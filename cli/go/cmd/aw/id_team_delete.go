@@ -86,7 +86,7 @@ func executeTeamDelete(ctx context.Context, opts teamDeleteOptions) (teamDeleteO
 	if err != nil {
 		return teamDeleteOutput{}, err
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: domain})
 	if err != nil {
 		return teamDeleteOutput{}, fmt.Errorf("discover registry for %s: %w", domain, err)
 	}

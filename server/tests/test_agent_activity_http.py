@@ -2,9 +2,7 @@
 
 An agent's host publishes signed activity while the agent works (aweb-acah.2,
 docs/agent-activity.md). The server verifies it, relays it with a per-agent
-revision, and keeps only the latest event for at most 60 seconds. Fixture
-provisioning and removing the app's Redis for the unavailable case are the
-only direct state changes.
+revision, and keeps only the latest event for at most 60 seconds.
 """
 
 from __future__ import annotations
@@ -21,23 +19,35 @@ import logging
 import pytest
 from redis.asyncio import Redis
 
-from identity_binding_support import register_global_identity
-
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.messaging.activity_stream import SessionActivity
 from test_agent_status_host_http import _team_request
-from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, _request
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_identity_grants import _grant_headers, _session_keypair
-from test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_identity_headers
+from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
+    _make_keypair,
+    _signed_identity_headers,
+)
+
+__all__ = ["privacy_app"]
 
 PATH = "/v1/agents/me/activity"
 
 
 def _ts(value: datetime) -> str:
-    return value.astimezone(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (
+        value.astimezone(timezone.utc)
+        .replace(microsecond=0)
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
 
 
-def _event(env, actor, *, from_did=None, seq=1, turn_id="turn-1", session_id=None, **changes):
+def _event(
+    env, actor, *, from_did=None, seq=1, turn_id="turn-1", session_id=None, **changes
+):
     now = datetime.now(timezone.utc).replace(microsecond=0)
     event = {
         "v": 1,
@@ -60,13 +70,17 @@ def _event(env, actor, *, from_did=None, seq=1, turn_id="turn-1", session_id=Non
 def _body(signing_key, event):
     canonical = canonical_json_bytes(event)
     return {
-        "signed_payload": base64.urlsafe_b64encode(canonical).rstrip(b"=").decode("ascii"),
+        "signed_payload": base64.urlsafe_b64encode(canonical)
+        .rstrip(b"=")
+        .decode("ascii"),
         "signature": sign_message(signing_key, canonical),
     }
 
 
 async def _publish(env, actor, event):
-    return await _team_request(env, actor, "POST", PATH, _body(env.actors[actor].sk, event))
+    return await _team_request(
+        env, actor, "POST", PATH, _body(env.actors[actor].sk, event)
+    )
 
 
 async def _latest(env, actor):
@@ -75,9 +89,16 @@ async def _latest(env, actor):
 
 
 async def _session(env, sender, *recipients):
-    response = await _request(env, sender, "POST", "/v1/chat/sessions", {
-        "to_dids": [env.actors[alias].did for alias in recipients], "message": "hello",
-    })
+    response = await _request(
+        env,
+        sender,
+        "POST",
+        "/v1/chat/sessions",
+        {
+            "to_dids": [env.actors[alias].did for alias in recipients],
+            "message": "hello",
+        },
+    )
     assert response.status_code == 200, response.text
     return response.json()["session_id"]
 
@@ -109,22 +130,34 @@ async def test_team_certificate_caller_publishes_and_the_event_is_relayed(privac
     assert await env.redis.ttl(f"agent-activity-rev:{env.actors['alice'].id}") > 3000
 
 
-async def _global_member(env, alias="dave"):
-    sk, _, did = _make_keypair()
-    agent_id = uuid4()
-    did_aw = await register_global_identity(env, SimpleNamespace(sk=sk, did=did), f"example.test/{alias}")
-    await env.db.execute(
-        "INSERT INTO {{tables.agents}} "
-        "(agent_id, team_id, did_key, did_aw, address, alias, identity_scope, inbound_mode) "
-        "VALUES ($1, $2, $3, $4, $5, $6, 'global', 'open')",
-        agent_id, TEAM, did, did_aw, f"example.test/{alias}", alias,
-    )
-    certificate = _encode_certificate(_make_certificate(
-        env.team_sk, env.team_did, did, team_id=TEAM, alias=alias, identity_scope="global",
-        member_did_aw=did_aw, member_address=f"example.test/{alias}", certificate_id=f"activity-{alias}",
-    ))
-    env.actors[alias] = SimpleNamespace(sk=sk, did=did, id=agent_id, certificate=certificate, did_aw=did_aw)
+async def _connect_member(env, alias):
+    connected = await _team_request(env, alias, "POST", "/v1/connect", {})
+    assert connected.status_code == 200, connected.text
+    assert (connected.json()["team_id"], connected.json()["alias"]) == (TEAM, alias)
+    env.actors[alias].id = UUID(connected.json()["agent_id"])
     return env.actors[alias]
+
+
+async def _global_member(env, alias="dave"):
+    if alias not in env.actors:
+        sk, _, did = _make_keypair()
+        env.actors[alias] = SimpleNamespace(sk=sk, did=did)
+    member = env.actors[alias]
+    registered = await env.app.state.awid_registry_client.register_did(member.did, member.sk)
+    member.did_aw = registered.did_aw
+    member.certificate = _encode_certificate(
+        _make_certificate(
+            env.team_sk,
+            env.team_did,
+            member.did,
+            team_id=TEAM,
+            alias=alias,
+            identity_scope="global",
+            member_did_aw=member.did_aw,
+            certificate_id=f"activity-global-{alias}",
+        )
+    )
+    return await _connect_member(env, alias)
 
 
 @pytest.mark.asyncio
@@ -132,8 +165,12 @@ async def test_global_member_certificate_publishes_with_its_stable_id(privacy_ap
     env = privacy_app
     member = await _global_member(env)
 
-    response = await _publish(env, "dave", _event(env, "dave", from_stable_id=member.did_aw))
-    wrong = await _publish(env, "dave", _event(env, "dave", seq=2, from_stable_id="did:aw:someoneelse"))
+    response = await _publish(
+        env, "dave", _event(env, "dave", from_stable_id=member.did_aw)
+    )
+    wrong = await _publish(
+        env, "dave", _event(env, "dave", seq=2, from_stable_id="did:aw:someoneelse")
+    )
 
     assert response.status_code == 202, response.text
     assert (await _latest(env, "dave"))["event"]["from_stable_id"] == member.did_aw
@@ -142,7 +179,9 @@ async def test_global_member_certificate_publishes_with_its_stable_id(privacy_ap
 
 
 @pytest.mark.asyncio
-async def test_activity_attributed_to_a_session_the_agent_is_in_is_accepted(privacy_app):
+async def test_activity_attributed_to_a_session_the_agent_is_in_is_accepted(
+    privacy_app,
+):
     env = privacy_app
     session_id = await _session(env, "bob", "alice")
 
@@ -158,7 +197,9 @@ async def test_absent_and_foreign_sessions_get_the_same_not_found(privacy_app):
     foreign = await _session(env, "bob", "carol")
 
     absent = await _publish(env, "alice", _event(env, "alice", session_id=str(uuid4())))
-    not_participant = await _publish(env, "alice", _event(env, "alice", seq=2, session_id=foreign))
+    not_participant = await _publish(
+        env, "alice", _event(env, "alice", seq=2, session_id=foreign)
+    )
 
     for response in (absent, not_participant):
         assert response.status_code == 404
@@ -184,15 +225,20 @@ async def test_turn_ended_is_kept_as_an_end_marker_with_the_next_revision(privac
 
 
 @pytest.mark.asyncio
-async def test_racing_publishes_keep_latest_state_and_channel_in_revision_order(privacy_app):
+async def test_racing_publishes_keep_latest_state_and_channel_in_revision_order(
+    privacy_app,
+):
     env = privacy_app
     async with env.redis.pubsub() as pubsub:
         await pubsub.subscribe(f"agent-activity:{env.actors['alice'].id}")
         await pubsub.get_message(timeout=1)
 
-        responses = await asyncio.gather(*(
-            _publish(env, "alice", _event(env, "alice", seq=seq)) for seq in range(1, 9)
-        ))
+        responses = await asyncio.gather(
+            *(
+                _publish(env, "alice", _event(env, "alice", seq=seq))
+                for seq in range(1, 9)
+            )
+        )
 
         assert [response.status_code for response in responses] == [202] * 8
         relayed = [await _next_relay(pubsub) for _ in range(8)]
@@ -204,9 +250,15 @@ async def test_racing_publishes_keep_latest_state_and_channel_in_revision_order(
 @pytest.mark.asyncio
 async def test_refusals_carry_their_codes(privacy_app):
     env = privacy_app
-    mismatched = await _publish(env, "alice", _event(env, "alice", from_did=env.actors["bob"].did))
-    malformed = await _team_request(env, "alice", "POST", PATH, {"signed_payload": "not base64!", "signature": "x"})
-    oversize = await _team_request(env, "alice", "POST", PATH, {"signed_payload": "a" * 2100, "signature": "x"})
+    mismatched = await _publish(
+        env, "alice", _event(env, "alice", from_did=env.actors["bob"].did)
+    )
+    malformed = await _team_request(
+        env, "alice", "POST", PATH, {"signed_payload": "not base64!", "signature": "x"}
+    )
+    oversize = await _team_request(
+        env, "alice", "POST", PATH, {"signed_payload": "a" * 2100, "signature": "x"}
+    )
 
     assert mismatched.status_code == 422
     assert mismatched.json()["detail"].startswith("signer_mismatch: ")
@@ -234,7 +286,9 @@ async def test_rate_limit_allows_ten_per_window_then_refuses(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_retry_after_allows_the_refused_event_after_the_advertised_wait(privacy_app):
+async def test_retry_after_allows_the_refused_event_after_the_advertised_wait(
+    privacy_app,
+):
     env = privacy_app
     for seq in range(1, 11):
         response = await _publish(env, "alice", _event(env, "alice", seq=seq))
@@ -255,7 +309,9 @@ async def test_retry_after_allows_the_refused_event_after_the_advertised_wait(pr
 
 
 @pytest.mark.asyncio
-async def test_without_redis_publishing_is_unavailable_and_not_an_error(privacy_app, caplog):
+async def test_without_redis_publishing_is_unavailable_and_not_an_error(
+    privacy_app, caplog
+):
     env = privacy_app
     redis, env.app.state.redis = env.app.state.redis, None
     try:
@@ -266,11 +322,15 @@ async def test_without_redis_publishing_is_unavailable_and_not_an_error(privacy_
 
     assert response.status_code == 503
     assert response.json()["detail"].startswith("publishing_unavailable: ")
-    assert [record for record in caplog.records if record.levelno >= logging.ERROR] == []
+    assert [
+        record for record in caplog.records if record.levelno >= logging.ERROR
+    ] == []
 
 
 @pytest.mark.asyncio
-async def test_failing_redis_is_unavailable_and_the_failure_is_logged(privacy_app, caplog):
+async def test_failing_redis_is_unavailable_and_the_failure_is_logged(
+    privacy_app, caplog
+):
     env = privacy_app
     # A real client for a port nothing listens on: every command fails to connect.
     unreachable = Redis.from_url("redis://127.0.0.1:1/0", socket_connect_timeout=0.5)
@@ -284,10 +344,14 @@ async def test_failing_redis_is_unavailable_and_the_failure_is_logged(privacy_ap
 
     assert response.status_code == 503
     assert response.json()["detail"].startswith("publishing_unavailable: ")
-    assert [record.getMessage() for record in caplog.records] == [
+    # Maintenance can report the same Redis outage through its own loggers.
+    records = [
+        record for record in caplog.records if record.name == "aweb.routes.agent_activity"
+    ]
+    assert [record.getMessage() for record in records] == [
         f"Activity rate limit failed for {env.actors['alice'].id}"
     ]
-    assert caplog.records[0].exc_info is not None
+    assert records[0].exc_info is not None
 
 
 async def _grant_publish(env, alias, scopes, *, event_from_session_key=True):
@@ -295,7 +359,10 @@ async def _grant_publish(env, alias, scopes, *, event_from_session_key=True):
     env.app.state.public_origin = origin
     signing_key, grant_did = _session_keypair()
     minted = await _team_request(
-        env, alias, "POST", "/v1/identity-grants",
+        env,
+        alias,
+        "POST",
+        "/v1/identity-grants",
         {"grant_did_key": grant_did, "scopes": scopes, "ttl_seconds": 600},
     )
     assert minted.status_code == 200, minted.text
@@ -305,8 +372,13 @@ async def _grant_publish(env, alias, scopes, *, event_from_session_key=True):
         PATH,
         content=content,
         headers=_grant_headers(
-            signing_key=signing_key, did_key=grant_did, grant_id=minted.json()["grant_id"],
-            method="POST", path=PATH, body=content, aud=origin,
+            signing_key=signing_key,
+            did_key=grant_did,
+            grant_id=minted.json()["grant_id"],
+            method="POST",
+            path=PATH,
+            body=content,
+            aud=origin,
         ),
     )
     return response, event
@@ -328,7 +400,9 @@ async def test_grant_with_chat_send_publishes_as_its_subject(privacy_app):
 async def test_grant_event_naming_the_subject_key_is_a_signer_mismatch(privacy_app):
     env = privacy_app
 
-    response, _ = await _grant_publish(env, "alice", ["chat.send"], event_from_session_key=False)
+    response, _ = await _grant_publish(
+        env, "alice", ["chat.send"], event_from_session_key=False
+    )
 
     assert response.status_code == 422
     assert response.json()["detail"].startswith("signer_mismatch: ")
@@ -346,9 +420,16 @@ async def test_grant_without_chat_send_is_outside_its_scope(privacy_app):
 
         assert response.status_code == 403
         assert response.json()["detail"] == "outside grant scope"
-        assert await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5) is None
+        assert (
+            await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
+            is None
+        )
     alice = env.actors["alice"].id
-    for key in (f"agent-activity:{alice}", f"agent-activity-rev:{alice}", f"agent-activity-rate:{alice}"):
+    for key in (
+        f"agent-activity:{alice}",
+        f"agent-activity-rev:{alice}",
+        f"agent-activity-rate:{alice}",
+    ):
         assert not await env.redis.exists(key)
 
 
@@ -356,10 +437,14 @@ async def test_grant_without_chat_send_is_outside_its_scope(privacy_app):
 async def test_bare_identity_caller_is_not_authenticated_for_activity(privacy_app):
     env = privacy_app
 
-    unique = await _request(env, "alice", "POST", PATH, _body(env.actors["alice"].sk, _event(env, "alice")))
+    unique = await _request(
+        env, "alice", "POST", PATH, _body(env.actors["alice"].sk, _event(env, "alice"))
+    )
     sk, _, did = _make_keypair()
     env.actors["stranger"] = SimpleNamespace(sk=sk, did=did, id=uuid4())
-    unresolved = await _request(env, "stranger", "POST", PATH, _body(sk, _event(env, "stranger")))
+    unresolved = await _request(
+        env, "stranger", "POST", PATH, _body(sk, _event(env, "stranger"))
+    )
 
     assert unique.status_code == 401
     assert unresolved.status_code == 401
@@ -379,15 +464,35 @@ async def test_message_ingress_refuses_signed_activity_bytes(privacy_app):
         "signed_payload": canonical.decode(),
     }
 
-    chat = await _request(env, "alice", "POST", "/v1/chat/sessions", {
-        "to_dids": [env.actors["bob"].did], "message": "hello", **signed,
-    })
-    mail = await _request(env, "alice", "POST", "/v1/messages", {
-        "to_did": env.actors["bob"].did, "subject": "s", "body": "hello", **signed,
-    })
+    chat = await _request(
+        env,
+        "alice",
+        "POST",
+        "/v1/chat/sessions",
+        {
+            "to_dids": [env.actors["bob"].did],
+            "message": "hello",
+            **signed,
+        },
+    )
+    mail = await _request(
+        env,
+        "alice",
+        "POST",
+        "/v1/messages",
+        {
+            "to_did": env.actors["bob"].did,
+            "subject": "s",
+            "body": "hello",
+            **signed,
+        },
+    )
 
     assert chat.status_code == 422
-    assert chat.json()["detail"] == "signed_payload type must be chat"
+    assert (
+        chat.json()["detail"]
+        == "signed_payload type must be chat. Check the chat fields and sign the message again."
+    )
     assert mail.status_code == 422
     assert mail.json()["detail"] == "signed_payload type must be mail"
 
@@ -406,9 +511,9 @@ class _Stream:
             event = None
             async for line in self._lines:
                 if line.startswith("event: "):
-                    event = line[len("event: "):]
+                    event = line[len("event: ") :]
                 elif line.startswith("data: ") and event == name:
-                    return json.loads(line[len("data: "):])
+                    return json.loads(line[len("data: ") :])
         raise AssertionError(f"stream ended before an {name} frame")
 
     async def frames_until(self, name, timeout=5):
@@ -417,7 +522,7 @@ class _Stream:
             event = None
             async for line in self._lines:
                 if line.startswith("event: "):
-                    event = line[len("event: "):]
+                    event = line[len("event: ") :]
                 elif line.startswith("data: "):
                     seen.append(event)
                     if event == name:
@@ -432,7 +537,9 @@ def _stream(env, viewer, session_id, *, include=None, seconds=8):
     if include is not None:
         params["include"] = include
     return env.client.stream(
-        "GET", f"/v1/chat/sessions/{session_id}/stream", params=params,
+        "GET",
+        f"/v1/chat/sessions/{session_id}/stream",
+        params=params,
         headers=_signed_identity_headers(identity.sk, identity.did, "", b""),
     )
 
@@ -445,8 +552,7 @@ async def _subscribed(env, actor):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("key_only", [False, True])
-async def test_global_activity_uses_canonical_participation_and_nullable_projection(privacy_app, key_only):
+async def test_global_activity_uses_canonical_participation_and_nullable_projection(privacy_app):
     env = privacy_app
     member = await _global_member(env)
     admitted = await _team_request(env, "dave", "GET", "/v1/agents/me/inbound-mode")
@@ -454,28 +560,62 @@ async def test_global_activity_uses_canonical_participation_and_nullable_project
     session_id = await _session(env, "bob", "dave")
     participant = await env.db.fetch_one(
         "SELECT did, agent_id FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
-        UUID(session_id), member.did_aw,
+        UUID(session_id),
+        member.did_aw,
     )
     assert participant and participant["agent_id"] is None
-    if key_only:
-        await env.db.execute(
-            "UPDATE {{tables.chat_participants}} SET did=$2 WHERE session_id=$1 AND did=$3",
-            UUID(session_id), member.did, member.did_aw,
-        )
-        refused = await _publish(env, "dave", _event(env, "dave", session_id=session_id,
-                                                  from_stable_id=member.did_aw))
-        assert refused.status_code == 404, refused.text
-        assert await _latest(env, "dave") is None
-        return
-
     async with _stream(env, "bob", session_id, include="agent_activity") as response:
         assert response.status_code == 200
         await _subscribed(env, "dave")
-        sent = await _publish(env, "dave", _event(env, "dave", session_id=session_id,
-                                               from_stable_id=member.did_aw))
+        sent = await _publish(
+            env,
+            "dave",
+            _event(env, "dave", session_id=session_id, from_stable_id=member.did_aw),
+        )
         assert sent.status_code == 202, sent.text
         frame = await _Stream(response.aiter_lines()).next("agent_activity")
     assert frame["agent"] == "dave" and frame["from_did"] == member.did
+
+
+@pytest.mark.asyncio
+async def test_global_activity_refuses_a_key_only_session_after_member_reconnect(privacy_app):
+    env = privacy_app
+    sk, _, did = _make_keypair()
+    env.actors["dave"] = SimpleNamespace(
+        sk=sk,
+        did=did,
+        certificate=_encode_certificate(
+            _make_certificate(
+                env.team_sk,
+                env.team_did,
+                did,
+                team_id=TEAM,
+                alias="dave",
+                identity_scope="local",
+                certificate_id="activity-local-dave",
+            )
+        ),
+    )
+    local = await _connect_member(env, "dave")
+    agent_id = local.id
+    session_id = await _session(env, "bob", "dave")
+
+    member = await _global_member(env)
+
+    assert member.id == agent_id
+    participant = await env.db.fetch_one(
+        "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
+        UUID(session_id),
+        did,
+    )
+    assert participant and participant["did"] == did
+    refused = await _publish(
+        env,
+        "dave",
+        _event(env, "dave", session_id=session_id, from_stable_id=member.did_aw),
+    )
+    assert refused.status_code == 404, refused.text
+    assert await _latest(env, "dave") is None
 
 
 @pytest.mark.asyncio
@@ -512,7 +652,9 @@ async def test_opted_in_participant_sees_the_signed_event_live(privacy_app):
 async def test_opening_mid_turn_shows_the_current_state(privacy_app):
     env = privacy_app
     session_id = await _session(env, "bob", "alice")
-    assert (await _publish(env, "alice", _event(env, "alice", session_id=session_id, seq=4))).status_code == 202
+    assert (
+        await _publish(env, "alice", _event(env, "alice", session_id=session_id, seq=4))
+    ).status_code == 202
 
     async with _stream(env, "bob", session_id, include="agent_activity") as response:
         frame = await _Stream(response.aiter_lines()).next("agent_activity")
@@ -537,7 +679,11 @@ async def test_work_in_another_session_shows_busy_then_cleared(privacy_app):
         assert (await _publish(env, "alice", end)).status_code == 202
         cleared_frame = await stream.next("agent_activity")
 
-    assert busy_frame == {"agent": "alice", "phase": "busy_elsewhere", "expires_at": busy["expires_at"]}
+    assert busy_frame == {
+        "agent": "alice",
+        "phase": "busy_elsewhere",
+        "expires_at": busy["expires_at"],
+    }
     assert cleared_frame == {"agent": "alice", "phase": "cleared"}
 
 
@@ -549,8 +695,16 @@ async def test_stream_without_include_never_subscribes_to_activity(privacy_app):
 
     async with _stream(env, "bob", session_id) as response:
         stream = _Stream(response.aiter_lines())
-        assert (await _publish(env, "alice", _event(env, "alice", session_id=session_id))).status_code == 202
-        reply = await _request(env, "alice", "POST", f"/v1/chat/sessions/{session_id}/messages", {"body": "done"})
+        assert (
+            await _publish(env, "alice", _event(env, "alice", session_id=session_id))
+        ).status_code == 202
+        reply = await _request(
+            env,
+            "alice",
+            "POST",
+            f"/v1/chat/sessions/{session_id}/messages",
+            {"body": "done"},
+        )
         assert reply.status_code == 200, reply.text
 
         seen = await stream.frames_until("message")
@@ -582,8 +736,12 @@ async def test_a_viewer_does_not_receive_its_own_activity(privacy_app):
         await _subscribed(env, "alice")
         own_channel = f"agent-activity:{env.actors['bob'].id}"
         own_subscribers = dict(await env.redis.pubsub_numsub(own_channel))[own_channel]
-        assert (await _publish(env, "bob", _event(env, "bob", session_id=session_id))).status_code == 202
-        assert (await _publish(env, "alice", _event(env, "alice", session_id=session_id))).status_code == 202
+        assert (
+            await _publish(env, "bob", _event(env, "bob", session_id=session_id))
+        ).status_code == 202
+        assert (
+            await _publish(env, "alice", _event(env, "alice", session_id=session_id))
+        ).status_code == 202
 
         frame = await stream.next("agent_activity")
 
@@ -592,7 +750,9 @@ async def test_a_viewer_does_not_receive_its_own_activity(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_message_sent_while_activity_is_being_set_up_arrives_once(privacy_app, monkeypatch):
+async def test_message_sent_while_activity_is_being_set_up_arrives_once(
+    privacy_app, monkeypatch
+):
     # A barrier around the real subscription: the stream's activity setup is
     # paused after Redis confirms it, while a real chat message is sent.
     env = privacy_app
@@ -608,11 +768,19 @@ async def test_message_sent_while_activity_is_being_set_up_arrives_once(privacy_
 
     monkeypatch.setattr(SessionActivity, "subscribe", paused_subscribe)
 
-    async with _stream(env, "bob", session_id, include="agent_activity", seconds=4) as response:
+    async with _stream(
+        env, "bob", session_id, include="agent_activity", seconds=4
+    ) as response:
         lines = response.aiter_lines()
         async with asyncio.timeout(5):
             await confirmed.wait()
-        sent = await _request(env, "alice", "POST", f"/v1/chat/sessions/{session_id}/messages", {"body": "during setup"})
+        sent = await _request(
+            env,
+            "alice",
+            "POST",
+            f"/v1/chat/sessions/{session_id}/messages",
+            {"body": "during setup"},
+        )
         assert sent.status_code == 200, sent.text
         # Setup outlasts the send by more than any clock difference between
         # this process and the database.
@@ -624,19 +792,23 @@ async def test_message_sent_while_activity_is_being_set_up_arrives_once(privacy_
         async with asyncio.timeout(10):
             async for line in lines:
                 if line.startswith("event: "):
-                    event = line[len("event: "):]
+                    event = line[len("event: ") :]
                 elif line.startswith("data: ") and event == "message":
-                    bodies.append(json.loads(line[len("data: "):])["body"])
+                    bodies.append(json.loads(line[len("data: ") :])["body"])
 
     assert bodies == ["during setup"]
 
 
 @pytest.mark.asyncio
-async def test_session_id_with_a_trailing_newline_is_invalid_not_a_server_error(privacy_app):
+async def test_session_id_with_a_trailing_newline_is_invalid_not_a_server_error(
+    privacy_app,
+):
     env = privacy_app
     session_id = await _session(env, "bob", "alice")
 
-    response = await _publish(env, "alice", _event(env, "alice", session_id=session_id + "\n"))
+    response = await _publish(
+        env, "alice", _event(env, "alice", session_id=session_id + "\n")
+    )
 
     assert response.status_code == 422
     assert response.json()["detail"].startswith("invalid_value: ")
@@ -646,9 +818,16 @@ async def test_session_id_with_a_trailing_newline_is_invalid_not_a_server_error(
 @pytest.mark.asyncio
 async def test_read_receipt_during_activity_setup_arrives(privacy_app, monkeypatch):
     env = privacy_app
-    opened = await _request(env, "bob", "POST", "/v1/chat/sessions", {
-        "to_dids": [env.actors["alice"].did], "message": "hello",
-    })
+    opened = await _request(
+        env,
+        "bob",
+        "POST",
+        "/v1/chat/sessions",
+        {
+            "to_dids": [env.actors["alice"].did],
+            "message": "hello",
+        },
+    )
     assert opened.status_code == 200, opened.text
     session_id, message_id = opened.json()["session_id"], opened.json()["message_id"]
     confirmed, resume = asyncio.Event(), asyncio.Event()
@@ -662,11 +841,19 @@ async def test_read_receipt_during_activity_setup_arrives(privacy_app, monkeypat
 
     monkeypatch.setattr(SessionActivity, "subscribe", paused_subscribe)
 
-    async with _stream(env, "bob", session_id, include="agent_activity", seconds=4) as response:
+    async with _stream(
+        env, "bob", session_id, include="agent_activity", seconds=4
+    ) as response:
         stream = _Stream(response.aiter_lines())
         async with asyncio.timeout(5):
             await confirmed.wait()
-        read = await _request(env, "alice", "POST", f"/v1/chat/sessions/{session_id}/read", {"up_to_message_id": message_id})
+        read = await _request(
+            env,
+            "alice",
+            "POST",
+            f"/v1/chat/sessions/{session_id}/read",
+            {"up_to_message_id": message_id},
+        )
         assert read.status_code == 200, read.text
         await asyncio.sleep(1)
         resume.set()
@@ -677,7 +864,9 @@ async def test_read_receipt_during_activity_setup_arrives(privacy_app, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_wake_consumed_while_confirming_activity_polls_at_once(privacy_app, monkeypatch):
+async def test_wake_consumed_while_confirming_activity_polls_at_once(
+    privacy_app, monkeypatch
+):
     # The message's session wake is already queued when activity subscribes,
     # so the subscription reads it while waiting for its confirmations. With
     # the fallback poll out of reach, only that wake can deliver the message.
@@ -698,11 +887,19 @@ async def test_wake_consumed_while_confirming_activity_polls_at_once(privacy_app
     monkeypatch.setattr(SessionActivity, "subscribe", subscribe_after_wake)
     monkeypatch.setattr(chat_routes, "CHAT_STREAM_FALLBACK_POLL_SECONDS", 30.0)
 
-    async with _stream(env, "bob", session_id, include="agent_activity", seconds=4) as response:
+    async with _stream(
+        env, "bob", session_id, include="agent_activity", seconds=4
+    ) as response:
         stream = _Stream(response.aiter_lines())
         async with asyncio.timeout(5):
             await reached.wait()
-        sent = await _request(env, "alice", "POST", f"/v1/chat/sessions/{session_id}/messages", {"body": "woken"})
+        sent = await _request(
+            env,
+            "alice",
+            "POST",
+            f"/v1/chat/sessions/{session_id}/messages",
+            {"body": "woken"},
+        )
         assert sent.status_code == 200, sent.text
         resume.set()
 

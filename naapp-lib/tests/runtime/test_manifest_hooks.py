@@ -80,7 +80,7 @@ async def running(
     if member is None:
         member = Member(team_id=TEAM)
         await registry.add_team(TEAM, member.team_did_key)
-        await registry.add_certificate(member.certificate())
+        await registry.add_certificate(member.certificate(), team_key=member.team_key)
     database = database or await test_db_factory.create_db(suffix="manifest_hook_runtime")
     key = key or _key_file(tmp_path, "commitment", secrets.token_hex(32))
     tool = {**TOOL, "mutation": mutation, "path": root_path + PATH}

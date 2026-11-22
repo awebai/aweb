@@ -43,6 +43,9 @@ func formatTeamAcceptInvite(v any) string {
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertPath))
+	if text := teamKeyConfirmationText(out.TeamKey); text != "" {
+		sb.WriteString(text + "\n")
+	}
 	if out.IDRegistration != "" {
 		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
 	}

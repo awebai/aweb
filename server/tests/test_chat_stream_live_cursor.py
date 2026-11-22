@@ -18,6 +18,8 @@ from test_agent_wake_latency import _open_chat
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401  (fixture)
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 async def _message_frames(stream):
     async for line in stream.aiter_lines():

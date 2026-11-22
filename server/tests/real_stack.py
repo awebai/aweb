@@ -27,9 +27,8 @@ from awid.ratelimit import NoOpRateLimiter
 from awid.signing import sign_message
 from awid.team_server_record import record_signing_bytes
 from awid_service.db import AwidDatabaseInfra
-from awid_service.routes.attestation_records import router as awid_attestation_records_router
-from awid_service.routes.did import router as awid_did_router
-from awid_service.routes.teams import router as awid_teams_router
+from awid_service.main import mount_registry
+from redis.asyncio import Redis
 from fastapi import FastAPI
 from nacl.signing import SigningKey
 
@@ -137,14 +136,14 @@ async def real_stack(aweb_cloud_db, test_db_factory, monkeypatch) -> AsyncIterat
     monkeypatch.setenv("AWID_DATABASE_URL", awid_database.config.get_dsn())
     await infra.initialize(run_migrations=True)
     awid_app = FastAPI()
+    mount_registry(awid_app)
+    registry_redis = Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+    awid_app.state.redis = registry_redis
     awid_app.state.db = infra
     awid_app.state.rate_limiter = NoOpRateLimiter()
     awid_app.state.awid_service_token = service_token
     # Its public origin, which covering controller signatures name.
     awid_app.state.awid_public_origins = (REGISTRY_URL,)
-    awid_app.include_router(awid_teams_router)
-    awid_app.include_router(awid_attestation_records_router)
-    awid_app.include_router(awid_did_router)
 
     aweb_app = _build_events_app(aweb_cloud_db.aweb_db, public_origin=AWEB_URL)
     aweb_app.include_router(apps_router)
@@ -158,4 +157,5 @@ async def real_stack(aweb_cloud_db, test_db_factory, monkeypatch) -> AsyncIterat
             service_token=service_token,
         )
     finally:
+        await registry_redis.aclose()
         await infra.close()

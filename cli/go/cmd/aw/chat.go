@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,80 +39,147 @@ func writeChatStatus(w io.Writer, kind, message string) {
 	termtext.Fprintln(w, "[chat:%s] %s", kind, message)
 }
 
+// e2eeFlagChoice is the encryption a chat or mail command's flags ask for:
+// --e2ee or --plaintext decide (--e2ee=false is --plaintext), and with
+// neither a continuation inherits its conversation's encryption.
+func e2eeFlagChoice(cmd *cobra.Command, e2ee, plaintext bool) chat.E2EEChoice {
+	switch {
+	case cmd.Flags().Changed("e2ee") && e2ee:
+		return chat.E2EERequired
+	case plaintext || cmd.Flags().Changed("e2ee"):
+		return chat.E2EEPlaintext
+	default:
+		return chat.E2EEInherit
+	}
+}
+
+// configureSendE2EE loads the keys a chat or mail send may need: --e2ee
+// requires them, and an inherited continuation uses them when this workspace
+// has them (an encrypted conversation is continued in plaintext, with a
+// notice, without them).
+func configureSendE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, choice chat.E2EEChoice) error {
+	switch choice {
+	case chat.E2EERequired:
+		return configureClientE2EE(ctx, c, sel, true)
+	case chat.E2EEInherit:
+		err := configureClientE2EE(ctx, c, sel, false)
+		var unavailable *e2eeDecryptionUnavailableError
+		if errors.As(err, &unavailable) {
+			return nil
+		}
+		return err
+	default:
+		return nil
+	}
+}
+
 func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOptions) (*chat.SendResult, *awconfig.Selection, error) {
 	c, sel, err := resolveClientSelectionForAliasTarget(ctx, toAlias)
 	if err != nil {
 		return nil, nil, err
 	}
-	if opts.EncryptE2EE {
-		if err := configureClientE2EE(ctx, c, sel, true); err != nil {
-			return nil, nil, err
-		}
+	if err := configureSendE2EE(ctx, c, sel, opts.Encryption()); err != nil {
+		return nil, nil, err
 	}
 	target := strings.TrimSpace(toAlias)
 	// Encrypted human aliases use selected-team key discovery; preserve the
 	// released plaintext live-roster route.
-	did, source, err := confirmChatAlias(ctx, c, sel, target, !opts.EncryptE2EE)
+	confirmed, err := confirmTeamAlias(ctx, c, sel, target, opts.Encryption() != chat.E2EERequired)
 	if err != nil {
 		return nil, sel, err
 	}
-	switch source {
-	case chatAliasFromAgentList:
+	switch confirmed.source {
+	case teamAliasFromAgentList:
 		// An existing session is selected by the confirmed DID; a new one is
-		// created by the alias, which the server resolves in the team.
-		opts.RecipientDID = did
-	case chatAliasFromLiveRoster:
-		target = did
+		// created by the alias, which the server resolves in the team, and
+		// signs the member the agent list names.
+		opts.RecipientDID = confirmed.sessionDID
+		opts.ConfirmedRecipient = confirmed.recipient
+	case teamAliasFromLiveRoster:
+		if strings.HasPrefix(confirmed.sessionDID, "did:aw:") {
+			// The roster confirms session identity. A new global recipient
+			// is still selected by its team alias; a bare did:aw supplies
+			// no first-contact route.
+			opts.RecipientDID = confirmed.sessionDID
+		} else {
+			target = confirmed.sessionDID
+		}
 	}
 	r, err := chat.Send(ctx, c.Client, sel.Alias, []string{target}, message, opts, chatStderrCallback)
 	return r, sel, err
 }
 
-type chatAliasSource int
+type teamAliasSource int
 
 const (
-	chatAliasUnconfirmed chatAliasSource = iota
-	chatAliasFromAgentList
-	chatAliasFromLiveRoster
+	teamAliasUnconfirmed teamAliasSource = iota
+	teamAliasFromAgentList
+	teamAliasFromLiveRoster
 )
 
-// confirmChatAlias confirms a bare alias in the selected team: the DID its
-// agent list names for it, as the server names that chat participant (its
-// did:aw, else its did:key), or else, with useLiveRoster, the DID the team's
-// live roster names. A confirmed DID is a strong identity, so it selects the
-// chat session rather than the name, which an outside participant may also
-// hold (chat/IDENTITY_RULES.md). A failed lookup refuses. Any other target,
-// or an alias neither confirms, is unconfirmed.
-func confirmChatAlias(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, target string, useLiveRoster bool) (string, chatAliasSource, error) {
+// confirmedTeamAlias is a bare alias confirmed in the selected team, for a
+// chat or a mail send.
+type confirmedTeamAlias struct {
+	source teamAliasSource
+	// sessionDID selects the chat session: the member's did:aw, else its
+	// did:key.
+	sessionDID string
+	// recipient is the identity a new message signs as its recipient
+	// binding; only the agent list sets it.
+	recipient *awid.ConfirmedRecipient
+	// live is the live roster's member, when it confirmed the alias: its
+	// identity target and current key.
+	live liveTeamMemberAliasTarget
+}
+
+// confirmTeamAlias confirms a bare alias in the selected team, for chat and
+// mail alike: the identity its agent list names for it, or else, with
+// useLiveRoster, the member the team's live roster names. A confirmed DID is
+// a strong identity, so it selects the chat session rather than the name,
+// which an outside participant may also hold (chat/IDENTITY_RULES.md). A
+// failed lookup refuses. Any other target, or an alias neither confirms, is
+// unconfirmed.
+func confirmTeamAlias(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, target string, useLiveRoster bool) (confirmedTeamAlias, error) {
 	target = strings.TrimSpace(target)
 	if !shouldTryLiveRosterAliasFallback(target) {
-		return "", chatAliasUnconfirmed, nil
+		return confirmedTeamAlias{}, nil
 	}
 	agent, found, err := clientAgentForAlias(ctx, c, target)
 	if err != nil {
-		return "", chatAliasUnconfirmed, recipientLookupError(target, "agent list", err)
+		return confirmedTeamAlias{}, recipientLookupError(target, "agent list", err)
 	}
 	if found {
-		for _, did := range []string{agent.DIDAW, agent.DIDKey} {
-			if did = strings.TrimSpace(did); did != "" {
-				return did, chatAliasFromAgentList, nil
-			}
+		recipient, err := agentListRecipient(target, agent)
+		if err != nil {
+			return confirmedTeamAlias{}, err
 		}
-		return "", chatAliasUnconfirmed, fmt.Errorf("cannot confirm recipient %q: the agent list names no DID for it; use the recipient's full address or DID", target)
+		sessionDID := firstNonEmpty(recipient.StableID, recipient.DID)
+		return confirmedTeamAlias{source: teamAliasFromAgentList, sessionDID: sessionDID, recipient: recipient}, nil
 	}
 	if !useLiveRoster {
-		return "", chatAliasUnconfirmed, nil
+		return confirmedTeamAlias{}, nil
 	}
 	live, liveFound, err := resolveLiveTeamMemberAliasTarget(ctx, sel, target)
 	if err != nil {
-		return "", chatAliasUnconfirmed, recipientLookupError(target, "live roster", err)
+		return confirmedTeamAlias{}, recipientLookupError(target, "live roster", err)
 	}
 	if liveFound {
 		if _, value := live.identityTarget(); strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value), chatAliasFromLiveRoster, nil
+			return confirmedTeamAlias{source: teamAliasFromLiveRoster, sessionDID: strings.TrimSpace(value), live: live}, nil
 		}
 	}
-	return "", chatAliasUnconfirmed, nil
+	return confirmedTeamAlias{}, nil
+}
+
+// agentListRecipient is the identity the selected team's agent list names
+// for alias: the binding a message to that alias signs. A row that names no
+// identity cannot be confirmed and refuses.
+func agentListRecipient(alias string, agent awid.AgentView) (*awid.ConfirmedRecipient, error) {
+	recipient := &awid.ConfirmedRecipient{DID: strings.TrimSpace(agent.DIDKey), StableID: strings.TrimSpace(agent.DIDAW)}
+	if recipient.DID == "" && recipient.StableID == "" {
+		return nil, fmt.Errorf("cannot confirm recipient %q: the agent list names no DID for it; use the recipient's full address or DID", alias)
+	}
+	return recipient, nil
 }
 
 // chatSessionDID is the DID that selects a session for a command that looks
@@ -119,11 +187,11 @@ func confirmChatAlias(ctx context.Context, c *aweb.Client, sel *awconfig.Selecti
 // teammate's alias, or "" when the list does not name it. A failed lookup
 // refuses.
 func chatSessionDID(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, target string) (string, error) {
-	did, source, err := confirmChatAlias(ctx, c, sel, target, false)
-	if err != nil || source != chatAliasFromAgentList {
+	confirmed, err := confirmTeamAlias(ctx, c, sel, target, false)
+	if err != nil || confirmed.source != teamAliasFromAgentList {
 		return "", err
 	}
-	return did, nil
+	return confirmed.sessionDID, nil
 }
 
 // logChatEvent logs a single chat event to the communication log.
@@ -244,7 +312,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 			Wait:              chatSendAndWaitWait,
 			WaitExplicit:      cmd.Flags().Changed("wait"),
 			StartConversation: chatSendAndWaitStartConversation,
-			EncryptE2EE:       chatSendAndWaitE2EE,
+			E2EE:              e2eeFlagChoice(cmd, chatSendAndWaitE2EE, chatSendAndWaitPlaintext),
 		})
 		if err != nil {
 			return networkError(err, args[0])
@@ -300,7 +368,7 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			Wait:              0,
 			Leaving:           true,
 			StartConversation: chatSendAndLeaveStartConversation,
-			EncryptE2EE:       chatSendAndLeaveE2EE,
+			E2EE:              e2eeFlagChoice(cmd, chatSendAndLeaveE2EE, chatSendAndLeavePlaintext),
 		})
 		if err != nil {
 			return networkError(err, args[0])
@@ -341,7 +409,9 @@ var chatPendingCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = configureClientE2EE(ctx, c, sel, false)
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
 		result, err := chat.Pending(ctx, c.Client)
 		if err != nil {
 			return err
@@ -365,7 +435,9 @@ var chatOpenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = configureClientE2EE(ctx, c, sel, false)
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
 		confirmedDID, err := chatSessionDID(ctx, c, sel, args[0])
 		if err != nil {
 			return err
@@ -414,7 +486,9 @@ var chatHistoryCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = configureClientE2EE(ctx, c, sel, false)
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
 		var result *chat.HistoryResult
 		if strings.TrimSpace(chatHistorySessionID) != "" {
 			result, err = chat.HistoryBySession(ctx, c.Client, chatHistorySessionID, chatHistoryMessageID, chatHistoryUnreadOnly, chatHistoryLimit)
@@ -471,15 +545,18 @@ var chatSendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if chatSendE2EE {
-			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
-				return err
-			}
+		choice := e2eeFlagChoice(cmd, chatSendE2EE, chatSendPlaintext)
+		if err := configureSendE2EE(ctx, c, sel, choice); err != nil {
+			return err
+		}
+		encrypt, err := chat.ContinuationEncrypted(ctx, c.Client, sessionID, choice, chatStderrCallback)
+		if err != nil {
+			return err
 		}
 		resp, err := c.Client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 			Body:        body,
 			Leaving:     chatSendLeave,
-			EncryptE2EE: chatSendE2EE,
+			EncryptE2EE: encrypt,
 		})
 		if err != nil {
 			return humanMailOnlyRefusal(err)
@@ -561,18 +638,16 @@ var chatExtendWaitCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		encryptE2EE := chatExtendWaitE2EE
-		if encryptE2EE {
-			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
-				return err
-			}
+		choice := e2eeFlagChoice(cmd, chatExtendWaitE2EE, chatExtendWaitPlaintext)
+		if err := configureSendE2EE(ctx, c, sel, choice); err != nil {
+			return err
 		}
 		confirmedDID, err := chatSessionDID(ctx, c, sel, args[0])
 		if err != nil {
 			return err
 		}
-		opts := chat.ExtendWaitOptions{EncryptE2EE: encryptE2EE, RecipientDID: confirmedDID}
-		result, err := chat.ExtendWaitWithOptions(ctx, c.Client, args[0], message, opts)
+		opts := chat.ExtendWaitOptions{E2EE: choice, RecipientDID: confirmedDID}
+		result, err := chat.ExtendWaitWithStatus(ctx, c.Client, args[0], message, opts, chatStderrCallback)
 		if err != nil {
 			return humanMailOnlyRefusal(err)
 		}
@@ -615,7 +690,9 @@ var chatListenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = configureClientE2EE(ctx, c, sel, false)
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
 		confirmedDID, err := chatSessionDID(ctx, c, sel, args[0])
 		if err != nil {
 			return err
@@ -647,7 +724,9 @@ var chatShowPendingCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = configureClientE2EE(ctx, c, sel, false)
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
+			return err
+		}
 		confirmedDID, err := chatSessionDID(ctx, c, sel, args[0])
 		if err != nil {
 			return err
@@ -668,20 +747,20 @@ var chatShowPendingCmd = &cobra.Command{
 func init() {
 	chatSendAndWaitCmd.Flags().IntVar(&chatSendAndWaitWait, "wait", chat.DefaultWait, "Seconds to wait for reply")
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitStartConversation, "start-conversation", false, "Start conversation (5min default wait)")
-	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
+	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)")
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
 	chatSendAndWaitCmd.Flags().StringVar(&chatSendAndWaitBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveStartConversation, "start-conversation", false, "Start a new conversation instead of continuing an existing one")
-	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeavePlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
+	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeavePlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)")
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
 	chatSendAndLeaveCmd.Flags().StringVar(&chatSendAndLeaveBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendCmd.Flags().StringVar(&chatSendSessionID, "session-id", "", "Existing chat session id")
 	chatSendCmd.Flags().StringVar(&chatSendBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
 	chatSendCmd.Flags().StringVar(&chatSendBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendCmd.Flags().BoolVar(&chatSendLeave, "leave", false, "Leave the conversation after sending")
-	chatSendCmd.Flags().BoolVar(&chatSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
+	chatSendCmd.Flags().BoolVar(&chatSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)")
 	chatSendCmd.Flags().BoolVar(&chatSendE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
-	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext wait extension (currently the default)")
+	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext wait extension (by default it inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)")
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitE2EE, "e2ee", false, "Send E2E encrypted wait extension; fails closed if encryption keys are missing")
 	chatExtendWaitCmd.Flags().StringVar(&chatExtendWaitBodyFile, "body-file", "", safeFileInputHelp("message body"))
 

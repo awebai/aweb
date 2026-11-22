@@ -125,6 +125,8 @@ type idCreatePlan struct {
 }
 
 type preparedIDCreate struct {
+	// Recovery owns the original key and plan once both are durable.
+	Recovery      *standaloneCreateRecovery
 	Plan          *idCreatePlan
 	IdentityKey   ed25519.PrivateKey
 	ControllerKey ed25519.PrivateKey
@@ -185,42 +187,64 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, error) {
-	var parent *idCreateParent
-	if strings.TrimSpace(opts.HumanParent) != "" || opts.RootParent {
-		domain, err := normalizeIDCreateDomain(opts.Domain, opts.AllowReservedLocalDomain)
-		if err != nil {
-			return idCreateOutput{}, err
-		}
-		if parent, err = prepareIDCreateParent(opts, domain); err != nil {
-			return idCreateOutput{}, err
-		}
-		identityPath, signingKeyPath, err := idCreateTargetPaths(workingDir, opts)
-		if err != nil {
-			return idCreateOutput{}, err
-		}
-		if fileExists(identityPath) {
-			name, err := normalizeIDCreateName(opts.Name)
-			if err != nil {
-				return idCreateOutput{}, err
-			}
-			ctx, cancel := commandAPIContext(nil)
-			defer cancel()
-			return resumeIDCreateChain(ctx, opts, parent, domain, identityPath, signingKeyPath, domain+"/"+name)
-		}
-	}
-	prepared, err := prepareIDCreatePlan(workingDir, opts)
+func executeIDCreate(workingDir string, opts idCreateOptions) (output idCreateOutput, resultErr error) {
+	selection, err := standaloneCreateSelection(workingDir, opts)
 	if err != nil {
 		return idCreateOutput{}, err
 	}
-	plan := prepared.Plan
-
-	if err := printIDCreateDNSInstructions(plan, opts.PromptOut); err != nil {
+	lockPath, err := (awconfig.RecoveryFile{
+		Home: awconfig.IdentityHome{Root: filepath.Dir(selection.IdentityPath)}, Name: "id-create.lock",
+	}).Path()
+	if err != nil {
 		return idCreateOutput{}, err
 	}
+	lock, err := awconfig.LockExclusive(lockPath)
+	if err != nil {
+		return idCreateOutput{}, fmt.Errorf("lock ID creation home: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, lock.Close()) }()
 
-	if err := confirmAndVerifyIDCreateDNS(plan, opts); err != nil {
+	selection.FinishRefusal = true
+	prepared, err := loadStandaloneCreateRecovery(selection)
+	if err != nil {
 		return idCreateOutput{}, err
+	}
+	defer func() {
+		if resultErr != nil && prepared != nil && prepared.Recovery != nil {
+			resultErr = retainIdentityForRecovery(resultErr)
+		}
+	}()
+
+	parent, err := prepareIDCreateParent(opts, selection.Domain)
+	if err != nil {
+		return idCreateOutput{}, err
+	}
+	if prepared == nil {
+		if parent != nil && fileExists(selection.IdentityPath) {
+			ctx, cancel := commandAPIContext(nil)
+			defer cancel()
+			output, err := resumeIDCreateChain(ctx, opts, parent, selection.Domain, selection.IdentityPath, selection.SigningKeyPath, selection.Domain+"/"+selection.Name)
+			return output, retainIdentityForRecovery(err)
+		}
+		prepared, err = newIDCreatePlan(selection)
+		if err != nil {
+			return idCreateOutput{}, err
+		}
+	}
+	plan := prepared.Plan
+	resumingClaim := prepared.Recovery != nil && prepared.Recovery.Progress != nil && prepared.Recovery.Progress.AddressClaimed
+	status := "created"
+	if parent != nil && resumingClaim && fileExists(plan.IdentityPath) {
+		status = "chain_installed"
+	}
+
+	if prepared.Recovery == nil || prepared.Recovery.Progress == nil || !prepared.Recovery.Progress.Started {
+		if err := printIDCreateDNSInstructions(plan, opts.PromptOut); err != nil {
+			return idCreateOutput{}, err
+		}
+		if err := confirmAndVerifyIDCreateDNS(plan, opts); err != nil {
+			return idCreateOutput{}, err
+		}
 	}
 
 	ctx, cancel := commandAPIContext(nil)
@@ -245,10 +269,14 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		}
 	}
 
+	if err := persistStandaloneCreate(prepared, opts); err != nil {
+		return idCreateOutput{}, err
+	}
+
 	registryStatus := "registered"
 	registryErr := ""
-	if err := ensureStandaloneRegistryRegistration(ctx, registry, plan, prepared.ControllerKey, prepared.IdentityKey); err != nil {
-		return idCreateOutput{}, idCreateAtomicClaimError(plan, err)
+	if err := prepared.registerStandaloneCreate(ctx, registry); err != nil {
+		return idCreateOutput{}, err
 	}
 
 	if err := awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
@@ -263,12 +291,6 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 	}); err != nil {
 		return idCreateOutput{}, err
 	}
-	if err := awid.SaveSigningKey(plan.SigningKeyPath, prepared.IdentityKey); err != nil {
-		return idCreateOutput{}, err
-	}
-
-	encryptionKeyID := ""
-	encryptionKeyPath := ""
 	identity := &awconfig.ResolvedIdentity{
 		WorkingDir:           workingDir,
 		IdentityHome:         identityHomeRoot(opts.IdentityHome),
@@ -284,20 +306,11 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		RegistryStatus:       registryStatus,
 		CreatedAt:            plan.CreatedAt,
 	}
-	record, assertion, err := createLocalEncryptionKeyRecord(identity, prepared.IdentityKey, "")
+	record, assertion, state, encryptionStatePath, err := standaloneCreateEncryption(identity, prepared.IdentityKey, resumingClaim)
 	if err != nil {
 		return idCreateOutput{}, err
 	}
-	state := &awconfig.EncryptionKeyState{ActiveKeyID: record.KeyID}
-	state.UpsertRecord(*record)
-	encryptionStatePath, err := encryptionStatePathForIdentity(identity)
-	if err != nil {
-		return idCreateOutput{}, err
-	}
-	if err := awconfig.SaveEncryptionKeyStateTo(encryptionStatePath, state); err != nil {
-		return idCreateOutput{}, err
-	}
-	if registryStatus == "registered" {
+	if record.PublishedAt == "" {
 		if err := registry.PublishEncryptionKey(ctx, plan.RegistryURL, plan.DIDAW, assertion); err != nil {
 			registryErr = strings.TrimSpace(firstNonEmpty(registryErr, fmt.Sprintf("encryption key publish pending: %v", err)))
 		} else {
@@ -306,8 +319,8 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 			_ = awconfig.SaveEncryptionKeyStateTo(encryptionStatePath, state)
 		}
 	}
-	encryptionKeyID = record.KeyID
-	encryptionKeyPath, err = resolveIdentityStoredPath(workingDir, identity.IdentityHome, record.PrivateKeyPath)
+	encryptionKeyID := record.KeyID
+	encryptionKeyPath, err := resolveIdentityStoredPath(workingDir, identity.IdentityHome, record.PrivateKeyPath)
 	if err != nil {
 		return idCreateOutput{}, err
 	}
@@ -319,13 +332,17 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 			registryURL: plan.RegistryURL, identityDir: filepath.Dir(plan.IdentityPath), registry: registry, now: idCreateNow(opts)(),
 		}
 		if _, err := step.install(ctx); err != nil {
-			return idCreateOutput{}, fmt.Errorf("created %s, but its chain is not installed: %w (run the same command again to finish)", plan.Address, err)
+			return idCreateOutput{}, fmt.Errorf("created %s, but its chain is not installed: %w. %s", plan.Address, err, prepared.Recovery.retryAdvice())
 		}
 		humanParent, rootParent = issuer.human, parent.root
 	}
+	if err := standaloneCreateRecord(plan.IdentityPath).Remove(); err != nil {
+		return idCreateOutput{}, err
+	}
+	prepared.Recovery = nil
 
 	return idCreateOutput{
-		Status:            "created",
+		Status:            status,
 		Address:           plan.Address,
 		DIDAW:             plan.DIDAW,
 		DIDKey:            plan.DIDKey,
@@ -342,6 +359,46 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 	}, nil
 }
 
+// A retry after the claim can already have published this encryption key.
+// Resume with the original material so finishing a chain cannot rotate it.
+func standaloneCreateEncryption(identity *awconfig.ResolvedIdentity, key ed25519.PrivateKey, resume bool) (*awconfig.EncryptionKeyRecord, *awid.EncryptionKeyAssertion, *awconfig.EncryptionKeyState, string, error) {
+	path, err := encryptionStatePathForIdentity(identity)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	if resume {
+		state, err := awconfig.LoadEncryptionKeyStateFrom(path)
+		if err == nil {
+			record := state.ActiveRecord()
+			material, err := validateEncryptionRecordPrivateKeyAt(identity.WorkingDir, identity.IdentityHome, record)
+			if err != nil {
+				return nil, nil, nil, "", err
+			}
+			assertion, err := loadEncryptionAssertionAt(identity.WorkingDir, identity.IdentityHome, record.AssertionPath)
+			if err != nil {
+				return nil, nil, nil, "", err
+			}
+			if err := validateEncryptionRecordForRead(identity, record, assertion, material); err != nil {
+				return nil, nil, nil, "", err
+			}
+			return record, assertion, state, path, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, nil, "", err
+		}
+	}
+	record, assertion, err := createLocalEncryptionKeyRecord(identity, key, "")
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	state := &awconfig.EncryptionKeyState{ActiveKeyID: record.KeyID}
+	state.UpsertRecord(*record)
+	if err := awconfig.SaveEncryptionKeyStateTo(path, state); err != nil {
+		return nil, nil, nil, "", err
+	}
+	return record, assertion, state, path, nil
+}
+
 // idCreateTargetPaths are where the identity and its signing key go: the
 // identity home when one is selected, else the working directory's .aw.
 func idCreateTargetPaths(workingDir string, opts idCreateOptions) (string, string, error) {
@@ -356,14 +413,14 @@ func idCreateTargetPaths(workingDir string, opts idCreateOptions) (string, strin
 	return identityPath, signingKeyPath, err
 }
 
-func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCreate, error) {
+func standaloneCreateSelection(workingDir string, opts idCreateOptions) (standaloneCreateResume, error) {
 	name, err := normalizeIDCreateName(opts.Name)
 	if err != nil {
-		return nil, err
+		return standaloneCreateResume{}, err
 	}
 	domain, err := normalizeIDCreateDomain(opts.Domain, opts.AllowReservedLocalDomain)
 	if err != nil {
-		return nil, err
+		return standaloneCreateResume{}, err
 	}
 
 	identityPath := awconfig.WorktreeIdentityPath(workingDir)
@@ -372,18 +429,37 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 	if opts.IdentityHome != nil {
 		identityPath, err = awconfig.IdentityHomePath(*opts.IdentityHome, "identity.yaml")
 		if err != nil {
-			return nil, err
+			return standaloneCreateResume{}, err
 		}
 		signingKeyPath, err = awconfig.IdentityHomePath(*opts.IdentityHome, "signing.key")
 		if err != nil {
-			return nil, err
+			return standaloneCreateResume{}, err
 		}
 		workspacePath, err = awconfig.IdentityHomePath(*opts.IdentityHome, "workspace.yaml")
 		if err != nil {
-			return nil, err
+			return standaloneCreateResume{}, err
 		}
 	}
-	if err := ensureStandaloneIdentityTarget(identityPath, signingKeyPath, workspacePath); err != nil {
+	return standaloneCreateResume{IdentityPath: identityPath, SigningKeyPath: signingKeyPath, WorkspacePath: workspacePath, Name: name, Domain: domain, Options: opts}, nil
+}
+
+func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCreate, error) {
+	selection, err := standaloneCreateSelection(workingDir, opts)
+	if err != nil {
+		return nil, err
+	}
+	retained, err := loadStandaloneCreateRecovery(selection)
+	if err != nil || retained != nil {
+		return retained, err
+	}
+	return newIDCreatePlan(selection)
+}
+
+func newIDCreatePlan(selection standaloneCreateResume) (*preparedIDCreate, error) {
+	identityPath, signingKeyPath := selection.IdentityPath, selection.SigningKeyPath
+	name, domain, opts := selection.Name, selection.Domain, selection.Options
+
+	if err := ensureStandaloneIdentityTarget(identityPath, signingKeyPath, selection.WorkspacePath); err != nil {
 		return nil, err
 	}
 
@@ -460,7 +536,7 @@ func discoverIDCreateRegistryURL(domain string, resolver awid.TXTResolver) (stri
 	if err != nil {
 		return "", err
 	}
-	return authority.RegistryURL, nil
+	return domainRegistryURL(authority, "")
 }
 
 func confirmAndVerifyIDCreateDNS(plan *idCreatePlan, opts idCreateOptions) error {
@@ -567,6 +643,10 @@ func ensureStandaloneRegistryRegistration(
 	if err := ensureStandaloneNamespace(ctx, registry, plan, controllerKey); err != nil {
 		return err
 	}
+	return claimStandaloneCreateAddress(ctx, registry, plan, controllerKey, identityKey)
+}
+
+func claimStandaloneCreateAddress(ctx context.Context, registry *awid.RegistryClient, plan *idCreatePlan, controllerKey, identityKey ed25519.PrivateKey) error {
 	_, err := registry.ClaimIdentityAddressAt(ctx, plan.RegistryURL, awid.AtomicAddressClaimParams{
 		Domain:                        plan.Domain,
 		AddressName:                   plan.Name,
@@ -577,49 +657,66 @@ func ensureStandaloneRegistryRegistration(
 		IdentityCustody:               string(awid.AddressClaimCustodySelf),
 		NamespaceCustody:              string(awid.AddressClaimCustodySelf),
 	})
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
-func ensureStandaloneNamespace(
-	ctx context.Context,
-	registry *awid.RegistryClient,
-	plan *idCreatePlan,
-	controllerKey ed25519.PrivateKey,
-) error {
+type standaloneNamespaceOutcome uint8
+
+const (
+	standaloneNamespaceUnchanged standaloneNamespaceOutcome = iota
+	standaloneNamespaceCreated
+	standaloneNamespaceRefused
+)
+
+func ensureStandaloneNamespace(ctx context.Context, registry *awid.RegistryClient, plan *idCreatePlan, controllerKey ed25519.PrivateKey) error {
+	_, err := ensureStandaloneNamespaceWithOutcome(ctx, registry, plan, controllerKey, nil)
+	return err
+}
+
+func ensureStandaloneNamespaceWithOutcome(ctx context.Context, registry *awid.RegistryClient, plan *idCreatePlan, controllerKey ed25519.PrivateKey, beforeWrite func() error) (standaloneNamespaceOutcome, error) {
 	namespace, _, err := registry.GetNamespaceAt(ctx, plan.RegistryURL, plan.Domain)
 	if err == nil {
 		if strings.TrimSpace(namespace.ControllerDID) != plan.ControllerDID {
-			return fmt.Errorf("namespace %s is already controlled by %s", plan.Domain, namespace.ControllerDID)
+			return standaloneNamespaceUnchanged, fmt.Errorf("namespace %s is already controlled by %s", plan.Domain, namespace.ControllerDID)
 		}
-		return nil
+		return standaloneNamespaceUnchanged, nil
 	}
 	if code, ok := registryStatusCode(err); !ok || code != http.StatusNotFound {
-		return err
+		return standaloneNamespaceUnchanged, err
+	}
+	if beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			return standaloneNamespaceUnchanged, err
+		}
 	}
 	namespace, err = registry.RegisterNamespaceAt(ctx, plan.RegistryURL, plan.Domain, plan.ControllerDID, controllerKey)
 	if err != nil {
 		if code, ok := registryStatusCode(err); ok && code == http.StatusConflict {
-			namespace, _, err = registry.GetNamespaceAt(ctx, plan.RegistryURL, plan.Domain)
-			if err != nil {
-				return err
+			current, _, lookupErr := registry.GetNamespaceAt(ctx, plan.RegistryURL, plan.Domain)
+			if lookupErr != nil {
+				return standaloneNamespaceRefused, errors.Join(err, fmt.Errorf("check namespace after refusal: %w", lookupErr))
 			}
-			if strings.TrimSpace(namespace.ControllerDID) != plan.ControllerDID {
-				return fmt.Errorf("namespace %s is already controlled by %s", plan.Domain, namespace.ControllerDID)
+			if strings.TrimSpace(current.ControllerDID) != plan.ControllerDID {
+				return standaloneNamespaceRefused, fmt.Errorf("namespace %s is already controlled by %s", plan.Domain, current.ControllerDID)
 			}
-			return nil
+			return standaloneNamespaceUnchanged, nil
 		}
-		return err
+		if definitiveStandaloneCreateRefusal(err) {
+			return standaloneNamespaceRefused, err
+		}
+		return standaloneNamespaceUnchanged, err
 	}
 	if strings.TrimSpace(namespace.ControllerDID) != plan.ControllerDID {
-		return fmt.Errorf("namespace %s registered unexpected controller %s", plan.Domain, namespace.ControllerDID)
+		return standaloneNamespaceCreated, fmt.Errorf("namespace %s registered unexpected controller %s", plan.Domain, namespace.ControllerDID)
 	}
-	return nil
+	return standaloneNamespaceCreated, nil
 }
 
 func idCreateAtomicClaimError(plan *idCreatePlan, err error) error {
+	return idCreateAtomicClaimRecoveryError(plan, err, false)
+}
+
+func idCreateAtomicClaimRecoveryError(plan *idCreatePlan, err error, retainSelection bool) error {
 	if plan == nil || err == nil {
 		return err
 	}
@@ -627,6 +724,9 @@ func idCreateAtomicClaimError(plan *idCreatePlan, err error) error {
 	if errors.As(err, &conflict) {
 		switch conflict.Code {
 		case awid.AtomicAddressClaimCodeAddressTakenDifferentOwner:
+			if retainSelection {
+				return usageError("address %s is already claimed by another identity; resolve the namespace address conflict before retrying", plan.Address)
+			}
 			return usageError("address %s is already claimed by another identity; choose a different --name or inspect the namespace address before retrying", plan.Address)
 		case awid.AtomicAddressClaimCodeDIDTakenDifferentKey:
 			return usageError("did:aw %s already exists with a different key; use a clean directory or restore the original .aw/signing.key before retrying", plan.DIDAW)

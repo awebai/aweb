@@ -152,7 +152,7 @@ async def joined(store, registry):
     )
     await registry.add_team(SCOPE.team_id, owner_member.team_did_key)
     for member in (owner_member, creator_member):
-        await registry.add_certificate(member.certificate())
+        await registry.add_certificate(member.certificate(), team_key=member.team_key)
     verified = []
 
     async def retain(request, principal):

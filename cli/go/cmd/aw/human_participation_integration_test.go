@@ -184,7 +184,7 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 		case "/v1/conversations":
 			json.NewEncoder(w).Encode(map[string]any{"conversations": []any{map[string]any{"conversation_id": "c1", "conversation_type": "mail", "participants": []string{"alice", "bob"}}}})
 		case "/v1/agents":
-			json.NewEncoder(w).Encode(map[string]any{"agents": []any{map[string]any{"alias": "bob", "agent_id": "bob", "agent_type": "agent"}}})
+			json.NewEncoder(w).Encode(map[string]any{"agents": []any{map[string]any{"alias": "bob", "agent_id": "bob", "agent_type": "agent", "did_key": "did:key:z6Mkbob"}}})
 		case "/v1/request":
 			w.Write([]byte(`{"ok":true}`))
 		default:

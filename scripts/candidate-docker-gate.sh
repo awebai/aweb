@@ -76,7 +76,9 @@ canonical_git_input() {
 }
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id"
+log_root="${AWEB_GATE_RUN_LOG_ROOT:-/tmp}"
+[[ "$log_root" == /* && -d "$log_root" ]] || refuse "AWEB_GATE_RUN_LOG_ROOT must be an existing absolute directory"
+LOG_DIR="${log_root%/}/aweb-candidate-gate-$SOURCE_SHA-$run_id"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
   || refuse "source checkout is dirty or has untracked files"
@@ -172,9 +174,13 @@ python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>/dev/
 recorded() {
   awk -F'\t' -v key="$KEY" -v stage="$1" '$1 == key && $2 == stage' "$LEDGER" | tail -1
 }
-failed="$(awk -F'\t' -v key="$KEY" '$1 == key && $3 == "failed" && index($2, "/") == 0' "$LEDGER" | tail -1)"
+failed="$(awk -F'\t' -v key="$KEY" -v tree="$TREE" '
+  $1 == key && $3 == "failed" && index($2, "/") == 0 {
+    printf "gate: tree %s already FAILED %s (log %s).\n", tree, $2, $6
+  }
+' "$LEDGER")"
 if [[ -n "$failed" ]]; then
-  printf 'gate: tree %s already FAILED %s (log %s).\n' "$TREE" "$(cut -f2 <<<"$failed")" "$(cut -f6 <<<"$failed")" >&2
+  printf '%s\n' "$failed" >&2
   printf '%s\n' "Fix the code and gate the changed tree. For infrastructure failures only, the coordinator removes the failed ledger line and uses GATE_RERUN_REASON='<reason>'." >&2
   exit 1
 fi
@@ -196,10 +202,9 @@ if [[ -z "$pending" ]]; then
   exit 0
 fi
 
-run_candidate() (
+run_candidate() {
 set -euo pipefail
 command -v docker >/dev/null || refuse "docker is unavailable"
-wait_for_disk
 
 if ! work="$(mktemp -d "/tmp/aweb-candidate-work.XXXXXX")"; then
   refuse "could not allocate the candidate work directory"
@@ -241,9 +246,6 @@ suite_projects=(
   "$gate_run_id-library"
 )
 # Install cleanup before the first Docker allocation. Logs outlive the run.
-[[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id" ]] || refuse "unsafe log directory"
-rm -rf -- "$LOG_DIR"
-mkdir -p "$LOG_DIR"
 : > "$LOG_DIR/owned-resources.tsv"
 printf '%s\n' "$run_id" > "$LOG_DIR/run-id"
 printf '%s\n' "$SYNCHRONIZED_MAIN_SHA" > "$LOG_DIR/synchronized-main-sha"
@@ -504,8 +506,10 @@ docker run --rm --init \
   -w "$checkout" \
   "$IMAGE" \
   bash scripts/candidate-suite.sh "$pending" \
-  2>&1 | tee "$LOG_DIR/gate.log"
-status="${PIPESTATUS[0]}"
+  2>&1 | (trap '' INT TERM; exec tee "$LOG_DIR/gate.log") &
+runner_job=$!
+wait "$runner_job"
+status=$?
 set -e
 
 if [[ "$status" -ne 0 ]]; then
@@ -515,77 +519,33 @@ fi
 printf 'candidate gate PASSED at %s; logs: %s\n' \
   "$SOURCE_SHA" "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log"
 
-)
+}
 
-# The child owns Docker cleanup. A stage is recorded only after it exits, and
-# only from this invocation's logs; stale logs cannot supply a missing result.
+# The child owns Docker cleanup. Its output reader survives group signals;
+# the lock holder waits for cleanup before recording reusable proof.
+source "$ROOT/scripts/candidate-record.sh"
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"
+wait_for_disk
+mkdir -- "$LOG_DIR" || refuse "could not allocate run logs: $LOG_DIR"
+output_pipe="$LOG_DIR/output.pipe"
+mkfifo "$output_pipe"
+if [[ -n "${AWEB_GATE_RUN_REGISTRY:-}" ]]; then
+  printf '%s\t%s\n' "$run_id" "$LOG_DIR" >> "$AWEB_GATE_RUN_REGISTRY"
+fi
+trap 'candidate_interrupted 130 INT' INT
+trap 'candidate_interrupted 143 TERM' TERM
+(trap '' INT TERM; exec tee "$run_log") < "$output_pipe" &
+candidate_writer=$!
+run_candidate > "$output_pipe" 2>&1 &
+candidate_job=$!
 set +e
-run_candidate 2>&1 | tee "$run_log"
-status="${PIPESTATUS[0]}"
-set -e
-finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-[[ "$status" != 130 && "$status" != 143 ]] || exit "$status"
-if [[ ! -f "$LOG_DIR/run-id" || "$(cat "$LOG_DIR/run-id")" != "$run_id" ]]; then
-  printf 'gate: stopped before allocation; nothing recorded\n' >&2
-  exit "$status"
-fi
-record() {
-  local entry="$1" result="$2" log="$3" note="${4:-}"
-  if [[ -n "${GATE_RERUN_REASON:-}" ]]; then
-    note="${note:+$note, }rerun after $GATE_RERUN_REASON"
-  fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$KEY" "$entry" "$result" "$SOURCE_SHA" "" "$log" "$OWNER" "$started" "$finished" "$note" >>"$LEDGER"
-}
-record_stage() {
-  local entry="$1" result="$2" source="$3"
-  local log="$LEDGER_LOGS/${KEY:0:12}-$entry-$run_id.log"
-  cp "$source" "$log"
-  record "$entry" "$result" "$log"
-}
-incomplete=0
-for stage in $pending; do
-  if [[ -f "$LOG_DIR/summary.tsv" ]] && grep -q "^$stage"$'\tPASSED\t' "$LOG_DIR/summary.tsv"; then
-    record_stage "$stage" passed "$LOG_DIR/$stage.log"
-  elif [[ -f "$LOG_DIR/$stage.log" ]]; then
-    record_stage "$stage" failed "$LOG_DIR/$stage.log"
-    status=1
-  else
-    incomplete=1
-  fi
-done
-if [[ "$incomplete" == 1 ]]; then
-  record_stage setup failed "$run_log"
-  status=1
-fi
-if [[ -f "$LOG_DIR/summary.tsv" ]]; then
-  isolated_log="$LEDGER_LOGS/${KEY:0:12}-unit-isolated-$run_id.log"
-  if [[ -f "$LOG_DIR/test-egress/suite.log" ]]; then
-    cp "$LOG_DIR/test-egress/suite.log" "$isolated_log"
-  fi
-  while IFS=$'\t' read -r entry verdict relative elapsed note; do
-    [[ "$entry" =~ ^(checks|user-paths|unit|artifacts|integration)/[A-Za-z0-9_.-]+$ ]] || continue
-    stage="${entry%%/*}"
-    [[ " $pending " == *" $stage "* ]] || continue
-    case "$relative" in
-      "$stage.log") target_log="$LEDGER_LOGS/${KEY:0:12}-$stage-$run_id.log" ;;
-      test-egress/suite.log) target_log="$isolated_log" ;;
-      *) status=1; continue ;;
-    esac
-    case "$verdict" in
-      PASSED) result=passed ;;
-      FAILED) result=failed; status=1 ;;
-      SKIPPED) result=skipped; status=1 ;;
-      *) status=1; continue ;;
-    esac
-    record "$entry" "$result" "$target_log" "${note:+$note, }${elapsed}"
-  done < "$LOG_DIR/summary.tsv"
-fi
-if [[ ! -f "$LOG_DIR/wrapper-verdict.log" ]] \
-   || ! grep -q '^candidate gate cleanup PASSED$' "$LOG_DIR/wrapper-verdict.log"; then
-  record_stage cleanup failed "$run_log"
-  status=1
-fi
+wait "$candidate_job"
+status=$?
+candidate_child_status=$status
+trap '' INT TERM
+finish_candidate_output
+if [[ "$status" == 0 && "$candidate_writer_status" != 0 ]]; then status=1; fi
+finalize_candidate "$status"
+status=$?
 exit "$status"

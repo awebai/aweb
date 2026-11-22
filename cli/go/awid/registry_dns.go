@@ -173,7 +173,7 @@ func isTXTNotFound(err error) bool {
 }
 
 func validateRegistryOrigin(raw string) (string, error) {
-	canonical, err := canonicalServerOrigin(raw)
+	canonical, err := CanonicalRegistryServerOrigin(raw)
 	if err != nil {
 		return "", err
 	}

@@ -16,6 +16,8 @@ from test_agent_status_host_http import _team_request
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_certificate
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
@@ -24,7 +26,7 @@ async def test_cli_subscription_survives_the_real_server_stream_cap(privacy_app,
     env = privacy_app
     # Exercise the real deadline clamp, SSE generator and clean HTTP EOF,
     # without waiting the production five minutes for each reconnect.
-    monkeypatch.setattr(aweb.routes.events, "MAX_STREAM_DURATION", 1)
+    monkeypatch.setattr(aweb.routes.events, "STREAM_MAX_DURATION_SECONDS", 1)
     message_id = None
     if with_mail:
         sent = await _team_request(env, "alice", "POST", "/v1/messages", {

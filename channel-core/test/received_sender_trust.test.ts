@@ -87,20 +87,27 @@ describe("addressless received human identity", () => {
   });
 });
 
-// Same decision matrix as TestReceivedLocalSenderMatrix in Go.
+const standingVectors = JSON.parse(readFileSync(
+  new URL("../../test-vectors/trust/sender-standing-v1.json", import.meta.url), "utf8",
+)) as { cases: Array<{ id: string; state: SenderMembership["state"]; verification_status: string }> };
+
+// The standing rows are also consumed by Go and the native HTTP producer test.
 describe("cross-team received local sender", () => {
-  test.each([
-    ["active", "verified"], ["missing", "verification_stale"], ["unknown", "verification_stale"],
-    ["empty-team", "verification_stale"], ["inactive", "identity_mismatch"], ["wrong-team", "identity_mismatch"],
+  const cases: Array<[string, string, SenderMembership["state"]?]> = [
+    ...standingVectors.cases.map(({ id, state, verification_status }): [string, string, SenderMembership["state"]] =>
+      [id, verification_status, state]),
+    ["missing", "verification_stale"], ["unknown", "verification_stale"],
+    ["empty-team", "verification_stale"], ["wrong-team", "identity_mismatch"],
     ["wrong-label", "identity_mismatch"], ["global-projection", "identity_mismatch"],
     ["wrong-projected-key", "identity_mismatch"], ["missing-projected-key", "verification_stale"],
     ["failed-signature", "failed"], ["wrong-recipient", "identity_mismatch"],
     ["plaintext-label", "verified"], ["qualified-team-label", "verified"],
-  ])("%s => %s", async (variant, expected) => {
+  ];
+  test.each(cases)("%s => %s", async (variant, expected, standing) => {
     const env = setup();
     const member: SenderMembership | undefined = variant === "missing" ? undefined : {
       team_id: variant === "empty-team" ? "" : variant === "wrong-team" ? "another:another.test" : "outbound:sender.test",
-      state: variant === "unknown" ? "unknown" : variant === "inactive" ? "inactive" : "active",
+      state: standing ?? (variant === "unknown" ? "unknown" : "active"),
       member_did_aw: variant === "global-projection" ? stableID : "",
     };
     const raw = variant === "plaintext-label" ? "sender.test/alice"

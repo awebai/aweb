@@ -11,10 +11,13 @@ registry, and a registry front that answers an address lookup with a 503.
 
 from __future__ import annotations
 
-from identity_binding_support import register_global_identity
+from messaging_actor_support import admit_privacy_actor, messaging_actor_headers
+from aweb.application_state import application_registry_client
+from awid.identity_observation import IdentityKind
+import base64
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -25,24 +28,19 @@ import subprocess
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from tests.js_runtime_tree import runtime_repo
+from aweb_naapp_testing.network import DnsServer
 
-from awid.did import stable_id_from_did_key
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.e2ee_messages import encrypt_e2ee_mail, generate_x25519_keypair
 from test_addressless_sender_cli import _registry_http
-from test_agent_status_host_http import _team_request
 from test_cli_human_reply import _cli, _pem, _reply_context
 import test_dashboard_privacy
 from test_dashboard_privacy import TEAM, _request
-from test_messages_http import (
-    _make_keypair,
-    _make_certificate,
-    _signed_team_headers,
-    _encode_certificate,
-)
+from test_messages_http import _signed_team_headers, _encode_certificate
 
 
 def _signed_plaintext_mail_request(
@@ -112,49 +110,26 @@ async def _local_sender_mail(
     sender_team = TEAM
     if cross_team:
         sender_team = f"outbound-{uuid4().hex[:12]}:sender.test"
-        sender_team_sk, _, sender_team_did = _make_keypair()
-        await env.db.execute(
-            "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ($1, 'sender.test', $2, $3)",
-            sender_team,
-            sender_team.split(":", 1)[0],
-            sender_team_did,
-        )
-        await env.registry_db.execute(
-            "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) VALUES ('sender.test', $1, $2, 'public')",
-            sender_team.split(":", 1)[0],
-            sender_team_did,
-        )
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET team_id=$1, certificate_id='privacy-alice', "
-            "accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = $1) WHERE agent_id=$2",
-            sender_team,
-            env.actors["alice"].id,
-        )
-        await env.db.execute(
-            "UPDATE {{tables.workspaces}} SET team_id=$1 WHERE workspace_id=$2",
-            sender_team,
-            env.actors["alice"].workspace,
-        )
+    sender_actor = await admit_privacy_actor(
+        env,
+        "alice",
+        team_id=sender_team,
+        local=not human,
+        kind=IdentityKind.HUMAN if human else IdentityKind.UNKNOWN,
+        new_identity=cross_team,
+    )
+    await admit_privacy_actor(
+        env,
+        "bob",
+        address="example.test/bob" if global_resident else "",
+        local=not global_resident,
+    )
     identities = {}
     for name in ("alice", "bob"):
         actor = env.actors[name]
         private, public = generate_x25519_keypair()
         address = "example.test/bob" if global_resident and name == "bob" else ""
-        stable_id = (
-            stable_id_from_did_key(actor.did)
-            if address or (human and name == "alice")
-            else ""
-        )
-        if stable_id:
-            assert await register_global_identity(env, actor, address) == stable_id
-            # The registered recipient is ready for stable/address delivery
-            # before its first authenticated read, as after the operator pass.
-            await env.db.execute(
-                "UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2, did_aw_verified_key=did_key WHERE agent_id = $3",
-                stable_id,
-                address,
-                actor.id,
-            )
+        stable_id = actor.stable_id
         assertion = build_encryption_key_assertion(
             signing_key=actor.sk,
             identity_did=actor.did,
@@ -163,6 +138,17 @@ async def _local_sender_mail(
             custody="hosted_custodial" if human and name == "alice" else "self",
             now=now,
         )
+        raw_assertion = json.dumps(assertion).encode()
+        published = await env.client.put(
+            "/v1/agents/me/encryption-key",
+            content=raw_assertion,
+            headers=messaging_actor_headers(actor.registered, body=raw_assertion),
+        )
+        assert published.status_code == 200, published.text
+        if stable_id:
+            await application_registry_client(env.app.state).publish_encryption_key(
+                stable_id, assertion
+            )
         identities[name] = dict(
             address=address,
             did=actor.did,
@@ -173,12 +159,6 @@ async def _local_sender_mail(
             encryption_key=assertion,
         )
     sender, agent = identities["alice"], identities["bob"]
-    if human:
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key, certificate_id='privacy-alice', "
-            "accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$1",
-            env.actors["alice"].id,
-        )
     message_id, conversation_id = str(uuid4()), str(uuid4())
     source = encrypt_e2ee_mail(
         sender=sender,
@@ -211,59 +191,28 @@ async def _local_sender_mail(
         )
     sent = await _request(env, "alice", "POST", "/v1/messages", body)
     assert sent.status_code == 200, sent.text
-    if sender_retired and human:
-        # A global human outlives a workspace. Revoke the membership through
-        # its team controller and leave the global identity in place.
-        name, domain = TEAM.split(":", 1)
-        registry = env.app.state.awid_registry_client
-        certificate_id = "privacy-alice"
-        certificate = _make_certificate(
-            env.team_sk,
-            env.team_did,
-            sender["did"],
-            team_id=TEAM,
-            alias="alice",
-            certificate_id=certificate_id,
-            identity_scope="global",
-            member_did_aw=sender["stable_id"],
-        )
-        await registry.register_team_certificate(
-            domain,
-            name,
-            team_controller_signing_key=env.team_sk,
-            certificate_id=certificate_id,
-            member_did_key=sender["did"],
-            member_did_aw=sender["stable_id"],
-            member_address=None,
-            alias="alice",
-            identity_scope="global",
-            certificate=_encode_certificate(certificate),
-        )
-        await registry.revoke_team_certificate(
-            domain,
-            name,
-            team_controller_signing_key=env.team_sk,
-            certificate_id=certificate_id,
-        )
-    elif sender_retired:
-        alice = env.actors["alice"]
-        certificate = alice.certificate
-        if cross_team:
-            certificate = _encode_certificate(_make_certificate(
-                sender_team_sk,
-                sender_team_did,
-                alice.did,
-                team_id=sender_team,
-                alias="alice",
-                certificate_id="privacy-alice",
-                identity_scope="local",
-            ))
-        retired = await _team_request(
-            env, "alice", "DELETE", f"/v1/workspaces/{alice.workspace}",
-            team_id=sender_team, certificate=certificate,
-        )
-        assert retired.status_code == 200, retired.text
-        assert retired.json()["identity_deleted"] is True, retired.text
+    if sender_retired:
+        if human:
+            certificate = json.loads(base64.b64decode(sender_actor.certificate))
+            team_name, domain = sender_team.split(":", 1)
+            await application_registry_client(env.app.state).revoke_team_certificate(
+                domain,
+                team_name,
+                team_controller_signing_key=env.team_sk,
+                certificate_id=certificate["certificate_id"],
+            )
+        else:
+            retired = await env.client.delete(
+                f"/v1/workspaces/{sender_actor.workspace}",
+                headers=_signed_team_headers(
+                    sender_actor.sk,
+                    sender_actor.did,
+                    sender_team,
+                    sender_actor.certificate,
+                ),
+            )
+            assert retired.status_code == 200, retired.text
+            assert retired.json()["identity_deleted"] is True, retired.text
 
     identity_home = tmp_path / ".aw"
     identity_home.mkdir(mode=0o700)
@@ -280,38 +229,7 @@ async def _local_sender_mail(
                 }
             )
         )
-    team_sk, _, team_did = _make_keypair()
-    await env.db.execute(
-        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2",
-        team_did,
-        TEAM,
-    )
-    await env.registry_db.execute(
-        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2",
-        team_did,
-        TEAM.split(":", 1)[0],
-    )
-    # The team has always had this key: its members were accepted under it.
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET accepted_team_did_key = $1 WHERE team_id = $2",
-        team_did,
-        TEAM,
-    )
-    cert = _make_certificate(
-        team_sk,
-        team_did,
-        agent["did"],
-        team_id=TEAM,
-        alias="bob",
-        identity_scope="global" if global_resident else "local",
-        member_did_aw=agent["stable_id"],
-        member_address=agent["address"],
-    )
-    cert.pop("signature")
-    if not global_resident:
-        for field in ("member_did_aw", "member_address"):
-            cert.pop(field)
-    cert["signature"] = sign_message(team_sk, canonical_json_bytes(cert))
+    cert = json.loads(base64.b64decode(env.actors["bob"].certificate))
     cert_path = "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
     (identity_home / "team-certs").mkdir(mode=0o700)
     (identity_home / cert_path).write_text(json.dumps(cert))
@@ -393,9 +311,60 @@ async def _local_sender_mail(
             return
         await env.registry_app(scope, receive, record)
 
-    async with _registry_http(recorded_registry) as (registry_url, _):
+    async with AsyncExitStack() as network:
+        registry_url, _ = await network.enter_async_context(
+            _registry_http(recorded_registry)
+        )
         registry.url = registry_url
         child_env["AWID_REGISTRY_URL"] = registry_url
+        if human:
+            # Enrollment locates authoritative status even when the message omits
+            # id_chain (docs/id-certificates.md:963-976). Serve that actual
+            # namespace through the existing disposable DNS/registry owners.
+            key = await application_registry_client(env.app.state).resolve_key(
+                sender["stable_id"]
+            )
+            assert key.id_tree is not None and key.id_tree.domain is not None
+            domain = key.id_tree.domain
+            authority = await env.registry.namespace_authority(domain)
+            dns_server = DnsServer()
+            await dns_server.start()
+            network.callback(dns_server.close)
+            registry_host = f"registry-{uuid4().hex}.test"
+            public_registry = registry_url.replace("127.0.0.1", registry_host)
+            dns_server.records[(f"_awid.{domain}", "TXT")] = [
+                f'"awid=v1;controller={authority.controller_did};registry={public_registry}"'
+            ]
+            dns_server.records[(registry_host, "A")] = ["127.0.0.1"]
+            registry.dns = dns_server
+            registry.enrollment_domain = domain
+            env.registry_app.state.awid_public_origins = (
+                *env.registry_app.state.awid_public_origins,
+                public_registry,
+            )
+            # Node's lookup uses the OS resolver, unlike resolveTxt. Forward
+            # both APIs to the SAME live DNS server; do not synthesize answers.
+            dns_preload = tmp_path / "disposable-dns.cjs"
+            dns_preload.write_text(
+                "const dns = require('node:dns');\n"
+                f"dns.setServers(['127.0.0.1:{dns_server.port}']);\n"
+                "dns.lookup = (host, options, callback) => {\n"
+                "  if (typeof options === 'function') { callback=options; options={}; }\n"
+                "  if (typeof options === 'number') options={family:options};\n"
+                "  const family=options?.family === 6 ? 6 : 4;\n"
+                "  const resolve=family === 6 ? dns.resolve6 : dns.resolve4;\n"
+                "  resolve(host, (error, addresses) => {\n"
+                "    if (error) return callback(error);\n"
+                "    if (options?.all) callback(null, addresses.map(address=>({address,family})));\n"
+                "    else callback(null, addresses[0], family);\n"
+                "  });\n"
+                "};\n"
+                "require('node:module').syncBuiltinESMExports();\n"
+            )
+            child_env["NODE_OPTIONS"] = (
+                child_env.get("NODE_OPTIONS", "") + f" --require={dns_preload}"
+            ).strip()
+            child_env["APP_ENV"] = "development"
         async with _reply_context(
             binary,
             tmp_path,
@@ -615,6 +584,9 @@ async def _present_by_channel(
     status = params["meta"].get("trust_status")
     if status in {"failed", "identity_mismatch"}:
         assert "subject" not in params["meta"], params["meta"]
+    (tmp_path / "presented-responsibility.json").write_text(
+        params["meta"].get("responsibility", "null")
+    )
     return status, params["content"]
 
 
@@ -855,6 +827,26 @@ async def test_channel_core_addressless_human_mail(
         assert not any("/addresses/" in path for path in node_reads), node_reads
         if not sender_retired:
             assert any(path.endswith("/key") for path in node_reads), node_reads
+            assert (
+                registry.dns.queries[(f"_awid.{registry.enrollment_domain}", "TXT")] > 0
+            )
+            assert (
+                "POST",
+                "/v1/id-certificates/status",
+                200,
+                "node",
+            ) in registry.responses
+            (tmp_path / "human-authority-observations.json").write_text(
+                json.dumps(
+                    {
+                        "domain": registry.enrollment_domain,
+                        "dns_queries": [
+                            [*key, count] for key, count in registry.dns.queries.items()
+                        ],
+                        "registry_requests": registry.responses,
+                    }
+                )
+            )
 
 
 @pytest.mark.usefixtures("source_cli_binary")
@@ -870,7 +862,7 @@ async def test_channel_core_addressless_human_mail(
     ],
 )
 async def test_cross_team_local_sender_to_global_grant(
-    privacy_app, runtime_packages, tmp_path, plaintext, runtime, state, expected
+    privacy_app, runtime_packages, tmp_path, monkeypatch, plaintext, runtime, state, expected
 ):
     async with _local_sender_mail(
         privacy_app,
@@ -881,11 +873,18 @@ async def test_cross_team_local_sender_to_global_grant(
         cross_team=True,
         plaintext=plaintext,
     ) as (message_id, conversation_id, binary, command_dir, command_env, registry):
+        failed_reads = []
         if state == "unknown":
-            await privacy_app.db.execute(
-                "UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1",
-                privacy_app.actors["alice"].id,
-            )
+            name, domain = privacy_app.actors["alice"].team_id.split(":", 1)
+            revocations = f"/v1/namespaces/{domain}/teams/{name}/revocations"
+
+            def fail_sender_standing(request, response):
+                if request.method == "GET" and request.url.path == revocations:
+                    failed_reads.append(request.url.path)
+                    return httpx.Response(503, json={"detail": "sender authority temporarily unavailable"})
+                return response
+
+            monkeypatch.setattr(privacy_app.registry.transport, "fault", fail_sender_standing)
         shown = await _cli(
             binary,
             command_dir,
@@ -905,6 +904,7 @@ async def test_cross_team_local_sender_to_global_grant(
             tmp_path, binary, command_dir, runtime_env, message_id, conversation_id
         )
         assert row["verification_status"] == expected, (row, registry.responses)
+        assert bool(failed_reads) is (state == "unknown")
         await _assert_runtime_presentation(
             privacy_app, tmp_path, runtime, expected, status, text, message_id
         )

@@ -12,7 +12,7 @@ from redis.asyncio import Redis
 
 import awid.registry as registry_module
 from awid.id_certificates import verify_id_chain
-from awid.registry import CachedRegistryClient, RegistryClient
+from awid.registry import CachedRegistryClient, MalformedIDStatusError, RegistryClient
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app
@@ -171,6 +171,37 @@ async def test_malformed_actual_status_response_is_unavailable(live_registry):
         and not evidence.namespace_authority
     )
     assert len(transport.calls) == 1
+
+
+async def test_cached_status_distinguishes_malformed_answer_from_failed_read(live_registry):
+    app, redis = live_registry
+    transport = ServiceTransport(app)
+
+    def failed_read(request, response):
+        assert response.status_code == 200
+        return httpx.Response(503)
+
+    def malformed_answer(request, response):
+        assert response.status_code == 200
+        return httpx.Response(200, content=b"[]")
+
+    async with aclosing(
+        CachedRegistryClient(
+            "http://cached-status.test",
+            redis,
+            transport=transport,
+            domain_verifier=app.dependency_overrides[get_domain_verifier](),
+        )
+    ) as client:
+        transport.fault = failed_read
+        evidence = await client.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)
+        assert evidence.age_seconds is None
+        assert not evidence.status and not evidence.namespace_authority
+
+        transport.fault = malformed_answer
+        with pytest.raises(MalformedIDStatusError, match="not a JSON object"):
+            await client.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)
+    assert len(transport.calls) == 2
 
 
 async def test_live_evidence_cancellation_propagates(live_registry):

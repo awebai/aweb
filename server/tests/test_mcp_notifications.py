@@ -11,6 +11,9 @@ from mcp.types import CallToolResult, TextContent
 from aweb.mcp.auth import AuthContext, _auth_context
 from aweb.mcp.notifications import append_pending_nudge
 from test_messages_http import _insert_agent, _insert_team
+from test_mcp_mutation_hook_parity import server as server
+
+__all__ = ["server"]
 
 
 class CountDB:
@@ -221,50 +224,50 @@ async def test_chat_counts_preserve_existing_participant_read_semantics(actor, m
 
 
 @pytest.mark.asyncio
-async def test_mounted_core_result_nudge_and_post_consumption_snapshot(actor, mailbox, monkeypatch):
+async def test_mounted_core_result_nudge_and_post_consumption_snapshot(server):
     import httpx
-    from identity_binding_support import seed_verified_bindings
-    from aweb.internal_auth import build_internal_auth_header_value
-    from aweb.mcp.server import create_mcp_app
-    from test_messages_http import _build_test_app
+    from aweb.internal_auth import application_proxy_verification, build_internal_auth_header_value
+    from test_mcp_mutation_hook_parity import TEAM
 
-    app = _build_test_app(mailbox.db, object())
-    seed_verified_bindings(app, ("did:aw:actor", actor.did_key, "example.com/actor"))
-    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
-    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "nudge-test-secret")
+    env = server
+    configured = application_proxy_verification(env.app.state)
+    assert configured.shared_secret
     principal = str(uuid4())
-    headers = {"Accept": "application/json, text/event-stream",
-        "X-Team-ID": actor.team_id, "X-User-ID": principal,
-        "X-AWEB-Actor-ID": actor.agent_id,
-        "X-AWEB-Auth": build_internal_auth_header_value(secret="nudge-test-secret",
-            team_id=actor.team_id, principal_type="u", principal_id=principal,
-            actor_id=actor.agent_id)}
-    mcp = create_mcp_app(db_infra=app.state.db)
-    app.mount("/mcp", mcp)
-    await mcp.startup()
-    try:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-            async def call(name):
-                response = await client.post("/mcp/", headers=headers, json={
-                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                    "params": {"name": name, "arguments": {}}})
-                assert response.status_code == 200, response.text
-                return response.json()["result"]
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "X-Team-ID": TEAM,
+        "X-User-ID": principal,
+        "X-AWEB-Actor-ID": env.agents["pilot"],
+        "X-AWEB-Auth": build_internal_auth_header_value(
+            secret=configured.shared_secret,
+            team_id=TEAM,
+            principal_type="u",
+            principal_id=principal,
+            actor_id=env.agents["pilot"],
+        ),
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=env.app), base_url="http://test"
+    ) as client:
+        async def call(name):
+            response = await client.post("/parity-mcp/", headers=headers, json={
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": {}}})
+            assert response.status_code == 200, response.text
+            return response.json()["result"]
 
-            baseline = await call("whoami")
-            await mailbox.mail(actor.did_aw)
-            nudged = await call("whoami")
-            assert nudged["content"][:-1] == baseline["content"]
-            assert "You have 1 unread mail message." in nudged["content"][-1]["text"]
-            assert {k: v for k, v in nudged.items() if k != "content"} == {
-                k: v for k, v in baseline.items() if k != "content"}
-            # The count query is AFTER the called tool, so consumed mail is not
-            # advertised again on the result of the call that consumed it.
-            read = await call("check_mail")
-            assert len(read["content"]) == 1
-            assert await call("whoami") == baseline
-    finally:
-        await mcp.shutdown()
+        baseline = await call("whoami")
+        await env.rest_mail("bob", to_alias="pilot", body="Unread nudge control")
+        nudged = await call("whoami")
+        assert nudged["content"][:-1] == baseline["content"]
+        assert "You have 1 unread mail message." in nudged["content"][-1]["text"]
+        assert {k: v for k, v in nudged.items() if k != "content"} == {
+            k: v for k, v in baseline.items() if k != "content"}
+        # The count query is AFTER the called tool, so consumed mail is not
+        # advertised again on the result of the call that consumed it.
+        read = await call("check_mail")
+        assert len(read["content"]) == 1
+        assert await call("whoami") == baseline
 
 
 @pytest.mark.asyncio

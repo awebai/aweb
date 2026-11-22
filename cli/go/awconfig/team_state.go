@@ -8,16 +8,18 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/awebai/aw/awid"
 	"gopkg.in/yaml.v3"
 )
 
 type TeamMembership struct {
-	TeamID      string `yaml:"team_id"`
-	Alias       string `yaml:"alias,omitempty"`
-	CertPath    string `yaml:"cert_path"`
-	JoinedAt    string `yaml:"joined_at,omitempty"`
-	RegistryURL string `yaml:"registry_url,omitempty"`
-	AwebURL     string `yaml:"aweb_url,omitempty"`
+	TeamKey     *awid.TeamKeyEvidence `yaml:"team_key,omitempty"`
+	TeamID      string                `yaml:"team_id"`
+	Alias       string                `yaml:"alias,omitempty"`
+	CertPath    string                `yaml:"cert_path"`
+	JoinedAt    string                `yaml:"joined_at,omitempty"`
+	RegistryURL string                `yaml:"registry_url,omitempty"`
+	AwebURL     string                `yaml:"aweb_url,omitempty"`
 }
 
 type TeamState struct {
@@ -31,12 +33,13 @@ type teamStateYAML struct {
 }
 
 type teamMembershipYAML struct {
-	TeamID      string `yaml:"team_id"`
-	Alias       string `yaml:"alias,omitempty"`
-	CertPath    string `yaml:"cert_path"`
-	JoinedAt    string `yaml:"joined_at,omitempty"`
-	RegistryURL string `yaml:"registry_url,omitempty"`
-	AwebURL     string `yaml:"aweb_url,omitempty"`
+	TeamKey     *awid.TeamKeyEvidence `yaml:"team_key,omitempty"`
+	TeamID      string                `yaml:"team_id"`
+	Alias       string                `yaml:"alias,omitempty"`
+	CertPath    string                `yaml:"cert_path"`
+	JoinedAt    string                `yaml:"joined_at,omitempty"`
+	RegistryURL string                `yaml:"registry_url,omitempty"`
+	AwebURL     string                `yaml:"aweb_url,omitempty"`
 }
 
 func (m *TeamMembership) normalize() {
@@ -82,6 +85,10 @@ func (s *TeamState) validate() error {
 		if membership.TeamID == "" {
 			return errors.New("teams.yaml membership is missing team_id")
 		}
+		if err := membership.validateTeamKey(); err != nil {
+			return err
+		}
+
 		if membership.CertPath == "" {
 			return fmt.Errorf("teams.yaml membership %q is missing cert_path", membership.TeamID)
 		}
@@ -93,6 +100,15 @@ func (s *TeamState) validate() error {
 	}
 	if s.ActiveMembership() == nil {
 		return fmt.Errorf("teams.yaml active_team %q is not present in memberships", s.ActiveTeam)
+	}
+	return nil
+}
+
+func (m TeamMembership) validateTeamKey() error {
+	if m.TeamKey != nil {
+		if err := m.TeamKey.Validate(); err != nil {
+			return fmt.Errorf("teams.yaml membership %q: %w", m.TeamID, err)
+		}
 	}
 	return nil
 }
@@ -205,10 +221,16 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
+	*s = raw.normalizedTeamState()
+	return s.validate()
+}
+
+func (raw teamStateYAML) normalizedTeamState() TeamState {
 	memberships := make([]TeamMembership, 0, len(raw.Memberships))
 	for _, membership := range raw.Memberships {
 		memberships = append(memberships, TeamMembership{
 			TeamID:      membership.TeamID,
+			TeamKey:     membership.TeamKey,
 			Alias:       membership.Alias,
 			CertPath:    membership.CertPath,
 			JoinedAt:    membership.JoinedAt,
@@ -216,12 +238,12 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 			AwebURL:     membership.AwebURL,
 		})
 	}
-	*s = TeamState{
+	state := TeamState{
 		ActiveTeam:  raw.ActiveTeam,
 		Memberships: memberships,
 	}
-	s.normalize()
-	return s.validate()
+	state.normalize()
+	return state
 }
 
 func (s TeamState) MarshalYAML() (any, error) {
@@ -233,6 +255,7 @@ func (s TeamState) MarshalYAML() (any, error) {
 	for _, membership := range s.Memberships {
 		memberships = append(memberships, teamMembershipYAML{
 			TeamID:      membership.TeamID,
+			TeamKey:     membership.TeamKey,
 			Alias:       membership.Alias,
 			CertPath:    membership.CertPath,
 			JoinedAt:    membership.JoinedAt,

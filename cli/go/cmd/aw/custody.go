@@ -425,7 +425,7 @@ func (s *custodyService) captureCredentials() (*custodyCapture, error) {
 // one this service started with.
 func (s *custodyService) checkPinLocked(capture *awconfig.CredentialCapture) error {
 	if s.identity == nil {
-		return nil
+		return errors.New("the resident signing identity is unavailable")
 	}
 	pinned := strings.TrimSpace(s.identity.DID)
 	var identity awconfig.WorktreeIdentity
@@ -435,14 +435,20 @@ func (s *custodyService) checkPinLocked(capture *awconfig.CredentialCapture) err
 	if did := strings.TrimSpace(identity.DID); did != "" && did != pinned {
 		return fmt.Errorf("the resident home now holds %s, not %s; restart the custody service", did, pinned)
 	}
-	if data, ok := capture.Files["signing.key"]; ok {
-		key, err := awid.ParseSigningKey(data)
-		if err != nil {
-			return fmt.Errorf("the resident home's signing key cannot be read: %w", err)
-		}
-		if did := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)); did != pinned {
-			return fmt.Errorf("the resident home's signing key is %s, not %s; restart the custody service", did, pinned)
-		}
+	data, ok := capture.Files["signing.key"]
+	if !ok {
+		return errors.New("the resident home's signing key is missing")
+	}
+	key, err := awid.ParseSigningKey(data)
+	if err != nil {
+		return fmt.Errorf("the resident home's signing key cannot be read: %w", err)
+	}
+	publicKey, ok := key.Public().(ed25519.PublicKey)
+	if !ok {
+		return errors.New("the resident home's signing key has an unsupported public key")
+	}
+	if did := awid.ComputeDIDKey(publicKey); did != pinned {
+		return fmt.Errorf("the resident home's signing key is %s, not %s; restart the custody service", did, pinned)
 	}
 	return nil
 }
@@ -468,9 +474,15 @@ func (s *custodyService) buildSnapshot(ctx context.Context, capture *awconfig.Cr
 		return nil, err
 	}
 	built := &builtSnapshot{selection: sel, client: client}
-	built.teams, _ = awconfig.ListTeamCertificatesFromIdentityHome(dir)
+	built.teams, err = awconfig.ListTeamCertificatesFromIdentityHome(dir)
+	if err != nil {
+		return nil, fmt.Errorf("load captured team certificates: %w", err)
+	}
 	if sel != nil && strings.TrimSpace(sel.WorkspacePath) != "" {
-		built.certificate, _ = loadSelectedTeamCertificate(sel)
+		built.certificate, err = loadSelectedTeamCertificate(sel)
+		if err != nil {
+			return nil, fmt.Errorf("load captured selected team certificate: %w", err)
+		}
 	}
 	return built, nil
 }
@@ -690,13 +702,6 @@ func (s *custodyService) serve(ctx context.Context) error {
 	if err := custodypath.Prepare(s.socketPath); err != nil {
 		return err
 	}
-	runDir := filepath.Dir(s.socketPath)
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(runDir, 0o700); err != nil {
-		return err
-	}
 	if _, err := os.Stat(s.socketPath); err == nil {
 		if err := custodyHTTPTimeout(ctx, s.socketPath, http.MethodGet, "/ping", nil, nil, 500*time.Millisecond); err == nil {
 			return usageError("custody service already running at %s", s.socketPath)
@@ -879,19 +884,6 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if err := awid.VerifyCustodyProof(req); err != nil {
 		return nil, err
 	}
-	ts, err := time.Parse(time.RFC3339, strings.TrimSpace(req.Timestamp))
-	if err != nil {
-		return nil, fmt.Errorf("bad_timestamp")
-	}
-	if s.now().Sub(ts) > 60*time.Second || ts.Sub(s.now()) > 60*time.Second {
-		return nil, fmt.Errorf("bad_timestamp")
-	}
-	if strings.TrimSpace(req.Audience) != "local-resident-custody:"+strings.TrimSpace(s.serviceID) {
-		return nil, fmt.Errorf("bad_audience")
-	}
-	if req.SubjectDIDKey != s.identity.DID || (req.SubjectDIDAW != "" && req.SubjectDIDAW != s.identity.StableID) {
-		return nil, fmt.Errorf("grant_subject_mismatch")
-	}
 	kind := strings.TrimSpace(req.Envelope.Type)
 	if kind != "mail" && kind != "chat" {
 		return nil, fmt.Errorf("message_not_allowed")
@@ -902,61 +894,16 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if from := strings.TrimSpace(req.Envelope.From); from != "" && from != strings.TrimSpace(s.identity.Address) && from != strings.TrimSpace(s.identity.Handle) {
 		return nil, fmt.Errorf("message_not_allowed")
 	}
-	grantStatus := s.clientDeps(ctx).grantStatus
-	if grantStatus == nil {
-		return nil, fmt.Errorf("grant_freshness_unavailable")
-	}
-	// Custody checks retain their short freshness/read budget within the calling request.
-	freshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	st, err := grantStatus(freshCtx, req.GrantID)
-	if err != nil {
-		s.reportFailure("check grant freshness", "grant_freshness_unavailable", err)
-		return nil, fmt.Errorf("grant_freshness_unavailable")
-	}
-	if !st.Active {
-		switch firstNonEmpty(strings.TrimSpace(st.EffectiveStatus), strings.TrimSpace(st.Status)) {
-		case "expired":
-			return nil, fmt.Errorf("grant_expired")
-		case "revoked":
-			return nil, fmt.Errorf("grant_revoked")
-		case "issuer_revoked":
-			return nil, fmt.Errorf("grant_issuer_revoked")
-		case "issuer_not_registered":
-			return nil, fmt.Errorf("grant_issuer_not_registered")
-		case "subject_inactive":
-			return nil, fmt.Errorf("grant_subject_inactive")
-		}
-		return nil, fmt.Errorf("grant_scope_denied")
-	}
-	if strings.TrimSpace(st.ExpiresAt) == "" {
-		return nil, fmt.Errorf("grant_freshness_unavailable")
-	}
-	if err := checkGrantExpiry(st.ExpiresAt, s.now()); err != nil {
+	if _, err := s.admitCustodyRequest(ctx, custodyAdmission{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, teamID: req.TeamID, subjectDIDAW: req.SubjectDIDAW, subjectDIDKey: req.SubjectDIDKey, audience: req.Audience, timestamp: req.Timestamp, scope: custodySendScope(kind)}); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(st.GrantDIDKey) != strings.TrimSpace(req.SessionDIDKey) {
-		return nil, fmt.Errorf("grant_session_mismatch")
-	}
-	if strings.TrimSpace(st.TeamID) != strings.TrimSpace(req.TeamID) {
-		return nil, fmt.Errorf("grant_team_mismatch")
-	}
-	requiredScope := kind + ".send"
-	ok := false
-	for _, sc := range st.Scopes {
-		if strings.TrimSpace(sc) == requiredScope {
-			ok = true
-		}
-	}
-	if !ok {
-		return nil, fmt.Errorf("grant_scope_denied")
-	}
-	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.PlainMessageSignResponse{})
+	key, cached, err := reserveCustodyReplay[awid.PlainMessageSignResponse](s, custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest})
 	if err != nil {
 		return nil, err
 	}
-	if res, _ := cached.(*awid.PlainMessageSignResponse); res != nil {
-		return res, nil
+	defer s.releaseFailedCustodyReplay(key)
+	if cached != nil {
+		return cached, nil
 	}
 	env := req.Envelope
 	env.FromDID = s.identity.DID
@@ -977,73 +924,6 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	out := &awid.PlainMessageSignResponse{FromDID: s.identity.DID, SigningKeyID: s.identity.DID, FromStableID: s.identity.StableID, ToDID: env.ToDID, ToStableID: env.ToStableID, MessageID: env.MessageID, Timestamp: env.Timestamp, Signature: sig, SignedPayload: awid.CanonicalJSON(&env)}
 	s.cacheCustodyReplayResult(key, out)
 	return out, nil
-}
-
-func (s *custodyService) evictReplayLocked(cutoff time.Time) {
-	for key, at := range s.replayAt {
-		if at.Before(cutoff) {
-			delete(s.replayAt, key)
-			delete(s.replay, key)
-			delete(s.results, key)
-		}
-	}
-}
-
-func (s *custodyService) reserveCustodyReplay(grantID, sessionDIDKey, nonce, digest string, resultType any) (string, any, error) {
-	key := strings.TrimSpace(grantID) + "|" + strings.TrimSpace(sessionDIDKey) + "|" + strings.TrimSpace(nonce)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.replay == nil {
-		s.replay = map[string]string{}
-	}
-	if s.replayAt == nil {
-		s.replayAt = map[string]time.Time{}
-	}
-	if s.results == nil {
-		s.results = map[string]any{}
-	}
-	s.evictReplayLocked(s.now().Add(-2 * time.Minute))
-	if old, exists := s.replay[key]; exists {
-		if old != strings.TrimSpace(digest) {
-			return "", nil, fmt.Errorf("replay_detected")
-		}
-		if res := s.results[key]; res != nil {
-			switch resultType.(type) {
-			case *awid.E2EEEnvelopeCreateResponse:
-				if _, ok := res.(*awid.E2EEEnvelopeCreateResponse); ok {
-					return key, res, nil
-				}
-			case *awid.E2EEUnwrapResponse:
-				if _, ok := res.(*awid.E2EEUnwrapResponse); ok {
-					return key, res, nil
-				}
-			case *awid.PlainMessageSignResponse:
-				if _, ok := res.(*awid.PlainMessageSignResponse); ok {
-					return key, res, nil
-				}
-			case *awid.AppRequestSignResponse:
-				if _, ok := res.(*awid.AppRequestSignResponse); ok {
-					return key, res, nil
-				}
-			}
-		}
-		return "", nil, fmt.Errorf("replay_detected")
-	}
-	s.replay[key] = strings.TrimSpace(digest)
-	s.replayAt[key] = s.now()
-	return key, nil, nil
-}
-
-func (s *custodyService) cacheCustodyReplayResult(key string, result any) {
-	if strings.TrimSpace(key) == "" || result == nil {
-		return
-	}
-	s.mu.Lock()
-	if s.results == nil {
-		s.results = map[string]any{}
-	}
-	s.results[key] = result
-	s.mu.Unlock()
 }
 
 func runCustodyStatus(ctx context.Context) (custodyStatusReport, error) {
@@ -1248,75 +1128,6 @@ func (s *custodyService) handleUnwrapE2EEMessage(w http.ResponseWriter, r *http.
 	writeJSON(w, out)
 }
 
-func (s *custodyService) validateE2EECommon(ctx context.Context, op string, reqFields map[string]string, nonce, timestamp string, requiredScope string) (custodyGrantStatus, error) {
-	ts, err := time.Parse(time.RFC3339, strings.TrimSpace(timestamp))
-	if err != nil {
-		return custodyGrantStatus{}, fmt.Errorf("bad_timestamp")
-	}
-	if s.now().Sub(ts) > 60*time.Second || ts.Sub(s.now()) > 60*time.Second {
-		return custodyGrantStatus{}, fmt.Errorf("bad_timestamp")
-	}
-	if strings.TrimSpace(reqFields["aud"]) != "local-resident-custody:"+strings.TrimSpace(s.serviceID) {
-		return custodyGrantStatus{}, fmt.Errorf("bad_audience")
-	}
-	if reqFields["subject_did_key"] != s.identity.DID || (reqFields["subject_did_aw"] != "" && reqFields["subject_did_aw"] != s.identity.StableID) {
-		return custodyGrantStatus{}, fmt.Errorf("grant_subject_mismatch")
-	}
-	grantStatus := s.clientDeps(ctx).grantStatus
-	if grantStatus == nil {
-		return custodyGrantStatus{}, fmt.Errorf("grant_freshness_unavailable")
-	}
-	// Custody checks retain their short freshness/read budget within the calling request.
-	freshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	st, err := grantStatus(freshCtx, reqFields["grant_id"])
-	if err != nil {
-		s.reportFailure("check grant freshness", "grant_freshness_unavailable", err)
-		return custodyGrantStatus{}, fmt.Errorf("grant_freshness_unavailable")
-	}
-	if !st.Active {
-		switch firstNonEmpty(strings.TrimSpace(st.EffectiveStatus), strings.TrimSpace(st.Status)) {
-		case "expired":
-			return st, fmt.Errorf("grant_expired")
-		case "revoked":
-			return st, fmt.Errorf("grant_revoked")
-		case "issuer_revoked":
-			return st, fmt.Errorf("grant_issuer_revoked")
-		case "issuer_not_registered":
-			return st, fmt.Errorf("grant_issuer_not_registered")
-		case "subject_inactive":
-			return st, fmt.Errorf("grant_subject_inactive")
-		}
-		return st, fmt.Errorf("grant_scope_denied")
-	}
-	if strings.TrimSpace(st.ExpiresAt) == "" {
-		return st, fmt.Errorf("grant_freshness_unavailable")
-	}
-	if err := checkGrantExpiry(st.ExpiresAt, s.now()); err != nil {
-		return st, err
-	}
-	if strings.TrimSpace(st.GrantDIDKey) != strings.TrimSpace(reqFields["session_did_key"]) {
-		return st, fmt.Errorf("grant_session_mismatch")
-	}
-	if strings.TrimSpace(st.TeamID) != strings.TrimSpace(reqFields["team_id"]) {
-		return st, fmt.Errorf("grant_team_mismatch")
-	}
-	// An empty requiredScope means authority comes from the resident's
-	// mint-time app tool snapshot rather than a server grant scope.
-	if requiredScope != "" {
-		ok := false
-		for _, sc := range st.Scopes {
-			if strings.TrimSpace(sc) == requiredScope {
-				ok = true
-			}
-		}
-		if !ok {
-			return st, fmt.Errorf("grant_scope_denied")
-		}
-	}
-	return st, nil
-}
-
 func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEEnvelopeCreateRequest) (*awid.E2EEEnvelopeCreateResponse, error) {
 	if err := awid.VerifyE2EECreateCustodyProof(req); err != nil {
 		return nil, err
@@ -1328,8 +1139,8 @@ func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEE
 	if kind != "mail" && kind != "chat" {
 		return nil, fmt.Errorf("message_not_allowed")
 	}
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	grant, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, kind+".send")
+
+	grant, err := s.admitCustodyRequest(ctx, custodyAdmission{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, teamID: req.TeamID, subjectDIDAW: req.SubjectDIDAW, subjectDIDKey: req.SubjectDIDKey, audience: req.Audience, timestamp: req.Timestamp, scope: custodySendScope(kind)})
 	if err != nil {
 		return nil, err
 	}
@@ -1345,15 +1156,16 @@ func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEE
 			return nil, fmt.Errorf("grant_scope_denied")
 		}
 	}
-	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.E2EEEnvelopeCreateResponse{})
+	key, cached, err := reserveCustodyReplay[awid.E2EEEnvelopeCreateResponse](s, custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest})
 	if err != nil {
 		return nil, err
 	}
-	if out, _ := cached.(*awid.E2EEEnvelopeCreateResponse); out != nil {
-		return out, nil
+	defer s.releaseFailedCustodyReplay(key)
+	if cached != nil {
+		return cached, nil
 	}
 	if s.residentHome != "" {
-		maybeRenewIdentityEncryptionAssertion(ctx, "", explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
+		maybeRenewIdentityEncryptionAssertion(ctx, s.workingDir, explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
 	}
 	if err := s.reloadActiveE2EEKey(); err != nil {
 		return nil, err
@@ -1677,16 +1489,17 @@ func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUn
 	if req.Envelope.Kind != kind || req.Envelope.MessageID != strings.TrimSpace(req.MessageID) || req.Envelope.ConversationID != strings.TrimSpace(req.ConversationID) {
 		return nil, fmt.Errorf("message_binding_mismatch")
 	}
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	if _, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, kind+".read"); err != nil {
+
+	if _, err := s.admitCustodyRequest(ctx, custodyAdmission{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, teamID: req.TeamID, subjectDIDAW: req.SubjectDIDAW, subjectDIDKey: req.SubjectDIDKey, audience: req.Audience, timestamp: req.Timestamp, scope: custodyReadScope(kind)}); err != nil {
 		return nil, err
 	}
-	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.E2EEUnwrapResponse{})
+	key, cached, err := reserveCustodyReplay[awid.E2EEUnwrapResponse](s, custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest})
 	if err != nil {
 		return nil, err
 	}
-	if out, _ := cached.(*awid.E2EEUnwrapResponse); out != nil {
-		return out, nil
+	defer s.releaseFailedCustodyReplay(key)
+	if cached != nil {
+		return cached, nil
 	}
 	readStoredEnvelope := s.clientDeps(ctx).readStoredEnvelope
 	if readStoredEnvelope == nil {
@@ -1721,7 +1534,7 @@ func (s *custodyService) renewEncryptionAssertions(ctx context.Context) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 	for {
-		maybeRenewIdentityEncryptionAssertion(ctx, "", explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
+		maybeRenewIdentityEncryptionAssertion(ctx, s.workingDir, explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
 		select {
 		case <-ctx.Done():
 			return

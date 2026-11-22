@@ -76,3 +76,5 @@ not recovery. A retryable result means the service could not establish authority
 complete routing at that attempt; it does not weaken validation or authorize plaintext
 fallback. The `correlation_id` is the safe support handle. Do not request registry
 responses, DID logs, keys, DNS answers, peer bodies, or internal URLs from users.
+
+MCP send refusals carry an additive `reason` beside the actionable `error`. For an outsider sending by address, a missing name and another team's local-only identity both use `recipient_identity_not_found` with the same address refusal text; HTTP retains its released distinct reasons.

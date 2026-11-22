@@ -19,8 +19,10 @@ from httpx import ASGITransport, AsyncClient
 
 import aweb.routes.apps as apps_routes
 import aweb.routes.hook_bindings as hook_routes
+from aweb.internal_auth import ProxyVerificationConfig
 from aweb.routes.hook_bindings import router as hook_bindings_router
 from tests.test_app_registry_http import _DbShim
+from tests import test_hook_binding_activation as binding_fixtures
 from tests.test_hook_binding_activation import (  # noqa: F401
     AUDIENCE,
     OTHER_TEAM,
@@ -29,10 +31,14 @@ from tests.test_hook_binding_activation import (  # noqa: F401
     _bindings,
     _hook_keys,
     _install,
-    env,
 )
 from aweb.audit import AuditActor, set_verified_audit_actor
 from aweb.team_auth_deps import TeamIdentity
+
+__all__ = ["env"]
+
+
+env = binding_fixtures.env
 
 
 def _identity(team_id: str):
@@ -53,6 +59,7 @@ def _identity(team_id: str):
 
 def _app(env, registry_client) -> FastAPI:
     app = FastAPI()
+    ProxyVerificationConfig.capture().install(app)
     app.include_router(hook_bindings_router)
     app.state.db = _DbShim(env.db)
     app.state.public_origin = AUDIENCE
@@ -231,8 +238,12 @@ async def test_a_server_without_a_registry_client_refuses_without_changing_anyth
         response = await client.post(
             f"/v1/apps/hook-bindings/{registration.binding_id}/activate", json=_body(signing, signature),
         )
-    assert response.status_code == 500
-    assert "registry client not configured" in response.json()["detail"]
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "registry_client_unavailable"
+    assert detail["message"].endswith(
+        "Configure the serving registry client and start the application before retrying."
+    )
     assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0
 
 
@@ -253,7 +264,8 @@ async def test_a_stalled_registry_is_a_classified_503_and_the_same_act_can_retry
                 response = await client.post(url, json=_body(signing, signature))
 
     assert response.status_code == 503, response.text
-    assert response.json()["detail"] == "AWID owner-act team key upstream unavailable (TimeoutError)"
+    assert response.json()["detail"].startswith("AWID owner-act team key upstream unavailable (TimeoutError).")
+    assert "Retry when the registry is available" in response.json()["detail"]
     assert "AWID registry dependency failed reading the owner-act team key" in caplog.text
     assert "TimeoutError" in caplog.text
     assert await env.db.fetch_value(

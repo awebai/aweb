@@ -1,13 +1,89 @@
 package awid
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 )
+
+func TestCurrentTeamCertificateStandingVectors(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "test-vectors", "trust", "sender-standing-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors struct {
+		Cases []struct {
+			ID         string                     `json:"id"`
+			Registered bool                       `json:"registered"`
+			Revoked    bool                       `json:"revoked"`
+			Want       CurrentTeamCertificateCode `json:"go_current_certificate_code"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &vectors); err != nil || len(vectors.Cases) == 0 {
+		t.Fatalf("invalid standing vector: %v", err)
+	}
+	_, teamKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberKey, _, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
+		Team: "backend:acme.com", MemberDIDKey: ComputeDIDKey(memberKey), Alias: "member", IdentityScope: IdentityModeLocal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, vector := range vectors.Cases {
+		t.Run(vector.ID, func(t *testing.T) {
+			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/certificates/"+cert.CertificateID+"/status" {
+					t.Errorf("unexpected registry request %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				if !vector.Registered {
+					http.NotFound(w, r)
+					return
+				}
+				status := "active"
+				var revokedAt *string
+				if vector.Revoked {
+					status = "revoked"
+					when := "2026-11-01T01:00:00Z"
+					revokedAt = &when
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"team_id": cert.Team, "team_did_key": cert.TeamDIDKey, "status": status, "revoked_at": revokedAt,
+				})
+			}))
+			defer registry.Close()
+			client := NewAWIDRegistryClient(registry.Client(), nil)
+			if err := client.TrustRegistryOrigin(registry.URL); err != nil {
+				t.Fatal(err)
+			}
+			err := client.CheckCurrentTeamCertificate(context.Background(), CurrentTeamCertificateCheck{RegistryURL: registry.URL, Certificate: cert})
+			if vector.Want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			var refusal *CurrentTeamCertificateError
+			if !errors.As(err, &refusal) || refusal.Code != vector.Want {
+				t.Fatalf("got %v, want refusal %s", err, vector.Want)
+			}
+		})
+	}
+}
 
 type teamCertificateVectorFile struct {
 	Version        int      `json:"version"`

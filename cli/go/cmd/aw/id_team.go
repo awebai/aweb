@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/pathpreflight"
@@ -44,16 +43,17 @@ type teamInviteOutput struct {
 }
 
 type teamAcceptInviteOutput struct {
-	IDRegistration string              `json:"id_registration,omitempty"`
-	Responsibility *awid.IDChainResult `json:"responsibility,omitempty"`
-	HarnessSetup   *joinHarnessResult  `json:"harness_setup,omitempty"`
-	Status         string              `json:"status"`
-	TeamID         string              `json:"team_id"`
-	Alias          string              `json:"alias"`
-	CertPath       string              `json:"cert_path"`
-	Connected      *bool               `json:"connected,omitempty"`
-	AwebURL        string              `json:"aweb_url,omitempty"`
-	ConnectCommand string              `json:"connect_command,omitempty"`
+	TeamKey        *awid.TeamKeyEvidence `json:"team_key,omitempty"`
+	IDRegistration string                `json:"id_registration,omitempty"`
+	Responsibility *awid.IDChainResult   `json:"responsibility,omitempty"`
+	HarnessSetup   *joinHarnessResult    `json:"harness_setup,omitempty"`
+	Status         string                `json:"status"`
+	TeamID         string                `json:"team_id"`
+	Alias          string                `json:"alias"`
+	CertPath       string                `json:"cert_path"`
+	Connected      *bool                 `json:"connected,omitempty"`
+	AwebURL        string                `json:"aweb_url,omitempty"`
+	ConnectCommand string                `json:"connect_command,omitempty"`
 }
 
 type teamAddMemberOutput struct {
@@ -233,21 +233,25 @@ type acceptedTeamInvite struct {
 	Output      *teamAcceptInviteOutput
 	Certificate *awid.TeamCertificate
 	RegistryURL string
-	AwebURL     string
-	Domain      string
-	TeamName    string
+	// The key check's origin is retained for immediate rollback only.
+	observedRegistryURL string
+	AwebURL             string
+	Domain              string
+	TeamName            string
 }
 
 type teamAcceptInviteOptions struct {
-	ParentHome   string
-	Registry     *awid.RegistryClient
-	TXTResolver  awid.TXTResolver
-	IdentityHome string
-	Name         string
-	Address      string
-	Scope        string
-	NoAddress    bool
-	AwebURL      string
+	ParentFromSource bool
+	ParentHome       string
+	Registry         *awid.RegistryClient
+	TXTResolver      awid.TXTResolver
+	IdentityHome     string
+	Name             string
+	Address          string
+	Scope            string
+	NoAddress        bool
+	AwebURL          string
+	RegistryURL      string
 }
 
 type teamMemberEnrollmentResolveOptions struct {
@@ -648,7 +652,7 @@ func init() {
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestCloudTeamID, "cloud-team-id", "", "Existing AC team id to sync")
 	teamImportRequestCmd.Flags().StringVar(&teamImportRequestTimestamp, "timestamp", "", "RFC3339 timestamp to sign (defaults to now; accepted for five minutes by cloud)")
 	teamImportRequestCmd.Flags().BoolVar(&teamImportRequestApply, "apply", false, "Create an apply request instead of the default dry-run request")
-	teamCmd.AddCommand(teamImportRequestCmd)
+	teamCmd.AddCommand(teamImportRequestCmd, teamClaimHumanRequestCmd)
 
 	teamRegisterCmd.Flags().StringVar(&teamRegisterTeam, "team", "", "Canonical AWID team id (<team>:<namespace>)")
 	teamRegisterCmd.Flags().StringVar(&teamRegisterServiceURL, "service", "", "Service URL to register with")
@@ -721,19 +725,17 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(teamCreateRegistryURL) != "" {
-		if err := registry.SetFallbackRegistryURL(teamCreateRegistryURL); err != nil {
-			return fmt.Errorf("invalid --registry: %w", err)
-		}
-	}
-
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
+	registryURL, err := resolveTeamCommandRegistry(ctx, registry, wd, domain, awid.BuildTeamID(domain, name), teamCreateRegistryURL)
+	if err != nil {
+		return err
+	}
 
 	registration, err := ensureLocalTeamRegistered(
 		ctx,
 		registry,
-		strings.TrimSpace(registry.DefaultRegistryURL),
+		registryURL,
 		domain,
 		name,
 		strings.TrimSpace(teamCreateDisplayName),
@@ -919,9 +921,12 @@ func resolveTeamInviteTargetAt(workingDir, identityHome string) (team, domain, r
 	if domain == "" {
 		return "", "", "", "", usageError("--namespace is required")
 	}
-	awebURL = awebURLForTeamInviteAt(rootDir, identityHome, awid.BuildTeamID(domain, team))
-	registryURL = registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
-	return team, domain, registryURL, awebURL, nil
+	teamID := awid.BuildTeamID(domain, team)
+	awebURL = awebURLForTeamInviteAt(rootDir, identityHome, teamID)
+	registryURL, err = resolveRegistryAuthority(context.Background(), registryAuthorityRequest{
+		Kind: registryTeamRoute, Domain: domain, TeamID: teamID, WorkingDir: rootDir, IdentityHome: identityHome, AwebURL: awebURL,
+	})
+	return team, domain, registryURL, awebURL, err
 }
 
 func loadTeamStateForInvite(workingDir string) (*awconfig.TeamState, string, error) {
@@ -951,44 +956,6 @@ func loadTeamStateForInviteAt(workingDir, identityHome string) (*awconfig.TeamSt
 	return nil, "", stateErr
 }
 
-func registryURLForTeamInvite(workingDir, domain, awebURL string) string {
-	return registryURLForTeamInviteAt(workingDir, "", domain, awebURL)
-}
-
-func registryURLForTeamInviteAt(workingDir, identityHome, domain, awebURL string) string {
-	if meta, err := awconfig.LoadControllerMeta(domain); err == nil && meta != nil {
-		if registryURL := strings.TrimSpace(meta.RegistryURL); registryURL != "" {
-			return registryURL
-		}
-	}
-	var identity *awconfig.WorktreeIdentity
-	if strings.TrimSpace(identityHome) != "" {
-		if identityPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml"); err == nil {
-			identity, _ = awconfig.LoadWorktreeIdentityFrom(identityPath)
-		}
-	} else {
-		identity, _, _ = awconfig.LoadWorktreeIdentityFromDir(workingDir)
-	}
-	if identity != nil {
-		if registryURL := strings.TrimSpace(identity.RegistryURL); registryURL != "" {
-			return registryURL
-		}
-	}
-	if strings.TrimSpace(awebURL) != "" {
-		if discovered, err := discoverOnboardingServiceURLs(awebURL); err == nil {
-			if registryURL := strings.TrimSpace(discovered.RegistryURL); registryURL != "" {
-				return registryURL
-			}
-		}
-	}
-	// A hosted aweb.ai team resolves to our registry when nothing else is on
-	// record; BYOT and local namespaces fail closed rather than assume it.
-	if isAwebHostedNamespace(domain) {
-		return awid.DefaultAWIDRegistryURL
-	}
-	return ""
-}
-
 // awebURLForTeamInvite resolves the aweb server hosting teamID so an invite can
 // be minted for it. Precedence: the live worktree binding (workspace.yaml,
 // written by `aw init`), then the team roster (teams.yaml, which `aw team join`
@@ -1004,15 +971,9 @@ func awebURLForTeamInvite(workingDir, teamID string) string {
 
 func awebURLForTeamInviteAt(workingDir, identityHome, teamID string) string {
 	teamID = strings.TrimSpace(teamID)
-	if workspace, teamState, _, err := loadCurrentWorkspaceAndTeamState(workingDir, identityHome); err == nil && workspace != nil {
-		if awebURL := strings.TrimSpace(workspace.AwebURL); awebURL != "" {
-			if teamID == "" {
-				if awconfig.ActiveMembershipFor(workspace, teamState) != nil {
-					return awebURL
-				}
-			} else if workspace.Membership(teamID) != nil {
-				return awebURL
-			}
+	if workspace, teamState, _, err := loadCurrentWorkspaceAndTeamState(workingDir, identityHome); err == nil {
+		if awebURL := workspaceAwebURLForTeam(workspace, teamState, teamID); awebURL != "" {
+			return awebURL
 		}
 	}
 	var teamState *awconfig.TeamState
@@ -1179,7 +1140,7 @@ func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamI
 	if err != nil {
 		return err
 	}
-	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeNativeInviteIssuance(rawToken, home.Root) && !canResumeTeamInviteIDChild(rawToken, home.Root) {
+	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeNativeInviteIssuance(rawToken, home.Root) && !canResumeTeamInviteIDChild(rawToken, home.Root) && !canResumeHostedInvite(rawToken, home.Root) {
 		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
 			return err
 		}
@@ -1548,7 +1509,7 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 	if awconfig.IsGrantHome(home.Root) {
 		return runGrantTeamMembers(cmd, workingDir, home)
 	}
-	domain, team, teamID, registryURL, err := resolveTeamMembersTarget(workingDir)
+	domain, team, teamID, err := resolveTeamMembersTarget(workingDir, home)
 	if err != nil {
 		return err
 	}
@@ -1556,18 +1517,20 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(registryURL) != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return fmt.Errorf("invalid --registry: %w", err)
-		}
-	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
-	signers := teamReadSigners(workingDir, domain, team)
+	registryURL, err := resolveTeamCommandRegistry(ctx, registry, workingDir, domain, teamID, teamMembersRegistryURL)
+	if err != nil {
+		return err
+	}
+	signers, err := teamReadSigners(workingDir, domain, team)
+	if err != nil {
+		return err
+	}
 	var certs []awid.RegistryCertificate
 	if _, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
 		var listErr error
-		certs, listErr = registry.ListCertificates(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, !teamMembersIncludeRevoked, key)
+		certs, listErr = registry.ListCertificates(ctx, registryURL, domain, team, !teamMembersIncludeRevoked, key)
 		return listErr
 	}); err != nil {
 		if friendly := friendlyTeamReadError(err, teamID, len(signers) > 0); friendly != err {
@@ -1664,54 +1627,28 @@ func printTeamMembers(out teamMembersOutput) error {
 	return printOutput(out, formatTeamMembers)
 }
 
-func resolveTeamMembersTarget(workingDir string) (domain, team, teamID, registryURL string, err error) {
-	home, err := identityHomeForDir(workingDir)
-	if err != nil {
-		return "", "", "", "", err
-	}
-	loadState := func() (*awconfig.TeamState, error) {
-		if home.External() {
-			return awconfig.LoadTeamStateFromIdentityHome(home.Root)
-		}
-		return awconfig.LoadTeamState(workingDir)
-	}
-	if strings.TrimSpace(teamMembersTeamID) != "" {
+func resolveTeamMembersTarget(workingDir string, home awconfig.IdentityHome) (domain, team, teamID string, err error) {
+	if requested := strings.TrimSpace(teamMembersTeamID); requested != "" {
 		if strings.TrimSpace(teamMembersTeam) != "" || strings.TrimSpace(teamMembersNamespace) != "" {
-			return "", "", "", "", usageError("--team-id cannot be combined with --team or --namespace")
+			return "", "", "", usageError("--team-id cannot be combined with --team or --namespace")
 		}
-		domain, team, err = awid.ParseTeamID(strings.TrimSpace(teamMembersTeamID))
+		domain, team, err = awid.ParseTeamID(requested)
 		if err != nil {
-			return "", "", "", "", err
+			return "", "", "", err
 		}
-		teamID = awid.BuildTeamID(domain, team)
-		registryURL = strings.TrimSpace(teamMembersRegistryURL)
-		if registryURL == "" {
-			if state, stateErr := loadState(); stateErr == nil && state != nil {
-				if membership := state.Membership(teamID); membership != nil {
-					registryURL = registryURLForTeamMembersMembership(membership)
-				}
-			}
-		}
-		return domain, team, teamID, registryURL, nil
+		return domain, team, awid.BuildTeamID(domain, team), nil
 	}
 	team = strings.ToLower(strings.TrimSpace(teamMembersTeam))
 	domain = awconfig.NormalizeDomain(teamMembersNamespace)
-	var state *awconfig.TeamState
-	if team == "" || domain == "" || strings.TrimSpace(teamMembersRegistryURL) == "" {
-		if loaded, stateErr := loadState(); stateErr == nil {
-			state = loaded
-		} else if team == "" || domain == "" {
-			return "", "", "", "", usageError("--team-id or both --team and --namespace are required when no active team can be inferred from this workspace: %v", stateErr)
-		}
-	}
 	if team == "" || domain == "" {
-		active := ""
-		if state != nil {
-			active = strings.TrimSpace(state.ActiveTeam)
+		state, err := loadSelectedTeamState(workingDir, home)
+		if err != nil {
+			return "", "", "", usageError("--team-id or both --team and --namespace are required when no active team can be inferred from this workspace: %v", err)
 		}
+		active := strings.TrimSpace(state.ActiveTeam)
 		activeDomain, activeTeam, parseErr := awid.ParseTeamID(active)
 		if parseErr != nil {
-			return "", "", "", "", fmt.Errorf("invalid active team %q: %w", active, parseErr)
+			return "", "", "", fmt.Errorf("invalid active team %q: %w", active, parseErr)
 		}
 		if team == "" {
 			team = activeTeam
@@ -1720,35 +1657,7 @@ func resolveTeamMembersTarget(workingDir string) (domain, team, teamID, registry
 			domain = activeDomain
 		}
 	}
-	if team == "" {
-		return "", "", "", "", usageError("--team is required")
-	}
-	if domain == "" {
-		return "", "", "", "", usageError("--namespace is required")
-	}
-	teamID = awid.BuildTeamID(domain, team)
-	registryURL = strings.TrimSpace(teamMembersRegistryURL)
-	if registryURL == "" && state != nil {
-		if membership := state.Membership(teamID); membership != nil {
-			registryURL = registryURLForTeamMembersMembership(membership)
-		}
-	}
-	return domain, team, teamID, registryURL, nil
-}
-
-func registryURLForTeamMembersMembership(membership *awconfig.TeamMembership) string {
-	if membership == nil {
-		return ""
-	}
-	if registryURL := strings.TrimSpace(membership.RegistryURL); registryURL != "" {
-		return registryURL
-	}
-	if awebURL := strings.TrimSpace(membership.AwebURL); awebURL != "" {
-		if discovered, err := discoverOnboardingServiceURLs(awebURL); err == nil {
-			return strings.TrimSpace(discovered.RegistryURL)
-		}
-	}
-	return ""
+	return domain, team, awid.BuildTeamID(domain, team), nil
 }
 
 func runTeamLeave(cmd *cobra.Command, args []string) error {
@@ -1792,102 +1701,6 @@ func runTeamLeave(cmd *cobra.Command, args []string) error {
 		TeamID:     teamID,
 		ActiveTeam: strings.TrimSpace(teamState.ActiveTeam),
 	}, formatTeamLeave)
-}
-
-// createHostedTeamInvite creates a single-use hosted invite and returns the
-// service's response, which carries its expiry.
-func createHostedTeamInvite(request teamInviteMintRequest) (*awid.SpawnCreateInviteResponse, error) {
-	source := request.Plan.Source
-	workingDir, identityHome := source.WorkingDir, externalIdentityHomeRoot(source.Home)
-	teamID := awid.BuildTeamID(source.Domain, source.Team)
-	if request.Scope != inviteMemberLocal {
-		return nil, usageError("--member-global is not supported for hosted team invites")
-	}
-	var client *aweb.Client
-	var selected *awconfig.Selection
-	var err error
-	if strings.TrimSpace(identityHome) != "" {
-		home := awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
-		client, selected, err = resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, teamID, home)
-	} else {
-		client, selected, err = resolveClientSelectionForDirWithTeamOverride(workingDir, teamID)
-	}
-	if err != nil {
-		return nil, fmt.Errorf(
-			"no local team controller key for %s and cloud-hosted invite authority is unavailable: %w",
-			teamID,
-			err,
-		)
-	}
-	ctx, cancel := commandAPIContext(nil)
-	defer cancel()
-	chain, err := awconfig.LoadInstalledIDChain(selected.IdentityHome)
-	if err != nil {
-		return nil, err
-	}
-	var bundle map[string]any
-	var leaf awid.IDCertificateView
-	if chain != nil {
-		bundle = chain.Bundle
-		leaf, err = chain.Leaf()
-		if err != nil {
-			return nil, err
-		}
-		subject := selected.StableID
-		if subject == "" {
-			subject = selected.DID
-		}
-		if leaf.ID() != subject || leaf.Kind() != awid.IDCertificateKindAgent {
-			return nil, errors.New("hosted invites require the selected agent's own chain")
-		}
-	}
-	requested := request.ForHuman
-	if requested != nil {
-		if err := validateInviteHuman(*requested); err != nil {
-			return nil, err
-		}
-	}
-	created, err := client.CreateSpawnInvite(ctx, &awid.SpawnCreateInviteRequest{
-		IDChain:    bundle,
-		ForHuman:   requested,
-		AccessMode: "open",
-		MaxUses:    1,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create hosted team invite: %w", err)
-	}
-	if requested != nil && (created.ForHuman == nil || *created.ForHuman != *requested) {
-		return nil, errors.New("hosted service did not retain --for-human; upgrade the service before issuing this invite")
-	}
-	if chain != nil && (created.IDTree != nil || requested == nil) {
-		if created.IDTree == nil || created.IDTree.V != 1 || created.IDTree.IssuerID != leaf.ID() || created.IDTree.Domain != leaf.Domain() || created.IDTree.ChildKind != "agent" || (created.IDTree.Mode != "host_managed" && created.IDTree.Mode != "self_custodial") {
-			return nil, errors.New("hosted invite did not retain the selected agent issuer binding")
-		}
-	}
-	if strings.TrimSpace(created.Token) == "" {
-		return nil, fmt.Errorf("hosted team invite response is missing token")
-	}
-	if chain != nil && created.IDTree != nil && created.IDTree.Mode == "self_custodial" {
-		link, err := prepareTeamInviteIDChild(ctx, idChildOptions{WorkingDir: workingDir, IdentityHome: selected.IdentityHome, Now: time.Now})
-		if err != nil {
-			return nil, err
-		}
-		if link == nil || link.Parent != created.IDTree.IssuerID || link.Domain != created.IDTree.Domain {
-			return nil, errors.New("hosted invite child link differs from the selected issuer")
-		}
-		domain, name, err := awid.ParseTeamID(teamID)
-		if err != nil {
-			return nil, err
-		}
-		if err := awconfig.SaveTeamInvite(&awconfig.TeamInvite{
-			InviteID: hostedTeamInviteRecordID(created.Token),
-			Domain:   domain, TeamName: name,
-			IdentityScope: awid.IdentityModeLocal, IDChild: link,
-		}); err != nil {
-			return nil, err
-		}
-	}
-	return created, nil
 }
 
 func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTeamInvite, error) {
@@ -1960,9 +1773,11 @@ func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTe
 	if err != nil {
 		return nil, err
 	}
-	registryURL := strings.TrimSpace(invite.RegistryURL)
-	if registryURL == "" {
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Override: invite.RegistryURL, Domain: invite.Domain, TeamID: teamID, DefaultURL: registry.DefaultRegistryURL,
+	})
+	if err != nil {
+		return nil, err
 	}
 	home, err := identityHomeForTarget(workingDir, opts.IdentityHome)
 	if err != nil {
@@ -1998,12 +1813,19 @@ func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTe
 		return nil, err
 	}
 
+	parentInviteID := ""
+	if opts.ParentHome != "" {
+		parentInviteID, _, err = loadTeamInviteParentRecord(token, home.Root)
+		if err != nil {
+			return nil, err
+		}
+	}
 	appliedDefaultClaim, err := claimNativeInviteDefaultAddress(ctx, nativeInviteDefaultClaimRequest{Plan: plan, Registry: registry, RegistryURL: registryURL})
 	if err != nil {
 		return nil, err
 	}
 
-	cert, err := issueNativeInviteCertificate(ctx, nativeInviteIssuanceRequest{Invite: invite, Plan: plan, Home: home, ParentInviteID: teamInviteParentRecordID(token, opts.ParentHome), TeamKey: teamKey, Registry: registry, RegistryURL: registryURL, DefaultClaimResult: appliedDefaultClaim})
+	cert, err := issueNativeInviteCertificate(ctx, nativeInviteIssuanceRequest{Invite: invite, Plan: plan, Home: home, ParentInviteID: parentInviteID, TeamKey: teamKey, Registry: registry, RegistryURL: registryURL, DefaultClaimResult: appliedDefaultClaim})
 	if err != nil {
 		return nil, err
 	}
@@ -2018,7 +1840,7 @@ func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTe
 			return nil, retainedIssuedIdentityStateFailure(cert, err)
 		}
 	}
-	if err := consumedInviteParent(token, opts.ParentHome); err != nil {
+	if err := consumeInviteParent(parentInviteID); err != nil {
 		return nil, retainIdentityForRecovery(err)
 	}
 	return &acceptedTeamInvite{
@@ -2137,8 +1959,13 @@ func acceptHostedTeamInviteWithDetails(input teamInviteAcceptanceRequest) (resul
 		return nil, err
 	}
 
+	mintedKey := false
 	if scope == awid.IdentityModeLocal {
 		material, err = loadLocalHostedInviteMaterial(localHostedInviteMaterialRequest{WorkingDir: workingDir, Home: home, Prior: prior})
+		if err != nil {
+			return nil, err
+		}
+		mintedKey, err = (acceptanceMintedKey{Home: home}).present()
 		if err != nil {
 			return nil, err
 		}
@@ -2167,15 +1994,19 @@ func acceptHostedTeamInviteWithDetails(input teamInviteAcceptanceRequest) (resul
 		}
 		_, refusal := verifyInviteMembership(ctx, prior.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: prior.DIDKey}, prior.ForHuman, opts.Registry, opts.TXTResolver)
 		if awid.IDCertificateErrorCode(refusal) == "human_mismatch" {
-			if err := discardHostedInviteAttempt(recoveryPath, acceptanceMintedKey{Home: home}); err != nil {
+			if err := discardHostedInviteAttempt(recoveryPath); err != nil {
 				return nil, errors.Join(refusal, err)
 			}
 			prior = nil
 		}
 	}
-	creation, err = prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material)
+	creation, err = prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material, mintedKey, opts.ParentFromSource, opts.ParentHome, recoveryPath)
 	if err != nil {
 		return nil, err
+	}
+	opts.ParentHome = creation.ParentHome
+	if creation.IssuerCreationStarted && !creation.parentageSelected() {
+		return nil, uncertainHostedInviteError(home.Root, creation.TeamID, errors.New("retained creation has no recorded key mint or explicit parent; reconcile the earlier attempt before retrying"))
 	}
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
@@ -2314,7 +2145,7 @@ func ensureHostedAcceptTargetClean(workingDir, identityHome string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() != hostedInviteRecoveryFile+".lock" {
+		if entry.Name() != hostedInviteRecoveryFile+".lock" && entry.Name() != initInviteRecoveryFile && entry.Name() != initInviteRecoveryFile+".lock" {
 			return usageError("refusing to overwrite non-empty identity home %s", root)
 		}
 	}
@@ -2412,22 +2243,20 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 	if err != nil {
 		return err
 	}
-	registryURL := strings.TrimSpace(accepted.RegistryURL)
-	if registryURL != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return fmt.Errorf("invalid registry url %q: %w", registryURL, err)
-		}
-	} else {
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
+	ctx, cancel := commandAPIContext(nil)
+	defer cancel()
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Override: firstNonEmptyString(accepted.RegistryURL, accepted.observedRegistryURL), Domain: accepted.Domain,
+		TeamID: awid.BuildTeamID(accepted.Domain, accepted.TeamName), DefaultURL: registry.DefaultRegistryURL,
+	})
+	if err != nil {
+		return err
 	}
 
 	teamKey, err := awconfig.LoadTeamKey(accepted.Domain, accepted.TeamName)
 	if err != nil {
 		return fmt.Errorf("load team key for %s/%s: %w", accepted.Domain, accepted.TeamName, err)
 	}
-
-	ctx, cancel := commandAPIContext(nil)
-	defer cancel()
 
 	if err := registry.RevokeCertificate(
 		ctx,
@@ -2552,9 +2381,18 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// The certificate belongs at the team namespace's own registry: the one
-	// AWID_REGISTRY_URL names, or the one its _awid record names.
-	teamRegistryURL, err := registry.DiscoverRegistry(ctx, domain)
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	teamRegistryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Registry: registry, Domain: domain, TeamID: teamID,
+		WorkingDir: workingDir, IdentityHome: externalIdentityHomeRoot(home),
+	})
 	if err != nil {
 		return fmt.Errorf("resolve the registry for namespace %s: %w", domain, err)
 	}
@@ -2566,15 +2404,11 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		workingDir, err := os.Getwd()
-		if err != nil {
-			return err
-		}
 		lookupSigningKey, err := loadOptionalWorktreeSigningKey(workingDir)
 		if err != nil {
 			return err
 		}
-		memberRegistryURL, err := registry.DiscoverRegistry(ctx, memberDomain)
+		memberRegistryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: memberDomain})
 		if err != nil {
 			return fmt.Errorf("resolve the registry for member namespace %s: %w", memberDomain, err)
 		}
@@ -2597,10 +2431,6 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	}
 
 	if member == "" && memberDID != "" && memberAddress != "" {
-		workingDir, err := os.Getwd()
-		if err != nil {
-			return err
-		}
 		lookupSigningKey, err := loadOptionalWorktreeSigningKey(workingDir)
 		if err != nil {
 			return err
@@ -2609,7 +2439,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		addressRegistryURL, err := registry.DiscoverRegistry(ctx, addressDomain)
+		addressRegistryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{Kind: registryDomainRoute, Registry: registry, Domain: addressDomain})
 		if err != nil {
 			return fmt.Errorf("resolve the registry for member namespace %s: %w", addressDomain, err)
 		}
@@ -2618,8 +2448,8 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:          teamID,
+	issuer := teamMembershipIssuer{TeamID: teamID, Key: teamKey, Registry: registry, RegistryURL: teamRegistryURL}
+	cert, err := issuer.issue(ctx, awid.TeamCertificateFields{
 		MemberDIDKey:  memberDID,
 		MemberDIDAW:   memberDIDAW,
 		MemberAddress: memberAddress,
@@ -2628,11 +2458,6 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	})
 	if err != nil {
 		return err
-	}
-
-	// Register at awid
-	if err := registry.RegisterCertificate(ctx, teamRegistryURL, domain, team, cert, teamKey); err != nil {
-		return fmt.Errorf("register certificate: %w", err)
 	}
 
 	fetchCommand := teamFetchCertificateCommand(domain, team, cert.CertificateID, "")
@@ -2703,17 +2528,12 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	registryURL := strings.TrimSpace(teamFetchCertRegistry)
-	if registryURL != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return fmt.Errorf("invalid --registry: %w", err)
-		}
-	} else {
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
-	}
-
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
+	registryURL, err := resolveTeamCommandRegistry(ctx, registry, workingDir, domain, teamID, teamFetchCertRegistry)
+	if err != nil {
+		return err
+	}
 
 	cert, err := registry.FetchTeamCertificate(ctx, registryURL, domain, team, certificateID, signingKey)
 	if err != nil {
@@ -2727,22 +2547,22 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	if err := checkCurrentTeamCertificate(ctx, teamCertificateInstall{RegistryURL: registryURL, Registry: registry}, cert); err != nil {
 		return err
 	}
-	status := "installed"
+	status := certificateInstalled
 	if existingErr == nil && existingCert != nil {
 		same, err := sameTeamCertificate(existingCert, cert)
 		if err != nil {
 			return err
 		}
 		if same {
-			status = "already_installed"
+			status = certificateAlreadyInstalled
 		}
 	}
-	if _, err := commitTeamCertificate(workingDir, identityRoot, "fetch-cert", cert, registryURL, "", func() (string, error) { return status, nil }); err != nil {
+	if _, err := commitTeamCertificate(certificateCommit{WorkingDir: workingDir, IdentityHome: identityRoot, Command: "fetch-cert", Certificate: cert, RegistryURL: registryURL, WorkspacePath: "", Decide: func() (certificateInstallStatus, error) { return status, nil }}); err != nil {
 		return err
 	}
 
 	return printOutput(teamFetchCertOutput{
-		Status:        status,
+		Status:        string(status),
 		TeamID:        teamID,
 		Alias:         strings.TrimSpace(cert.Alias),
 		CertificateID: strings.TrimSpace(cert.CertificateID),
@@ -2783,10 +2603,16 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	registryURL := resolveTeamRemoveRegistryURL(registry)
-
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	registryURL, err := resolveTeamCommandRegistry(ctx, registry, workingDir, domain, teamID, teamRemoveRegistryURL)
+	if err != nil {
+		return err
+	}
 
 	if certificateID == "" {
 		// The typed namespace is discarded here on purpose-for-now: the alias is
@@ -2896,25 +2722,6 @@ func verifyNamedMember(typedAddress, teamDomain string, ref *awid.TeamMemberRefe
 		)
 	}
 	return nil
-}
-
-// resolveTeamRemoveRegistryURL resolves the registry origin for a removal:
-// explicit flag → identity.yaml → default.
-func resolveTeamRemoveRegistryURL(registry *awid.RegistryClient) string {
-	registryURL := strings.TrimSpace(teamRemoveRegistryURL)
-	if registryURL == "" {
-		if workingDir, wdErr := os.Getwd(); wdErr == nil {
-			if home, homeErr := identityHomeForDir(workingDir); homeErr == nil {
-				if identity, idErr := awconfig.LoadWorktreeIdentityFrom(filepath.Join(home.Root, "identity.yaml")); idErr == nil && identity != nil {
-					registryURL = strings.TrimSpace(identity.RegistryURL)
-				}
-			}
-		}
-	}
-	if registryURL == "" {
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
-	}
-	return registryURL
 }
 
 // revokeRegistryTeamCertificate revokes under local team-controller authority.
@@ -3909,23 +3716,18 @@ func ensureLocalTeamRegistered(
 		return nil, fmt.Errorf("ensure namespace at registry: %w", err)
 	}
 
-	var teamPriv ed25519.PrivateKey
-	exists, err := awconfig.TeamKeyExists(domain, name)
+	if err := settleUnconfirmedTeamKey(ctx, registry, registryURL, domain, name); err != nil {
+		return nil, err
+	}
+
+	// The key is in local custody before the registry pins the team to it,
+	// so an interrupted run is completed by a retry that reuses it.
+	teamPriv, created, err := teamKeyForCreate(domain, name)
 	if err != nil {
 		return nil, err
 	}
-	if exists {
-		teamPriv, err = awconfig.LoadTeamKey(domain, name)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		_, teamPriv, err = awid.GenerateKeypair()
-		if err != nil {
-			return nil, err
-		}
-	}
-	teamDIDKey := awid.ComputeDIDKey(teamPriv.Public().(ed25519.PublicKey))
+	teamPub := teamPriv.Public().(ed25519.PublicKey)
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
 	_, err = registry.CreateTeam(ctx, registryURL, domain, name, strings.TrimSpace(displayName), teamDIDKey, controllerKey)
 	if err != nil {
@@ -3933,20 +3735,47 @@ func ensureLocalTeamRegistered(
 			return nil, fmt.Errorf("create team at registry: %w", err)
 		}
 		existingTeam, getErr := registry.GetTeam(ctx, registryURL, domain, name, teamPriv)
+		if awid.IsTeamPrivateError(getErr) {
+			// A private team refuses this read, signed with teamPriv, only
+			// when teamPriv is neither its key nor a member's: the registry
+			// pins another key.
+			taken := withErrorCode(codeTeamNameTaken, fmt.Errorf("create team at registry: %w\nRestore this team's controller key to reuse it, or choose another --name.", err))
+			if created {
+				if removeErr := awconfig.RemoveTeamKey(domain, name, teamPub); removeErr != nil {
+					return nil, fmt.Errorf("%w. The unregistered team key this run saved was kept: %v", taken, removeErr)
+				}
+			}
+			return nil, taken
+		}
 		if getErr != nil {
-			debugLog("read existing team after name conflict: %v", getErr)
-			return nil, withErrorCode(codeTeamNameTaken, fmt.Errorf("create team at registry: %w\nRestore this team's controller key to reuse it, or choose another --name.", err))
+			// The registry has the name but could not say which key holds
+			// it; a failed read is not a taken name. A key this run created
+			// may be the registered one (another run here registered it
+			// first), so it is set aside, never destroyed, and never read as
+			// the team key until a read settles it.
+			aside := ""
+			if created {
+				path, asideErr := awconfig.SetAsideUnconfirmedTeamKey(domain, name, teamPub)
+				if asideErr != nil {
+					return nil, fmt.Errorf("%w. The team key this run saved could not be set aside: %v", unconfirmedTeamNameError(domain, name, "", getErr), asideErr)
+				}
+				aside = path
+			}
+			return nil, unconfirmedTeamNameError(domain, name, aside, getErr)
 		}
 		if strings.TrimSpace(existingTeam.TeamDIDKey) != teamDIDKey {
-			return nil, withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is already pinned to %s\nRestore its current controller key to reuse this team, or choose another --name.", domain, name, existingTeam.TeamDIDKey))
+			pinned := teamPinnedElsewhereError(domain, name, existingTeam.TeamDIDKey)
+			// A key this run created was never registered; keep no key file
+			// for a team pinned to another key.
+			if created {
+				if removeErr := awconfig.RemoveTeamKey(domain, name, teamPub); removeErr != nil {
+					return nil, fmt.Errorf("%w. The unregistered team key this run saved was kept: %v", pinned, removeErr)
+				}
+			}
+			return nil, pinned
 		}
 	}
 
-	if !exists {
-		if err := awconfig.SaveTeamKey(domain, name, teamPriv); err != nil {
-			return nil, err
-		}
-	}
 	teamKeyPath, err := awconfig.TeamKeyPath(domain, name)
 	if err != nil {
 		return nil, err
@@ -3957,6 +3786,85 @@ func ensureLocalTeamRegistered(
 		TeamKey:     teamPriv,
 		TeamKeyPath: teamKeyPath,
 	}, nil
+}
+
+// settleUnconfirmedTeamKey settles a team key an earlier run set aside as
+// unconfirmed, before this run reads or creates a team key. A registry read
+// that succeeds restores it when the registry pins exactly that key, and
+// removes it, refusing the name as taken, when the registry pins another; a
+// private team's refusal of the read signed with that key shows the same. A
+// read that fails otherwise leaves it set aside and refuses: no new key is
+// created while one that may be registered is unsettled.
+func settleUnconfirmedTeamKey(ctx context.Context, registry *awid.RegistryClient, registryURL, domain, name string) error {
+	key, aside, err := awconfig.LoadUnconfirmedTeamKey(domain, name)
+	if err != nil || key == nil {
+		return err
+	}
+	pub := key.Public().(ed25519.PublicKey)
+	team, err := registry.GetTeam(ctx, registryURL, domain, name, key)
+	var pinned error
+	switch {
+	case awid.IsTeamPrivateError(err):
+		// A private team refuses a read signed with the set-aside key only
+		// when that key is neither its key nor a member's.
+		pinned = withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is private and refuses a read signed with the team key this machine set aside, so another key holds it: %w\nRestore this team's controller key to reuse it, or choose another --name.", domain, name, err))
+	case err != nil:
+		return unconfirmedTeamNameError(domain, name, aside, err)
+	case strings.TrimSpace(team.TeamDIDKey) == awid.ComputeDIDKey(pub):
+		return awconfig.RestoreUnconfirmedTeamKey(domain, name)
+	default:
+		pinned = teamPinnedElsewhereError(domain, name, team.TeamDIDKey)
+	}
+	if err := awconfig.RemoveUnconfirmedTeamKey(domain, name, pub); err != nil {
+		return fmt.Errorf("%w. The unconfirmed team key at %s was kept: %v", pinned, aside, err)
+	}
+	return pinned
+}
+
+// unconfirmedTeamNameError is the refusal when the registry has a team's name
+// and a read could not say which key holds it. aside is where this machine's
+// unconfirmed key waits, or "" when no key was set aside.
+func unconfirmedTeamNameError(domain, name, aside string, readErr error) error {
+	held := ""
+	if aside != "" {
+		held = fmt.Sprintf("\nThe team key this machine created is set aside at %s and is not used as the team key.", aside)
+	}
+	return withErrorCode(codeTeamNameUnconfirmed, fmt.Errorf("team %s/%s already exists at the registry, and reading it to confirm which key holds it failed: %w%s\nRun the same command again once the registry answers: aw restores a set-aside key the registry pins and removes one it does not.", domain, name, readErr, held))
+}
+
+// teamPinnedElsewhereError is the refusal when the registry pins a team's
+// name to another key.
+func teamPinnedElsewhereError(domain, name, pinnedDIDKey string) error {
+	return withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is already pinned to %s\nRestore its current controller key to reuse this team, or choose another --name.", domain, name, pinnedDIDKey))
+}
+
+// teamKeyForCreate returns the team key to register: the key already saved
+// for the team, or a new key saved exclusively before any registry call.
+// created reports that this run saved the key. When another run saved a key
+// first, that key is used, so concurrent runs register one key.
+func teamKeyForCreate(domain, name string) (key ed25519.PrivateKey, created bool, err error) {
+	exists, err := awconfig.TeamKeyExists(domain, name)
+	if err != nil {
+		return nil, false, err
+	}
+	if !exists {
+		_, key, err = awid.GenerateKeypair()
+		if err != nil {
+			return nil, false, err
+		}
+		err = awconfig.CreateTeamKey(domain, name, key)
+		if err == nil {
+			return key, true, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, false, err
+		}
+	}
+	key, err = awconfig.LoadTeamKey(domain, name)
+	if err != nil {
+		return nil, false, err
+	}
+	return key, false, nil
 }
 
 func resolveTeamMemberEnrollment(ctx context.Context, opts teamMemberEnrollmentResolveOptions) (teamMemberEnrollmentPlan, error) {

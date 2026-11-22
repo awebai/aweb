@@ -154,7 +154,7 @@ func (c *RegistryClient) SetFallbackRegistryURL(raw string) error {
 	if err := c.Resolver.SetFallbackRegistryURL(raw); err != nil {
 		return err
 	}
-	canonical, err := canonicalRegistryServerOrigin(raw)
+	canonical, err := CanonicalRegistryServerOrigin(raw)
 	if err != nil {
 		return err
 	}
@@ -633,6 +633,10 @@ func (c *RegistryClient) newRequest(ctx context.Context, method, registryURL, pa
 	registryURL = strings.TrimSpace(registryURL)
 	if registryURL == "" {
 		registryURL = c.defaultRegistryURL()
+	}
+	registryURL, err := CanonicalRegistryServerOrigin(registryURL)
+	if err != nil {
+		return nil, err
 	}
 	var reader io.Reader
 	if raw != nil {

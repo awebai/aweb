@@ -87,7 +87,7 @@ func TestTeamUpPlanEnumeratesMaterializedAgents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plan, err := buildTeamUpPlan(root, "eng:local", false, false)
+	plan, err := buildTeamUpPlanForSession(root, teamUpSessionSelection{Session: "eng:local", TmuxContext: teamUpConfiguredTmuxContext}, false, false)
 	if err != nil {
 		t.Fatalf("buildTeamUpPlan: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestTeamUpPlanNormalizesDottedSessionNameForTmux(t *testing.T) {
 	resetTeamUpDetectorsForTest(t)
 	root := t.TempDir()
 	writeMaterializedAgentForTeamUp(t, root, "developer", "pi")
-	plan, err := buildTeamUpPlan(root, "aweb-juan.aweb.ai", false, false)
+	plan, err := buildTeamUpPlanForSession(root, teamUpSessionSelection{Session: "aweb-juan.aweb.ai", TmuxContext: teamUpConfiguredTmuxContext}, false, false)
 	if err != nil {
 		t.Fatalf("buildTeamUpPlan: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestTeamUpPlanDefaultsMissingRuntimeKindToClaudeCode(t *testing.T) {
 	resetTeamUpDetectorsForTest(t)
 	root := t.TempDir()
 	writeMaterializedAgentForTeamUp(t, root, "developer", "")
-	plan, err := buildTeamUpPlan(root, "", false, false)
+	plan, err := buildTeamUpPlanForSession(root, teamUpSessionSelection{Session: "", TmuxContext: teamUpConfiguredTmuxContext}, false, false)
 	if err != nil {
 		t.Fatalf("buildTeamUpPlan: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestTeamUpPlanRejectsUnsupportedRuntime(t *testing.T) {
 	resetTeamUpDetectorsForTest(t)
 	root := t.TempDir()
 	writeMaterializedAgentForTeamUp(t, root, "coder", "codex")
-	_, err := buildTeamUpPlan(root, "aw-team", false, false)
+	_, err := buildTeamUpPlanForSession(root, teamUpSessionSelection{Session: "aw-team", TmuxContext: teamUpConfiguredTmuxContext}, false, false)
 	if err == nil || !strings.Contains(err.Error(), "only claude-code and pi are supported") {
 		t.Fatalf("error=%v", err)
 	}
@@ -148,7 +148,7 @@ func TestTeamUpPlanSkipsHomeWithActiveProcess(t *testing.T) {
 	teamUpDetectActiveHomes = func(string) (map[string]teamUpRunningProcess, error) {
 		return map[string]teamUpRunningProcess{canonicalTeamUpPath(home): {PID: 123, Command: "node", CWD: home}}, nil
 	}
-	plan, err := buildTeamUpPlan(root, "aw-team", false, false)
+	plan, err := buildTeamUpPlanForSession(root, teamUpSessionSelection{Session: "aw-team", TmuxContext: teamUpConfiguredTmuxContext}, false, false)
 	if err != nil {
 		t.Fatalf("buildTeamUpPlan: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestTeamUpPlanForceIgnoresActiveProcess(t *testing.T) {
 		t.Fatal("active process detector should not run when force is true")
 		return nil, nil
 	}
-	plan, err := buildTeamUpPlan(root, "aw-team", true, false)
+	plan, err := buildTeamUpPlanForSession(root, teamUpSessionSelection{Session: "aw-team", TmuxContext: teamUpConfiguredTmuxContext}, true, false)
 	if err != nil {
 		t.Fatalf("buildTeamUpPlan: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestTeamUpPlanRecreateIgnoresActiveProcess(t *testing.T) {
 		t.Fatal("active process detector should not run when recreate is true")
 		return nil, nil
 	}
-	plan, err := buildTeamUpPlan(root, "aw-team", false, true)
+	plan, err := buildTeamUpPlanForSession(root, teamUpSessionSelection{Session: "aw-team", TmuxContext: teamUpConfiguredTmuxContext}, false, true)
 	if err != nil {
 		t.Fatalf("buildTeamUpPlan: %v", err)
 	}
@@ -644,7 +644,7 @@ func TestConfirmClaudeChannelPromptAnswersTrustThenDevChannelPrompts(t *testing.
 		return nil
 	}
 	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
-	if err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent}); err != nil {
+	if err := confirmStartedClaudeChannelPromptsInContext(teamUpConfiguredTmuxContext, "aw-team", []teamUpAgentPlan{agent}); err != nil {
 		t.Fatalf("confirmStartedClaudeChannelPrompts: %v", err)
 	}
 	want := []string{"send-keys -t aw-team:developer Enter", "send-keys -t aw-team:developer Enter"}
@@ -675,7 +675,7 @@ func TestConfirmClaudeChannelPromptDoesNotTreatBypassWithActivePromptAsComplete(
 		return nil
 	}
 	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
-	if err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent}); err != nil {
+	if err := confirmStartedClaudeChannelPromptsInContext(teamUpConfiguredTmuxContext, "aw-team", []teamUpAgentPlan{agent}); err != nil {
 		t.Fatalf("confirmStartedClaudeChannelPrompts: %v", err)
 	}
 	if len(sent) != 1 || sent[0] != "send-keys -t aw-team:developer Enter" {
@@ -706,7 +706,7 @@ func TestConfirmClaudeChannelPromptHandlesStaleTrustTextAboveDevPrompt(t *testin
 		return nil
 	}
 	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
-	if err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent}); err != nil {
+	if err := confirmStartedClaudeChannelPromptsInContext(teamUpConfiguredTmuxContext, "aw-team", []teamUpAgentPlan{agent}); err != nil {
 		t.Fatalf("confirmStartedClaudeChannelPrompts: %v", err)
 	}
 	want := []string{"send-keys -t aw-team:developer Enter", "send-keys -t aw-team:developer Enter"}
@@ -732,7 +732,7 @@ func TestConfirmClaudeChannelPromptSendsEnterAfterSeeingPrompt(t *testing.T) {
 		return nil
 	}
 	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
-	if err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent}); err != nil {
+	if err := confirmStartedClaudeChannelPromptsInContext(teamUpConfiguredTmuxContext, "aw-team", []teamUpAgentPlan{agent}); err != nil {
 		t.Fatalf("confirmStartedClaudeChannelPrompts: %v", err)
 	}
 	if len(sent) != 1 || sent[0] != "send-keys -t aw-team:developer Enter" {
@@ -751,7 +751,7 @@ func TestConfirmClaudeChannelPromptAlreadyCompleteSendsNothing(t *testing.T) {
 		return nil
 	}
 	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
-	if err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent}); err != nil {
+	if err := confirmStartedClaudeChannelPromptsInContext(teamUpConfiguredTmuxContext, "aw-team", []teamUpAgentPlan{agent}); err != nil {
 		t.Fatalf("confirmStartedClaudeChannelPrompts: %v", err)
 	}
 }
@@ -765,7 +765,7 @@ func TestConfirmClaudeChannelPromptDoesNotSendBlindBeforePrompt(t *testing.T) {
 		return nil
 	}
 	agent := teamUpAgentPlan{Name: "developer", RuntimeKind: "claude-code"}
-	err := confirmStartedClaudeChannelPrompts("aw-team", []teamUpAgentPlan{agent})
+	err := confirmStartedClaudeChannelPromptsInContext(teamUpConfiguredTmuxContext, "aw-team", []teamUpAgentPlan{agent})
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -1010,7 +1010,7 @@ func TestTeamUpPlanRefusesHomesThatDoNotAccountForThemselves(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	plan, err := buildTeamUpPlan(root, "aawn:local", false, false)
+	plan, err := buildTeamUpPlanForSession(root, teamUpSessionSelection{Session: "aawn:local", TmuxContext: teamUpConfiguredTmuxContext}, false, false)
 	if err != nil {
 		t.Fatalf("buildTeamUpPlan: %v", err)
 	}

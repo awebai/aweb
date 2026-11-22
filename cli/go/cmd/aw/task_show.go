@@ -39,8 +39,7 @@ func runTaskShow(cmd *cobra.Command, args []string) error {
 	}
 	task.Comments = comments.Comments
 
-	printOutput(task, func(v any) string {
+	return printOutput(task, func(v any) string {
 		return formatTaskDetail(v.(*aweb.Task))
 	})
-	return nil
 }

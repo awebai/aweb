@@ -86,7 +86,10 @@ func TestOATSControllerInviteExpiresFlagUsesTheSavedLifetime(t *testing.T) {
 	if err := os.Remove(keyPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveTeamState(dir, &awconfig.TeamState{ActiveTeam: "one:example.com", Memberships: []awconfig.TeamMembership{{TeamID: "one:example.com", Alias: "root", CertPath: "team-certs/one.pem", AwebURL: "https://service.invalid"}}}); err != nil {
+	if err := awconfig.SaveTeamState(dir, &awconfig.TeamState{ActiveTeam: "one:example.com", Memberships: []awconfig.TeamMembership{{
+		TeamID: "one:example.com", Alias: "root", CertPath: "team-certs/one.pem",
+		AwebURL: "https://service.invalid", RegistryURL: "https://registry.example.test",
+	}}}); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin, "team", "invite", "--team-id", "one:example.com", "--expires", "48h", "--preflight", "--json")

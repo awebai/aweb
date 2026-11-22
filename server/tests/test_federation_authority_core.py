@@ -74,12 +74,15 @@ def vector_checkpoint_candidate(case: dict) -> CheckpointCandidate:
     snapshot = case["snapshot"]
     raw = case.get("candidate") or case["candidates"][0]
     seq = raw["seq"]
-    state_hash = raw.get("state_hash") or hashlib.sha256(
-        f"{case['name']}:{seq}:state".encode()
-    ).hexdigest()
-    current_key = raw.get("current_did_key") or (
-        snapshot.get("current_did_key") if snapshot else None
-    ) or evidence().current_did_key
+    state_hash = (
+        raw.get("state_hash")
+        or hashlib.sha256(f"{case['name']}:{seq}:state".encode()).hexdigest()
+    )
+    current_key = (
+        raw.get("current_did_key")
+        or (snapshot.get("current_did_key") if snapshot else None)
+        or evidence().current_did_key
+    )
     return CheckpointCandidate(
         did_aw=evidence().did_aw,
         seq=seq,
@@ -87,12 +90,18 @@ def vector_checkpoint_candidate(case: dict) -> CheckpointCandidate:
         state_hash=state_hash,
         current_did_key=current_key,
         contains_snapshot=raw.get("contains_snapshot", False),
-        expected_revision=snapshot.get("revision") if snapshot and seq > snapshot["seq"] else None,
-        expected_entry_hash=snapshot.get("entry_hash") if snapshot and seq > snapshot["seq"] else None,
+        expected_revision=snapshot.get("revision")
+        if snapshot and seq > snapshot["seq"]
+        else None,
+        expected_entry_hash=snapshot.get("entry_hash")
+        if snapshot and seq > snapshot["seq"]
+        else None,
     )
 
 
-def vector_cohort(candidate: CheckpointCandidate, revision: int, *, address: str | None = None) -> AddressAuthorityCandidate:
+def vector_cohort(
+    candidate: CheckpointCandidate, revision: int, *, address: str | None = None
+) -> AddressAuthorityCandidate:
     value = evidence()
     return AddressAuthorityCandidate(
         canonical_address=address or value.canonical_address,
@@ -127,9 +136,8 @@ async def insert_vector_snapshot(db, snapshot: dict) -> None:
         evidence().did_aw,
         snapshot["seq"],
         snapshot["entry_hash"],
-        snapshot.get("state_hash") or hashlib.sha256(
-            f"snapshot:{snapshot['seq']}:state".encode()
-        ).hexdigest(),
+        snapshot.get("state_hash")
+        or hashlib.sha256(f"snapshot:{snapshot['seq']}:state".encode()).hexdigest(),
         snapshot.get("current_did_key") or evidence().current_did_key,
         snapshot["revision"],
     )
@@ -139,13 +147,16 @@ async def insert_vector_snapshot(db, snapshot: dict) -> None:
 @pytest.mark.parametrize(
     "case", _STATE_VECTOR["checkpoint_cases"], ids=lambda case: case["name"]
 )
-async def test_checkpoint_vectors_execute_against_postgresql(case: dict, aweb_cloud_db) -> None:
+async def test_checkpoint_vectors_execute_against_postgresql(
+    case: dict, aweb_cloud_db
+) -> None:
     if case["snapshot"] is not None:
         await insert_vector_snapshot(aweb_cloud_db.aweb_db, case["snapshot"])
     repository = AuthorityRepository(aweb_cloud_db.aweb_db)
     expected = case["expected"]
 
     if case["name"] == "two_n_plus_one_forks_allow_one_winner":
+
         async def commit(raw: dict):
             candidate = vector_checkpoint_candidate({**case, "candidate": raw})
             try:
@@ -157,7 +168,10 @@ async def test_checkpoint_vectors_execute_against_postgresql(case: dict, aweb_cl
                 return exc.reason
 
         results = await asyncio.gather(*(commit(raw) for raw in case["candidates"]))
-        assert sum(isinstance(result, AuthoritySecurityToken) for result in results) == expected["max_winners"]
+        assert (
+            sum(isinstance(result, AuthoritySecurityToken) for result in results)
+            == expected["max_winners"]
+        )
         assert expected["reason_for_loser"] in results
         return
 
@@ -217,7 +231,9 @@ def advanced_checkpoint() -> CheckpointCandidate:
 @pytest.mark.parametrize(
     "case", _STATE_VECTOR["cohort_cases"], ids=lambda case: case["name"]
 )
-async def test_cohort_vectors_execute_against_postgresql(case: dict, aweb_cloud_db) -> None:
+async def test_cohort_vectors_execute_against_postgresql(
+    case: dict, aweb_cloud_db
+) -> None:
     repository = AuthorityRepository(aweb_cloud_db.aweb_db)
     candidate = first_checkpoint()
     expected = case["expected"]
@@ -247,7 +263,11 @@ async def test_cohort_vectors_execute_against_postgresql(case: dict, aweb_cloud_
         return
 
     if name == "checkpoint_advance_invalidates_every_older_did_cohort":
-        addresses = ["alpha.example.com/Alice", "beta.example.com/Alice", "gamma.example.com/Alice"]
+        addresses = [
+            "alpha.example.com/Alice",
+            "beta.example.com/Alice",
+            "gamma.example.com/Alice",
+        ]
         for address in addresses:
             await repository.commit_phase_a(
                 candidate, vector_cohort(candidate, 1, address=address)
@@ -269,7 +289,11 @@ async def test_cohort_vectors_execute_against_postgresql(case: dict, aweb_cloud_
         return
 
     if name == "fresh_source_change_invalidates_peer_cohorts":
-        addresses = ["alpha.example.com/Alice", "beta.example.com/Alice", "gamma.example.com/Alice"]
+        addresses = [
+            "alpha.example.com/Alice",
+            "beta.example.com/Alice",
+            "gamma.example.com/Alice",
+        ]
         for address in addresses:
             await repository.commit_phase_a(
                 candidate, vector_cohort(candidate, 1, address=address)
@@ -333,11 +357,15 @@ async def test_cohort_vectors_execute_against_postgresql(case: dict, aweb_cloud_
             base.canonical_address,
         )
         assert token.cohort_generation == expected["generation"]
-        assert all(row[field] == getattr(changed, field) for field in case["input"]["changed_fields"])
+        assert all(
+            row[field] == getattr(changed, field)
+            for field in case["input"]["changed_fields"]
+        )
         assert expected["merge_fields"] is False
         return
 
     if name == "fast_path_requires_postgresql_row_and_exact_tuple":
+
         class FailedDB:
             def transaction(self):
                 raise RuntimeError("postgres unavailable")
@@ -369,14 +397,23 @@ async def test_cohort_vectors_execute_against_postgresql(case: dict, aweb_cloud_
         evidence().canonical_address,
     )
     if name == "expiry_requires_full_authoritative_reread":
-        assert await repository.authorize_from_cohort(
-            canonical_address=evidence().canonical_address,
-            did_aw=evidence().did_aw,
-            current_did_key=evidence().current_did_key,
-            delivery_origin=evidence().delivery_origin,
-        ) is None
+        assert (
+            await repository.authorize_from_cohort(
+                canonical_address=evidence().canonical_address,
+                did_aw=evidence().did_aw,
+                current_did_key=evidence().current_did_key,
+                delivery_origin=evidence().delivery_origin,
+            )
+            is None
+        )
         assert expected["reuse"] is False
-        assert expected["reread"] == ["dns", "namespace", "address", "key_or_log", "origin"]
+        assert expected["reread"] == [
+            "dns",
+            "namespace",
+            "address",
+            "key_or_log",
+            "origin",
+        ]
         return
 
     assert name == "source_suppression_can_renew_old_valid_state_without_sla_claim"
@@ -393,7 +430,9 @@ async def test_cohort_vectors_execute_against_postgresql(case: dict, aweb_cloud_
 @pytest.mark.parametrize(
     "case", _STATE_VECTOR["work_fence_cases"], ids=lambda case: case["name"]
 )
-async def test_work_fence_vectors_execute_against_postgresql(case: dict, aweb_cloud_db) -> None:
+async def test_work_fence_vectors_execute_against_postgresql(
+    case: dict, aweb_cloud_db
+) -> None:
     work = AuthorityWorkRepository(aweb_cloud_db.aweb_db)
     expected = case["expected"]
     name = case["name"]
@@ -413,6 +452,7 @@ async def test_work_fence_vectors_execute_against_postgresql(case: dict, aweb_cl
         return
 
     if name == "external_work_holds_no_pool_connection":
+
         class TrackingRepository:
             active = False
 
@@ -426,7 +466,9 @@ async def test_work_fence_vectors_execute_against_postgresql(case: dict, aweb_cl
             async def commit_phase_a(self, _checkpoint, _cohort, *, fences=()):
                 self.active = True
                 try:
-                    return AuthoritySecurityToken(evidence().canonical_address, evidence().did_aw, 1, 1)
+                    return AuthoritySecurityToken(
+                        evidence().canonical_address, evidence().did_aw, 1, 1
+                    )
                 finally:
                     self.active = False
 
@@ -438,7 +480,7 @@ async def test_work_fence_vectors_execute_against_postgresql(case: dict, aweb_cl
                 return evidence()
 
         repository = TrackingRepository()
-        await FederationAuthorityCore(repository).resolve_and_commit(
+        await FederationAuthorityCore(repository).resolve_evidence_and_commit(
             claim(), Resolver(), authority_generation=1, publishing_fence=1
         )
         assert expected == {"open_transaction": False, "checked_out_connection": False}
@@ -497,11 +539,16 @@ async def test_work_fence_vectors_execute_against_postgresql(case: dict, aweb_cl
         with pytest.raises(FederationAuthorityError) as raised:
             await AuthorityRepository(aweb_cloud_db.aweb_db).commit_phase_a(
                 candidate,
-                AddressAuthorityCandidate(**{**vector_cohort(candidate, 1).__dict__, "publishing_fence": 2}),
+                AddressAuthorityCandidate(
+                    **{**vector_cohort(candidate, 1).__dict__, "publishing_fence": 2}
+                ),
                 fences=leases,
             )
         assert raised.value.reason == "federation_authority_cas_conflict"
-        assert expected == {"sorted_scope_locking": True, "exact_owner_fence_unexpired_required": True}
+        assert expected == {
+            "sorted_scope_locking": True,
+            "exact_owner_fence_unexpired_required": True,
+        }
         return
 
     if name == "permit_count_ignores_expired_leases":
@@ -579,15 +626,23 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
                 return exc.reason
 
         wrong_did = name.startswith("wrong_claim")
-        wrong = claim(did_aw="did:aw:wrong") if wrong_did else AuthorityClaim(
-            canonical_address=value.canonical_address,
-            did_aw=value.did_aw,
-            current_did_key="did:key:wrong",
-            delivery_origin=value.delivery_origin,
+        wrong = (
+            claim(did_aw="did:aw:wrong")
+            if wrong_did
+            else AuthorityClaim(
+                canonical_address=value.canonical_address,
+                did_aw=value.did_aw,
+                current_did_key="did:key:wrong",
+                delivery_origin=value.delivery_origin,
+            )
         )
-        wrong_result, correct_result = await asyncio.gather(attempt(wrong), attempt(claim()))
+        wrong_result, correct_result = await asyncio.gather(
+            attempt(wrong), attempt(claim())
+        )
         assert wrong_result == (
-            "sender_address_did_mismatch" if wrong_did else "sender_current_key_mismatch"
+            "sender_address_did_mismatch"
+            if wrong_did
+            else "sender_current_key_mismatch"
         )
         assert isinstance(correct_result, AuthoritySecurityToken)
         if wrong_did:
@@ -618,15 +673,17 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
         payload = authority_result_scope_payload(scope)
         assert list(payload) == expected["key_fields"]
         reuse_seconds = case["input"]["reuse_seconds"]
-        assert authority_result_ttl_seconds(
-            "authoritative_not_found", reuse_seconds
-        ) == reuse_seconds
-        assert authority_result_ttl_seconds(
-            "authoritative_not_found", reuse_seconds + 1
-        ) == reuse_seconds
-        assert authority_result_ttl_seconds(
-            "authoritative_not_found", 60
-        ) == reuse_seconds
+        assert (
+            authority_result_ttl_seconds("authoritative_not_found", reuse_seconds)
+            == reuse_seconds
+        )
+        assert (
+            authority_result_ttl_seconds("authoritative_not_found", reuse_seconds + 1)
+            == reuse_seconds
+        )
+        assert (
+            authority_result_ttl_seconds("authoritative_not_found", 60) == reuse_seconds
+        )
         return
 
     if name == "malformed_evidence_scope_includes_response_digest":
@@ -634,11 +691,17 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
             scope, response_digest="sha256:" + "f" * 64
         )
         assert list(payload) == expected["key_fields"]
-        assert list(payload["complete_source_scope"]) == _STATE_VECTOR["evidence_reuse_cases"][3]["expected"]["key_fields"]
+        assert (
+            list(payload["complete_source_scope"])
+            == _STATE_VECTOR["evidence_reuse_cases"][3]["expected"]["key_fields"]
+        )
         return
 
     if name == "dns_transport_failure_is_retryable_and_short_lived":
-        assert authority_result_ttl_seconds("dns_transport_failure", 60) == expected["max_seconds"]
+        assert (
+            authority_result_ttl_seconds("dns_transport_failure", 60)
+            == expected["max_seconds"]
+        )
         assert expected["retryable"] is True
         return
 
@@ -664,7 +727,9 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
                 self.commits += 1
                 if self.commits < case["input"]["attempted_bypasses"]:
                     raise FederationAuthorityError("federation_authority_cas_conflict")
-                return AuthoritySecurityToken(evidence().canonical_address, evidence().did_aw, 2, 3)
+                return AuthoritySecurityToken(
+                    evidence().canonical_address, evidence().did_aw, 2, 3
+                )
 
         class Resolver:
             def __init__(self) -> None:
@@ -673,15 +738,21 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
             async def fetch_evidence(self, _address, **kwargs):
                 self.calls.append(kwargs)
                 return ExternalAuthorityEvidence(
-                    **{**evidence().__dict__, "verified_checkpoint": kwargs["checkpoint"]}
+                    **{
+                        **evidence().__dict__,
+                        "verified_checkpoint": kwargs["checkpoint"],
+                    }
                 )
 
         racing = RacingRepository()
         resolver = Resolver()
-        await FederationAuthorityCore(racing).resolve_and_commit(
+        await FederationAuthorityCore(racing).resolve_evidence_and_commit(
             claim(), resolver, authority_generation=3, publishing_fence=1
         )
-        assert sum(item.get("bypass_cache", False) for item in resolver.calls) == expected["performed_bypasses"]
+        assert (
+            sum(item.get("bypass_cache", False) for item in resolver.calls)
+            == expected["performed_bypasses"]
+        )
         assert expected["through_singleflight"] is True
         return
 
@@ -695,13 +766,17 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
             "authority_generation": case["input"]["new_generation"],
         }
     )
-    second = await core.commit_verified_evidence(claim(), replacement, publishing_fence=2)
+    second = await core.commit_verified_evidence(
+        claim(), replacement, publishing_fence=2
+    )
     assert second.cohort_generation == first.cohort_generation + 1
     assert expected == {"old_mismatch_reused": False, "new_tuple_replaces_whole": True}
 
 
 @pytest.mark.asyncio
-async def test_inactive_core_commits_verified_evidence_then_uses_shared_fast_path(aweb_cloud_db) -> None:
+async def test_inactive_core_commits_verified_evidence_then_uses_shared_fast_path(
+    aweb_cloud_db,
+) -> None:
     repository = AuthorityRepository(aweb_cloud_db.aweb_db)
     core = FederationAuthorityCore(repository)
     token = await core.commit_verified_evidence(claim(), evidence(), publishing_fence=1)
@@ -711,7 +786,9 @@ async def test_inactive_core_commits_verified_evidence_then_uses_shared_fast_pat
 
 
 @pytest.mark.asyncio
-async def test_wrong_claim_does_not_mutate_or_poison_correct_claim(aweb_cloud_db) -> None:
+async def test_wrong_claim_does_not_mutate_or_poison_correct_claim(
+    aweb_cloud_db,
+) -> None:
     repository = AuthorityRepository(aweb_cloud_db.aweb_db)
     core = FederationAuthorityCore(repository)
     with pytest.raises(FederationAuthorityError) as wrong:
@@ -748,13 +825,17 @@ async def test_cas_conflict_reloads_winner_and_uses_one_bypass() -> None:
             self.commits += 1
             if self.commits == 1:
                 raise FederationAuthorityError("federation_authority_cas_conflict")
-            return AuthoritySecurityToken(evidence().canonical_address, evidence().did_aw, 2, 3)
+            return AuthoritySecurityToken(
+                evidence().canonical_address, evidence().did_aw, 2, 3
+            )
 
     class Resolver:
         def __init__(self) -> None:
             self.calls = []
 
-        async def fetch_evidence(self, _address, *, authority_generation, checkpoint, bypass_cache=False):
+        async def fetch_evidence(
+            self, _address, *, authority_generation, checkpoint, bypass_cache=False
+        ):
             self.calls.append((authority_generation, checkpoint, bypass_cache))
             return ExternalAuthorityEvidence(
                 **{
@@ -766,10 +847,10 @@ async def test_cas_conflict_reloads_winner_and_uses_one_bypass() -> None:
     repository = RacingRepository()
     resolver = Resolver()
     core = FederationAuthorityCore(repository)
-    token = await core.resolve_and_commit(
+    token = await core.resolve_evidence_and_commit(
         claim(), resolver, authority_generation=3, publishing_fence=9
     )
-    assert token.cohort_generation == 3
+    assert token.token.cohort_generation == 3
     assert resolver.calls == [(3, None, False), (3, winner, True)]
     assert repository.commits == 2
 

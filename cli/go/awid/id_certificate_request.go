@@ -43,7 +43,7 @@ func SignIDCertificateRequest(request map[string]any, sign IDCertificateSigner) 
 		return nil, err
 	}
 	if signer != request["subject_key"] {
-		return nil, idCertificateRefusal("invalid_proof")
+		return nil, idCertificateRefusal(IDRefusalInvalidProof)
 	}
 	raw, err := idCertificateCanonical(map[string]any{"request": request, "signature": base64.RawURLEncoding.EncodeToString(signature)})
 	if err != nil {
@@ -60,11 +60,11 @@ func SignIDCertificateRequest(request map[string]any, sign IDCertificateSigner) 
 // groups of eight lowercase hex digits.
 func IDKeyFingerprint(didKey string) (string, error) {
 	if !idCertificateIDValid(didKey, true) {
-		return "", idCertificateRefusal("invalid_shape")
+		return "", idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	k, err := ExtractPublicKey(didKey)
 	if err != nil {
-		return "", idCertificateRefusal("invalid_shape")
+		return "", idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	sum := sha256.Sum256(k)
 	h := hex.EncodeToString(sum[:16])
@@ -75,13 +75,13 @@ func IDKeyFingerprint(didKey string) (string, error) {
 // subject key's proof of possession.
 func ParseIDCertificateRequest(raw []byte) (map[string]any, error) {
 	if len(raw) > IDCertificateRequestMaxBytes {
-		return nil, idCertificateRefusal("bundle_too_large")
+		return nil, idCertificateRefusal(IDRefusalBundleTooLarge)
 	}
 	signed, err := idCertificateDecodeCanonical(raw)
 	if err != nil {
 		return nil, err
 	}
-	invalid := idCertificateRefusal("invalid_shape")
+	invalid := idCertificateRefusal(IDRefusalInvalidShape)
 	if !idCertificateExactFields(signed, "request", "signature") {
 		return nil, invalid
 	}
@@ -99,7 +99,10 @@ func ParseIDCertificateRequest(raw []byte) (map[string]any, error) {
 	if !ok || !idCertificateIDValid(subject, true) {
 		return nil, invalid
 	}
-	id := r["id"].(string)
+	id, idOK := r["id"].(string)
+	if !idOK {
+		return nil, invalid
+	}
 	if strings.HasPrefix(id, "did:key:") && id != subject {
 		return nil, invalid
 	}
@@ -141,7 +144,7 @@ func EncodeIDCertificateResponse(requestID string, chain map[string]any) ([]byte
 		return nil, err
 	}
 	if len(raw) > IDCertificateRequestMaxBytes {
-		return nil, idCertificateRefusal("bundle_too_large")
+		return nil, idCertificateRefusal(IDRefusalBundleTooLarge)
 	}
 	return raw, nil
 }
@@ -150,7 +153,7 @@ func EncodeIDCertificateResponse(requestID string, chain map[string]any) ([]byte
 // signatures authenticate the result; request_id is correlation only.
 func ParseIDCertificateResponse(raw []byte) (map[string]any, error) {
 	if len(raw) > IDCertificateRequestMaxBytes {
-		return nil, idCertificateRefusal("bundle_too_large")
+		return nil, idCertificateRefusal(IDRefusalBundleTooLarge)
 	}
 	response, err := idCertificateDecodeCanonical(raw)
 	if err != nil {
@@ -164,18 +167,18 @@ func ParseIDCertificateResponse(raw []byte) (map[string]any, error) {
 
 func idCertificateResponseShape(response map[string]any) error {
 	if !idCertificateExactFields(response, "v", "request_id", "chain") || !attestationVersionIsOne(response["v"]) || !idCertificateIsUUID(response["request_id"]) {
-		return idCertificateRefusal("invalid_shape")
+		return idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	chain, ok := response["chain"].(map[string]any)
 	if !ok {
-		return idCertificateRefusal("invalid_shape")
+		return idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	raw, err := idCertificateCanonical(chain)
 	if err != nil {
 		return err
 	}
 	if len(raw) > IDChainMaxBytes {
-		return idCertificateRefusal("bundle_too_large")
+		return idCertificateRefusal(IDRefusalBundleTooLarge)
 	}
 	return idCertificateBundleShape(chain)
 }

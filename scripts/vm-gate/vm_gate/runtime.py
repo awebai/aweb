@@ -1,6 +1,5 @@
 """Wire local admission, canonical ledger transport and one disposable VM."""
 
-from contextlib import contextmanager
 from importlib.metadata import version
 import json
 import os
@@ -11,7 +10,7 @@ import tarfile
 import time
 
 from .backend import Backend
-from .config import child_environment
+from .config import child_environment, select_manifest, select_target
 from .config_lease import ConfigLease
 from .errors import Infrastructure, Refused
 from .executor import Executor
@@ -40,6 +39,9 @@ class Runtime:
         executor_factory=Executor,
     ):
         self.config = dict(config)
+        if command is not None:
+            select_target(args, self.config)
+        select_manifest(self.config, getattr(args, "target", None))
         self.config["server_type"] = getattr(args, "type", None)
         self.directory = Path(directory) if directory else None
         self.source = source
@@ -148,14 +150,23 @@ class Runtime:
     def _import_logs(self, lease):
         logs = self.directory / "evidence/var/log/vm-gate/ledger-gate-logs"
         target = Path(self.config["ledger"]).parent / "gate-logs"
-        target.mkdir(parents=True, exist_ok=True, mode=0o700)
         with lease.writer():
-            for path in logs.glob("*"):
-                if not path.is_file():
+            if logs.is_symlink() or target.is_symlink():
+                raise Infrastructure("unexpected symlink in gate logs")
+            target.mkdir(parents=True, exist_ok=True, mode=0o700)
+            for path in sorted(logs.rglob("*")):
+                dest = target / path.relative_to(logs)
+                if dest.is_symlink() or path.is_symlink():
+                    raise Infrastructure("unexpected symlink in gate logs")
+                if path.is_dir() and (not dest.exists() or dest.is_dir()):
+                    dest.mkdir(exist_ok=True, mode=0o700)
                     continue
-                dest = target / path.name
+                if not path.is_file():
+                    raise Infrastructure(
+                        "unexpected gate log entry or directory conflict"
+                    )
                 if dest.exists():
-                    if dest.read_bytes() != path.read_bytes():
+                    if not dest.is_file() or dest.read_bytes() != path.read_bytes():
                         raise Infrastructure(
                             "canonical gate log conflicts with retained VM log"
                         )
@@ -176,6 +187,8 @@ class Runtime:
 
     def _run(self):
         source = self.source
+        if getattr(self.args, "target", None) == "merak":
+            self.config["compose_project"] = self.run_id
         with LedgerLease(self.config["ledger"], source["tree"]) as lease:
             before = lease.snapshot(self.directory / "ledger-before.tsv")
             self._ledger_logs()
@@ -184,43 +197,12 @@ class Runtime:
                 self.config, self.directory, source, self.command, None
             )
             remote.preflight()
-            provider = self.provider()
-            remote.provider = provider
-            # No pricing or image read precedes expiry cleanup.
-            reaped = reap_and_settle(provider, self.store)
-            self._forget_reaped_keys()
-            quote = provider.read("pricing", self.args.type)
-            image = provider.read("image_info", self.config["snapshot_id"])
-            if (
-                image.get("status") != "available"
-                or image.get("architecture") != "x86"
-                or image.get("disk_size", 0) > quote["disk"]
-            ):
-                raise Refused(
-                    "configured snapshot unavailable or incompatible with requested server type"
-                )
-            verify_train_main(self.config["repo"], source)
-            durations = {
-                key: self.config[key + "_seconds"]
-                for key in ["setup", "pull", "cleanup", "margin"]
-                if key + "_seconds" in self.config
-            }
-            budget = CompletionBudget(time.time(), self.args.timeout, **durations)
-            result = run_session(
-                provider=provider,
-                store=self.store,
-                remote=remote,
-                run_id=self.run_id,
-                owner=self.config["owner"],
-                sha=source["sha"],
-                budget=budget,
-                directory=self.directory,
-                server_type=self.args.type,
-                hourly_eur=quote["server_hourly"],
-                ip_hourly_eur=quote["ip_hourly"],
-                pre_reaped=reaped,
-                max_reserve_eur=self.config.get("run_ceiling_eur"),
-            )
+            if getattr(self.args, "target", None) == "merak":
+                from .merak import run_guest
+
+                result = run_guest(self, remote)
+            else:
+                result = self._hetzner_session(remote)
             result.update(
                 source=source,
                 requested_command=self.command,
@@ -259,6 +241,45 @@ class Runtime:
                 )
             write_summary(self.directory, result)
             return result
+
+    def _hetzner_session(self, remote):
+        provider = self.provider()
+        remote.provider = provider
+        # No pricing or image read precedes expiry cleanup.
+        reaped = reap_and_settle(provider, self.store)
+        self._forget_reaped_keys()
+        quote = provider.read("pricing", self.args.type)
+        image = provider.read("image_info", self.config["snapshot_id"])
+        if (
+            image.get("status") != "available"
+            or image.get("architecture") != "x86"
+            or image.get("disk_size", 0) > quote["disk"]
+        ):
+            raise Refused(
+                "configured snapshot unavailable or incompatible with requested server type"
+            )
+        verify_train_main(self.config["repo"], self.source)
+        durations = {
+            key: self.config[key + "_seconds"]
+            for key in ["setup", "pull", "cleanup", "margin"]
+            if key + "_seconds" in self.config
+        }
+        budget = CompletionBudget(time.time(), self.args.timeout, **durations)
+        return run_session(
+            provider=provider,
+            store=self.store,
+            remote=remote,
+            run_id=self.run_id,
+            owner=self.config["owner"],
+            sha=self.source["sha"],
+            budget=budget,
+            directory=self.directory,
+            server_type=self.args.type,
+            hourly_eur=quote["server_hourly"],
+            ip_hourly_eur=quote["ip_hourly"],
+            pre_reaped=reaped,
+            max_reserve_eur=self.config.get("run_ceiling_eur"),
+        )
 
     def snapshot(self):
         from .snapshot_ops import SnapshotOperations

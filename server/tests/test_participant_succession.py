@@ -25,6 +25,8 @@ from chat_pair_support import (
 )  # noqa: F401
 from test_actl_fresh_chat import _post
 
+__all__ = ["route_pair"]
+
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message
 
