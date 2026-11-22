@@ -202,6 +202,56 @@ func TestOATSOfflineMembershipInspection(t *testing.T) {
 			}
 		}
 	})
+	t.Run("list preserves recorded membership without a service route", func(t *testing.T) {
+		workspacePath := awconfig.WorktreeWorkspacePath(dir)
+		original, err := os.ReadFile(workspacePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.WriteFile(workspacePath, original, 0o600); err != nil {
+				t.Error(err)
+			}
+		})
+		unrouted := strings.Replace(string(original), "aweb_url: "+workspace.AwebURL+"\n", "", 1)
+		if unrouted == string(original) {
+			t.Fatalf("workspace fixture has no service route to remove: %s", original)
+		}
+		if err := os.WriteFile(workspacePath, []byte(unrouted), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		unroutedState := &awconfig.TeamState{ActiveTeam: state.ActiveTeam, Memberships: append([]awconfig.TeamMembership(nil), state.Memberships...)}
+		for i := range unroutedState.Memberships {
+			unroutedState.Memberships[i].AwebURL = ""
+		}
+		if err := awconfig.SaveTeamState(dir, unroutedState); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := awconfig.SaveTeamState(dir, state); err != nil {
+				t.Error(err)
+			}
+		})
+		out, err := run("team", "list", "--json")
+		if err != nil {
+			t.Fatalf("list without service route: %v\n%s", err, out)
+		}
+		var result teamListOutput
+		if err := json.Unmarshal(out, &result); err != nil {
+			t.Fatalf("decode list: %v\n%s", err, out)
+		}
+		if len(result.Memberships) != 2 || result.ActiveTeam != state.ActiveTeam {
+			t.Fatalf("unexpected team state: %s", out)
+		}
+		for _, membership := range result.Memberships {
+			if membership.Alias != "worker" || membership.AwebURL != "" || membership.WorkspaceID != "workspace-"+strings.Split(membership.TeamID, ":")[0] {
+				t.Fatalf("list changed membership or invented a service route: %s", out)
+			}
+		}
+		if _, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); err == nil || !strings.Contains(err.Error(), "workspace.yaml is missing aweb_url") {
+			t.Fatalf("strict workspace loader accepted the unrouted binding: %v", err)
+		}
+	})
 	t.Run("cert show selects inactive team", func(t *testing.T) {
 		out, err := run("id", "cert", "show", "--team", "two:example.com", "--json")
 		if err != nil {
