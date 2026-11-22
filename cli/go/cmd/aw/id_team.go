@@ -1458,7 +1458,7 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+	workspace, err := awconfig.LoadWorktreeWorkspaceForTeamList(workspacePath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read workspace binding: %w; repair the selected home's workspace.yaml before listing its bindings", err)
 	}

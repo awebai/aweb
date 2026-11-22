@@ -261,7 +261,7 @@ func inspectMembershipYAMLKeys(prefix string, value *yaml.Node) (removed []strin
 	return removed, unsupported
 }
 
-func inspectWorkspaceYAMLKeys(value *yaml.Node) (bool, bool, bool, []string, []string) {
+func inspectWorkspaceYAMLKeys(value *yaml.Node, ignoreLegacyAlias bool) (bool, bool, bool, []string, []string) {
 	if value == nil || value.Kind != yaml.MappingNode {
 		return false, false, false, nil, nil
 	}
@@ -288,7 +288,7 @@ func inspectWorkspaceYAMLKeys(value *yaml.Node) (bool, bool, bool, []string, []s
 			}
 			continue
 		}
-		if _, ok := canonicalWorkspaceYAMLKeys[key]; ok {
+		if _, ok := canonicalWorkspaceYAMLKeys[key]; ok || (ignoreLegacyAlias && key == "alias") {
 			continue
 		}
 		switch key {
@@ -312,11 +312,15 @@ func inspectWorkspaceYAMLKeys(value *yaml.Node) (bool, bool, bool, []string, []s
 }
 
 func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
+	return w.unmarshalYAML(value, false)
+}
+
+func (w *WorktreeWorkspace) unmarshalYAML(value *yaml.Node, ignoreLegacyAlias bool) error {
 	var raw worktreeWorkspaceYAML
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
-	hasServerURL, hasLegacyTeamAddress, hasLegacySingleTeam, removed, unsupported := inspectWorkspaceYAMLKeys(value)
+	hasServerURL, hasLegacyTeamAddress, hasLegacySingleTeam, removed, unsupported := inspectWorkspaceYAMLKeys(value, ignoreLegacyAlias)
 	if hasServerURL {
 		return errors.New(legacyWorkspaceFormatError)
 	}
@@ -414,18 +418,39 @@ func FindWorktreeWorkspacePath(startDir string) (string, error) {
 }
 
 func LoadWorktreeWorkspaceFrom(path string) (*WorktreeWorkspace, error) {
-	if err := preflightIdentityFile(path, "workspace file"); err != nil {
-		return nil, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
 	var state WorktreeWorkspace
-	if err := yaml.Unmarshal(data, &state); err != nil {
+	if err := readWorktreeWorkspace(path, &state); err != nil {
 		return nil, err
 	}
 	return &state, nil
+}
+
+type teamListWorkspace WorktreeWorkspace
+
+func (w *teamListWorkspace) UnmarshalYAML(value *yaml.Node) error {
+	return (*WorktreeWorkspace)(w).unmarshalYAML(value, true)
+}
+
+// LoadWorktreeWorkspaceForTeamList reads supplemental bindings for offline team
+// inspection. Released workspaces may carry a top-level alias. Team list takes
+// its aliases from team state and ignores this historical field.
+func LoadWorktreeWorkspaceForTeamList(path string) (*WorktreeWorkspace, error) {
+	var state teamListWorkspace
+	if err := readWorktreeWorkspace(path, &state); err != nil {
+		return nil, err
+	}
+	return (*WorktreeWorkspace)(&state), nil
+}
+
+func readWorktreeWorkspace(path string, state yaml.Unmarshaler) error {
+	if err := preflightIdentityFile(path, "workspace file"); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return yaml.Unmarshal(data, state)
 }
 
 func LoadLegacySingleTeamWorkspaceFrom(path string) (*LegacySingleTeamWorkspace, error) {

@@ -129,6 +129,48 @@ func TestOATSOfflineMembershipInspection(t *testing.T) {
 			}
 		}
 	})
+	t.Run("list tolerates a released top-level alias", func(t *testing.T) {
+		workspacePath := awconfig.WorktreeWorkspacePath(dir)
+		original, err := os.ReadFile(workspacePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.WriteFile(workspacePath, original, 0o600); err != nil {
+				t.Error(err)
+			}
+		})
+		legacy := []byte("alias: stale-workspace-alias\n" + string(original))
+		if err := os.WriteFile(workspacePath, legacy, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, err := run("team", "list", "--json")
+		if err != nil {
+			t.Fatalf("list with legacy alias: %v\n%s", err, out)
+		}
+		var result teamListOutput
+		if err := json.Unmarshal(out, &result); err != nil {
+			t.Fatalf("decode list: %v\n%s", err, out)
+		}
+		if len(result.Memberships) != 2 {
+			t.Fatalf("memberships: %s", out)
+		}
+		for _, membership := range result.Memberships {
+			if membership.Alias != "worker" || membership.WorkspaceID != "workspace-"+strings.Split(membership.TeamID, ":")[0] {
+				t.Fatalf("legacy alias changed the membership or dropped coordinates: %s", out)
+			}
+		}
+		if _, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); err == nil || !strings.Contains(err.Error(), "unsupported fields: alias") {
+			t.Fatalf("strict workspace loader accepted the legacy field: %v", err)
+		}
+		if err := os.WriteFile(workspacePath, append(legacy, []byte("unknown_field: invalid\n")...), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, err = run("team", "list", "--json")
+		if err == nil || !strings.Contains(string(out), "unsupported fields: unknown_field") {
+			t.Fatalf("list with unrelated unknown field: %v\n%s", err, out)
+		}
+	})
 	t.Run("cert show selects inactive team", func(t *testing.T) {
 		out, err := run("id", "cert", "show", "--team", "two:example.com", "--json")
 		if err != nil {
