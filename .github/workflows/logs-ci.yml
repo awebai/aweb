@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -64,6 +64,13 @@ jobs:
       - name: Lint and type-check
         working-directory: naapp/logs
         run: make lint
+
+      # The tests back up and restore with the client of the server's major
+      # version, installed as the gate installs it.
+      - name: Install the PostgreSQL client of the server's major version
+        run: |
+          sudo bash scripts/test-egress/install-postgres-client.sh
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
 
       - name: Run unit and contract tests
         working-directory: naapp/logs

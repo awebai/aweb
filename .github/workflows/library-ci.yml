@@ -146,7 +146,7 @@ jobs:
       TEST_DB_PASSWORD: postgres
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -196,6 +196,14 @@ jobs:
         run: |
           uv run ruff check .
           uv run mypy src
+
+      # The tests back up and restore with the client of the server's major
+      # version, installed as the gate installs it.
+      - name: Install the PostgreSQL client of the server's major version
+        working-directory: naapp-lib
+        run: |
+          sudo bash ../scripts/test-egress/install-postgres-client.sh
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
 
       # The same path as make test-naapp: behind the test egress guard, which
       # forwards the governance browser's RP host to loopback for Chromium and
