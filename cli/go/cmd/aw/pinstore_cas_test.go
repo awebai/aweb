@@ -103,7 +103,10 @@ func TestCompareAndSetPinStoreRefusesToCommitOverACorruptStore(t *testing.T) {
 	}
 }
 
-func TestCompareAndSetPinStoreRefusesStalePreconditionWithoutOverwrite(t *testing.T) {
+// Another aw process on the same home committed a pin for a different
+// address after this writer read the store. The two changes commute, so both
+// are kept: this writer's change is applied on top of the other's.
+func TestCompareAndSetPinStoreKeepsAnotherWritersChangeToADifferentKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "known_agents.yaml")
 	expected := awid.NewPinStore()
 	alice := pinStoreWithAddress("did:key:zAlice", "acme.com/alice")
@@ -112,22 +115,59 @@ func TestCompareAndSetPinStoreRefusesStalePreconditionWithoutOverwrite(t *testin
 	if err := compareAndSetPinStore(path, pinStoreYAML(t, expected), pinStoreYAML(t, alice)); err != nil {
 		t.Fatal(err)
 	}
-	err := compareAndSetPinStore(path, pinStoreYAML(t, expected), pinStoreYAML(t, bob))
-	if err == nil || !strings.Contains(err.Error(), "changed since it was read") {
-		t.Fatalf("stale precondition must produce a visible refusal, got %v", err)
+	if err := compareAndSetPinStore(path, pinStoreYAML(t, expected), pinStoreYAML(t, bob)); err != nil {
+		t.Fatalf("a change to another key was refused: %v", err)
 	}
 
 	got, err := awid.LoadPinStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Addresses["acme.com/alice"] != "did:key:zAlice" || got.Addresses["acme.com/bob"] != "" {
-		t.Fatalf("stale writer damaged the committed store: %#v", got.Addresses)
+	if got.Addresses["acme.com/alice"] != "did:key:zAlice" || got.Addresses["acme.com/bob"] != "did:key:zBob" {
+		t.Fatalf("both writers' pins should be kept: %#v", got.Addresses)
 	}
 }
 
-func TestConfigureResolvedClientUsesCASForGoTrustWrites(t *testing.T) {
-	path := withHome(t)
+// The control: another writer pinned the same address to a different key.
+// That is a real conflict, so the stale writer is refused and the committed
+// pin stands.
+func TestCompareAndSetPinStoreRefusesAnotherWritersDifferentValueForTheSameKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_agents.yaml")
+	expected := awid.NewPinStore()
+	first := pinStoreWithAddress("did:key:zAlice", "acme.com/alice")
+	second := pinStoreWithAddress("did:key:zMallory", "acme.com/alice")
+
+	if err := compareAndSetPinStore(path, pinStoreYAML(t, expected), pinStoreYAML(t, first)); err != nil {
+		t.Fatal(err)
+	}
+	err := compareAndSetPinStore(path, pinStoreYAML(t, expected), pinStoreYAML(t, second))
+	if err == nil || !strings.Contains(err.Error(), "changed since it was read") {
+		t.Fatalf("a different key for the same address must be refused, got %v", err)
+	}
+
+	got, err := awid.LoadPinStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Addresses["acme.com/alice"] != "did:key:zAlice" || got.Pins["did:key:zMallory"] != nil {
+		t.Fatalf("the stale writer changed the committed pin: %#v", got.Addresses)
+	}
+}
+
+// confirmingRegistry answers that each address belongs to its did:key, so a
+// first contact is confirmed and the client commits a pin.
+type confirmingRegistry map[string]string
+
+func (r confirmingRegistry) Resolve(_ context.Context, address string) (*awid.ResolvedIdentity, error) {
+	did, ok := r[address]
+	if !ok {
+		return nil, &awid.RegistryError{StatusCode: 404, Detail: "address not found"}
+	}
+	return &awid.ResolvedIdentity{DID: did, Address: address, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, ResolvedVia: "registry"}, nil
+}
+
+func newCASTestClient(t *testing.T) *aweb.Client {
+	t.Helper()
 	const baseURL = "https://app.aweb.ai/api"
 	client, err := aweb.New(baseURL)
 	if err != nil {
@@ -140,23 +180,58 @@ func TestConfigureResolvedClientUsesCASForGoTrustWrites(t *testing.T) {
 	}, baseURL); err != nil {
 		t.Fatal(err)
 	}
+	client.Client.SetResolver(confirmingRegistry{"alice@example.com": "did:key:zAlice"})
+	return client
+}
 
-	otherWriter := pinStoreWithAddress("did:key:zBob", "did:key:zBob")
-	if err := otherWriter.Save(path); err != nil {
+// A Go trust write commits through the CAS. Another aw process on the same
+// home pinned Bob after this client loaded the store; this client's pin for
+// Alice is applied on top, so the message stays verified and both pins are
+// on disk.
+func TestConfigureResolvedClientUsesCASForGoTrustWrites(t *testing.T) {
+	path := withHome(t)
+	client := newCASTestClient(t)
+
+	if err := pinStoreWithAddress("did:key:zBob", "bob@example.com").Save(path); err != nil {
 		t.Fatal(err)
 	}
 	status := client.Client.CheckTOFUPin(
-		context.Background(), awid.Verified, "did:key:zAlice", "did:key:zAlice", "", nil, nil,
+		context.Background(), awid.Verified, "alice@example.com", "did:key:zAlice", "", nil, nil,
 	)
-	if status != awid.VerificationStale {
-		t.Fatalf("stale Go trust decision status=%q, want %q", status, awid.VerificationStale)
+	if status != awid.Verified {
+		t.Fatalf("Go trust decision status=%q, want %q", status, awid.Verified)
 	}
 	persisted, err := awid.LoadPinStore(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Addresses["did:key:zBob"] != "did:key:zBob" || persisted.Addresses["did:key:zAlice"] != "" {
-		t.Fatalf("stale Go writer overwrote the current store: %#v", persisted.Addresses)
+	if persisted.Addresses["bob@example.com"] != "did:key:zBob" || persisted.Addresses["alice@example.com"] != "did:key:zAlice" {
+		t.Fatalf("both writers' pins should be on disk: %#v", persisted.Addresses)
+	}
+}
+
+// The control at the client: another process pinned the same address to a
+// different key after this client loaded the store. That is a real conflict;
+// the client's pin is not committed and the message is not reported verified.
+func TestGoTrustWriteIsNotVerifiedWhenAnotherWriterPinnedTheSameAddressElsewhere(t *testing.T) {
+	path := withHome(t)
+	client := newCASTestClient(t)
+
+	if err := pinStoreWithAddress("did:key:zMallory", "alice@example.com").Save(path); err != nil {
+		t.Fatal(err)
+	}
+	status := client.Client.CheckTOFUPin(
+		context.Background(), awid.Verified, "alice@example.com", "did:key:zAlice", "", nil, nil,
+	)
+	if status != awid.VerificationStale {
+		t.Fatalf("status=%q, want %q for a conflicting pin", status, awid.VerificationStale)
+	}
+	persisted, err := awid.LoadPinStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Addresses["alice@example.com"] != "did:key:zMallory" || persisted.Pins["did:key:zAlice"] != nil {
+		t.Fatalf("the conflicting writer's pin must stand: %#v", persisted.Addresses)
 	}
 }
 

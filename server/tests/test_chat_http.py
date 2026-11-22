@@ -1996,7 +1996,9 @@ async def test_receive_federated_chat_local_didkey_missing_session_target_fails_
 
 
 @pytest.mark.asyncio
-async def test_receive_federated_chat_duplicate_message_id_is_idempotent(route_pair):
+async def test_receive_federated_chat_duplicate_message_id_is_idempotent(
+    route_pair, monkeypatch
+):
     from types import SimpleNamespace
 
     world = await _registered_routing_pair(route_pair)
@@ -2021,15 +2023,14 @@ async def test_receive_federated_chat_duplicate_message_id_is_idempotent(route_p
     ) as client:
         first = await client.post("/v1/federation/messages", json=payload)
         assert first.status_code == 200, first.text
-        prior_read = await aweb_cloud_db.aweb_db.fetch_value(
-            "SELECT authoritative_read_completed_at FROM {{tables.federation_address_authority_cohorts}} WHERE canonical_address = $1",
+        prior_cohort = await aweb_cloud_db.aweb_db.fetch_one(
+            "SELECT authoritative_read_completed_at, expires_at FROM {{tables.federation_address_authority_cohorts}} WHERE canonical_address = $1",
             alice.address,
         )
-        await aweb_cloud_db.aweb_db.fetch_value(
-            "SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM expires_at - clock_timestamp()))) "
-            "FROM {{tables.federation_address_authority_cohorts}} WHERE canonical_address=$1",
-            alice.address,
-            timeout=65,
+        assert prior_cohort is not None
+        repository = app.state.federation_authority.core.repository
+        monkeypatch.setattr(
+            repository, "_cohort_check_time", lambda: prior_cohort["expires_at"]
         )
         second = await client.post("/v1/federation/messages", json=payload)
     assert second.status_code == 200, second.text
@@ -2037,7 +2038,9 @@ async def test_receive_federated_chat_duplicate_message_id_is_idempotent(route_p
         "SELECT authoritative_read_completed_at, expires_at FROM {{tables.federation_address_authority_cohorts}} WHERE canonical_address = $1",
         alice.address,
     )
-    assert cohort["authoritative_read_completed_at"] > prior_read
+    assert cohort["authoritative_read_completed_at"] > prior_cohort[
+        "authoritative_read_completed_at"
+    ]
     assert cohort["expires_at"] - cohort[
         "authoritative_read_completed_at"
     ] == timedelta(seconds=60)
