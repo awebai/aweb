@@ -122,9 +122,7 @@ async def _install(coordination: Coordination, member: Member, origin: str) -> d
             "origin": origin,
             "app_id": preview["app_id"],
             "digest": preview["digest"],
-            "granted_scopes": sorted(
-                {scope for tool in preview["manifest"]["tools"] for scope in tool["scopes"]}
-            ),
+            "granted_scopes": preview["resolved"]["install_scopes"],
         },
     )
     assert installed["origin_verified"] and installed["state"] == "active"
