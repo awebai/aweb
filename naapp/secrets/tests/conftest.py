@@ -11,7 +11,7 @@ from awid_service.testing import Registry, running_registry
 
 from tests.production_database import prepared_service_databases as prepared_service_databases
 
-pytest_plugins = ("pgdbm.fixtures.conftest",)
+pytest_plugins = ("pgdbm.fixtures.conftest", "aweb_naapp_testing.server")
 
 
 @pytest.fixture
