@@ -270,6 +270,8 @@ async def resolve_team_membership(
     ):
         raise ValueError("Member snapshot belongs to a different request or certificate")
 
+    binding = cert_info.get("identity_binding")
+    read_native_share = False
     # A host that already read this member's agent row while verifying the
     # same request passes it as cert_info["agent_row"]; it is used only for the
     # exact (team_id, did_key) this certificate verified.
@@ -293,7 +295,20 @@ async def resolve_team_membership(
             and row["team_id"] == team_id
             and row["did_key"] == did_key
         ):
-            row = await read_member_projection(db, team_id=team_id, did_key=did_key)
+            if (
+                request is not None
+                and cert_info.get("agent_row") is None
+                and isinstance(binding, IdentityBinding)
+                and not binding.fresh_observation
+                and not isinstance(db, TransactionManager)
+            ):
+                # The verifier already supplied the binding. Read the native
+                # member under SHARE once, without an unlocked preflight.
+                snapshot = await _read_admission_share(db, credential, request)
+                row = snapshot.member
+                read_native_share = True
+            else:
+                row = await read_member_projection(db, team_id=team_id, did_key=did_key)
 
     if not row or row["deleted_at"] is not None:
         raise CurrentMembershipRequired(
@@ -309,7 +324,6 @@ async def resolve_team_membership(
     if not verified_team_did_key:
         raise CurrentMembershipRequired()
 
-    binding = cert_info.get("identity_binding")
     if not isinstance(binding, IdentityBinding):
         binding = IdentityBinding()
         if request is not None:
@@ -328,6 +342,10 @@ async def resolve_team_membership(
             did_aw=row.get("did_aw") or "",
             address=row.get("address") or "",
         )
+        if read_native_share:
+            # When a stored claim needs independent evidence, recheck the
+            # member after that observation, just like the preflight path.
+            snapshot = None
     # identity.md:807-811: later grants must retain the exact certificate that
     # this verified request makes current for its subject.
     # A worker may still hold a verified old key in its memo, or a host may
