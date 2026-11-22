@@ -9,11 +9,11 @@ from time import monotonic_ns
 
 import httpx
 import pytest
+from aweb.config import APP_GRANT_MAX_AGE_CEILING_SECONDS
 from aweb_naapp.console import CONSOLE_HEADERS
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.human_members import registered_human
 from aweb_naapp_testing.webauthn import SoftAuthenticator
-from aweb.config import APP_GRANT_MAX_AGE_CEILING_SECONDS
 
 from tests.production_authority import SERVER
 from tests.test_production_bootstrap import root as root
