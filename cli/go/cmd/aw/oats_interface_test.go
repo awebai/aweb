@@ -171,6 +171,37 @@ func TestOATSOfflineMembershipInspection(t *testing.T) {
 			t.Fatalf("list with unrelated unknown field: %v\n%s", err, out)
 		}
 	})
+	t.Run("list accepts an alias-only supplemental binding", func(t *testing.T) {
+		workspacePath := awconfig.WorktreeWorkspacePath(dir)
+		original, err := os.ReadFile(workspacePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.WriteFile(workspacePath, original, 0o600); err != nil {
+				t.Error(err)
+			}
+		})
+		if err := os.WriteFile(workspacePath, []byte("alias: stale-workspace-alias\naweb_url: https://service.invalid/api\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out, err := run("--identity-home", filepath.Dir(workspacePath), "id", "team", "list", "--json")
+		if err != nil {
+			t.Fatalf("list with alias-only binding: %v\n%s", err, out)
+		}
+		var result teamListOutput
+		if err := json.Unmarshal(out, &result); err != nil {
+			t.Fatalf("decode list: %v\n%s", err, out)
+		}
+		if len(result.Memberships) != 2 || result.ActiveTeam != state.ActiveTeam {
+			t.Fatalf("unexpected team state: %s", out)
+		}
+		for _, membership := range result.Memberships {
+			if membership.Alias != "worker" || membership.WorkspaceID != "" {
+				t.Fatalf("alias-only workspace changed the membership: %s", out)
+			}
+		}
+	})
 	t.Run("cert show selects inactive team", func(t *testing.T) {
 		out, err := run("id", "cert", "show", "--team", "two:example.com", "--json")
 		if err != nil {

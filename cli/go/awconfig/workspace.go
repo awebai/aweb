@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -261,7 +262,7 @@ func inspectMembershipYAMLKeys(prefix string, value *yaml.Node) (removed []strin
 	return removed, unsupported
 }
 
-func inspectWorkspaceYAMLKeys(value *yaml.Node, ignoreLegacyAlias bool) (bool, bool, bool, []string, []string) {
+func inspectWorkspaceYAMLKeys(value *yaml.Node) (bool, bool, bool, []string, []string) {
 	if value == nil || value.Kind != yaml.MappingNode {
 		return false, false, false, nil, nil
 	}
@@ -288,7 +289,7 @@ func inspectWorkspaceYAMLKeys(value *yaml.Node, ignoreLegacyAlias bool) (bool, b
 			}
 			continue
 		}
-		if _, ok := canonicalWorkspaceYAMLKeys[key]; ok || (ignoreLegacyAlias && key == "alias") {
+		if _, ok := canonicalWorkspaceYAMLKeys[key]; ok {
 			continue
 		}
 		switch key {
@@ -320,7 +321,7 @@ func (w *WorktreeWorkspace) unmarshalYAML(value *yaml.Node, ignoreLegacyAlias bo
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
-	hasServerURL, hasLegacyTeamAddress, hasLegacySingleTeam, removed, unsupported := inspectWorkspaceYAMLKeys(value, ignoreLegacyAlias)
+	hasServerURL, hasLegacyTeamAddress, hasLegacySingleTeam, removed, unsupported := inspectWorkspaceYAMLKeys(value)
 	if hasServerURL {
 		return errors.New(legacyWorkspaceFormatError)
 	}
@@ -333,11 +334,22 @@ func (w *WorktreeWorkspace) unmarshalYAML(value *yaml.Node, ignoreLegacyAlias bo
 	if len(removed) > 0 {
 		return fmt.Errorf("%s: %s. Run `aw init` to reinitialize this worktree.", legacyWorkspaceRemovedFieldsErrorPrefix, strings.Join(removed, ", "))
 	}
+	legacyAlias := false
+	if ignoreLegacyAlias {
+		if i := slices.Index(unsupported, "alias"); i >= 0 {
+			unsupported = slices.Delete(unsupported, i, i+1)
+			legacyAlias = true
+		}
+	}
 	if len(unsupported) > 0 {
 		return fmt.Errorf("%s: %s. Remove them and keep only the canonical workspace binding keys.", workspaceUnsupportedFieldsErrorPrefix, strings.Join(unsupported, ", "))
 	}
 
 	*w = raw.normalizedWorkspace()
+	if legacyAlias && raw.Memberships == nil {
+		// An alias-only binding contributes no per-team coordinates.
+		return nil
+	}
 	return w.validate()
 }
 
