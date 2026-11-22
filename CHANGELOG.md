@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Self-hosted CLI and wake processes retain access to private or HTTP AWID
+  registries chosen by the operator. `aw` records a saved `--registry`,
+  `--awid-registry` or `AWID_REGISTRY_URL` choice, and treats the identity’s
+  own `registry_url` from a 1.36.58 home as an operator choice. An invite’s
+  team registry, DNS, service discovery and other unmarked origins still
+  require public HTTPS. If you operate or trust an unmarked registry stored
+  in your home, run `aw id registry-trust <origin>` once from that home.
+- `aw check --online` exits nonzero if an online check fails.
+
 - A pin-store write no longer fails because another `aw` process on the same
   home changed the trust store first. `aw id pin-store compare-and-set`
   applies the writer's change on top of the other writer's, keeping both.
@@ -1324,7 +1333,7 @@
   `--token-stdin`; `aw team invite`, `aw id team invite` and
   `aw team admission-invite` warn on stderr that the printed token is a
   credential, say when a hosted invite expires (also as `expires_at` in
-  `--json`) or that a local invite is valid until it is used, and print the
+  `--json`) or that a local invite expires after 24 hours by default, and print the
   join command in its `--token-file` form. The admission invite's
   `join_command` field no longer embeds the token.
 

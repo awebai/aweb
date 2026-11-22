@@ -850,21 +850,22 @@ func installWorkspaceTeamEnrollment(workingDir, identityHome, issuer string, mat
 			return err
 		}
 		stableID := firstNonEmptyString(enroll.StableID, material.StableID)
-		if err := awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{DID: material.DIDKey, StableID: stableID, Address: strings.TrimSpace(cert.MemberAddress), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registryURL, RegistryStatus: "registered", CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		if err := saveWorktreeIdentityWithRegistryOrigin(identityPath, &awconfig.WorktreeIdentity{DID: material.DIDKey, StableID: stableID, Address: strings.TrimSpace(cert.MemberAddress), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registryURL, RegistryStatus: "registered", CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 			return err
 		}
 	}
 	canonicalTeamID := strings.TrimSpace(enroll.CanonicalTeamID)
 	output := &teamAcceptInviteOutput{Status: "accepted", TeamID: canonicalTeamID, Alias: firstNonEmptyString(enroll.Alias, material.Alias), CertPath: awconfig.TeamCertificateRelativePath(canonicalTeamID), AwebURL: strings.TrimRight(issuer, "/")}
 	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
-		WorkingDir:   workingDir,
-		Output:       output,
-		Certificate:  cert,
-		RegistryURL:  registryURL,
-		AwebURL:      strings.TrimRight(issuer, "/"),
-		IdentityHome: explicitEncryptionKeyIdentityHome(identityHome),
-		Activation:   membershipMakeActive,
-		Binding:      membershipLeaveWorkspaceBinding,
+		WorkingDir:             workingDir,
+		Output:                 output,
+		Certificate:            cert,
+		RegistryURL:            registryURL,
+		RegistryOperatorOrigin: operatorRegistryOrigin(registryURL, ""),
+		AwebURL:                strings.TrimRight(issuer, "/"),
+		IdentityHome:           explicitEncryptionKeyIdentityHome(identityHome),
+		Activation:             membershipMakeActive,
+		Binding:                membershipLeaveWorkspaceBinding,
 	}); err != nil {
 		return err
 	}

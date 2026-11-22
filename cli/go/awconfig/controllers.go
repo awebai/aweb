@@ -16,6 +16,8 @@ type ControllerMeta struct {
 	ControllerDID string `yaml:"controller_did"`
 	RegistryURL   string `yaml:"registry_url"`
 	CreatedAt     string `yaml:"created_at"`
+
+	RegistryOperatorOrigin string `yaml:"registry_operator_origin,omitempty"`
 }
 
 func ControllerKeyPath(domain string) (string, error) {

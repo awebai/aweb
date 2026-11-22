@@ -87,6 +87,9 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 			return "", fmt.Errorf("load controller metadata for %s: %w", domain, err)
 		}
 		if meta != nil && strings.TrimSpace(meta.RegistryURL) != "" {
+			if req.Registry != nil {
+				trustRecordedRegistryOrigin(req.Registry.Resolver, meta.RegistryURL, meta.RegistryOperatorOrigin)
+			}
 			return awid.CanonicalRegistryServerOrigin(meta.RegistryURL)
 		}
 		if req.Kind == registryAddressClaimRoute {
@@ -238,8 +241,13 @@ func resolveTeamCommandRegistry(ctx context.Context, registry *awid.RegistryClie
 	if err != nil {
 		return "", err
 	}
-	return resolveRegistryAuthority(ctx, registryAuthorityRequest{
+	origin, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
 		Kind: registryTeamRoute, Override: override, DefaultURL: registry.DefaultRegistryURL,
 		Domain: domain, TeamID: teamID, WorkingDir: workingDir, IdentityHome: externalIdentityHomeRoot(home),
 	})
+	if err != nil {
+		return "", err
+	}
+	trustControllerRegistryOrigin(registry.Resolver, domain, origin)
+	return origin, nil
 }
