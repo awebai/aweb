@@ -260,7 +260,10 @@ async def test_claim_preserves_invalid_controller_record_refusal(
             await verify_unowned_team_claim(
                 context=context(real_stack, sdk), claim=artifact, target=TARGET
             )
-    assert isinstance(refusal.value.__cause__, MalformedTeamKeyError)
+    cause = refusal.value.__cause__
+    assert isinstance(cause, MalformedTeamKeyError)
+    assert isinstance(cause.__cause__, KeyError)
+    assert cause.__cause__.args == ("team_did_key",)
     response = team_control_error_response(refusal.value)
     assert response.status_code == 422
     assert json.loads(response.body) == {
