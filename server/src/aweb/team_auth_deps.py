@@ -20,7 +20,9 @@ from pgdbm import AsyncDatabaseManager, TransactionManager
 
 from aweb.application_state import application_registry_client
 from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
-from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, TeamIdentity
+from aweb.auth_context import (
+    GRANT_SCOPE_ANY, GRANT_SCOPES, MessagingAuth, TeamIdentity, has_verified_team_certificate,
+)
 from aweb.auth_metrics import count_legacy_request_auth
 from aweb.certificate_evidence import EvidenceMode
 from aweb.connection_scope import request_memo
@@ -59,6 +61,7 @@ from aweb.team_registry import (
 )
 
 logger = logging.getLogger(__name__)
+_ADMITTED_MEMBER = "aweb.admitted_member"
 
 
 def _superseded_team_key() -> HTTPException:
@@ -100,6 +103,30 @@ class TeamMemberSnapshot:
 class ResolvedTeamMembership:
     identity: TeamIdentity
     snapshot: TeamMemberSnapshot
+
+
+def admitted_member_projection(
+    request: Request, identity: TeamIdentity | MessagingAuth,
+) -> MemberProjection | None:
+    """Return the exact certificate member admitted within this open request."""
+    if identity.grant is not None or not has_verified_team_certificate(identity):
+        return None
+    memo = request_memo()
+    if memo is None or (admitted := memo.get(_ADMITTED_MEMBER)) is None:
+        return None
+    request_state, member = admitted
+    if (
+        request_state is request.scope.get("state")
+        and member["team_id"] == identity.team_id
+        and str(member["agent_id"]) == identity.agent_id
+        and member["did_key"] == identity.did_key
+        and identity.certificate_id
+        and member["certificate_id"] == identity.certificate_id
+        and identity.verified_team_did_key
+        and member["accepted_team_did_key"] == identity.verified_team_did_key
+    ):
+        return member
+    return None
 
 
 def _snapshot_credential(cert_info: dict) -> _MemberCredential:
@@ -353,6 +380,11 @@ async def resolve_team_membership(
         certificate_verified=True,
     )
     assert snapshot is not None
+    memo = request_memo()
+    if request is not None and memo is not None:
+        # After reacceptance, row is the persisted projection from the UPDATE
+        # transaction. A verifier-only snapshot never publishes admission.
+        memo[_ADMITTED_MEMBER] = (snapshot._request_state, row)
     return ResolvedTeamMembership(identity, snapshot)
 
 

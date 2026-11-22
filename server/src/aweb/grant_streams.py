@@ -19,11 +19,13 @@ from aweb.identity_grant_status import GrantValidityState, grant_validity
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
     GRANT_ISSUER_RECOVERY_DETAIL,
+    MemberProjection,
     current_member,
     current_membership,
     member_key_columns_sql,
     read_member_projection,
 )
+from aweb.team_auth_deps import admitted_member_projection
 from aweb.team_registry import native_database_manager
 
 STREAM_AUTHORITY_RECHECK_SECONDS = 30
@@ -67,11 +69,47 @@ def grant_expiry_reason(identity: StreamIdentity) -> str | None:
     return None
 
 
-async def require_valid_stream_grant(request: Request, db, identity: StreamIdentity) -> None:
+async def require_valid_stream_grant(
+    request: Request, db, identity: StreamIdentity, *, use_admitted_member: bool = False,
+) -> None:
     """Check before constructing StreamingResponse, while HTTP errors are legal."""
-    reason = await grant_terminal_reason(request, db, identity)
+    admitted = admitted_member_projection(request, identity) if use_admitted_member else None
+    if admitted is None:
+        reason = await grant_terminal_reason(request, db, identity)
+    else:
+        reason = await _certificate_terminal_reason(request, identity, admitted)
     if reason:
         raise HTTPException(status_code=403, detail=GRANT_TERMINAL_DETAILS[reason])
+
+
+async def _certificate_terminal_reason(
+    request: Request,
+    identity: StreamIdentity,
+    row: MemberProjection | None,
+    *,
+    continue_on_registry_outage: bool = False,
+) -> str | None:
+    checked_key = identity.verified_team_did_key
+    if (
+        not checked_key or row is None or row["did_key"] != identity.did_key
+        or not current_member(row, checked_key=checked_key)
+    ):
+        return "team_membership_not_current"
+    registry = application_registry_client(request.app.state)
+    try:
+        member = await current_membership(
+            registry, {**dict(row), "certificate_id": identity.certificate_id}, request=request,
+        )
+    except HTTPException as exc:
+        # The registration adapter wraps acquisition failures in a 503
+        # for the caller. Keep the registry's original classification.
+        acquisition = exc.__cause__ if isinstance(exc.__cause__, HTTPException) else exc
+        if continue_on_registry_outage and exc.status_code == acquisition.status_code == 503:
+            # Only an admitted connection may keep its previous standing.
+            # The local membership and checked key were confirmed above.
+            return None
+        raise
+    return None if member and member.get("team_id") else "team_membership_not_current"
 
 
 async def grant_terminal_reason(
@@ -87,26 +125,9 @@ async def grant_terminal_reason(
         row = await read_member_projection(
             native_database_manager(db), team_id=identity.team_id, agent_id=identity.agent_id,
         )
-        if (
-            row is None or row["did_key"] != identity.did_key
-            or not current_member(row, checked_key=checked_key)
-        ):
-            return "team_membership_not_current"
-        registry = application_registry_client(request.app.state)
-        try:
-            member = await current_membership(
-                registry, {**dict(row), "certificate_id": identity.certificate_id}, request=request,
-            )
-        except HTTPException as exc:
-            # The registration adapter wraps acquisition failures in a 503
-            # for the caller. Keep the registry's original classification.
-            acquisition = exc.__cause__ if isinstance(exc.__cause__, HTTPException) else exc
-            if continue_on_registry_outage and exc.status_code == acquisition.status_code == 503:
-                # Only an admitted connection may keep its previous standing.
-                # The local membership and checked key were confirmed above.
-                return None
-            raise
-        return None if member and member.get("team_id") else "team_membership_not_current"
+        return await _certificate_terminal_reason(
+            request, identity, row, continue_on_registry_outage=continue_on_registry_outage,
+        )
     now = datetime.now(timezone.utc)
     if not grant.never_expires and _as_utc(grant.expires_at) <= now:
         return "grant_expired"

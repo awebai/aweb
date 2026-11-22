@@ -443,11 +443,26 @@ async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, mo
     from datetime import datetime, timedelta, timezone
 
     from aweb import grant_streams
+    from aweb.connection_scope import request_memo
     from aweb.routes import events
 
     env = pinning
     actor = await _admit(env, "eventstreamoriginal")
     headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
+    member_reads, standing_checks = [], []
+    read_member = grant_streams.read_member_projection
+    current_membership = grant_streams.current_membership
+
+    async def observe_member_read(*args, **kwargs):
+        member_reads.append(request_memo() is not None)
+        return await read_member(*args, **kwargs)
+
+    async def observe_standing(*args, **kwargs):
+        standing_checks.append(request_memo() is not None)
+        return await current_membership(*args, **kwargs)
+
+    monkeypatch.setattr(grant_streams, "read_member_projection", observe_member_read)
+    monkeypatch.setattr(grant_streams, "current_membership", observe_standing)
     assert grant_streams.STREAM_AUTHORITY_RECHECK_SECONDS == events.STREAM_AUTHORITY_RECHECK_SECONDS == 30
     monkeypatch.setattr(grant_streams, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
     monkeypatch.setattr(events, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
@@ -463,6 +478,8 @@ async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, mo
         assert terminal["type"] == "team_membership_not_current", terminal
         async with asyncio.timeout(5):
             assert [line async for line in lines if line.startswith("data: ")] == []
+    assert True in standing_checks
+    assert member_reads and not any(member_reads)
 
 
 @pytest.mark.asyncio

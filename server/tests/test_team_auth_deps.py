@@ -320,8 +320,14 @@ class TestResolveTeamIdentity:
 
     @pytest.mark.asyncio
     async def test_mounted_snapshot_carries_the_locked_row_and_overlay_once(self, privacy_app):
+        from dataclasses import replace
+
         from aweb.connection_scope import connection_scope
-        from aweb.team_auth_deps import read_team_member_snapshot, resolve_team_membership
+        from aweb.team_auth_deps import (
+            admitted_member_projection,
+            read_team_member_snapshot,
+            resolve_team_membership,
+        )
 
         env = privacy_app
         member, cert_info = await _admitted_cert_info(env, alias="bob")
@@ -345,6 +351,17 @@ class TestResolveTeamIdentity:
                     env.db, cert_info, request=wrapped_request, snapshot=snapshot,
                 )
                 assert await env.db.fetch_value("SELECT 1") == 1
+            assert admitted_member_projection(wrapped_request, admitted.identity) is snapshot.member
+            for changed in (
+                {"team_id": "other:example.test"},
+                {"agent_id": str(uuid.uuid4())},
+                {"did_key": "other-did"},
+                {"certificate_id": "other-certificate"},
+                {"verified_team_did_key": "other-controller"},
+                {"certificate_verified": False},
+            ):
+                assert admitted_member_projection(wrapped_request, replace(admitted.identity, **changed)) is None
+            assert admitted_member_projection(_request_with_headers({}), admitted.identity) is None
             with pytest.raises(ValueError, match="different request or certificate"):
                 await resolve_team_membership(
                     env.db, cert_info, request=_request_with_headers({}), snapshot=snapshot,
@@ -366,6 +383,7 @@ class TestResolveTeamIdentity:
         admission = [query for query in queries if query != "SELECT 1"]
         assert len(admission) == 1, admission
         assert "FOR SHARE OF t, a" in admission[0]
+        assert admitted_member_projection(request, admitted.identity) is None
         with pytest.raises(ValueError, match="different request or certificate"):
             await resolve_team_membership(env.db, cert_info, request=request, snapshot=snapshot)
 
@@ -375,9 +393,11 @@ class TestResolveTeamIdentity:
         self, privacy_app, remove_before_retry,
     ):
         from aweb.application_state import application_registry_client
+        from aweb.connection_scope import connection_scope
         from aweb.lifecycle_agent import AgentDisposition, apply_agent_disposition_on
         from aweb.member_team_key import CurrentMembershipRequired, read_member_projection
         from aweb.team_auth_deps import (
+            admitted_member_projection,
             read_team_member_snapshot,
             resolve_team_membership,
             verify_request_certificate,
@@ -440,9 +460,11 @@ class TestResolveTeamIdentity:
             assert removed["certificate_id"] == first["certificate_id"]
             return
 
-        admitted = await resolve_team_membership(
-            env.db, checked, request=request, snapshot=snapshot, before_write=rereads.append,
-        )
+        async with connection_scope():
+            admitted = await resolve_team_membership(
+                env.db, checked, request=request, snapshot=snapshot, before_write=rereads.append,
+            )
+            assert admitted_member_projection(request, admitted.identity) is admitted.snapshot.member
         assert len(rereads) == 2
         assert admitted.identity.certificate_id == replacement_id
         assert admitted.snapshot.member == await read_member_projection(env.db, agent_id=member.id)

@@ -2230,6 +2230,9 @@ deadline and the checks for new stream admission still apply. Readmitting
 the member under a new certificate does not change
 the credential that opened the old stream. Independent identity-only thread
 participation remains governed by the Identity and Messaging Contract.
+The synchronous agent event stream opening check can use the exact admitted
+member from the same request and still checks registry standing. Each later
+check reads current membership again.
 Embedding hosts set `certificate_verified` and `verified_team_did_key` after
 certificate verification and admission. API-key and proxy credentials retain
 their own admission with `certificate_verified` false, including when their
