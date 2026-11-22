@@ -241,6 +241,7 @@ async def production_routed_owner(
         egress = Egress(
             addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED),
             resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
+            user_agent="secrets-root/routed-owner-test",
             ca_file=certificates.ca_file,
         )
         async with AsyncExitStack() as apps:
