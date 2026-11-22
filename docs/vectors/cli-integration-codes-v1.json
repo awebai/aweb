@@ -3,11 +3,14 @@
   "owner": "docs/cli-integration-contract.md",
   "cli_error_codes": [
     "invite_not_created", "alias_conflict", "outcome_unknown",
-    "controller_key_missing", "team_name_taken", "team_name_unconfirmed", "grant_not_found",
+    "controller_key_missing", "team_name_unconfirmed", "grant_not_found",
     "certificate_persistence_incomplete", "certificate_rollback_pending", "retirement_receipt_unavailable",
     "workspace_cleanup_incomplete", "invite_issuance_pending", "invite_unknown_or_expired",
-    "team_server_record_missing", "invalid_alias", "invalid_team_id",
+    "invalid_alias", "invalid_team_id",
     "invalid_team_server_url", "native_agent_signature_pending"
+  ],
+  "cli_error_classifications": [
+    "team_server_record_missing", "team_name_taken", "team_name_unconfirmed"
   ],
   "invite_cancellation": {
     "states": ["cancelled", "absent", "already_used", "attempted"],
