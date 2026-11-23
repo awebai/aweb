@@ -11,7 +11,7 @@
     "awid/tests/test_id_certificate_status.py": 2,
     "awid/tests/test_id_dns_unavailable.py": 1,
     "awid/tests/test_id_enrollment_resolution.py": 1,
-    "awid/tests/test_namespace_recovery_delegations.py": 3,
+    "awid/tests/test_namespace_recovery_delegations.py": 2,
     "awid/tests/test_namespaces.py": 4,
     "awid/tests/test_registry_address_listing.py": 2,
     "awid/tests/test_registry_team_server.py": 1,

@@ -282,11 +282,15 @@ async def test_delete_and_same_key_reregistration_do_not_restore_child_grants(ca
 @pytest.mark.parametrize("stale_key", ["alice", "root_rotated"])
 async def test_two_key_rotation_preserves_only_delegations_bound_to_previous_key(case, delegation_world, stale_key):
     world = delegation_world
-    ok(await register_child(world, domain="stale.example.com", child="bob"))
-    await world.db.execute(
-        "UPDATE {{tables.dns_namespaces}} SET parent_controller_key=$2 WHERE domain=$1",
-        "stale.example.com", did_key(stale_key),
-    )
+    # While DNS briefly names another parent key, that key authorizes a child;
+    # reverifying the restored record leaves the witness bound to it.
+    world.dns.records[PARENT] = stale_key
+    ok(await world.tree.reverify(domain=PARENT))
+    ok(await register_child(world, domain="stale.example.com", child="bob", parent=stale_key))
+    world.dns.records[PARENT] = "depth1"
+    ok(await world.tree.reverify(domain=PARENT))
+    assert (await namespace(world, PARENT))["controller_did"] == did_key("depth1")
+    assert (await namespace(world, "stale.example.com"))["delegation"]["parent_controller_key"] == did_key(stale_key)
     before = await epochs(world)
     ok(await rotate(world))
     ok(await status(world))
