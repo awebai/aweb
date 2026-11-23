@@ -277,12 +277,21 @@ On a hosted accept-invite HTTP 409 with code `registry_operation_in_progress`,
 `aw` can repeat the same signed acceptance with the same body, key and request
 ID. It makes at most three attempts, with replays limited to five seconds
 from the start of the original POST. A `Retry-After` that exceeds that budget
-ends automatic retries. Other 409s and HTTP 503
-`registry_operation_incomplete` return immediately. For a persistent overlap
-or incomplete operation, preserve the identity home and run the printed
-recovery command from the same directory after the service is ready. Repeat
-`aw init --join-from` with the same selection, or reuse the original supplied
-invite in `aw team join` or `aw id team accept-invite` as directed.
+ends automatic retries. `aw` returns other 409s and HTTP 503
+`registry_operation_incomplete` without sending another POST.
+
+With Cloud 0.8.82, the server itself queues an overlapping acceptance for up
+to 20 seconds. If it waits the full 20 seconds and returns
+`registry_operation_in_progress` or `registry_operation_incomplete`, `aw`
+prints the recovery command without replaying. The client retry helps with
+Cloud 0.8.81 and when the lease for the requested name causes an early
+overlap response.
+
+For a persistent overlap or incomplete operation, preserve the identity home
+and run the printed recovery command from the same directory after the service
+is ready. Repeat `aw init --join-from` with the same selection, or reuse the
+original supplied invite in `aw team join` or `aw id team accept-invite` as
+directed.
 
 If a first submission timed out and its retry then returned 409, or an invite
 expired after a possibly applied submission, the earlier attempt may have
