@@ -362,6 +362,16 @@ RELEASED_AW_13658 := .cache/released-aw/1.36.58
 released-aw-sync:
 	test -f $(RELEASED_AW_13658)/provenance.json || python3 scripts/fetch_released_aw.py $(RELEASED_AW_13658) --metadata-input scripts/test-egress/released-aw-1.36.58.json
 
+# Use the same prepared source on the Mac and inside the isolated unit image.
+HERMES_TEST_SOURCE := .cache/hermes-agent/0.23.1
+
+.PHONY: hermes-test-sync test-hermes-aweb-platform
+hermes-test-sync:
+	HERMES_AGENT_SOURCE="$(abspath $(HERMES_TEST_SOURCE))" bash scripts/test-hermes-aweb-platform.sh --prepare
+
+test-hermes-aweb-platform:
+	HERMES_AGENT_SOURCE="$(abspath $(HERMES_TEST_SOURCE))" bash scripts/test-hermes-aweb-platform.sh
+
 # Unique loopback Compose services; this does not use an existing host database.
 .PHONY: test-server-local
 test-server-local:

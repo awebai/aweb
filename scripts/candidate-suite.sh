@@ -49,6 +49,7 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   run test-server
   run test-awid
   run test-key-holder
+  run test-hermes-aweb-platform
   run test-naapp
   run test-cli
   run test-cli-auth-v2
