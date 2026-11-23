@@ -135,3 +135,26 @@ def test_an_ordinary_header_value_is_not_credential_shaped(value: str) -> None:
 def test_a_credential_field_in_json_that_does_not_parse_is_detected() -> None:
     assert has_credential_shape(b'{"token_type": "bearer", "access_token": "issued-and-then-cut')
     assert has_credential_shape(b'garbage {"SessionToken" : "v"')
+
+
+@pytest.mark.parametrize("leading", ["", "word-", "word—"])
+def test_jwt_keeps_word_boundaries_and_minimum_segment_lengths(leading: str) -> None:
+    segment = "eyJ" + _filler(8)
+    signature = _filler(16)
+    assert is_credential_shaped_value(f"{leading}{segment}.{segment}.{signature}")
+    assert not is_credential_shaped_value(f"é{segment}.{segment}.{signature}")
+    assert not is_credential_shaped_value(f"{leading}{segment[:-1]}.{segment}.{signature}")
+    assert not is_credential_shaped_value(f"{leading}{segment}.{segment[:-1]}.{signature}")
+    assert not is_credential_shaped_value(f"{leading}{segment}.{segment}.{signature[:-1]}")
+
+
+def test_jwt_candidate_can_start_inside_an_earlier_candidates_signature() -> None:
+    segment = "eyJ" + _filler(13)
+    assert is_credential_shaped_value(f"no-header.{segment}.{segment}.{_filler(16)}")
+
+
+def test_json_checks_decoded_nested_fields_without_treating_unrelated_strings_as_values() -> None:
+    assert has_credential_shape(b'{"details":[{"api\\u005fkey":{"values":[null,"fixture"]}}]}')
+    assert not has_credential_shape(
+        b'{"details":[{"api\\u005fkey":{"values":[null,""]}},{"values":["fixture"]}]}'
+    )

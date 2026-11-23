@@ -1,5 +1,6 @@
 """Owner-defined broker response limits reach the real DNS/TLS egress path."""
 
+import asyncio
 import copy
 import json
 
@@ -183,3 +184,57 @@ async def test_configured_operation_limit_controls_actual_upstream_bytes(
     assert result.truncated is cut
     assert result.upstream_bytes == (maximum if cut else len(raw))
     assert result.body == (raw[:maximum] if cut else raw)
+
+
+async def test_small_broker_request_completes_while_maximum_response_is_processed(
+    upstream, monkeypatch
+):
+    small_body = b'{"data":"ready"}'
+    opening, closing = b'{"data":"', b'"}'
+    large_body = opening + b"." * (CEILING - len(opening) - len(closing)) + closing
+
+    @upstream.app.post("/concurrent-response/{charge}")
+    async def response(charge: str):
+        return Response(
+            large_body if charge == "ch_large" else small_body, media_type="application/json"
+        )
+
+    operation = _template(
+        upstream,
+        url={"host": NAME, "port": upstream.port, "path": "/concurrent-response/{charge}"},
+        response={"projection": None, "max_bytes": CEILING, "content_types": ["application/json"]},
+    )
+
+    def request(charge):
+        return render_operation(
+            operation,
+            {"charge": charge, "amount_minor_units": 1, "currency": "EUR"},
+            headers=[],
+            idempotency_key=charge,
+        )
+
+    completed = []
+
+    async def call(charge):
+        result = (await _send(upstream, request(charge))).result
+        completed.append(charge)
+        return result
+
+    async with asyncio.TaskGroup() as tasks:
+        send = upstream.egress.send
+        small = []
+
+        async def send_and_start_small(*args, **kwargs):
+            received = await send(*args, **kwargs)
+            if len(received.body) == CEILING:
+                # Schedule the peer at the handoff after real DNS/TLS egress,
+                # so completing during the large download cannot pass the test.
+                small.append(tasks.create_task(call("ch_small")))
+            return received
+
+        monkeypatch.setattr(upstream.egress, "send", send_and_start_small)
+        large = tasks.create_task(call("ch_large"))
+
+    assert completed == ["ch_small", "ch_large"]
+    assert small[0].result().body == small_body
+    assert large.result().body == large_body
