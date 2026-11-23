@@ -7,7 +7,7 @@ SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
 CANDIDATE_UNIT_PROFILE ?= $(or $(AWEB_GATE_UNIT_PROFILE),portable)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
-.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping production-awid-sync released-aw-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -355,6 +355,13 @@ PRODUCTION_AWID_PROJECT := scripts/test-egress/production-awid
 production-awid-sync:
 	uv sync --frozen --project $(PRODUCTION_AWID_PROJECT)
 
+# The aw release whose homes the upgrade tests open, fetched before isolation.
+# provenance.json is the fetch's last write.
+RELEASED_AW_13658 := .cache/released-aw/1.36.58
+
+released-aw-sync:
+	test -f $(RELEASED_AW_13658)/provenance.json || python3 scripts/fetch_released_aw.py $(RELEASED_AW_13658) --metadata-input scripts/test-egress/released-aw-1.36.58.json
+
 # Unique loopback Compose services; this does not use an existing host database.
 .PHONY: test-server-local
 test-server-local:
@@ -423,7 +430,7 @@ test-awid-pooler:
 	AWID_TEST_POOLER_URL=postgresql://postgres:postgres@localhost:$${AWID_TEST_POOLER_PORT:-56433}/postgres \
 		PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_database_session_settings.py
 
-test-cli: production-awid-sync
+test-cli: production-awid-sync released-aw-sync
 	python3 scripts/test-egress/test_fixture_imports.py
 	cd cli/go && go mod download
 	cd awid && uv sync --frozen
