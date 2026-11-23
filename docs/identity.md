@@ -280,16 +280,17 @@ from the start of the original POST. A `Retry-After` that exceeds that budget
 ends automatic retries. `aw` returns other 409s and HTTP 503
 `registry_operation_incomplete` without sending another POST.
 
-Cloud 0.8.83 queues acceptance behind another request using the same
-invitation or holding the lease for the requested name. Those waits share a
-20-second budget. If the server waits the full 20 seconds and returns
-`registry_operation_in_progress` or `registry_operation_incomplete`, `aw`
-prints the recovery command without replaying. The client retry helps with
-early overlap responses from Cloud 0.8.81.
+Cloud versions that queue overlapping acceptances share a 20-second wait
+budget across the invitation, the lease for the requested name, and the
+shared organization, team, and domain leases. A different join in the same
+team can also wait on the team lease. If the server waits the full 20 seconds
+and returns `registry_operation_in_progress`, `aw` prints the recovery command
+without replaying. The client retry helps with early overlap responses from
+Cloud 0.8.81.
 
-For a persistent overlap or incomplete operation, preserve the identity home
-and run the printed recovery command from the same directory after the service
-is ready. Repeat `aw init --join-from` with the same selection, or reuse the
+If the overlap persists or the server returns `registry_operation_incomplete`,
+preserve the identity home and run the printed recovery command from the same
+directory after the service is ready. Repeat `aw init --join-from` with the same selection, or reuse the
 original supplied invite in `aw team join` or `aw id team accept-invite` as
 directed.
 

@@ -8,9 +8,16 @@
   prints the command to resume the join.
 - For the selected identity's own namespace, `aw who` and `aw verify`
   use the home's recorded registry when DNS supplies only the public default.
+  Both refuse if the registry flag or DNS TXT record names a different
+  registry, or if the selected identity home is unreadable.
+- Hosted identity creation and `aw id parent refresh` also use the identity
+  home's recorded registry.
 - When hosted `aw init` receives a setup response and is interrupted before
   saving the workspace, `aw check` reports the interrupted setup and tells
   you to rerun the same `aw init` command from the original folder.
+- The next aweb server release ships updated default team instructions
+  (`server/src/aweb/defaults/team_instructions.md`), with clearer guidance
+  on quoted heredocs and reading the written file back.
 
 - Self-hosted CLI and wake processes retain access to private or HTTP AWID
   registries chosen by the operator. `aw` records a saved `--registry`,
