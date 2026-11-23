@@ -182,6 +182,7 @@ hooks = [
     { name = "pynacl" },
 ]
 runtime = [
+    { name = "asyncpg" },
     { name = "awid-service" },
     { name = "cbor2" },
     { name = "fastapi" },
@@ -244,7 +245,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.5.2rc3"
+version = "0.5.2"
 source = { editable = "../../naapp-lib/testing" }
 dependencies = [
     { name = "aiosmtpd" },
