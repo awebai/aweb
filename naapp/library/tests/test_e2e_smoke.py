@@ -111,9 +111,10 @@ def running_library(
     an existing deployment's coordination server (``operator``) as its team server."""
     require_e2e_enabled()
     wait_http_ok(f"{registry_url}/health")
-    directory.mkdir(parents=True)
+    tls = directory / "tls"
+    tls.mkdir(parents=True)
     address = local_address()
-    certificates = make_certificates(directory / "tls", ["library-install.test"], [address])
+    certificates = make_certificates(tls, ["library-install.test"], [address])
     own = library_settings(
         directory, awid_service_token=awid_service_token, registry_url=registry_url
     )
