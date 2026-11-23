@@ -121,7 +121,9 @@ async def test_history_facts_are_reused_for_at_most_a_minute(registry, team):
     assert 0 < cache._cache[TEAM_ID].expires_at - time.monotonic_ns() <= seconds_to_ns(60)
 
 
-async def test_history_page_bound_fails_closed_without_caching_partial_facts(registry, team_past_first_page, history_clock):
+async def test_history_page_bound_never_authorizes_from_partial_or_expired_facts(
+    registry, team_past_first_page, history_clock, caplog
+):
     await add_filler_certificates(registry, team_past_first_page, 201, 19999)
     complete = history_cache(registry)
     async with relying_app(registry, public_origin=ORIGIN, cache=complete) as (client, _):
@@ -144,16 +146,15 @@ async def test_history_page_bound_fails_closed_without_caching_partial_facts(reg
     assert not incomplete._cache
     assert len(certificate_pages(registry)) == 200
 
-
-async def test_history_refresh_failure_never_reuses_expired_facts(registry, team_past_first_page, caplog):
-    cache = history_cache(registry)
-    async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
-        assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 200
-        expired = replace(cache._cache[TEAM_ID], expires_at=-1)
-        cache._cache[TEAM_ID] = expired
-        await add_filler_certificates(registry, team_past_first_page, 201, 20000)
+    # A cache that held the whole history does not fall back to it once expired.
+    expired = replace(complete._cache[TEAM_ID], expires_at=-1)
+    complete._cache[TEAM_ID] = expired
+    caplog.clear()
+    registry.transport.calls.clear()
+    async with relying_app(registry, public_origin=ORIGIN, cache=complete) as (client, _):
         assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 503
-    assert cache._cache[TEAM_ID] is expired
+    assert len(certificate_pages(registry)) == 100
+    assert complete._cache[TEAM_ID] is expired
     assert "AWID team facts refresh failed" in caplog.text
 
 
