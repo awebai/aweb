@@ -2451,7 +2451,7 @@ evidence or unreadable input.
 
 Flags:
 - `-h, --help help for verify`
-- `--registry string Registry origin, when the domain's _awid record names none (same restriction as aw who)`
+- `--registry string Registry origin when neither the identity home nor DNS names a non-default registry`
 
 ## `whoami`
 
@@ -5194,6 +5194,6 @@ with an optional --message-id for chat. These reads do not acknowledge messages.
 Flags:
 - `-h, --help help for who`
 - `--message-id string Inspect the sender of this received mail or chat message`
-- `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+- `--registry string Registry origin when neither the identity home nor DNS names a non-default registry`
 - `--room Inspect an exact team room post (requires --message-id)`
 - `--session-id string Inspect received chat in this session`

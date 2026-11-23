@@ -3,6 +3,8 @@
 
 A second stdout line is JSON naming the fixture's storage (database URL and
 schema), for test helpers that seed state the CLI cannot publish itself.
+AWID_FIXTURE_ID_TREE_VECTOR=1 registers the identity-tree status vector before
+serving requests.
 Rate limits are off unless AWID_FIXTURE_RATE_LIMITS=production, which runs the
 production bucket values on the in-memory limiter, private to this fixture.
 The limiter clock stays in one window for the life of that fixture.
@@ -18,6 +20,7 @@ Uses the suite's PG/Redis when configured, otherwise owns disposable containers.
 No service responses are synthesized. Run uv sync --frozen in awid beforehand.
 """
 import json
+from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 import socket
@@ -62,7 +65,47 @@ def fixture_app():
             )
 
         app.dependency_overrides[get_domain_verifier] = lambda: verify_domain
+    if os.environ.get('AWID_FIXTURE_ID_TREE_VECTOR') == '1':
+        seed_identity_tree(app)
     return app
+
+
+def seed_identity_tree(app):
+    """Register the frozen root and parent through AWID before it listens."""
+    sys.path.insert(0, str(ROOT / 'awid' / 'tests'))
+    from conftest import ManualClock, build_signed_headers
+    from httpx import ASGITransport, AsyncClient
+    from id_tree_support import DOMAIN, Tree, at, did_key, seed
+
+    lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def seeded_lifespan(application):
+        async with lifespan(application):
+            clock = ManualClock(at('2026-10-26T00:00:00Z'))
+            application.state.id_tree_clock = clock
+            async with AsyncClient(transport=ASGITransport(app=application), base_url='http://fixture') as client:
+                client.app = application
+                tree = Tree(client, clock)
+                await tree.root()
+                await tree.vector_did('alice')
+                await tree.vector_did('global_agent')
+                await tree.enroll('alice', when=at('2026-10-26T00:01:00Z'))
+                await tree.enroll('alice', 'global-agent', when=at('2026-10-26T00:04:00Z'))
+                headers = build_signed_headers(
+                    seed('root'), did_key('root'), domain=DOMAIN, operation='create_team', name='backend',
+                )
+                response = await client.post(
+                    f'/v1/namespaces/{DOMAIN}/teams',
+                    json={'name': 'backend', 'team_did_key': did_key('seat'), 'visibility': 'public'},
+                    headers=headers,
+                )
+                response.raise_for_status()
+            application.state.awid_public_origins = ('https://api.awid.ai',)
+            del application.state.id_tree_clock
+            yield
+
+    app.router.lifespan_context = seeded_lifespan
 
 
 def main():

@@ -185,6 +185,9 @@ func TestHostedGlobalCreationResumesSameCertificateAndRefreshesAfterRegistration
 	var originalBody []byte
 	var originalHeader string
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != "registry.example.test" {
+			t.Errorf("unexpected registry origin %s during %s", r.Host, r.URL.Path)
+		}
 		switch r.URL.Path {
 		case "/v1/id-certificates/status":
 			reads++
@@ -218,10 +221,15 @@ func TestHostedGlobalCreationResumesSameCertificateAndRefreshesAfterRegistration
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
 	}
-	resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root"].DIDKey, "https://registry.example.test")}}
+	resolver := staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root"].DIDKey, "https://other.test")}}
 	t.Setenv("AWID_REGISTRY_URL", "https://registry.example.test")
 	registry := awid.NewAWIDRegistryClient(&http.Client{Transport: transport}, resolver)
-	tree := &hostedIDTreeRecovery{Domain: "example.com", Parent: map[string]any{"kind": "namespace", "id": "example.com"}}
+	tree, err := newHostedIDTreeRecovery(hostedIdentityContext{
+		Domain: "example.com", ParentKind: "namespace", ParentID: "example.com", RegistryURL: "https://registry.example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	response := awid.IDTreeCreationResponse{FieldsPresent: true, IDChain: awid.ReceivedIDChain{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["registered-root-agent"].Signed}}, RegistrationRequest: &awid.IDTreeRegistrationRequest{}}
 	material := workspaceTeamIdentityMaterial{SigningKey: ed25519.NewKeyFromSeed(seed), DIDKey: fixture.DIDKey, StableID: fixture.DIDAW, IdentityScope: awid.IdentityModeGlobal}
 	root := t.TempDir()
@@ -235,7 +243,7 @@ func TestHostedGlobalCreationResumesSameCertificateAndRefreshesAfterRegistration
 	// its rotated successor, where historical registration remains valid.
 	// Keep the preflight on the old controller, then publish its successor for
 	// the post-registration evidence read.
-	switching := &registrationTXTResolver{before: resolver, after: staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root_rotated"].DIDKey, "https://registry.example.test")}}, registered: &registered}
+	switching := &registrationTXTResolver{before: resolver, after: staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(v.Keys["root_rotated"].DIDKey, "https://other.test")}}, registered: &registered}
 	verdict, err := finishHostedIDTree(t.Context(), tree, response, material, root, registry, switching)
 	if err != nil || verdict == nil || verdict.IdentityValid == nil || !*verdict.IdentityValid || writes != 2 || reads != 3 {
 		t.Fatalf("resume lacks fresh completed verification: %+v %v reads=%d writes=%d", verdict, err, reads, writes)
@@ -296,7 +304,7 @@ func TestHostedLocalOwnerCannotCreateRegisteredChild(t *testing.T) {
 
 	registry := awid.NewAWIDRegistryClient(nil, staticTXTResolver{})
 	registry.DefaultRegistryURL = "http://127.0.0.1:1"
-	issuer, err := hostedOwnerIssuer(t.Context(), t.TempDir(), owner, registry, resolver)
+	issuer, err := hostedOwnerIssuer(t.Context(), t.TempDir(), owner, registry, resolver, "", nil)
 	if issuer != nil || awid.IDCertificateErrorCode(err) != "unregistered_parent" || resolver.calls != 0 {
 		t.Fatalf("local parent was not refused before global creation: %+v %v", issuer, err)
 	}

@@ -141,6 +141,12 @@ func resolveIdentityForDir(workingDir string) (*awconfig.ResolvedIdentity, error
 	if homeErr != nil {
 		return nil, homeErr
 	}
+	return resolveIdentityAtHome(workingDir, identityHome)
+}
+
+var errIdentityAbsent = errors.New("no identity or team state")
+
+func resolveIdentityAtHome(workingDir string, identityHome awconfig.IdentityHome) (*awconfig.ResolvedIdentity, error) {
 	identity, err := awconfig.ResolveIdentityFromHome(workingDir, identityHome.Root)
 	if err == nil {
 		identity.ExternalIdentityHome = identityHome.External()
@@ -150,7 +156,7 @@ func resolveIdentityForDir(workingDir string) (*awconfig.ResolvedIdentity, error
 		return identity, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
+		return nil, fmt.Errorf("read %s: %w", filepath.Join(identityHome.Root, "identity.yaml"), err)
 	}
 	if identityHome.External() {
 		local, localErr := resolveCertificateIdentityAtHome(workingDir, identityHome.Root)
@@ -165,8 +171,11 @@ func resolveIdentityForDir(workingDir string) (*awconfig.ResolvedIdentity, error
 
 func resolveCertificateIdentityAtHome(workingDir, identityHome string) (*awconfig.ResolvedIdentity, error) {
 	teamState, err := awconfig.LoadTeamStateFromIdentityHome(identityHome)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%w: %w", errIdentityAbsent, err)
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read %s: %w", filepath.Join(identityHome, "teams.yaml"), err)
 	}
 	membership := teamState.ActiveMembership()
 	if membership == nil {
@@ -196,16 +205,17 @@ func resolveCertificateIdentityAtHome(workingDir, identityHome string) (*awconfi
 	canonicalIdentityHome := filepath.Clean(strings.TrimSpace(identityHome))
 	externalIdentityHome := canonicalIdentityHome != filepath.Join(canonicalWorkingDir, ".aw")
 	resolved := &awconfig.ResolvedIdentity{
-		WorkingDir:           canonicalWorkingDir,
-		IdentityHome:         canonicalIdentityHome,
-		ExternalIdentityHome: externalIdentityHome,
-		SigningKeyPath:       signingKeyPath,
-		DID:                  didKey,
-		StableID:             strings.TrimSpace(cert.MemberDIDAW),
-		Address:              strings.TrimSpace(cert.MemberAddress),
-		Custody:              awid.CustodySelf,
-		IdentityScope:        identityScope,
-		RegistryURL:          strings.TrimSpace(membership.RegistryURL),
+		WorkingDir:             canonicalWorkingDir,
+		IdentityHome:           canonicalIdentityHome,
+		ExternalIdentityHome:   externalIdentityHome,
+		SigningKeyPath:         signingKeyPath,
+		DID:                    didKey,
+		StableID:               strings.TrimSpace(cert.MemberDIDAW),
+		Address:                strings.TrimSpace(cert.MemberAddress),
+		Custody:                awid.CustodySelf,
+		IdentityScope:          identityScope,
+		RegistryURL:            strings.TrimSpace(membership.RegistryURL),
+		RegistryOperatorOrigin: strings.TrimSpace(membership.RegistryOperatorOrigin),
 	}
 	if domain, handle, ok := awconfig.CutIdentityAddress(resolved.Address); ok {
 		resolved.Domain = domain
@@ -225,11 +235,14 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 	if err != nil {
 		if workspace == nil && errors.Is(err, os.ErrNotExist) {
 			teamState, err = awconfig.LoadTeamState(workingDir)
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("%w: %w", errIdentityAbsent, err)
+			}
 			if err != nil {
-				return nil, err
+				return nil, localIdentityStateError(fmt.Errorf("read %s: %w", awconfig.TeamStatePath(workingDir), err))
 			}
 		} else {
-			return nil, fmt.Errorf("invalid worktree workspace: %w", err)
+			return nil, localIdentityStateError(fmt.Errorf("invalid worktree workspace: %w", err))
 		}
 	}
 	activeMembership := awconfig.ActiveMembershipFor(workspace, teamState)
@@ -241,8 +254,13 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 		activeTeamID = strings.TrimSpace(teamState.ActiveTeam)
 	}
 	if activeTeamID == "" {
-		return nil, usageError("current worktree is missing active_team membership; run `aw init` first")
+		err := usageError("current worktree is missing active_team membership; run `aw init` first")
+		if teamState == nil || strings.TrimSpace(teamState.ActiveTeam) == "" {
+			return nil, fmt.Errorf("%w: %w", errIdentityAbsent, err)
+		}
+		return nil, err
 	}
+
 	cert, err := awconfig.LoadTeamCertificateForTeam(workingDir, activeTeamID)
 	if err != nil {
 		return nil, fmt.Errorf("load active team certificate for %s: %w", activeTeamID, err)
@@ -272,21 +290,33 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 	if err != nil {
 		return nil, fmt.Errorf("invalid active team certificate team: %w", err)
 	}
+	var registryURL, operatorOrigin string
+	if membership := teamState.Membership(activeTeamID); membership != nil {
+		registryURL = membership.RegistryURL
+		operatorOrigin = membership.RegistryOperatorOrigin
+	}
 	return &awconfig.ResolvedIdentity{
-		WorkingDir:     strings.TrimSpace(workingDir),
-		IdentityPath:   "",
-		SigningKeyPath: signingKeyPath,
-		DID:            didKey,
-		StableID:       "",
-		Address:        "",
-		Handle:         strings.TrimSpace(cert.Alias),
-		Domain:         domain,
-		Custody:        awid.CustodySelf,
-		IdentityScope:  awid.IdentityModeLocal,
-		RegistryURL:    "",
-		RegistryStatus: "",
-		CreatedAt:      "",
+		WorkingDir:             strings.TrimSpace(workingDir),
+		IdentityPath:           "",
+		SigningKeyPath:         signingKeyPath,
+		DID:                    didKey,
+		StableID:               "",
+		Address:                "",
+		Handle:                 strings.TrimSpace(cert.Alias),
+		Domain:                 domain,
+		Custody:                awid.CustodySelf,
+		IdentityScope:          awid.IdentityModeLocal,
+		RegistryURL:            strings.TrimSpace(registryURL),
+		RegistryOperatorOrigin: strings.TrimSpace(operatorOrigin),
+		CreatedAt:              "",
 	}, nil
+}
+
+func localIdentityStateError(err error) error {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, awconfig.ErrNoActiveTeamMembership) {
+		return fmt.Errorf("%w: %w", errIdentityAbsent, err)
+	}
+	return err
 }
 
 func validateResolvedIdentity(identity *awconfig.ResolvedIdentity) error {

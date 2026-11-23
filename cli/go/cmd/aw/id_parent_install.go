@@ -69,12 +69,12 @@ func executeIDParentInstall(ctx context.Context, opts idParentOptions, raw []byt
 	if err := check(); err != nil {
 		return nil, err
 	}
-	registry, origin, err := parentRegistry(ctx, opts, r.domain)
+	registry, route, err := parentRegistry(ctx, opts, r.domain)
 	if err != nil {
 		return nil, err
 	}
 	subject := awid.IDChainSubject{ID: r.id, DIDKey: r.didKey}
-	evidence := idStatusAt(registry, opts.TXTResolver, origin).IDChainEvidence(ctx, chain, subject, r.domain)
+	evidence := route.status(registry).IDChainEvidence(ctx, chain, subject, r.domain)
 	verdict := awid.VerifyIDChain(chain, subject, evidence, r.domain)
 	if verdict.IdentityValid == nil || !*verdict.IdentityValid {
 		return nil, &awid.IDCertificateError{Code: verdict.Reason}

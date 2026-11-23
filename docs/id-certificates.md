@@ -905,7 +905,12 @@ to an exported message without credentials or an aweb messaging-server read.
 `aw mail show --message-id ID --envelope` exports its original signed bytes (or
 encrypted envelope) with the unchanged adjacent chain. The verifier derives the
 author from signed content, verifies original authentication first, then obtains
-current DNS/public-registry evidence. Invalid proof is explicit in text and
+current DNS and registry evidence. For the selected identity's own namespace,
+`aw who` and `aw verify` use the home's recorded non-default registry when
+DNS supplies only the implicit public default. The recorded origin takes
+precedence over an ambient registry setting. An explicit conflicting origin
+from the registry flag or TXT record refuses before any evidence request. `aw id status` inspects the local home without a registry read.
+Invalid proof is explicit in text and
 retains `outcome=unknown, identity_valid=false` in JSON; failed lookups remain
 unavailable.
 
@@ -1101,7 +1106,11 @@ its original key and request UUID. If issuance refuses, the pending child home
 and request remain available rather than being rolled back. Creation across
 machines uses the explicit parent exchange.
 For a local-team invitation, the inviter's own saved registry remains its
-identity registry. When that pin is absent, the already-resolved team registry
+identity registry. The same identity route applies when `--parent` explicitly
+selects a local creator. Issuance uses the recorded origin even when the
+environment or TXT registry field differs. Only an explicit registry flag can
+conflict with that origin. DNS still verifies the namespace controller. When
+that pin is absent, the already-resolved team registry
 (including service discovery) is a routing fallback only for an inviter in that
 same namespace, and must not contradict that namespace's discovered registry.
 A differently homed inviter uses its own identity/namespace registry selection.

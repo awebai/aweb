@@ -101,6 +101,7 @@ type idParentOptions struct {
 	HumanAtTerminal func() error
 	Keychain        awid.HumanKeyStore
 	Prompt          awid.PassphrasePrompt
+	registryScope   identityRegistryScope
 }
 
 func idParentOptionsFromFlags(commands ...*cobra.Command) idParentOptions {
@@ -123,6 +124,7 @@ type requester struct {
 	domain         string
 	kind           string
 	dir            string
+	identity       *awconfig.ResolvedIdentity
 	signer         func(description string) awid.IDCertificateSigner
 	human          *awconfig.HumanRecord
 	session        *humanParticipation
@@ -169,7 +171,7 @@ func selectRequester(opts idParentOptions) (*requester, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &requester{id: id, didKey: identity.DID, domain: domain, kind: "agent", dir: dir,
+		return &requester{id: id, didKey: identity.DID, domain: domain, kind: "agent", dir: dir, identity: identity,
 			signer: func(string) awid.IDCertificateSigner { return awid.KeySigner(key) }}, nil
 	}
 	domain, err := normalizeIDCreateDomain(opts.Domain, false)
@@ -461,16 +463,13 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 		r.domain = domain
 	}
 	call, cancel := commandAPIContext(nil, ctx)
-	authority, err := awid.DiscoverAuthoritativeRegistry(call, opts.TXTResolver, r.domain)
+	registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
+	route, err := resolveIdentityEvidenceRoute(call, registry, opts.TXTResolver, registryIdentityIssuanceRoute, opts.registryScope, r.domain, opts.RegistryURL)
 	cancel()
-	if err != nil {
-		return idParentImportOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(r.domain), err)
-	}
-	registryURL, err := domainRegistryURL(authority, opts.RegistryURL)
 	if err != nil {
 		return idParentImportOutput{}, err
 	}
-	registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
+	registryURL := route.origin
 	registry.DefaultRegistryURL = registryURL
 
 	chain := response.Chain().Bundle()
@@ -483,7 +482,7 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 			return idParentImportOutput{}, err
 		}
 		subject := awid.IDChainSubject{ID: r.id, DIDKey: r.didKey}
-		evidence := idStatusAt(registry, opts.TXTResolver, registryURL).IDChainEvidence(ctx, chain, subject, r.domain)
+		evidence := route.status(registry).IDChainEvidence(ctx, chain, subject, r.domain)
 		if err := validateParentReplacement(r, outgoing, signed, chain); err != nil {
 			return idParentImportOutput{}, err
 		}
