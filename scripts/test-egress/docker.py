@@ -38,6 +38,7 @@ def runner_args(token, dns_ip, image, profile='portable', server_workers=0):
             '--name', token + '-runner', '--cpus', cpus, '--memory', memory,
             '--pids-limit', '2048',
             '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres',
+            '-e', 'TEST_DB_HOST=127.0.0.1', '-e', 'TEST_DB_PORT=5432',
             '-e', 'PGPASSWORD=postgres', '-e', 'REDIS_URL=redis://127.0.0.1:6379/0',
             *worker_env, image, 'sleep', 'infinity']
 
