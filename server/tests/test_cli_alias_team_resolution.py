@@ -192,6 +192,15 @@ async def memberships(env, tmp_path, registry_url, *, missing):
     peer_certificate = await register(env, beta, beta_key, carol, "reviewer")
     for actor, cert in ((alice, human_certificate), (carol, peer_certificate)):
         await env.db.execute("UPDATE {{tables.agents}} SET certificate_id=$1 WHERE agent_id=$2", cert["certificate_id"], actor.id)
+    projection = await env.db.fetch_one(
+        """SELECT did_aw, did_aw_verified_key, human_verified_key
+           FROM {{tables.agents}} WHERE agent_id=$1""",
+        alice.id,
+    )
+    assert projection is not None
+    assert (projection["did_aw"] or "").startswith("did:aw:")
+    assert projection["did_aw_verified_key"] == alice.did
+    assert projection["human_verified_key"] == alice.did
     home = tmp_path / "sender-home"
     home.mkdir(mode=0o700)
     child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
