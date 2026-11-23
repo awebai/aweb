@@ -28,6 +28,7 @@ import subprocess
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from tests.js_runtime_tree import runtime_repo
 from aweb_naapp_testing.network import DnsServer
@@ -861,7 +862,7 @@ async def test_channel_core_addressless_human_mail(
     ],
 )
 async def test_cross_team_local_sender_to_global_grant(
-    privacy_app, runtime_packages, tmp_path, plaintext, runtime, state, expected
+    privacy_app, runtime_packages, tmp_path, monkeypatch, plaintext, runtime, state, expected
 ):
     async with _local_sender_mail(
         privacy_app,
@@ -872,12 +873,18 @@ async def test_cross_team_local_sender_to_global_grant(
         cross_team=True,
         plaintext=plaintext,
     ) as (message_id, conversation_id, binary, command_dir, command_env, registry):
+        failed_reads = []
         if state == "unknown":
-            # unreachable-state: pre-attribution stored message with no sender certificate_id
-            await privacy_app.db.execute(
-                "UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1",
-                privacy_app.actors["alice"].id,
-            )
+            name, domain = privacy_app.actors["alice"].team_id.split(":", 1)
+            revocations = f"/v1/namespaces/{domain}/teams/{name}/revocations"
+
+            def fail_sender_standing(request, response):
+                if request.method == "GET" and request.url.path == revocations:
+                    failed_reads.append(request.url.path)
+                    return httpx.Response(503, json={"detail": "sender authority temporarily unavailable"})
+                return response
+
+            monkeypatch.setattr(privacy_app.registry.transport, "fault", fail_sender_standing)
         shown = await _cli(
             binary,
             command_dir,
@@ -897,6 +904,7 @@ async def test_cross_team_local_sender_to_global_grant(
             tmp_path, binary, command_dir, runtime_env, message_id, conversation_id
         )
         assert row["verification_status"] == expected, (row, registry.responses)
+        assert bool(failed_reads) is (state == "unknown")
         await _assert_runtime_presentation(
             privacy_app, tmp_path, runtime, expected, status, text, message_id
         )

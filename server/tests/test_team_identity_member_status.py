@@ -9,6 +9,8 @@ from aweb.member_team_key import MemberProjection
 from aweb.team_auth_deps import resolve_team_identity
 from test_native_member_projection import native_json_snapshot as native_json_snapshot
 
+__all__ = ["native_json_snapshot"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", list(MemberStatus))

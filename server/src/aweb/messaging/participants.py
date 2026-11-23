@@ -7,7 +7,7 @@ actor, never a newly invented global address or membership in another team.
 from __future__ import annotations
 
 from aweb.human_kind import is_verified_human
-from aweb.identity_auth_deps import current_membership
+from aweb.member_team_key import current_membership
 from aweb.member_team_key import (
     current_member_projections,
     messaging_identity_projection,
@@ -20,7 +20,7 @@ async def messaging_participants_by_aliases(
     team_id: str,
     aliases: list[str],
     selected_team_id: str | None,
-    registry_client=None,
+    registry_client,
 ) -> list[dict]:
     if not aliases:
         return []
@@ -49,7 +49,7 @@ async def messaging_participant_by_alias(
     team_id: str,
     alias: str,
     selected_team_id: str | None,
-    registry_client=None,
+    registry_client,
 ) -> dict | None:
     rows = await messaging_participants_by_aliases(
         db,

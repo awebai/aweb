@@ -20,7 +20,7 @@ from awid.e2ee_keys import build_encryption_key_assertion
 from awid.registry import Address, AddressDelivery, Namespace
 from awid.signing import sign_message
 from aweb.e2ee_messages import encrypt_e2ee_chat, generate_x25519_keypair
-from aweb.internal_auth import build_internal_auth_header_value
+from aweb.internal_auth import application_proxy_verification, build_internal_auth_header_value
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.mcp import auth as mcp_auth
 from aweb.mcp.auth import AuthContext
@@ -38,6 +38,13 @@ from team_facts_fixtures import legacy_registry
 from messaging_actor_support import admit_messaging_actor
 from test_dashboard_privacy import TEAM as PRIVACY_TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
+import test_mcp_mutation_hook_parity as proxy_fixtures
+from test_mcp_mutation_hook_parity import TEAM as PROXY_TEAM
+
+
+proxy_server = proxy_fixtures.server
+
+__all__ = ["mail_server", "privacy_app"]
 
 
 class DBInfra:
@@ -188,8 +195,8 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status)
-        VALUES ($1, $2, $3, $4, 'global', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
         """,
         agent_id,
         team_id,
@@ -260,8 +267,8 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, status)
-        VALUES ($1, $2, $3, $4, 'global', 'active')
+            (agent_id, team_id, did_key, alias, identity_scope, status, inbound_mode)
+        VALUES ($1, $2, $3, $4, 'global', 'active', 'open')
         """,
         agent_id,
         team_id,
@@ -322,45 +329,35 @@ async def test_mcp_auth_retains_the_shared_identity_member_context(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_mcp_auth_accepts_trusted_proxy_headers(privacy_app, monkeypatch):
-    env = privacy_app
-    actor = await admit_messaging_actor(
-        env, alias="proxy-alice", team_id=PRIVACY_TEAM, address="example.test/proxy-alice"
-    )
-    workspace_id = await env.db.fetch_val(
-        "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1", UUID(actor.agent_id)
-    )
-    assert workspace_id is not None
-    secret = "proxy-secret"
-    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
-    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
+async def test_mcp_auth_accepts_trusted_proxy_headers(proxy_server):
+    env = proxy_server
+    config = application_proxy_verification(env.app.state)
+    agent_id = env.agents["pilot"]
     user_id = str(uuid4())
-    middleware = mcp_auth.MCPAuthMiddleware(app=env.app, db_infra=env.infra)
-    ctx = await middleware._resolve_auth(
-        _request_with_headers(
-            {
-                "X-Team-ID": PRIVACY_TEAM,
-                "X-User-ID": user_id,
-                "X-AWEB-Actor-ID": actor.agent_id,
-                "X-AWEB-Auth": build_internal_auth_header_value(
-                    secret=secret,
-                    team_id=PRIVACY_TEAM,
-                    principal_type="u",
-                    principal_id=user_id,
-                    actor_id=actor.agent_id,
-                ),
-            },
-            app=env.app,
-        )
+    headers = {
+        "X-Team-ID": PROXY_TEAM, "X-User-ID": user_id, "X-AWEB-Actor-ID": agent_id,
+        "X-AWEB-Auth": build_internal_auth_header_value(
+            secret=config.shared_secret, team_id=PROXY_TEAM,
+            principal_type="u", principal_id=user_id, actor_id=agent_id,
+        ),
+    }
+    middleware = mcp_auth.MCPAuthMiddleware(
+        app=lambda *_args, **_kwargs: None, db_infra=env.app.state.db,
+        proxy_verification=config,
     )
+    request = Request({
+        "type": "http", "method": "POST", "path": "/mcp/", "app": env.app,
+        "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+    })
+    ctx = await middleware._resolve_auth(request)
     assert ctx is not None
-    assert ctx.team_id == PRIVACY_TEAM
-    assert ctx.agent_id == actor.agent_id
-    assert ctx.workspace_id == str(workspace_id)
-    assert ctx.alias == "proxy-alice"
-    assert ctx.did_key == actor.did_key
-    assert ctx.did_aw == actor.stable_id
-    assert ctx.address == actor.address
+    assert ctx.team_id == PROXY_TEAM
+    assert ctx.agent_id == agent_id
+    assert ctx.workspace_id == str(env.workspaces["pilot"])
+    assert ctx.alias == "pilot"
+    assert ctx.did_key == env.keys["pilot"][1]
+    assert ctx.did_aw == env.dids["pilot"]
+    assert ctx.address == "local/pilot"
 
 
 @pytest.mark.asyncio
@@ -384,8 +381,8 @@ async def test_mcp_auth_refuses_a_forwarded_actor_that_is_not_an_active_member(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key)
-        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', $3, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */)
+            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key, inbound_mode)
+        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', $3, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'open')
         """,
         agent_id,
         team_id,
@@ -467,19 +464,16 @@ async def test_mcp_auth_rejects_bad_trusted_proxy_signature(aweb_cloud_db, monke
     assert exc_info.value.status_code == 401
 
 
-@pytest.mark.asyncio
-async def test_mcp_auth_fails_when_proxy_trust_enabled_without_secret(aweb_cloud_db, monkeypatch):
+def test_mcp_auth_refuses_construction_when_proxy_enabled_without_secret(monkeypatch):
+    from aweb.internal_auth import ProxyVerificationConfigurationError
+
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.delenv("AWEB_INTERNAL_AUTH_SECRET", raising=False)
-
-    middleware = mcp_auth.MCPAuthMiddleware(
-        app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db)
+    with pytest.raises(ProxyVerificationConfigurationError) as refused:
+        mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=None)
+    assert str(refused.value) == (
+        "Configure a nonempty shared secret or disable proxy header trust before constructing the application."
     )
-    with pytest.raises(HTTPException) as exc_info:
-        await middleware._resolve_auth(_request_with_headers({}))
-
-    assert exc_info.value.status_code == 500
-    assert "misconfigured" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio
@@ -1881,11 +1875,11 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, left_at)
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
         VALUES
-            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL),
-            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob', NULL),
-            ($1, 'did:aw:carol', $4, 'carol', 'acme.com/carol', NOW())
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob'),
+            ($1, 'did:aw:carol', $4, 'carol', 'acme.com/carol')
         """,
         session_id,
         alice_agent_id,
@@ -1893,6 +1887,15 @@ async def test_mcp_chat_continuation_encryptor_gets_active_recipient_identities(
         carol_agent_id,
     )
 
+    from messaging_actor_support import archive_messaging_actor
+
+    await archive_messaging_actor(
+        aweb_cloud_db.aweb_db,
+        None,
+        team_id=team_id,
+        agent_id=carol_agent_id,
+        registry_client=None,
+    )
     monkeypatch.setattr(
         chat_tools,
         "get_auth",

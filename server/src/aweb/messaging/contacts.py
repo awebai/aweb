@@ -8,6 +8,12 @@ import logging
 import re
 from enum import Enum, auto
 from uuid import UUID
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+import asyncpg
+from pgdbm.errors import QueryError
+from aweb.db import TransactionInfra
 
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.service_errors import ConflictError, ValidationError
@@ -91,6 +97,114 @@ async def add_contact(
         raise ConflictError("Contact already exists")
 
     return _contact_row_to_dict(row)
+
+
+async def ensure_identity_contact(
+    *, db, owner_did: str, contact_address: str, contact_did_aw: str,
+    binding_controller_did: str, label: str = "",
+) -> dict:
+    """Accept a fresh resolved contact, or return an unchanged accepted identity.
+
+    The host supplies independently resolved DID/controller facts and explicit
+    owner acceptance. An existing legacy or differently bound row requires the
+    existing exact-old bind operation; retries never activate or overwrite it.
+    ``db`` is a native manager or the host's open transaction.
+    """
+    async with db.transaction() as tx:
+        try:
+            return await add_contact(
+                TransactionInfra(None, tx), owner_did=owner_did,
+                contact_address=contact_address, contact_did_aw=contact_did_aw,
+                binding_controller_did=binding_controller_did, label=label,
+            )
+        except ConflictError:
+            row = await tx.fetch_one(
+                "SELECT * FROM {{tables.contacts}} "
+                "WHERE owner_did=$1 AND contact_address=$2 AND reference_type='identity' FOR UPDATE",
+                owner_did, normalize_hosted_handle_reference(contact_address),
+            )
+            if row is not None and row.get("contact_did_aw") == contact_did_aw.strip():
+                # Key/controller rotation for an unchanged stable identity is
+                # not a replacement of the owner's accepted relationship.
+                return _contact_row_to_dict(row)
+            reason = (
+                "This contact has no accepted identity binding. "
+                if row is not None and not row.get("contact_did_aw")
+                else "This contact is bound to a different identity. "
+            )
+            raise ConflictError({
+                "code": "contact_identity_binding_required",
+                "message": reason + "Use the contact's explicit bind operation before retrying.",
+            }) from None
+
+
+@dataclass(frozen=True)
+class ContactTransferResult:
+    moved: int
+    merged: int
+
+
+async def transfer_contacts(
+    *, db, old_owner_dids: Sequence[str], target_owner_did: str,
+) -> ContactTransferResult:
+    """Transfer host-selected owners' contacts without accepting new bindings.
+
+    Prefer a bound row, then an existing target row, then the lowest contact
+    UUID. Keep every survivor field except its owner. Check every group's
+    positive bindings before deleting duplicates; all effects share the host's
+    transaction (a savepoint when one is already open).
+    """
+    target = str(target_owner_did or "").strip()
+    if not target:
+        raise ValidationError("A target contact owner is required. Select the target identity before retrying.")
+    owners = normalize_owner_dids(owner_did=target, owner_dids=list(old_owner_dids))
+    try:
+        async with db.transaction() as tx:
+            rows = await tx.fetch_all(
+                "SELECT * FROM {{tables.contacts}} WHERE owner_did=ANY($1::text[]) "
+                "ORDER BY contact_id FOR UPDATE", owners,
+            )
+            groups: dict[tuple, list] = {}
+            for row in rows:
+                reference = row["reference_type"]
+                key = (
+                    (reference, row["contact_address"]) if reference == "identity"
+                    else (reference, row["handle_namespace"], row["target_agent_name"] or "")
+                )
+                groups.setdefault(key, []).append(row)
+
+            survivors: list[dict] = []
+            duplicates: list[UUID] = []
+            for group in groups.values():
+                bindings = {row["contact_did_aw"] for row in group if row.get("contact_did_aw")}
+                if len(bindings) > 1:
+                    raise ConflictError({
+                        "code": "contact_transfer_binding_conflict",
+                        "message": "These owners accepted different identities for the same contact. "
+                        "Resolve the conflicting contact bindings explicitly before retrying the transfer.",
+                    })
+                chosen = min(group, key=lambda row: (
+                    not bool(row.get("contact_did_aw")), row["owner_did"] != target, str(row["contact_id"]),
+                ))
+                survivors.append(chosen)
+                duplicates.extend(row["contact_id"] for row in group if row["contact_id"] != chosen["contact_id"])
+
+            if duplicates:
+                await tx.execute("DELETE FROM {{tables.contacts}} WHERE contact_id=ANY($1::uuid[])", duplicates)
+            moving = [row["contact_id"] for row in survivors if row["owner_did"] != target]
+            if moving:
+                await tx.execute(
+                    "UPDATE {{tables.contacts}} SET owner_did=$2 WHERE contact_id=ANY($1::uuid[])", moving, target,
+                )
+            return ContactTransferResult(moved=len(moving), merged=len(duplicates))
+    except (QueryError, asyncpg.UniqueViolationError) as exc:
+        if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
+            raise
+        logger.warning("Contacts changed during owner transfer", exc_info=True)
+        raise ConflictError({
+            "code": "contact_transfer_changed",
+            "message": "Contacts changed during the transfer. Retry the transfer with the current contacts.",
+        }) from exc
 
 
 async def add_handle_contact(
@@ -195,7 +309,8 @@ async def identity_contact_match(
 ) -> IdentityContactMatch:
     """Read exact active identity bindings, retaining locks in a caller transaction.
 
-    docs/identity-messaging-contract.md:85-91 excludes pending/handle/domain
+    Global And Local Identities (docs/identity-messaging-contract.md:88-91,108-110) excludes
+    pending/handle/domain
     matches. A legacy address without an identity needs explicit rebinding.
     """
     owner_keys = normalize_owner_dids(owner_dids=owner_dids)

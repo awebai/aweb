@@ -55,7 +55,8 @@ from aweb.messaging.room_notices import (
 from aweb.messaging.waiting import get_waiting_agents, get_waiting_agents_by_session
 from aweb.internal_auth import parse_internal_auth_context, resolve_internal_actor
 from aweb.grant_streams import (
-    GRANT_STREAM_RECHECK_SECONDS,
+    STREAM_AUTHORITY_RECHECK_SECONDS,
+    STREAM_MAX_DURATION_SECONDS,
     agent_event_allowed,
     clamp_deadline_to_grant,
     grant_has_scope,
@@ -80,7 +81,6 @@ EVENTS_SNAPSHOT_RETRY_INITIAL = 1.0  # first retry delay after a failed snapshot
 EVENTS_SNAPSHOT_FAILURE_WINDOW = 30.0  # tolerate bursts; terminate only after >30s
 EVENTS_SNAPSHOT_MAX_BACKOFF = 5.0  # cap snapshot retry delay
 EVENTS_HEARTBEAT_INTERVAL = 30.0  # seconds between idle SSE heartbeat comments
-MAX_STREAM_DURATION = 300  # maximum stream lifetime in seconds
 CONTROL_SIGNAL_BATCH = 10  # control signals consumed per read; a full batch reads again
 ROOM_AUTHORITY_RETRY_MAX = 5.0  # cap on retrying room notices while authority is unavailable
 
@@ -675,11 +675,15 @@ async def _sse_agent_events(
         # The caller deadline bounds waiting, not the initial scoped snapshot.
         # Grant expiry still blocks delivery above, even for an expired deadline.
 
+        delivered = False
         for evt in initial:
             if evt["type"] == "actionable_room_post" and not room_authority.fresh():
                 continue
             if agent_event_allowed(identity, evt):
                 yield _sse_frame(evt)
+                delivered = True
+        if delivered:
+            last_heartbeat_at = datetime.now(timezone.utc)
 
         # Streams opened together reconcile apart.
         next_reconcile_at = monotonic() + random.uniform(0, EVENTS_RECONCILE_INTERVAL)
@@ -706,7 +710,7 @@ async def _sse_agent_events(
                 ),
             ]
             if identity.grant is None or identity.grant.never_expires:
-                due.append(guard.checked_at + GRANT_STREAM_RECHECK_SECONDS)
+                due.append(guard.checked_at + STREAM_AUTHORITY_RECHECK_SECONDS)
             if pending - {"room"}:
                 due.append(retry_at)
             if "room" in pending:
@@ -936,12 +940,12 @@ async def event_stream(
         raise HTTPException(status_code=422, detail="Invalid deadline format")
 
     # Cap deadline so clients cannot hold connections open indefinitely.
-    max_deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_STREAM_DURATION)
+    max_deadline = datetime.now(timezone.utc) + timedelta(seconds=STREAM_MAX_DURATION_SECONDS)
     if deadline_dt > max_deadline:
         deadline_dt = max_deadline
     deadline_dt = clamp_deadline_to_grant(deadline_dt, identity)
 
-    await require_valid_stream_grant(request, db, identity)
+    await require_valid_stream_grant(request, db, identity, use_admitted_member=True)
 
     return StreamingResponse(
         _sse_agent_events(

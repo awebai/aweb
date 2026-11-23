@@ -714,7 +714,7 @@ async def test_mcp_handle_address_outside_the_senders_team_needs_its_registry_bi
         "jane.aweb.ai",
         "c3po",
         c3po.stable_id,
-        bytes(controller),
+        controller,
         current_did_key=c3po.did_key,
     )
     sent = await server.mcp_mail(to="@jane/c3po", plaintext=True)

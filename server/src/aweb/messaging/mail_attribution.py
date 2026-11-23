@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from aweb.identity_auth_deps import MessagingAuth
     from aweb.messaging.participant_succession import MailSuccessionScope
 
 
@@ -29,7 +30,8 @@ def incoming_mail_snapshot_predicate(
 ) -> IncomingMailPredicate:
     """Use exact thread evidence preloaded at stream establishment.
 
-    docs/identity-messaging-contract.md:127-131 keeps historical key evidence
+    Global And Local Identities (docs/identity-messaging-contract.md:131-144) keeps historical
+    key evidence
     within its recorded thread. Snapshotting
     keeps event ticks from querying succession/participant tables again.
     """
@@ -98,3 +100,23 @@ def readable_mail_sql(dids_parameter: str) -> str:
               AND own.did = ANY({dids_parameter}::text[])
         )
     )"""
+
+
+async def has_authored_mail(*, db, auth: "MessagingAuth") -> bool:
+    """Existence of authored mail within this authenticated reader's authority.
+
+    The host supplies its already authorized scoped native manager/transaction.
+    History comes only from the same canonical participant and thread-local
+    attribution predicates as native mail reads, never a caller's predecessor
+    list. This reads no content or keys and propagates database failures.
+    """
+    from aweb.identity_auth_deps import participant_dids
+
+    return bool(await db.fetch_value(
+        f"""SELECT EXISTS (
+            SELECT 1 FROM {{{{tables.messages}}}} m
+            WHERE {readable_mail_sql(dids_parameter='$1')}
+              AND {mail_identity_sql(field='from_did', dids_parameter='$1')}
+        )""",
+        participant_dids(auth),
+    ))

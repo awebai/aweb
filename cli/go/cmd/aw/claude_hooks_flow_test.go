@@ -67,7 +67,7 @@ func TestGuidedClaudePollingFallbackExplainsLimitsAndRequiresOptIn(t *testing.T)
 	for _, answer := range []string{"n\n\n", "n\ny\n"} {
 		root := t.TempDir()
 		var out bytes.Buffer
-		if err := runGuidedPostInitSetup(guidedOnboardingRequest{
+		if _, err := runGuidedSetup(guidedOnboardingRequest{
 			WorkingDir: root, AskPostCreateSetup: true, PromptIn: &singleByteReader{data: answer}, PromptOut: &out,
 		}); err != nil {
 			t.Fatal(err)

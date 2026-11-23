@@ -10,16 +10,19 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from awid.registry import CachedRegistryClient, TeamCertificateStanding
+from awid.registry import MalformedTeamKeyError, TeamCertificateStanding
 from awid.team_ids import build_team_id, parse_team_id
 from awid.team_key_acts import TeamKeyMemo, TeamKeyUnverified
 from fastapi import HTTPException, Request
 
-from aweb.application_state import application_registry_client, native_application_state
+from aweb.application_state import (
+    RegistryClientUnavailable,
+    application_registry_client,
+    native_application_state,
+)
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
     is_private_team_refusal,
     serves_team,
     team_not_served_exception,
@@ -56,6 +59,13 @@ def request_auth_audiences(request: Request) -> list[str]:
     )
 
 
+def team_key_pin_memo_for(state) -> TeamKeyMemo:
+    memo = getattr(state, "team_key_pin_memo", None)
+    if memo is None:
+        memo = state.team_key_pin_memo = TeamKeyMemo()
+    return memo
+
+
 def _team_read_failure(
     exc: Exception, registry_client, team_id: str, *, operation: str, reading: str
 ) -> HTTPException:
@@ -78,6 +88,7 @@ async def resolve_team_key(
     db: Any = None,
     evidence: EvidenceMode = EvidenceMode.CACHED,
     check_key: Callable[[str], None] | None = None,
+    rejected_key: str | None = None,
 ) -> str:
     """Request adapter preserving native unknown-team, pin and dependency errors."""
     try:
@@ -86,9 +97,6 @@ async def resolve_team_key(
         return ""
     state = native_application_state(request.app.state)
     registry_client = application_registry_client(request.app.state)
-    memo = getattr(state, "team_key_pin_memo", None)
-    if memo is None:
-        memo = state.team_key_pin_memo = TeamKeyMemo()
     try:
         return await read_team_key(
             db=db if db is not None else native_database_manager(state.db),
@@ -96,14 +104,15 @@ async def resolve_team_key(
             txt_resolver=txt_resolver_for(state),
             team_id=build_team_id(domain, name),
             evidence=evidence,
-            pin_memo=memo,
+            pin_memo=team_key_pin_memo_for(state),
             check_key=check_key,
+            rejected_key=rejected_key,
         )
     except TeamKeyUnverified:
         raise team_key_unverified_exception() from None
     except HTTPException:
         raise
-    except AWID_DEPENDENCY_ERRORS as exc:
+    except (MalformedTeamKeyError, *AWID_DEPENDENCY_ERRORS) as exc:
         raise _team_read_failure(
             exc,
             registry_client,
@@ -117,25 +126,6 @@ async def resolve_team_key(
             team_id,
         )
         raise awid_dependency_http_exception(exc, operation="AWID team key resolution") from exc
-
-
-async def request_revoked_certificates(
-    request: Request,
-    team_id: str,
-    *,
-    certificate_ids: list[str] | None = None,
-    evidence: EvidenceMode = EvidenceMode.CACHED,
-) -> set[str]:
-    """Get the set of revoked certificate IDs from awid.
-
-    Raises HTTPException(503) if awid is unreachable.
-    """
-    return await revoked_certificates(
-        application_registry_client(request.app.state),
-        team_id,
-        certificate_ids=certificate_ids,
-        evidence=evidence,
-    )
 
 
 async def revoked_certificates(
@@ -154,11 +144,12 @@ async def revoked_certificates(
     domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
-        raise awid_registry_not_configured_exception(operation="AWID team revocation check")
+        raise RegistryClientUnavailable()
 
     try:
-        if certificate_ids is not None:
-            return await registry_client.get_team_revocations_for_certificates(
+        selected = getattr(registry_client, "get_team_revocations_for_certificates", None)
+        if certificate_ids is not None and callable(selected):
+            return await selected(
                 domain, team_name, certificate_ids, fresh=evidence is EvidenceMode.FRESH
             )
         if evidence is EvidenceMode.FRESH:
@@ -180,13 +171,26 @@ async def revoked_certificates(
         raise awid_dependency_http_exception(exc, operation="AWID team revocation check") from exc
 
 
-async def request_registered_certificates(request: Request, team_id: str) -> set[str]:
-    """Read registered IDs for both enforcement and non-failing staged measurement.
-
-    hosted-certificate-anchoring.md:286-294 distinguishes unknown acquisition
-    from an empty authoritative list. The SDK owns cache freshness.
-    """
-    return await registered_certificates(application_registry_client(request.app.state), team_id)
+async def refresh_certificate_standing(
+    registry_client, team_id: str, *, certificate_id: str
+) -> TeamCertificateStanding | None:
+    """Refresh standing after a verified certificate was missing from the list."""
+    if registry_client is None:
+        raise RegistryClientUnavailable()
+    refresh = getattr(registry_client, "refresh_team_certificates_after_miss", None)
+    if not callable(refresh):
+        return None
+    domain, team_name = member_team_scope(team_id)
+    try:
+        return await refresh(domain, team_name, certificate_id=certificate_id)
+    except AWID_DEPENDENCY_ERRORS as exc:
+        raise _team_read_failure(
+            exc,
+            registry_client,
+            build_team_id(domain, team_name),
+            operation="AWID certificate existence check",
+            reading="certificate existence check",
+        ) from exc
 
 
 async def registered_certificates(
@@ -195,15 +199,11 @@ async def registered_certificates(
     *,
     active_only: bool = False,
 ) -> set[str]:
-    """Read registry certificate IDs through the existing SDK list owner.
-
-    Ordinary staged observations can select the active view after checking
-    revocation. Existing list callers retain the complete list by default.
-    """
+    """Read registry certificate IDs through the existing SDK list owner."""
     domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
-        raise awid_registry_not_configured_exception(operation="AWID certificate existence check")
+        raise RegistryClientUnavailable()
 
     try:
         certificates = await registry_client.list_team_certificates(
@@ -237,22 +237,3 @@ async def registered_certificates(
         for cert_id in ((cert.certificate_id or "").strip() for cert in certificates)
         if cert_id
     }
-
-
-async def refresh_certificate_standing(
-    registry_client: CachedRegistryClient, team_id: str, *, certificate_id: str
-) -> TeamCertificateStanding:
-    """Refresh a signed certificate miss through the registry's standing API."""
-    domain, team_name = member_team_scope(team_id)
-    try:
-        return await registry_client.refresh_team_certificates_after_miss(
-            domain, team_name, certificate_id=certificate_id
-        )
-    except AWID_DEPENDENCY_ERRORS as exc:
-        raise _team_read_failure(
-            exc,
-            registry_client,
-            build_team_id(domain, team_name),
-            operation="AWID certificate existence check",
-            reading="certificate existence check",
-        ) from exc

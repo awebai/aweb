@@ -13,6 +13,8 @@ from aweb.mcp.notifications import append_pending_nudge
 from test_messages_http import _insert_agent, _insert_team
 from test_mcp_mutation_hook_parity import server as server
 
+__all__ = ["server"]
+
 
 class CountDB:
     def __init__(self, counts):
@@ -224,10 +226,12 @@ async def test_chat_counts_preserve_existing_participant_read_semantics(actor, m
 @pytest.mark.asyncio
 async def test_mounted_core_result_nudge_and_post_consumption_snapshot(server):
     import httpx
-    from aweb.internal_auth import build_internal_auth_header_value
-    from test_mcp_mutation_hook_parity import INTERNAL_SECRET, TEAM
+    from aweb.internal_auth import application_proxy_verification, build_internal_auth_header_value
+    from test_mcp_mutation_hook_parity import TEAM
 
     env = server
+    configured = application_proxy_verification(env.app.state)
+    assert configured.shared_secret
     principal = str(uuid4())
     headers = {
         "Accept": "application/json, text/event-stream",
@@ -235,7 +239,7 @@ async def test_mounted_core_result_nudge_and_post_consumption_snapshot(server):
         "X-User-ID": principal,
         "X-AWEB-Actor-ID": env.agents["pilot"],
         "X-AWEB-Auth": build_internal_auth_header_value(
-            secret=INTERNAL_SECRET,
+            secret=configured.shared_secret,
             team_id=TEAM,
             principal_type="u",
             principal_id=principal,

@@ -3,16 +3,21 @@ from __future__ import annotations
 from aweb.member_team_key import current_member_sql
 
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
-
-from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
+from aweb.application_state import application_registry_client
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 
 import json
+import logging
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 import asyncpg
+from awid.dns_auth import validate_did_key, verify_signed_json_request
+from awid.e2ee_keys import validate_encryption_key_assertion
+from awid.team_ids import parse_team_id
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from pgdbm import AsyncDatabaseManager, TransactionManager
 from pgdbm.errors import QueryError
 from pydantic import (
     BaseModel,
@@ -22,48 +27,55 @@ from pydantic import (
     model_validator,
 )
 
-from awid.dns_auth import validate_did_key, verify_signed_json_request
-from awid.e2ee_keys import validate_encryption_key_assertion
-from awid.team_ids import parse_team_id
 from aweb.agent_wake import (
     agent_wake_key,
     agent_wake_publisher,
     agent_wake_scope,
     record_agent_wake,
 )
-from aweb.inbound_modes import (
-    INBOUND_MODES,
-    normalize_inbound_mode,
-    effective_inbound_mode,
-    set_identity_inbound_mode,
-)
-from aweb.service_errors import ForbiddenError
 from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
+from aweb.auth_context import GRANT_SCOPE_ANY
+from aweb.certificate_auth import VerifiedCertificateGeneration
 from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db, get_redis
 from aweb.grant_liveness import (
-    grant_liveness_expiry,
     cleanup_expired_grant_liveness,
-    valid_grant_liveness_by_workspace,
+    grant_liveness_expiry,
+    workspace_grant_liveness_join_sql,
 )
+from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
+from aweb.identity_address import require_address_evidence
+from aweb.inbound_modes import (
+    INBOUND_MODES,
+    effective_inbound_mode,
+    normalize_inbound_mode,
+    set_identity_inbound_mode,
+)
+from aweb.member_team_key import MemberProjection, current_member, read_member_projection
 from aweb.role_name_compat import (
     normalize_optional_role_name,
     resolve_role_name_aliases,
 )
-from aweb.application_state import application_registry_client
+from aweb.service_errors import ForbiddenError
 from aweb.team_registry import resolve_team_key
-from aweb.auth_context import GRANT_SCOPE_ANY
 from aweb.team_auth_deps import (
     TeamIdentity,
     get_team_identity,
     team_identity_with_grant_scope,
 )
 
-from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
+from ..presence import update_agent_presence
+from aweb.config import get_presence_ttl_seconds
+from aweb.workspace_activity import (
+    PresenceStatus,
+    workspace_activity_by_id,
+    latest_workspace_activity,
+)
 
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +144,7 @@ class EncryptionKeyAssertion(BaseModel):
 
     @model_serializer(mode="wrap")
     def serialize_without_null_optional_fields(self, handler):
+        """Serialize the public assertion while omitting absent optional fields."""
         return {key: value for key, value in handler(self).items() if value is not None}
 
 
@@ -150,6 +163,7 @@ class UpdateAgentInboundModeRequest(BaseModel):
     @field_validator("inbound_mode")
     @classmethod
     def validate_inbound_mode(cls, value: str) -> str:
+        """Accept only the native inbound delivery modes supported by this request."""
         return normalize_inbound_mode(value, default="")
 
 
@@ -163,6 +177,7 @@ class SuggestAliasPrefixRequest(BaseModel):
     @field_validator("exclude")
     @classmethod
     def validate_exclude(cls, values: list[str]) -> list[str]:
+        """Normalize the requested exclusion list for alias suggestions."""
         out: list[str] = []
         for value in values or []:
             item = str(value or "").strip().lower()
@@ -194,10 +209,12 @@ class PatchWorkspaceRequest(BaseModel):
     @field_validator("role", "role_name")
     @classmethod
     def validate_role_field(cls, value: Optional[str]) -> Optional[str]:
+        """Validate a requested role against the native role-name contract."""
         return normalize_optional_role_name(value)
 
     @model_validator(mode="after")
     def sync_role_aliases(self):
+        """Keep the supported role input spellings consistent before request handling."""
         resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
         self.role = resolved
         self.role_name = resolved
@@ -217,6 +234,7 @@ class PatchWorkspaceResponse(BaseModel):
 
     @model_validator(mode="after")
     def sync_role_aliases(self):
+        """Keep the supported role input spellings consistent before request handling."""
         resolved = resolve_role_name_aliases(role=self.role, role_name=self.role_name)
         self.role = resolved
         self.role_name = resolved
@@ -241,10 +259,12 @@ class ReplaceLocalIdentityKeyRequest(BaseModel):
     @field_validator("old_did_key", "new_did_key")
     @classmethod
     def validate_identity_did_key(cls, value: str) -> str:
+        """Validate the asserted public identity key before publication."""
         return validate_did_key(value)
 
     @model_validator(mode="after")
     def require_changed_key(self):
+        """Require a changed public key for this rotation request."""
         if self.old_did_key == self.new_did_key:
             raise ValueError("new_did_key must differ from old_did_key")
         return self
@@ -303,7 +323,9 @@ async def suggest_alias_prefix(
     return SuggestAliasPrefixResponse(
         team_id=identity.team_id,
         name_prefix=names[0],
-        names=[SuggestAliasPrefixName(name=name) for name in names] if include_names else None,
+        names=[SuggestAliasPrefixName(name=name) for name in names]
+        if include_names
+        else None,
     )
 
 
@@ -327,13 +349,17 @@ async def _local_team_aliases(aweb_db, team_id: str) -> list[str]:
     return [str(r.get("alias") or "") for r in rows]
 
 
-async def _global_namespace_names(request: Request, identity: TeamIdentity) -> list[str]:
+async def _global_namespace_names(
+    request: Request, identity: TeamIdentity
+) -> list[str]:
     namespace, _team_name = parse_team_id(identity.team_id)
     registry_client = application_registry_client(request.app.state)
     try:
         addresses = await registry_client.list_addresses(namespace)
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="awid_registry_unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="awid_registry_unavailable"
+        ) from exc
     names = []
     for address in addresses or []:
         if isinstance(address, dict):
@@ -374,7 +400,11 @@ def _suggest_scoped_names(
 def _used_global_names(
     existing_names: list[str], exclude: list[str], *, user_prefix: str
 ) -> set[str]:
-    used = {str(name or "").strip().lower() for name in existing_names if str(name or "").strip()}
+    used = {
+        str(name or "").strip().lower()
+        for name in existing_names
+        if str(name or "").strip()
+    }
     prefix = f"{user_prefix}-"
     for value in exclude:
         item = str(value or "").strip().lower()
@@ -387,7 +417,6 @@ def _used_global_names(
 
 
 def _identity_global_name_prefix(identity: TeamIdentity) -> str:
-    from aweb.identity_address import require_address_evidence
 
     require_address_evidence(identity)
     raw = ""
@@ -395,7 +424,9 @@ def _identity_global_name_prefix(identity: TeamIdentity) -> str:
         _namespace, raw = identity.address.split("/", 1)
     raw = (raw or identity.alias or "").strip().lower()
     if not raw:
-        raise HTTPException(status_code=422, detail="global_scope_requires_identity_prefix")
+        raise HTTPException(
+            status_code=422, detail="global_scope_requires_identity_prefix"
+        )
     for candidate in candidate_name_prefixes():
         suffix = f"-{candidate}"
         if raw.endswith(suffix) and raw[: -len(suffix)].strip("-"):
@@ -428,13 +459,7 @@ async def list_agents(
                e.not_before_text AS encryption_key_not_before,
                e.expires_at_text AS encryption_key_expires_at,
                e.previous_encryption_key_id,
-               e.assertion_signature AS encryption_key_signature,
-               ctx.workspace_id,
-               ctx.workspace_type,
-               ctx.hostname,
-               ctx.workspace_path,
-               ctx.ws_role,
-               ctx.repo
+               e.assertion_signature AS encryption_key_signature
         FROM {{{{tables.agents}}}} a
         CROSS JOIN LATERAL (
             SELECT {verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent="a")} AS did_aw,
@@ -460,20 +485,6 @@ async def list_agents(
             ORDER BY assertion_created_at DESC, not_before_at DESC, encryption_key_id DESC
             LIMIT 1
         ) e ON TRUE
-        -- Workspace context: an agent's most recently seen live workspace.
-        LEFT JOIN LATERAL (
-            SELECT w.workspace_id,
-                   w.workspace_type,
-                   w.hostname,
-                   w.workspace_path,
-                   w.role AS ws_role,
-                   r.canonical_origin AS repo
-            FROM {{{{tables.workspaces}}}} w
-            LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-            WHERE w.team_id = a.team_id AND w.agent_id = a.agent_id AND w.deleted_at IS NULL
-            ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id
-            LIMIT 1
-        ) ctx ON TRUE
         WHERE a.team_id = $1 AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
@@ -481,45 +492,50 @@ async def list_agents(
         identity.team_id,
     )
 
-    context_by_agent = {str(r["agent_id"]): r for r in rows if r["workspace_id"] is not None}
-
-    # Presence is keyed by workspace_id, not agent_id.
-    workspace_ids = [str(r["workspace_id"]) for r in context_by_agent.values()]
-    presences = (
-        await list_agent_presences_by_workspace_ids(redis, workspace_ids)
-        if redis and workspace_ids
-        else []
+    workspace_rows = await aweb_db.fetch_all(
+        f"""SELECT w.workspace_id, w.agent_id, w.workspace_type, w.hostname,
+                  w.team_id, w.last_seen_at, w.workspace_path, w.role AS ws_role,
+                  r.canonical_origin AS repo, grant_liveness.*
+           FROM {{{{tables.workspaces}}}} w
+           LEFT JOIN {{{{tables.repos}}}} r ON r.id=w.repo_id AND r.deleted_at IS NULL
+           {workspace_grant_liveness_join_sql(workspace="w", ttl_seconds_parameter="$2")}
+           WHERE w.team_id=$1 AND w.deleted_at IS NULL
+           ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id,
+                    grant_liveness.grant_liveness_last_seen_at DESC,
+                    grant_liveness.grant_liveness_grant_id""",
+        identity.team_id,
+        get_presence_ttl_seconds(),
     )
-    presence_by_id = {str(p.get("workspace_id")): p for p in presences if p.get("workspace_id")}
-    grant_liveness_by_id = await valid_grant_liveness_by_workspace(
+    activity_by_id = await workspace_activity_by_id(
         aweb_db,
-        workspace_ids,
+        redis,
+        workspace_ids=[str(row["workspace_id"]) for row in workspace_rows],
+        workspace_rows=workspace_rows,
         registry_client=application_registry_client(request.app.state),
         request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
     )
+    context_by_agent = latest_workspace_activity(workspace_rows, activity_by_id)
+    now = datetime.now(timezone.utc)
 
     agents: list[AgentView] = []
     for r in rows:
         agent_id = str(r["agent_id"])
-        ctx = context_by_agent.get(agent_id)
-        presence = presence_by_id.get(str(ctx["workspace_id"])) if ctx else None
-
-        status = "offline"
+        selected = context_by_agent.get(agent_id)
+        ctx = selected.workspace if selected else None
+        activity = selected.activity if selected else None
+        presence = activity.presence if activity else None
+        online = activity is not None and activity.is_online(now=now)
+        status = (
+            activity.display_status(now=now) if activity else PresenceStatus.OFFLINE
+        )
+        last_seen_at = activity.last_seen_at if activity else None
         last_seen = None
-        online = False
         role = (ctx.get("ws_role") if ctx else None) or (r.get("role") or None)
-
+        if online and last_seen_at is not None:
+            last_seen = last_seen_at.astimezone(timezone.utc).isoformat()
         if presence:
-            online = True
-            status = presence.get("status") or "active"
-            last_seen = presence.get("last_seen") or None
             role = presence.get("role") or role
-        elif ctx:
-            grant_liveness = grant_liveness_by_id.get(str(ctx["workspace_id"]))
-            if grant_liveness:
-                online = True
-                status = "active"
-                last_seen = grant_liveness["last_seen_at"].astimezone(timezone.utc).isoformat()
 
         agents.append(
             AgentView(
@@ -654,7 +670,7 @@ async def heartbeat(
     if workspace is None:
         raise HTTPException(status_code=409, detail="Agent has no active workspace")
 
-    ttl_seconds = 1800
+    ttl_seconds = get_presence_ttl_seconds()
     last_seen = await update_agent_presence(
         redis,
         workspace_id=str(workspace["workspace_id"]),
@@ -695,10 +711,10 @@ async def _load_current_agent_inbound_mode(
             inbound_mode = await effective_inbound_mode(aweb_db, row["did_aw"])
         except ForbiddenError as exc:
             raise HTTPException(
-                status_code=409, detail="Agent inbound_mode migration required"
+                status_code=409, detail="Agent inbound policy is unavailable"
             ) from exc
     if inbound_mode not in INBOUND_MODES:
-        raise HTTPException(status_code=409, detail="Agent inbound_mode migration required")
+        raise HTTPException(status_code=409, detail="Agent inbound policy is unavailable")
     return AgentInboundModeResponse(
         agent_id=str(row["agent_id"]),
         team_id=str(row["team_id"]),
@@ -756,39 +772,132 @@ async def publish_my_encryption_key(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> PublishEncryptionKeyResponse:
     """Publish the calling agent's identity-signed E2E encryption key."""
-    aweb_db = db.get_manager("aweb")
-    expected_stable_id = identity.did_aw.strip() or None
+    return await publish_encryption_key(
+        db=db.get_manager("aweb"), identity=identity, payload=payload
+    )
+
+
+async def publish_encryption_key(
+    *,
+    db: AsyncDatabaseManager | TransactionManager,
+    payload: EncryptionKeyAssertion,
+    identity: TeamIdentity | None = None,
+    generation: VerifiedCertificateGeneration | None = None,
+    agent_id: UUID | None = None,
+) -> PublishEncryptionKeyResponse:
+    """Validate and store a request-authenticated or just-admitted member's key.
+
+    Request callers supply TeamIdentity. System admission callers supply the
+    actual generation and exact agent UUID inside the same open transaction
+    as connect_agent, retaining its team-then-member locks. This operation
+    never creates request proof or admits pending material. Current eligibility
+    and exact certificate/key equality come from the canonical member owner;
+    stable identity attribution comes only from its verified projection.
+    Both paths share signature/validity validation and storage. Private key
+    material stays with its custody owner; same-key renewal is supported.
+    """
+    if (identity is None) == (generation is None) or (
+        identity is not None and agent_id is not None
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "encryption_publication_input_invalid",
+                "message": "Supply either a verified request identity or the admitted generation and agent_id, then retry.",
+            },
+        )
+    aweb_db = db
+    row: MemberProjection | dict[str, Any] | None = None
+    if generation is not None:
+        if (
+            not isinstance(generation, VerifiedCertificateGeneration)
+            or not isinstance(agent_id, UUID)
+            or not isinstance(db, TransactionManager)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "encryption_admission_transaction_required",
+                    "message": "Publish the verified generation and exact agent_id inside the same open admission transaction, then retry.",
+                },
+            )
+        claims = generation.certificate.claims
+        projection = await read_member_projection(
+            db, team_id=claims["team_id"], agent_id=agent_id
+        )
+        if (
+            projection is None
+            or not current_member(projection)
+            or any(
+                (
+                    projection["did_key"] != claims["member_did_key"],
+                    projection["certificate_id"] != claims["certificate_id"],
+                    projection["accepted_team_did_key"]
+                    != generation.verified_team_did_key,
+                )
+            )
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "encryption_admission_conflict",
+                    "message": "The generation does not match the current admitted member. Complete admission with the current certificate and retry in that transaction.",
+                },
+            )
+        row = projection.verified_identity()
+        principal = row
+        member_key = principal["did_key"]
+        member_id = principal["agent_id"]
+        team_id = principal["team_id"]
+        expected_stable_id = principal["did_aw"] or None
+    else:
+        assert identity is not None  # The exclusive-input check above establishes this.
+        member_key = identity.did_key
+        member_id = identity.agent_id
+        team_id = identity.team_id
+        expected_stable_id = identity.did_aw.strip() or None
     try:
-        canonical_payload, created_at, not_before, expires_at = validate_encryption_key_assertion(
-            payload.model_dump(exclude_none=True),
-            current_did_key=identity.did_key,
-            stable_id=expected_stable_id,
-            now=datetime.now(timezone.utc),
+        canonical_payload, created_at, not_before, expires_at = (
+            validate_encryption_key_assertion(
+                payload.model_dump(exclude_none=True),
+                current_did_key=member_key,
+                stable_id=expected_stable_id,
+                now=datetime.now(timezone.utc),
+            )
         )
     except ValueError as exc:
+        logger.warning(
+            "Encryption-key assertion refused for member %s", member_id, exc_info=True
+        )
         raise HTTPException(
             status_code=422,
             detail={
                 "code": "invalid_encryption_key_assertion",
-                "message": str(exc),
+                "message": str(exc)
+                + ". Publish an identity-signed encryption-key assertion "
+                "with current validity and matching identity fields, then retry.",
             },
         )
 
-    row = await aweb_db.fetch_one(
-        """
-        SELECT agent_id, team_id, alias
-        FROM {{tables.agents}}
-        WHERE team_id = $1
-          AND agent_id = $2::UUID
-          AND did_key = $3
-          AND deleted_at IS NULL
-        """,
-        identity.team_id,
-        identity.agent_id,
-        identity.did_key,
-    )
     if row is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        row = await aweb_db.fetch_one(
+            """
+            SELECT agent_id, team_id, alias
+            FROM {{tables.agents}}
+            WHERE team_id = $1
+              AND agent_id = $2::UUID
+              AND did_key = $3
+              AND deleted_at IS NULL
+            """,
+            team_id,
+            member_id,
+            member_key,
+        )
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Agent not found. Reconnect this identity to the team before publishing its encryption key.",
+        )
 
     await aweb_db.execute(
         """
@@ -835,8 +944,8 @@ async def publish_my_encryption_key(
             published_at = NOW(),
             revoked_at = NULL
         """,
-        identity.agent_id,
-        identity.team_id,
+        member_id,
+        team_id,
         payload.encryption_key_id,
         payload.encryption_public_key,
         payload.algorithm,
@@ -891,18 +1000,26 @@ async def patch_agent_workspace(
 
     new_hostname = payload.hostname if payload.hostname is not None else row["hostname"]
     new_path = (
-        payload.workspace_path if payload.workspace_path is not None else row["workspace_path"]
+        payload.workspace_path
+        if payload.workspace_path is not None
+        else row["workspace_path"]
     )
     new_role = payload.role if payload.role is not None else row["role"]
-    new_human_name = payload.human_name if payload.human_name is not None else row["human_name"]
+    new_human_name = (
+        payload.human_name if payload.human_name is not None else row["human_name"]
+    )
     new_repo_id = row["repo_id"]
     canonical_origin = row["canonical_origin"]
     if payload.repo_origin is not None:
         try:
             canonical_origin = canonicalize_git_url(payload.repo_origin)
-            new_repo_id = await ensure_repo(aweb_db, identity.team_id, payload.repo_origin)
+            new_repo_id = await ensure_repo(
+                aweb_db, identity.team_id, payload.repo_origin
+            )
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=f"invalid repo_origin: {exc}") from exc
+            raise HTTPException(
+                status_code=422, detail=f"invalid repo_origin: {exc}"
+            ) from exc
 
     await aweb_db.execute(
         """
@@ -1130,7 +1247,9 @@ async def send_control_signal(
     target = await aweb_db.fetch_one(
         """
         SELECT a.agent_id FROM {{tables.agents}} a
-        WHERE a.team_id = $1 AND a.alias = $2 AND """ + current_member_sql("a") + """
+        WHERE a.team_id = $1 AND a.alias = $2 AND """
+        + current_member_sql("a")
+        + """
         """,
         identity.team_id,
         alias,

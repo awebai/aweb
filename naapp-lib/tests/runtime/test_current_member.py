@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import socket
 import time
+from contextlib import AsyncExitStack
 from dataclasses import FrozenInstanceError, replace
 
 import httpx
 import pytest
 import uvicorn
 from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
-from awid_service.testing import dns_naming
+from awid_service.testing import dns_naming, running_registry
 from fastapi import FastAPI, HTTPException, Request
 from nacl.signing import SigningKey
 
@@ -98,23 +99,28 @@ async def test_current_member_passes_without_observed_principal_rows(cache, memb
     assert await require(cache, member) is None
 
 
-@pytest.mark.parametrize("change", ["revoke", "remove", "rotate"])
-async def test_lost_authority_refuses_on_refresh(registry, cache, member, change):
+@pytest.mark.parametrize("change", ["revoke", "replace_history", "rotate"])
+async def test_lost_authority_refuses_on_refresh(
+    registry, cache, member, change, test_db_factory, monkeypatch,
+):
     await require(cache, member)
-    if change == "revoke":
-        await registry.revoke(member.certificate_id)
-    elif change == "remove":
-        # unreachable-state: corrupt registry storage loses an admitted certificate; normal revocation retains it.
-        await registry.db.execute(
-            "DELETE FROM {{tables.team_certificates}} WHERE certificate_id = $1", member.certificate_id
-        )
-    else:
-        await registry.rotate_team_key_by_controller(TEAM, did_key(SigningKey.generate()), NAMESPACE_KEY)
-    expire(cache)
-    with pytest.raises(HTTPException) as refused:
-        await require(cache, member)
-    assert refused.value.status_code == 403
-    assert refused.value.detail["code"] == "current_member_required"
+    async with AsyncExitStack() as stack:
+        if change == "revoke":
+            await registry.revoke(member.certificate_id)
+        elif change == "replace_history":
+            # A restored authority can have the team but lack its later
+            # certificate history. Use a second real registry for that view.
+            restored_db = await test_db_factory.create_db(suffix="naapp_awid_restore")
+            restored = await stack.enter_async_context(running_registry(restored_db.config.get_dsn()))
+            await restored.add_team(TEAM, member.team_did_key, namespace_controller=NAMESPACE_KEY)
+            monkeypatch.setattr(cache, "_transport", restored.transport)
+        else:
+            await registry.rotate_team_key_by_controller(TEAM, did_key(SigningKey.generate()), NAMESPACE_KEY)
+        expire(cache)
+        with pytest.raises(HTTPException) as refused:
+            await require(cache, member)
+        assert refused.value.status_code == 403
+        assert refused.value.detail["code"] == "current_member_required"
 
 
 async def test_another_teams_evidence_is_not_authority(registry, cache, member):

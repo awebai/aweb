@@ -24,6 +24,8 @@ from identity_binding_support import register_global_identity
 from tests.test_dashboard_privacy import privacy_app as privacy_app  # noqa: PLC0414
 from tests.test_messages_http import _signed_identity_headers
 
+__all__ = ["privacy_app"]
+
 
 def identity_request(env, actor):
     """A genuine signed identity request admitted by the production verifier."""

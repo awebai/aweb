@@ -42,7 +42,7 @@ class ValidationError(ServiceError):
 class ConflictError(ServiceError):
     status_code: int = 409
 
-    def __init__(self, detail: str = "Conflict") -> None:
+    def __init__(self, detail: str | dict = "Conflict") -> None:
         super().__init__(detail)
 
 
@@ -51,6 +51,12 @@ class ForbiddenError(ServiceError):
 
     def __init__(self, detail: str = "Forbidden") -> None:
         super().__init__(detail)
+
+
+class CurrentMembershipRefusal(ForbiddenError):
+    """A current-member refusal with a stable reason beside its string detail."""
+
+    reason = "team_membership_not_current"
 
 
 class BadRequestError(ServiceError):

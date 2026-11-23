@@ -33,6 +33,7 @@ async def test_recovery_attempts_healthy_101st_row_past_100_failing_callbacks(
             signature="signed-message",
             recipient=recipient,
             authority_token=authority,
+            registry_client=None,
         )
     poison = {item.message_id for item in envelopes[:100]}
     healthy = envelopes[-1].message_id

@@ -15,9 +15,11 @@ import httpx
 import pytest
 
 from awid.signing import canonical_json_bytes, sign_message
-from identity_binding_support import register_global_identity
+from messaging_actor_support import admit_messaging_actor, set_messaging_inbound_mode
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
+
+__all__ = ["privacy_app"]
 
 HOLD_COMPLETION_SECONDS = 6
 INITIAL_ATTESTATION_AGE_SECONDS = 297
@@ -183,12 +185,10 @@ async def test_exact_mail_retry_after_completion_fault_crosses_attestation_windo
 ):
     env = privacy_app
     bob = env.actors["bob"]
-    stable_id = await register_global_identity(env, bob, "example.test/bob")
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET did_aw=$1, did_aw_verified_key=did_key, identity_scope='global', address='example.test/bob' WHERE agent_id=$2",
-        stable_id,
-        bob.id,
+    recipient = await admit_messaging_actor(
+        env, alias="bob", team_id=TEAM, signing_key=bob.sk, address="example.test/bob"
     )
+    stable_id = recipient.stable_id
     opening = signed_mail(
         env, path=RetryPath.NAMED_RECIPIENT, recipient_stable_id=stable_id
     )
@@ -292,10 +292,7 @@ async def test_exact_mail_retry_after_completion_fault_crosses_attestation_windo
             await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}"),
             env.dispatched,
         ) == before
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET inbound_mode='contacts_only' WHERE agent_id=$1",
-            bob.id,
-        )
+        await set_messaging_inbound_mode(env, recipient, "contacts_only")
         for payload in payloads.values():
             denied = await send_signed_mail(env.client, env, payload)
             assert denied.status_code == 403, denied.text

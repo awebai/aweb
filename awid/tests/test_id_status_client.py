@@ -24,7 +24,7 @@ from redis.asyncio import Redis
 import awid.registry as registry_module
 from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid.id_certificates import IDChainEvidence, verify_id_chain
-from awid.registry import CachedRegistryClient, RegistryError
+from awid.registry import CachedRegistryClient, MalformedIDStatusError, RegistryError
 from awid_service.deps import get_domain_verifier
 
 from id_tree_support import VECTORS, Tree, at, did_aw, did_key
@@ -631,13 +631,12 @@ async def test_contradictory_authority_is_kept_as_current_and_never_verifies(env
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("body", [b"not json", b"[]", b'"status"'])
-async def test_a_malformed_successful_answer_is_unavailable_and_drops_the_old_tree(env, body):
+async def test_a_malformed_successful_answer_raises_and_drops_the_old_tree(env, body):
     await _evidence(env)
     env.clock[0] += 61
     env.raw_body = body
-    evidence = await _evidence(env)
-    assert evidence.age_seconds is None
-    assert _verdict(evidence)["reason"] == "evidence_unavailable"
+    with pytest.raises(MalformedIDStatusError):
+        await _evidence(env)
     env.raw_body = None
     env.clock[0] += 1
     assert (await _evidence(env)).age_seconds == 0

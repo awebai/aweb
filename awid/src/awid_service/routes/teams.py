@@ -991,11 +991,9 @@ async def delete_team(
         if active_cert is not None:
             raise HTTPException(status_code=409, detail="Team has active certificates")
 
+        # Every certificate is revoked by now, and the rows stay: the team's
+        # revocations outlive it (docs/awid-sot.md, revocations).
         now = datetime.now(timezone.utc)
-        await tx.execute(
-            "DELETE FROM {{tables.team_certificates}} WHERE team_uuid = $1",
-            row["team_uuid"],
-        )
         await tx.execute(
             """
             UPDATE {{tables.teams}}
@@ -1513,11 +1511,24 @@ async def certificate_status(
 
     Active means not revoked; callers must still verify the presented certificate
     against the current team key. A rotation invalidates old-key signatures.
+
+    A certificate id has one answer, the revocation list's: it is revoked if
+    any team ever created under this domain and name revoked it, so deleting
+    the team, creating it again and registering the id again does not make it
+    active (docs/awid-sot.md, revocations). The live team answers for a
+    certificate no generation revoked.
     """
     db = db_infra.get_manager("aweb")
     row = await db.fetch_one(
         """
-        SELECT t.team_did_key, tc.revoked_at
+        SELECT t.team_did_key, tc.revoked_at,
+               (SELECT MIN(history.revoked_at)
+                FROM {{tables.team_certificates}} history
+                WHERE history.certificate_id = $3
+                  AND history.revoked_at IS NOT NULL
+                  AND history.team_uuid IN (
+                      SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2
+                  )) AS first_revoked_at
         FROM {{tables.team_certificates}} tc
         JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
         WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
@@ -1529,7 +1540,7 @@ async def certificate_status(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
-    revoked_at = row["revoked_at"]
+    revoked_at = row["first_revoked_at"]
     return CertificateStatusResponse(
         team_id=build_team_id(domain, name),
         team_did_key=row["team_did_key"],
@@ -1869,8 +1880,15 @@ async def list_revocations(
         # existed. Explicit limits use the shared clamp.
         validated_limit = _UNPAGINATED_REVOCATION_PAGE_ROWS
 
-    where_clauses = ["team_uuid = $1", "revoked_at IS NOT NULL"]
-    params: list[object] = [team_row["team_uuid"]]
+    # A revocation is one-way: the list covers every team ever created under
+    # this domain and name, so deleting a team or its namespace and creating
+    # the team again does not revive a revoked certificate (docs/awid-sot.md,
+    # revocations).
+    where_clauses = [
+        "team_uuid IN (SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2)",
+        "revoked_at IS NOT NULL",
+    ]
+    params: list[object] = [domain, name]
 
     if since is not None:
         try:

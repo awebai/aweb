@@ -12,7 +12,8 @@ import pytest
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
 from aweb.api import _build_awid_registry_client
-from test_dashboard_privacy import privacy_app as privacy_app, TEAM
+from test_dashboard_privacy import privacy_app, TEAM
+from test_coordination_state_http import coordination_mcp, call_mcp
 from test_cli_never_grants import registry_listener
 from test_id_chain_request_auth import (
     ALICE,
@@ -26,6 +27,8 @@ from test_messages_http import (
     _make_certificate,
     _signed_team_headers,
 )
+
+__all__ = ["coordination_mcp", "privacy_app"]
 
 
 @pytest.mark.asyncio
@@ -51,18 +54,14 @@ async def test_connect_own_verified_kind_controls_chat_mail_and_roster(
         object.__setattr__(cached, "_domain_verifier", exact_dns)
         env.app.state.awid_registry_client = cached
         try:
-            await writer.register_did(
-                subject["did_key"], bytes.fromhex(subject["seed_hex"])
-            )
+            await writer.register_did(subject["did_key"], bytes.fromhex(subject["seed_hex"]))
             await writer.register_namespace(
                 domain, ROOT["did_key"], bytes.fromhex(ROOT["seed_hex"])
             )
             certificates = []
             if kind == "owned-agent":
                 parent = VECTORS["keys"]["bob"]
-                await writer.register_did(
-                    parent["did_key"], bytes.fromhex(parent["seed_hex"])
-                )
+                await writer.register_did(parent["did_key"], bytes.fromhex(parent["seed_hex"]))
                 human = _signed_fixture_certificate(
                     "alice",
                     domain=domain,
@@ -99,9 +98,7 @@ async def test_connect_own_verified_kind_controls_chat_mail_and_roster(
             }
             await writer.register_id_certificate(
                 bundle,
-                signer=_fixture_signer(
-                    "bob_agent" if kind == "owned-agent" else "alice"
-                ),
+                signer=_fixture_signer("bob_agent" if kind == "owned-agent" else "alice"),
                 expected_head=None,
                 invitation_id=None,
             )
@@ -137,23 +134,15 @@ async def test_connect_own_verified_kind_controls_chat_mail_and_roster(
                 UUID(response.json()["agent_id"]),
             )
             # This assertion reproduces the released defect before any new API is used.
-            expected_type = (
-                "human" if kind == "human" else ("agent" if hint == "human" else hint)
-            )
+            expected_type = "human" if kind == "human" else ("agent" if hint == "human" else hint)
             assert row["agent_type"] == expected_type
             assert response.json()["agent_type"] == expected_type
-            assert row["human_verified_key"] == (
-                subject["did_key"] if kind == "human" else None
-            )
+            assert row["human_verified_key"] == (subject["did_key"] if kind == "human" else None)
             sender = env.actors["bob"]
-            headers = _signed_team_headers(
-                sender.sk, sender.did, TEAM, sender.certificate
-            )
+            headers = _signed_team_headers(sender.sk, sender.did, TEAM, sender.certificate)
             roster = await env.client.get("/v1/agents", headers=headers)
             assert roster.status_code == 200, roster.text
-            assert ("subject" in {r["alias"] for r in roster.json()["agents"]}) == (
-                kind != "human"
-            )
+            assert ("subject" in {r["alias"] for r in roster.json()["agents"]}) == (kind != "human")
             for path, payload, expected in [
                 (
                     "/v1/chat/sessions",
@@ -193,9 +182,7 @@ async def test_connect_own_verified_kind_controls_chat_mail_and_roster(
             assert preview["stamped"] == 0
             applied = await revalidate_human_kind(env.db, cached, apply=True)
             assert applied["stamped"] == (1 if kind == "human" else 0)
-            assert applied["after"]["active"]["verified"] == (
-                1 if kind == "human" else 0
-            )
+            assert applied["after"]["active"]["verified"] == (1 if kind == "human" else 0)
             if kind == "human":
                 from dataclasses import replace
                 from aweb import human_kind_revalidation as revalidation
@@ -211,7 +198,7 @@ async def test_connect_own_verified_kind_controls_chat_mail_and_roster(
                         subject["did_aw"],
                     )
 
-                    async def changed_observation(client, binding):
+                    async def changed_observation(client, binding, *, change=change):
                         verified = await observe(client, binding)
                         assert verified.is_human
                         if change == "cross-subject":
@@ -236,15 +223,11 @@ async def test_connect_own_verified_kind_controls_chat_mail_and_roster(
                         return verified
 
                     with monkeypatch.context() as patch:
-                        patch.setattr(
-                            revalidation, "observe_identity_kind", changed_observation
-                        )
+                        patch.setattr(revalidation, "observe_identity_kind", changed_observation)
                         raced = await revalidate_human_kind(env.db, cached, apply=True)
                     assert raced["stamped"] == 0, change
                     assert raced["unresolved_active"] == 1, change
-                    assert raced["changed"] == (
-                        0 if change == "cross-subject" else 1
-                    ), change
+                    assert raced["changed"] == (0 if change == "cross-subject" else 1), change
                     assert (
                         await env.db.fetch_val(
                             "SELECT human_verified_key FROM {{tables.agents}} WHERE agent_id=$1",
@@ -270,11 +253,8 @@ async def test_connect_own_verified_kind_controls_chat_mail_and_roster(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("marker", ["missing", "wrong-key", "verified"])
 async def test_legacy_label_needs_exact_key_marker_on_every_current_surface(
-    privacy_app, monkeypatch, marker
+    coordination_mcp, marker
 ):
-    from aweb.mcp.auth import AuthContext
-    from aweb.mcp.tools import _common
-    from aweb.mcp.tools.agents import list_agents
     from aweb.messaging.messages import get_agent_by_id
     from aweb.messaging.mail_routing import (
         _require_live_mail_participant,
@@ -282,7 +262,7 @@ async def test_legacy_label_needs_exact_key_marker_on_every_current_surface(
     )
     from test_dashboard import _make_jwt
 
-    env = privacy_app
+    env = coordination_mcp
     bob, sender = env.actors["bob"], env.actors["alice"]
     key = {"missing": None, "wrong-key": sender.did, "verified": bob.did}[marker]
     await env.db.execute(
@@ -306,19 +286,7 @@ async def test_legacy_label_needs_exact_key_marker_on_every_current_surface(
         f"/v1/teams/{TEAM}/agents/bob", headers={"X-Dashboard-Token": _make_jwt([TEAM])}
     )
     assert detail.status_code == 404, detail.text
-    monkeypatch.setattr(
-        _common,
-        "get_auth",
-        lambda: AuthContext(
-            certificate_id="privacy-alice",
-            team_id=TEAM,
-            agent_id=str(sender.id),
-            workspace_id=str(sender.workspace),
-            alias="alice",
-            did_key=sender.did,
-        ),
-    )
-    mcp = json.loads(await list_agents(env.infra, env.redis))
+    mcp = await call_mcp(env, name="list_agents")
     assert "bob" not in {r["alias"] for r in mcp["agents"]}
     looked_up = await get_agent_by_id(env.infra, agent_id=str(bob.id))
     assert looked_up["agent_type"] == ("human" if human else "unknown")
@@ -335,25 +303,17 @@ async def test_legacy_label_needs_exact_key_marker_on_every_current_surface(
             path,
             content=body,
             headers={
-                **_signed_team_headers(
-                    sender.sk, sender.did, TEAM, sender.certificate, body
-                ),
+                **_signed_team_headers(sender.sk, sender.did, TEAM, sender.certificate, body),
                 "Content-Type": "application/json",
             },
         )
         assert response.status_code == expected, response.text
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE agent_id=$1", bob.id
-    )
+    await env.db.execute("UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE agent_id=$1", bob.id)
     if human:
         with pytest.raises(ParticipantRetiredError):
-            await _require_live_mail_participant(
-                env.infra, {"did": bob.did}, {}, human_only=True
-            )
+            await _require_live_mail_participant(env.infra, {"did": bob.did}, {}, human_only=True)
     else:
-        await _require_live_mail_participant(
-            env.infra, {"did": bob.did}, {}, human_only=True
-        )
+        await _require_live_mail_participant(env.infra, {"did": bob.did}, {}, human_only=True)
 
 
 @pytest.mark.asyncio
@@ -383,10 +343,7 @@ async def test_connect_rejects_kind_observation_for_another_subject(aweb_cloud_d
     ]:
         with pytest.raises(ValueError, match="identity_kind_mismatch"):
             await connect_agent(**kwargs, identity_kind=evidence)
-    assert (
-        await aweb_cloud_db.aweb_db.fetch_val("SELECT count(*) FROM {{tables.agents}}")
-        == 0
-    )
+    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT count(*) FROM {{tables.agents}}") == 0
 
     # Chainless local reconnect cannot preserve an old human label or marker.
     connected = await connect_agent(**kwargs)
@@ -403,9 +360,7 @@ async def test_connect_rejects_kind_observation_for_another_subject(aweb_cloud_d
 
 
 @pytest.mark.asyncio
-async def test_self_derived_binding_does_not_establish_human_kind(
-    privacy_app, monkeypatch
-):
+async def test_self_derived_binding_does_not_establish_human_kind(privacy_app, monkeypatch):
     env = privacy_app
     async with registry_listener(env) as (writer, origin):
         monkeypatch.setenv("AWID_REGISTRY_URL", origin)
@@ -488,7 +443,7 @@ async def test_revalidation_cli_defaults_to_read_only_and_reports_unresolved(
             ALICE["did_key"],
         )
         await db.execute(
-            "INSERT INTO {{tables.agents}} (team_id,alias,did_key,agent_type) VALUES ('cli:test','old-human',$1,'human')",
+            "INSERT INTO {{tables.agents}} (team_id,alias,did_key,agent_type, inbound_mode) VALUES ('cli:test','old-human',$1,'human', 'open')",
             ALICE["did_key"],
         )
         for args in ([], ["--apply"]):
@@ -517,10 +472,7 @@ async def test_revalidation_cli_defaults_to_read_only_and_reports_unresolved(
             assert report["before"] == report["after"]
             assert report["stamped"] == 0
             assert report["unresolved_active"] == 1
-        assert (
-            await db.fetch_val("SELECT human_verified_key FROM {{tables.agents}}")
-            is None
-        )
+        assert await db.fetch_val("SELECT human_verified_key FROM {{tables.agents}}") is None
     finally:
         await infra.close()
         await pool.close()
@@ -562,9 +514,7 @@ async def test_revalidation_failed_public_evidence_reports_without_clearing(
 
     async def evidence(bundle, bound, *, domain):
         assert bound == {key: subject[key] for key in ("id", "did_key")}
-        return IDChainEvidence(
-            status, authority, None if expected == "unavailable" else 0
-        )
+        return IDChainEvidence(status, authority, None if expected == "unavailable" else 0)
 
     client = SimpleNamespace(resolve_key_fresh=resolve, id_chain_evidence=evidence)
     row_id = privacy_app.actors["bob"].id

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -117,10 +118,17 @@ func TestAwebURLForTeamInviteDoesNotReturnOtherTeamURL(t *testing.T) {
 // registry-side twin: a hosted aweb.ai team resolves to our registry when
 // nothing else is on record; a BYOT namespace fails closed.
 func TestRegistryURLForTeamInviteHostedNamespaceDefaultsToOurRegistry(t *testing.T) {
-	if got := registryURLForTeamInvite(t.TempDir(), "gracehosted.aweb.ai", ""); got != awid.DefaultAWIDRegistryURL {
+	t.Setenv("AWID_REGISTRY_URL", "")
+	if got, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{Kind: registryTeamRoute, WorkingDir: t.TempDir(), Domain: "gracehosted.aweb.ai"}); err != nil || got != awid.DefaultAWIDRegistryURL {
+		if err != nil {
+			t.Fatal(err)
+		}
 		t.Fatalf("hosted namespace: registryURLForTeamInvite = %q, want %q", got, awid.DefaultAWIDRegistryURL)
 	}
-	if got := registryURLForTeamInvite(t.TempDir(), "alpha.test.local", ""); got != "" {
+	if got, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{Kind: registryTeamRoute, WorkingDir: t.TempDir(), Domain: "alpha.test.local"}); err != nil || got != "" {
+		if err != nil {
+			t.Fatal(err)
+		}
 		t.Fatalf("BYOT namespace must fail closed: registryURLForTeamInvite = %q, want empty", got)
 	}
 }

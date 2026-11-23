@@ -26,8 +26,29 @@ PAIRS = [
 ]
 
 
+def read_completed_events(path: Path) -> list[dict[str, object]]:
+    """Apply docs/release.md's User-path event evidence framing rule."""
+    # The receiver appends UTF-8 JSON followed by LF. A concurrent snapshot may
+    # end inside either the JSON or a UTF-8 code point; decode completed records only.
+    records = path.read_bytes().split(b"\n")[:-1]
+    events = []
+    for number, record in enumerate(records, start=1):
+        refusal = (
+            f"Invalid completed event in {path}, record {number}. "
+            "Inspect the retained receiver event log before requesting a new run."
+        )
+        try:
+            event = json.loads(record.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError(refusal) from error
+        if not isinstance(event, dict):
+            raise ValueError(refusal)
+        events.append(event)
+    return events
+
+
 class CLICommandError(AssertionError):
-    def __init__(self, lane, actor, args, result):
+    def __init__(self, lane, actor, args, result, *, phase=None):
         try:
             response = json.loads(result.stdout)
         except ValueError:
@@ -37,7 +58,9 @@ class CLICommandError(AssertionError):
             args=list(args),
             exit=result.returncode,
             response=response,
+            stdout=result.stdout,
             stderr=result.stderr,
+            phase=phase,
         )
         super().__init__(
             f"{lane}/{actor} aw {args}: {result.returncode}\n{result.stdout}\n{result.stderr}"
@@ -180,6 +203,7 @@ class Lane:
                     (name + "-encryption-key", name, ["id", "encryption-key", "show"]),
                 ]
             )
+        observations = {}
         for label, actor, args in commands:
             result = self.command(actor, *args, check=False)
             (directory / (label + ".json")).write_text(
@@ -192,6 +216,8 @@ class Lane:
                     indent=2,
                 )
             )
+            if label in ("roster", "sessions") and result.returncode == 0:
+                observations[label] = json.loads(result.stdout)
         # A separately pinned published client is an author diagnostic only;
         # it never substitutes for npm latest in the standing released lane.
         comparison = os.environ.get("USER_PATHS_COMPARISON_BIN")
@@ -222,6 +248,29 @@ class Lane:
                 )
             finally:
                 self.binary = original
+        # The actw exception needs the actual existing local session and
+        # published keys, not only the same missing-key diagnostic.
+        if (
+            kind == "chat"
+            and encrypted
+            and case.removesuffix("/v2") + "/plain" in self.results
+            and not self.actors[sender]["address"]
+            and not self.actors[receiver]["address"]
+        ):
+            local_keys = {
+                row.get("did_key")
+                for row in observations.get("roster", {}).get("agents", [])
+                if row.get("identity_scope") == "local" and row.get("encryption_key")
+            }
+            if {self.actors[sender]["did"], self.actors[receiver]["did"]} <= local_keys:
+                sessions = [
+                    row["session_id"]
+                    for row in observations.get("sessions", {}).get("sessions", [])
+                    if row.get("participant_dids") == [self.actors[receiver]["did"]]
+                ]
+                if len(sessions) == 1:
+                    return sessions[0]
+        return None
 
     def run_case(self, case, operation, diagnostic=None):
         started = time.monotonic()
@@ -232,6 +281,8 @@ class Lane:
             record = dict(case=case, status="FAILED", error=str(error))
             if isinstance(error, CLICommandError):
                 record["failure"] = error.failure
+            elif isinstance(error, AssertionError):
+                record["assertion"] = str(error)
             if self.case_commands:
                 directory = self.root / (
                     "failure-" + case.replace("/", "_").replace("->", "-")
@@ -242,7 +293,9 @@ class Lane:
                 )
             if diagnostic:
                 try:
-                    self.capture_failure(case, *diagnostic)
+                    existing_session = self.capture_failure(case, *diagnostic)
+                    if existing_session and "failure" in record:
+                        record["failure"]["existing_local_session"] = existing_session
                 except Exception as capture_error:
                     record["diagnostic_error"] = str(capture_error)
             # Let real presentation callbacks finish even after an assertion
@@ -250,8 +303,7 @@ class Lane:
             for actor in self.actors.values():
                 events = actor.get("events")
                 if events and events.exists():
-                    for line in events.read_text().splitlines():
-                        event = json.loads(line)
+                    for event in read_completed_events(events):
                         if event.get("type") == "awakening":
                             Path(
                                 str(events) + ".release-" + event["meta"]["message_id"]
@@ -268,12 +320,13 @@ class Lane:
                 flush=True,
             )
         elif record["status"] == "KNOWN_ISSUE":
+            diagnostic = (record.get("failure") or {}).get("stderr", record["error"])
             print(
                 "KNOWN ISSUE",
                 case,
                 record["known_issue"]["task"],
                 "observed failure:",
-                record["failure"]["response"],
+                diagnostic.rstrip("\n"),
                 flush=True,
             )
         elif record["status"] == "PASSED":
@@ -338,7 +391,7 @@ class Lane:
                 )
         self.record_command(actor, args, result, phase)
         if check and result.returncode:
-            raise CLICommandError(self.name, actor, args, result)
+            raise CLICommandError(self.name, actor, args, result, phase=phase)
         if not check:
             return result
         return json.loads(result.stdout)
@@ -348,7 +401,7 @@ class Lane:
         path.mkdir()
         self.actors[name] = dict(home=path, domain=domain, server=server)
 
-    def provision(self):
+    def provision(self, *, start_receivers=True):
         for name in ["g1", "g2", "remote", "nonresident"]:
             self.actor(
                 name,
@@ -499,6 +552,11 @@ class Lane:
             self.command(name, "id", "encryption-key", "setup")
             actor = self.actors[name]
             actor["did"] = self.command(name, "id", "show")["did_key"]
+        if not start_receivers:
+            return
+        for name, actor in self.actors.items():
+            if name == "nonresident":
+                continue
             actor["events"] = self.root / (name + "-events.jsonl")
             log = (self.root / (name + "-channel.log")).open("w")
             proc = subprocess.Popen(
@@ -604,25 +662,18 @@ class Lane:
             self.command("g1", "inbound-mode", "open")
 
     def contacts_only(self, kind):
-        configured = self.command("g2", "inbound-mode", "contacts-only")
+        self.command("g2", "inbound-mode", "contacts-only")
         try:
-            mode = configured["inbound_mode"]
-            assert mode == "contacts_only" or (
-                self.name == "released"
-                and self.version == "1.36.40"
-                and mode == "team_and_contacts"
-            ), configured
-            message = (
-                "Recipient only accepts messages from verified team members or exact active contacts"
-                if mode == "team_and_contacts"
-                else "Recipient only accepts messages from exact active contacts"
+            stored = self.command("g2", "inbound-mode")
+            assert stored["inbound_mode"] == "contacts_only", (
+                f"Expected contacts_only; server stored {stored['inbound_mode']}"
             )
             self.refused(
                 "t1",
                 "g2",
                 kind,
                 403,
-                message,
+                "Recipient only accepts messages from exact active contacts",
                 "recipient_policy_rejected",
             )
         finally:
@@ -802,8 +853,7 @@ class Lane:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if path.exists():
-                for line in path.read_text().splitlines():
-                    event = json.loads(line)
+                for event in read_completed_events(path):
                     if predicate(event):
                         return event
             for proc, _ in self.receivers:
@@ -848,6 +898,20 @@ class Lane:
                 conversation,
                 event,
             )
+        self.read_message(
+            receiver, sender, kind, body, conversation, message_id, encrypted
+        )
+        Path(
+            str(self.actors[receiver]["events"])
+            + ".release-"
+            + event["meta"]["message_id"]
+        ).touch()
+        return event
+
+    def read_message(
+        self, receiver, sender, kind, body, conversation, message_id, encrypted
+    ):
+        """Read and validate the exact message through the selected CLI."""
         if kind == "mail":
             inbox = self.command(receiver, "mail", "inbox", "--show-all")
             history = self.command(
@@ -863,6 +927,7 @@ class Lane:
                 conversation,
                 history,
             )
+        observed = {}
         expected = self.actors[sender]["address"]
         for label, result in [("inbox/pending", inbox), ("history", history)]:
             matches = [
@@ -870,6 +935,7 @@ class Lane:
             ]
             assert len(matches) == 1, (label, body, result)
             message = matches[0]
+            observed[label.replace("/", "-")] = message
             if kind == "chat" and label == "inbox/pending":
                 # Pending exposes a session summary, not a message ID or mode.
                 assert message["session_id"] == conversation, (
@@ -924,21 +990,10 @@ class Lane:
                 ), (label, message)
             saved = self.root / "reads"
             saved.mkdir(exist_ok=True)
-            (
-                saved
-                / (
-                    event["meta"]["message_id"]
-                    + "-"
-                    + label.replace("/", "-")
-                    + ".json"
-                )
-            ).write_text(json.dumps(result, indent=2))
-        Path(
-            str(self.actors[receiver]["events"])
-            + ".release-"
-            + event["meta"]["message_id"]
-        ).touch()
-        return event
+            (saved / (message_id + "-" + label.replace("/", "-") + ".json")).write_text(
+                json.dumps(result, indent=2)
+            )
+        return observed
 
     def flow(self, sender, receiver, kind, encrypted):
         case = (

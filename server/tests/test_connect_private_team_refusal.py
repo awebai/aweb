@@ -26,6 +26,8 @@ from test_connect_http import (  # noqa: F401
 )
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 
+__all__ = ["connect_app"]
+
 REGISTRY_URL = "http://registry.test"
 
 

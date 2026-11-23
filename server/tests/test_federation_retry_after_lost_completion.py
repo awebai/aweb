@@ -27,6 +27,8 @@ from test_same_origin_delivery import (
     same_origin_registry_socket as same_origin_registry_socket,
 )
 
+__all__ = ["foreign_receiver", "same_origin"]
+
 
 @dataclass(frozen=True, kw_only=True)
 class PreparedSend:
@@ -145,7 +147,7 @@ def wire_envelope(prepared: PreparedSend, *, sender_origin: str, receiver_origin
 async def table_counts(manager):
     return {
         table: await manager.fetch_value(
-            "SELECT count(*) FROM {{tables." + table + "}}"
+            f"SELECT count(*) FROM {{{{tables.{table}}}}}"
         )
         for table in (
             "messages",

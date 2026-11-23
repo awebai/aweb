@@ -8,6 +8,8 @@ from chat_pair_support import route_pair as route_pair, _submission
 from test_actl_fresh_chat import _post
 from test_messages_http import _signed_team_headers
 
+__all__ = ["route_pair"]
+
 
 async def connect_pair_actor(actor):
     """Establish this real certificate's current admission before testing delivery."""

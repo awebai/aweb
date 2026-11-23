@@ -24,6 +24,8 @@ from test_same_origin_delivery import (
     same_origin_registry_socket as same_origin_registry_socket,
 )
 
+__all__ = ["foreign_receiver", "same_origin"]
+
 
 @pytest.fixture(autouse=True)
 def configured_host_signing(monkeypatch):

@@ -102,7 +102,6 @@ from aweb.messaging.messages import (
     admit_message_delivery,
     authorize_message_delivery,
     get_agent_by_id,
-    resolve_agent_by_did,
 )
 from aweb.messaging.messages import (
     utc_iso as _utc_iso,
@@ -113,6 +112,7 @@ from aweb.messaging.recipient_bindings import (
     signed_recipient_matches,
     RecipientSelectorField,
 )
+from aweb.messaging.recipient_lookup import resolve_recipient_by_did
 from aweb.messaging.kinds import (
     MessageKind,
     MessagePriorityValue,
@@ -514,7 +514,8 @@ def _prepare_remote_mail_envelope(
 ) -> _PreparedRemoteMail:
     """Bind the outbound envelope to the preserved sender signature and target.
 
-    docs/identity-messaging-contract.md:334-343 separates the protected artifact
+    Receiver-Wide Replay And Contact Compatibility
+    (docs/identity-messaging-contract.md:338-348) separates the protected artifact
     from transport routing and persistence. This preparation performs no send.
     """
     is_encrypted = payload.content_mode == ContentMode.ENCRYPTED
@@ -1299,7 +1300,7 @@ async def send_federated_mail_conversation_continuation(
 
 
 async def _resolve_message_alias(
-    db, auth: MessagingAuth, raw_alias: str, registry_client=None
+    db, auth: MessagingAuth, raw_alias: str, *, registry_client
 ) -> dict | None:
     target = resolve_alias_target(auth.team_id, raw_alias, field="to_alias")
     if "~" in str(raw_alias or "") and not await team_exists(db, target.team_id):
@@ -1595,11 +1596,7 @@ async def _resolve_new_mail_target(
 
     if payload.to_address is None and payload.to_stable_id is not None:
         recipient_did = payload.to_stable_id.strip()
-        recipient = await resolve_agent_by_did(
-            db,
-            recipient_did,
-            team_id=auth.team_id if recipient_did.startswith("did:key:") else None,
-        )
+        recipient = await resolve_recipient_by_did(db, recipient_did, sender_team_id=auth.team_id)
         if recipient is not None:
             recipient = identity_recipient(recipient)
         if recipient is None:
@@ -1607,10 +1604,8 @@ async def _resolve_new_mail_target(
                 _raise_bare_did_first_contact_unsupported()
             raise recipient_not_found()
         if payload.to_did is not None and payload.to_did.strip():
-            bound_recipient = await resolve_agent_by_did(
-                db,
-                payload.to_did.strip(),
-                team_id=auth.team_id if payload.to_did.strip().startswith("did:key:") else None,
+            bound_recipient = await resolve_recipient_by_did(
+                db, payload.to_did.strip(), sender_team_id=auth.team_id
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise recipient_selector_mismatch(
@@ -1630,10 +1625,8 @@ async def _resolve_new_mail_target(
         to_alias = recipient.get("alias")
     elif payload.to_address is None and payload.to_did is not None:
         requested_recipient_did = payload.to_did.strip()
-        recipient = await resolve_agent_by_did(
-            db,
-            requested_recipient_did,
-            team_id=auth.team_id if requested_recipient_did.startswith("did:key:") else None,
+        recipient = await resolve_recipient_by_did(
+            db, requested_recipient_did, sender_team_id=auth.team_id
         )
         if recipient is not None:
             recipient = identity_recipient(recipient)
@@ -2004,7 +1997,7 @@ async def _send_mail_to_resolved_target(
         )
 
     try:
-        if not recipient.get("external"):
+        if msg_uuid is not None or payload.content_mode == ContentMode.ENCRYPTED:
             await authorize_message_delivery(
                 db,
                 registry_client=runtime.registry_client,

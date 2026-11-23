@@ -27,7 +27,7 @@ def signed_recipient_matches(
 ) -> bool:
     """Validate supplied claims; released plaintext envelopes may omit them.
 
-    Implements docs/identity-messaging-contract.md:128-139.
+    Implements Global And Local Identities (docs/identity-messaging-contract.md:124-142).
 
     Address resolution requires a DID claim before signed bytes can establish
     visibility. Group identity claims still require exactly one recipient.

@@ -60,6 +60,8 @@ func TestIDCreateDelegatedControllerPreflight(t *testing.T) {
 
 func TestIDNamespaceCheckTXTRequiresOwnRecordForBYOTSetup(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	// The DNS value omits the registry only when none is named.
+	t.Setenv("AWID_REGISTRY_URL", "")
 	prepared, err := executeIDNamespacePrepareController(idNamespacePrepareControllerOptions{Domain: "child.example.com"})
 	if err != nil {
 		t.Fatal(err)

@@ -19,6 +19,7 @@ from awid.dns_verify import awid_txt_value
 from awid.id_certificates import id_certificate_id, sign_id_certificate
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
+from awid_service.deps import get_domain_verifier
 from lab_environment import LabConfigurationError
 from lab_publication import publish_lab_runtime
 
@@ -136,10 +137,6 @@ async def lab(tmp_path, registry, aw_binary, human_fixture_binary, monkeypatch, 
     team = inputs[PREFIX + "TEAM_ID"]
     first = Member(team, alias="team-controller", certificate_id="lab-controller")
     controller = Member(team)
-    await registry.add_team(team, first.team_did_key, namespace_controller=controller.member_key)
-    await registry.publish_team_server(
-        team, first.team_key, server_url=inputs[PREFIX + "COORDINATION_ORIGIN"]
-    )
     domain = "example.test"
     lab_dns.records[("_awid." + domain, "TXT")] = [
         '"' + awid_txt_value(controller.did_key, inputs[PREFIX + "AWID_REGISTRY_URL"]) + '"'
@@ -149,12 +146,19 @@ async def lab(tmp_path, registry, aw_binary, human_fixture_binary, monkeypatch, 
     resolver.port = lab_dns.port
     previous = dns.asyncresolver.default_resolver
     dns.asyncresolver.default_resolver = resolver
+    # Let the real resolver serve every authority check, including team setup.
+    monkeypatch.setitem(registry.app.dependency_overrides, get_domain_verifier, get_domain_verifier)
     monkeypatch.setenv("HOME", str(tmp_path))
     client = RegistryClient(
         registry_url=inputs[PREFIX + "AWID_REGISTRY_URL"], transport=registry.transport
     )
     try:
-        await registry.ensure_namespace(domain=domain, controller=controller.member_key)
+        await registry.add_team(
+            team, first.team_did_key, namespace_controller=controller.member_key
+        )
+        await registry.publish_team_server(
+            team, first.team_key, server_url=inputs[PREFIX + "COORDINATION_ORIGIN"]
+        )
         members = {}
         for actor in ("HUMAN", "AGENT_A", "AGENT_B"):
             member = Member(

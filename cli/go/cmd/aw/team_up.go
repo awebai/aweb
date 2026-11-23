@@ -186,10 +186,6 @@ func defaultTeamUpSessionName(repoRoot string) string {
 	return "aw-team"
 }
 
-func buildTeamUpPlan(repoRoot, session string, force bool, recreate bool) (teamUpPlan, error) {
-	return buildTeamUpPlanForSession(repoRoot, teamUpSessionSelection{Session: session, TmuxContext: teamUpConfiguredTmuxContext}, force, recreate)
-}
-
 func buildTeamUpPlanForSession(repoRoot string, selection teamUpSessionSelection, force bool, recreate bool) (teamUpPlan, error) {
 	agentsDir := filepath.Join(repoRoot, "agents", "instances")
 	entries, err := os.ReadDir(agentsDir)
@@ -696,10 +692,6 @@ func envWithValueAndUnset(env []string, key, value string, unsetKeys ...string) 
 		out = append(out, prefix+value)
 	}
 	return out
-}
-
-func confirmStartedClaudeChannelPrompts(session string, started []teamUpAgentPlan) error {
-	return confirmStartedClaudeChannelPromptsInContext(teamUpConfiguredTmuxContext, session, started)
 }
 
 func confirmStartedClaudeChannelPromptsInContext(tmuxContext teamUpTmuxContext, session string, started []teamUpAgentPlan) error {

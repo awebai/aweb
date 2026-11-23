@@ -2,13 +2,13 @@
 
 import json
 import os
+from pathlib import Path
 import shlex
 import subprocess
 import sys
 import tempfile
-import unittest
-from pathlib import Path
 from unittest.mock import patch
+import unittest
 
 import test_server_local as local
 
@@ -23,30 +23,33 @@ class LocalControls(unittest.TestCase):
                     commands.append((command, environ, log))
                     return subprocess.CompletedProcess(command, 0)
 
-                with (
-                    tempfile.TemporaryDirectory() as directory,
-                    patch.object(local, "run_logged_suite", side_effect=record),
-                ):
-                    reports = (Path(directory) / "reports").resolve()
+                with tempfile.TemporaryDirectory() as scratch:
+                    report = Path(scratch) / "receipt"
                     environment = {
                         "AWEB_TEST_SERVICES": "1",
                         "TEST_DB_PORT": "15432",
-                        "LOCAL_TEST_REPORT_DIR": str(reports),
+                        "LOCAL_TEST_REPORT_DIR": str(report),
                     }
-                    status = local.run_suites(
-                        suite=local.Suite(label), workers=4,
-                        arguments=["-k", "current_key"], environ=environment,
+                    with patch.object(local, "run_logged_suite", side_effect=record):
+                        status = local.run_suites(
+                            suite=local.Suite(label), workers=4,
+                            arguments=["-k", "current_key"], environ=environment,
+                        )
+                    self.assertEqual(status, 0)
+                    self.assertEqual(len(commands), 1)
+                    command, selected, log = commands[0]
+                    self.assertEqual(command, ["make", "test-naapp", f"NAAPP_PACKAGES={package}"])
+                    self.assertEqual(selected["AWEB_TEST_SERVICES"], "1")
+                    self.assertEqual(selected["TEST_DB_PORT"], "15432")
+                    self.assertEqual(log, report / label / "pytest.log")
+                    self.assertEqual(
+                        shlex.split(selected["PYTEST_ADDOPTS"]),
+                        [
+                            "-k", "current_key", "-p", "local_pytest_progress",
+                            f"--junitxml={report / label / 'cases.xml'}",
+                            "--durations=0", "--durations-min=0",
+                        ],
                     )
-                self.assertEqual(status, 0)
-                self.assertEqual(len(commands), 1)
-                command, selected, log = commands[0]
-                self.assertEqual(command, ["make", "test-naapp", f"NAAPP_PACKAGES={package}"])
-                self.assertEqual(selected["AWEB_TEST_SERVICES"], "1")
-                self.assertEqual(selected["TEST_DB_PORT"], "15432")
-                options = shlex.split(selected["PYTEST_ADDOPTS"])
-                self.assertEqual(options[:2], ["-k", "current_key"])
-                self.assertIn("--junitxml=" + str(reports / label / "cases.xml"), options)
-                self.assertEqual(log, reports / label / "pytest.log")
 
     def test_host_database_and_nonlocal_endpoints_refuse(self):
         for env in (

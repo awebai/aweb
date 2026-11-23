@@ -19,6 +19,7 @@ func TestOrdinaryClientConfirmsPendingTeamKeyAndRefusesAnObservedSubstitution(t 
 	}
 	cert := signedMemberCertificate(t, teamPrivate, awid.ComputeDIDKey(memberPublic), "", awid.IdentityModeLocal)
 	registry := newCertificateRegistry(t, teamPrivate)
+	t.Setenv("AWID_REGISTRY_URL", registry.server.URL)
 	home := t.TempDir()
 	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(home, cert.Team, cert); err != nil {
 		t.Fatal(err)

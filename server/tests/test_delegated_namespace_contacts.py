@@ -12,7 +12,6 @@ import json
 import os
 
 import pytest
-from nacl.signing import SigningKey
 
 from aweb.federation.activation import FederationAuthorityActivation
 from aweb.federation.authority import AuthorityClaim, FederationAuthorityCore
@@ -27,6 +26,8 @@ from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_federation_preactivation_harness import _RecordedDNS
 from test_messages_http import _make_certificate, _encode_certificate, _make_keypair
+
+__all__ = ["privacy_app"]
 
 
 @pytest.mark.asyncio
@@ -60,7 +61,7 @@ async def test_delegated_namespace_authority(
     async with registry_listener(env) as (registry, registry_origin):
         owner_did = await register_global_identity(env, actor, "example.test/bob")
         await env.registry.ensure_namespace(
-            domain="example.com", controller=SigningKey(env.namespace_sk)
+            domain="example.com", controller=env.namespace_sk
         )
         await registry.register_namespace(
             domain,
@@ -69,7 +70,7 @@ async def test_delegated_namespace_authority(
             parent_signing_key=env.namespace_sk,
             default_delivery_origin="https://sender.example.test",
         )
-        await env.registry.ensure_namespace(domain=domain, controller=SigningKey(child_sk))
+        await env.registry.ensure_namespace(domain=domain, controller=child_sk)
         target_did = await register_global_identity(env, target, address)
         await env.db.execute(
             "UPDATE {{tables.agents}} SET did_aw=$1, did_aw_verified_key=did_key, "

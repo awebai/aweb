@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
 from uuid import UUID
@@ -17,11 +17,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from redis.asyncio import Redis
 
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
+
 from aweb.audit import OperatorAuditRoute, audit_success
 
 from ...db import DatabaseInfra, get_db_infra
 from awid.pagination import encode_cursor, validate_pagination_params
-from ...presence import clear_workspace_presence
+from ...lifecycle import (
+    LifecycleActor,
+    LocalWorkspaceTarget,
+    apply_local_workspace_cleanup,
+    load_removed_claim_workspaces,
+    lock_workspace_cleanup_targets_on,
+    replay_lifecycle_side_effects,
+)
 from ...redis_client import get_redis
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
@@ -262,11 +271,19 @@ async def list_repos(
     )
 
 
+class SkippedWorkspace(BaseModel):
+    workspace_id: str
+    code: str
+
+
 class RepoDeleteResponse(BaseModel):
     id: str
     workspaces_deleted: int
     claims_deleted: int
     presence_cleared: int
+    repo_deleted: bool = True
+    skipped_workspaces: list[SkippedWorkspace] = Field(default_factory=list)
+    cleanup_pending: bool = False
 
 
 @router.delete("/{repo_id}")
@@ -278,6 +295,10 @@ async def delete_repo(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> RepoDeleteResponse:
     """Soft-delete a repo and cascade to workspaces."""
+    try:
+        registry_client = application_registry_client(request.app.state)
+    except RegistryClientUnavailable as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     manager = db.get_manager("aweb")
     async with manager.transaction() as aweb_db:
         repo = await aweb_db.fetch_one(
@@ -293,66 +314,88 @@ async def delete_repo(
 
         workspace_rows = await aweb_db.fetch_all(
             """
-            SELECT workspace_id FROM {{tables.workspaces}}
-            WHERE repo_id = $1 AND deleted_at IS NULL
+            SELECT workspace_id, agent_id FROM {{tables.workspaces}}
+            WHERE repo_id = $1 AND team_id = $2 AND deleted_at IS NULL
+            ORDER BY workspace_id
             """,
             str(repo_id),
+            identity.team_id,
         )
-        workspace_ids = [str(row["workspace_id"]) for row in workspace_rows]
-
-        # Soft-delete workspaces
-        if workspace_ids:
-            await aweb_db.execute(
-                """
-                UPDATE {{tables.workspaces}}
-                SET deleted_at = NOW()
-                WHERE repo_id = $1 AND deleted_at IS NULL
-                """,
-                str(repo_id),
-            )
-
-        # Delete claims for affected workspaces
+        removed = await load_removed_claim_workspaces(
+            aweb_db,
+            agent_ids=[row["agent_id"] for row in workspace_rows if row["agent_id"] is not None],
+            team_id=identity.team_id,
+        )
+        # One outer transaction locks the full repo set before any claim release.
+        await lock_workspace_cleanup_targets_on(
+            aweb_db,
+            targets=tuple(
+                LocalWorkspaceTarget(workspace_id=row["workspace_id"], agent_id=row["agent_id"])
+                for row in workspace_rows + removed
+            ),
+            team_id=identity.team_id,
+        )
+        skipped: list[SkippedWorkspace] = []
+        deleted_count = 0
         claims_deleted = 0
-        if workspace_ids:
-            result = await aweb_db.fetch_one(
-                """
-                WITH deleted AS (
-                    DELETE FROM {{tables.task_claims}}
-                    WHERE workspace_id = ANY($1::uuid[])
-                    RETURNING id
-                )
-                SELECT COUNT(*) as count FROM deleted
-                """,
-                workspace_ids,
-            )
-            claims_deleted = result["count"] if result else 0
-
-        # Soft-delete the repo
-        await aweb_db.execute(
-            """
-            UPDATE {{tables.repos}}
-            SET deleted_at = NOW()
-            WHERE id = $1
-            """,
-            str(repo_id),
+        operation_ids: list[str] = []
+        deleted_at = datetime.now(timezone.utc)
+        actor = LifecycleActor(
+            actor_id=identity.agent_id, actor_type="agent", authority="team_identity"
         )
+        for row in workspace_rows:
+            result = await apply_local_workspace_cleanup(
+                aweb_db,
+                redis,
+                team_id=identity.team_id,
+                target=LocalWorkspaceTarget(
+                    workspace_id=row["workspace_id"], agent_id=row["agent_id"]
+                ),
+                actor=actor,
+                deleted_at=deleted_at,
+                registry_client=registry_client,
+                request_context=request,
+            )
+            if result.errors:
+                skipped.append(
+                    SkippedWorkspace(
+                        workspace_id=str(row["workspace_id"]), code=result.errors[0].code
+                    )
+                )
+                continue
+            deleted_count += len(result.workspace_changes)
+            claims_deleted += result.task_unclaim_count
+            if result.outbox_operation_id is not None:
+                operation_ids.append(result.outbox_operation_id)
+
+        # A repo with surviving workspaces remains available to those sessions.
+        if not skipped:
+            await aweb_db.execute(
+                "UPDATE {{tables.repos}} SET deleted_at=$2 WHERE id=$1",
+                str(repo_id),
+                deleted_at,
+            )
 
         await audit_success(aweb_db, request, identity.team_id)
 
-    # Redis follows the committed deletion; failed SQL/audit leaves it intact.
-    presence_cleared = await clear_workspace_presence(redis, workspace_ids)
-
-    logger.info(
-        "Repo soft-deleted: id=%s workspaces=%d claims=%d presence=%d",
-        repo_id,
-        len(workspace_ids),
-        claims_deleted,
-        presence_cleared,
-    )
+    presence_cleared = 0
+    cleanup_pending = False
+    for operation_id in operation_ids:
+        replay = await replay_lifecycle_side_effects(manager, redis, operation_id=operation_id)
+        presence_cleared += replay.presence_cleared_count
+        cleanup_pending = cleanup_pending or replay.pending_count > 0
+    if cleanup_pending:
+        logger.warning(
+            "Repo cleanup committed with lifecycle side effects pending",
+            extra={"repo_id": str(repo_id)},
+        )
 
     return RepoDeleteResponse(
         id=str(repo_id),
-        workspaces_deleted=len(workspace_ids),
+        workspaces_deleted=deleted_count,
         claims_deleted=claims_deleted,
         presence_cleared=presence_cleared,
+        repo_deleted=not skipped,
+        skipped_workspaces=skipped,
+        cleanup_pending=cleanup_pending,
     )

@@ -61,6 +61,8 @@ from aweb.team_auth_deps import (
     team_identity_with_grant_scope,
 )
 
+__all__ = ["privacy_app"]
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 TEAM_ID = "backend:acme.com"
@@ -1045,7 +1047,6 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     app.state.db = _DbShim(aweb_db)
     app.state.public_origin = "http://test"
     app.state.redis = None
-    app.state.rate_limiter = None
 
     @app.middleware("http")
     async def cache_body_middleware(request, call_next):
@@ -2178,8 +2179,8 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, status, identity_scope)
-        VALUES ($1, 'other:acme.com', 'other', 'did:key:zOtherAgent', 'active', 'global')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, status, identity_scope, inbound_mode)
+        VALUES ($1, 'other:acme.com', 'other', 'did:key:zOtherAgent', 'active', 'global', 'open')
         """,
         other_agent,
     )

@@ -9,6 +9,8 @@ from asyncpg.exceptions import LockNotAvailableError
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_member_team_key import _connect
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 async def test_reconnect_locks_its_workspace_before_waiting_for_its_member(privacy_app):

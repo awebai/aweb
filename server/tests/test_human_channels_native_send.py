@@ -19,6 +19,8 @@ from test_messages_http import (
     _make_keypair,
 )
 
+__all__ = ["mail_server"]
+
 
 def dto(schema, value):
     return decode_record(schema, canonical_json_bytes(value))
@@ -145,7 +147,10 @@ async def native_send(aweb_cloud_db):
     provider = HostAuthority(db, service_binding)
     # No publisher until explicitly recovered: simulates commit->process crash.
     service = NativeMessagingService(
-        _build_test_app(db, None).state.db, authority=provider, service=service_binding
+        _build_test_app(db, None).state.db,
+        authority=provider,
+        service=service_binding,
+        registry_client=None,
     )
     auth = MessagingAuth(
         did_key=a_did,
@@ -371,6 +376,7 @@ async def test_committed_intent_recovers_without_second_message(native_send):
         authority=env["provider"],
         service=env["service"].service,
         publisher=publish,
+        registry_client=None,
     )
     await service.publish_pending()
     await service.publish_pending()
@@ -612,6 +618,7 @@ async def test_human_discovery_withholds_unverified_global_claim(native_send):
         team_id=env["auth"].team_id,
         selected_team_id=env["auth"].team_id,
         alias="human",
+        registry_client=env["service"].registry_client,
     )
     assert row["did_key"] == env["recipient_did"]
     assert row["did_aw"] is None
@@ -708,6 +715,7 @@ async def test_native_facts_project_identity_in_endpoint_team(native_send):
 async def test_legacy_native_policy_retains_forbidden_contract_after_local_refusal(mail_server):
     from dataclasses import replace
     from types import SimpleNamespace
+    from aweb.application_state import RegistryClientUnavailable
     from test_local_policy_refusal_boundaries import admitted_local_recipient
 
     env = mail_server
@@ -732,3 +740,11 @@ async def test_legacy_native_policy_retains_forbidden_contract_after_local_refus
     member = replace(outsider, did_key=bob.did, did_aw=None, team_id=bob.team,
                      verified_team_id=bob.team)
     await NativeMessagingService._policy(service, env.fixture.infra, member, recipient)
+    service.registry_client = None
+    with pytest.raises(RegistryClientUnavailable) as unavailable:
+        await NativeMessagingService._policy(service, env.fixture.infra, member, recipient)
+    assert unavailable.value.status_code == 503
+    assert unavailable.value.detail == {
+        "code": RegistryClientUnavailable.code,
+        "message": RegistryClientUnavailable.message,
+    }

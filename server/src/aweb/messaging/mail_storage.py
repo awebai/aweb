@@ -1,8 +1,8 @@
 """Persist admitted mail; delivery policy belongs to messaging.delivery_policy.
 
 The caller admits the selected identity before creating a conversation or row
-(docs/identity-messaging-contract.md:69-93). Storage receives the attestation
-unchanged and chooses only the canonical persisted content shape.
+under Global And Local Identities (docs/identity-messaging-contract.md:81-99).
+Storage receives the attestation unchanged and chooses the persisted content shape.
 """
 
 from __future__ import annotations

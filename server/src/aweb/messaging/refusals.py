@@ -115,42 +115,26 @@ def recipient_selector_mismatch(
     )
 
 
-def registry_configuration_refusal(*, operation: str) -> DeliveryRefusal:
-    """Keep the registry's configuration diagnosis in the service carrier."""
-    from aweb.awid_error_handling import awid_registry_not_configured_detail
-
-    return DeliveryRefusal(
-        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-        detail=awid_registry_not_configured_detail(operation=operation)
-        + ". Ask the server operator to configure the registry and retry.",
-    )
-
-
 def registry_dependency_refusal(exc: Exception, *, operation: str) -> DeliveryRefusal:
     """Use the shared upstream classifier without importing HTTP into delivery."""
     from aweb.awid_error_handling import classify_awid_dependency_error
 
-    # The shared owner classifies status. Upstream exception/body text is not
-    # part of the delivery response or log: it can contain request data.
-    classification = classify_awid_dependency_error(exc, operation=operation)
-    status_code = classification[0]
+    # Keep upstream exception/body text out of the delivery log.
+    status_code, detail = classify_awid_dependency_error(exc, operation=operation)
     logger.log(
         logging.ERROR if status_code == HTTPStatus.INTERNAL_SERVER_ERROR else logging.WARNING,
         "delivery_registry_dependency_failed failure_type=%s status=%d",
         type(exc).__name__,
         status_code,
     )
-    return DeliveryRefusal(
-        status_code=status_code,
-        detail=f"{operation} could not be completed. Retry when the registry is available; if this persists, ask the server operator to check the registry connection.",
-    )
+    return DeliveryRefusal(status_code=status_code, detail=detail)
 
 
 def signed_chat_payload_refusal(*, detail: str) -> DeliveryRefusal:
     """Keep signed chat field failures actionable at every send/retry boundary.
 
     Implements the sender-artifact checks in
-    docs/identity-messaging-contract.md:154-166.
+    Direct Address Send Protocol (docs/identity-messaging-contract.md:156-168).
     """
     return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,

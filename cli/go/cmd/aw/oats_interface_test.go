@@ -129,6 +129,64 @@ func TestOATSOfflineMembershipInspection(t *testing.T) {
 			}
 		}
 	})
+	t.Run("list ignores unusable supplemental bindings", func(t *testing.T) {
+		workspacePath := awconfig.WorktreeWorkspacePath(dir)
+		original, err := os.ReadFile(workspacePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unroutedState := &awconfig.TeamState{ActiveTeam: state.ActiveTeam, Memberships: append([]awconfig.TeamMembership(nil), state.Memberships...)}
+		for i := range unroutedState.Memberships {
+			unroutedState.Memberships[i].AwebURL = ""
+		}
+		if err := awconfig.SaveTeamState(dir, unroutedState); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.WriteFile(workspacePath, original, 0o600); err != nil {
+				t.Error(err)
+			}
+			if err := awconfig.SaveTeamState(dir, state); err != nil {
+				t.Error(err)
+			}
+		})
+		cases := []struct {
+			name string
+			yaml string
+		}{
+			{"historical top-level alias", "alias: stale-workspace-alias\naweb_url: https://service.invalid/api\n"},
+			{"missing service route", strings.Replace(string(original), "aweb_url: "+workspace.AwebURL+"\n", "", 1)},
+			{"unknown field", string(original) + "unknown_field: invalid\n"},
+			{"malformed YAML", "memberships: [\n"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if err := os.WriteFile(workspacePath, []byte(tc.yaml), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); err == nil {
+					t.Fatal("strict workspace loader accepted the fixture")
+				}
+				out, err := run("--identity-home", filepath.Dir(workspacePath), "id", "team", "list", "--json")
+				if err != nil {
+					t.Fatalf("list with unusable binding: %v\n%s", err, out)
+				}
+				var result teamListOutput
+				if err := json.Unmarshal(out, &result); err != nil {
+					t.Fatalf("decode list: %v\n%s", err, out)
+				}
+				if len(result.Memberships) != 2 || result.ActiveTeam != state.ActiveTeam {
+					t.Fatalf("unexpected team state: %s", out)
+				}
+				for _, membership := range result.Memberships {
+					cert := certs[membership.TeamID]
+					if cert == nil || membership.CertificateID != cert.CertificateID || membership.Alias != "worker" || membership.AwebURL != "" || membership.WorkspaceID != "" {
+						t.Fatalf("list used an unusable binding or changed the membership: %s", out)
+					}
+				}
+			})
+		}
+	})
 	t.Run("cert show selects inactive team", func(t *testing.T) {
 		out, err := run("id", "cert", "show", "--team", "two:example.com", "--json")
 		if err != nil {

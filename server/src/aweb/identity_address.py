@@ -49,7 +49,7 @@ def require_address_evidence(auth) -> None:
             status_code=409,
             detail={
                 "code": "sender_context_required",
-                "message": "This identity has multiple sender contexts. Present the intended team's certificate in X-AWID-Team-Certificate; with aw, pass --team, or upgrade aw 1.36.58 to select the intended sender address.",
+                "message": "This identity has multiple sender contexts. Present the intended team's certificate in X-AWID-Team-Certificate. With aw 1.36.59 or later, pass --team to select the intended sender address.",
             },
         )
     if (

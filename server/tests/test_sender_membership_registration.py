@@ -15,6 +15,8 @@ from test_dashboard_privacy import privacy_app as privacy_app
 from test_member_team_key import _connect
 from test_task_answers import _v2_request
 
+__all__ = ["privacy_app"]
+
 
 class RegistrationRequirement(StrEnum):
     MEASURE = "false"

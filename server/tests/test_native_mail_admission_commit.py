@@ -1,4 +1,3 @@
-# ruff: noqa: F811 -- shared real-stack fixture is imported for pytest.
 """Native writes retain their current policy decision until the row commits."""
 
 import asyncio
@@ -7,10 +6,19 @@ from enum import Enum, auto
 import asyncpg
 import pytest
 
-from identity_binding_support import register_global_identity
+from aweb.inbound_modes import set_identity_inbound_mode
+from aweb.application_state import application_registry_client
+from aweb.lifecycle import (
+    LifecycleActor,
+    LifecycleCascadeRequest,
+    apply_lifecycle_cascade,
+)
+from messaging_actor_support import admit_messaging_actor, set_messaging_inbound_mode
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
 from test_delivery_contract_regressions import _send
+
+__all__ = ["privacy_app"]
 
 
 async def connect_policy_members(env):
@@ -39,6 +47,37 @@ async def connect_policy_members(env):
         )
 
 
+async def prepare_test_policy_members(env):
+    await connect_policy_members(env)
+    bob = await admit_messaging_actor(
+        env, alias="bob", team_id=TEAM, signing_key=env.actors["bob"].sk
+    )
+    await set_messaging_inbound_mode(env, bob, "team_and_contacts")
+    return bob
+
+
+async def apply_test_policy_change(tx, env, change, bob):
+    if change is PolicyChange.RECIPIENT_MODE:
+        await set_identity_inbound_mode(tx, bob.stable_id, "contacts_only")
+        return
+    alice = env.actors["alice"]
+    result = await apply_lifecycle_cascade(
+        tx,
+        env.redis,
+        LifecycleCascadeRequest(
+            operation="delete_local_workspace",
+            actor=LifecycleActor(str(alice.id), "agent", "team_identity"),
+            team_id=TEAM,
+            target_agent_id=str(alice.id),
+            target_workspace_ids=(str(alice.workspace),),
+            require_identity_scope="local",
+            mark_local_agent_deleted=True,
+        ),
+        registry_client=application_registry_client(env.app.state),
+    )
+    assert result.identity_deleted, result.errors
+
+
 class MailPath(Enum):
     NEW_THREAD = auto()
     CONTINUATION = auto()
@@ -58,19 +97,11 @@ async def test_native_mail_admission_stays_locked_through_the_actual_message_com
     change,
 ):
     env = privacy_app
-    await connect_policy_members(env)
-    bob = env.actors["bob"]
-    stable = await register_global_identity(env, bob)
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET did_aw=$1,did_aw_verified_key=did_key,"
-        "identity_scope='global',inbound_mode='team_and_contacts' WHERE agent_id=$2",
-        stable,
-        bob.id,
-    )
-    payload = {"to_did": bob.did, "body": "Held native send"}
+    bob = await prepare_test_policy_members(env)
+    payload = {"to_did": bob.did_key, "body": "Held native send"}
     count_before = 0
     if path is MailPath.CONTINUATION:
-        initial = await _send(env, {"to_did": bob.did, "body": "Existing thread"})
+        initial = await _send(env, {"to_did": bob.did_key, "body": "Existing thread"})
         assert initial.status_code == 200, initial.text
         payload = {
             "conversation_id": initial.json()["conversation_id"],
@@ -81,24 +112,11 @@ async def test_native_mail_admission_stays_locked_through_the_actual_message_com
     relation = (
         "aweb.messages" if path is MailPath.CONTINUATION else "aweb.conversations"
     )
-    lock = (
-        "LOCK TABLE {{tables.messages}} IN SHARE MODE"
-        if path is MailPath.CONTINUATION
-        else "LOCK TABLE {{tables.conversations}} IN SHARE MODE"
-    )
-    statement, actor_id = (
-        (
-            "UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1",
-            env.actors["alice"].id,
-        )
-        if change is PolicyChange.SENDER_RETIREMENT
-        else (
-            "UPDATE {{tables.agents}} SET inbound_mode='contacts_only' WHERE agent_id=$1",
-            bob.id,
-        )
-    )
     async with env.db.transaction() as blocker:
-        await blocker.execute(lock)
+        if path is MailPath.CONTINUATION:
+            await blocker.execute("LOCK TABLE {{tables.messages}} IN SHARE MODE")
+        else:
+            await blocker.execute("LOCK TABLE {{tables.conversations}} IN SHARE MODE")
         sending = asyncio.create_task(_send(env, payload))
         try:
             async with asyncio.timeout(5):
@@ -116,7 +134,7 @@ async def test_native_mail_admission_stays_locked_through_the_actual_message_com
             async with env.db.transaction() as changing:
                 await changing.execute("SET LOCAL lock_timeout='200ms'")
                 with pytest.raises(asyncpg.LockNotAvailableError):
-                    await changing.execute(statement, actor_id)
+                    await apply_test_policy_change(changing, env, change, bob)
         except BaseException:
             sending.cancel()
             await asyncio.gather(sending, return_exceptions=True)
@@ -129,7 +147,8 @@ async def test_native_mail_admission_stays_locked_through_the_actual_message_com
     )
     assert len(env.dispatched) == len(events_before) + 1
     # The lock ends with the send; subsequent policy changes must take effect.
-    await env.db.execute(statement, actor_id)
+    async with env.db.transaction() as changing:
+        await apply_test_policy_change(changing, env, change, bob)
     if change is PolicyChange.RECIPIENT_MODE:
         refused = await _send(env, payload)
         assert refused.status_code == 403, refused.text

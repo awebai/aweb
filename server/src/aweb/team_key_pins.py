@@ -14,7 +14,6 @@ Enforcement is staged (``aweb.config.enforce_team_key_pins``): until
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -29,16 +28,9 @@ from awid.team_key_acts import (
 from awid.team_key_acts import (
     pinned_team_key as pin_team_key,
 )
-from fastapi import HTTPException, Request
+from fastapi import HTTPException
 
-from aweb.application_state import application_registry_client, native_application_state
-from aweb.awid_error_handling import (
-    AWID_DEPENDENCY_ERRORS,
-    awid_dependency_http_exception,
-)
 from aweb.config import enforce_team_key_pins
-
-logger = logging.getLogger(__name__)
 
 TEAM_KEY_UNVERIFIED = "team_key_unverified"
 _SYSTEM_TXT_RESOLVER = SystemTXTOutcomeResolver()
@@ -48,7 +40,6 @@ __all__ = [
     "AdmittedTeamKeys",
     "TeamKeyUnverified",
     "pinned_team_key",
-    "pinned_team_key_for_request",
     "team_key_unverified_exception",
     "txt_resolver_for",
 ]
@@ -137,42 +128,4 @@ async def pinned_team_key(
     )
     if pin_memo is not None:
         pin_memo.put(team_id, served_key, key)
-    return key
-
-
-async def pinned_team_key_for_request(
-    request: Request,
-    team_id: str,
-    served_key: str,
-    *,
-    db: Any = None,
-) -> str:
-    """``pinned_team_key`` with ``db`` (the request's aweb database manager,
-    else the app's), the app's registry and its DNS resolver; an unverified
-    key is the 401 ``team_key_unverified`` and a failed act read is the
-    registry dependency error. A request under a served key this app answered
-    within the memo window (awid TeamKeyMemo) reads nothing."""
-    state = native_application_state(request.app.state)
-    memo = getattr(state, "team_key_pin_memo", None)
-    if memo is None:
-        memo = TeamKeyMemo()
-        state.team_key_pin_memo = memo
-    try:
-        key = await pinned_team_key(
-            db=db if db is not None else state.db.get_manager("aweb"),
-            registry_client=application_registry_client(request.app.state),
-            txt_resolver=txt_resolver_for(state),
-            team_id=team_id,
-            served_key=served_key,
-            pin_memo=memo,
-        )
-    except TeamKeyUnverified:
-        raise team_key_unverified_exception() from None
-    except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning(
-            "AWID registry dependency failed for the team key act of %s",
-            team_id,
-            exc_info=True,
-        )
-        raise awid_dependency_http_exception(exc, operation="AWID team key act read") from exc
     return key

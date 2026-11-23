@@ -10,13 +10,13 @@ from fastapi import Depends, HTTPException, Request
 from aweb.application_state import application_registry_client
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.auth_context import GrantContext as GrantContext
-from aweb.auth_context import IdentityAuth, MessagingAuth, TeamIdentity
-from aweb.auth_metrics import count_legacy_request_auth
-from aweb.certificate_registration import (
-    RegistrationState,
-    configured_registration_mode,
-    read_certificate_registration,
+from aweb.auth_context import (
+    IdentityAuth,
+    MessagingAuth,
+    TeamIdentity,
+    has_verified_team_certificate,
 )
+from aweb.auth_metrics import count_legacy_request_auth
 from aweb.deps import get_db
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.identity_address import AddressResolution, AddressResolutionState
@@ -27,7 +27,7 @@ from aweb.identity_binding import (
     verify_identity_binding,
 )
 from aweb.member_team_key import (
-    current_member,
+    current_membership,
     member_projection_columns_sql,
 )
 from aweb.request_body import request_body_sha256
@@ -37,7 +37,6 @@ from aweb.team_auth_envelope import identity_auth_signature_payload
 from aweb.team_registry import (
     native_database_manager,
     request_auth_audiences,
-    revoked_certificates,
 )
 
 logger = logging.getLogger(__name__)
@@ -252,71 +251,6 @@ async def lookup_identity_agent_context(
     return dict(rows[0])
 
 
-async def current_membership(
-    registry_client, row: dict | None, *, request: Request | None = None
-) -> dict | None:
-    """The row with its team context, or stripped of it when the admitting
-    certificate is revoked or unregistered, as this registry client reports it."""
-    if not row:
-        return row
-    team_id = (row.get("team_id") or "").strip()
-    certificate_id = (row.get("certificate_id") or "").strip()
-    if not team_id:
-        return row
-    if not current_member(row):
-        logger.warning(
-            "identity-auth team context stripped: alias %r in %s was accepted under "
-            "a team key that is not the team's current key",
-            row.get("alias"),
-            team_id,
-        )
-        return _without_team_context(row)
-    if not certificate_id:
-        return row
-    revoked = await revoked_certificates(
-        registry_client, team_id, certificate_ids=[certificate_id]
-    )
-    if certificate_id not in revoked:
-        decision = await read_certificate_registration(
-            registry_client=registry_client,
-            team_id=team_id,
-            certificate_id=certificate_id,
-            mode=configured_registration_mode(),
-            request=request,
-        )
-        if decision.allows_registration:
-            return row
-        if decision.state is RegistrationState.UNAVAILABLE:
-            raise HTTPException(
-                status_code=503,
-                detail="Certificate registration is unavailable. Retry in a moment.",
-            ) from decision.unavailable_cause
-        logger.warning(
-            "identity-auth team context stripped: certificate %s for alias %r in %s "
-            "is not registered at the AWID registry",
-            certificate_id,
-            row.get("alias"),
-            team_id,
-        )
-    else:
-        logger.warning(
-            "identity-auth team context stripped: certificate %s for alias %r in %s is revoked",
-            certificate_id,
-            row.get("alias"),
-            team_id,
-        )
-    return _without_team_context(row)
-
-
-def _without_team_context(row: dict) -> dict:
-    """The row with its team context removed and its DID-scoped facts kept."""
-    stripped = dict(row)
-    stripped["team_id"] = None
-    stripped["alias"] = None
-    stripped["agent_id"] = None
-    return stripped
-
-
 async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingAuth:
     """Resolve one original messaging principal for HTTP and native MCP consumers."""
     if (request.headers.get("Authorization") or "").lstrip().startswith("AWEB-Grant "):
@@ -327,6 +261,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
 
     if request.headers.get("X-AWID-Team-Certificate"):
         team_identity: TeamIdentity = await get_team_identity(request, db)
+        certificate_verified = has_verified_team_certificate(team_identity)
         return MessagingAuth(
             did_key=team_identity.did_key,
             did_aw=team_identity.did_aw or None,
@@ -336,7 +271,10 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             agent_id=team_identity.agent_id,
             identity_scope=team_identity.identity_scope,
             certificate_id=team_identity.certificate_id,
-            verified_team_did_key=team_identity.verified_team_did_key,
+            verified_team_did_key=(
+                team_identity.verified_team_did_key if certificate_verified else None
+            ),
+            certificate_verified=certificate_verified,
             verified_team_id=team_identity.team_id,
             id_chain=getattr(request.state, "id_chain", None),
             address_resolution=team_identity.address_resolution,

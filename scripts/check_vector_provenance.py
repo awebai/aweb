@@ -48,6 +48,26 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("awid/tests/test_unowned_team_claim.py"): _consumer(
+        "team-control-requests-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("server/tests/test_unowned_team_claim_registry.py"): _consumer(
+        "team-control-requests-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("cli/go/awid/team_claim_artifact_test.go"): _consumer(
+        "team-control-requests-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-control-requests-v1.json")',
+    ),
+    PurePosixPath("cli/go/cmd/aw/claim_human_controller_test.go"): _consumer(
+        "team-control-requests-v1.json",
+        'filepath.Join("..", "..", "..", "..", "docs", "vectors", "team-control-requests-v1.json")',
+    ),
+    PurePosixPath("cli/go/cmd/aw/id_team_test.go"): _consumer(
+        "team-control-requests-v1.json",
+        'filepath.Join("..", "..", "..", "..", "docs", "vectors", "team-control-requests-v1.json")',
+    ),
     PurePosixPath("server/tests/test_message_event_contracts.py"): _consumer(
         "mutation-hook-call-sites-v1.json",
         "root = Path(__file__).resolve().parents[2]",
@@ -777,7 +797,9 @@ ROOT_CONSUMERS = {
         },
         'filepath.Join(root, "docs", "vectors", name)',
     ),
-    PurePosixPath("cli/go/internal/conformance/federation_authority_vectors_test.go"): _consumer(
+    PurePosixPath(
+        "cli/go/internal/conformance/federation_authority_vectors_test.go"
+    ): _consumer(
         {
             "federation-authority-state-v1.json",
             "federation-discovery-v1.json",
@@ -788,11 +810,15 @@ ROOT_CONSUMERS = {
         },
         "data := readRootVector(t, name)",
     ),
-    PurePosixPath("cli/go/internal/conformance/identity_log_negative_test.go"): _consumer(
+    PurePosixPath(
+        "cli/go/internal/conformance/identity_log_negative_test.go"
+    ): _consumer(
         "identity-log-negative-v1.json",
         'readRootVector(t, "identity-log-negative-v1.json")',
     ),
-    PurePosixPath("cli/go/internal/conformance/identity_log_raw_wire_test.go"): _consumer(
+    PurePosixPath(
+        "cli/go/internal/conformance/identity_log_raw_wire_test.go"
+    ): _consumer(
         "identity-log-raw-wire-v1.json",
         'readRootVector(t, "identity-log-raw-wire-v1.json")',
     ),
@@ -892,6 +918,10 @@ ROOT_CONSUMERS = {
         'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
         'filepath.Join("..", "..", "..", "docs", "vectors", "message-display-binding-v1.json")',
     ),
+    PurePosixPath("cli/go/chat/stream_display_binding_test.go"): _consumer(
+        "team-auth-envelope-v2.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+    ),
     PurePosixPath("channel-core/test/request_envelope_as_message.test.ts"): _consumer(
         {
             "message-display-binding-v1.json",
@@ -938,6 +968,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("cli/go/awid/registry_origin.go"): (
+        "vectors/atomic-address-claim-v1.json",
+    ),
     PurePosixPath("awid/src/awid/external_authority.py"): (
         "federation-origin-ip-v1.json",
     ),
@@ -1042,15 +1075,8 @@ def _reader(
 
 def _python_tokens(source: str) -> tuple[tuple[int, str], ...] | None:
     """Keep Python syntax and literal values, ignoring formatting and comments."""
-    ignored = {
-        tokenize.ENCODING,
-        tokenize.ENDMARKER,
-        tokenize.NEWLINE,
-        tokenize.NL,
-        tokenize.INDENT,
-        tokenize.DEDENT,
-        tokenize.COMMENT,
-    }
+    ignored = {tokenize.ENCODING, tokenize.ENDMARKER, tokenize.NEWLINE,
+               tokenize.NL, tokenize.INDENT, tokenize.DEDENT, tokenize.COMMENT}
     result = []
     try:
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
@@ -1077,10 +1103,8 @@ def _root_marker_present(consumer: PurePosixPath, *, source: str, marker: str) -
     actual, expected = _python_tokens(source), _python_tokens(marker)
     if actual is None or not expected:
         return False
-    return any(
-        actual[index : index + len(expected)] == expected
-        for index in range(len(actual) - len(expected) + 1)
-    )
+    return any(actual[index:index+len(expected)] == expected
+               for index in range(len(actual)-len(expected)+1))
 
 
 def check(
@@ -1093,7 +1117,9 @@ def check(
     read = _reader(root, overrides)
     failures: list[str] = []
 
-    vector_roots = {candidate for path in tracked_files if (candidate := _vector_root(path))}
+    vector_roots = {
+        candidate for path in tracked_files if (candidate := _vector_root(path))
+    }
     if vector_roots != EXPECTED_VECTOR_ROOTS:
         missing = sorted(str(path) for path in EXPECTED_VECTOR_ROOTS - vector_roots)
         extra = sorted(str(path) for path in vector_roots - EXPECTED_VECTOR_ROOTS)
@@ -1118,7 +1144,11 @@ def check(
             failures.append(f"invalid public vector {path}: {exc}")
 
     for path in tracked_files:
-        if path.parent == PUBLIC_ROOT or path.suffix != ".json" or path in MANAGED_PUBLIC_COPIES:
+        if (
+            path.parent == PUBLIC_ROOT
+            or path.suffix != ".json"
+            or path in MANAGED_PUBLIC_COPIES
+        ):
             continue
         if path.name in public_vectors:
             failures.append(
@@ -1152,7 +1182,9 @@ def check(
         elif authority not in tracked_set:
             failures.append(f"missing authority for managed package copy: {authority}")
         elif read(copy) != read(authority):
-            failures.append(f"managed public-vector package copy differs from authority: {copy}")
+            failures.append(
+                f"managed public-vector package copy differs from authority: {copy}"
+            )
 
     required_files = (
         *ROOT_CONSUMERS,
@@ -1198,11 +1230,11 @@ def check(
             source = read(path).decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        unclassified_names = sorted(name for name in public_vectors if name in source)
-        if unclassified_names:
+        unclassified_vector_names = sorted(name for name in public_vectors if name in source)
+        if unclassified_vector_names:
             failures.append(
                 f"unclassified public-vector code reference in {path}: "
-                f"{', '.join(unclassified_names)}"
+                f"{', '.join(unclassified_vector_names)}"
             )
 
     for reference_guard, markers in NON_CONSUMING_CODE_REFERENCES.items():
@@ -1221,7 +1253,9 @@ def check(
         source = read(package_guard).decode("utf-8")
         for marker in markers:
             if marker not in source:
-                failures.append(f"{package_guard} omits vector package/build guard: {marker}")
+                failures.append(
+                    f"{package_guard} omits vector package/build guard: {marker}"
+                )
 
     if GO_CONSUMER in tracked_set:
         source = read(GO_CONSUMER).decode("utf-8")
@@ -1234,7 +1268,9 @@ def check(
                 )
         managed_marker = 'vectorsFS.ReadFile("vectors/team-auth-envelope-v2.json")'
         if managed_marker not in source:
-            failures.append(f"{GO_CONSUMER} does not exercise the managed team-auth package copy")
+            failures.append(
+                f"{GO_CONSUMER} does not exercise the managed team-auth package copy"
+            )
 
     for consumer, markers in REFERENCE_CONSUMERS.items():
         if consumer not in tracked_set:
@@ -1242,7 +1278,9 @@ def check(
         source = read(consumer).decode("utf-8")
         for marker in markers:
             if marker not in source:
-                failures.append(f"{consumer} does not link the managed root-checked team-auth copy")
+                failures.append(
+                    f"{consumer} does not link the managed root-checked team-auth copy"
+                )
 
     stale_server_reference = "server/docs/" + "vectors/"
     root_mirror_reference = "cli/go/internal/conformance/" + "vectors/"
@@ -1260,7 +1298,9 @@ def check(
         for name in public_vectors:
             if root_mirror_reference + name not in text:
                 continue
-            managed_reference = name == "team-auth-envelope-v2.json" and path in REFERENCE_CONSUMERS
+            managed_reference = (
+                name == "team-auth-envelope-v2.json" and path in REFERENCE_CONSUMERS
+            )
             if not managed_reference:
                 failures.append(f"reference bypasses root authority for {name}: {path}")
 
@@ -1291,10 +1331,7 @@ def self_test(root: Path) -> None:
 
     formatted_consumer = PurePosixPath("server/tests/test_id_chain_request_auth.py")
     original = read_bytes(root, formatted_consumer)
-    spellings = (
-        b'"docs/vectors/id-certificates-v1.json"',
-        b"'docs/vectors/id-certificates-v1.json'",
-    )
+    spellings = (b'"docs/vectors/id-certificates-v1.json"', b"'docs/vectors/id-certificates-v1.json'")
     for quoted, opposite in (spellings, tuple(reversed(spellings))):
         # Start each variant from the other spelling, whichever source this
         # shared guard is composed with. Neither positive can be a no-op.
@@ -1305,9 +1342,8 @@ def self_test(root: Path) -> None:
         failures = check(root, tracked, {formatted_consumer: alternate})
         if failures:
             raise AssertionError(f"equivalent formatted vector root refused: {failures}")
-    spaced = original.replace(
-        b"Path(__file__).resolve().parents[2]", b"Path(\n    __file__\n).resolve().parents[2]"
-    )
+    spaced = original.replace(b"Path(__file__).resolve().parents[2]",
+                              b"Path(\n    __file__\n).resolve().parents[2]")
     if spaced == original or ast.dump(ast.parse(spaced)) != ast.dump(ast.parse(original)):
         raise AssertionError("whitespace control must change bytes while preserving Python syntax")
     if failures := check(root, tracked, {formatted_consumer: spaced}):
@@ -1316,21 +1352,13 @@ def self_test(root: Path) -> None:
     if failures := check(root, tracked, {formatted_consumer: with_fstring}):
         raise AssertionError(f"ordinary f-string refused: {failures}")
     for label, alternate in (
-        (
-            "f-string-only Python root",
-            b"marker = f\"Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'\"\n",
-        ),
+        ("f-string-only Python root", b'marker = f"Path(__file__).resolve().parents[2] / \'docs/vectors/id-certificates-v1.json\'"\n'),
         ("wrong Python root", original.replace(b"parents[2]", b"parents[1]")),
         ("wrong Python path", original.replace(b"docs/vectors/", b"local-fixtures/")),
         ("comment-only Python root", b"# " + original.replace(b"\n", b"\n# ")),
     ):
-        _expect_mutation(
-            label,
-            root,
-            tracked,
-            overrides={formatted_consumer: alternate},
-            expected="does not resolve the repository-root authority",
-        )
+        _expect_mutation(label, root, tracked, overrides={formatted_consumer: alternate},
+                         expected="does not resolve the repository-root authority")
 
     _expect_mutation(
         "server hand copy",
@@ -1379,7 +1407,9 @@ def self_test(root: Path) -> None:
         root,
         tracked,
         add=(arbitrary_mirror,),
-        overrides={arbitrary_mirror: read_bytes(root, PUBLIC_ROOT / arbitrary_mirror.name)},
+        overrides={
+            arbitrary_mirror: read_bytes(root, PUBLIC_ROOT / arbitrary_mirror.name)
+        },
         expected="public vector mirror is forbidden",
     )
     renamed_mirror = PurePosixPath("server/tests/fixtures/copied-protocol.json")
@@ -1388,7 +1418,9 @@ def self_test(root: Path) -> None:
         root,
         tracked,
         add=(renamed_mirror,),
-        overrides={renamed_mirror: read_bytes(root, PUBLIC_ROOT / "identity-log-v1.json")},
+        overrides={
+            renamed_mirror: read_bytes(root, PUBLIC_ROOT / "identity-log-v1.json")
+        },
         expected="public vector content mirror is forbidden",
     )
     unclassified_consumer = PurePosixPath("other/tests/test_public_vector.py")

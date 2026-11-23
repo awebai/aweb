@@ -39,7 +39,7 @@ from starlette.requests import Request
 from awid.did import did_from_public_key
 from awid.registry import RegistryClient, RegistryError
 from awid.signing import canonical_json_bytes, sign_message
-from aweb.identity_auth_deps import current_membership
+from aweb.member_team_key import current_membership
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.team_auth_deps import verify_request_certificate
 from aweb.team_auth_envelope import compact_team_auth_payload
@@ -224,10 +224,9 @@ async def test_flag_on_revoked_certificate_keeps_revocation_verdict(monkeypatch,
         await verify_request_certificate(request, db=db_infra)
 
     assert excinfo.value.status_code == 401
-    assert excinfo.value.detail == "revoked"
-    # The registered set is an input of the one check, read with the revoked
-    # set before it runs.
-    assert registry.list_calls == 1
+    assert excinfo.value.detail["code"] == "certificate_revoked"
+    # A definitive revocation needs no registration read or miss refresh.
+    assert registry.list_calls == 0
 
 
 @pytest.mark.asyncio

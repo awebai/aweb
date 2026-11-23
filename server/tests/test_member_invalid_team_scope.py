@@ -2,7 +2,7 @@
 
 import pytest
 from aweb.service_errors import AuthenticationError
-from aweb.team_auth_deps import registered_certificates, revoked_certificates
+from aweb.team_registry import registered_certificates, revoked_certificates
 
 
 @pytest.mark.asyncio

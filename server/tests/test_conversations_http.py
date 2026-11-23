@@ -3,6 +3,8 @@ from __future__ import annotations
 from identity_binding_support import register_global_identity
 from tests.test_dashboard_privacy import privacy_app as privacy_app
 
+__all__ = ["privacy_app"]
+
 import hashlib
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
@@ -84,7 +86,6 @@ def _build_test_app(aweb_db, registry):
 
     app.state.db = _DbShim()
     app.state.redis = None
-    app.state.rate_limiter = None
     app.state.awid_registry_client = registry
     return app
 

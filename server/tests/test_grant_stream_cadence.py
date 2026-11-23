@@ -20,6 +20,8 @@ from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_identity_grants import _grant_headers, _session_keypair
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 async def authenticated_grant_member(env):
     """Capture the real verifier result after signed registration, connect and mint."""
@@ -143,9 +145,6 @@ async def harness(privacy_app, monkeypatch):
             return self
 
         async def fetch_one(self, sql, *args):
-            if "identity_session_grants" in sql:
-                self.grant_reads += 1
-                return await env.db.fetch_one(sql, *args)
             if "chat_participants" in sql:
                 return {"did": identity.did_key}
             return {"did_key": identity.did_key, "did_aw": ""}
@@ -187,6 +186,13 @@ async def harness(privacy_app, monkeypatch):
             return {"type": "message", "data": '{"type":"chat.message"}'}
 
     db, redis = DB(), Redis()
+
+    def grant_database(scope):
+        # Grant validity reads its actual migrated database. The simulated
+        # chat/event readers above only move the stream clock and frames.
+        assert scope is db
+        db.grant_reads += 1
+        return env.db
 
     async def disconnected():
         return False
@@ -252,6 +258,7 @@ async def harness(privacy_app, monkeypatch):
         for module in (chat, events):
             scoped.setattr(module, "asyncio", StreamLoop())
         scoped.setattr(type(sdk), "get_team_revocations_for_certificates", observed_revocations)
+        scoped.setattr(grant_streams, "native_database_manager", grant_database)
         yield SimpleNamespace(clock=clock, registry=controls, db=db, redis=redis, open=open_stream)
 
 

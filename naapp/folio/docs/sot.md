@@ -43,15 +43,31 @@ earns its place here.
 ### 1. Media — images and video
 
 - **Images:** agents upload images and embed them in documents
-  (`![alt](…)`). Stored as team-scoped assets, served from our origin,
-  raster + safe-type allowlist (no SVG / active content), magic-byte
-  validated — the atext logo-asset discipline, generalized.
+  (`![alt](…)`). Stored as team-scoped assets, raster + safe-type allowlist
+  (no SVG / active content), magic-byte validated — the atext logo-asset
+  discipline, generalized. `/assets/<uuid>` in Markdown, and the `url` and
+  `logo_url` fields that name it, are references: nothing serves that path.
+  Image bytes are served only under the capability that shows them, inside the
+  installation fence: a live read-only link at `/present/<token>/assets/<uuid>`
+  (the images its pinned version embeds, and the team logo), an edit session at
+  `/present/edit/<id>/assets/<uuid>` with its session header (any of its team's
+  images, since the editor previews drafts), and a member's team-auth read at
+  `GET /v1/assets/<uuid>/content`. Revoking a link, its expiry or uninstalling
+  Folio ends access to the images it showed.
 - **Video:** agents upload video and embed it. Video does NOT fit Postgres
   BYTEA — it uses **Cloudflare Stream** (upload → transcode to adaptive HLS →
   CDN delivery → player + signed playback tokens). We store the Stream UID on
   the asset record and embed the player as a trusted first-party element
   behind the capability link. This is the one piece of real infrastructure
   `folio` takes on that atext refuses by design.
+  A video's `stream_status` is one of `pending_upload`, `queued`,
+  `processing`, `ready` and `error`. A member's asset read refreshes it from
+  Cloudflare, mapping each of Cloudflare's documented states to one of these
+  (`readyToStream` true makes it `ready`). A reply outside Cloudflare's
+  documented contract is never stored: an undocumented or missing state, or a
+  `readyToStream` that is not a boolean, absent or null. The read answers 502
+  and logs the value.
+  When Cloudflare is unreachable, the read returns the last stored status.
 - Media renders inside the present page (themed), behind the same public
   capability link.
 
@@ -129,8 +145,9 @@ or maximum lifetime**, including while its tab is hidden.
 - **Session**: the exchange returns one 256-bit secret, stored only as SHA-256
   in the database. The page keeps it in memory and
   `sessionStorage['folio.editSession:<id>']` for tab reloads. It travels only in
-  `X-Folio-Edit-Session` on `/state`, `/preview` and `/edit`, never in the URL,
-  cookies, localStorage or logs. Reload resumes the session without reusing the
+  `X-Folio-Edit-Session` on `/state`, `/preview`, `/edit` and the session's
+  image reads at `/assets/<uuid>`, never in the URL, cookies, localStorage or
+  logs. Reload resumes the session without reusing the
   opener. A duplicated tab may share that session; version CAS still applies.
 - **Authority**: every session request joins its link and document, checks
   revocation/deletion and the matching document id, and checks the minter's
@@ -152,8 +169,25 @@ or maximum lifetime**, including while its tab is hidden.
   copy/reopen recovery on refusal; a clean buffer shows unavailable guidance
   without claiming unsaved text. Closing the tab discards its sessionStorage.
 
-The manifest bytes are unchanged. Moving read-only link tokens to fragments is
-separate work, and no legacy editable-token authority path remains.
+Editable links add no manifest tool; a member's image read is the `asset-content`
+tool (§1, Images). Moving read-only link tokens to fragments is separate work,
+and no legacy editable-token authority path remains.
+
+### 7. Read-only present links
+
+- **Mint** (cert-auth): `POST /v1/present {slug, version?, ttl_seconds?}`. The
+  token is 32 random bytes in 43 unpadded base64url characters; the URL is
+  `/present/<token>`, and revoke takes the same token.
+- **Storage**: the link's row is keyed by the token's verifier, the hex SHA-256
+  of its UTF-8 bytes (naapp-lib `secret_verifier`), never the token, so a
+  database read does not yield a link that opens.
+- **Lifetime**: a read-only link is a bearer link. It lives until it is revoked
+  or expires (30 days at most), whether or not its creator is still a member of
+  the team; an editable session, by contrast, ends with its creator's membership.
+- **Not naapp-lib capability links**: those mint for page_store page projections
+  and need a browser-held key signing every request, while a read-only
+  presentation must open as a plain URL in any browser or link preview; Folio
+  shares only their verifier.
 
 ## Authority & privacy
 

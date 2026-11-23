@@ -14,12 +14,13 @@ from typing import Any, Optional
 
 import jwt as pyjwt
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 
 from fastapi import HTTPException
 
 from awid.team_certificate import (
     TeamCertificateError,
+    TeamCertificateReason,
     check_team_certificate,
     refusal_answer,
 )
@@ -33,11 +34,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def certificate_refusal(error: TeamCertificateError) -> HTTPException:
-    """What the server answers for a certificate the shared check refuses
-    (awid.team_certificate.refusal_answer)."""
-    status_code, detail = refusal_answer(error)
-    return HTTPException(status_code=status_code, detail=detail)
+class TeamCertificateRefusal(HTTPException):
+    """HTTP refusal with the shared certificate error available to embedding hosts."""
+
+    def __init__(self, error: TeamCertificateError) -> None:
+        status_code, diagnostic = refusal_answer(error)
+        detail: str | dict[str, str] = diagnostic
+        if error.reason is TeamCertificateReason.REVOKED:
+            detail = {
+                "code": "certificate_revoked",
+                "message": (
+                    "This team certificate has been revoked. "
+                    "Ask the team's owner for a new certificate."
+                ),
+            }
+        super().__init__(status_code=status_code, detail=detail)
+        self.certificate_error = error
+
+
+def certificate_refusal(error: TeamCertificateError) -> TeamCertificateRefusal:
+    """Return the server's refusal for a certificate the shared check rejects."""
+    return TeamCertificateRefusal(error)
 
 
 def parse_and_verify_certificate(
@@ -79,17 +96,18 @@ def parse_and_verify_certificate(
         revoked_certificate_ids=revoked_certificate_ids,
         registered_certificate_ids=registered_certificate_ids,
     )
-    team_id = cert["team_id"]
-    member_did_key = cert["member_did_key"]
-    certificate_id = cert["certificate_id"]
+    return project_verified_team_certificate(cert)
 
+
+def project_verified_team_certificate(cert: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the fields used after the caller verifies certificate authority."""
     identity_scope = normalize_identity_scope(cert.get("identity_scope") or cert.get("lifetime"))
     return {
-        "team_id": team_id,
+        "team_id": cert["team_id"],
         "alias": cert["alias"],
-        "did_key": member_did_key,
+        "did_key": cert["member_did_key"],
         "identity_scope": identity_scope,
-        "certificate_id": certificate_id,
+        "certificate_id": cert["certificate_id"],
         "member_did_aw": cert.get("member_did_aw", ""),
         "member_address": cert.get("member_address", ""),
     }

@@ -20,6 +20,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["mail_server"]
+
 
 async def admitted_local_recipient(server, *, team="eng:acme.com", alias="local-bob"):
     """Issue, register and connect a local member under its real team controller."""

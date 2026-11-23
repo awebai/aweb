@@ -62,6 +62,7 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
     with zipfile.ZipFile(wheels[0]) as wheel:
         names = wheel.namelist()
         assert "aweb/data/reserved-app-ids-v1.json" in names
+        assert "aweb/migrations/__init__.py" in names
         for attachment_path in (
             "inbound_modes.py",
             "attachments.py",
@@ -91,6 +92,7 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
         assert any(
             name.endswith("/src/aweb/data/reserved-app-ids-v1.json") for name in names
         )
+        assert any(name.endswith("/src/aweb/migrations/__init__.py") for name in names)
         for attachment_path in (
             "inbound_modes.py",
             "attachments.py",
@@ -203,6 +205,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "052_member_accepted_team_key.sql",
         "053_drop_retired_signer.sql",
         "055_chat_conversation_coverage.sql",
+        "056_inbound_mode_default.sql",
     ]
 
 
@@ -314,50 +317,54 @@ def test_agents_table_declares_agent_type_inline():
 
 
 @pytest.mark.asyncio
-async def test_contacts_only_forward_migration_preserves_legacy_rows(aweb_cloud_db):
-    manager = aweb_cloud_db.aweb_db
-    # Reproduce an older database that allowed the legacy spelling.
-    await manager.execute(
-        "ALTER TABLE {{tables.agents}} DROP CONSTRAINT agents_inbound_mode_valid"
-    )
-    await manager.execute("""
-        ALTER TABLE {{tables.agents}} ADD CONSTRAINT agents_inbound_mode_valid
-        CHECK (inbound_mode IS NULL OR inbound_mode IN ('open', 'team_and_contacts', 'contacts_only'))
-    """)
-    await manager.execute("""
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('default:legacy.example', 'legacy.example', 'default', 'did:key:team')
-    """)
-    for alias, mode in [
-        ("legacy", "contacts_only"),
-        ("team", "team_and_contacts"),
-        ("all", "open"),
-        ("unset", None),
-    ]:
+async def test_contacts_only_forward_migration_preserves_legacy_rows(shared_test_pool, tmp_path):
+    from tests.product_migration_support import stage_aweb_upgrade
+
+    async with stage_aweb_upgrade(
+        shared_test_pool, tmp_path / "contacts-policy", "037_contacts_only.sql"
+    ) as upgrade:
+        manager = upgrade.infra.get_manager()
+        # Reproduce an older database that allowed the legacy spelling.
         await manager.execute(
-            """
-            INSERT INTO {{tables.agents}} (team_id, alias, did_key, inbound_mode)
-            VALUES ('default:legacy.example', $1, $2, $3)
-        """,
-            alias,
-            f"did:key:{alias}",
-            mode,
+            "ALTER TABLE {{tables.agents}} DROP CONSTRAINT agents_inbound_mode_valid"
         )
-    migration = (AWEB_MIGRATIONS / "037_contacts_only.sql").read_text()
-    await manager.execute(migration)
-    modes = await manager.fetch_all(
-        "SELECT alias, inbound_mode FROM {{tables.agents}} ORDER BY alias"
-    )
-    assert {row["alias"]: row["inbound_mode"] for row in modes} == {
-        "legacy": "team_and_contacts",
-        "team": "team_and_contacts",
-        "all": "open",
-        "unset": None,
-    }
-    await manager.execute(
-        "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_only' WHERE alias = 'legacy'"
-    )
-    with pytest.raises(QueryError):
+        await manager.execute("""
+            ALTER TABLE {{tables.agents}} ADD CONSTRAINT agents_inbound_mode_valid
+            CHECK (inbound_mode IS NULL OR inbound_mode IN ('open', 'team_and_contacts', 'contacts_only'))
+        """)
+        await manager.execute("""
+            INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+            VALUES ('default:legacy.example', 'legacy.example', 'default', 'did:key:team')
+        """)
+        for alias, mode in [
+            ("legacy", "contacts_only"),
+            ("team", "team_and_contacts"),
+            ("all", "open"),
+            ("unset", None),
+        ]:
+            await manager.execute(
+                """
+                INSERT INTO {{tables.agents}} (team_id, alias, did_key, inbound_mode)
+                VALUES ('default:legacy.example', $1, $2, $3)
+            """,
+                alias,
+                f"did:key:{alias}",
+                mode,
+            )
+        assert await upgrade.apply() == ["037_contacts_only.sql"]
+        modes = await manager.fetch_all(
+            "SELECT alias, inbound_mode FROM {{tables.agents}} ORDER BY alias"
+        )
+        assert {row["alias"]: row["inbound_mode"] for row in modes} == {
+            "legacy": "team_and_contacts",
+            "team": "team_and_contacts",
+            "all": "open",
+            "unset": None,
+        }
         await manager.execute(
-            "UPDATE {{tables.agents}} SET inbound_mode = 'unknown' WHERE alias = 'legacy'"
+            "UPDATE {{tables.agents}} SET inbound_mode = 'contacts_only' WHERE alias = 'legacy'"
         )
+        with pytest.raises(QueryError):
+            await manager.execute(
+                "UPDATE {{tables.agents}} SET inbound_mode = 'unknown' WHERE alias = 'legacy'"
+            )

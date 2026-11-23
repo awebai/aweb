@@ -111,20 +111,27 @@ async def test_history_facts_are_reused_for_at_most_a_minute(registry, team):
 
 
 async def test_history_page_bound_fails_closed_without_caching_partial_facts(registry, team, history_clock):
-    cache = history_cache(registry)
-    await add_filler_certificates(registry, team, 201, 20000)
-    async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
+    await add_filler_certificates(registry, team, 201, 19999)
+    complete = history_cache(registry)
+    async with relying_app(registry, public_origin=ORIGIN, cache=complete) as (client, _):
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
+    assert TEAM_ID in complete._cache
+    assert len(certificate_pages(registry)) == 100
+
+    # One more genuinely registered certificate requires a 101st page.
+    await add_filler_certificates(registry, team, 20000, 20000)
+    registry.transport.calls.clear()
+    incomplete = history_cache(registry)
+    async with relying_app(registry, public_origin=ORIGIN, cache=incomplete) as (client, _):
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
-        assert not cache._cache
+        assert not incomplete._cache
         assert len(certificate_pages(registry)) == 100
-        # The last permitted page is accepted when it completes the history.
-        # unreachable-state: corrupt history loses one retained certificate; current registry never deletes certificate history.
-        await registry.db.execute("DELETE FROM {{tables.team_certificates}} WHERE certificate_id = 'filler-1'")
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
         assert len(certificate_pages(registry)) == 100
         history_clock[0] += seconds_to_ns(5)
-        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
-    assert TEAM_ID in cache._cache
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+    assert not incomplete._cache
+    assert len(certificate_pages(registry)) == 200
 
 
 async def test_history_refresh_failure_never_reuses_expired_facts(registry, team, caplog):

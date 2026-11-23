@@ -165,7 +165,9 @@ def unverified_kind(reason: str) -> dict[str, Any]:
     return {
         "outcome": "unavailable" if unavailable else "unknown",
         "human_id": None,
-        "identity_valid": None if unavailable or reason == "unregistered_identity" else False,
+        "identity_valid": None
+        if unavailable or reason == "unregistered_identity"
+        else False,
         "kind": None,
         "reason": reason,
     }
@@ -188,7 +190,10 @@ async def observe_identity_kind(
         if binding.did_aw and enrollment is None:
             result = unverified_kind("evidence_unavailable")
         elif (
-            binding.did_aw and enrollment is not None and not enrollment.enrolled and bundle is None
+            binding.did_aw
+            and enrollment is not None
+            and not enrollment.enrolled
+            and bundle is None
         ):
             result = unverified_kind("unregistered_identity")
         else:
@@ -203,12 +208,16 @@ async def observe_identity_kind(
                 cached_evidence = getattr(registry_client, "id_chain_evidence", None)
                 if callable(cached_evidence):
                     try:
-                        evidence = await cached_evidence(bundle, subject, domain=plan["domain"])
+                        evidence = await cached_evidence(
+                            bundle, subject, domain=plan["domain"]
+                        )
                     except Exception:
                         logger.warning("ID-tree cached evidence failed", exc_info=True)
             if evidence is not None:
                 evidence_age_seconds = evidence.age_seconds
-            result = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)
+            result = verify_id_chain(
+                bundle, subject=subject, evidence=evidence, domain=domain
+            )
     except IDCertificateError as exc:
         result = unverified_kind(exc.code)
     return IdentityKindObservation(

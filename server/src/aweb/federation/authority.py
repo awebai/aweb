@@ -140,7 +140,9 @@ class FederationAuthorityCore:
     ) -> CommittedAuthorityEvidence:
         """Fetch current authority, commit it, and retry one checkpoint race.
 
-        Implements docs/identity-messaging-contract.md:178-210.
+        Implements Direct Address Send Protocol (docs/identity-messaging-contract.md:177-196)
+        and Strict Cross-Registry Sender Authority
+        (docs/identity-messaging-contract.md:199-222).
 
         A sender claim is independently checked when supplied. Address discovery
         derives its claim only from the resolver's verified evidence.

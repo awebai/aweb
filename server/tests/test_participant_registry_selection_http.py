@@ -12,6 +12,8 @@ from test_mcp_mail_conversation_parity import (
     mail_server as mail_server,
 )
 
+__all__ = ["mail_server"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("subject", ["human-membership", "agent-encryption-key"])

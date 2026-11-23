@@ -1,26 +1,22 @@
 """Sender address policy with real OSS/AWID/DB/Redis and authenticated HTTP."""
 from uuid import UUID
 
-from identity_binding_support import register_global_identity
+from messaging_actor_support import admit_privacy_actor
 
 import pytest
-from awid.did import stable_id_from_did_key
 from aweb.messaging.alias_targets import derive_team_address
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
+
+__all__ = ["privacy_app"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scope,address", [("global", ""), ("local", ""), ("global", "example.test/alice")])
 async def test_sender_address_preserves_team_context(privacy_app, scope, address):
     env = privacy_app
-    actor = env.actors["alice"]
-    stable = stable_id_from_did_key(actor.did) if scope == "global" else None
-    if stable:
-        assert await register_global_identity(env, actor, address) == stable
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET identity_scope=$1, did_aw=$2, address=$3, "
-        "certificate_id='privacy-alice', accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$4", scope, stable, address, actor.id,
-    )
+    actor = await admit_privacy_actor(env, "alice", address=address, local=scope == "local")
+    await admit_privacy_actor(env, "bob", local=True)
+    stable = actor.stable_id or None
     expected = address or (derive_team_address(TEAM, "alice") if scope == "local" else None)
     mail = await _request(env, "alice", "POST", "/v1/messages", {
         "to_alias": "bob", "subject": "scope", "body": "mail control",
@@ -30,10 +26,15 @@ async def test_sender_address_preserves_team_context(privacy_app, scope, address
         "to_aliases": ["bob"], "message": "chat control",
     })
     assert chat.status_code == 200, chat.text
-    for table, message_id in [("messages", mail.json()["message_id"]), ("chat_messages", chat.json()["message_id"])]:
-        row = await env.db.fetch_one(
-            "SELECT from_address, from_alias, from_did FROM {{tables." + table + "}} WHERE message_id=$1", UUID(message_id),
-        )
+    mail_row = await env.db.fetch_one(
+        "SELECT from_address, from_alias, from_did FROM {{tables.messages}} WHERE message_id=$1",
+        UUID(mail.json()["message_id"]),
+    )
+    chat_row = await env.db.fetch_one(
+        "SELECT from_address, from_alias, from_did FROM {{tables.chat_messages}} WHERE message_id=$1",
+        UUID(chat.json()["message_id"]),
+    )
+    for row in (mail_row, chat_row):
         assert row["from_address"] == expected
         assert row["from_alias"] == "alice"
         assert row["from_did"] == (stable or actor.did)
@@ -60,14 +61,7 @@ async def test_mcp_sender_scope_from_authenticated_projection(privacy_app, scope
     from test_messages_http import _signed_identity_headers
 
     env = privacy_app
-    actor = env.actors["alice"]
-    stable = stable_id_from_did_key(actor.did) if scope == "global" else None
-    if stable:
-        assert await register_global_identity(env, actor, address) == stable
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET identity_scope=$1, did_aw=$2, address=$3 WHERE agent_id=$4",
-        scope, stable, address, actor.id,
-    )
+    actor = await admit_privacy_actor(env, "alice", address=address, local=scope == "local")
     headers = _signed_identity_headers(actor.sk, actor.did, "", b"")
     request = Request({"type": "http", "method": "GET", "path": "/mcp", "app": env.app,
                        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()]})

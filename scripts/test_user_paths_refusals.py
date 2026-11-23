@@ -31,13 +31,19 @@ class ReleasedRefusals(unittest.TestCase):
                 address="released-" + actor + ".test/" + actor, events=events
             )
         calls = []
+        stored_policy = "open"
 
         def command(actor, *args, **kwargs):
+            nonlocal stored_policy
             calls.append((actor, args, kwargs))
             if args[0] == "inbound-mode":
-                return dict(
-                    inbound_mode=policy if args[1] == "contacts-only" else "open"
-                )
+                if args[1:] == ("contacts-only",):
+                    stored_policy = policy
+                elif args[1:] == ("open",):
+                    stored_policy = "open"
+                else:
+                    self.assertEqual(args, ("inbound-mode",))
+                return dict(inbound_mode=stored_policy)
             if args[:2] in [("mail", "inbox"), ("chat", "pending")]:
                 return []
             return result
@@ -90,17 +96,16 @@ class ReleasedRefusals(unittest.TestCase):
                         else subprocess.CompletedProcess([], 1, "", message + "\n")
                     )
                     lane, calls = self.lane(directory, result)
-                    if case == "contacts-only":
-                        lane.contacts_only(kind)
-                    else:
-                        lane.refused(
-                            "g1" if case == "nonresident" else "t1",
-                            receiver,
-                            kind,
-                            status,
-                            message,
-                            reason,
-                        )
+                    # These receipts start at the send. The policy setup and
+                    # read-back are covered by the contacts-only gate controls.
+                    lane.refused(
+                        "g1" if case == "nonresident" else "t1",
+                        receiver,
+                        kind,
+                        status,
+                        message,
+                        reason,
+                    )
                     self.assertEqual(len(lane.results), 1)
                     receipt = json.loads(
                         (lane.root / f"refusal-{receiver}-{kind}.json").read_text()

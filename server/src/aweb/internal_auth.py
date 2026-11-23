@@ -6,6 +6,8 @@ import logging
 import os
 import re
 import uuid
+from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Optional, TypedDict
 
 from fastapi import HTTPException
@@ -13,10 +15,13 @@ from starlette.requests import Request
 
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
-    MemberStatus,
     current_member,
+    member_row_active,
     read_member_projection,
 )
+
+from starlette.applications import Starlette
+from starlette.datastructures import State
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +47,76 @@ def _is_valid_proxy_team_id(team_id: str) -> bool:
     return True
 
 
-def _trust_aweb_proxy_headers() -> bool:
-    """True when the operator has explicitly opted into proxy-header auth."""
-    return os.getenv("AWEB_TRUST_PROXY_HEADERS", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
+class ProxyHeaderTrust(StrEnum):
+    DISABLED = "disabled"
+    SHARED_SECRET = "shared_secret"
+
+
+class ProxyVerificationConfigurationError(ValueError):
+    """Invalid application configuration, without secret values in diagnostics."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProxyVerificationConfig:
+    """Immutable proxy configuration captured before an application serves."""
+
+    trust: ProxyHeaderTrust
+    shared_secret: str | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.trust, ProxyHeaderTrust):
+            raise ProxyVerificationConfigurationError(
+                "Choose ProxyHeaderTrust.DISABLED or SHARED_SECRET before constructing the application."
+            )
+        if self.shared_secret is not None and not isinstance(self.shared_secret, str):
+            raise ProxyVerificationConfigurationError(
+                "Configure the shared secret as text before constructing the application."
+            )
+        if self.trust is ProxyHeaderTrust.SHARED_SECRET and not self.shared_secret:
+            raise ProxyVerificationConfigurationError(
+                "Configure a nonempty shared secret or disable proxy header trust before constructing the application."
+            )
+
+    @classmethod
+    def capture(cls, configured: ProxyVerificationConfig | None = None) -> ProxyVerificationConfig:
+        """Resolve explicit configuration or capture environment at construction only."""
+        if configured is not None:
+            if not isinstance(configured, cls):
+                raise ProxyVerificationConfigurationError(
+                    "Pass a ProxyVerificationConfig before constructing the application."
+                )
+            return configured
+        enabled = os.getenv("AWEB_TRUST_PROXY_HEADERS", "").strip().lower() in ("1", "true", "yes", "on")
+        return cls(
+            trust=ProxyHeaderTrust.SHARED_SECRET if enabled else ProxyHeaderTrust.DISABLED,
+            shared_secret=os.getenv("AWEB_INTERNAL_AUTH_SECRET"),
+        )
+
+    def install(self, app: Starlette) -> None:
+        """Bind this snapshot while constructing a host that mounts native routers.
+
+        Full native and embedded apps use their constructor keyword. Custom
+        router hosts call this before exposing their app. No process settings
+        are read or written here.
+        """
+        app.state.proxy_verification = self
+
+
+_DISABLED_PROXY_VERIFICATION = ProxyVerificationConfig(trust=ProxyHeaderTrust.DISABLED)
+
+
+def application_proxy_verification(state: State | None) -> ProxyVerificationConfig:
+    """Select this app's config; a resource reference wins over a host shadow."""
+    resources = getattr(state, "native_resources", None)
+    configured = (
+        getattr(resources, "proxy_verification", None) if resources is not None
+        else getattr(state, "proxy_verification", _DISABLED_PROXY_VERIFICATION)
     )
+    if not isinstance(configured, ProxyVerificationConfig):
+        raise ProxyVerificationConfigurationError(
+            "Configure proxy verification through the application constructor before serving requests."
+        )
+    return configured
 
 
 INTERNAL_AUTH_HEADER = "X-AWEB-Auth"
@@ -66,10 +133,6 @@ class InternalAuthContext(TypedDict):
     actor_id: str
 
 
-def _get_internal_auth_secret() -> Optional[str]:
-    return os.getenv("AWEB_INTERNAL_AUTH_SECRET")
-
-
 def build_internal_auth_header_value(
     *, secret: str, team_id: str, principal_type: str, principal_id: str, actor_id: str
 ) -> str:
@@ -82,27 +145,22 @@ def build_internal_auth_header_value(
     return f"{msg}:{sig}"
 
 
-def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContext]:
+def parse_internal_auth_context(
+    request: Request, *, proxy_verification: ProxyVerificationConfig | None = None,
+) -> Optional[InternalAuthContext]:
     """Parse and validate trusted proxy auth headers.
 
-    Returns None when proxy-header trust is disabled or no internal auth header
-    is present. Raises 500 when proxy-header trust is enabled without a shared
-    secret, and 401 when proxy auth is present but malformed or invalid.
+    Returns None when this app disables proxy trust or no internal header is
+    present. Malformed or invalid material raises 401. Constructors capture the
+    configuration; request parsing never consults the environment.
     """
-    if not _trust_aweb_proxy_headers():
+    config = proxy_verification if proxy_verification is not None else application_proxy_verification(
+        getattr(request.scope.get("app"), "state", None)
+    )
+    if config.trust is ProxyHeaderTrust.DISABLED:
         return None
-
-    secret = _get_internal_auth_secret()
-    if not secret:
-        path = request.scope.get("path") or ""
-        logger.error(
-            "AWEB_TRUST_PROXY_HEADERS is enabled but %s is not configured (path=%s)",
-            "AWEB_INTERNAL_AUTH_SECRET",
-            path,
-        )
-        raise HTTPException(
-            status_code=500, detail="Internal proxy authentication is misconfigured"
-        )
+    secret = config.shared_secret
+    assert secret is not None  # Enabled configuration was validated at construction.
 
     internal_auth = request.headers.get(INTERNAL_AUTH_HEADER)
     if not internal_auth:
@@ -180,8 +238,7 @@ async def read_internal_actor_projection(aweb_db, internal: InternalAuthContext)
         return None
     if (
         row["team_id"] != internal["team_id"]
-        or row["status"] != MemberStatus.ACTIVE.value
-        or row["deleted_at"] is not None
+        or not member_row_active(row)
     ):
         raise HTTPException(status_code=403, detail="Agent not connected")
     if not current_member(row):

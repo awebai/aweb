@@ -77,8 +77,8 @@ moment rather than the caller (408, 409, 425, 429) are transient.
 
 ### 4. Refusals: slow retry, not a stop
 
-401, 403, 404 and 422 on open, and the grant terminal events on an open
-stream, say that the server will not serve this caller as it presents itself.
+401, 403, 404 and 422 on open, and terminal grant or membership events on an
+open stream, say that the server will not serve this caller as it presents itself.
 Retrying at once cannot help. Stopping for good is wrong too, because each of
 them has causes that end without the process restarting:
 
@@ -89,6 +89,7 @@ them has causes that end without the process restarting:
 | 404 | the server was mid-deploy or the route was briefly unmounted; the agent was re-created |
 | 422 | a server and client disagree on a parameter during a rolling upgrade |
 | grant terminal event | the grant was renewed or reissued into the same home |
+| `team_membership_not_current` | the member reconnects with a certificate under the current team key |
 
 So a refused stream is **quarantined**:
 

@@ -213,6 +213,7 @@ async def test_federated_ingress_cannot_send_chat_to_authoritative_human(aweb_cl
             signature="test",
             recipient=recipient,
             authority_token=token,
+            registry_client=None,
         )
     assert refused.value.reason == "recipient_human_mail_only"
     for table in (

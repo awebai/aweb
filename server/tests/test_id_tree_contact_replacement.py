@@ -14,11 +14,12 @@ from pathlib import Path
 import pytest
 
 from awid.signing import canonical_json_bytes, sign_message
-from nacl.signing import SigningKey
 from aweb.federation.activation import build_federation_authority_activation
 from aweb.messaging.contacts import add_contact, has_exact_active_identity_contact
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import _request, privacy_app  # noqa: F401
+
+__all__ = ["privacy_app"]
 
 
 _VECTORS = json.loads(
@@ -56,7 +57,7 @@ async def test_address_replacement_does_not_transfer_contact_trust(privacy_app, 
                 bytes.fromhex(identity["seed_hex"]),
             )
             assert registered.did_aw == identity["did_aw"]
-        await env.registry.ensure_namespace(domain=domain, controller=SigningKey(root_seed))
+        await env.registry.ensure_namespace(domain=domain, controller=root_seed)
         await registry.update_namespace_delivery_origin(
             domain, root_seed, "https://recipient.example.test"
         )

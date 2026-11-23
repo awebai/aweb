@@ -1,8 +1,9 @@
 """One stored-artifact identity rule for admitted message retries.
 
 This proves a prior accepted artifact, never current sender/recipient authority.
-Callers retain signature/binding/admission and encrypted freshness checks
-(docs/identity-messaging-contract.md:345-370; Antares69b3a50a).
+Callers retain signature, binding, admission and encrypted freshness checks.
+See Receiver-Wide Replay And Contact Compatibility
+(docs/identity-messaging-contract.md:338-374; Antares69b3a50a).
 """
 
 from __future__ import annotations

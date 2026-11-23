@@ -6,6 +6,8 @@ from test_mcp_mail_conversation_parity import mail_server as mail_server
 from test_messages_http import _signed_identity_headers
 from aweb.messaging.mail_routing import explicit_mail_target_matches_participant
 
+__all__ = ["mail_server"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

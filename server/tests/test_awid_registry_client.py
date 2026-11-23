@@ -2187,8 +2187,7 @@ async def test_cached_registry_client_delete_address_invalidates_reverse_lookup_
     subject_signing_key, subject_public_key = generate_keypair()
     subject_did_key = did_from_public_key(subject_public_key)
     subject_did_aw = stable_id_from_did_key(subject_did_key)
-    controller_signing_key, controller_public_key = generate_keypair()
-    controller_did = did_from_public_key(controller_public_key)
+    controller_signing_key, _ = generate_keypair()
     deleted = {"value": False}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -2269,8 +2268,7 @@ async def test_cached_registry_client_delete_address_invalidates_reverse_lookup_
 
 @pytest.mark.asyncio
 async def test_cached_registry_client_invalidates_reassign_address_caches():
-    controller_signing_key, controller_public_key = generate_keypair()
-    controller_did = did_from_public_key(controller_public_key)
+    controller_signing_key, _ = generate_keypair()
     old_subject_signing_key, old_subject_public_key = generate_keypair()
     old_did_key = did_from_public_key(old_subject_public_key)
     old_did_aw = stable_id_from_did_key(old_did_key)

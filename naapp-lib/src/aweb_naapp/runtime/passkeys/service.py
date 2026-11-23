@@ -113,8 +113,6 @@ MIGRATIONS = Path(__file__).parent / "migrations"
 MIGRATION_MODULE = "aweb_naapp_passkeys"
 SUBJECT_TYPE = "app_local"
 ENROLMENT_PREFIX = b"aweb.passkey-enrolment/1\n"
-CONTACT_CHANGE_PREFIX = b"aweb.passkey-contact-change/1\n"
-CONTACT_CANCEL_PREFIX = b"aweb.passkey-contact-cancel/1\n"
 CONTACT_CHANGE_ACT = "approver-contact.change"
 LOGIN_PREFIX = b"aweb.passkey-login/1\n"
 TRUST_ON_FIRST_USE = "trust_on_first_use"
@@ -133,9 +131,9 @@ class DesignationRefused(Exception):
 
 
 class ContactChangeRefused(Exception):
-    """A contact change, its cancellation or its proof is not allowed now.
-    `reason` is `last_owner_protected`, `contact_change_pending`,
-    `no_pending_contact_change` or `contact_proof_unavailable`."""
+    """A contact change or its proof is not allowed now.
+    `reason` is `last_owner_protected`, `contact_not_declared`,
+    `contact_change_pending` or `contact_proof_unavailable`."""
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -172,8 +170,7 @@ class PasskeyEffectFence(Protocol):
     Expected authority refusal raises EnrolmentRefused or ContactChangeRefused
     for the operation; any other exception propagates unchanged. Effect/token
     consumption and audit roll back together; enrolment's pre-effect WebAuthn
-    challenge, and a contact change's or cancellation's verified assertion,
-    stay spent. No LOGIN/APPROVE or
+    challenge stays spent. No LOGIN/APPROVE or
     fresh send authority is granted by these callbacks.
     """
 
@@ -237,7 +234,6 @@ class LockoutPolicy:
 class NoticeKind(StrEnum):
     RECOVERY_STARTED = "recovery_started"
     CONTACT_CHANGE_SCHEDULED = "contact_change_scheduled"
-    CONTACT_CHANGE_CANCELLED = "contact_change_cancelled"
 
 
 @dataclass(frozen=True)
@@ -352,28 +348,6 @@ def _login_preimage(scope: str, subject: str, nonce: bytes) -> bytes:
 
 def _login_challenge(scope: str, subject: str, nonce: bytes) -> bytes:
     return hashlib.sha256(_login_preimage(scope, subject, nonce)).digest()
-
-
-def _contact_cancel_preimage(subject: str, pending_contact_sha256: str, nonce: bytes) -> bytes:
-    fields = {
-        "subject": subject,
-        "pending_contact_sha256": pending_contact_sha256,
-        "nonce": nonce.hex(),
-    }
-    return CONTACT_CANCEL_PREFIX + canonical_json_bytes(fields)
-
-
-def _contact_cancel_challenge(subject: str, pending_contact_sha256: str, nonce: bytes) -> bytes:
-    return hashlib.sha256(_contact_cancel_preimage(subject, pending_contact_sha256, nonce)).digest()
-
-
-def _contact_change_preimage(subject: str, new_contact_sha256: str, nonce: bytes) -> bytes:
-    fields = {"contact_sha256": new_contact_sha256, "nonce": nonce.hex(), "subject": subject}
-    return CONTACT_CHANGE_PREFIX + canonical_json_bytes(fields)
-
-
-def _contact_change_challenge(subject: str, new_contact_sha256: str, nonce: bytes) -> bytes:
-    return hashlib.sha256(_contact_change_preimage(subject, new_contact_sha256, nonce)).digest()
 
 
 _CURRENT = "superseded_at IS NULL AND effective_at <= $2"
@@ -1368,7 +1342,6 @@ class Passkeys:
         enrolment_id: str | None = None,
         approval_id: str | None = None,
         task_answer_ref: str | None = None,
-        new_contact_sha256: str | None = None,
         scope: str | None = None,
         binding_kind: str | None = None,
         preimage: bytes | None = None,
@@ -1431,16 +1404,15 @@ class Passkeys:
             )
             await tx.execute(
                 "INSERT INTO {{tables.passkey_challenges}} (challenge, purpose, subject, "
-                "enrolment_id, approval_id, task_answer_ref, contact_sha256, nonce, created_at, "
+                "enrolment_id, approval_id, task_answer_ref, nonce, created_at, "
                 "expires_at,proof_context,challenge_preimage,covered_request) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11,$12,$13)",
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11,$12)",
                 challenge,
                 purpose,
                 subject,
                 enrolment_id,
                 approval_id,
                 task_answer_ref,
-                new_contact_sha256,
                 nonce,
                 now,
                 now + self._challenge_ttl,
@@ -1463,7 +1435,7 @@ class Passkeys:
         row = await self.db.fetch_one(
             "UPDATE {{tables.passkey_challenges}} SET used_at = $3 "
             "WHERE challenge = $1 AND purpose = $2 AND used_at IS NULL "
-            "RETURNING subject, enrolment_id, approval_id, task_answer_ref, contact_sha256, "
+            "RETURNING subject, enrolment_id, approval_id, task_answer_ref, "
             "nonce, created_at, expires_at, proof_context, challenge_preimage, covered_request",
             challenge,
             purpose,
@@ -1892,73 +1864,6 @@ class Passkeys:
             raise AuthenticationFailed("no approver in effect for this scope")
         return row
 
-    async def contact_change_options(self, scope: str, new_contact: str) -> Mapping[str, Any]:
-        """Assertion options for the current approver to change its own contact."""
-        approver = await self._current_approver(scope)
-        nonce = secrets.token_bytes(32)
-        digest = contact_sha256(new_contact)
-        challenge = _contact_change_challenge(approver["subject"], digest, nonce)
-        await self._issue_challenge(
-            challenge,
-            "contact_change",
-            approver["subject"],
-            nonce,
-            new_contact_sha256=digest,
-            scope=scope,
-            binding_kind="contact_change",
-            preimage=_contact_change_preimage(approver["subject"], digest, nonce),
-        )
-        return await self._assertion_options(approver["subject"], challenge)
-
-    async def change_contact(
-        self,
-        scope: str,
-        new_contact: str,
-        proof: Mapping[str, Any],
-        *,
-        fence: PasskeyEffectFence | None = None,
-    ) -> datetime:
-        """Schedule the approver's new contact, proven with its own passkey.
-        It takes effect after the contact-change delay; both contacts are told.
-        Returns when it takes effect.
-
-        fence holds caller authority before B3 and checks it after audit in
-        the same effect tx. Refusal rolls back the pending contact, its proof
-        and audit, and tells nobody; the verified assertion stays spent, so
-        retry needs fresh options."""
-        approver = await self._current_approver(scope)
-        digest = contact_sha256(new_contact)
-        try:
-            challenge = _client_challenge(proof)
-        except (KeyError, TypeError, ValueError, WebAuthnException) as exc:
-            raise AuthenticationFailed("malformed assertion") from exc
-        issued = await self._take_challenge(challenge, "contact_change")
-        if (
-            issued is None
-            or issued["subject"] != approver["subject"]
-            or issued["contact_sha256"] != digest
-            or _contact_change_challenge(approver["subject"], digest, issued["nonce"]) != challenge
-        ):
-            raise AuthenticationFailed("assertion does not answer this contact change")
-        evidence_ref = await self._verify_assertion(
-            approver["subject"], challenge, proof, "contact_change", issued=issued
-        )
-        async with self.db.transaction() as tx:
-            if fence is not None:
-                await fence.prepare(tx)
-            change = await self._schedule_contact(
-                tx,
-                scope,
-                new_contact,
-                kind=AuditKind.APPROVER_CONTACT_CHANGE_SCHEDULED,
-                actor=approver["subject"],
-                details={"evidence_ref": evidence_ref},
-            )
-            if fence is not None:
-                await fence.check(tx)
-        await self.send_notices(change)
-        return change.effective_at
-
     async def change_contact_by_owner(
         self,
         tx: TransactionManager,
@@ -1971,11 +1876,10 @@ class Passkeys:
         admitted in this transaction, as an owner-confirmed change set does.
 
         It changes the contact only: no authenticator is enrolled, re-enrolled
-        or revoked, and nothing is sent to the new contact but the notice. It
-        takes effect after the contact-change delay, and the approver can
-        cancel it with their own passkey. The last owner's own contact changes
-        only through that owner's passkey or a recovery. Send the returned
-        notices after the commit."""
+        or revoked, and nothing is sent to the new contact but the notice and
+        its proof. It takes effect after the contact-change delay, once
+        proven. The last owner's own contact changes only through a recovery.
+        Send the returned notices after the commit."""
         if not isinstance(evidence, OwnerApproval):
             raise TypeError("an owner contact change needs an owner approval")
         if evidence.transaction_id != await _transaction_id(tx):
@@ -2120,8 +2024,8 @@ class Passkeys:
         async with self.db.transaction() as tx:
             if fence is not None:
                 await fence.prepare(tx)
-            # The approver row first, then the proof: the order every contact
-            # change and cancel takes, so they serialise instead of deadlocking.
+            # The approver row first, then the proof: the order a contact
+            # change takes, so the two serialise instead of deadlocking.
             subject = await tx.fetch_value(
                 "SELECT subject FROM {{tables.passkey_contact_proofs}} WHERE verifier_sha256 = $1",
                 verifier,
@@ -2133,7 +2037,7 @@ class Passkeys:
                 subject,
             )
             proof = await tx.fetch_one(
-                "SELECT proof_id, contact_sha256 FROM {{tables.passkey_contact_proofs}} "
+                "SELECT proof_id, contact_sha256, expires_at FROM {{tables.passkey_contact_proofs}} "
                 "WHERE verifier_sha256 = $1 AND used_at IS NULL AND revoked_at IS NULL "
                 "AND expires_at > $2 FOR UPDATE",
                 verifier,
@@ -2173,104 +2077,11 @@ class Passkeys:
             )
             if fence is not None:
                 await fence.check(tx)
+            # After the last await: a lock wait in the fence may outlast the
+            # proof or the pending change, which is then not proven.
+            if self._clock() >= min(proof["expires_at"], approver["pending_contact_at"]):
+                raise ContactChangeRefused("contact_proof_unavailable")
         return approver["pending_contact_at"]
-
-    async def _pending_contact(self, scope: str) -> dict[str, Any]:
-        now = self._clock()
-        row = await self.db.fetch_one(
-            f"SELECT subject, contact, pending_contact, pending_contact_at "
-            f"FROM {{{{tables.passkey_approvers}}}} WHERE scope = $1 AND {_CURRENT}",
-            scope,
-            now,
-        )
-        if row is None:
-            raise AuthenticationFailed("no approver in effect for this scope")
-        if row["pending_contact_at"] is None or row["pending_contact_at"] <= now:
-            raise ContactChangeRefused("no_pending_contact_change")
-        return row
-
-    async def contact_cancel_options(self, scope: str) -> Mapping[str, Any]:
-        """Assertion options for the approver to cancel its pending contact
-        change, whoever scheduled it."""
-        pending = await self._pending_contact(scope)
-        nonce = secrets.token_bytes(32)
-        digest = contact_sha256(pending["pending_contact"])
-        challenge = _contact_cancel_challenge(pending["subject"], digest, nonce)
-        await self._issue_challenge(
-            challenge,
-            "contact_change",
-            pending["subject"],
-            nonce,
-            new_contact_sha256=digest,
-            scope=scope,
-            binding_kind="contact_cancel",
-            preimage=_contact_cancel_preimage(pending["subject"], digest, nonce),
-        )
-        return await self._assertion_options(pending["subject"], challenge)
-
-    async def cancel_pending_contact(
-        self,
-        scope: str,
-        proof: Mapping[str, Any],
-        *,
-        fence: PasskeyEffectFence | None = None,
-    ) -> None:
-        """Cancel the approver's pending contact change with its own passkey,
-        whether the approver or an owner scheduled it. The approver's cancel
-        wins; both contacts are told.
-
-        fence holds caller authority before B3 and checks it after audit in
-        the same effect tx; a cancellation only narrows, so B3 gates it on
-        nothing else. Refusal leaves the change pending and tells nobody; the
-        verified assertion stays spent, so retry needs fresh options."""
-        pending = await self._pending_contact(scope)
-        digest = contact_sha256(pending["pending_contact"])
-        try:
-            challenge = _client_challenge(proof)
-        except (KeyError, TypeError, ValueError, WebAuthnException) as exc:
-            raise AuthenticationFailed("malformed assertion") from exc
-        issued = await self._take_challenge(challenge, "contact_change")
-        if (
-            issued is None
-            or issued["subject"] != pending["subject"]
-            or issued["contact_sha256"] != digest
-            or _contact_cancel_challenge(pending["subject"], digest, issued["nonce"]) != challenge
-        ):
-            raise AuthenticationFailed("assertion does not answer this cancellation")
-        evidence_ref = await self._verify_assertion(
-            pending["subject"], challenge, proof, "contact_change", issued=issued
-        )
-        now = self._clock()
-        async with self.db.transaction() as tx:
-            if fence is not None:
-                await fence.prepare(tx)
-            cancelled = await tx.fetch_value(
-                "UPDATE {{tables.passkey_approvers}} SET pending_contact = NULL, "
-                "pending_contact_at = NULL, pending_contact_proven_at = NULL "
-                "WHERE subject = $1 AND superseded_at IS NULL "
-                "AND pending_contact = $2 AND pending_contact_at > $3 RETURNING subject",
-                pending["subject"],
-                pending["pending_contact"],
-                now,
-            )
-            if cancelled is None:
-                raise ContactChangeRefused("no_pending_contact_change")
-            await self._revoke_contact_proofs(tx, pending["subject"], now)
-            await self._audit.emit(
-                AuditEvent(
-                    kind=AuditKind.APPROVER_CONTACT_CHANGE_CANCELLED,
-                    actor=pending["subject"],
-                    subject=pending["subject"],
-                    occurred_at=now,
-                    details={"scope": scope, "evidence_ref": evidence_ref},
-                ),
-                tx,
-            )
-            if fence is not None:
-                await fence.check(tx)
-        notice = Notice(NoticeKind.CONTACT_CHANGE_CANCELLED, scope, pending["pending_contact_at"])
-        for contact in sorted({pending["contact"], pending["pending_contact"]}):
-            await self._send(self._delivery.deliver_notice(contact, notice))
 
     async def evidence(self, evidence_ref: str) -> PasskeyEvidence | None:
         row = await self.db.fetch_one(

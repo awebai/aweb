@@ -8,20 +8,21 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 
 from aweb.application_state import application_registry_client
 from aweb.certificate_registration import (
     RegistrationDecision,
     RegistrationMode,
     configured_registration_mode,
-    read_certificate_registration,
 )
 from aweb.grant_expiry import GrantLifetimeState, grant_lifetime_state
 from aweb.member_team_key import (
     GRANT_ISSUER_RECOVERY_DETAIL,
-    MemberStatus,
+    CertificateStandingState,
     grant_issuer_current,
+    member_row_active,
+    read_certificate_standings,
 )
 
 
@@ -73,7 +74,7 @@ def _stored_grant_validity(row: Mapping[str, Any], *, now: datetime) -> GrantVal
         return GrantValidityState.REVOKED
     if lifetime is GrantLifetimeState.EXPIRED:
         return GrantValidityState.EXPIRED
-    if row["subject_status"] != MemberStatus.ACTIVE.value or row["subject_deleted_at"] is not None:
+    if not member_row_active({"status": row["subject_status"], "deleted_at": row["subject_deleted_at"]}):
         return GrantValidityState.SUBJECT_INACTIVE
     if not grant_issuer_current(row):
         return GrantValidityState.ISSUER_SUPERSEDED
@@ -95,47 +96,26 @@ async def grant_validity(
     distinct from unavailable evidence; staged registration never waives the
     ordinary issuer revocation check or adds an off-mode refusal.
     """
-    from aweb.team_registry import revoked_certificates
-
     state = _stored_grant_validity(row, now=now)
     if state is not GrantValidityState.ACTIVE:
         return GrantValidityObservation(state=state)
     issuer = str(row.get("issued_by_certificate_id") or "").strip()
     if not issuer:
         return GrantValidityObservation(state=GrantValidityState.ACTIVE)
-    try:
-        revoked = await revoked_certificates(
-            registry_client,
-            row["team_id"],
-            certificate_ids=[issuer],
-        )
-    except HTTPException as exc:
-        if exc.status_code < 500:
-            raise
-        return GrantValidityObservation(
-            state=GrantValidityState.UNAVAILABLE,
-            unavailable_cause=exc,
-        )
-    if issuer in revoked:
-        return GrantValidityObservation(state=GrantValidityState.ISSUER_REVOKED)
-    registration = await read_certificate_registration(
-        registry_client=registry_client,
-        team_id=row["team_id"],
-        certificate_id=issuer,
-        mode=registration_mode,
-        request=request,
+    standings = await read_certificate_standings(
+        registry_client, row["team_id"], [issuer], request=request, mode=registration_mode,
     )
-    if registration.allows_registration:
-        state = GrantValidityState.ACTIVE
-    elif registration.unavailable_cause is not None:
-        return GrantValidityObservation(
-            state=GrantValidityState.UNAVAILABLE,
-            registration=registration,
-            unavailable_cause=registration.unavailable_cause,
-        )
-    else:
-        state = GrantValidityState.ISSUER_UNREGISTERED
-    return GrantValidityObservation(state=state, registration=registration)
+    standing = standings[issuer]
+    return GrantValidityObservation(
+        state={
+            CertificateStandingState.ACTIVE: GrantValidityState.ACTIVE,
+            CertificateStandingState.REVOKED: GrantValidityState.ISSUER_REVOKED,
+            CertificateStandingState.UNREGISTERED: GrantValidityState.ISSUER_UNREGISTERED,
+            CertificateStandingState.UNAVAILABLE: GrantValidityState.UNAVAILABLE,
+        }[standing.state],
+        registration=standing.registration,
+        unavailable_cause=standing.unavailable_cause,
+    )
 
 
 async def effective_grant_status(

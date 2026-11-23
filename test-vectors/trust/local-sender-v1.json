@@ -1,0 +1,161 @@
+{
+  "schema": "aweb.trust.local-sender.v1",
+  "description": "A sender the current team roster names as a local identity: the roster's key must be the signing key, and the previous holder of a team-scoped member name keeps its pin under a retired key instead of losing it. A real domain/name address is never released this way.",
+  "vectors": [
+    {
+      "name": "bare-team-name-retires-the-previous-holders-pin",
+      "raw_address": "alice",
+      "trust_address": "alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "roster_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK": {
+            "address": "alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "2026-01-01T00:00:00Z",
+            "last_seen": "2026-01-01T00:00:00Z",
+            "server": "",
+            "confirmed_by": ""
+          }
+        },
+        "addresses": {
+          "alice": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK": {
+            "address": "$RETIRED:alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "2026-01-01T00:00:00Z",
+            "last_seen": "2026-01-01T00:00:00Z",
+            "server": "",
+            "confirmed_by": ""
+          }
+        },
+        "addresses": {
+          "$RETIRED:alice": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "name": "team-qualified-name-retires-the-previous-holders-pin",
+      "raw_address": "backend:acme.com/alice",
+      "trust_address": "backend:acme.com/alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "roster_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK": {
+            "address": "backend:acme.com/alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "2026-01-01T00:00:00Z",
+            "last_seen": "2026-01-01T00:00:00Z",
+            "server": "",
+            "confirmed_by": ""
+          }
+        },
+        "addresses": {
+          "backend:acme.com/alice": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": {
+        "pins": {
+          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK": {
+            "address": "$RETIRED:backend:acme.com/alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "2026-01-01T00:00:00Z",
+            "last_seen": "2026-01-01T00:00:00Z",
+            "server": "",
+            "confirmed_by": ""
+          }
+        },
+        "addresses": {
+          "$RETIRED:backend:acme.com/alice": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      }
+    },
+    {
+      "name": "real-address-pin-is-never-touched",
+      "raw_address": "acme.com/alice",
+      "trust_address": "acme.com/alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "roster_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK": {
+            "address": "acme.com/alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "2026-01-01T00:00:00Z",
+            "last_seen": "2026-01-01T00:00:00Z",
+            "server": "",
+            "confirmed_by": ""
+          }
+        },
+        "addresses": {
+          "acme.com/alice": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      },
+      "expected_status": "verified",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "roster-names-another-key-is-a-mismatch",
+      "raw_address": "alice",
+      "trust_address": "alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "roster_did": "did:key:z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG",
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK": {
+            "address": "alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "2026-01-01T00:00:00Z",
+            "last_seen": "2026-01-01T00:00:00Z",
+            "server": "",
+            "confirmed_by": ""
+          }
+        },
+        "addresses": {
+          "alice": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      },
+      "expected_status": "identity_mismatch",
+      "expected_pin_store_after": null
+    },
+    {
+      "name": "roster-names-no-key-is-stale",
+      "raw_address": "alice",
+      "trust_address": "alice",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "roster_did": "",
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK": {
+            "address": "alice",
+            "stable_id": "",
+            "did_key": "",
+            "first_seen": "2026-01-01T00:00:00Z",
+            "last_seen": "2026-01-01T00:00:00Z",
+            "server": "",
+            "confirmed_by": ""
+          }
+        },
+        "addresses": {
+          "alice": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
+        }
+      },
+      "expected_status": "verification_stale",
+      "expected_pin_store_after": null
+    }
+  ]
+}

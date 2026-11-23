@@ -1,10 +1,36 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class LinkKind(StrEnum):
+    """What a present link opens: a pinned read-only page (docs/sot.md §7) or one
+    document's editor (docs/sot.md §6)."""
+
+    READ_ONLY = "read_only"
+    EDITABLE = "editable"
+
+
+class AssetKind(StrEnum):
+    """An asset's stored kind (assets.kind)."""
+
+    IMAGE = "image"
+    VIDEO = "video"
+
+
+class StreamStatus(StrEnum):
+    """A video asset's Cloudflare Stream state (assets.stream_status)."""
+
+    PENDING_UPLOAD = "pending_upload"
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    READY = "ready"
+    ERROR = "error"
 
 
 class DeclarativeTemplateRequest(BaseModel):
@@ -107,7 +133,7 @@ class ImageAssetUploadRequest(BaseModel):
 
 class ImageAssetResponse(BaseModel):
     asset_id: UUID
-    kind: str = "image"
+    kind: AssetKind = AssetKind.IMAGE
     url: str
     content_type: str
 
@@ -122,21 +148,21 @@ class VideoDirectUploadRequest(BaseModel):
 
 class VideoDirectUploadResponse(BaseModel):
     asset_id: UUID
-    kind: str
+    kind: AssetKind
     stream_uid: str
     upload_url: str
     upload_expires_at: datetime
-    status: str
+    status: StreamStatus
     content_type: str
 
 
 class AssetMetadataResponse(BaseModel):
     asset_id: UUID
-    kind: str
+    kind: AssetKind
     content_type: str | None = None
     url: str | None = None
     stream_uid: str | None = None
-    stream_status: str | None = None
+    stream_status: StreamStatus | None = None
     upload_expires_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None = None

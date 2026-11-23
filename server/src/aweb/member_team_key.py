@@ -11,20 +11,41 @@ member until each is accepted under the new key.
 
 from __future__ import annotations
 
+import json
+import logging
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, auto
+from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
+from awid.team_certificate import (
+    TeamCertificateError,
+    TeamCertificateStanding,
+    evaluate_team_certificate_standing,
+)
+from fastapi import HTTPException, Request
+
+from aweb.certificate_evidence import EvidenceMode
+from aweb.certificate_registration import (
+    CertificateRegistrationObservation,
+    RegistrationDecision,
+    RegistrationMode,
+    RegistrationState,
+    configured_registration_mode,
+    observe_certificate_registrations,
+    record_certificate_registration,
+)
 from aweb.identity_scope import IdentityScope
 from aweb.member_status import MemberStatus as MemberStatus
 from aweb.service_errors import NotFoundError
+from aweb.team_registry import refresh_certificate_standing, revoked_certificates
 from aweb.team_scope import member_team_scope as member_team_scope
 
+logger = logging.getLogger(__name__)
 
 class MemberReadLock(Enum):
     """Row protection requested inside the caller's existing transaction."""
@@ -43,6 +64,13 @@ CURRENT_MEMBERSHIP_REQUIRED_DETAIL = (
     "Team membership is no longer current. "
     "Reconnect with a certificate issued under the team's current key."
 )
+
+
+class CurrentMembershipRequired(ValueError):
+    """The native certificate could not establish a current team member."""
+
+    def __init__(self, detail: str = CURRENT_MEMBERSHIP_REQUIRED_DETAIL) -> None:
+        super().__init__(detail)
 
 
 GRANT_ISSUER_RECOVERY_DETAIL = (
@@ -168,6 +196,17 @@ async def read_member_projection(
     """
     if (did_key is None) == (agent_id is None) or (did_key is not None and not team_id):
         raise ValueError("Select a native member by team and did_key, or by agent_id")
+    selector = "a.agent_id=$1::uuid" if agent_id is not None else "a.did_key=$1"
+    selected = UUID(str(agent_id)) if agent_id is not None else did_key
+    row = await db.fetch_one(
+        _member_projection_select(selector + " AND ($2::text IS NULL OR a.team_id=$2)", read_lock),
+        selected,
+        team_id,
+    )
+    return MemberProjection.from_row(row) if row is not None else None
+
+
+def _member_projection_select(selector: str, read_lock: MemberReadLock) -> str:
     if not isinstance(read_lock, MemberReadLock):
         raise TypeError("Member reads require a named MemberReadLock")
     locked = read_lock is not MemberReadLock.NONE
@@ -179,23 +218,51 @@ async def read_member_projection(
             if read_lock is MemberReadLock.UPDATE
             else " FOR SHARE OF t, a"
         )
-    selector = "a.agent_id=$1::uuid" if agent_id is not None else "a.did_key=$1"
-    selected = UUID(str(agent_id)) if agent_id is not None else did_key
-    row = await db.fetch_one(
+    return (
         "SELECT "
         + member_projection_columns_sql("a", team="t" if locked else None)
-        + """
-        FROM {{tables.agents}} a
-        """
+        + " FROM {{tables.agents}} a"
         + join_sql
         + " WHERE "
         + selector
-        + " AND ($2::text IS NULL OR a.team_id=$2)"
-        + lock_sql,
-        selected,
-        team_id,
+        + lock_sql
     )
-    return MemberProjection.from_row(row) if row is not None else None
+
+
+async def read_member_with_overlay(
+    db,
+    *,
+    team_id: str,
+    did_key: str,
+    certificate_id: str,
+    read_lock: MemberReadLock,
+    overlay_sql: str,
+) -> tuple[MemberProjection | None, Mapping[str, Any]]:
+    """Read native member facts and a host overlay in one statement.
+
+    The host supplies a trusted SELECT that may reference ``native_member``
+    and the three bound credential arguments. The native projection is
+    returned independently of the overlay, and may be absent.
+    """
+    member_select = _member_projection_select("a.team_id=$1 AND a.did_key=$2", read_lock)
+    row = await db.fetch_one(
+        f"""
+        WITH native_member AS MATERIALIZED ({member_select}),
+             member_overlay AS ({overlay_sql})
+        SELECT to_jsonb(native_member) AS native_member_projection, member_overlay.*
+        FROM (SELECT $3::text) AS credential
+        LEFT JOIN native_member ON TRUE
+        LEFT JOIN member_overlay ON TRUE
+        """,
+        team_id,
+        did_key,
+        certificate_id,
+    )
+    assert row is not None
+    member = row.pop("native_member_projection")
+    if isinstance(member, str):
+        member = json.loads(member)
+    return MemberProjection.from_row(member) if member is not None else None, MappingProxyType(row)
 
 
 async def lock_member_projections(tx, *, agent_ids: list[UUID]) -> list[MemberProjection]:
@@ -235,11 +302,11 @@ def member_key_current_sql(agent: str) -> str:
     return f"({agent}.accepted_team_did_key = {current_team_key_sql(agent)})"
 
 
-def member_key_current(row) -> bool:
+def member_key_current(row, *, checked_key: str | None = None) -> bool:
     """Whether the member ``row`` (an agents row read with
     member_key_columns_sql) was accepted under its team's current key. A row
     read without those columns is not."""
-    accepted = str(row.get("accepted_team_did_key") or "").strip()
+    accepted = checked_key if checked_key is not None else str(row.get("accepted_team_did_key") or "").strip()
     return bool(accepted) and accepted == str(row.get("current_team_did_key") or "").strip()
 
 
@@ -252,13 +319,13 @@ def member_row_active(row: Mapping[str, Any] | None) -> bool:
     return bool(row and row.get("status") == MemberStatus.ACTIVE and row.get("deleted_at") is None)
 
 
-def current_member(row: Mapping[str, Any] | None) -> bool:
+def current_member(row: Mapping[str, Any] | None, *, checked_key: str | None = None) -> bool:
     """An active live member admitted under the team's current key.
 
     Migration 052:1-4 and docs/design/team-room-v1.md:16-21 require current
     membership; the identity's independent residence is not this question.
     """
-    return member_row_active(row) and member_key_current(row)
+    return member_row_active(row) and member_key_current(row, checked_key=checked_key)
 
 
 def current_member_sql(agent: str) -> str:
@@ -284,7 +351,8 @@ async def current_member_projections(
     docs/identity.md:93-102 scopes a member name to a team. Verified global
     claims are selected through identity_binding, never raw metadata.
     SHARE holds eligible rows through the caller's transaction, preserving
-    delivery policy through commit (identity-messaging-contract.md:314-320).
+    delivery policy through commit under Global And Local Identities
+    (docs/identity-messaging-contract.md:94-99).
     It creates no transaction and adds no lock to the ordinary default read.
     """
     from aweb.identity_binding import verified_key_sql
@@ -376,25 +444,185 @@ async def read_participant_identity_projection(
     return recipient
 
 
+class CertificateStandingState(StrEnum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    UNREGISTERED = "unregistered"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class CertificateStanding:
+    state: CertificateStandingState
+    unavailable_cause: Exception | None = None
+    registration: RegistrationDecision | None = None
+    refreshed_after_miss: bool = False
+
+    def require_active(self) -> None:
+        if self.state is CertificateStandingState.UNAVAILABLE:
+            if self.unavailable_cause is None:
+                raise RuntimeError("Unavailable certificate standing requires an acquisition error")
+            raise self.unavailable_cause
+        if self.state is not CertificateStandingState.ACTIVE:
+            raise TeamCertificateError(self.state.value)
+
+
+async def read_certificate_standings(
+    registry_client,
+    team_id: str,
+    certificate_ids: Collection[str],
+    *,
+    request: Request | None = None,
+    mode: RegistrationMode | None = None,
+    revocation_evidence: EvidenceMode = EvidenceMode.CACHED,
+    registrations: CertificateRegistrationObservation | None = None,
+) -> dict[str, CertificateStanding]:
+    """Read standing for checked artifacts or previously admitted certificates.
+
+    Global And Local Identities (docs/identity-messaging-contract.md:81-86)
+    gives the same standing rule to request, stream, and delivery membership.
+    An authorized caller can supply a fresh registration snapshot it already
+    needs; otherwise strict misses use the SDK's bounded refresh owner.
+    """
+    if registrations is not None and registrations.team_id != team_id:
+        raise ValueError("Certificate registrations must come from the selected team")
+    selected = set(certificate_ids)
+    if not selected:
+        return {}
+    try:
+        revoked = await revoked_certificates(
+            registry_client, team_id, certificate_ids=sorted(selected), evidence=revocation_evidence,
+        )
+    except HTTPException as exc:
+        if exc.status_code < 500:
+            raise
+        return {cid: CertificateStanding(CertificateStandingState.UNAVAILABLE, exc) for cid in selected}
+    result = {
+        cid: CertificateStanding(CertificateStandingState.REVOKED)
+        for cid in selected
+        if evaluate_team_certificate_standing(
+            revoked=cid in revoked, registered=None,
+        ) is TeamCertificateStanding.REVOKED
+    }
+    remaining = selected - result.keys()
+    if not remaining:
+        return result
+    mode = mode if mode is not None else configured_registration_mode()
+    snapshot = registrations if registrations is not None else await observe_certificate_registrations(
+        registry_client=registry_client, team_id=team_id, mode=mode,
+    )
+    for certificate_id in sorted(remaining):
+        observation = snapshot
+        refreshed = False
+        if (
+            registrations is None
+            and mode is RegistrationMode.REQUIRED
+            and snapshot.registered_certificate_ids is not None
+            and certificate_id not in snapshot.registered_certificate_ids
+        ):
+            try:
+                standing = await refresh_certificate_standing(
+                    registry_client, team_id, certificate_id=certificate_id,
+                )
+            except HTTPException as exc:
+                if exc.status_code < 500:
+                    raise
+                result[certificate_id] = CertificateStanding(CertificateStandingState.UNAVAILABLE, exc)
+                continue
+            if standing is TeamCertificateStanding.REVOKED:
+                result[certificate_id] = CertificateStanding(CertificateStandingState.REVOKED)
+                continue
+            if standing is TeamCertificateStanding.ACTIVE:
+                observation = CertificateRegistrationObservation(
+                    team_id=team_id, registered_certificate_ids={certificate_id},
+                )
+                refreshed = True
+        registration = record_certificate_registration(
+            request, observation=observation, certificate_id=certificate_id, mode=mode,
+        )
+        if registration.allows_registration:
+            result[certificate_id] = CertificateStanding(
+                CertificateStandingState.ACTIVE, registration=registration, refreshed_after_miss=refreshed,
+            )
+        elif registration.state is RegistrationState.UNAVAILABLE:
+            result[certificate_id] = CertificateStanding(
+                CertificateStandingState.UNAVAILABLE, registration.unavailable_cause, registration,
+            )
+        else:
+            result[certificate_id] = CertificateStanding(
+                CertificateStandingState.UNREGISTERED, registration=registration,
+            )
+    return result
+
+
+async def current_membership(
+    registry_client, row: Mapping[str, Any] | None, *, request: Request | None = None
+) -> Mapping[str, Any] | None:
+    """Keep exact identity facts and strip team context from an ineligible member."""
+    if not row or not (team_id := str(row.get("team_id") or "").strip()):
+        return row
+    if not current_member(row):
+        reason = "the member is inactive or was accepted under a superseded key"
+    else:
+        certificate_id = str(row.get("certificate_id") or "").strip()
+        if not certificate_id:
+            return row
+        standings = await read_certificate_standings(
+            registry_client, team_id, [certificate_id], request=request
+        )
+        standing = standings[certificate_id]
+        if standing.state is CertificateStandingState.ACTIVE:
+            return row
+        if standing.state is CertificateStandingState.UNAVAILABLE:
+            if standing.registration is None:
+                standing.require_active()
+            raise HTTPException(
+                status_code=503,
+                detail="Certificate registration is unavailable. Retry in a moment.",
+            ) from standing.unavailable_cause
+        reason = f"certificate {certificate_id} is {standing.state}"
+    logger.warning("Team context stripped for alias %r in %s: %s", row.get("alias"), team_id, reason)
+    return {**row, "team_id": None, "alias": None, "agent_id": None}
+
+
 async def current_member_team_ids_for_identity(
-    db, dids: list[str], *, registry_client=None, read_lock: MemberReadLock = MemberReadLock.NONE
+    db, dids: list[str], *, registry_client, read_lock: MemberReadLock = MemberReadLock.NONE
 ) -> set[str]:
+    (teams,) = await current_member_team_ids_for_identities(
+        db, dids, registry_client=registry_client, read_lock=read_lock
+    )
+    return teams
+
+
+async def current_member_team_ids_for_identities(
+    db,
+    *identities: Collection[str],
+    registry_client,
+    read_lock: MemberReadLock = MemberReadLock.NONE,
+) -> tuple[set[str], ...]:
     """Current memberships with the admitting certificate's live standing.
 
-    The existing identity-auth membership owner applies SDK revocation and
-    staged registration policy; a native SQL projection alone is not standing.
+    Apply SDK revocation and staged registration policy after selecting each
+    admitted membership under the current key. The caller's lock covers the
+    combined selection, while each identity keeps its own membership set.
     """
-    from aweb.identity_auth_deps import current_membership
-
-    selected = [did.strip() for did in dids if did and did.strip()]
+    scopes = [{did.strip() for did in dids if did and did.strip()} for dids in identities]
+    selected = set().union(*scopes)
     if not selected:
-        return set()
-    teams = set()
-    for row in await current_member_projections(db, dids=selected, read_lock=read_lock):
-        standing = await current_membership(registry_client, dict(row))
-        if standing is not None and standing.get("team_id"):
-            teams.add(standing["team_id"])
-    return teams
+        return tuple(set() for _ in scopes)
+    rows = await current_member_projections(db, dids=sorted(selected), read_lock=read_lock)
+    projected = [row.verified_identity() for row in rows]
+    results = []
+    for scope in scopes:
+        teams = set()
+        for row in projected:
+            if row["did_key"] not in scope and row["did_aw"] not in scope:
+                continue
+            standing = await current_membership(registry_client, row)
+            if standing is not None and standing.get("team_id"):
+                teams.add(standing["team_id"])
+        results.append(teams)
+    return tuple(results)
 
 
 def grant_issuer_current(row) -> bool:

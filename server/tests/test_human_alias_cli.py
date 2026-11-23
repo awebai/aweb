@@ -15,6 +15,8 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_e2ee_local_sender_read_trust import _local_sender_mail
 from test_messages_http import _insert_agent_encryption_assertion
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio

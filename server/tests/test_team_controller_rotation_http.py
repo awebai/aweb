@@ -25,6 +25,8 @@ from test_messages_http import (
 )
 from awid_service.testing import TXTAnswers
 
+__all__ = ["privacy_app"]
+
 
 def _headers(sk, did, payload):
     timestamp = datetime.now(timezone.utc).isoformat()

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -742,64 +743,71 @@ func TestRunTeamImportRequestMissingKeyUsesBYOTGuidance(t *testing.T) {
 }
 
 func TestBuildTeamImportRequestOutputSignsCanonicalACPayload(t *testing.T) {
-	teamKey := ed25519.NewKeyFromSeed([]byte{
-		0, 1, 2, 3, 4, 5, 6, 7,
-		8, 9, 10, 11, 12, 13, 14, 15,
-		16, 17, 18, 19, 20, 21, 22, 23,
-		24, 25, 26, 27, 28, 29, 30, 31,
-	})
-	pub := teamKey.Public().(ed25519.PublicKey)
-	out, err := buildTeamImportRequestOutput(
-		teamKey,
-		"research:acme.com",
-		"org-1",
-		"",
-		true,
-		"2026-05-09T12:00:00Z",
-	)
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "docs", "vectors", "team-control-requests-v1.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	wantCanonical := `{"awid_team_id":"research:acme.com","dry_run":true,"operation":"byoidt_import","organization_id":"org-1","team_id":"","timestamp":"2026-05-09T12:00:00Z"}`
-	if out.CanonicalPayload != wantCanonical {
-		t.Fatalf("canonical payload mismatch:\n got: %s\nwant: %s", out.CanonicalPayload, wantCanonical)
+	var vector struct {
+		SeedHex string `json:"seed_hex"`
+		Signer  string `json:"signer_did_key"`
+		Cases   []struct {
+			Name  string `json:"name"`
+			Input struct {
+				AWIDTeamID     string `json:"awid_team_id"`
+				OrganizationID string `json:"organization_id"`
+				TeamID         string `json:"team_id"`
+				DryRun         bool   `json:"dry_run"`
+				Timestamp      string `json:"timestamp"`
+			} `json:"input"`
+			Payload   string `json:"canonical_payload"`
+			Signature string `json:"signature"`
+		} `json:"import_cases"`
 	}
-	if out.ControllerDID != awid.ComputeDIDKey(pub) {
-		t.Fatalf("controller did=%q want %q", out.ControllerDID, awid.ComputeDIDKey(pub))
-	}
-	if out.ControllerDID != "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd" {
-		t.Fatalf("controller did interop vector changed: %q", out.ControllerDID)
-	}
-	const wantSignature = "wJ9qUNecyxiqSF45ALU6upFloyUPiQW1RXkste671QcTjBM9nGqN9ngTcgGwVX2OO+s4gQ/yFIXKL7OewHelBw"
-	if out.ControllerSignature != wantSignature {
-		t.Fatalf("signature mismatch:\n got: %s\nwant: %s", out.ControllerSignature, wantSignature)
-	}
-	sig, err := base64.RawStdEncoding.DecodeString(out.ControllerSignature)
-	if err != nil {
-		t.Fatalf("decode signature: %v", err)
-	}
-	if !ed25519.Verify(pub, []byte(out.CanonicalPayload), sig) {
-		t.Fatal("controller signature does not verify")
-	}
-	if got := out.RequestBody["organization_id"]; got != "org-1" {
-		t.Fatalf("request organization_id=%v", got)
-	}
-	if got := out.RequestBody["team_id"]; got != nil {
-		t.Fatalf("empty cloud team id should encode as nil request field, got %v", got)
-	}
-	if got := out.RequestBody["controller_signature"]; got != out.ControllerSignature {
-		t.Fatalf("request signature=%v want %s", got, out.ControllerSignature)
-	}
-	if _, ok := out.RequestBody["access_mode"]; ok {
-		t.Fatal("request body must not include stale unsigned access_mode")
-	}
-	encoded, err := json.Marshal(out)
-	if err != nil {
+	if err := json.Unmarshal(raw, &vector); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), "access_mode") {
-		t.Fatalf("import-request output must not expose stale access_mode, got %s", encoded)
+	seed, err := hex.DecodeString(vector.SeedHex)
+	if err != nil || len(seed) != ed25519.SeedSize || len(vector.Cases) != 4 {
+		t.Fatalf("incomplete import vector: %v", err)
+	}
+	key := ed25519.NewKeyFromSeed(seed)
+	for _, tc := range vector.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			in := tc.Input
+			out, err := buildTeamImportRequestOutput(key, in.AWIDTeamID, in.OrganizationID, in.TeamID, in.DryRun, in.Timestamp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.CanonicalPayload != tc.Payload || out.ControllerDID != vector.Signer || out.ControllerSignature != tc.Signature {
+				t.Fatalf("released import proof changed: %+v", out)
+			}
+			signature, err := base64.RawStdEncoding.DecodeString(out.ControllerSignature)
+			if err != nil || !ed25519.Verify(key.Public().(ed25519.PublicKey), []byte(out.CanonicalPayload), signature) {
+				t.Fatal("controller signature does not verify")
+			}
+			for field, input := range map[string]string{"organization_id": in.OrganizationID, "team_id": in.TeamID} {
+				var want any
+				if trimmed := strings.TrimSpace(input); trimmed != "" {
+					want = trimmed
+				}
+				if got := out.RequestBody[field]; got != want {
+					t.Fatalf("request %s=%v want %v", field, got, want)
+				}
+			}
+			if got := out.RequestBody["controller_signature"]; got != out.ControllerSignature {
+				t.Fatalf("request signature=%v want %s", got, out.ControllerSignature)
+			}
+			if _, ok := out.RequestBody["access_mode"]; ok {
+				t.Fatal("request body must not include stale unsigned access_mode")
+			}
+			encoded, err := json.Marshal(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encoded), "access_mode") {
+				t.Fatalf("import-request output must not expose stale access_mode, got %s", encoded)
+			}
+		})
 	}
 }
 
@@ -949,7 +957,25 @@ func TestExecuteTeamCleanupCloudSignsProjectionDeletePayload(t *testing.T) {
 	})
 	pub := teamKey.Public().(ed25519.PublicKey)
 	var gotBody map[string]any
+	var advertiseGzip atomic.Bool
+	advertiseGzip.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if advertiseGzip.Load() {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/health":
+				w.Header().Set("Accept-Encoding", "gzip")
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/byoidt/projection-delete":
+				if r.Header.Get("Content-Encoding") != "gzip" {
+					t.Error("the previous fixture did not establish gzip support")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				http.NotFound(w, r)
+			}
+			return
+		}
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
@@ -973,6 +999,17 @@ func TestExecuteTeamCleanupCloudSignsProjectionDeletePayload(t *testing.T) {
 		})
 	}))
 	defer server.Close()
+	defer awid.ForgetRequestCompression(server.URL)
+	awid.ForgetRequestCompression(server.URL)
+
+	// Simulate a prior fixture at this origin advertising gzip. Switch to
+	// the plain handler on the same listener to reproduce reuse without a
+	// race to reacquire its port.
+	if err := postTeamCleanupCloud(context.Background(), server.URL, map[string]any{"fixture": "previous"}, nil); err != nil {
+		t.Fatalf("cache the previous fixture's compression capability: %v", err)
+	}
+	advertiseGzip.Store(false)
+	awid.ForgetRequestCompression(server.URL)
 
 	out, err := executeTeamCleanupCloud(
 		context.Background(),
@@ -1048,6 +1085,9 @@ func TestExecuteTeamCleanupCloudCanSignWithNamespaceControllerScope(t *testing.T
 		})
 	}))
 	defer server.Close()
+	defer awid.ForgetRequestCompression(server.URL)
+	// A closed loopback fixture may have advertised gzip on this port.
+	awid.ForgetRequestCompression(server.URL)
 
 	out, err := executeTeamCleanupCloud(
 		context.Background(),
@@ -1284,7 +1324,7 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 		Scope:         awid.IdentityScopeGlobal,
 	})
 	if err != nil {
-		t.Fatalf("bootstrapLocalTeamMemberWithScope: %v", err)
+		t.Fatalf("bootstrapLocalTeamMember: %v", err)
 	}
 	if result.TeamID != "default:acme.com" {
 		t.Fatalf("team_id=%q", result.TeamID)
@@ -1331,16 +1371,20 @@ func TestTeamInviteAndAcceptInviteFlowStdin(t *testing.T) { testTeamInviteAndAcc
 func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	t.Parallel()
 
+	const domain = "acme.test"
+	const teamID = "backend:" + domain
 	var encryptionKeyPublished atomic.Bool
 	var registeredCert map[string]any
 	var memberDIDKey string
 	var memberStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+memberStableID+"/key":
+			json.NewEncoder(w).Encode(map[string]any{"did_aw": memberStableID, "current_did_key": memberDIDKey, "id_tree": map[string]any{"enrolled": false}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/"+domain+"/addresses/alice":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"address_id":      "addr-alice",
-				"domain":          "acme.com",
+				"domain":          domain,
 				"name":            "alice",
 				"did_aw":          memberStableID,
 				"current_did_key": memberDIDKey,
@@ -1374,7 +1418,7 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+	writeTeamKeyForTest(t, tmp, domain, "backend", teamKey)
 
 	// Pre-create agent identity (the accepting agent has an identity)
 	memberPub, memberKey, err := awid.GenerateKeypair()
@@ -1386,7 +1430,8 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
 		DID:           memberDIDKey,
 		StableID:      memberStableID,
-		Address:       "acme.com/alice",
+		Address:       domain + "/alice",
+		RegistryURL:   server.URL,
 		Custody:       awid.CustodySelf,
 		IdentityScope: awid.IdentityModeGlobal,
 		CreatedAt:     "2026-04-06T00:00:00Z",
@@ -1399,7 +1444,7 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	// Step 1: Create invite
 	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
 		"--team", "backend",
-		"--namespace", "acme.com",
+		"--namespace", domain,
 		"--persistent",
 		"--json")
 	runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
@@ -1449,7 +1494,7 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	if acceptGot["status"] != "accepted" {
 		t.Fatalf("accept status=%v", acceptGot["status"])
 	}
-	if acceptGot["team_id"] != "backend:acme.com" {
+	if acceptGot["team_id"] != teamID {
 		t.Fatalf("team_id=%v", acceptGot["team_id"])
 	}
 	if acceptGot["alias"] != "alice" {
@@ -1457,12 +1502,12 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	}
 
 	// Verify certificate was saved to disk
-	certPath := awconfig.TeamCertificatePath(tmp, "backend:acme.com")
+	certPath := awconfig.TeamCertificatePath(tmp, teamID)
 	cert, err := awid.LoadTeamCertificate(certPath)
 	if err != nil {
 		t.Fatalf("load certificate: %v", err)
 	}
-	if cert.Team != "backend:acme.com" {
+	if cert.Team != teamID {
 		t.Fatalf("cert team_id=%q", cert.Team)
 	}
 	if cert.MemberDIDKey != memberDIDKey {
@@ -1475,10 +1520,10 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	if err != nil {
 		t.Fatalf("load teams state: %v", err)
 	}
-	if teamState.ActiveTeam != "backend:acme.com" {
+	if teamState.ActiveTeam != teamID {
 		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
-	if membership := teamState.Membership("backend:acme.com"); membership == nil {
+	if membership := teamState.Membership(teamID); membership == nil {
 		t.Fatal("expected backend team membership in teams.yaml")
 	} else if strings.TrimSpace(membership.CertPath) == "" {
 		t.Fatal("teams.yaml membership missing cert_path")
@@ -2582,7 +2627,9 @@ func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdi
 	var sawConnect bool
 	publishCertTeams := []string{}
 	mailInboxCalls := 0
+	mailSendCalls := 0
 	chatPendingCalls := 0
+	mailRecipient := awid.ComputeDIDKey(primaryPub)
 	var gotConnectPayload connectRequest
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -2635,6 +2682,19 @@ func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdi
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox":
 			mailInboxCalls++
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
+			mailSendCalls++
+			cert := requireCertificateAuthForTest(t, r)
+			if cert.Team != teamID || cert.MemberDIDKey != acceptedDID {
+				t.Errorf("mail used %q/%q, want %q/%q", cert.Team, cert.MemberDIDKey, teamID, acceptedDID)
+			}
+			var req awid.SendMessageRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ToDID != mailRecipient || req.Body != "hello from the joined home" {
+				t.Errorf("unexpected mail request: %+v, %v", req, err)
+			}
+			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{
+				MessageID: "joined-mail", ConversationID: req.ConversationID, Status: "delivered",
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/pending":
 			chatPendingCalls++
 			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{})
@@ -2738,6 +2798,21 @@ func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdi
 	}
 	if primaryAfter := fileDigestsForTest(t, filepath.Join(instanceHome, ".aw")); !reflect.DeepEqual(primaryAfter, primaryBefore) {
 		t.Fatal("external mail/chat mutated caller primary identity home")
+	}
+
+	// A send records an interaction in the caller's workspace. Check the
+	// selected sender on the wire from that same directory after the reads.
+	send := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "mail", "send",
+		"--to-did", mailRecipient, "--subject", "Joined team", "--body", "hello from the joined home", "--json")
+	send.Dir = instanceHome
+	send.Env = testCommandEnv(tmp)
+	out, err = send.CombinedOutput()
+	if err != nil {
+		t.Fatalf("unqualified mail from the joined home failed: %v\n%s", err, out)
+	}
+	var sent awid.SendMessageResponse
+	if err := json.Unmarshal(extractJSON(t, out), &sent); err != nil || sent.MessageID != "joined-mail" || mailSendCalls != 1 {
+		t.Fatalf("joined mail response: %s (requests=%d, error=%v)", out, mailSendCalls, err)
 	}
 }
 
@@ -5479,28 +5554,6 @@ func TestVerifyNamedMemberRefusesAResolvedAliasThatIsNotTheOneNamed(t *testing.T
 	}
 }
 
-// captureTeamMembersStdout drains the pipe while fn runs, so a roster large
-// enough to fill the pipe buffer cannot deadlock the test it is proving.
-func captureTeamMembersStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
-	done := make(chan string, 1)
-	go func() {
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
-	}()
-	fn()
-	_ = w.Close()
-	os.Stdout = oldStdout
-	return <-done
-}
-
 func TestRunTeamMembersListsMembersBeyondTheFirstPage(t *testing.T) {
 	resetTeamMembersGlobals(t)
 	root := t.TempDir()
@@ -5547,7 +5600,7 @@ func TestRunTeamMembersListsMembersBeyondTheFirstPage(t *testing.T) {
 	teamMembersRegistryURL = server.URL
 
 	var runErr error
-	output := captureTeamMembersStdout(t, func() {
+	output := captureStdout(t, func() {
 		runErr = runTeamMembers(&cobra.Command{}, nil)
 	})
 	if runErr != nil {
@@ -5585,7 +5638,7 @@ func TestRunTeamMembersRefusesToPrintATruncatedRoster(t *testing.T) {
 	teamMembersRegistryURL = server.URL
 
 	var runErr error
-	output := captureTeamMembersStdout(t, func() {
+	output := captureStdout(t, func() {
 		runErr = runTeamMembers(&cobra.Command{}, nil)
 	})
 	if runErr == nil {

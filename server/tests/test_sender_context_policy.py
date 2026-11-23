@@ -21,7 +21,7 @@ def test_multi_context_sender_refusal_names_the_selecting_credential():
     assert refused.value.status_code == 409
     text = refused.value.detail["message"]
     assert "X-AWID-Team-Certificate" in text
-    assert "--team" in text and "upgrade aw 1.36.58" in text
+    assert "--team" in text and "aw 1.36.59 or later" in text
 
 
 def test_empty_keys_never_verify_a_stored_global_claim():

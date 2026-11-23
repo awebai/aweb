@@ -1,6 +1,7 @@
 """Messaging actors admitted by the shared registry and native HTTP owners."""
 
-from dataclasses import dataclass, field
+import base64
+from dataclasses import dataclass, field, replace
 from contextlib import contextmanager
 import json
 from typing import Protocol
@@ -13,8 +14,10 @@ from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
 from awid.identity_observation import IdentityKind
+from awid.registry import RegistryClient
 from awid_service.testing import Registry
 from aweb.application_state import application_registry_client
+from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
 from aweb.routes.connect import ConnectResponse
 from test_messages_http import (
     _encode_certificate,
@@ -56,7 +59,7 @@ async def register_messaging_team(env: MessagingFixture, *, team_id: str) -> Non
             display_name=name,
             team_did_key=env.team_did,
             visibility="public",
-            namespace_controller_signing_key=bytes(controller),
+            namespace_controller_signing_key=controller,
         )
     else:
         assert existing.team_did_key == env.team_did
@@ -74,7 +77,7 @@ async def _certify_kind(
 
     domain = f"messaging-kind-{uuid4().hex}.test"
     await env.registry.ensure_namespace(
-        domain=domain, controller=SigningKey(bytes.fromhex(ROOT["seed_hex"]))
+        domain=domain, controller=bytes.fromhex(ROOT["seed_hex"])
     )
     certificate = _signed_fixture_certificate(
         "alice" if kind is IdentityKind.HUMAN else "root-agent",
@@ -137,7 +140,7 @@ async def admit_messaging_actor(
         domain, name = address.split("/", 1)
         controller = await env.registry.ensure_namespace(domain=domain)
         await registry.register_address(
-            domain, name, stable_id, bytes(controller), current_did_key=did_key
+            domain, name, stable_id, controller, current_did_key=did_key
         )
     if kind is not IdentityKind.UNKNOWN:
         await _certify_kind(env, kind=kind, stable_id=stable_id, key=key)
@@ -192,6 +195,68 @@ async def admit_messaging_actor(
     )
 
 
+async def set_messaging_inbound_mode(
+    env: MessagingFixture, actor: RegisteredMessagingActor, mode: str
+) -> None:
+    """Choose receive policy through the same signed preference route as clients."""
+    body = json.dumps({"inbound_mode": mode}).encode()
+    response = await env.client.patch(
+        "/v1/agents/me/inbound-mode",
+        content=body,
+        headers=messaging_actor_headers(actor, body=body),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["inbound_mode"] == mode
+
+
+async def archive_messaging_actor(
+    db,
+    redis,
+    *,
+    team_id: str,
+    agent_id,
+    registry_client: RegistryClient | None,
+) -> None:
+    result = await apply_lifecycle_cascade(
+        db,
+        redis,
+        LifecycleCascadeRequest(
+            operation="archive_global_agent",
+            actor=LifecycleActor(None, "support", "support"),
+            team_id=team_id,
+            target_agent_id=str(agent_id),
+            workspace_scope="all_for_agent",
+            require_identity_scope="global",
+        ),
+        registry_client=registry_client,
+    )
+    assert result.identity_archived, result.errors
+
+
+async def remove_messaging_agent_from_sessions(
+    db,
+    redis,
+    *,
+    team_id: str,
+    agent_id,
+    registry_client: RegistryClient | None,
+) -> None:
+    result = await apply_lifecycle_cascade(
+        db,
+        redis,
+        LifecycleCascadeRequest(
+            operation="cleanup_agent_coordination_state",
+            actor=LifecycleActor(None, "support", "support"),
+            team_id=team_id,
+            target_agent_id=str(agent_id),
+            workspace_scope="all_for_agent",
+        ),
+        registry_client=registry_client,
+    )
+    assert not result.errors, result.errors
+    assert result.chat_participant_cleanup_count == 1
+
+
 @contextmanager
 def record_registry_requests(env):
     """Observe HTTP at the actual registry app and forward every request unchanged."""
@@ -230,6 +295,35 @@ async def register_messaging_actors(
     }
 
 
+async def issue_global_certificate_to_local_member(
+    env: MessagingFixture, actor: RegisteredMessagingActor, *, address: str,
+) -> RegisteredMessagingActor:
+    """Publish the identity and its replacement certificate before native reconnect."""
+    registry = application_registry_client(env.app.state)
+    mapping = await registry.register_did(actor.did_key, actor.signing_key)
+    domain, name = address.split("/", 1)
+    controller = await env.registry.ensure_namespace(domain=domain)
+    await registry.register_address(
+        domain, name, mapping.did_aw, bytes(controller), current_did_key=actor.did_key,
+    )
+    previous = json.loads(base64.b64decode(actor.certificate))
+    certificate = _make_certificate(
+        env.team_sk, env.team_did, actor.did_key,
+        team_id=actor.team_id, alias=previous["alias"], identity_scope="global",
+        member_did_aw=mapping.did_aw, member_address=address,
+        certificate_id=f"messaging-global-{uuid4()}",
+    )
+    team_name, team_domain = actor.team_id.split(":", 1)
+    await registry.revoke_team_certificate(
+        team_domain, team_name, team_controller_signing_key=env.team_sk,
+        certificate_id=previous["certificate_id"],
+    )
+    await env.registry.add_certificate(certificate, team_key=SigningKey(env.team_sk))
+    return replace(
+        actor, stable_id=mapping.did_aw, address=address, certificate=_encode_certificate(certificate),
+    )
+
+
 def messaging_actor_headers(actor, *, body=b"", team=True):
     """Sign exact request bytes with the actor's admitted certificate or identity."""
     from test_messages_http import _signed_identity_headers
@@ -244,17 +338,6 @@ def messaging_actor_headers(actor, *, body=b"", team=True):
         )
     )
     return {**headers, "Content-Type": "application/json"}
-
-
-async def set_messaging_inbound_mode(env, actor, *, mode):
-    """Choose receive policy through the same signed preference route as clients."""
-    raw = json.dumps({"inbound_mode": mode}).encode()
-    response = await env.client.patch(
-        "/v1/agents/me/inbound-mode",
-        content=raw,
-        headers=messaging_actor_headers(actor, body=raw),
-    )
-    assert response.status_code == 200, response.text
 
 
 async def add_messaging_contact(

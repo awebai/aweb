@@ -9,7 +9,8 @@ from aweb_naapp.client_identity import ClientIdentity
 def request_client_address(request: Request | None) -> str:
     """Resolve the configured trusted header or peer, without trusting others.
 
-    docs/identity-messaging-contract.md:239-247 assigns proxy-header trust to
+    Strict Cross-Registry Sender Authority (docs/identity-messaging-contract.md:267-275)
+    assigns proxy-header trust to
     deployment configuration. Missing HTTP context has no known client address.
     """
     if request is None:

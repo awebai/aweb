@@ -33,6 +33,8 @@ type IDTreeRegistrationRequest struct {
 	InvitationID *string `json:"invitation_id"`
 }
 
+// UnmarshalJSON requires both registration precondition fields to be present;
+// an explicit null remains distinct from a missing field.
 func (request *IDTreeRegistrationRequest) UnmarshalJSON(raw []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
@@ -104,11 +106,16 @@ func DecodeIDCreationInvitation(raw []byte) (*IDCreationInvitation, error) {
 	return &inv, nil
 }
 
+// Validate checks the invitation shape and registered-person parent selector.
+// It does not establish expiry, availability or the parent's current authority.
 func (inv *IDCreationInvitation) Validate() error {
 	if inv == nil || !idCertificateIsUUID(inv.ID) || !idCertificateDomain(inv.Domain) || inv.Name == "" || (inv.IdentityScope != "local" && inv.IdentityScope != "global") || len(inv.Parent) != 2 || inv.Parent["kind"] != "identity" || !idCertificateIDValid(inv.Parent["id"], false) {
 		return fmt.Errorf("invalid creation invitation")
 	}
-	id, _ := inv.Parent["id"].(string)
+	id, ok := inv.Parent["id"].(string)
+	if !ok {
+		return fmt.Errorf("invalid creation invitation")
+	}
 	if !strings.HasPrefix(id, "did:aw:") {
 		return fmt.Errorf("creation invitation requires a registered person parent")
 	}

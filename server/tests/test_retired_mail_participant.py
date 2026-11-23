@@ -11,6 +11,8 @@ from test_messages_http import _signed_identity_headers
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_mcp_mail_conversation_parity import mail_server  # noqa: F401
 
+__all__ = ["addressed_human", "mail_server", "privacy_app"]
+
 
 @pytest.mark.asyncio
 async def test_retired_identity_continuation_refuses_new_alias_mail_reaches_replacement(

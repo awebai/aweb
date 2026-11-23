@@ -3,19 +3,30 @@
 from __future__ import annotations
 
 from aweb.human_kind import agent_listing_predicate_sql
+from aweb.member_team_key import current_member_sql
+from aweb.task_refs import task_title_join
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from aweb.application_state import RegistryClientUnavailable
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
+from aweb.workspace_activity import workspace_activity_by_id
+from datetime import timezone
 
 from aweb.mcp.tools._common import require_team_context
-from aweb.presence import list_agent_presences_by_workspace_ids
 
 
-async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
+async def workspace_status(
+    db_infra, redis, *, registry_client=None, limit: int = 15
+) -> str:
     """Show self/team coordination status for the authenticated agent."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
+    if registry_client is None:
+        raise RegistryClientUnavailable()
     aweb_db = db_infra.get_manager("aweb")
 
     workspaces = await aweb_db.fetch_all(
@@ -27,43 +38,45 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
             w.human_name,
             COALESCE(w.role, a.role) AS role
         FROM {{{{tables.workspaces}}}} w
-        JOIN {{{{tables.agents}}}} a ON a.agent_id = w.agent_id
+        JOIN {{{{tables.agents}}}} a ON a.agent_id = w.agent_id AND a.team_id = w.team_id
         WHERE w.team_id = $1
           AND w.deleted_at IS NULL
-          AND a.deleted_at IS NULL
+          AND {current_member_sql("a")}
           AND {agent_listing_predicate_sql("a")}
         ORDER BY w.alias
         """,
         auth.team_id,
     )
     workspace_ids = [str(row["workspace_id"]) for row in workspaces]
-    presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
-    presence_map = {}
-    for presence in presences:
-        # Presence writes should already key by workspace_id. The agent_id fallback
-        # exists only to tolerate older payloads during the transition.
-        presence_id = (presence.get("workspace_id") or presence.get("agent_id") or "").strip()
-        if presence_id:
-            presence_map[presence_id] = presence
+    activity_by_id = await workspace_activity_by_id(
+        aweb_db,
+        redis,
+        workspace_ids=workspace_ids,
+        registry_client=registry_client,
+        request=auth.request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+    )
+    now = datetime.now(UTC)
 
     claim_rows = await aweb_db.fetch_all(
-        """
+        f"""
+        WITH current_claims AS (
+            SELECT c.* FROM {{{{tables.task_claims}}}} c
+            WHERE c.team_id = $1 AND c.workspace_id = ANY($2::UUID[])
+        )
         SELECT c.task_ref, c.workspace_id, c.alias, c.human_name, c.claimed_at, c.team_id,
-               counts.claimant_count, t.title
-        FROM {{tables.task_claims}} c
+               counts.claimant_count, task_info.title
+        FROM current_claims c
         JOIN (
             SELECT team_id, task_ref, COUNT(*) AS claimant_count
-            FROM {{tables.task_claims}}
+            FROM current_claims
             GROUP BY team_id, task_ref
         ) counts ON c.team_id = counts.team_id AND c.task_ref = counts.task_ref
-        LEFT JOIN {{tables.tasks}} t
-            ON t.team_id = c.team_id
-            AND t.task_ref_suffix = SUBSTRING(c.task_ref FROM POSITION('-' IN c.task_ref) + 1)
-            AND t.deleted_at IS NULL
-        WHERE c.team_id = $1
+        {task_title_join(alias="task_info", team_id_col="c.team_id", task_ref_col="c.task_ref")}
         ORDER BY c.claimed_at DESC
         """,
         auth.team_id,
+        [row["workspace_id"] for row in workspaces],
     )
 
     claims_by_workspace = {}
@@ -90,21 +103,26 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
 
     def _workspace_entry(row) -> dict:
         workspace_id = str(row["workspace_id"])
-        presence = presence_map.get(workspace_id) or {}
+        activity = activity_by_id.get(workspace_id)
+        presence = (activity.presence or {}) if activity else {}
         return {
             "workspace_id": workspace_id,
             "alias": row["alias"],
             "human_name": row.get("human_name") or None,
             "role": (presence.get("role") or row.get("role") or None),
             "role_name": (presence.get("role") or row.get("role") or None),
-            "status": presence.get("status") or ("active" if workspace_id in presence_map else "offline"),
-            "last_seen": presence.get("last_seen") or None,
+            "status": activity.display_status(now=now) if activity else "offline",
+            "last_seen": activity.last_seen_at.isoformat()
+            if activity and activity.last_seen_at
+            else None,
             "current_branch": presence.get("current_branch") or None,
             "claims": claims_by_workspace.get(workspace_id, []),
         }
 
     entries = [_workspace_entry(row) for row in workspaces]
-    self_entry = next((entry for entry in entries if entry["workspace_id"] == auth.workspace_id), None)
+    self_entry = next(
+        (entry for entry in entries if entry["workspace_id"] == auth.workspace_id), None
+    )
     if self_entry is None:
         self_entry = {
             "workspace_id": auth.workspace_id,

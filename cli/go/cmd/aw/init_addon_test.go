@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/spf13/cobra"
@@ -54,11 +59,7 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 		}},
 	})
 
-	origWd, _ := os.Getwd()
-	if err := os.Chdir(tmp); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chdir(origWd)
+	t.Chdir(tmp)
 
 	t.Setenv(initAPIKeyEnvVar, "")
 	t.Setenv("AWEB_URL", "")
@@ -93,5 +94,34 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".mcp.json")); !os.IsNotExist(err) {
 		t.Fatalf("setup-channel unexpectedly created broken .mcp.json: %v", err)
+	}
+}
+
+func TestInitAddonRefusesMalformedWorkspaceBeforeChangingFiles(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(t.TempDir(), awBinaryNameForTest())
+	buildAwBinary(t, ctx, bin)
+	if err := os.Mkdir(filepath.Join(root, ".aw"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".aw", "workspace.yaml"), []byte("memberships: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotJoinFiles(t, root)
+	command := exec.CommandContext(ctx, bin, "init", "--inject-docs", "--json")
+	command.Dir = root
+	command.Env = append(testCommandEnv(t.TempDir()), "AWEB_IDENTITY_HOME=", "AWEB_API_KEY=", "AWEB_URL=", "AW_NO_UPDATE_CHECK=1")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("malformed workspace was treated as a successful add-on target")
+	}
+	if !strings.Contains(string(output), "invalid local workspace binding") {
+		t.Fatalf("workspace read error was lost: %s", output)
+	}
+	after := snapshotJoinFiles(t, root)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("refused add-on changed workspace files")
 	}
 }

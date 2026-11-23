@@ -5,10 +5,11 @@ channel-core/runner.mjs cache is no longer read, created or rewritten. Remove
 its old runner.sha256 success stamp before starting a child, so a downgraded aw
 cannot trust stale bytes. A failed stamp removal warns with its path and recovery.
 
-Existing wake state directories remain supported when shared or owned by another
-UID. Warn once per affected state path with the exact chmod/chown command to make
-it private; registration, inspection and startup remain available. Storage-managed
-ancestor mounts and the unused legacy cache do not become eligibility gates.
+Existing wake state directories owned by the current user remain supported when
+shared. Warn once per affected state path with the exact chmod/chown command to
+make it private. Registration, inspection and startup remain available. A state
+root owned by another UID is refused. Storage-managed ancestor mounts and the
+unused legacy cache do not become eligibility gates.
 
 Node executes a fresh private snapshot of the embedded bundle at 0700/0600 under
 os.TempDir(), honoring TMPDIR. The parent must be owned by root or the effective

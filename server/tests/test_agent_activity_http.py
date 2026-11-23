@@ -2,9 +2,7 @@
 
 An agent's host publishes signed activity while the agent works (aweb-acah.2,
 docs/agent-activity.md). The server verifies it, relays it with a per-agent
-revision, and keeps only the latest event for at most 60 seconds. Fixture
-provisioning and removing the app's Redis for the unavailable case are the
-only direct state changes.
+revision, and keeps only the latest event for at most 60 seconds.
 """
 
 from __future__ import annotations
@@ -21,12 +19,11 @@ import logging
 import pytest
 from redis.asyncio import Redis
 
-from identity_binding_support import register_global_identity
-
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.messaging.activity_stream import SessionActivity
 from test_agent_status_host_http import _team_request
-from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, _request
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_identity_grants import _grant_headers, _session_keypair
 from test_messages_http import (
     _encode_certificate,
@@ -34,6 +31,8 @@ from test_messages_http import (
     _make_keypair,
     _signed_identity_headers,
 )
+
+__all__ = ["privacy_app"]
 
 PATH = "/v1/agents/me/activity"
 
@@ -131,40 +130,34 @@ async def test_team_certificate_caller_publishes_and_the_event_is_relayed(privac
     assert await env.redis.ttl(f"agent-activity-rev:{env.actors['alice'].id}") > 3000
 
 
+async def _connect_member(env, alias):
+    connected = await _team_request(env, alias, "POST", "/v1/connect", {})
+    assert connected.status_code == 200, connected.text
+    assert (connected.json()["team_id"], connected.json()["alias"]) == (TEAM, alias)
+    env.actors[alias].id = UUID(connected.json()["agent_id"])
+    return env.actors[alias]
+
+
 async def _global_member(env, alias="dave"):
-    sk, _, did = _make_keypair()
-    agent_id = uuid4()
-    did_aw = await register_global_identity(
-        env, SimpleNamespace(sk=sk, did=did), f"example.test/{alias}"
-    )
-    await env.db.execute(
-        "INSERT INTO {{tables.agents}} "
-        "(agent_id, team_id, did_key, did_aw, address, alias, identity_scope, inbound_mode) "
-        "VALUES ($1, $2, $3, $4, $5, $6, 'global', 'open')",
-        agent_id,
-        TEAM,
-        did,
-        did_aw,
-        f"example.test/{alias}",
-        alias,
-    )
-    certificate = _encode_certificate(
+    if alias not in env.actors:
+        sk, _, did = _make_keypair()
+        env.actors[alias] = SimpleNamespace(sk=sk, did=did)
+    member = env.actors[alias]
+    registered = await env.app.state.awid_registry_client.register_did(member.did, member.sk)
+    member.did_aw = registered.did_aw
+    member.certificate = _encode_certificate(
         _make_certificate(
             env.team_sk,
             env.team_did,
-            did,
+            member.did,
             team_id=TEAM,
             alias=alias,
             identity_scope="global",
-            member_did_aw=did_aw,
-            member_address=f"example.test/{alias}",
-            certificate_id=f"activity-{alias}",
+            member_did_aw=member.did_aw,
+            certificate_id=f"activity-global-{alias}",
         )
     )
-    env.actors[alias] = SimpleNamespace(
-        sk=sk, did=did, id=agent_id, certificate=certificate, did_aw=did_aw
-    )
-    return env.actors[alias]
+    return await _connect_member(env, alias)
 
 
 @pytest.mark.asyncio
@@ -351,10 +344,14 @@ async def test_failing_redis_is_unavailable_and_the_failure_is_logged(
 
     assert response.status_code == 503
     assert response.json()["detail"].startswith("publishing_unavailable: ")
-    assert [record.getMessage() for record in caplog.records] == [
+    # Maintenance can report the same Redis outage through its own loggers.
+    records = [
+        record for record in caplog.records if record.name == "aweb.routes.agent_activity"
+    ]
+    assert [record.getMessage() for record in records] == [
         f"Activity rate limit failed for {env.actors['alice'].id}"
     ]
-    assert caplog.records[0].exc_info is not None
+    assert records[0].exc_info is not None
 
 
 async def _grant_publish(env, alias, scopes, *, event_from_session_key=True):
@@ -555,10 +552,7 @@ async def _subscribed(env, actor):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("key_only", [False, True])
-async def test_global_activity_uses_canonical_participation_and_nullable_projection(
-    privacy_app, key_only
-):
+async def test_global_activity_uses_canonical_participation_and_nullable_projection(privacy_app):
     env = privacy_app
     member = await _global_member(env)
     admitted = await _team_request(env, "dave", "GET", "/v1/agents/me/inbound-mode")
@@ -570,22 +564,6 @@ async def test_global_activity_uses_canonical_participation_and_nullable_project
         member.did_aw,
     )
     assert participant and participant["agent_id"] is None
-    if key_only:
-        await env.db.execute(
-            "UPDATE {{tables.chat_participants}} SET did=$2 WHERE session_id=$1 AND did=$3",
-            UUID(session_id),
-            member.did,
-            member.did_aw,
-        )
-        refused = await _publish(
-            env,
-            "dave",
-            _event(env, "dave", session_id=session_id, from_stable_id=member.did_aw),
-        )
-        assert refused.status_code == 404, refused.text
-        assert await _latest(env, "dave") is None
-        return
-
     async with _stream(env, "bob", session_id, include="agent_activity") as response:
         assert response.status_code == 200
         await _subscribed(env, "dave")
@@ -597,6 +575,47 @@ async def test_global_activity_uses_canonical_participation_and_nullable_project
         assert sent.status_code == 202, sent.text
         frame = await _Stream(response.aiter_lines()).next("agent_activity")
     assert frame["agent"] == "dave" and frame["from_did"] == member.did
+
+
+@pytest.mark.asyncio
+async def test_global_activity_refuses_a_key_only_session_after_member_reconnect(privacy_app):
+    env = privacy_app
+    sk, _, did = _make_keypair()
+    env.actors["dave"] = SimpleNamespace(
+        sk=sk,
+        did=did,
+        certificate=_encode_certificate(
+            _make_certificate(
+                env.team_sk,
+                env.team_did,
+                did,
+                team_id=TEAM,
+                alias="dave",
+                identity_scope="local",
+                certificate_id="activity-local-dave",
+            )
+        ),
+    )
+    local = await _connect_member(env, "dave")
+    agent_id = local.id
+    session_id = await _session(env, "bob", "dave")
+
+    member = await _global_member(env)
+
+    assert member.id == agent_id
+    participant = await env.db.fetch_one(
+        "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2",
+        UUID(session_id),
+        did,
+    )
+    assert participant and participant["did"] == did
+    refused = await _publish(
+        env,
+        "dave",
+        _event(env, "dave", session_id=session_id, from_stable_id=member.did_aw),
+    )
+    assert refused.status_code == 404, refused.text
+    assert await _latest(env, "dave") is None
 
 
 @pytest.mark.asyncio

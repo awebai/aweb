@@ -65,7 +65,7 @@ async def authorize_message_delivery(
     sender_address: str | None,
     sender_verified_dids: list[str] | tuple[str, ...] | None = None,
     stored_route_continuation: bool = False,
-    registry_client=None,
+    registry_client,
 ) -> None:
     """Compatibility entry; current memberships come only from the shared owner."""
     await authorize_delivery(
@@ -93,7 +93,7 @@ async def admit_message_delivery(
     sender_address: str | None,
     sender_verified_dids,
     stored_route_continuation: bool,
-    registry_client=None,
+    registry_client,
 ) -> None:
     """The recipient's delivery policy for this sender; raises when it refuses."""
     if recipient.get("external") and not (

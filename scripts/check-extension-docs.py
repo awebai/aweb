@@ -274,6 +274,7 @@ def _mutation_enum_imports(tree: ast.Module) -> set[tuple[str, ...]]:
     """Resolve explicit canonical imports, conservatively refusing rebinding."""
     references: set[tuple[str, ...]] = set()
     canonical_imports: set[tuple[int, str]] = set()
+    node: ast.AST
     for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module == "aweb.event_types":
             for name in node.names:

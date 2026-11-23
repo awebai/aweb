@@ -19,11 +19,10 @@ from awid.identity_observation import (
 )
 from fastapi import Request
 
-from aweb.application_state import (
-    RegistryClientUnavailable,
-    application_registry_client,
-)
+from aweb.application_state import application_registry_client
 from aweb.service_errors import IdentityBindingCode, IdentityBindingError
+
+from aweb.application_state import native_application_state
 
 logger = logging.getLogger(__name__)
 _BINDING_TTL = 60
@@ -88,19 +87,17 @@ async def verify_identity_binding(
     fresh: bool = False,
     registry_client=None,
 ) -> IdentityBinding:
+    """Verify the claimed stable identity and address against the supplied registry evidence."""
     did_aw, address = (did_aw or "").strip(), (address or "").strip()
     if not did_aw and not address:
         return IdentityBinding(did_key=did_key)
     if not did_aw or not did_aw.startswith("did:aw:"):
         raise IdentityBindingError(IdentityBindingCode.MISMATCH)
-    try:
-        client = (
-            registry_client
-            if registry_client is not None
-            else application_registry_client(request.app.state)
-        )
-    except RegistryClientUnavailable as exc:
-        raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
+    client = (
+        registry_client
+        if registry_client is not None
+        else application_registry_client(request.app.state)
+    )
     cache = identity_binding_cache(request.app.state)
     key: tuple[str, ...] = (did_aw, did_key, address)
     if registry_client is not None:
@@ -123,6 +120,8 @@ async def verify_identity_binding(
 
 def identity_binding_cache(app_state) -> OrderedDict:
     """The application's cache of observed identity bindings, kept on its state."""
+
+    app_state = native_application_state(app_state)
     cache = getattr(app_state, "identity_binding_cache", None)
     if cache is None:
         cache = OrderedDict()

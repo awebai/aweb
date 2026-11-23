@@ -553,6 +553,10 @@ is extended. An age refusal tells the sender to sign with current UTC time and
 retry; changing a signature is never needed merely to acknowledge an exact
 accepted plaintext message.
 
+Native recipient lookups return 422 with `detail.code=registry_response_unusable`
+when the registry returns an unexpected status. The message directs the sender
+to the server operator. A temporary registry failure returns 503 with retry guidance.
+
 Cross-registry failures return `reason`, `retryable`, and `correlation_id` in
 addition to matching `detail`. Retry unchanged input only when `retryable` is
 true; only rate limiting emits `Retry-After: 1`. See the generated
@@ -563,9 +567,11 @@ stable reason/status table and safe support interpretation.
 
 New CLI mail and chat sends are server-readable plaintext by default. Mail
 replies preserve the source message's encryption by default; `--plaintext` and
-`--e2ee` explicitly select the reply mode. Encrypted delivery requires both
-identities to have valid encryption capability and fails closed rather than
-silently downgrading.
+`--e2ee` explicitly select the reply mode. A flagless chat continuation inherits
+the session's encryption. When the sole peer's verified key assertion declares
+hosted custody, the flagless continuation is signed and server-readable.
+An explicit `--e2ee` request requires valid end-to-end encryption capability
+from both identities and fails closed.
 
 Hosted MCP and dashboard-side messaging are server-readable hosted messaging,
 not evidence of self-custodial E2E behavior. For cryptographic and routing

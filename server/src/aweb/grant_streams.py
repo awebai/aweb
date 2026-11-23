@@ -9,19 +9,28 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 from aweb.application_state import application_registry_client
-from aweb.auth_context import TeamIdentity
+from aweb.auth_context import (
+    MessagingAuth,
+    TeamIdentity,
+    has_verified_team_certificate,
+)
 from aweb.certificate_registration import configured_registration_mode
 from aweb.identity_grant_status import GrantValidityState, grant_validity
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
     GRANT_ISSUER_RECOVERY_DETAIL,
+    MemberProjection,
     current_member,
+    current_membership,
     member_key_columns_sql,
     read_member_projection,
 )
+from aweb.team_auth_deps import admitted_member_projection
 from aweb.team_registry import native_database_manager
 
-GRANT_STREAM_RECHECK_SECONDS = 30
+STREAM_AUTHORITY_RECHECK_SECONDS = 30
+STREAM_MAX_DURATION_SECONDS = 300
+StreamIdentity = TeamIdentity | MessagingAuth
 
 GRANT_TERMINAL_DETAILS = {
     "verification_unavailable": "identity grant verification unavailable",
@@ -33,7 +42,11 @@ GRANT_TERMINAL_DETAILS = {
 }
 
 
-def clamp_deadline_to_grant(deadline: datetime, identity: TeamIdentity) -> datetime:
+def requires_stream_recheck(identity: StreamIdentity) -> bool:
+    return has_verified_team_certificate(identity) or identity.grant is not None
+
+
+def clamp_deadline_to_grant(deadline: datetime, identity: StreamIdentity) -> datetime:
     grant = identity.grant
     if grant is None or grant.never_expires:
         return deadline
@@ -46,7 +59,7 @@ def grant_terminal_sse(reason: str) -> str:
     return f"event: {reason}\ndata: {json.dumps(payload)}\n\n"
 
 
-def grant_expiry_reason(identity: TeamIdentity) -> str | None:
+def grant_expiry_reason(identity: StreamIdentity) -> str | None:
     if (
         identity.grant is not None
         and not identity.grant.never_expires
@@ -56,35 +69,65 @@ def grant_expiry_reason(identity: TeamIdentity) -> str | None:
     return None
 
 
-async def require_valid_stream_grant(request: Request, db, identity: TeamIdentity) -> None:
+async def require_valid_stream_grant(
+    request: Request, db, identity: StreamIdentity, *, use_admitted_member: bool = False,
+) -> None:
     """Check before constructing StreamingResponse, while HTTP errors are legal."""
-    reason = await grant_terminal_reason(request, db, identity)
+    admitted = admitted_member_projection(request, identity) if use_admitted_member else None
+    if admitted is None:
+        reason = await grant_terminal_reason(request, db, identity)
+    else:
+        reason = await _certificate_terminal_reason(request, identity, admitted)
     if reason:
         raise HTTPException(status_code=403, detail=GRANT_TERMINAL_DETAILS[reason])
 
 
-async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) -> str | None:
+async def _certificate_terminal_reason(
+    request: Request,
+    identity: StreamIdentity,
+    row: MemberProjection | None,
+    *,
+    continue_on_registry_outage: bool = False,
+) -> str | None:
+    checked_key = identity.verified_team_did_key
+    if (
+        not checked_key or row is None or row["did_key"] != identity.did_key
+        or not current_member(row, checked_key=checked_key)
+    ):
+        return "team_membership_not_current"
+    registry = application_registry_client(request.app.state)
+    try:
+        member = await current_membership(
+            registry, {**dict(row), "certificate_id": identity.certificate_id}, request=request,
+        )
+    except HTTPException as exc:
+        # The registration adapter wraps acquisition failures in a 503
+        # for the caller. Keep the registry's original classification.
+        acquisition = exc.__cause__ if isinstance(exc.__cause__, HTTPException) else exc
+        if continue_on_registry_outage and exc.status_code == acquisition.status_code == 503:
+            # Only an admitted connection may keep its previous standing.
+            # The local membership and checked key were confirmed above.
+            return None
+        raise
+    return None if member and member.get("team_id") else "team_membership_not_current"
+
+
+async def grant_terminal_reason(
+    request: Request, db, identity: StreamIdentity, *, continue_on_registry_outage: bool = False,
+) -> str | None:
     grant = identity.grant
     if grant is None:
-        if not identity.certificate_id:
-            # An identity-only conversation is not a certificate-auth stream.
+        if not has_verified_team_certificate(identity):
             return None
-        from aweb.identity_auth_deps import current_membership
-
+        checked_key = identity.verified_team_did_key
+        if not (checked_key and identity.certificate_id and identity.team_id and identity.agent_id):
+            return "team_membership_not_current"
         row = await read_member_projection(
             native_database_manager(db), team_id=identity.team_id, agent_id=identity.agent_id,
         )
-        if (
-            not row or not current_member(row) or row["did_key"] != identity.did_key
-            or not identity.verified_team_did_key
-            or identity.verified_team_did_key != row["current_team_did_key"]
-        ):
-            return "team_membership_not_current"
-        member = await current_membership(
-            application_registry_client(request.app.state),
-            {**dict(row), "certificate_id": identity.certificate_id}, request=request,
+        return await _certificate_terminal_reason(
+            request, identity, row, continue_on_registry_outage=continue_on_registry_outage,
         )
-        return None if member and member.get("team_id") else "team_membership_not_current"
     now = datetime.now(timezone.utc)
     if not grant.never_expires and _as_utc(grant.expires_at) <= now:
         return "grant_expired"
@@ -188,15 +231,19 @@ class NeverGrantStreamGuard:
         self.checked_at = time.monotonic()
 
     async def reason(self):
+        if not requires_stream_recheck(self.identity):
+            return None
         grant = self.identity.grant
         if grant is not None and not grant.never_expires:
             return self.expiry_reason(self.identity)
         now = time.monotonic()
-        if now - self.checked_at < GRANT_STREAM_RECHECK_SECONDS:
+        if now - self.checked_at < STREAM_AUTHORITY_RECHECK_SECONDS:
             return None
         self.checked_at = now
         try:
-            return await grant_terminal_reason(self.request, self.db, self.identity)
+            return await grant_terminal_reason(
+                self.request, self.db, self.identity, continue_on_registry_outage=True,
+            )
         except Exception:
             logging.getLogger(__name__).warning(
                 "Stream credential revalidation failed", exc_info=True

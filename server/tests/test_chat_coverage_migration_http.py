@@ -6,20 +6,28 @@ from uuid import uuid4
 
 import pytest
 
-from chat_coverage_support import migrate_chat_conversation_coverage
-from test_dashboard_privacy import TEAM, _request, privacy_app as privacy_app
+from tests.chat_coverage_support import COVERAGE_MIGRATION
+from test_dashboard_privacy import (
+    TEAM,
+    _request,
+    pre_chat_coverage_privacy_app as pre_chat_coverage_privacy_app,
+)
+
+__all__ = ["pre_chat_coverage_privacy_app"]
 
 
 @pytest.mark.asyncio
 async def test_migrated_pair_group_and_single_keep_exact_history_and_empty_stays_private(
-    privacy_app,
+    pre_chat_coverage_privacy_app,
+    chat_coverage_upgrade,
 ):
-    env = privacy_app
+    env = pre_chat_coverage_privacy_app
     historical_time = datetime(2026, 5, 1, tzinfo=timezone.utc)
     cases = {}
     for count in range(4):
         session_id, message_id = uuid4(), uuid4()
         names = ["alice", "bob", "carol"][:count]
+        # unreachable-state: pre-055 session without conversation coverage (migration 055)
         await env.db.execute(
             """INSERT INTO {{tables.chat_sessions}} (session_id,team_id,created_by,created_at)
                VALUES ($1,$2,'alice',$3)""",
@@ -29,10 +37,11 @@ async def test_migrated_pair_group_and_single_keep_exact_history_and_empty_stays
         )
         for name in names:
             actor = env.actors[name]
+            # unreachable-state: pre-055 session party without a canonical conversation participant (migration 055)
             await env.db.execute(
                 """INSERT INTO {{tables.chat_participants}}
-                   (session_id,did,agent_id,alias,address,current_did_key,joined_at,delivery_origin,left_at)
-                   VALUES ($1,$2,$3,$4,$5,$2,$6,$7,$8)""",
+                   (session_id,did,agent_id,alias,address,current_did_key,joined_at,delivery_origin)
+                   VALUES ($1,$2,$3,$4,$5,$2,$6,$7)""",
                 session_id,
                 actor.did,
                 actor.id,
@@ -40,8 +49,8 @@ async def test_migrated_pair_group_and_single_keep_exact_history_and_empty_stays
                 f"example.test/{name}",
                 historical_time,
                 "https://old-route.example.test" if name == "carol" else None,
-                historical_time if name == "carol" else None,
             )
+        # unreachable-state: pre-055 message attached to an uncovered session (migration 055)
         await env.db.execute(
             """INSERT INTO {{tables.chat_messages}}
                (message_id,session_id,from_agent_id,from_did,from_alias,body,created_at)
@@ -71,8 +80,8 @@ async def test_migrated_pair_group_and_single_keep_exact_history_and_empty_stays
                 (row["message_id"], row["body"]) for row in response.json()["messages"]
             ] == [(str(message_id), f"historical {count}")]
 
-    await migrate_chat_conversation_coverage(env.db)
-    await migrate_chat_conversation_coverage(env.db)
+    assert await chat_coverage_upgrade.apply() == [COVERAGE_MIGRATION]
+    assert await chat_coverage_upgrade.apply() == []
     assert [
         dict(row)
         for row in await env.db.fetch_all(
@@ -143,6 +152,7 @@ async def test_migrated_pair_group_and_single_keep_exact_history_and_empty_stays
 
 async def _legacy_pair(env, *, created_at, party_override=None):
     session_id, message_id = uuid4(), uuid4()
+    # unreachable-state: pre-055 session without conversation coverage (migration 055)
     await env.db.execute(
         "INSERT INTO {{tables.chat_sessions}} (session_id,team_id,created_by,created_at) VALUES ($1,$2,'alice',$3)",
         session_id,
@@ -154,6 +164,7 @@ async def _legacy_pair(env, *, created_at, party_override=None):
         party = dict(did=actor.did, alias=name)
         if name == "bob":
             party.update(party_override or {})
+        # unreachable-state: pre-055 blank or uncovered session party without a canonical conversation participant (migration 055)
         await env.db.execute(
             """INSERT INTO {{tables.chat_participants}}
                (session_id,did,agent_id,alias,current_did_key,joined_at)
@@ -165,6 +176,7 @@ async def _legacy_pair(env, *, created_at, party_override=None):
             actor.did,
             created_at,
         )
+    # unreachable-state: pre-055 message attached to an uncovered session (migration 055)
     await env.db.execute(
         """INSERT INTO {{tables.chat_messages}}
            (message_id,session_id,from_agent_id,from_did,from_alias,body,created_at)
@@ -189,9 +201,9 @@ async def _legacy_pair(env, *, created_at, party_override=None):
     ],
 )
 async def test_blank_legacy_party_retains_history_without_aborting_valid_coverage(
-    privacy_app, party_override, bob_status
+    pre_chat_coverage_privacy_app, chat_coverage_upgrade, party_override, bob_status
 ):
-    env = privacy_app
+    env = pre_chat_coverage_privacy_app
     at = datetime(2026, 5, 1, tzinfo=timezone.utc)
     malformed, message_id = await _legacy_pair(
         env, created_at=at, party_override=party_override
@@ -206,8 +218,8 @@ async def test_blank_legacy_party_retains_history_without_aborting_valid_coverag
             env, viewer, "GET", f"/v1/chat/sessions/{malformed}/messages"
         )
         assert old.status_code == expected_status, old.text
-    await migrate_chat_conversation_coverage(env.db)
-    await migrate_chat_conversation_coverage(env.db)
+    assert await chat_coverage_upgrade.apply() == [COVERAGE_MIGRATION]
+    assert await chat_coverage_upgrade.apply() == []
     assert (
         await env.db.fetch_all(
             "SELECT * FROM {{tables.chat_participants}} WHERE session_id=$1 ORDER BY participant_id",
@@ -242,15 +254,16 @@ async def test_blank_legacy_party_retains_history_without_aborting_valid_coverag
 
 @pytest.mark.asyncio
 async def test_only_newest_uncovered_pair_is_active_and_older_history_remains_readable(
-    privacy_app,
+    pre_chat_coverage_privacy_app,
+    chat_coverage_upgrade,
 ):
     from aweb.messaging.chat import find_session_between
 
-    env = privacy_app
+    env = pre_chat_coverage_privacy_app
     at = datetime(2026, 5, 1, tzinfo=timezone.utc)
     older, old_message = await _legacy_pair(env, created_at=at)
     newer, _ = await _legacy_pair(env, created_at=at + timedelta(days=1))
-    await migrate_chat_conversation_coverage(env.db)
+    assert await chat_coverage_upgrade.apply() == [COVERAGE_MIGRATION]
     rows = await env.db.fetch_all(
         "SELECT conversation_id,status FROM {{tables.conversations}} WHERE conversation_id=ANY($1::uuid[])",
         [older, newer],
@@ -273,10 +286,13 @@ async def test_only_newest_uncovered_pair_is_active_and_older_history_remains_re
 
 
 @pytest.mark.asyncio
-async def test_active_canonical_pair_wins_over_newer_uncovered_pair(privacy_app):
+async def test_active_canonical_pair_wins_over_newer_uncovered_pair(
+    pre_chat_coverage_privacy_app,
+    chat_coverage_upgrade,
+):
     from aweb.messaging.chat import find_session_between
 
-    env = privacy_app
+    env = pre_chat_coverage_privacy_app
     current = await _request(
         env,
         "alice",
@@ -293,7 +309,7 @@ async def test_active_canonical_pair_wins_over_newer_uncovered_pair(privacy_app)
         env,
         created_at=datetime.now(timezone.utc) + timedelta(days=1),
     )
-    await migrate_chat_conversation_coverage(env.db)
+    assert await chat_coverage_upgrade.apply() == [COVERAGE_MIGRATION]
     assert (
         await env.db.fetch_value(
             "SELECT status FROM {{tables.conversations}} WHERE conversation_id=$1",

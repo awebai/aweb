@@ -8,6 +8,8 @@ from test_member_team_key import _certificate, _change_key, _connect
 from test_team_auth_deps import _admitted_cert_info
 from test_team_key_pinning import pinning as pinning
 
+__all__ = ["pinning"]
+
 
 @pytest.mark.asyncio
 async def test_superseded_status_host_is_inactive_until_it_reconnects(pinning):

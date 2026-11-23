@@ -14,7 +14,8 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from nacl.signing import SigningKey
 from awid.did import did_from_public_key
-from awid.registry import CachedRegistryClient
+from awid.registry import CachedRegistryClient, RegistryClient
+from awid_service.testing import ServiceTransport
 import awid.registry as registry_module
 import httpx
 from aweb.app_registry import get_installation_on
@@ -37,6 +38,8 @@ from aweb.service_errors import ConflictError, ForbiddenError, ValidationError
 from aweb.task_contracts import validate_app_task, strict_json_bytes
 from test_dashboard_privacy import privacy_app as privacy_app, TEAM
 from test_task_answers import _v2_request
+
+__all__ = ["privacy_app"]
 
 
 async def _verified_install(
@@ -645,7 +648,8 @@ async def test_revoked_originator_cannot_create_or_read_by_replay(app_request_co
     )
     with pytest.raises(HTTPException) as caught:
         await _create(app_request_context, _body(env, expired=expired))
-    assert caught.value.status_code == 401 and caught.value.detail == "revoked"
+    assert caught.value.status_code == 401
+    assert caught.value.detail["code"] == "certificate_revoked"
 
 
 @pytest.mark.asyncio
@@ -928,6 +932,51 @@ async def test_c2_cached_authority_outage_fails_closed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answer", "status", "detail"),
+    [
+        ("keyless", 422, "registry_response_unusable"),
+        ("missing_key", 422, "registry_response_unusable"),
+        ("absent", 404, "awid_team_not_found"),
+    ],
+)
+async def test_c2_distinguishes_unusable_and_absent_team_authority(
+    app_request_context, monkeypatch, answer, status, detail
+):
+    env, *_ = app_request_context
+    original = env.app.state.awid_registry_client
+    transport = ServiceTransport(env.registry_app)
+    team_path = f"/v1/namespaces/example.test/teams/{TEAM.split(':', 1)[0]}"
+
+    def fault(request, response):
+        if request.url.path != team_path or request.method != "GET":
+            return None
+        assert response.status_code == 200
+        if answer == "absent":
+            return httpx.Response(404, json={"detail": "Team not found"})
+        body = response.json()
+        assert body["team_did_key"] == env.team_did
+        if answer == "missing_key":
+            del body["team_did_key"]
+        else:
+            body["team_did_key"] = ""
+        return httpx.Response(200, json=body)
+
+    transport.fault = fault
+    faulty_registry = RegistryClient(
+        original.registry_url, transport=transport, service_token=original.service_token
+    )
+    monkeypatch.setattr(env.app.state, "awid_registry_client", faulty_registry)
+    try:
+        response = await _app_http(app_request_context, "POST", "/v1/tasks/app-requests", _body(env))
+        assert (response.status_code, response.json()["detail"]) == (status, detail), response.text
+        assert [request.url.path for request in transport.calls] == [team_path]
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 0
+    finally:
+        await faulty_registry.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cache_age", [0, 61, 601])
 @pytest.mark.parametrize("expired_replay", [False, True])
 async def test_c2_cached_authority_observes_revocation(
@@ -948,7 +997,8 @@ async def test_c2_cached_authority_observes_revocation(
         env, expired=expired_replay, request_id="action-1" if expired_replay else "cache-new"
     )
     response = await _app_http(context, "POST", "/v1/tasks/app-requests", body)
-    assert response.status_code == 401 and response.json()["detail"] == "revoked", response.text
+    assert response.status_code == 401, response.text
+    assert response.json()["detail"]["code"] == "certificate_revoked"
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
 
 
@@ -991,9 +1041,11 @@ async def test_answer_requires_fresh_member_authority_even_for_replay(
     clock[0] += 61
     refused = await _v2_request(env, "bob", "POST", ref + "/answer", answer)
     assert refused.status_code == (401 if authority == "revoked" else 503), refused.text
-    assert refused.json()["detail"] == (
-        "revoked" if authority == "revoked" else "authority_unavailable"
-    )
+    detail = refused.json()["detail"]
+    if authority == "revoked":
+        assert detail["code"] == "certificate_revoked"
+    else:
+        assert detail == "authority_unavailable"
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_answers}}") == int(replay)
     assert await env.db.fetch_value(
         "SELECT count(*) FROM {{tables.task_answer_stage_nonces}}"

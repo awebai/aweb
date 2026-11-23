@@ -122,7 +122,7 @@ func TestAgentAndHumanCreationNames(t *testing.T) {
 				args = append(args, "--json")
 				cmd := exec.CommandContext(ctx, bin, args...)
 				cmd.Dir = root
-				cmd.Env = append(idCreateCommandEnv(root), "AWEB_URL="+server.URL, "AWEB_API_KEY="+apiKey, "AWID_REGISTRY_URL=", "AWEB_HUMAN="+tc.human, "AWEB_HUMAN_NAME="+tc.legacy, "USER="+tc.user, "AWEB_AGENT_TYPE="+tc.envType, "AW_NO_UPDATE_CHECK=1")
+				cmd.Env = append(idCreateCommandEnv(root), "AWEB_URL="+server.URL, "AWEB_API_KEY="+apiKey, "AWEB_HUMAN="+tc.human, "AWEB_HUMAN_NAME="+tc.legacy, "USER="+tc.user, "AWEB_AGENT_TYPE="+tc.envType, "AW_NO_UPDATE_CHECK=1")
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("creation: %v\n%s", err, out)
 				}

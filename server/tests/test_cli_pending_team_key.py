@@ -14,6 +14,8 @@ from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import _encode_certificate, _make_certificate, _make_keypair
 
+__all__ = ["privacy_app"]
+
 
 @pytest.fixture(scope="session")
 def team_key_observation_probe(tmp_path_factory):

@@ -241,9 +241,9 @@ func (r *teamRotation) collectMembers(ctx context.Context, currentKey ed25519.Pr
 	if err != nil {
 		return fmt.Errorf("list the member certificates of %s: %w", r.teamID, err)
 	}
+	issuer := teamMembershipIssuer{TeamID: r.teamID, Key: r.newKey}
 	for _, old := range certificates {
-		fresh, err := awid.SignTeamCertificate(r.newKey, awid.TeamCertificateFields{
-			Team:          r.teamID,
+		fresh, err := issuer.sign(awid.TeamCertificateFields{
 			MemberDIDKey:  old.MemberDIDKey,
 			MemberDIDAW:   old.MemberDIDAW,
 			MemberAddress: old.MemberAddress,

@@ -25,6 +25,7 @@ from starlette.requests import Request
 import uvicorn
 
 from aweb.api import create_app
+from aweb.embedding import OutboxRecoveryOwnership
 from aweb.outbox_recovery import stop_outbox_recovery
 from aweb.db import DatabaseInfra
 from aweb.events import (
@@ -38,13 +39,13 @@ from aweb.mutation_hooks import create_mutation_handler
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.status import status_stream
 from aweb.team_auth_deps import TeamIdentity
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
 from awid_service.testing import Registry, ServiceTransport
-from test_dashboard import _JWT_SECRET, _make_jwt
+from dashboard_test_support import _JWT_SECRET, _make_jwt
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -63,13 +64,25 @@ _TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 
 @pytest_asyncio.fixture
-async def privacy_app(shared_test_pool, monkeypatch):
-    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+async def privacy_app(shared_test_pool, monkeypatch, request):
+    async with privacy_stack(shared_test_pool, monkeypatch, proxy_verification=getattr(request, "param", None)) as env:
+        yield env
+
+
+@pytest_asyncio.fixture
+async def pre_chat_coverage_privacy_app(shared_test_pool, monkeypatch, chat_coverage_upgrade):
+    async with privacy_stack(
+        shared_test_pool, monkeypatch, database=chat_coverage_upgrade.infra
+    ) as env:
         yield env
 
 
 @asynccontextmanager
-async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
+async def privacy_stack(
+    shared_test_pool, monkeypatch, tls=None, *,
+    aliases=("alice", "bob", "carol"), team_visibility="public", database=None,
+    outbox_recovery=OutboxRecoveryOwnership.NATIVE, proxy_verification=None,
+):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
@@ -82,7 +95,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
         decode_responses=True,
     ) as redis:
         await redis.ping()
-        db = DatabaseInfra()
+        db = database if database is not None else DatabaseInfra()
         await db.initialize(shared_pool=shared_test_pool)
         registry_db = AwidDatabaseInfra(schema="privacy_registry")
         await registry_db.initialize(shared_pool=shared_test_pool)
@@ -110,7 +123,10 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 service_token=service_token,
                 domain_verifier=fixture_registry.namespace_authority,
             )
-            app = create_app()
+            app = create_app(
+                host_runs_outbox_recovery=outbox_recovery is OutboxRecoveryOwnership.HOST,
+                proxy_verification=proxy_verification,
+            )
             # Externally provisioned resources, exactly as an embedding host
             # supplies them; lifecycle startup would create different ones.
             app.state.db = db
@@ -122,7 +138,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
 
             async def observe_mutation(event_type, context):
                 dispatched.append((event_type, dict(context)))
-                await handler(event_type, context)
+                return await handler(event_type, context)
 
             app.state.on_mutation = observe_mutation
             manager = db.get_manager("aweb")
@@ -139,11 +155,11 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 name=TEAM_NAME,
                 display_name=TEAM_NAME,
                 team_did_key=team_did,
-                visibility="public",
-                namespace_controller_signing_key=bytes(namespace_key),
+                visibility=team_visibility,
+                namespace_controller_signing_key=namespace_key,
             )
             actors = {}
-            for alias in ("alice", "bob", "carol"):
+            for alias in aliases:
                 sk, _, did = _make_keypair()
                 agent_id, workspace_id = uuid4(), uuid4()
                 await manager.execute(
@@ -223,8 +239,8 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                         dispatched=dispatched,
                         app=app,
                         infra=db,
-                        namespace_sk=bytes(namespace_key),
-                        namespace_did=did_from_public_key(bytes(namespace_key.verify_key)),
+                        namespace_sk=namespace_key,
+                        namespace_did=did_key_from_signing_key(namespace_key),
                         team_sk=team_sk,
                         team_did=team_did,
                     )
@@ -236,7 +252,8 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 await registry.aclose()
                 await fixture_registry.aclose()
         await registry_db.close()
-        await db.close()
+        if database is None:
+            await db.close()
 
 
 async def _request(env, actor, method, path, body=None):
@@ -578,8 +595,8 @@ async def test_embedded_public_status_reader_never_gets_messaging(
     if colliding_workspace:
         _, _, did = _make_keypair()
         await env.db.execute(
-            "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias) "
-            "VALUES ($1, $2, $3, 'public-collision')",
+            "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, inbound_mode) "
+            "VALUES ($1, $2, $3, 'public-collision', 'open')",
             UUID(actor_id),
             TEAM,
             did,

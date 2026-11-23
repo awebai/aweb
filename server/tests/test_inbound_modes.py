@@ -83,27 +83,23 @@ async def test_effective_identity_policy(aweb_cloud_db, modes, want):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("invalid", [None, "unknown"])
-async def test_identity_policy_rejects_null_but_ignores_deleted_rows(
-    aweb_cloud_db, invalid
-):
+async def test_identity_policy_rejects_invalid_but_ignores_deleted_rows(aweb_cloud_db):
     from aweb.inbound_modes import effective_inbound_mode
     from aweb.service_errors import ForbiddenError
 
     manager = aweb_cloud_db.aweb_db
-    if invalid is not None:
-        await manager.execute(
-            "ALTER TABLE {{tables.agents}} DROP CONSTRAINT agents_inbound_mode_valid"
-        )
-    ids, _ = await _memberships(manager, ["open", invalid])
-    with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
+    await manager.execute(
+        "ALTER TABLE {{tables.agents}} DROP CONSTRAINT agents_inbound_mode_valid"
+    )
+    ids, _ = await _memberships(manager, ["open", "unknown"])
+    with pytest.raises(ForbiddenError, match="inbound policy is unavailable"):
         await effective_inbound_mode(manager, "did:aw:policy")
     await manager.execute(
         "UPDATE {{tables.agents}} SET deleted_at=clock_timestamp() WHERE agent_id=$1",
         ids[1],
     )
     assert await effective_inbound_mode(manager, "did:aw:policy") == "open"
-    with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
+    with pytest.raises(ForbiddenError, match="inbound policy is unavailable"):
         await effective_inbound_mode(manager, "did:aw:unknown")
     assert await effective_inbound_mode(manager, "did:aw:new", default="open") == "open"
 
@@ -279,7 +275,7 @@ async def test_global_policy_without_raw_did_uses_only_its_own_mode(
         "inbound_mode": mode,
     }
     if mode is None or mode == "unknown":
-        with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
+        with pytest.raises(ForbiddenError, match="inbound policy is unavailable"):
             await recipient_inbound_mode(_DbShim(aweb_cloud_db.aweb_db), recipient)
     else:
         assert (

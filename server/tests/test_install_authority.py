@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from contextlib import aclosing
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from awid.did import did_from_public_key, generate_keypair
+from awid.did import did_key_from_signing_key
+from awid.team_certificate import issue_team_certificate
+from aweb.certificate_auth import verify_certificate_generation
+from aweb.routes.connect import PlannedIdentityIds, connect_agent
+from test_certificate_generation import _registered_team, _context
+from aweb.internal_auth import ProxyVerificationConfig
 from aweb.auth_context import GrantContext
 from aweb.install_authority import (
     CertificateInstallAdminSubject,
@@ -19,7 +25,7 @@ from aweb.internal_auth import build_internal_auth_header_value
 from aweb.team_auth_deps import TeamIdentity
 from fastapi import FastAPI, HTTPException, Request
 
-TEAM = "demo:example.com"
+TEAM = "generation:local"
 ACTOR = str(uuid4())
 PRINCIPAL = str(uuid4())
 SECRET = "test-install-policy-proxy-secret"
@@ -42,6 +48,7 @@ def identity(**changes):
 
 def request(*, headers=None, policy=None):
     app = FastAPI()
+    ProxyVerificationConfig.capture().install(app)
     if policy is not None:
         app.state.install_admin_policy = policy
     return Request(
@@ -77,35 +84,33 @@ class Policy:
 
 
 @pytest_asyncio.fixture
-async def db(aweb_cloud_db):
-    # Use the actual native schema read by the shared MemberProjection owner.
-    # Only the host policy's delegation table belongs to this unit fixture.
-    db = aweb_cloud_db.aweb_db
-    await db.execute(
-        "CREATE TABLE aweb.test_install_admins (team_id TEXT NOT NULL, subject_id TEXT NOT NULL)"
-    )
-    for team_id in (TEAM, "elsewhere:example.com"):
-        _, public_key = generate_keypair()
-        await db.execute(
-            "INSERT INTO aweb.teams (team_id, namespace, team_name, team_did_key) "
-            "VALUES ($1, 'example.com', $2, $3)",
-            team_id,
-            team_id.split(":", 1)[0],
-            did_from_public_key(public_key),
-        )
+async def db(real_stack):
+    db = real_stack.aweb_db
+    await db.execute("CREATE TABLE aweb.test_install_admins (team_id TEXT NOT NULL, subject_id TEXT NOT NULL)")
     return db
 
 
-async def insert_actor(db, *, team_id=TEAM, status="active", removed=False):
-    _, public_key = generate_keypair()
-    await db.execute(
-        "INSERT INTO aweb.agents (agent_id, team_id, alias, did_key, status, deleted_at) "
-        "VALUES ($1, $2, 'actor', $3, $4, CASE WHEN $5 THEN NOW() END)",
-        ACTOR,
-        team_id,
-        did_from_public_key(public_key),
-        status,
-        removed,
+async def _admit_actor(stack, *, team_id=TEAM):
+    sdk, controller, member, _, _ = await _registered_team(stack)
+    async with aclosing(sdk):
+        if team_id != TEAM:
+            await sdk.register_team(
+                domain="local", name=team_id.split(":")[0], display_name="Other team",
+                team_did_key=did_key_from_signing_key(controller), visibility="public",
+                namespace_controller_signing_key=bytes([41]) * 32,
+            )
+        _, encoded = issue_team_certificate(
+            team_id=team_id, team_signing_key=controller,
+            member_did_key=did_key_from_signing_key(member), alias="worker", identity_scope="local",
+        )
+        generation = await verify_certificate_generation(
+            context=_context(stack, sdk), team_id=team_id,
+            encoded_certificate=encoded, member_did_key=did_key_from_signing_key(member),
+        )
+    await connect_agent(
+        db=stack.aweb_db, generation=generation,
+        planned_ids=PlannedIdentityIds(agent_id=UUID(ACTOR), workspace_id=uuid4()),
+        hostname="", workspace_path="", repo_origin="", role="", human_name="", agent_type="agent",
     )
 
 
@@ -210,16 +215,13 @@ async def test_verified_internal_subject_reaches_host_policy(db, monkeypatch, pr
 
 
 @pytest.mark.parametrize("state", ["retired", "removed", "other-team"])
-async def test_forwarded_actor_that_names_a_non_member_agent_never_reaches_policy(
-    db, monkeypatch, state
-):
+async def test_forwarded_actor_that_names_a_non_member_agent_never_reaches_policy(db, real_stack, monkeypatch, state):
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
-    await insert_actor(
-        db,
-        team_id="elsewhere:example.com" if state == "other-team" else TEAM,
-        status="retired" if state == "retired" else "active",
-        removed=state == "removed",
+    await _admit_actor(real_stack, team_id="elsewhere:local" if state == "other-team" else TEAM)
+    await db.execute(
+        "UPDATE aweb.agents SET status=$2, deleted_at=CASE WHEN $3 THEN NOW() END WHERE agent_id=$1",
+        ACTOR, "retired" if state == "retired" else "active", state == "removed",
     )
     await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, PRINCIPAL)
     policy = Policy()
@@ -229,10 +231,10 @@ async def test_forwarded_actor_that_names_a_non_member_agent_never_reaches_polic
     assert policy.seen == []
 
 
-async def test_forwarded_actor_that_is_an_active_member_reaches_policy(db, monkeypatch):
+async def test_forwarded_actor_that_is_an_active_member_reaches_policy(db, real_stack, monkeypatch):
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
-    await insert_actor(db)
+    await _admit_actor(real_stack)
     await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, PRINCIPAL)
     policy = Policy()
     await require(db, request(headers=proxy_headers(), policy=policy))

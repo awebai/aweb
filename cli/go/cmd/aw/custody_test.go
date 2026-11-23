@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -614,10 +615,10 @@ func TestCustodyServeRefusesLiveSocketAndRemovesStaleSocket(t *testing.T) {
 	runDir := filepath.Join("/tmp", "aw-custody-test-"+runID[:8])
 	_ = os.RemoveAll(runDir)
 	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
-	if err := os.MkdirAll(runDir, 0o777); err != nil {
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(runDir, 0o777); err != nil {
+	if err := os.Chmod(runDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	socket := filepath.Join(runDir, "custody.sock")
@@ -674,7 +675,15 @@ func TestCustodyServeRefusesLiveSocketAndRemovesStaleSocket(t *testing.T) {
 	}
 
 	_ = os.Remove(socket)
-	if err := os.WriteFile(socket, []byte("stale"), 0o600); err != nil {
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(socket, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
 	stale := testCustodyService(t, residentKey, sessionKey)

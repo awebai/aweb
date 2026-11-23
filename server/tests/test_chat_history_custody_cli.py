@@ -21,6 +21,8 @@ from test_cli_human_reply import _cli
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_e2ee_local_sender_read_trust import _local_sender_mail
 
+__all__ = ["privacy_app"]
+
 
 @asynccontextmanager
 async def encrypted_history(env, root, count):

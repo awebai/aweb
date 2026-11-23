@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.reconnect import ReconnectBackoff
+
 from aweb.messaging.kinds import ContentMode
 from aweb.event_types import TransportEventType
 
@@ -449,9 +451,7 @@ async def stream_events_multi(
     #    a catch-up mechanism (the per-agent wake stream in routes/events.py
     #    does this by polling Postgres directly).
     pubsub: PubSub | None = None
-    reconnect_delay_seconds = 0.1
-    max_reconnect_delay_seconds = 5.0
-    next_reconnect_at: float | None = None
+    backoff = ReconnectBackoff(initial_delay=0.1, maximum_delay=5.0)
 
     async def _close_pubsub(ps: PubSub | None) -> None:
         await release_subscription(ps, *channels)
@@ -469,19 +469,16 @@ async def stream_events_multi(
         while True:
             # Check for client disconnect
             if check_disconnected and await check_disconnected():
-                logger.debug(
-                    f"Client disconnected, ending stream for {len(channels)} channels"
-                )
+                logger.debug(f"Client disconnected, ending stream for {len(channels)} channels")
                 return
 
             now = loop.time()
 
             if pubsub is None:
-                if next_reconnect_at is None or now >= next_reconnect_at:
+                if backoff.due(now):
                     try:
                         pubsub = await _connect_pubsub()
-                        reconnect_delay_seconds = 0.1
-                        next_reconnect_at = None
+                        backoff.reset()
                         last_keepalive = now
                         last_pubsub_ping = now
                     except RedisError:
@@ -489,11 +486,7 @@ async def stream_events_multi(
                             "Redis pubsub reconnect failed; will retry",
                             exc_info=True,
                         )
-                        next_reconnect_at = now + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(
-                            max_reconnect_delay_seconds,
-                            reconnect_delay_seconds * 2,
-                        )
+                        backoff.schedule(now)
 
                 if now - last_keepalive >= keepalive_seconds:
                     yield ": keepalive\n\n"
@@ -508,26 +501,16 @@ async def stream_events_multi(
                     timeout=1.0,
                 )
             except RedisConnectionError:
-                logger.info(
-                    "Redis pubsub connection dropped; reconnecting", exc_info=True
-                )
+                logger.info("Redis pubsub connection dropped; reconnecting", exc_info=True)
                 await _close_pubsub(pubsub)
                 pubsub = None
-                next_reconnect_at = now + reconnect_delay_seconds
-                reconnect_delay_seconds = min(
-                    max_reconnect_delay_seconds,
-                    reconnect_delay_seconds * 2,
-                )
+                backoff.schedule(now)
                 message = None
             except RedisError:
                 logger.warning("Redis pubsub error; reconnecting", exc_info=True)
                 await _close_pubsub(pubsub)
                 pubsub = None
-                next_reconnect_at = now + reconnect_delay_seconds
-                reconnect_delay_seconds = min(
-                    max_reconnect_delay_seconds,
-                    reconnect_delay_seconds * 2,
-                )
+                backoff.schedule(now)
                 message = None
 
             current_time = loop.time()
@@ -553,24 +536,15 @@ async def stream_events_multi(
 
             # Send keepalive comment if needed
             if current_time - last_keepalive >= keepalive_seconds:
-                if (
-                    pubsub is not None
-                    and current_time - last_pubsub_ping >= keepalive_seconds
-                ):
+                if pubsub is not None and current_time - last_pubsub_ping >= keepalive_seconds:
                     try:
                         await pubsub.ping()
                         last_pubsub_ping = current_time
                     except RedisError:
-                        logger.info(
-                            "Redis pubsub ping failed; reconnecting", exc_info=True
-                        )
+                        logger.info("Redis pubsub ping failed; reconnecting", exc_info=True)
                         await _close_pubsub(pubsub)
                         pubsub = None
-                        next_reconnect_at = current_time + reconnect_delay_seconds
-                        reconnect_delay_seconds = min(
-                            max_reconnect_delay_seconds,
-                            reconnect_delay_seconds * 2,
-                        )
+                        backoff.schedule(current_time)
 
                 yield ": keepalive\n\n"
                 last_keepalive = current_time

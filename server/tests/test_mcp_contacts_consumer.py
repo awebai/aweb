@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 from unittest.mock import AsyncMock
 from types import SimpleNamespace
 
 import pytest
 
 from aweb.mcp.auth import AuthContext
-from aweb.mcp import server as mcp_server
 from aweb.mcp.server import register_tools
 from aweb.mcp.tools import chat as chat_tools
 from aweb.mcp.tools import contacts as contacts_tools
 from aweb.mcp.tools import mail as mail_tools
+from test_mcp_chat_send_parity import chat_server
+from test_messages_http import _signed_team_headers
+
+__all__ = ["chat_server"]
 
 
 class DBInfra:
@@ -256,106 +259,163 @@ async def test_mcp_read_tools_accept_old_new_and_expand_contract_shapes(
     assert "takes precedence" in description
 
 
+async def _public_mcp_tool(server, alias, name, **arguments):
+    actor = server.actors[alias]
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+    ).encode()
+    response = await server.client.post(
+        "/mcp/",
+        content=body,
+        headers={
+            **_signed_team_headers(
+                actor.signing_key, actor.did_key, actor.team_id, actor.certificate, body
+            ),
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+    )
+    assert response.status_code == 200, response.text
+    envelope = response.json()
+    assert "error" not in envelope, envelope
+    result = envelope["result"]
+    assert not result.get("isError"), result
+    return json.loads(result["content"][0]["text"])
+
+
 @pytest.mark.asyncio
 async def test_legacy_mcp_tool_aliases_delegate_to_existing_implementations(
-    monkeypatch,
+    chat_server,
 ):
-    collector = ToolCollector()
-    calls: list[tuple[str, dict]] = []
+    server = chat_server
+    sent_ids = set()
+    for number in range(4):
+        sent = await _public_mcp_tool(
+            server,
+            "bob",
+            "send_mail",
+            to="pilot",
+            subject=f"subject-{number}",
+            body=f"mail-{number}",
+            plaintext=True,
+        )
+        assert "error" not in sent, sent
+        sent_ids.add(sent["message_id"])
 
-    async def fake_check_inbox(*args, **kwargs):
-        calls.append(("check_inbox", kwargs))
-        return json.dumps({"ok": True})
-
-    async def fake_chat_send(*args, **kwargs):
-        calls.append(("chat_send", kwargs))
-        return json.dumps({"ok": True})
-
-    async def fake_chat_pending(*args, **kwargs):
-        calls.append(("chat_pending", kwargs))
-        return json.dumps({"ok": True})
-
-    async def fake_send_message_to_contact(*args, **kwargs):
-        calls.append(("send_message_to_contact", kwargs))
-        return json.dumps({"ok": True})
-
-    monkeypatch.setattr(mcp_server, "_check_inbox_impl", fake_check_inbox)
-    monkeypatch.setattr(mcp_server, "_chat_send_impl", fake_chat_send)
-    monkeypatch.setattr(mcp_server, "_chat_pending_impl", fake_chat_pending)
-    monkeypatch.setattr(
-        mcp_server, "_send_message_to_contact_impl", fake_send_message_to_contact
+    inbox = await _public_mcp_tool(server, "pilot", "check_inbox", limit=3)
+    messages = inbox["messages"]
+    assert len(messages) == 3
+    assert {message["body"] for message in messages} <= {f"mail-{n}" for n in range(4)}
+    read = await server.db.fetch_all(
+        "SELECT message_id FROM {{tables.messages}} WHERE read_at IS NOT NULL"
     )
-    register_tools(
-        collector,  # type: ignore[arg-type]
-        db_infra=object(),  # type: ignore[arg-type]
-        redis=None,
-        registry_client=object(),  # type: ignore[arg-type]
-    )
+    assert {str(row["message_id"]) for row in read} == {
+        m["message_id"] for m in messages
+    }
+    remaining = await _public_mcp_tool(server, "pilot", "check_mail", limit=3)
+    assert len(remaining["messages"]) == 1
+    assert {m["message_id"] for m in messages + remaining["messages"]} == sent_ids
+    assert (await _public_mcp_tool(server, "pilot", "check_inbox"))["messages"] == []
 
-    await collector.funcs["check_inbox"](limit=3)  # type: ignore[operator]
-    await collector.funcs["chat_pending"]()  # type: ignore[operator]
-    await collector.funcs["chat_send"](  # type: ignore[operator]
-        message="hi", to_address="aweb.ai/aida"
+    sent = await _public_mcp_tool(
+        server, "pilot", "chat_send", to_address="acme.com/bob", message="hi"
     )
-    await collector.funcs["send_message_to_contact"](  # type: ignore[operator]
-        contact_id="contact-1",
+    assert sent["delivered"] is True
+    pending = await _public_mcp_tool(server, "bob", "chat_pending")
+    canonical = await _public_mcp_tool(server, "bob", "check_chats")
+    assert [p["session_id"] for p in pending["pending"]] == [sent["session_id"]]
+    assert pending["pending"][0]["unread_count"] == 1
+    assert canonical == pending
+
+    contact = await _public_mcp_tool(
+        server, "pilot", "add_contact_by_handle", handle="@acme.com/bob", label="Bob"
+    )
+    assert "error" not in contact, contact
+    via_contact = await _public_mcp_tool(
+        server,
+        "pilot",
+        "send_message_to_contact",
+        contact_id=contact["contact_id"],
         message="hello",
         channel="chat",
         wait=True,
+        wait_seconds=1,
     )
-
-    assert calls[0] == (
-        "check_inbox",
-        {
-            "hosted_decryptor": None,
-            "unread_only": True,
-            "limit": 3,
-            "include_bodies": True,
-        },
+    assert via_contact["delivered"] is True
+    assert via_contact["session_id"] == sent["session_id"]
+    assert via_contact["replies"] == []
+    assert via_contact["timed_out"] is True
+    stored = await server.db.fetch_all(
+        "SELECT body FROM {{tables.chat_messages}} WHERE session_id=$1 ORDER BY seq",
+        UUID(sent["session_id"]),
     )
-    assert calls[1] == ("chat_pending", {"hosted_decryptor": None})
-    assert calls[2][0] == "chat_send"
-    assert calls[2][1]["to_address"] == "aweb.ai/aida"
-    assert calls[2][1]["message"] == "hi"
-    assert calls[3][0] == "send_message_to_contact"
-    assert calls[3][1]["contact_id"] == "contact-1"
-    assert calls[3][1]["channel"] == "chat"
-    assert calls[3][1]["wait"] is True
+    assert [row["body"] for row in stored] == ["hi", "hello"]
+    session = await server.db.fetch_one(
+        "SELECT wait_seconds, wait_started_by FROM {{tables.chat_sessions}} WHERE session_id=$1",
+        UUID(sent["session_id"]),
+    )
+    assert session["wait_seconds"] == 1
+    assert str(session["wait_started_by"]) == server.agents["pilot"]
 
 
 @pytest.mark.asyncio
-async def test_send_chat_public_tool_maps_to_unified_recipient_args(monkeypatch):
-    collector = ToolCollector()
-    calls: list[dict] = []
-
-    async def fake_chat_send_impl(*args, **kwargs):
-        calls.append(kwargs)
-        return json.dumps({"ok": True})
-
-    monkeypatch.setattr(mcp_server, "_chat_send_impl", fake_chat_send_impl)
-    register_tools(
-        collector,  # type: ignore[arg-type]
-        db_infra=object(),  # type: ignore[arg-type]
-        redis=None,
-        registry_client=object(),  # type: ignore[arg-type]
+async def test_send_chat_public_tool_maps_to_unified_recipient_args(chat_server):
+    server = chat_server
+    sent = []
+    for recipient, body in (
+        ("acme.com/bob", "by-address"),
+        (server.dids["bob"], "by-did"),
+        ("bob", "by-alias"),
+    ):
+        result = await _public_mcp_tool(
+            server, "pilot", "send_chat", to=recipient, message=body
+        )
+        assert result["delivered"] is True
+        sent.append(result)
+    continued = await _public_mcp_tool(
+        server,
+        "pilot",
+        "send_chat",
+        conversation_id=sent[0]["session_id"],
+        message="continuation",
     )
+    assert continued["delivered"] is True
+    sent.append(continued)
+    assert {result["session_id"] for result in sent} == {sent[0]["session_id"]}
+    assert len({result["message_id"] for result in sent}) == 4
+    rows = await server.db.fetch_all(
+        "SELECT message_id, body FROM {{tables.chat_messages}} ORDER BY seq"
+    )
+    assert [row["body"] for row in rows] == [
+        "by-address",
+        "by-did",
+        "by-alias",
+        "continuation",
+    ]
+    assert {str(row["message_id"]) for row in rows} == {r["message_id"] for r in sent}
 
-    send_chat = collector.funcs["send_chat"]
-    await send_chat(message="hello", to="aweb.ai/aida")  # type: ignore[operator]
-    await send_chat(message="hello", to="did:aw:target")  # type: ignore[operator]
-    await send_chat(message="hello", to="bob")  # type: ignore[operator]
-    await send_chat(message="hello", conversation_id="conv-1")  # type: ignore[operator]
-
-    assert calls[0]["to_address"] == "aweb.ai/aida"
-    assert calls[0]["to_alias"] == ""
-    assert calls[0]["to_did"] == ""
-    assert calls[0]["session_id"] == ""
-    assert calls[1]["to_did"] == "did:aw:target"
-    assert calls[2]["to_alias"] == "bob"
-    assert calls[3]["session_id"] == "conv-1"
-    assert calls[3]["to_address"] == ""
-    assert calls[3]["to_alias"] == ""
-    assert calls[3]["to_did"] == ""
+    conflicting = await _public_mcp_tool(
+        server,
+        "pilot",
+        "send_chat",
+        to="bob",
+        conversation_id=sent[0]["session_id"],
+        message="blocked",
+    )
+    assert conflicting == {"error": "Provide session_id or a recipient, not both"}
+    absent = await _public_mcp_tool(server, "pilot", "send_chat", message="blocked")
+    assert absent == {"error": "Provide exactly one of to_alias, to_did, or to_address"}
+    assert (
+        await server.db.fetch_all(
+            "SELECT message_id, body FROM {{tables.chat_messages}} ORDER BY seq"
+        )
+        == rows
+    )
 
 
 @pytest.mark.asyncio
@@ -915,12 +975,13 @@ async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_chat_se
 
 @pytest.mark.asyncio
 async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session_without_rediscovery(
-    aweb_cloud_db,
+    pre_chat_coverage_db,
     monkeypatch,
+    chat_coverage_upgrade,
 ):
-    alice_agent_id, bob_agent_id = await _seed_team(aweb_cloud_db.aweb_db)
+    alice_agent_id, bob_agent_id = await _seed_team(pre_chat_coverage_db.aweb_db)
     _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
-    contact = await aweb_cloud_db.aweb_db.fetch_one(
+    contact = await pre_chat_coverage_db.aweb_db.fetch_one(
         """
         INSERT INTO {{tables.contacts}} (
             owner_did, contact_address, contact_did_aw,
@@ -932,14 +993,14 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
         """
     )
     session_id = str(uuid4())
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
         VALUES ($1, 'ops:acme.com', 'alice')
         """,
         session_id,
     )
-    await aweb_cloud_db.aweb_db.execute(
+    await pre_chat_coverage_db.aweb_db.execute(
         """
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
         VALUES
@@ -951,10 +1012,7 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
         bob_agent_id,
     )
 
-    # Historical fixtures inserted after setup must cross the shipped migration.
-    from chat_coverage_support import migrate_chat_conversation_coverage
-
-    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+    await chat_coverage_upgrade.apply()
 
     class NoRegistry:
         async def resolve_address(self, *_args, **_kwargs):
@@ -962,7 +1020,7 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
 
     result = json.loads(
         await contacts_tools.send_message_to_contact(
-            DBInfra(aweb_cloud_db.aweb_db),
+            DBInfra(pre_chat_coverage_db.aweb_db),
             registry_client=NoRegistry(),
             contact_id=str(contact["contact_id"]),
             message="hello chat",
@@ -973,12 +1031,12 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
     assert result["delivered"] is True
     assert result["conversation_id"] == session_id
     assert (
-        await aweb_cloud_db.aweb_db.fetch_val(
+        await pre_chat_coverage_db.aweb_db.fetch_val(
             "SELECT COUNT(*) FROM {{tables.chat_sessions}}"
         )
         == 1
     )
-    row = await aweb_cloud_db.aweb_db.fetch_one(
+    row = await pre_chat_coverage_db.aweb_db.fetch_one(
         "SELECT session_id, body FROM {{tables.chat_messages}}"
     )
     assert str(row["session_id"]) == session_id

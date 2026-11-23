@@ -18,6 +18,8 @@ from test_messages_http import (
     _encode_certificate,
 )
 
+__all__ = ["privacy_app"]
+
 
 def headers(actor, body=b""):
     return {

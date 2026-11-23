@@ -36,6 +36,8 @@ from test_team_room import (
     post_payload as room_post_payload,
 )
 
+__all__ = ["awid", "db_infra", "privacy_app", "route_pair"]
+
 WAKE_LATENCY_BOUND_SECONDS = 1.0
 
 
@@ -656,7 +658,8 @@ async def test_a_send_that_commits_then_fails_still_wakes_the_recipient(
 
     async def commit_then_fail(db, *, message, recipient, sender, registry_client):
         await commit_continuation(
-            db, message=message, recipient=recipient, sender=sender, registry_client=registry_client
+            db, message=message, recipient=recipient, sender=sender,
+            registry_client=registry_client,
         )
         raise RuntimeError("failed after the message committed")
 

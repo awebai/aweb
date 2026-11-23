@@ -10,6 +10,8 @@ from aweb.message_vocabulary import MessageInputSource, UNNAMED_MESSAGE_VOCABULA
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_delivery_contract_regressions import _send
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 async def test_accepted_mail_mode_is_observed_on_exact_retry_without_another_event(

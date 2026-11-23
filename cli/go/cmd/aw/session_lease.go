@@ -44,14 +44,13 @@ func runSessionLeaseStatus(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(view, func(v any) string {
+	return printOutput(view, func(v any) string {
 		lease := v.(*aweb.SessionLeaseView)
 		if lease.SessionID == "" {
 			return "No active session admission lease.\n"
 		}
 		return fmt.Sprintf("Session %s holds admission through %s (generation %d).\n", lease.SessionID, lease.ExpiresAt, lease.Generation)
 	})
-	return nil
 }
 
 func runSessionLeaseAcquire(cmd *cobra.Command, _ []string) error {
@@ -69,10 +68,9 @@ func runSessionLeaseAcquire(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(view, func(any) string {
+	return printOutput(view, func(any) string {
 		return fmt.Sprintf("Acquired session admission lease for %s through %s.\n", view.SessionID, view.ExpiresAt)
 	})
-	return nil
 }
 
 func runSessionLeaseRenew(cmd *cobra.Command, _ []string) error {
@@ -90,10 +88,9 @@ func runSessionLeaseRenew(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(view, func(any) string {
+	return printOutput(view, func(any) string {
 		return fmt.Sprintf("Renewed session admission lease for %s through %s.\n", view.SessionID, view.ExpiresAt)
 	})
-	return nil
 }
 
 func runSessionLeaseRelease(cmd *cobra.Command, _ []string) error {
@@ -110,8 +107,7 @@ func runSessionLeaseRelease(cmd *cobra.Command, _ []string) error {
 	if err := client.SessionLeaseRelease(ctx, &aweb.SessionLeaseReleaseRequest{SessionID: id, SessionKey: key}); err != nil {
 		return err
 	}
-	printOutput(map[string]string{"status": "released", "session_id": id}, func(any) string { return fmt.Sprintf("Released session admission lease for %s.\n", id) })
-	return nil
+	return printOutput(map[string]string{"status": "released", "session_id": id}, func(any) string { return fmt.Sprintf("Released session admission lease for %s.\n", id) })
 }
 
 func runSessionLeaseTakeover(cmd *cobra.Command, _ []string) error {
@@ -133,10 +129,9 @@ func runSessionLeaseTakeover(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(view, func(any) string {
+	return printOutput(view, func(any) string {
 		return fmt.Sprintf("Took over session admission lease for %s at generation %d.\n", view.SessionID, view.Generation)
 	})
-	return nil
 }
 
 func addLeaseFlags(cmd *cobra.Command, ttl bool) {

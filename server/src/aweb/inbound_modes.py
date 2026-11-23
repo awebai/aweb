@@ -1,7 +1,7 @@
 """Canonical inbound policy values for aweb and embedding hosts.
 
-Defaults belong to the provisioning caller. Delivery must reject absent policy
-instead of using this convenience normalizer's provisioning default.
+Defaults belong to the provisioning caller. Migration 056 makes stored native
+policy explicit. Delivery still rejects missing identity or policy evidence.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ async def effective_inbound_mode(
     if for_share and for_update:
         raise ValueError("for_share and for_update are mutually exclusive")
     if not did_aw or not did_aw.startswith("did:aw:"):
-        raise ForbiddenError("Recipient inbound_mode migration required")
+        raise ForbiddenError("Recipient inbound policy is unavailable")
     rows = await db.fetch_all(
         """
         SELECT agent_id, inbound_mode FROM {{tables.agents}}
@@ -80,10 +80,10 @@ async def effective_inbound_mode(
     if not rows:
         if default is not None:
             return normalize_inbound_mode(default, default="")
-        raise ForbiddenError("Recipient inbound_mode migration required")
+        raise ForbiddenError("Recipient inbound policy is unavailable")
     modes = {str(row.get("inbound_mode") or "").strip().lower() for row in rows}
     if not modes <= INBOUND_MODES:
-        raise ForbiddenError("Recipient inbound_mode migration required")
+        raise ForbiddenError("Recipient inbound policy is unavailable")
     for mode in (
         INBOUND_MODE_CONTACTS_ONLY,
         INBOUND_MODE_TEAM_AND_CONTACTS,
@@ -91,7 +91,7 @@ async def effective_inbound_mode(
     ):
         if mode in modes:
             return mode
-    raise ForbiddenError("Recipient inbound_mode migration required")
+    raise ForbiddenError("Recipient inbound policy is unavailable")
 
 
 async def set_identity_inbound_mode(tx, did_aw: str, mode: str) -> None:

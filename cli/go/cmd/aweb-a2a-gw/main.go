@@ -1661,7 +1661,7 @@ func (t *managedBridgeTransport) MailConversationForRoute(ctx context.Context, r
 	if err := t.doJSON(ctx, managedJSONRequest{Method: http.MethodGet, Path: path, Out: &out}); err != nil {
 		return nil, err
 	}
-	return t.mailVerifier.VerifyInboxResponse(ctx, &out)
+	return t.mailVerifier.VerifyManagedMailConversation(ctx, &out, conversationID)
 }
 
 type managedJSONRequest struct {

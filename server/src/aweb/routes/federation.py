@@ -299,7 +299,8 @@ async def _verified_delivery_replay(
 ) -> tuple[FederationEnvelope, str, StoredFederationReceipt | None]:
     """Verify integrity and require age only without an exact plaintext receipt.
 
-    docs/identity-messaging-contract.md:334-365; Antares69b3a50a. Current
+    Receiver-Wide Replay And Contact Compatibility
+    (docs/identity-messaging-contract.md:338-370); Antares69b3a50a. Current
     authority is still checked by the caller and rechecked under Phase-B locks.
     Encrypted integrity verification retains its ordinary ingestion window.
     """

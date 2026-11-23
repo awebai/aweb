@@ -98,7 +98,14 @@ func compareAndSetPinStore(path string, expectedYAML, desiredYAML []byte) error 
 		return err
 	}
 	if !current.SemanticallyEqual(expected) {
-		return fmt.Errorf("trust pin store changed since it was read; refusing stale mutation")
+		// Another writer committed since this one read the store. Keep its
+		// change and apply this writer's on top; refuse only when both
+		// changed the same key to different values.
+		merged, err := awid.MergePinStoreChanges(expected, desired, current)
+		if err != nil {
+			return fmt.Errorf("trust pin store changed since it was read; refusing stale mutation: %w", err)
+		}
+		desired = merged
 	}
 	if err := desired.Save(path); err != nil {
 		return fmt.Errorf("commit trust pin store: %w", err)

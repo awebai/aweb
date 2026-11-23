@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
-import aweb
 import httpx
 import pytest
 import pytest_asyncio
@@ -45,7 +44,7 @@ from nacl.signing import SigningKey
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-from pgdbm import AsyncMigrationManager
+from aweb.migrations import apply_native_migrations
 
 _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _ROOT / "test-vectors" / "federation" / "preactivation-harness-v1.json"
@@ -293,13 +292,7 @@ def test_topology_and_canonical_input_artifacts_are_exact() -> None:
 
 async def _receiver_database(test_db_factory, suffix: str):
     db = await test_db_factory.create_db(suffix=suffix, schema="aweb")
-    migrations = AsyncMigrationManager(
-        db,
-        migrations_path=str(Path(aweb.__file__).parent / "migrations" / "aweb"),
-        module_name="aweb-aweb",
-        migrations_table="schema_migrations",
-    )
-    await migrations.apply_pending_migrations()
+    await apply_native_migrations(db)
     return db
 
 

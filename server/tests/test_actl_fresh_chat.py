@@ -18,6 +18,8 @@ from chat_pair_support import (  # noqa: F401
     _signed_team_headers,
 )
 
+__all__ = ["route_pair"]
+
 
 async def _post(sender, submission):
     path, payload, _ = submission

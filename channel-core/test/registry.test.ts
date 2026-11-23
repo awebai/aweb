@@ -231,7 +231,7 @@ describe("registry verification", () => {
     ["unsafe integer", Number.MAX_SAFE_INTEGER + 1],
   ])("refuses %s verified-head checkpoint seeds", (_name, seq) => {
     const resolver = new RegistryResolver();
-    resolver.seedVerifiedHead(identityLogVectors.mapping.did_aw, {
+    resolver.seedVerifiedHead("https://registry.example.com", identityLogVectors.mapping.did_aw, {
       seq,
       entryHash: "a".repeat(64),
       stateHash: "b".repeat(64),
@@ -240,7 +240,7 @@ describe("registry verification", () => {
     });
 
     const cache = (resolver as unknown as { headCache: Map<string, unknown> }).headCache;
-    expect(cache.has(identityLogVectors.mapping.did_aw)).toBe(false);
+    expect(cache.size).toBe(0);
   });
 
   test("fails hard when log_head current key disagrees with body", () => {
@@ -462,162 +462,6 @@ describe("registry resolver", () => {
       identityLogVectors.mapping.rotated_did_key,
     );
     expect(result.outcome).not.toBe("OK_VERIFIED");
-  });
-
-  test("repeated signed-key mismatches stay stale without bypassing the key cache", async () => {
-    const register = identityLogVectors.entries.find((entry) => entry.name === "register_did")!;
-    const rotate = identityLogVectors.entries.find((entry) => entry.name === "rotate_key")!;
-    let keyCalls = 0;
-    const fetchImpl: typeof fetch = vi.fn(async (input) => {
-      const url = String(input);
-      if (url === "https://registry.example.com/v1/namespaces/acme.com/addresses/alice") {
-        return jsonResponse({
-          address_id: "addr-1",
-          domain: "acme.com",
-          name: "alice",
-          did_aw: identityLogVectors.mapping.did_aw,
-          current_did_key: identityLogVectors.mapping.rotated_did_key,
-          created_at: "2026-04-04T00:00:00Z",
-        });
-      }
-      if (url === `https://registry.example.com/v1/did/${identityLogVectors.mapping.did_aw}/key`) {
-        keyCalls++;
-        const entry = keyCalls === 1 ? register : rotate;
-        return jsonResponse({
-          did_aw: identityLogVectors.mapping.did_aw,
-          current_did_key: entry.entry_payload.new_did_key,
-          log_head: {
-            ...entry.entry_payload,
-            entry_hash: entry.entry_hash,
-            signature: entry.signature_b64,
-          },
-        });
-      }
-      throw new Error(`unexpected url ${url}`);
-    }) as typeof fetch;
-    const resolveTxt = vi.fn(async () => [[`awid=v1; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://registry.example.com;`]]);
-    const resolver = new RegistryResolver(fetchImpl, resolveTxt);
-
-    const initial = await resolver.verifyStableIdentity(
-      "acme.com/alice",
-      identityLogVectors.mapping.did_aw,
-      identityLogVectors.mapping.initial_did_key,
-    );
-    expect(initial.outcome).toBe("OK_VERIFIED");
-
-    for (let index = 0; index < 3; index += 1) {
-      const result = await resolver.verifyStableIdentity(
-        "acme.com/alice",
-        identityLogVectors.mapping.did_aw,
-        identityLogVectors.mapping.rotated_did_key,
-      );
-      expect(result).toMatchObject({
-        outcome: "STALE_CACHE",
-        currentDidKey: identityLogVectors.mapping.initial_did_key,
-      });
-    }
-    expect(keyCalls).toBe(1);
-  });
-
-  test("does not make a second key request while reporting a cached mismatch stale", async () => {
-    const register = identityLogVectors.entries.find((entry) => entry.name === "register_did")!;
-    let keyCalls = 0;
-    const fetchImpl: typeof fetch = vi.fn(async (input) => {
-      const url = String(input);
-      if (url === "https://registry.example.com/v1/namespaces/acme.com/addresses/alice") {
-        return jsonResponse({
-          address_id: "addr-1",
-          domain: "acme.com",
-          name: "alice",
-          did_aw: identityLogVectors.mapping.did_aw,
-          current_did_key: identityLogVectors.mapping.initial_did_key,
-          created_at: "2026-04-04T00:00:00Z",
-        });
-      }
-      if (url === `https://registry.example.com/v1/did/${identityLogVectors.mapping.did_aw}/key`) {
-        keyCalls++;
-        if (keyCalls > 1) throw new Error("registry unavailable during refresh");
-        return jsonResponse({
-          did_aw: identityLogVectors.mapping.did_aw,
-          current_did_key: identityLogVectors.mapping.initial_did_key,
-          log_head: {
-            ...register.entry_payload,
-            entry_hash: register.entry_hash,
-            signature: register.signature_b64,
-          },
-        });
-      }
-      throw new Error(`unexpected url ${url}`);
-    }) as typeof fetch;
-    const resolver = new RegistryResolver(fetchImpl, vi.fn(async () => [[`awid=v1; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://registry.example.com;`]]));
-
-    await resolver.verifyStableIdentity(
-      "acme.com/alice",
-      identityLogVectors.mapping.did_aw,
-      identityLogVectors.mapping.initial_did_key,
-    );
-    const result = await resolver.verifyStableIdentity(
-      "acme.com/alice",
-      identityLogVectors.mapping.did_aw,
-      identityLogVectors.mapping.rotated_did_key,
-    );
-
-    expect(result.outcome).toBe("STALE_CACHE");
-    expect(result.error).toContain("key cache does not match");
-    expect(keyCalls).toBe(1);
-  });
-
-  test("repeated stable-id mismatches do not bypass the address cache", async () => {
-    const register = identityLogVectors.entries.find((entry) => entry.name === "register_did")!;
-    let addressCalls = 0;
-    let keyCalls = 0;
-    const fetchImpl: typeof fetch = vi.fn(async (input) => {
-      const url = String(input);
-      if (url === "https://registry.example.com/v1/namespaces/acme.com/addresses/alice") {
-        addressCalls += 1;
-        return jsonResponse({
-          address_id: "addr-1",
-          domain: "acme.com",
-          name: "alice",
-          did_aw: identityLogVectors.mapping.did_aw,
-          current_did_key: identityLogVectors.mapping.initial_did_key,
-          created_at: "2026-04-04T00:00:00Z",
-        });
-      }
-      if (url === `https://registry.example.com/v1/did/${identityLogVectors.mapping.did_aw}/key`) {
-        keyCalls += 1;
-        return jsonResponse({
-          did_aw: identityLogVectors.mapping.did_aw,
-          current_did_key: identityLogVectors.mapping.initial_did_key,
-          log_head: {
-            ...register.entry_payload,
-            entry_hash: register.entry_hash,
-            signature: register.signature_b64,
-          },
-        });
-      }
-      throw new Error(`unexpected url ${url}`);
-    }) as typeof fetch;
-    const resolver = new RegistryResolver(
-      fetchImpl,
-      vi.fn(async () => [[`awid=v1; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://registry.example.com;`]]),
-    );
-
-    expect((await resolver.verifyStableIdentity(
-      "acme.com/alice",
-      identityLogVectors.mapping.did_aw,
-      identityLogVectors.mapping.initial_did_key,
-    )).outcome).toBe("OK_VERIFIED");
-    for (let index = 0; index < 3; index += 1) {
-      const result = await resolver.verifyStableIdentity(
-        "acme.com/alice",
-        "did:aw:different",
-        identityLogVectors.mapping.initial_did_key,
-      );
-      expect(result.outcome).toBe("HARD_ERROR");
-    }
-    expect(addressCalls).toBe(1);
-    expect(keyCalls).toBe(1);
   });
 
   test("degrades verification on transient registry failure", async () => {

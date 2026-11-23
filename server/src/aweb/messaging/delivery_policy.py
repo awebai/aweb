@@ -13,7 +13,7 @@ from aweb.inbound_modes import (
     effective_inbound_mode,
     normalize_inbound_mode,
 )
-from aweb.member_team_key import MemberReadLock, current_member_team_ids_for_identity
+from aweb.member_team_key import MemberReadLock, current_member_team_ids_for_identities
 from aweb.messaging.contacts import IdentityContactMatch, identity_contact_match
 from aweb.messaging.refusals import (
     CONTACT_REBIND_ACTION,
@@ -85,7 +85,7 @@ async def recipient_inbound_mode(db, recipient: Mapping) -> InboundMode:
     except (ValueError, ForbiddenError) as exc:
         raise DeliveryPolicyRefused(
             code=DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED,
-            detail="Recipient inbound_mode migration required. Ask the server operator to complete the inbound policy migration and retry.",
+            detail="Recipient inbound policy is unavailable. Ask the recipient to reconnect or the server operator to check the recipient's policy.",
         ) from exc
 
 
@@ -94,17 +94,14 @@ async def has_current_shared_team(
     *,
     recipient: Mapping,
     sender_dids: list[str],
-    registry_client=None,
+    registry_client,
 ) -> bool:
     """Intersect all current active memberships using R2's single selector."""
     recipient_dids = [
         str(recipient[field]) for field in ("did_aw", "did_key") if recipient.get(field)
     ]
-    recipient_teams = await current_member_team_ids_for_identity(
-        db, recipient_dids, registry_client=registry_client, read_lock=MemberReadLock.SHARE
-    )
-    sender_teams = await current_member_team_ids_for_identity(
-        db, sender_dids, registry_client=registry_client, read_lock=MemberReadLock.SHARE
+    recipient_teams, sender_teams = await current_member_team_ids_for_identities(
+        db, recipient_dids, sender_dids, registry_client=registry_client, read_lock=MemberReadLock.SHARE
     )
     return bool(recipient_teams & sender_teams)
 
@@ -115,9 +112,10 @@ async def authorize_delivery(
     recipient: Mapping,
     sender: DeliverySender,
     attempt: DeliveryAttempt,
-    registry_client=None,
+    registry_client,
 ) -> None:
-    """Enforce docs/identity-messaging-contract.md:69-93 on every transport.
+    """Enforce Global And Local Identities (docs/identity-messaging-contract.md:81-99) on
+    every transport.
 
     Global contacts-only always applies to continuations. Local participants
     may continue a stored route. Otherwise only current team intersection or an

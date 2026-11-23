@@ -31,6 +31,8 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("source_cli_binary")
@@ -326,9 +328,8 @@ async def test_contacts_only_real_delivery(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raw_did", [True, False])
-@pytest.mark.parametrize("mode", ["contacts_only", None])
 async def test_unmarked_global_recipient_keeps_strict_policy(
-    privacy_app, raw_did, mode
+    privacy_app, raw_did
 ):
     from aweb.messaging.messages import resolve_agent_by_did
 
@@ -356,7 +357,7 @@ async def test_unmarked_global_recipient_keeps_strict_policy(
     """,
         recipient_id if raw_did else None,
         recipient.id,
-        mode,
+        "contacts_only",
     )
     projected = await resolve_agent_by_did(env.infra, recipient.did)
     assert projected["did_aw"] is None
@@ -387,16 +388,10 @@ async def test_unmarked_global_recipient_keeps_strict_policy(
                 headers={**headers, "Content-Type": "application/json"},
             )
             assert response.status_code == expected, response.text
-            if mode is None:
-                assert "inbound_mode migration required" in response.text
-            else:
-                assert "migration required" not in response.text
-                if expected == 403:
-                    assert "exact active contacts" in response.text
+            if expected == 403:
+                assert "exact active contacts" in response.text
 
     await send_both(403)
-    if mode is None:
-        return
     # Key-owned contacts remain valid without attributing an unverified global
     # claim to this recipient. Raw policy facts never grant identity authority.
     await env.db.execute(

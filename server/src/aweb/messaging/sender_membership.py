@@ -1,21 +1,21 @@
 """Read-time delivery-team membership, independent of message claims."""
 
-from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 import logging
 from enum import StrEnum
 from uuid import UUID
 
-from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from aweb.member_team_key import member_key_columns_sql, current_member
-from aweb.certificate_registration import (
-    configured_registration_mode,
-    read_certificate_registration,
-)
 from aweb.application_state import RegistryClientUnavailable, application_registry_client
-from aweb.team_registry import request_revoked_certificates
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+from aweb.member_team_key import (
+    CertificateStandingState,
+    current_member,
+    member_key_columns_sql,
+    read_certificate_standings,
+)
+from aweb.service_errors import AuthenticationError
 
 
 logger = logging.getLogger(__name__)
@@ -65,14 +65,7 @@ async def sender_memberships(
             ids,
         )
     )
-    team_certificates: dict[str, list[str]] = {}
-    for member in members:
-        team = str(member["team_id"])
-        if (team, str(member["agent_id"])) in result:
-            certificate_id = str(member.get("certificate_id") or "").strip()
-            if certificate_id:
-                team_certificates.setdefault(team, []).append(certificate_id)
-    revocations: dict[str, set[str] | None] = {}
+    pending: dict[str, list[tuple[str, SenderMembership]]] = {}
     for member in members:
         key = (str(member["team_id"]), str(member["agent_id"]))
         if key not in result:
@@ -83,37 +76,26 @@ async def sender_memberships(
             projection.state = SenderMembershipState.INACTIVE
             continue
         certificate_id = str(member.get("certificate_id") or "").strip()
-        if not certificate_id:
+        if certificate_id:
+            pending.setdefault(key[0], []).append((certificate_id, projection))
+    for team, projections in pending.items():
+        try:
+            standing = await read_certificate_standings(
+                application_registry_client(request.app.state),
+                team,
+                {certificate_id for certificate_id, _ in projections},
+                request=request,
+            )
+        except AuthenticationError:
+            logger.warning("Sender membership has invalid team scope", exc_info=True)
             continue
-        team = key[0]
-        if team not in revocations:
-            try:
-                parse_team_id(team)
-            except ValueError:
-                logger.warning("Sender membership has invalid team scope", exc_info=True)
-                continue
-            try:
-                revocations[team] = await request_revoked_certificates(
-                    request, team, certificate_ids=team_certificates[team]
-                )
-            except (HTTPException, RegistryClientUnavailable):
-                logger.warning("Sender certificate revocations unavailable", exc_info=True)
-                revocations[team] = None
-        revoked = revocations[team]
-        if revoked is None:
+        except (HTTPException, RegistryClientUnavailable):
+            logger.warning("Sender certificate standing unavailable", exc_info=True)
             continue
-        if certificate_id in revoked:
-            projection.state = SenderMembershipState.INACTIVE
-            continue
-        registration = await read_certificate_registration(
-            registry_client=application_registry_client(request.app.state),
-            team_id=team,
-            certificate_id=certificate_id,
-            mode=configured_registration_mode(),
-            request=request,
-        )
-        if registration.allows_registration:
-            projection.state = SenderMembershipState.ACTIVE
-        elif registration.unavailable_cause is None:
-            projection.state = SenderMembershipState.INACTIVE
+        for certificate_id, projection in projections:
+            state = standing[certificate_id].state
+            if state is CertificateStandingState.ACTIVE:
+                projection.state = SenderMembershipState.ACTIVE
+            elif state is not CertificateStandingState.UNAVAILABLE:
+                projection.state = SenderMembershipState.INACTIVE
     return result

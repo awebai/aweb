@@ -9,6 +9,8 @@ from aweb.messaging import messages
 from aweb.messaging.recipient import Recipient, RecipientResidence
 from test_dashboard_privacy import _request, privacy_app as privacy_app
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 async def test_shared_recipient_projection_keeps_identity_mail_and_chat_actor_free(

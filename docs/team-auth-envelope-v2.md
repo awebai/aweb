@@ -60,6 +60,12 @@ The verifier:
 8. Verifies the team certificate against AWID team authority and revocation
    state, and requires `certificate.member_did_key == signing did:key`.
 
+Aweb refuses a revoked team certificate with HTTP 401 and
+`detail.code = "certificate_revoked"`. `detail.message` tells the caller to
+ask the team's owner for a new certificate. Embedding hosts can catch
+`aweb.team_auth.TeamCertificateRefusal` and check
+`refusal.certificate_error.reason` against `awid.team_certificate.TeamCertificateReason.REVOKED`.
+
 Independent applications without an operator token can obtain the current
 team key and revocation status from AWID's anonymous
 `/v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status`, even

@@ -472,7 +472,7 @@ func TestAwMailSendSealsTheCommLogAfterLogKeyInstall(t *testing.T) {
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{AgentID: "eve-agent", Alias: "eve"}}})
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{{AgentID: "eve-agent", Alias: "eve", DIDKey: "did:key:z6Mkeve"}}})
 		case "/v1/messages":
 			var posted awid.SendMessageRequest
 			_ = json.NewDecoder(r.Body).Decode(&posted)
@@ -857,10 +857,11 @@ func TestAwDoctorNamesAWIDRegistryURLForAPrivateStoredRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// doctor runs with no registry the operator named, unless env names one.
 	doctor := func(env ...string) doctorOutput {
 		run := exec.Command(bin, "doctor", "identity", "--offline", "--json")
 		run.Dir = tmp
-		run.Env = append(testCommandEnv(tmp), env...)
+		run.Env = append(append(testCommandEnv(tmp), "AWID_REGISTRY_URL="), env...)
 		out, err := run.CombinedOutput()
 		if err != nil && !strings.Contains(string(out), `"checks"`) {
 			t.Fatalf("doctor: %v\n%s", err, out)

@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
-from awid.did import did_from_public_key, stable_id_from_public_key
+from awid.did import did_from_public_key, did_key_from_signing_key, stable_id_from_public_key
 from awid.e2ee_keys import (
     build_encryption_key_assertion,
     canonical_encryption_assertion,
@@ -350,7 +350,6 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
 
     app.state.db = _DbShim()
     app.state.redis = None
-    app.state.rate_limiter = None
     app.state.awid_registry_client = legacy_registry(registry)
     if isinstance(registry, AsyncMock):
         # These unit cases select the strict foreign authority supplied below.
@@ -466,7 +465,7 @@ async def _registered_routing_pair(pair):
         domain = f"routing-{uuid4().hex}.test"
         controller = await node.registry.ensure_namespace(domain=domain)
         pair.dns.records[(f"_awid.{domain}", "TXT")] = [
-            f'"awid=v1;controller={did_from_public_key(bytes(controller.verify_key))};registry={node.registry_origin}"'
+            f'"awid=v1;controller={did_key_from_signing_key(controller)};registry={node.registry_origin}"'
         ]
         env = SimpleNamespace(
             app=node.server.app,
@@ -479,7 +478,7 @@ async def _registered_routing_pair(pair):
         await register_messaging_team(env, team_id=team_id)
         registry = node.server.app.state.awid_registry_client
         await registry.update_namespace_delivery_origin(
-            domain, bytes(controller), node.origin
+            domain, controller, node.origin
         )
         actor = await admit_messaging_actor(
             env,
@@ -566,57 +565,94 @@ async def _admit_registered_local(node):
     )
 
 
-async def _mirror_retained_local_history(world, *, conversation_id, local, kind):
-    """Retired local-key route input only; today's API cannot create this history.
-
-    docs/identity-messaging-contract.md:257-263 retains exact saved routes without
-    authorizing local-key first contact. The global peer was registered/admitted.
-    """
+async def _store_retained_route(node, *, kind, conversation_id, team_id, parties):
+    """Build an already trusted route with the product's persistence owner."""
+    from aweb.messaging.chat import ensure_session
+    from aweb.messaging.conversations import ConversationParticipant, create_conversation
     from aweb.messaging.kinds import MessageKind
 
-    manager, peer = world.target.node.db, world.target.actor
-    await manager.execute(
-        "INSERT INTO {{tables.conversations}} (conversation_id,conversation_type,team_id,created_by_did) VALUES ($1,$2,$3,$4)",
-        UUID(str(conversation_id)),
-        kind.value,
-        peer.team_id,
-        local.did_key,
-    )
-    await manager.execute(
-        "INSERT INTO {{tables.conversation_participants}} "
-        "(conversation_id,did,agent_id,alias,address,delivery_origin,current_did_key,transport_hint,role) VALUES "
-        "($1,$2,NULL,'local',$3,$4,$2,$5,'initiator'), "
-        "($1,$6,$7,'bob',$8,NULL,$9,'local','participant')",
-        UUID(str(conversation_id)),
-        local.did_key,
-        f"{world.source.node.domain}/local",
-        world.source.node.origin,
-        f"federation:{world.source.node.origin}",
-        peer.stable_id,
-        UUID(peer.agent_id),
-        peer.address,
-        peer.did_key,
-    )
+    infra = node.server.app.state.db
+    conversation_id = UUID(str(conversation_id))
     if kind is MessageKind.CHAT:
-        await manager.execute(
-            "INSERT INTO {{tables.chat_sessions}} (session_id,team_id,created_by) VALUES ($1,$2,$3)",
-            UUID(str(conversation_id)),
-            peer.team_id,
-            local.did_key,
+        assert await ensure_session(
+            infra,
+            team_id=team_id,
+            participant_rows=parties,
+            created_by=parties[0]["did"],
+            session_id=conversation_id,
+        ) == conversation_id
+    else:
+        await create_conversation(
+            infra,
+            conversation_type="mail",
+            created_by_did=parties[0]["did"],
+            initiator=ConversationParticipant(**parties[0]),
+            recipients=[ConversationParticipant(**party) for party in parties[1:]],
+            conversation_id=conversation_id,
+            team_id=team_id,
+            ttl=None,
         )
-        await manager.execute(
-            "INSERT INTO {{tables.chat_participants}} "
-            "(session_id,did,agent_id,alias,address,delivery_origin,current_did_key) VALUES "
-            "($1,$2,NULL,'local',$3,$4,$2), ($1,$5,$6,'bob',$7,NULL,$8)",
-            UUID(str(conversation_id)),
-            local.did_key,
-            f"{world.source.node.domain}/local",
-            world.source.node.origin,
-            peer.stable_id,
-            UUID(peer.agent_id),
-            peer.address,
-            peer.did_key,
-        )
+
+
+async def _mirror_retained_local_history(
+    world, *, conversation_id, local_did_key, kind, local_address=None
+):
+    """Project retained local-key history on the global peer's server."""
+    node, peer = world.target.node, world.target.actor
+    local_origin = world.source.node.origin
+    await _store_retained_route(
+        node,
+        kind=kind,
+        conversation_id=conversation_id,
+        team_id=peer.team_id,
+        parties=[
+            dict(
+                did=local_did_key,
+                current_did_key=local_did_key,
+                alias="local",
+                address=local_address or f"{world.source.node.domain}/local",
+                delivery_origin=local_origin,
+                transport_hint=f"federation:{local_origin}",
+            ),
+            dict(
+                did=peer.stable_id,
+                current_did_key=peer.did_key,
+                agent_id=peer.agent_id,
+                alias="bob",
+                address=peer.address,
+                transport_hint="local",
+            ),
+        ],
+    )
+
+
+async def _store_retained_local_origin(world, *, conversation_id, local, kind):
+    """Project the same valid local-key participant on its own server."""
+    peer, peer_origin = world.target.actor, world.target.node.origin
+    await _store_retained_route(
+        world.source.node,
+        kind=kind,
+        conversation_id=conversation_id,
+        team_id=local.team_id,
+        parties=[
+            dict(
+                did=local.did_key,
+                current_did_key=local.did_key,
+                agent_id=local.agent_id,
+                alias="local",
+                address=local.did_key,
+                transport_hint="local",
+            ),
+            dict(
+                did=peer.stable_id,
+                current_did_key=peer.did_key,
+                alias="bob",
+                address=peer.address,
+                delivery_origin=peer_origin,
+                transport_hint=f"federation:{peer_origin}",
+            ),
+        ],
+    )
 
 
 async def _registered_history(world, *, make_payload):
@@ -2461,9 +2497,9 @@ async def test_retired_mail_recipient_refuses_even_with_a_learned_return_route(
     retired_routed_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
         INSERT INTO {{tables.agents}}
-            (team_id, did_key, alias, identity_scope, role, status, deleted_at)
+            (team_id, did_key, alias, identity_scope, role, status, deleted_at, inbound_mode)
         VALUES
-            ('backend:remote.example', $1, 'retired-routed', 'local', 'developer', 'deleted', NOW())
+            ('backend:remote.example', $1, 'retired-routed', 'local', 'developer', 'deleted', NOW(), 'open')
         RETURNING agent_id
         """,
         local_did_key,
@@ -2562,9 +2598,9 @@ async def test_retired_mail_recipient_refuses_even_with_a_learned_return_route(
     retired_local_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
         """
         INSERT INTO {{tables.agents}}
-            (team_id, did_key, alias, identity_scope, role, status, deleted_at)
+            (team_id, did_key, alias, identity_scope, role, status, deleted_at, inbound_mode)
         VALUES
-            ('backend:remote.example', 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ' /* z6MkNoRoute */, 'retired-local', 'local', 'developer', 'deleted', NOW())
+            ('backend:remote.example', 'did:key:z6Mkgm6L6rFHRZFt7PKhqFhJygpzWYudLHjpg88q7Kw2yqmQ' /* z6MkNoRoute */, 'retired-local', 'local', 'developer', 'deleted', NOW(), 'open')
         RETURNING agent_id
         """
     )
@@ -4924,7 +4960,7 @@ async def test_send_message_rejects_unsigned_stable_id_address_binding_when_awid
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     assert addressed.stable_id == bob.stable_id
     payload = {
         "to_address": "otherco.com/bob",
@@ -5187,38 +5223,14 @@ async def test_receive_federated_mail_existing_local_didkey_reply_succeeds(route
     app = world.source.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.source.node.db)
     conversation_id = str(uuid4())
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
-        VALUES ($1, 'mail', 'default:beta.example', $2)
-        """.replace("default:beta.example", world.source.node.team_id),
-        UUID(conversation_id),
-        local_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversation_participants}}
-            (conversation_id, did, agent_id, alias, address, delivery_origin,
-             current_did_key, transport_hint, role)
-        VALUES
-            ($1, $2, $3, 'local', $2, NULL, $2, 'local', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob',
-             'https://remote.example', $4, 'federation:https://remote.example',
-             'participant')
-        """.replace("did:aw:bob", bob.stable_id)
-        .replace("https://remote.example", world.target.node.origin)
-        .replace("remote.example/bob", bob.address)
-        .replace(
-            "federation:https://remote.example",
-            f"federation:{world.target.node.origin}",
-        ),
-        UUID(conversation_id),
-        local_did_key,
-        local_agent_id,
-        bob_did_key,
+    await _store_retained_local_origin(
+        world, conversation_id=conversation_id, local=local, kind=MessageKind.MAIL
     )
     await _mirror_retained_local_history(
-        world, conversation_id=conversation_id, local=local, kind=MessageKind.MAIL
+        world,
+        conversation_id=conversation_id,
+        local_did_key=local.did_key,
+        kind=MessageKind.MAIL,
     )
     payload = _federated_mail_payload(
         sender_sk=bob_sk,
@@ -5250,9 +5262,10 @@ async def test_receive_federated_mail_existing_local_didkey_reply_succeeds(route
         """
         SELECT current_did_key
         FROM {{tables.conversation_participants}}
-        WHERE conversation_id = $1 AND did = 'did:aw:bob'
-        """.replace("did:aw:bob", bob.stable_id),
+        WHERE conversation_id = $1 AND did = $2
+        """,
         UUID(conversation_id),
+        bob.stable_id,
     )
     assert remote_participant["current_did_key"] == bob_did_key
     peer_reads_before = (
@@ -5850,9 +5863,10 @@ async def test_receive_federated_mail_historical_continuation_uses_stored_sender
         """
         SELECT address, delivery_origin, transport_hint
         FROM {{tables.conversation_participants}}
-        WHERE conversation_id = $1 AND did = 'did:aw:bob'
-        """.replace("did:aw:bob", bob.stable_id),
+        WHERE conversation_id = $1 AND did = $2
+        """,
         UUID(conversation_id),
+        bob.stable_id,
     )
     assert dict(target_route) == {
         "address": bob.address,
@@ -5896,45 +5910,21 @@ async def test_receive_federated_mail_local_sender_omission_preserves_stored_rou
 ):
     """A retained local-key history input, not current first-contact authority."""
     from types import SimpleNamespace
+    from aweb.messaging.kinds import MessageKind
 
     world = await _registered_routing_pair(route_pair)
     bob = world.target.actor
     local_sk, local_did_key = (world.source.node.local.sk, world.source.node.local.did)
     bob_did_key = bob.did_key
-    bob_agent_id = UUID(bob.agent_id)
     app = world.target.node.server.app
     aweb_cloud_db = SimpleNamespace(aweb_db=world.target.node.db)
     conversation_id = uuid4()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversations}} (
-            conversation_id, conversation_type, team_id, created_by_did
-        ) VALUES ($1, 'mail', 'default:beta.example', $2)
-        """.replace("default:beta.example", bob.team_id),
-        conversation_id,
-        local_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, agent_id, alias, address, delivery_origin,
-            current_did_key, transport_hint, role
-        ) VALUES
-            ($1, $2, NULL, 'local', 'alpha.example/local',
-             'https://sender.example', $2, 'federation:https://sender.example', 'initiator'),
-            ($1, 'did:aw:bob', $3, 'bob', 'beta.example/bob', NULL, $4,
-             'local', 'participant')
-        """.replace("did:aw:bob", bob.stable_id)
-        .replace("beta.example/bob", bob.address)
-        .replace("https://sender.example", world.source.node.origin)
-        .replace(
-            "federation:https://sender.example",
-            f"federation:{world.source.node.origin}",
-        ),
-        conversation_id,
-        local_did_key,
-        bob_agent_id,
-        bob_did_key,
+    await _mirror_retained_local_history(
+        world,
+        conversation_id=conversation_id,
+        local_did_key=local_did_key,
+        kind=MessageKind.MAIL,
+        local_address="alpha.example/local",
     )
     target_address_reads_before = _registered_address_reads(world.target)
     payload = _federated_mail_payload(
@@ -6006,9 +5996,10 @@ async def test_receive_federated_mail_local_sender_omission_preserves_stored_rou
         await aweb_cloud_db.aweb_db.fetch_value(
             """
         SELECT address FROM {{tables.conversation_participants}}
-        WHERE conversation_id = $1 AND did = 'did:aw:bob'
-        """.replace("did:aw:bob", bob.stable_id),
+        WHERE conversation_id = $1 AND did = $2
+        """,
             conversation_id,
+            bob.stable_id,
         )
         == bob.address
     )
@@ -6587,7 +6578,7 @@ async def test_receive_federated_mail_rejects_target_binding_mismatch(route_pair
     other_key, _, other_did = _make_keypair()
     other_identity = await registry.register_did(other_did, other_key)
     await registry.reassign_address(
-        domain, alias, other_identity.did_aw, bytes(controller)
+        domain, alias, other_identity.did_aw, controller
     )
     payload = _federated_mail_payload(
         sender_sk=alice_sk,
@@ -6967,7 +6958,8 @@ async def test_send_message_accepts_signed_local_address_binding_without_registr
         bob_did_key,
     )
 
-    # docs/identity-messaging-contract.md:149-161: verified signed local binding needs no registry read.
+    # Direct Address Send Protocol (docs/identity-messaging-contract.md:148-163): verified
+    # signed local binding needs no registry read.
     registry = AsyncMock()
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
@@ -7850,47 +7842,41 @@ async def test_identity_auth_mail_derives_sender_address_from_agent_row(
 
 
 @pytest.mark.asyncio
-async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_partial(
+async def test_send_message_team_auth_uses_global_certificate_before_reconnect(
     registered_mail_actors,
 ):
-    from types import SimpleNamespace
     from messaging_actor_support import (
-        set_messaging_inbound_mode,
         add_messaging_contact,
+        admit_messaging_actor,
+        issue_global_certificate_to_local_member,
+        register_messaging_team,
+        set_messaging_inbound_mode,
     )
 
-    env, actors = registered_mail_actors
-    alice, bob = (actors["alice"], actors["bob"])
+    env, _ = registered_mail_actors
+    team_id = "upgrade:acme.com"
+    await register_messaging_team(env, team_id=team_id)
+    alice = await admit_messaging_actor(env, team_id=team_id, alias="alice", local=True)
+    bob = await admit_messaging_actor(env, team_id=team_id, alias="bob", address="acme.com/upgrade-bob")
+    alice = await issue_global_certificate_to_local_member(env, alice, address="acme.com/upgrade-alice")
     await set_messaging_inbound_mode(env, bob, mode="team_and_contacts")
     await add_messaging_contact(env, bob, address=alice.address)
-    app = env.app
-    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
-    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
-    cert_header = alice.certificate
     alice_row = await env.db.fetch_one(
-        "SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND alias='alice'",
-        alice.team_id,
-    )
-    assert alice_row is not None
-    # unreachable-state: old incomplete member projection lost DID/address metadata retained in its valid certificate.
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET did_aw=NULL, address=NULL, did_aw_verified_key=NULL WHERE agent_id=$1",
+        "SELECT agent_id, did_aw, address FROM {{tables.agents}} WHERE agent_id=$1",
         UUID(alice.agent_id),
     )
+    assert alice_row is not None and not alice_row["did_aw"] and not alice_row["address"]
     payload = {"to_alias": "bob", "subject": "hello partial", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
         **_signed_team_headers(
-            alice_sk, alice_did_key, alice.team_id, cert_header, body_bytes
+            alice.signing_key, alice.did_key, team_id, alice.certificate, body_bytes
         ),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
+    resp = await env.client.post("/v1/messages", content=body_bytes, headers=headers)
     assert resp.status_code == 200, resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
+    row = await env.db.fetch_one(
         "SELECT from_agent_id, from_did FROM {{tables.messages}} WHERE subject = 'hello partial'"
     )
     assert row["from_agent_id"] == alice_row["agent_id"]
@@ -7901,52 +7887,30 @@ async def test_send_message_team_auth_uses_cert_identity_when_agent_row_is_parti
 async def test_global_inbox_does_not_include_current_key_identity(
     registered_mail_actors,
 ):
-    from types import SimpleNamespace
+    from messaging_actor_support import register_messaging_actors, send_messaging_mail
 
-    env, actors = registered_mail_actors
-    app = env.app
-    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
-    alice = actors["alice"]
-    bob_sk, _, bob_did_key = _make_keypair()
-    mapping = await env.app.state.awid_registry_client.register_did(bob_did_key, bob_sk)
+    env, _ = registered_mail_actors
+    locals = await register_messaging_actors(
+        env, team_id="before-enrollment:local.test", aliases=("sender", "reader"), local=True,
+    )
+    bob = locals["reader"]
+    await send_messaging_mail(
+        env, locals["sender"], payload={"to_alias": "reader", "subject": "hello", "body": "hi"},
+    )
+    mapping = await env.app.state.awid_registry_client.register_did(bob.did_key, bob.signing_key)
     assert (
         await env.db.fetch_value(
             "SELECT count(*) FROM {{tables.agents}} WHERE did_aw=$1", mapping.did_aw
         )
         == 0
     )
-    # unreachable-state: historical did:key mail predates global enrollment and must remain separate from the did:aw inbox.
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}} (
-            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority
-        )
-        VALUES (
-            '11111111-1111-1111-1111-111111111111',
-            'did:aw:alice',
-            $1,
-            'alice',
-            'bob',
-            'hello',
-            'hi',
-            'normal'
-        )
-        """.replace("did:aw:alice", alice.stable_id),
-        bob_did_key,
-    )
-    headers = _signed_identity_headers(bob_sk, bob_did_key, mapping.did_aw)
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/v1/messages/inbox", headers=headers)
+    headers = _signed_identity_headers(bob.signing_key, bob.did_key, mapping.did_aw)
+    resp = await env.client.get("/v1/messages/inbox", headers=headers)
     assert resp.status_code == 200, resp.text
     messages = resp.json()["messages"]
     assert messages == []
-    local_headers = _signed_identity_headers(bob_sk, bob_did_key, "")
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        local = await client.get("/v1/messages/inbox", headers=local_headers)
+    local_headers = _signed_identity_headers(bob.signing_key, bob.did_key, "")
+    local = await env.client.get("/v1/messages/inbox", headers=local_headers)
     assert local.status_code == 200, local.text
     assert [item["body"] for item in local.json()["messages"]] == ["hi"]
 
@@ -8018,7 +7982,11 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
     registered_mail_actors,
 ):
     from types import SimpleNamespace
-    from messaging_actor_support import messaging_actor_headers, send_messaging_mail
+    from messaging_actor_support import (
+        messaging_actor_headers,
+        register_messaging_actors,
+        send_messaging_mail,
+    )
 
     env, actors = registered_mail_actors
     app = env.app
@@ -8026,7 +7994,10 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
     alice, bob, carol = (actors["alice"], actors["bob"], actors["carol"])
     alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
     bob_sk, bob_did_key = (bob.signing_key, bob.did_key)
-    local_bob_sk, _, local_bob_did_key = _make_keypair()
+    local_actors = await register_messaging_actors(
+        env, team_id="recipient-view:local.test", aliases=("sender", "reader"), local=True,
+    )
+    local_reader = local_actors["reader"]
     encrypted_id = "66666666-6666-4666-8666-666666666666"
     encrypted_conversation_id = "77777777-7777-4777-8777-777777777777"
     encrypted = _encrypted_mail_envelope(
@@ -8048,11 +8019,15 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
             "message_id": "55555555-5555-4555-8555-555555555555",
         },
     )
-    # unreachable-state: retained local-key plaintext mail has no current resident recipient; present send cannot create that row.
-    await env.db.execute(
-        "INSERT INTO {{tables.messages}} (message_id,from_did,to_did,from_alias,to_alias,subject,body,priority) VALUES ('88888888-8888-4888-8888-888888888888',$1,$2,'alice','bob','legacy local plaintext','hello','normal')",
-        alice.did_key,
-        local_bob_did_key,
+    await send_messaging_mail(
+        env,
+        local_actors["sender"],
+        payload={
+            "to_alias": "reader",
+            "subject": "local plaintext",
+            "body": "hello",
+            "message_id": "88888888-8888-4888-8888-888888888888",
+        },
     )
     recipient_assertion = build_encryption_key_assertion(
         signing_key=bob_sk,
@@ -8094,7 +8069,7 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
         )
         local_key_read = await client.get(
             "/v1/messages/88888888-8888-4888-8888-888888888888",
-            headers=_signed_identity_headers(local_bob_sk, local_bob_did_key, ""),
+            headers=_signed_identity_headers(local_reader.signing_key, local_reader.did_key, ""),
         )
         sender_encrypted = await client.get(
             f"/v1/messages/{encrypted_id}", headers=alice_headers
@@ -8114,7 +8089,7 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
     assert sender_global.json()["subject"] == "global plaintext"
     assert recipient_local.status_code == 404, recipient_local.text
     assert local_key_read.status_code == 200, local_key_read.text
-    assert local_key_read.json()["subject"] == "legacy local plaintext"
+    assert local_key_read.json()["subject"] == "local plaintext"
     assert sender_encrypted.status_code == 200, sender_encrypted.text
     assert sender_encrypted.json()["content_mode"] == "encrypted_v2"
     assert sender_encrypted.json()["encrypted_envelope"] == encrypted
@@ -8397,10 +8372,10 @@ async def test_cross_team_same_registry_address_send_creates_bound_contact_witho
         SELECT owner_did, contact_address, contact_did_aw,
                binding_controller_did, binding_accepted_at, status
         FROM {{tables.contacts}}
-        WHERE owner_did = 'did:aw:alice' AND contact_address = 'otherco.com/bob'
-        """.replace("did:aw:alice", alice.stable_id).replace(
-            "otherco.com/bob", bob.address
-        )
+        WHERE owner_did = $1 AND contact_address = $2
+        """,
+        alice.stable_id,
+        bob.address,
     )
     contact = dict(contact)
     assert contact.pop("binding_accepted_at") is not None
@@ -8451,13 +8426,13 @@ async def test_send_message_to_did_does_not_create_unresolved_identity_contact(
     contact_count = await aweb_cloud_db.aweb_db.fetch_value(
         """
         SELECT COUNT(*) FROM {{tables.contacts}}
-        WHERE owner_did = 'did:aw:alice'
-          AND contact_address = 'otherco.com/bob'
+        WHERE owner_did = $1
+          AND contact_address = $2
           AND reference_type = 'identity'
           AND status = 'active'
-        """.replace("otherco.com/bob", bob.address).replace(
-            "did:aw:alice", alice.stable_id
-        )
+        """,
+        alice.stable_id,
+        bob.address,
     )
     assert contact_count == 0
 
@@ -8499,10 +8474,9 @@ async def test_send_message_to_global_address_team_and_contacts_rejects_non_cont
     message_count = await aweb_cloud_db.aweb_db.fetch_value(
         """
         SELECT COUNT(*) FROM {{tables.messages}}
-        WHERE to_did = 'did:aw:bob-contacts'
-        """.replace("did:aw:bob-contacts", bob.stable_id).replace(
-            "did:aw:bob", bob.stable_id
-        )
+        WHERE to_did = $1
+        """,
+        bob.stable_id,
     )
     assert message_count == 0
 
@@ -8538,57 +8512,6 @@ async def test_send_message_to_global_address_allows_explicit_inbound_mode_open(
     ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
     assert resp.status_code == 200, resp.text
-
-
-@pytest.mark.asyncio
-async def test_send_message_global_recipient_null_inbound_mode_fails_migration_required(
-    registered_mail_actors,
-):
-    from types import SimpleNamespace
-    from messaging_actor_support import (
-        register_messaging_actors,
-        set_messaging_inbound_mode,
-    )
-
-    env, actors = registered_mail_actors
-    alice, bob = (actors["alice"], actors["bob"])
-    others = await register_messaging_actors(
-        env, team_id="ops:otherco.com", aliases=("bob-migration",), local=False
-    )
-    bob = others["bob-migration"]
-    await set_messaging_inbound_mode(env, bob, mode="open")
-    app = env.app
-    aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
-    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
-    # unreachable-state: pre-migration global member has NULL inbound_mode; current admission supplies a policy.
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET inbound_mode = NULL WHERE agent_id=$1",
-        UUID(bob.agent_id),
-    )
-    payload = {"to_did": bob.stable_id, "subject": "blocked", "body": "hi"}
-    body_bytes = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(
-            alice_sk, alice_did_key, alice.stable_id, body_bytes
-        ),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-    assert resp.status_code == 403, resp.text
-    assert "inbound_mode migration required" in resp.text
-    contact_count = await aweb_cloud_db.aweb_db.fetch_value(
-        """
-        SELECT COUNT(*) FROM {{tables.contacts}}
-        WHERE owner_did = 'did:aw:alice'
-          AND contact_address = 'otherco.com/bob-migration'
-        """.replace("otherco.com/bob-migration", bob.address)
-        .replace("otherco.com/bob", bob.address)
-        .replace("did:aw:alice", alice.stable_id)
-    )
-    assert contact_count == 0
 
 
 @pytest.mark.asyncio
@@ -8642,7 +8565,7 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     payload = {"to_address": "otherco.com/bob", "subject": "hidden", "body": "hi"}
     with record_registry_requests(env) as reads:
         resp = await env.client.post(
@@ -8739,7 +8662,7 @@ async def test_send_message_to_address_rejects_cross_team_local_persistent_when_
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     payload = {"to_address": "otherco.com/bob", "subject": "hidden", "body": "hi"}
     with record_registry_requests(env) as reads:
         resp = await env.client.post(
@@ -8847,6 +8770,8 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
 ):
     from types import SimpleNamespace
     from messaging_actor_support import (
+        issue_global_certificate_to_local_member,
+        messaging_actor_headers,
         register_messaging_actors,
         set_messaging_inbound_mode,
         record_registry_requests,
@@ -8859,19 +8784,20 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
     )
     alice = sender_actors["alice"]
     others = await register_messaging_actors(
-        env, team_id="ops:otherco.com", aliases=("bob",), local=False
+        env, team_id="ops:otherco.com", aliases=("bob",), local=recipient_identity_scope == "local"
     )
     bob = others["bob"]
-    await set_messaging_inbound_mode(env, bob, mode="open")
+    if recipient_identity_scope == "local":
+        bob = await issue_global_certificate_to_local_member(env, bob, address="otherco.com/bob")
+    else:
+        await set_messaging_inbound_mode(env, bob, mode="open")
+    policy = await env.client.get("/v1/agents/me/inbound-mode", headers=messaging_actor_headers(bob))
+    assert policy.status_code == 200, policy.text
+    assert policy.json()["identity_scope"] == recipient_identity_scope
+    assert policy.json()["inbound_mode"] == "open"
     app = env.app
     aweb_cloud_db = SimpleNamespace(aweb_db=env.db)
     alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
-    if recipient_identity_scope == "local":
-        # unreachable-state: old local-scope storage retains a verified global binding; current admission sets global scope.
-        await env.db.execute(
-            "UPDATE {{tables.agents}} SET identity_scope='local' WHERE agent_id=$1",
-            UUID(bob.agent_id),
-        )
     with record_registry_requests(env) as registry_calls:
         message_id = str(uuid4())
         timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -8961,7 +8887,7 @@ async def test_send_message_to_private_address_rejects_unverified_client_recipie
         team_controller_signing_key=env.team_sk,
         certificate_id=certificate["certificate_id"],
     )
-    await registry.delete_address("otherco.com", "bob", bytes(controller))
+    await registry.delete_address("otherco.com", "bob", controller)
     payload = {
         "to_address": "otherco.com/bob",
         "subject": "private spoof",

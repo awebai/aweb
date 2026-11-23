@@ -494,10 +494,6 @@ func (r *doctorRunner) addTeamOnlineChecks(state *doctorAwebState, client *aweb.
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	registry, err := newRegistryClientWithPreferredBaseURL(state.registryURL)
-	if err == nil && state.registryURL != "" {
-		// The selected membership's registry URL is local operator configuration.
-		err = registry.TrustRegistryOrigin(state.registryURL)
-	}
 	if err != nil {
 		r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusUnknown, nil, "Current team membership is unknown: registry configuration could not be read.", "Repair the selected registry configuration and retry aw doctor --online.", map[string]any{"error": err.Error()}))
 		r.addBlockedAwebChecks([]string{doctorCheckTeamRolesRead, doctorCheckTeamSelectedRoleMatches}, doctorCheckTeamMembershipAuth)

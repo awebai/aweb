@@ -8,27 +8,24 @@ a TeamIdentity from the request's certificate headers.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
+from typing import Any, NamedTuple
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
-from awid.registry import CachedRegistryClient, TeamCertificateStanding
 from awid.signing import verify_did_key_signature
-from awid.team_certificate import TeamCertificateError, decode_team_certificate
-from awid.team_ids import parse_team_id
+from awid.team_certificate import TeamCertificateError, decode_team_certificate, verify_team_certificate_claims
 from fastapi import Depends, HTTPException, Request
-from pgdbm import AsyncDatabaseManager
+from pgdbm import AsyncDatabaseManager, TransactionManager
 
 from aweb.application_state import application_registry_client
 from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
-from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, TeamIdentity
+from aweb.auth_context import (
+    GRANT_SCOPE_ANY, GRANT_SCOPES, MessagingAuth, TeamIdentity, has_verified_team_certificate,
+)
 from aweb.auth_metrics import count_legacy_request_auth
 from aweb.certificate_evidence import EvidenceMode
-from aweb.certificate_registration import (
-    CertificateRegistrationObservation,
-    configured_registration_mode,
-    read_certificate_registration,
-    record_certificate_registration,
-)
-from aweb.config import require_registered_certificates
+from aweb.connection_scope import request_memo
 from aweb.deps import get_db
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.identity_binding import (
@@ -39,42 +36,32 @@ from aweb.identity_binding import (
 from aweb.identity_scope import normalize_identity_scope
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+    CurrentMembershipRequired,
     MemberProjection,
     MemberReadLock,
     current_member,
     member_row_active,
+    read_certificate_standings,
     read_member_projection,
+    read_member_with_overlay,
 )
 from aweb.request_body import request_body_sha256
-from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
+from aweb.service_errors import CurrentMembershipRefusal
+from aweb.team_auth import certificate_refusal, project_verified_team_certificate
 from aweb.team_auth_envelope import team_auth_signature_payload
-from aweb.team_key_pins import AdmittedTeamKeys, pinned_team_key_for_request
+from aweb.team_key_pins import AdmittedTeamKeys
 from aweb.team_registry import (
     native_database_manager as _aweb_db,
-)
-from aweb.team_registry import (
-    refresh_certificate_standing,
-)
-from aweb.team_registry import (
-    registered_certificates as registered_certificates,
 )
 from aweb.team_registry import (
     request_auth_audiences as _team_auth_allowed_audiences,
 )
 from aweb.team_registry import (
-    request_registered_certificates as _get_registered_certificates,
-)
-from aweb.team_registry import (
-    request_revoked_certificates as _get_revoked_certificates,
-)
-from aweb.team_registry import (
     resolve_team_key as _resolve_team_key,
-)
-from aweb.team_registry import (
-    revoked_certificates as revoked_certificates,
 )
 
 logger = logging.getLogger(__name__)
+_ADMITTED_MEMBER = "aweb.admitted_member"
 
 
 def _superseded_team_key() -> HTTPException:
@@ -87,68 +74,256 @@ def _superseded_team_key() -> HTTPException:
     )
 
 
+class _MemberCredential(NamedTuple):
+    team_id: str
+    did_key: str
+    certificate_id: str
+    team_key: str
+
+
+@dataclass(frozen=True)
+class TeamMemberSnapshot:
+    """The native locked read and optional host facts for one verified request."""
+
+    member: MemberProjection | None
+    host_row: Mapping[str, Any] | None
+    _credential: _MemberCredential = field(repr=False)
+    _request_state: dict[str, Any] | None = field(repr=False, compare=False)
+    _memo: dict[str, Any] | None = field(repr=False, compare=False)
+    _overlay_sql: str | None = field(repr=False)
+
+    def _require_current_member(self) -> MemberProjection:
+        row = self.member
+        if row is None or not current_member(row, checked_key=self._credential.team_key):
+            raise CurrentMembershipRequired()
+        return row
+
+
+@dataclass(frozen=True)
+class ResolvedTeamMembership:
+    identity: TeamIdentity
+    snapshot: TeamMemberSnapshot
+
+
+def admitted_member_projection(
+    request: Request, identity: TeamIdentity | MessagingAuth,
+) -> MemberProjection | None:
+    """Return the exact certificate member admitted within this open request."""
+    if identity.grant is not None or not has_verified_team_certificate(identity):
+        return None
+    memo = request_memo()
+    if memo is None or (admitted := memo.get(_ADMITTED_MEMBER)) is None:
+        return None
+    request_state, member = admitted
+    if (
+        request_state is request.scope.get("state")
+        and member["team_id"] == identity.team_id
+        and str(member["agent_id"]) == identity.agent_id
+        and member["did_key"] == identity.did_key
+        and identity.certificate_id
+        and member["certificate_id"] == identity.certificate_id
+        and identity.verified_team_did_key
+        and member["accepted_team_did_key"] == identity.verified_team_did_key
+    ):
+        return member
+    return None
+
+
+def _snapshot_credential(cert_info: dict) -> _MemberCredential:
+    return _MemberCredential(
+        cert_info["team_id"],
+        cert_info["did_key"],
+        (cert_info.get("certificate_id") or "").strip(),
+        str(cert_info.get("verified_team_did_key") or "").strip(),
+    )
+
+
+async def read_team_member_snapshot(
+    db: AsyncDatabaseManager,
+    cert_info: dict,
+    *,
+    request: Request,
+    overlay_sql: str | None = None,
+) -> TeamMemberSnapshot:
+    """Read once after certificate verification, before host route policy.
+
+    Pass a database manager outside any transaction. SHARE locks on the team
+    and member live through the statement. This read performs no acceptance
+    writes and also returns host facts when the native member is absent.
+    """
+    if isinstance(db, TransactionManager):
+        raise ValueError("A request member snapshot requires a database manager outside a transaction")
+    return await _read_team_member_snapshot(
+        db, _snapshot_credential(cert_info), request, overlay_sql, MemberReadLock.SHARE
+    )
+
+
+async def _read_team_member_snapshot(
+    db,
+    credential: _MemberCredential,
+    request: Request | None,
+    overlay_sql: str | None,
+    read_lock: MemberReadLock,
+) -> TeamMemberSnapshot:
+    team_id, did_key, certificate_id, _ = credential
+    host_row = None
+    if overlay_sql is None:
+        member = await read_member_projection(db, team_id=team_id, did_key=did_key, read_lock=read_lock)
+    else:
+        member, host_row = await read_member_with_overlay(
+            db,
+            team_id=team_id,
+            did_key=did_key,
+            certificate_id=certificate_id,
+            read_lock=read_lock,
+            overlay_sql=overlay_sql,
+        )
+    return TeamMemberSnapshot(
+        member=member,
+        host_row=host_row,
+        _credential=credential,
+        _request_state=request.scope.setdefault("state", {}) if request is not None else None,
+        _memo=request_memo(),
+        _overlay_sql=overlay_sql,
+    )
+
+
+def _changes_certificate(row: MemberProjection, certificate_id: str, team_key: str) -> bool:
+    return bool(certificate_id) and (
+        certificate_id != (row.get("certificate_id") or "").strip()
+        or team_key != (row.get("accepted_team_did_key") or "").strip()
+    )
+
+
+class _ReleaseShareBeforeUpdating(Exception):
+    """Roll back the savepoint that acquired SHARE when called inside a transaction."""
+
+
+async def _read_admission_share(
+    db: AsyncDatabaseManager | TransactionManager,
+    credential: _MemberCredential,
+    request: Request | None,
+) -> TeamMemberSnapshot:
+    if not isinstance(db, TransactionManager):
+        return await _read_team_member_snapshot(db, credential, request, None, MemberReadLock.SHARE)
+    # Compatibility for preexisting native callers that pass a transaction.
+    # A released savepoint retains its locks. Roll back this read's savepoint
+    # on a certificate change before taking the write lock.
+    try:
+        async with db.transaction() as tx:
+            snapshot = await _read_team_member_snapshot(tx, credential, request, None, MemberReadLock.SHARE)
+            if snapshot.member is not None and _changes_certificate(
+                snapshot.member, credential.certificate_id, credential.team_key,
+            ):
+                raise _ReleaseShareBeforeUpdating()
+    except _ReleaseShareBeforeUpdating:
+        pass
+    return snapshot
+
+
 async def resolve_team_identity(
     db: AsyncDatabaseManager,
     cert_info: dict,
     *,
     request: Request | None = None,
 ) -> TeamIdentity:
-    """Resolve a TeamIdentity from verified certificate info.
+    """Resolve only the identity for callers that do not need the snapshot."""
+    return (await resolve_team_membership(db, cert_info, request=request)).identity
+
+
+async def resolve_team_membership(
+    db: AsyncDatabaseManager,
+    cert_info: dict,
+    *,
+    request: Request | None = None,
+    snapshot: TeamMemberSnapshot | None = None,
+    before_write: Callable[[TeamMemberSnapshot], None] | None = None,
+) -> ResolvedTeamMembership:
+    """Resolve a TeamIdentity and member snapshot from verified certificate info.
 
     Looks up the agent row by (team_id, did_key). The agent must
     already exist (created via POST /v1/connect).
 
     Args:
         db: The aweb database manager.
-        cert_info: Verified certificate fields from parse_and_verify_certificate().
+        cert_info: Verified certificate fields and native standing evidence.
+        snapshot: Native SHARE read of this credential in the same ASGI request.
+            When supplied, pass a database manager outside any transaction.
+        before_write: Host policy check on the UPDATE reread, without I/O.
 
     Returns:
-        TeamIdentity with resolved agent_id.
+        The accepted identity and the native snapshot it used.
 
     Raises:
-        ValueError: If the native member is absent, deleted or inactive.
+        CurrentMembershipRequired: If the native member is absent, deleted,
+            inactive, or the certificate's verified team key is no longer current.
     """
-    team_id = cert_info["team_id"]
-    did_key = cert_info["did_key"]
+    credential = _snapshot_credential(cert_info)
+    team_id, did_key, presented_certificate_id, verified_team_did_key = credential
+    if snapshot is not None and isinstance(db, TransactionManager):
+        raise ValueError("A request member snapshot requires a database manager outside a transaction")
+    if snapshot is not None and (
+        request is None
+        or snapshot._request_state is not request.scope.setdefault("state", {})
+        or snapshot._credential != credential
+        or (snapshot._memo is not None and snapshot._memo is not request_memo())
+    ):
+        raise ValueError("Member snapshot belongs to a different request or certificate")
 
+    binding = cert_info.get("identity_binding")
+    read_native_share = False
     # A host that already read this member's agent row while verifying the
     # same request passes it as cert_info["agent_row"]; it is used only for the
     # exact (team_id, did_key) this certificate verified.
-    row = cert_info.get("agent_row")
-    if isinstance(row, dict):
-        try:
-            row = MemberProjection.from_row(row)
-        except ValueError:
-            # A partial row cannot answer native eligibility. Read the missing
-            # authority facts through their owner, without inventing NULL values.
-            logger.warning(
-                "Invalid host member snapshot; reading the canonical native projection",
-                exc_info=True,
-            )
-            row = None
-    if not (
-        isinstance(row, MemberProjection)
-        and row["team_id"] == team_id
-        and row["did_key"] == did_key
-    ):
-        row = await read_member_projection(db, team_id=team_id, did_key=did_key)
+    if snapshot is not None:
+        row = snapshot.member
+    else:
+        row = cert_info.get("agent_row")
+        if isinstance(row, dict):
+            try:
+                row = MemberProjection.from_row(row)
+            except ValueError:
+                # A partial row cannot answer native eligibility. Read the missing
+                # authority facts through their owner, without inventing NULL values.
+                logger.warning(
+                    "Invalid host member snapshot; reading the canonical native projection",
+                    exc_info=True,
+                )
+                row = None
+        if not (
+            isinstance(row, MemberProjection)
+            and row["team_id"] == team_id
+            and row["did_key"] == did_key
+        ):
+            if (
+                request is not None
+                and cert_info.get("agent_row") is None
+                and isinstance(binding, IdentityBinding)
+                and not binding.fresh_observation
+                and not isinstance(db, TransactionManager)
+            ):
+                # The verifier already supplied the binding. Read the native
+                # member under SHARE once, without an unlocked preflight.
+                snapshot = await _read_admission_share(db, credential, request)
+                row = snapshot.member
+                read_native_share = True
+            else:
+                row = await read_member_projection(db, team_id=team_id, did_key=did_key)
 
     if not row or row["deleted_at"] is not None:
-        raise ValueError(
+        raise CurrentMembershipRequired(
             f"Agent not connected: no agent with did_key {did_key[:20]}... in team {team_id}. "
             + CURRENT_MEMBERSHIP_REQUIRED_DETAIL
         )
 
     if not member_row_active(row):
-        raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
+        raise CurrentMembershipRequired()
 
     # Only the key checked by the certificate verifier may reaccept a member.
     # A stored accepted key is attribution, not a substitute for that proof.
-    verified_team_did_key = str(cert_info.get("verified_team_did_key") or "").strip()
     if not verified_team_did_key:
-        raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
+        raise CurrentMembershipRequired()
 
-    binding = cert_info.get("identity_binding")
     if not isinstance(binding, IdentityBinding):
         binding = IdentityBinding()
         if request is not None:
@@ -167,9 +342,12 @@ async def resolve_team_identity(
             did_aw=row.get("did_aw") or "",
             address=row.get("address") or "",
         )
+        if read_native_share:
+            # When a stored claim needs independent evidence, recheck the
+            # member after that observation, just like the preflight path.
+            snapshot = None
     # identity.md:807-811: later grants must retain the exact certificate that
     # this verified request makes current for its subject.
-    presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
     # A worker may still hold a verified old key in its memo, or a host may
     # have read its snapshot before rotation. Recheck under the same locks
     # that protect acceptance and binding writes; no registry read occurs here.
@@ -179,42 +357,35 @@ async def resolve_team_identity(
     # If the credential changed, release SHARE before taking UPDATE so two
     # readers never deadlock while upgrading their locks. Reread and validate
     # again in that transaction; the earlier row grants no authority.
-    read_locks = (
-        (MemberReadLock.UPDATE,)
-        if binding.fresh_observation or (
-            presented_certificate_id and (
-                presented_certificate_id != (row.get("certificate_id") or "").strip()
-                or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
-            )
-        )
-        else (MemberReadLock.SHARE, MemberReadLock.UPDATE)
-    )
-    for read_lock in read_locks:
+    changed = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
+    if not binding.fresh_observation and not changed:
+        if snapshot is None:
+            snapshot = await _read_admission_share(db, credential, request)
+        row = snapshot._require_current_member()
+        changed = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
+
+    if binding.fresh_observation or changed:
+        overlay_sql = snapshot._overlay_sql if snapshot is not None else None
         async with db.transaction() as tx:
-            row = await read_member_projection(
-                tx, team_id=team_id, did_key=did_key, read_lock=read_lock
+            snapshot = await _read_team_member_snapshot(
+                tx, credential, request, overlay_sql, MemberReadLock.UPDATE
             )
-            if not row or not current_member({
-                **dict(row), "accepted_team_did_key": verified_team_did_key,
-            }):
-                raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
-            update_certificate = presented_certificate_id and (
-                presented_certificate_id != (row.get("certificate_id") or "").strip()
-                or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
-            )
-            if read_lock is MemberReadLock.SHARE and update_certificate:
-                continue
-            await refresh_projection_binding(
-                tx, agent_id=row["agent_id"], did_key=did_key, binding=binding
-            )
+            row = snapshot._require_current_member()
+            update_certificate = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
+            if before_write is not None and (binding.fresh_observation or update_certificate):
+                before_write(snapshot)
+            await refresh_projection_binding(tx, agent_id=row["agent_id"], did_key=did_key, binding=binding)
             if update_certificate:
                 await tx.execute(
                     "UPDATE {{tables.agents}} SET certificate_id = $2, accepted_team_did_key = $3 WHERE agent_id = $1",
                     row["agent_id"], presented_certificate_id, verified_team_did_key,
                 )
-            break
+            if binding.fresh_observation or update_certificate:
+                row = await read_member_projection(tx, team_id=team_id, did_key=did_key)
+                assert row is not None  # The UPDATE lock still holds the row.
+                snapshot = replace(snapshot, member=row)
 
-    return TeamIdentity(
+    identity = TeamIdentity(
         team_id=team_id,
         alias=cert_info["alias"],
         did_key=did_key,
@@ -224,7 +395,15 @@ async def resolve_team_identity(
         identity_scope=normalize_identity_scope(cert_info.get("identity_scope")),
         certificate_id=cert_info.get("certificate_id", ""),
         verified_team_did_key=verified_team_did_key,
+        certificate_verified=True,
     )
+    assert snapshot is not None
+    memo = request_memo()
+    if request is not None and memo is not None:
+        # After reacceptance, row is the persisted projection from the UPDATE
+        # transaction. A verifier-only snapshot never publishes admission.
+        memo[_ADMITTED_MEMBER] = (snapshot._request_state, row)
+    return ResolvedTeamMembership(identity, snapshot)
 
 
 # ---------------------------------------------------------------------------
@@ -357,140 +536,54 @@ async def _verify_admitting_certificate(
     if not team_did_key:
         raise HTTPException(status_code=401, detail="unknown_team")
 
-    # -- Step 5: The team's revoked and registered certificates --
-    selected_certificate_ids = (
-        [cert_data["certificate_id"]] if isinstance(cert_data.get("certificate_id"), str) else None
-    )
-    revoked_certs = await _get_revoked_certificates(
-        request, cert_team_id, certificate_ids=selected_certificate_ids
-    )
-    # docs/aweb-sot.md, Staged certificate-registration observations: enforcement and measurement
-    # share a registration decision. OFF measurement follows artifact checks.
-    registered_certs = (
-        await _get_registered_certificates(request, cert_team_id)
-        if require_registered_certificates()
-        else None
-    )
-
-    def check_certificate(team_key: str):
-        return parse_and_verify_certificate(
-            cert_header,
-            request_did_key=did_key,
-            team_did_key=team_key,
-            revoked_certificate_ids=revoked_certs,
-            registered_certificate_ids=registered_certs,
-        )
-
-    async def check_with_registration(
-        team_key: str, *, revocation_evidence: EvidenceMode = EvidenceMode.CACHED
-    ):
-        nonlocal registered_certs, revoked_certs
-        try:
-            result = check_certificate(team_key)
-        except TeamCertificateError as exc:
-            if exc.reason != "unregistered":
-                raise
-            # Unregistered already establishes a valid signature. Rotation
-            # additionally requires current revocations before a list retry.
-            if revocation_evidence is EvidenceMode.FRESH:
-                revoked_certs = await _get_revoked_certificates(
-                    request,
-                    cert_team_id,
-                    certificate_ids=selected_certificate_ids,
-                    evidence=EvidenceMode.FRESH,
-                )
-                if cert_data["certificate_id"] in revoked_certs:
-                    raise TeamCertificateError("revoked") from None
-            registry = application_registry_client(request.app.state)
-            if not isinstance(registry, CachedRegistryClient):
-                # An uncached registry client's initial list was already live.
-                raise
-            certificate_id = cert_data["certificate_id"]
-            standing = await refresh_certificate_standing(
-                registry,
-                cert_team_id,
-                certificate_id=certificate_id,
-            )
-            if standing == TeamCertificateStanding.REVOKED:
-                raise TeamCertificateError("revoked") from None
-            if standing != TeamCertificateStanding.ACTIVE:
-                raise
-            # Standing and the server's admitted key can change independently.
-            pin = await AdmittedTeamKeys(_aweb_db(db)).pin(cert_team_id)
-            if pin is not None and pin.team_did_key != team_key:
-                raise _superseded_team_key() from None
-            registered_certs = {certificate_id}
-            result = check_certificate(team_key)
-        else:
-            if revocation_evidence is EvidenceMode.FRESH:
-                revoked_certs = await _get_revoked_certificates(
-                    request,
-                    cert_team_id,
-                    certificate_ids=selected_certificate_ids,
-                    evidence=EvidenceMode.FRESH,
-                )
-                if result["certificate_id"] in revoked_certs:
-                    raise TeamCertificateError("revoked") from None
-        return result
-
+    # Only a valid certificate may spend the registration-miss budget. A
+    # certificate signature failure alone may spend the team-key refresh.
+    evidence = EvidenceMode.CACHED
     try:
         try:
-            cert_info = await check_with_registration(team_did_key)
-        except TeamCertificateError as e:
-            if e.reason != "bad_signature":
-                raise
-            # Only a certificate signature failure may spend the separate
-            # bounded team-key refresh budget.
-            registry = application_registry_client(request.app.state)
-            refreshed_key = None
-            if isinstance(registry, CachedRegistryClient):
-                domain, team_name = parse_team_id(cert_team_id)
-                refreshed_key = await registry.refresh_team_key_after_signature_failure(
-                    domain, team_name, rejected_key=team_did_key
-                )
-            if not refreshed_key or refreshed_key == team_did_key:
-                raise
-            refreshed_key = await pinned_team_key_for_request(
-                request, cert_team_id, refreshed_key, db=_aweb_db(db)
+            checked = verify_team_certificate_claims(
+                cert_header, subject_did_key=did_key, team_did_key=team_did_key,
             )
+        except TeamCertificateError as exc:
+            if exc.reason != "bad_signature":
+                raise
+            refreshed_key = await _resolve_team_key(
+                request, cert_team_id, db=_aweb_db(db), rejected_key=team_did_key,
+            )
+            if not refreshed_key:
+                raise
             team_did_key = refreshed_key
-            cert_info = await check_with_registration(
-                team_did_key, revocation_evidence=EvidenceMode.FRESH
+            checked = verify_team_certificate_claims(
+                cert_header, subject_did_key=did_key, team_did_key=team_did_key,
             )
-    except TeamCertificateError as e:
+            evidence = EvidenceMode.FRESH
+
+        certificate_id = checked.claims["certificate_id"]
+        standings = await read_certificate_standings(
+            application_registry_client(request.app.state), cert_team_id, [certificate_id],
+            request=request, revocation_evidence=evidence,
+        )
+        standing = standings[certificate_id]
+        standing.require_active()
+        if standing.refreshed_after_miss:
+            pin = await AdmittedTeamKeys(_aweb_db(db)).pin(cert_team_id)
+            if pin is not None and pin.team_did_key != team_did_key:
+                raise _superseded_team_key()
+    except TeamCertificateError as exc:
         if (
-            e.reason == "bad_signature"
+            exc.reason == "bad_signature"
             and str(cert_data.get("team_did_key") or "").strip() != team_did_key
         ):
-            # A certificate under a key the team no longer holds: the member
-            # fetches the certificate now recorded for it and continues.
             raise _superseded_team_key() from None
-        if e.reason == "unregistered":
+        if exc.reason == "unregistered":
             logger.warning(
                 "certificate existence check failed: a certificate presented for team %s "
                 "is not registered at the AWID registry",
                 cert_team_id,
             )
-        raise certificate_refusal(e) from None
-
-    if registered_certs is None:
-        cert_info["registration_decision"] = await read_certificate_registration(
-            registry_client=application_registry_client(request.app.state),
-            team_id=cert_team_id,
-            certificate_id=cert_info["certificate_id"],
-            mode=configured_registration_mode(),
-            request=request,
-        )
-    else:
-        cert_info["registration_decision"] = record_certificate_registration(
-            request,
-            observation=CertificateRegistrationObservation(
-                team_id=cert_team_id,
-                registered_certificate_ids=registered_certs,
-            ),
-            certificate_id=cert_info["certificate_id"],
-            mode=configured_registration_mode(),
-        )
+        raise certificate_refusal(exc) from None
+    cert_info = project_verified_team_certificate(checked.claims)
+    cert_info["registration_decision"] = standing.registration
     return cert_info, team_did_key
 
 
@@ -499,6 +592,7 @@ async def resolve_team_identity_with_grant_scope(
     db,
     *,
     grant_scope: str | None,
+    membership_refusal_detail: str | None = None,
 ) -> TeamIdentity:
     """Resolve native certificate/grant authority under a declared grant scope.
 
@@ -536,6 +630,11 @@ async def resolve_team_identity_with_grant_scope(
     aweb_db = _aweb_db(db)
     try:
         return await resolve_team_identity(aweb_db, cert_info, request=request)
+    except CurrentMembershipRequired as e:
+        logger.warning("Native membership refusal: %s", e)
+        if membership_refusal_detail is not None:
+            raise CurrentMembershipRefusal(membership_refusal_detail) from e
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
@@ -555,13 +654,18 @@ async def get_team_identity(request: Request, db=Depends(get_db)) -> TeamIdentit
     return await resolve_team_identity_with_grant_scope(request, db, grant_scope=None)
 
 
-def team_identity_with_grant_scope(scope: str):
+def team_identity_with_grant_scope(scope: str, *, membership_refusal_detail: str | None = None):
     """Return a dependency that accepts either root team auth or a scoped grant."""
     if scope != GRANT_SCOPE_ANY and scope not in GRANT_SCOPES:
         raise AssertionError(f"unknown grant scope declaration: {scope}")
 
     async def dependency(request: Request, db=Depends(get_db)) -> TeamIdentity:
-        return await resolve_team_identity_with_grant_scope(request, db, grant_scope=scope)
+        return await resolve_team_identity_with_grant_scope(
+            request,
+            db,
+            grant_scope=scope,
+            membership_refusal_detail=membership_refusal_detail,
+        )
 
     dependency._aweb_grant_scope = scope  # type: ignore[attr-defined]
     return dependency
