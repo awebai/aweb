@@ -28,6 +28,15 @@ type connectedEncryptionSetup struct {
 	Policy     encryptionPublicationPolicy
 }
 
+// connectedMemberSetupError marks a local completion failure after the member
+// binding and its credentials were persisted. Creation rollback must preserve
+// those keys, including an encryption assertion whose write may have committed.
+type connectedMemberSetupError struct{ cause error }
+
+func (err *connectedMemberSetupError) Error() string         { return err.cause.Error() }
+func (err *connectedMemberSetupError) Unwrap() error         { return err.cause }
+func (err *connectedMemberSetupError) RetainsIdentity() bool { return true }
+
 type requiredEncryptionPublicationError struct{ cause error }
 
 func (err *requiredEncryptionPublicationError) Error() string {

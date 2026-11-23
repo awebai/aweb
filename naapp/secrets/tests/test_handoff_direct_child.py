@@ -42,7 +42,7 @@ async def certify_agent(journey, parent: Member, parent_chain: list[dict], alias
     )
     principal = (await journey.registry.register_did(agent.did_key, bytes(agent.member_key))).did_aw
     agent.extra_cert_fields = {"member_did_aw": principal}
-    await journey.world.registry.add_certificate(agent.certificate())
+    await journey.world.registry.add_certificate(agent.certificate(), team_key=agent.team_key)
     fields = {
         "v": 1,
         "type": "aweb.id-certificate",
@@ -160,7 +160,7 @@ async def test_a_renewed_holder_certificate_refuses_until_the_holders_credential
     )
     # One active certificate per alias: the old one is revoked as the new one is issued.
     await journey.world.registry.revoke(journey.member.certificate_id)
-    await journey.world.registry.add_certificate(renewed.certificate())
+    await journey.world.registry.add_certificate(renewed.certificate(), team_key=renewed.team_key)
 
     refused = await start(journey, laptop, chain)
     assert refused.status_code == 403 and refused.json() == {"detail": "principal_not_member"}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,11 +51,15 @@ func (s IDInvitationFileStore) path(invitationID string) (string, error) {
 }
 
 func (s IDInvitationFileStore) Invitation(invitationID string) (*awid.IDInvitation, error) {
+	return s.readInvitation(os.DirFS(s.Dir), invitationID)
+}
+
+func (s IDInvitationFileStore) readInvitation(files fs.FS, invitationID string) (*awid.IDInvitation, error) {
 	path, err := s.path(invitationID)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := fs.ReadFile(files, invitationID+".json")
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -76,6 +81,10 @@ func (s IDInvitationFileStore) Invitation(invitationID string) (*awid.IDInvitati
 // PutInvitation durably replaces the invitation: the file and the directory
 // that names it are both synced before it returns.
 func (s IDInvitationFileStore) PutInvitation(inv *awid.IDInvitation) error {
+	return (invitationRequestIndex{store: s, files: os.DirFS(s.Dir)}).put(inv)
+}
+
+func (s IDInvitationFileStore) writeInvitation(inv *awid.IDInvitation) error {
 	path, err := s.path(inv.InvitationID)
 	if err != nil {
 		return err

@@ -1248,13 +1248,16 @@ async def test_delete_namespace_happy_path_cascades(client, controller_identity,
         address["address_id"],
     )
     cert_row = await db.fetch_one(
-        "SELECT 1 FROM {{tables.team_certificates}} WHERE certificate_id = $1",
+        "SELECT revoked_at FROM {{tables.team_certificates}} WHERE certificate_id = $1",
         cert_id,
     )
     assert ns_row["deleted_at"] is not None
     assert team_row["deleted_at"] is not None
     assert address_row["deleted_at"] is not None
-    assert cert_row is None
+    # A revocation outlives its team: it still applies if the team name is
+    # created again.
+    assert cert_row is not None
+    assert cert_row["revoked_at"] is not None
 
 
 @pytest.mark.asyncio

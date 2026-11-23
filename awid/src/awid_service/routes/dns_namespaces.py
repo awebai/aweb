@@ -846,16 +846,10 @@ async def delete_namespace(
         if active_cert is not None:
             raise HTTPException(status_code=409, detail="Namespace has active certificates")
 
+        # Every certificate is revoked by now, and the rows stay: a team's
+        # revocations outlive the team and its namespace (docs/awid-sot.md,
+        # revocations).
         now = datetime.now(timezone.utc)
-        await tx.execute(
-            """
-            DELETE FROM {{tables.team_certificates}} tc
-            USING {{tables.teams}} t
-            WHERE tc.team_uuid = t.team_uuid
-              AND t.domain = $1
-            """,
-            domain,
-        )
         await tx.execute(
             """
             UPDATE {{tables.teams}}

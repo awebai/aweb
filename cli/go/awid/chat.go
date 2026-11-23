@@ -3,6 +3,7 @@ package awid
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -203,6 +204,9 @@ type ChatCreateSessionRequest struct {
 	MessageID      string               `json:"message_id,omitempty"`
 	SignedPayload  string               `json:"signed_payload,omitempty"`
 	EncryptE2EE    bool                 `json:"-"`
+	// ConfirmedRecipient is what the sender's team roster names for the one
+	// alias in ToAliases; it is signed, never sent as a selector.
+	ConfirmedRecipient *ConfirmedRecipient `json:"-"`
 }
 
 type ChatCreateSessionResponse struct {
@@ -280,6 +284,10 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 	if len(payload.ToDIDs) == 1 {
 		env.ToDID = strings.TrimSpace(payload.ToDIDs[0])
 	}
+	if payload.ConfirmedRecipient != nil && len(payload.ToAliases) == 1 && !directIdentityTargets {
+		env.ToDID = strings.TrimSpace(payload.ConfirmedRecipient.DID)
+		env.ToStableID = strings.TrimSpace(payload.ConfirmedRecipient.StableID)
+	}
 	sf, err := c.signEnvelope(ctx, env)
 	if err != nil {
 		return nil, err
@@ -303,18 +311,10 @@ func (c *Client) prepareE2EEChatCreate(ctx context.Context, payload *ChatCreateS
 	if c == nil || payload == nil {
 		return errors.New("aweb: request is required")
 	}
-	if c.signingKey == nil || strings.TrimSpace(c.did) == "" {
-		return errors.New("E2E messaging requires a local self-custodial signing key")
+	if _, refusal := c.e2eeSenderGap(); refusal != nil {
+		return refusal
 	}
 	custody := c.e2eeCustody()
-	if custody == nil {
-		if !c.canSignMessages() {
-			return errors.New("E2E messaging requires the subject identity signing key; identity grants cannot sign encrypted message envelopes")
-		}
-		if c.e2eeEncryptionKey == nil {
-			return errors.New("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
-		}
-	}
 	recipients, err := c.e2eeChatRecipients(ctx, payload.ToAliases, payload.ToDIDs, payload.ToAddresses)
 	if err != nil {
 		return err
@@ -389,23 +389,20 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	if c == nil || payload == nil {
 		return errors.New("aweb: request is required")
 	}
-	if c.signingKey == nil || strings.TrimSpace(c.did) == "" {
-		return errors.New("E2E messaging requires a local self-custodial signing key")
+	if _, refusal := c.e2eeSenderGap(); refusal != nil {
+		return refusal
 	}
 	custody := c.e2eeCustody()
-	if custody == nil {
-		if !c.canSignMessages() {
-			return errors.New("E2E messaging requires the subject identity signing key; identity grants cannot sign encrypted message envelopes")
-		}
-		if c.e2eeEncryptionKey == nil {
-			return errors.New("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
-		}
-	}
 	recipients, err := c.e2eeChatRecipientsForSession(ctx, sessionID)
 	if err != nil {
 		return err
 	}
-	if err := refuseCustodialRecipients(recipients, time.Now().UTC()); err != nil {
+	now := time.Now().UTC()
+	if payload.E2EEInherited && len(recipients) == 1 && recipientKeyIsHosted(recipients[0], now) {
+		payload.EncryptE2EE = false
+		return nil
+	}
+	if err := refuseCustodialRecipients(recipients, now); err != nil {
 		return err
 	}
 	messageID, err := GenerateUUID4()
@@ -415,7 +412,7 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	if strings.TrimSpace(payload.MessageID) != "" {
 		messageID = strings.TrimSpace(payload.MessageID)
 	}
-	now := time.Now().UTC().Truncate(time.Second)
+	now = now.Truncate(time.Second)
 	if custody != nil {
 		envelope, err := c.createCustodyE2EEEnvelope(ctx, custody, custodyEnvelopeMessage{Kind: custodyChatMessage, Body: payload.Body, MessageID: messageID, ConversationID: strings.TrimSpace(sessionID), ReplyTo: payload.ReplyTo, Recipients: recipients})
 		if err != nil {
@@ -844,123 +841,73 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
-		m.Attachments = nil
-		m.AttachmentsAvailable = true
-		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
-		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !signedDisplayMatches(m.SignedPayload, map[string]string{
-			"type": "chat", "body": m.Body,
-			"message_id": m.MessageID, "conversation_id": m.ConversationID,
-			"from_did": m.FromDID, "to_did": m.ToDID,
-		}) {
-			// Preserve the observed response so a mismatch cannot be hidden by
-			// metadata overlay or subsequently promoted by trust normalization.
-			m.VerificationStatus = Failed
-			continue
+		if err := c.VerifyReceivedChatMessage(ctx, m, p.SessionID, m.FromAgent); err != nil {
+			return nil, err
 		}
-
-		if m.ContentMode == ContentModeEncryptedV2 || m.MessageVersion == E2EEMessageVersion || m.Encrypted != nil {
-			if m.Encrypted == nil {
-				return nil, errors.New("encrypted chat response is missing encrypted envelope")
-			}
-			plain, err := c.DecryptE2EEEnvelopeWithContext(ctx, m.Encrypted)
-			if err != nil {
-				return nil, err
-			}
-			if m.MessageID != plain.MessageID || m.ConversationID != plain.ConversationID {
-				// Decryption authenticated the envelope and its inner IDs. Keep
-				// the original outer projection visible when it disagrees.
-				m.VerificationStatus = Failed
-				continue
-			}
-
-			m.Body = plain.Body
-			m.Attachments, m.AttachmentsAvailable = DecodeAttachmentContent(plain.Attachments)
-			binding.TeamID = plain.From.TeamID
-			applyE2EEPlaintextChatMetadata(m, plain)
-			m.VerificationStatus = Verified
-		}
-		if meta, ok := parseSignedEnvelopeMetadata(m.SignedPayload); ok && m.ContentMode != ContentModeEncryptedV2 {
-			if meta.FromDID != "" {
-				m.FromDID = meta.FromDID
-			}
-			if meta.ToDID != "" {
-				m.ToDID = meta.ToDID
-			}
-			if m.FromStableID == "" {
-				m.FromStableID = meta.FromStableID
-			}
-			if m.ToStableID == "" {
-				m.ToStableID = meta.ToStableID
-			}
-			// A signed member name is not a public address. Preserve an explicit
-			// server projection; only suppress alias-to-address fallback.
-			stableAlias := strings.HasPrefix(meta.FromStableID, "did:aw:") && !strings.Contains(meta.From, "/")
-			if m.FromAddress == "" && meta.From != "" && !stableAlias {
-				m.FromAddress = meta.From
-			}
-			if m.ToAddress == "" && meta.To != "" {
-				m.ToAddress = meta.To
-			}
-			if stableAlias {
-				m.FromStableID = meta.FromStableID
-			}
-		}
-		from := m.FromAgent
-		if m.FromAddress != "" {
-			from = m.FromAddress
-		}
-		if m.ContentMode == ContentModeEncryptedV2 {
-			// The v2 envelope signature was verified before decrypting above.
-		} else if m.SignedPayload != "" {
-			m.VerificationStatus, _ = VerifySignedPayload(m.SignedPayload, m.Signature, m.FromDID, m.SigningKeyID)
-			if m.VerificationStatus == Verified {
-				m.VerificationStatus = SignedPayloadConversationStatus(m.SignedPayload, m.ConversationID)
-			}
-		} else {
-			to := ""
-			if m.ToAddress != "" {
-				to = m.ToAddress
-			}
-			env := &MessageEnvelope{
-				From:           from,
-				FromDID:        m.FromDID,
-				To:             to,
-				ToDID:          m.ToDID,
-				Type:           "chat",
-				Body:           m.Body,
-				Timestamp:      m.Timestamp,
-				FromStableID:   m.FromStableID,
-				ToStableID:     m.ToStableID,
-				MessageID:      m.MessageID,
-				ConversationID: m.ConversationID,
-				Signature:      m.Signature,
-				SigningKeyID:   m.SigningKeyID,
-			}
-			m.VerificationStatus, _ = VerifyMessage(env)
-			if m.VerificationStatus == Failed && m.ConversationID != "" {
-				env.ConversationID = ""
-				legacyStatus, _ := VerifyMessage(env)
-				if legacyStatus == Verified {
-					m.VerificationStatus = VerifiedLegacy
-				}
-			}
-		}
-		m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAgent, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact, binding)
 	}
 	return &out, nil
 }
 
-func applyE2EEPlaintextChatMetadata(m *ChatMessage, plain *E2EEInnerPayload) {
-	if m == nil || plain == nil {
-		return
+// VerifyReceivedChatMessage sets a plaintext or encrypted chat message's
+// verification status and authenticated sender fields, the same way for every
+// reader (chat history and the live stream) and by the rule mail uses
+// (verifyReceived). conversationID is the conversation the reader read the
+// message from; a message from any other conversation is Failed. trustAlias
+// names the sender for trust normalisation when the message carries no
+// address. An error means the message could not be read at all.
+func (c *Client) VerifyReceivedChatMessage(ctx context.Context, m *ChatMessage, conversationID, trustAlias string) error {
+	r := receivedChatMessage(m, trustAlias)
+	r.requestedConversationID = strings.TrimSpace(conversationID)
+	if err := c.verifyReceived(ctx, &r); err != nil {
+		return err
 	}
-	if strings.TrimSpace(plain.From.DID) != "" {
-		m.FromDID = strings.TrimSpace(plain.From.DID)
+	r.applyToChat(m)
+	return nil
+}
+
+func receivedChatMessage(m *ChatMessage, trustAlias string) receivedMessage {
+	return receivedMessage{
+		kind:                    receivedChat,
+		fromAlias:               m.FromAgent,
+		trustAlias:              trustAlias,
+		timestamp:               m.Timestamp,
+		messageID:               m.MessageID,
+		conversationID:          m.ConversationID,
+		contentMode:             m.ContentMode,
+		messageVersion:          m.MessageVersion,
+		encrypted:               m.Encrypted,
+		signature:               m.Signature,
+		signingKeyID:            m.SigningKeyID,
+		signedPayload:           m.SignedPayload,
+		senderMembership:        m.SenderMembership,
+		rotationAnnouncement:    m.RotationAnnouncement,
+		replacementAnnouncement: m.ReplacementAnnouncement,
+		body:                    m.Body,
+		fromDID:                 m.FromDID,
+		toDID:                   m.ToDID,
+		fromStableID:            m.FromStableID,
+		toStableID:              m.ToStableID,
+		fromAddress:             m.FromAddress,
+		toAddress:               m.ToAddress,
+		attachments:             m.Attachments,
+		attachmentsAvailable:    m.AttachmentsAvailable,
+		status:                  m.VerificationStatus,
+		isContact:               m.IsContact,
 	}
-	m.FromStableID = strings.TrimSpace(plain.From.StableID)
-	// An authenticated empty address is meaningful; never retain a projected
-	// alias/address here. Server-attested membership remains separate.
-	m.FromAddress = strings.TrimSpace(plain.From.Address)
+}
+
+func (r *receivedMessage) applyToChat(m *ChatMessage) {
+	m.Body = r.body
+	m.FromDID = r.fromDID
+	m.ToDID = r.toDID
+	m.FromStableID = r.fromStableID
+	m.ToStableID = r.toStableID
+	m.FromAddress = r.fromAddress
+	m.ToAddress = r.toAddress
+	m.Attachments = r.attachments
+	m.AttachmentsAvailable = r.attachmentsAvailable
+	m.VerificationStatus = r.status
+	m.IsContact = r.isContact
 }
 
 type ChatMarkReadRequest struct {
@@ -984,11 +931,11 @@ func (c *Client) ChatMarkRead(ctx context.Context, sessionID string, req *ChatMa
 		return &out, nil
 	}
 
-	// Well-formedness gates only the compatibility retry. The exact request is
-	// always sent first so the server remains the authoritative validator and
-	// its original error stays observable.
-	status, isHTTPError := HTTPStatusCode(originalErr)
-	if !isHTTPError || status < 400 || status >= 500 || !wellFormedChatMessageIDs(req) {
+	// The exact request is always sent first so the server remains the
+	// authoritative validator. Only an older server's answer to the ids-list
+	// shape is retried with a watermark; every other refusal is returned as
+	// itself, since a watermark would mark unpresented messages read.
+	if !olderServerRequiresWatermark(originalErr) || !wellFormedChatMessageIDs(req) {
 		return nil, originalErr
 	}
 
@@ -998,6 +945,36 @@ func (c *Client) ChatMarkRead(ctx context.Context, sessionID string, req *ChatMa
 		return nil, originalErr
 	}
 	return &fallbackOut, nil
+}
+
+// olderServerRequiresWatermark reports the answer a server released before
+// v1.26.28 gives an ids-list read: FastAPI's 422 validation refusal naming
+// the missing up_to_message_id, since its MarkReadRequest required that field
+// and forbade others (server/src/aweb/routes/chat.py, server-v1.8.1 through
+// server-v1.26.24).
+func olderServerRequiresWatermark(err error) bool {
+	if status, ok := HTTPStatusCode(err); !ok || status != http.StatusUnprocessableEntity {
+		return false
+	}
+	body, ok := HTTPErrorBody(err)
+	if !ok {
+		return false
+	}
+	var refusal struct {
+		Detail []struct {
+			Type string `json:"type"`
+			Loc  []any  `json:"loc"`
+		} `json:"detail"`
+	}
+	if json.Unmarshal([]byte(body), &refusal) != nil {
+		return false
+	}
+	for _, detail := range refusal.Detail {
+		if detail.Type == "missing" && len(detail.Loc) == 2 && detail.Loc[0] == "body" && detail.Loc[1] == "up_to_message_id" {
+			return true
+		}
+	}
+	return false
 }
 
 func wellFormedChatMessageIDs(req *ChatMarkReadRequest) bool {
@@ -1119,6 +1096,9 @@ type ChatSendMessageRequest struct {
 	MessageID      string               `json:"message_id,omitempty"`
 	SignedPayload  string               `json:"signed_payload,omitempty"`
 	EncryptE2EE    bool                 `json:"-"`
+	// E2EEInherited permits a server-readable continuation to a verified
+	// hosted peer when encryption came from the existing conversation.
+	E2EEInherited bool `json:"-"`
 }
 
 type ChatSendMessageResponse struct {
@@ -1136,6 +1116,8 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		if err := c.prepareE2EEChatSend(ctx, sessionID, &payload); err != nil {
 			return nil, err
 		}
+	}
+	if payload.EncryptE2EE {
 		var out ChatSendMessageResponse
 		if err := c.Post(ctx, "/v1/chat/sessions/"+urlPathEscape(sessionID)+"/messages", &payload, &out); err != nil {
 			return nil, serverCustodialRefusal(err, payload.Encrypted)

@@ -11,15 +11,15 @@ export const STREAM_PLANNED_CLOSE_MIN_MS = 3 * 60_000 + 30_000;
 export const STREAM_PLANNED_CLOSE_MAX_MS = 4 * 60_000;
 
 /** The delay after a transient failure doubles between these (§3). */
-export const STREAM_RETRY_DELAY_MIN_MS = 1000;
-export const STREAM_RETRY_DELAY_MAX_MS = 15_000;
+const STREAM_RETRY_DELAY_MIN_MS = 1000;
+const STREAM_RETRY_DELAY_MAX_MS = 15_000;
 
 /** The delay after a refusal doubles between these (§4). */
-export const STREAM_REFUSED_DELAY_MIN_MS = 60_000;
-export const STREAM_REFUSED_DELAY_MAX_MS = 15 * 60_000;
+const STREAM_REFUSED_DELAY_MIN_MS = 60_000;
+const STREAM_REFUSED_DELAY_MAX_MS = 15 * 60_000;
 
 /** Caps Retry-After; a larger or unparsable value is treated as this (§3). */
-export const STREAM_RETRY_AFTER_MAX_MS = 5 * 60_000;
+const STREAM_RETRY_AFTER_MAX_MS = 5 * 60_000;
 
 /**
  * How long an open stream may deliver no bytes: two missed 30-second
@@ -27,12 +27,12 @@ export const STREAM_RETRY_AFTER_MAX_MS = 5 * 60_000;
  */
 export const STREAM_SILENCE_LIMIT_MS = 75_000;
 
-/** The server ended an open stream with a grant terminal event. */
+/** The server ended an open stream because it lost membership or grant authority. */
 export class EventStreamClosedError extends Error {
   constructor(
     /** The terminal event's name. */
     public readonly event: string,
-    detail: string,
+    public readonly detail: string,
   ) {
     super(`agent event stream closed: ${detail}`);
   }
@@ -57,7 +57,7 @@ export interface StreamPolicyConfig {
  * - transient: retry on the transient delay (§3);
  * - refused: the stream is quarantined (§4).
  */
-export type StreamEndKind = "planned_close" | "transient" | "refused";
+type StreamEndKind = "planned_close" | "transient" | "refused";
 
 /** How one connection attempt ended and what the client does next. */
 export interface StreamEnd {
@@ -94,8 +94,8 @@ export interface StreamEnd {
  * transient or a refusal, and names its cause.
  *
  * 408, 409, 425 and 429 describe a moment, not the caller: they are transient,
- * as is every answer outside 4xx. Every other 4xx is a refusal. The grant
- * terminal events are refusals, except verification_unavailable. Everything
+ * as is every answer outside 4xx. Every other 4xx is a refusal. Membership and
+ * grant terminal events are refusals, except verification_unavailable. Everything
  * else (a failure to open, an early end, a read error, silence) is transient.
  */
 export function classifyStreamFailure(error: unknown): { kind: "transient" | "refused"; cause: string } {

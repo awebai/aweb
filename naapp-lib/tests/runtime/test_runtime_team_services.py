@@ -140,7 +140,7 @@ async def test_shared_publication_check_and_request_authentication_agree(
     member = Member(team_id=TEAM_ID)
     await registry.add_team(TEAM_ID, member.team_did_key)
     if state != "unpublished":
-        await registry.add_certificate(member.certificate())
+        await registry.add_certificate(member.certificate(), team_key=member.team_key)
     if state == "revoked":
         await registry.revoke(member.certificate_id)
     cache = team_auth.AWIDTeamCache(
@@ -187,7 +187,7 @@ def test_a_declared_hook_key_cannot_be_replaced_by_another_configured_kid(tmp_pa
 async def test_shared_publication_check_preserves_authority_outages(registry, service_token):
     member = Member(team_id=TEAM_ID)
     await registry.add_team(TEAM_ID, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
 
     def outage(request, response):
         response.status_code = 503

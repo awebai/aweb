@@ -211,20 +211,26 @@ func hostedInviteSubmissionBefore(creation *hostedInviteCreation) hostedInviteSu
 	return hostedSubmissionNotAttempted
 }
 
-// Only a known pre-submission refusal may release the selection (docs/identity.md:235-245).
+// Release only a definite refusal without an earlier unresolved submission.
+// Retained 4xx errors explain how to reconcile the same identity and invite.
 func finishHostedInviteRefusal(request hostedInviteAcceptanceRequest, history hostedInviteSubmissionHistory, cause error) error {
-	if request.Creation.ResponseJSON != "" || history == hostedSubmissionAttempted {
-		return cause
+	localMismatch := awid.IDCertificateErrorCode(cause) == "human_mismatch"
+	if request.Creation.ResponseJSON == "" && history != hostedSubmissionAttempted &&
+		(history == hostedSubmissionNotAttempted || localMismatch) {
+		cause = releaseRefusedHostedInvite(request.RecoveryPath, cause)
 	}
-	if history == hostedSubmissionNotAttempted || awid.IDCertificateErrorCode(cause) == "human_mismatch" {
-		return releaseRefusedHostedInvite(request.RecoveryPath, acceptanceMintedKey{Home: request.Home}, cause)
+	if status, ok := awid.HTTPStatusCode(cause); ok && status >= 400 && status < 500 {
+		if _, err := os.Stat(request.RecoveryPath); err == nil {
+			return uncertainHostedInviteError(request.Home.Root, request.Creation.TeamID, cause)
+		}
 	}
 	return cause
 }
 
 type hostedInviteChildPreparation struct {
-	LocalLink   *awconfig.TeamInvite
-	TreeRequest *awid.IDTreeCreationRequest
+	LocalLink      *awconfig.TeamInvite
+	ParentInviteID string
+	TreeRequest    *awid.IDTreeCreationRequest
 }
 
 func prepareHostedInviteChild(ctx context.Context, request hostedInviteAcceptanceRequest) (hostedInviteChildPreparation, error) {
@@ -239,8 +245,13 @@ func prepareHostedInviteChild(ctx context.Context, request hostedInviteAcceptanc
 	recoveryPath := request.RecoveryPath
 
 	var err error
+	parentInviteID := ""
 	if opts.ParentHome != "" {
 		if err := completeExplicitInviteParent(ctx, workingDir, home.Root, token, opts.ParentHome); err != nil {
+			return hostedInviteChildPreparation{}, err
+		}
+		parentInviteID, _, err = loadTeamInviteParentRecord(token, home.Root)
+		if err != nil {
 			return hostedInviteChildPreparation{}, err
 		}
 	}
@@ -272,7 +283,7 @@ func prepareHostedInviteChild(ctx context.Context, request hostedInviteAcceptanc
 		}
 	}
 
-	return hostedInviteChildPreparation{LocalLink: localLink, TreeRequest: treeRequest}, nil
+	return hostedInviteChildPreparation{LocalLink: localLink, ParentInviteID: parentInviteID, TreeRequest: treeRequest}, nil
 }
 
 type hostedInviteAcceptedResponseRequest struct {
@@ -282,13 +293,13 @@ type hostedInviteAcceptedResponseRequest struct {
 	RegistryURL      string
 	MembershipResult *awid.IDChainResult
 	LocalLink        *awconfig.TeamInvite
+	ParentInviteID   string
 }
 
 func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInviteAcceptedResponseRequest) (*acceptedTeamInvite, error) {
 	request := responseRequest.Acceptance
 
 	workingDir := request.WorkingDir
-	token := request.Token
 	opts := request.Options
 	scope := string(request.Scope)
 	alias := request.Alias
@@ -337,6 +348,29 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
 	}
+	selectedTeamRegistry, err := resolveRegistryURLSetting(registryURLSettingInput{ExplicitURL: opts.RegistryURL})
+	if err != nil {
+		return nil, err
+	}
+	if selectedTeamRegistry != "" {
+		selectedTeamRegistry, err = cleanBaseURL(selectedTeamRegistry)
+		if err != nil {
+			return nil, fmt.Errorf("invalid team registry URL: %w", err)
+		}
+	}
+	if responseRequest.Registry == nil {
+		responseRequest.Registry, err = newConfiguredRegistryClient(nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	keyObservation, err := responseRequest.Registry.CheckTeamCertificateCurrentKey(ctx, awid.CurrentTeamCertificateCheck{
+		RegistryURL: selectedTeamRegistry,
+		Certificate: cert,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("hosted membership is not current: %w; ask the team controller for a current certificate", err)
+	}
 	responsibility, err := verifyHostedInviteAcceptedAttribution(ctx, responseRequest)
 	if err != nil {
 		return nil, err
@@ -375,22 +409,25 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 			return nil, err
 		}
 	}
-	if err := consumedInviteParent(token, opts.ParentHome); err != nil {
+	if err := consumeInviteParent(responseRequest.ParentInviteID); err != nil {
 		return nil, err
 	}
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			IDRegistration: registration,
+			TeamKey:        &keyObservation.Evidence,
 			Responsibility: responsibility,
 			Status:         "accepted",
 			TeamID:         cert.Team,
 			Alias:          strings.TrimSpace(cert.Alias),
 			CertPath:       awconfig.TeamCertificateRelativePath(cert.Team),
 		},
-		Certificate: cert,
-		AwebURL:     serverURL,
-		Domain:      strings.TrimSpace(resp.Namespace),
-		TeamName:    strings.TrimSpace(resp.TeamSlug),
+		Certificate:         cert,
+		RegistryURL:         selectedTeamRegistry,
+		observedRegistryURL: keyObservation.RegistryURL,
+		AwebURL:             serverURL,
+		Domain:              strings.TrimSpace(resp.Namespace),
+		TeamName:            strings.TrimSpace(resp.TeamSlug),
 	}, nil
 }
 
@@ -415,7 +452,7 @@ func completeHostedInviteAcceptance(ctx context.Context, request hostedInviteAcc
 	}
 	localLink, treeRequest := child.LocalLink, child.TreeRequest
 	var membershipResult *awid.IDChainResult
-	if creation.MembershipChain != nil {
+	if creation.MembershipOnly || creation.MembershipChain != nil {
 		subjectID := didKey
 		if scope == awid.IdentityModeGlobal {
 			subjectID = stableID
@@ -474,7 +511,7 @@ func completeHostedInviteAcceptance(ctx context.Context, request hostedInviteAcc
 		return nil, err
 	}
 
-	return completeHostedInviteResponse(ctx, hostedInviteAcceptedResponseRequest{Acceptance: request, Response: resp, Registry: registry, RegistryURL: registryURL, MembershipResult: membershipResult, LocalLink: localLink})
+	return completeHostedInviteResponse(ctx, hostedInviteAcceptedResponseRequest{Acceptance: request, Response: resp, Registry: registry, RegistryURL: registryURL, MembershipResult: membershipResult, LocalLink: localLink, ParentInviteID: child.ParentInviteID})
 
 }
 
@@ -559,11 +596,14 @@ func verifyHostedInviteAcceptedAttribution(ctx context.Context, responseRequest 
 		}
 	}
 	responsibility := membershipResult
-	if creation.MembershipChain != nil {
+	if creation.MembershipOnly || creation.MembershipChain != nil {
 		if resp.RegistrationRequest != nil {
 			return nil, errors.New("membership-only acceptance requested identity registration")
 		}
 		if resp.IDChain != nil {
+			if creation.MembershipChain == nil {
+				return nil, errors.New("membership-only acceptance returned a new identity chain; retain the original home and invite for reconciliation")
+			}
 			expected, err := awid.EncodeIDChainHeader(creation.MembershipChain)
 			if err != nil {
 				return nil, fmt.Errorf("encode selected membership chain: %w; restore the selected identity's original chain and retry the same invite", err)
@@ -644,8 +684,8 @@ func issueNativeInviteCertificate(ctx context.Context, request nativeInviteIssua
 	registry, registryURL := request.Registry, request.RegistryURL
 	appliedDefaultClaim := request.DefaultClaimResult
 	teamID := awid.BuildTeamID(invite.Domain, invite.TeamName)
-	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:          teamID,
+	issuer := teamMembershipIssuer{TeamID: teamID, Key: teamKey, Registry: registry, RegistryURL: registryURL}
+	cert, err := issuer.sign(awid.TeamCertificateFields{
 		MemberDIDKey:  plan.MemberDIDKey,
 		MemberDIDAW:   plan.MemberDIDAW,
 		MemberAddress: plan.MemberAddress,

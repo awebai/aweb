@@ -5,6 +5,8 @@ import pytest
 
 from test_dashboard_privacy import TEAM, _request, _seed_mail, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 async def test_an_inbox_page_reads_sender_membership_rows_with_its_messages(privacy_app, monkeypatch):

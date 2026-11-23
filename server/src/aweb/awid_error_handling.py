@@ -6,7 +6,7 @@ import httpx
 from fastapi import HTTPException
 
 from awid.dns_verify import DnsVerificationError
-from awid.registry import RegistryError
+from awid.registry import MalformedTeamKeyError, RegistryError
 
 from aweb.config import get_awid_service_token
 
@@ -19,15 +19,6 @@ AWID_DEPENDENCY_ERRORS = (
     RegistryError,
     TimeoutError,
 )
-
-
-def awid_registry_not_configured_detail(*, operation: str = "AWID registry") -> str:
-    operation = (operation or "AWID registry").strip()
-    return f"{operation} registry client not configured"
-
-
-def awid_registry_not_configured_exception(*, operation: str = "AWID registry") -> HTTPException:
-    return HTTPException(status_code=500, detail=awid_registry_not_configured_detail(operation=operation))
 
 
 def awid_dependency_http_exception(
@@ -60,40 +51,60 @@ def team_not_served_exception(team_id: str, *, operation: str) -> HTTPException:
     return HTTPException(status_code=403, detail=f"{operation}: team {team_id} is not served by this server")
 
 
-def _classify_upstream_status(status_code: int) -> tuple[int, str]:
+def _retryable_registry_failure(operation: str, reason: str) -> tuple[int, str]:
+    return http.HTTPStatus.SERVICE_UNAVAILABLE, (
+        f"{operation} {reason}. Retry when the registry is available. "
+        "If this persists, ask the server operator to check the registry connection."
+    )
+
+
+def _unusable_registry_response(operation: str) -> tuple[int, dict[str, str]]:
+    return http.HTTPStatus.UNPROCESSABLE_ENTITY, {
+        "code": "registry_response_unusable",
+        "message": (
+            f"{operation} received an unusable registry response. "
+            "Ask the server operator to check the registry."
+        ),
+    }
+
+
+def _classify_upstream_status(
+    status_code: int, *, operation: str, failure_type: str
+) -> tuple[int, str | dict[str, str]]:
     if not status_code:
-        return 503, "upstream status error"
+        return _retryable_registry_failure(operation, f"upstream status error ({failure_type})")
     if 500 <= status_code < 600:
-        return 503, "upstream error"
+        return _retryable_registry_failure(
+            operation, f"upstream error ({failure_type} status={status_code})"
+        )
     if status_code == http.HTTPStatus.TOO_MANY_REQUESTS:
-        return 503, "upstream rate limited"
-    return http.HTTPStatus.BAD_GATEWAY, "upstream returned unexpected status"
+        return _retryable_registry_failure(
+            operation, f"upstream rate limited ({failure_type} status={status_code})"
+        )
+    return _unusable_registry_response(operation)
 
 
 def classify_awid_dependency_error(
     exc: Exception, *, operation: str = "AWID registry", team_id: str | None = None
-) -> tuple[int, str]:
+) -> tuple[int, str | dict[str, str]]:
+    """Build the public refusal shared by HTTP verification and message delivery."""
     operation = (operation or "AWID registry").strip()
     class_name = type(exc).__name__
-    message = str(exc).strip()
-    suffix = f": {message}" if message else ""
 
+    if isinstance(exc, MalformedTeamKeyError):
+        return _unusable_registry_response(operation)
     if isinstance(exc, DnsVerificationError):
-        return 503, f"{operation} DNS resolution failed ({class_name}){suffix}"
+        return _retryable_registry_failure(operation, f"DNS resolution failed ({class_name})")
     if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError, TimeoutError)):
-        return 503, f"{operation} upstream unavailable ({class_name}){suffix}"
+        return _retryable_registry_failure(operation, f"upstream unavailable ({class_name})")
     if isinstance(exc, httpx.RequestError):
-        return 503, f"{operation} request failed ({class_name}){suffix}"
+        return _retryable_registry_failure(operation, f"request failed ({class_name})")
     if isinstance(exc, httpx.HTTPStatusError):
         response = getattr(exc, "response", None)
         status_code = int(getattr(response, "status_code", 0) or 0)
-        mapped_status, status_label = _classify_upstream_status(status_code)
-        if status_code:
-            return mapped_status, f"{operation} {status_label} ({class_name} status={status_code}){suffix}"
-        return mapped_status, f"{operation} {status_label} ({class_name}){suffix}"
+        return _classify_upstream_status(status_code, operation=operation, failure_type=class_name)
     if isinstance(exc, RegistryError) and exc.code == "unavailable" and exc.__cause__ is not None:
-        # The registry client reports a transport failure as unavailable; the
-        # failure behind it is what the operator needs to see.
+        # Preserve the safe category of an error wrapped by the client.
         return classify_awid_dependency_error(exc.__cause__, operation=operation, team_id=team_id)
     if is_private_team_refusal(exc):
         if get_awid_service_token() is not None:
@@ -109,8 +120,9 @@ def classify_awid_dependency_error(
             "for the key named in AWID_MEMBER_KEYS_FILE."
         )
     if isinstance(exc, RegistryError):
-        detail = (getattr(exc, "detail", None) or message or class_name).strip()
         status_code = int(getattr(exc, "status_code", 500) or 500)
-        mapped_status, status_label = _classify_upstream_status(status_code)
-        return mapped_status, f"{operation} {status_label} ({class_name} status={status_code}): {detail}"
-    return 500, f"Unexpected {operation} dependency error ({class_name}){suffix}"
+        return _classify_upstream_status(status_code, operation=operation, failure_type=class_name)
+    return http.HTTPStatus.INTERNAL_SERVER_ERROR, (
+        f"Unexpected {operation} dependency error ({class_name}). "
+        "Ask the server operator to investigate."
+    )

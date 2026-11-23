@@ -22,6 +22,8 @@ from identity_binding_support import register_global_identity
 from test_identity_binding_http import certificate, request
 from test_messages_http import _signed_identity_headers
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])

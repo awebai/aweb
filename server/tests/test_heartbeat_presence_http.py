@@ -7,6 +7,8 @@ from aweb.presence import clear_workspace_presence
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 async def test_heartbeat_makes_distinct_workspace_active_in_rosters(privacy_app):

@@ -12,21 +12,25 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from aweb.identity_auth_deps import (
-    _enforce_current_membership,
-    lookup_identity_agent_context,
-    resolve_identity_auth,
-)
+from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.agent_wake import agent_wake_publisher
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
 from aweb.identity_address import AddressResolution
-from aweb.internal_auth import parse_internal_auth_context, resolve_internal_actor
+from aweb.service_errors import IdentityBindingError
+from aweb.application_state import RegistryClientUnavailable
+from aweb.auth_error_transport import mcp_auth_error_response
+from aweb.internal_auth import (
+    InternalAuthContext,
+    ProxyVerificationConfig,
+    parse_internal_auth_context,
+    read_internal_actor_projection,
+)
 from aweb.mcp.mutations import (
     mutation_callback_from_scope,
     reset_mutation_callback,
     set_mutation_callback,
 )
-from aweb.team_auth_deps import _aweb_db, get_team_identity
+from aweb.team_registry import native_database_manager
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +53,33 @@ class AuthContext:
     # never from the agent projection's stored certificate_id.
     certificate_id: str | None = None
     address_resolution: AddressResolution = field(default_factory=AddressResolution)
+    # The native adapter retains the original credential, scope, chain and
+    # address observation rather than reconstructing authority from metadata.
+    messaging_auth: MessagingAuth | None = None
+
+    @classmethod
+    def from_messaging_auth(
+        cls, *, identity: MessagingAuth, workspace_id: str | None = None
+    ) -> AuthContext:
+        """Adapt the shared HTTP principal without selecting another membership.
+
+        Global And Local Identities (docs/identity-messaging-contract.md:68-94) keeps
+        DID-scoped messaging
+        independent of team selection. Transport metadata adds no authority.
+        """
+        return cls(
+            team_id=identity.team_id,
+            agent_id=identity.agent_id,
+            workspace_id=workspace_id,
+            alias=identity.alias,
+            did_key=identity.did_key,
+            did_aw=identity.did_aw,
+            address=identity.address,
+            identity_scope=identity.identity_scope,
+            certificate_id=identity.certificate_id,
+            address_resolution=identity.address_resolution,
+            messaging_auth=identity,
+        )
 
 
 def auth_dids(auth: AuthContext) -> list[str]:
@@ -94,7 +125,8 @@ def get_auth() -> AuthContext:
 class MCPAuthMiddleware:
     """ASGI middleware that resolves identity for MCP requests."""
 
-    def __init__(self, app: ASGIApp, db_infra: Any) -> None:
+    def __init__(self, app: ASGIApp, db_infra: Any, *, proxy_verification: ProxyVerificationConfig | None = None) -> None:
+        self.proxy_verification = ProxyVerificationConfig.capture(proxy_verification)
         self.app = app
         self.db_infra = db_infra
 
@@ -107,11 +139,12 @@ class MCPAuthMiddleware:
 
         try:
             ctx = await self._resolve_auth(request)
+        except (IdentityBindingError, RegistryClientUnavailable) as exc:
+            await mcp_auth_error_response(exc)(scope, receive, send)
+            return
         except HTTPException as exc:
             response = JSONResponse(
-                {"error": exc.detail},
-                status_code=exc.status_code,
-                headers=exc.headers,
+                {"error": exc.detail}, status_code=exc.status_code, headers=exc.headers
             )
             await response(scope, receive, send)
             return
@@ -136,7 +169,7 @@ class MCPAuthMiddleware:
             _auth_context.reset(cv_token)
 
     async def _resolve_auth(self, request: Request) -> AuthContext | None:
-        internal = parse_internal_auth_context(request)
+        internal = parse_internal_auth_context(request, proxy_verification=self.proxy_verification)
         if internal is not None:
             return await self._resolve_proxy_auth(internal, request=request)
 
@@ -144,83 +177,43 @@ class MCPAuthMiddleware:
         if not auth_header.startswith("DIDKey "):
             return None
 
-        cert_header = request.headers.get("x-awid-team-certificate", "")
-        if not cert_header:
-            identity = await resolve_identity_auth(request)
-            row = await lookup_identity_agent_context(
-                self.db_infra,
-                did_key=identity.did_key,
-                did_aw=identity.did_aw,
-                request=request,
+        identity = await get_messaging_auth(request, self.db_infra)
+        workspace = None
+        if identity.certificate_id and identity.agent_id:
+            workspace = await native_database_manager(self.db_infra).fetch_one(
+                """
+                SELECT workspace_id
+                FROM {{tables.workspaces}}
+                WHERE agent_id = $1::uuid AND team_id = $2 AND deleted_at IS NULL
+                ORDER BY updated_at DESC, workspace_id DESC
+                LIMIT 1
+                """,
+                identity.agent_id,
+                identity.team_id,
             )
-            # Same enforcement as the HTTP identity-only path (aweb-abfn): a
-            # projection whose admitting certificate is revoked must not grant
-            # team context here either.
-            row = await _enforce_current_membership(request, row)
-            outcome = getattr(request.state, "identity_address_resolution", identity.address_resolution)
-            return AuthContext(
-                team_id=(row or {}).get("team_id") or None,
-                agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
-                workspace_id=None,
-                alias=(row or {}).get("alias") or None,
-                did_key=identity.did_key,
-                did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
-                address=(outcome.stored_address if outcome.state == "unknown"
-                         else identity.address or ((row or {}).get("address") or None)),
-                identity_scope=(row or {}).get("identity_scope") or None,
-                address_resolution=outcome,
-            )
-
-        identity = await get_team_identity(request, self.db_infra)
-
-        aweb_db = _aweb_db(self.db_infra)
-        row = await aweb_db.fetch_one(
-            """
-            SELECT agent_id, alias, did_aw, address, identity_scope FROM {{tables.agents}}
-            WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
-            """,
-            identity.team_id,
-            identity.did_key,
-        )
-        if not row:
-            raise HTTPException(status_code=403, detail="Agent not connected")
-
-        workspace = await aweb_db.fetch_one(
-            """
-            SELECT workspace_id
-            FROM {{tables.workspaces}}
-            WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
-            ORDER BY updated_at DESC, workspace_id DESC
-            LIMIT 1
-            """,
-            row["agent_id"],
-            identity.team_id,
+        return AuthContext.from_messaging_auth(
+            identity=identity,
+            workspace_id=str(workspace["workspace_id"]) if workspace else None,
         )
 
-        return AuthContext(
-            team_id=identity.team_id,
-            agent_id=str(row["agent_id"]),
-            workspace_id=(str(workspace["workspace_id"]) if workspace else None),
-            alias=row["alias"],
-            did_key=identity.did_key,
-            did_aw=identity.did_aw or None,
-            address=identity.address or None,
-            identity_scope=identity.identity_scope or None,
-            certificate_id=identity.certificate_id,
-        )
-
-    async def _resolve_proxy_auth(self, internal: dict[str, str], *, request: Request) -> AuthContext:
-        aweb_db = _aweb_db(self.db_infra)
+    async def _resolve_proxy_auth(
+        self, internal: InternalAuthContext, *, request: Request
+    ) -> AuthContext:
+        aweb_db = native_database_manager(self.db_infra)
         team_id = internal["team_id"]
-        row = await resolve_internal_actor(aweb_db, internal)
+        row = await read_internal_actor_projection(aweb_db, internal)
         if not row:
             raise HTTPException(status_code=403, detail="Agent not connected")
 
         binding = await verify_identity_binding(
-            request, did_key=row["did_key"], did_aw=row.get("did_aw") or "",
+            request,
+            did_key=row["did_key"],
+            did_aw=row.get("did_aw") or "",
             address=row.get("address") or "",
         )
-        await refresh_projection_binding(aweb_db, agent_id=row["agent_id"], did_key=row["did_key"], binding=binding)
+        await refresh_projection_binding(
+            aweb_db, agent_id=row["agent_id"], did_key=row["did_key"], binding=binding
+        )
 
         workspace = await aweb_db.fetch_one(
             """

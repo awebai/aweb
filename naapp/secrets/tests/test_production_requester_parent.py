@@ -103,7 +103,7 @@ async def agent(registry, sdk, parent, chain, *, alias):
         expected_head=None,
         invitation_id=None,
     )
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member, bundle["certificates"]
 
 
@@ -188,6 +188,50 @@ async def test_first_session_start_resolves_the_requester_from_runtime_evidence(
             assert (verified.get("identity_valid"), verified.get("kind")) == (True, "agent"), {
                 key: verified.get(key) for key in ("outcome", "reason", "identity_valid", "kind")
             }
+        if requester in {"holder", "child"}:
+            # Exercise the router's restrictions with the production signer,
+            # requester resolver and session writer. These attempts share the
+            # registered identities and holding with the successful neighbour.
+            refused_starts = [
+                ({"holder_certificate": "eyJ9"}, 400, "handoff_invalid"),
+                (
+                    {"return": "user_code", "client_hostname": "laptop.local"},
+                    409 if requester == "holder" else 400,
+                    "fallback_unavailable" if requester == "holder" else "handoff_invalid",
+                ),
+            ]
+            if requester == "child":
+                refused_starts.append(({"purpose": "credential"}, 403, "scope_not_signer"))
+            for changes, expected_status, expected_code in refused_starts:
+                refused_body = {**json.loads(raw), **changes}
+                if refused_body["return"] == "user_code":
+                    del refused_body["redirect_uri"]
+                refused_raw = json.dumps(refused_body).encode()
+                refused_headers = {
+                    **headers,
+                    **signer.headers(
+                        aud=settings.public_origin,
+                        method="POST",
+                        path="/handoffs",
+                        body=refused_raw,
+                    ),
+                }
+                refused = await client.post(
+                    settings.public_origin + "/handoffs",
+                    content=refused_raw,
+                    headers=refused_headers,
+                )
+                assert (refused.status_code, refused.json()) == (
+                    expected_status,
+                    {"detail": expected_code},
+                ), changes
+                assert (
+                    await effects(service, installed["installation_id"], member.team_id) == before
+                )
+                assert (
+                    await db.fetch_value("SELECT count(*) FROM console_handoffs") == handoffs_before
+                )
+                assert await db.fetch_value("SELECT count(*) FROM console_sessions") == 0
         started = await client.post(
             settings.public_origin + "/handoffs", content=raw, headers=headers
         )

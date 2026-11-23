@@ -101,6 +101,8 @@ from awid.did import stable_id_from_did_key
 from aweb.identity_auth_deps import get_messaging_auth
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 
+__all__ = ["privacy_app"]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('global_subject,owner_lane,rotated', [(False, False, False), (True, False, False), (True, True, False), (True, False, True)])

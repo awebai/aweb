@@ -1,4 +1,4 @@
-"""The public signing audience follows actual DNS, unless explicitly selected."""
+"""Public read selection follows actual DNS, unless explicitly selected."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import pytest
 import pytest_asyncio
 from awid.did import did_from_public_key, generate_keypair
 from awid.dns_verify import awid_txt_value
-from awid.registry import RegistryClient
+from awid.registry import RegistryClient, RegistryError
 
 
 class AuthorityAnswer(StrEnum):
@@ -23,6 +23,8 @@ class AuthorityAnswer(StrEnum):
     PUBLIC_DEFAULT = "public_default"
     ABSENT = "absent"
     UNAVAILABLE = "unavailable"
+    MALFORMED = "malformed"
+    AMBIGUOUS = "ambiguous"
 
 
 class RegistryAudienceDNS(asyncio.DatagramProtocol):
@@ -48,13 +50,19 @@ class RegistryAudienceDNS(asyncio.DatagramProtocol):
             response.set_rcode(dns.rcode.SERVFAIL)
         else:
             override = (
-                "https://override.example"
-                if self.answer == AuthorityAnswer.OVERRIDE
-                else None
+                "https://override.example" if self.answer == AuthorityAnswer.OVERRIDE else None
             )
-            record = awid_txt_value(self.controller_did_key, override)
+            record = (
+                "awid=v1; controller=not-a-controller;"
+                if self.answer == AuthorityAnswer.MALFORMED
+                else awid_txt_value(self.controller_did_key, override)
+            )
             response.answer.append(
                 dns.rrset.from_text(question.name, 0, "IN", "TXT", f'"{record}"')
+            )
+        if self.answer == AuthorityAnswer.AMBIGUOUS:
+            response.answer.append(
+                dns.rrset.from_text(question.name, 0, "IN", "TXT", '"awid=v1; controller=invalid;"')
             )
         self.transport.sendto(response.to_wire(), peer)
 
@@ -77,8 +85,8 @@ async def registry_audience_dns(monkeypatch):
         channel.close()
 
 
-# docs/awid-sot.md:1459: the audience names the registry actually selected for
-# the domain. Explicit operator selection does not consult a DNS override.
+# docs/identity-messaging-contract.md:249-256: read discovery remains domain-selected;
+# administrative writes use their configured pin instead.
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "answer,configured,expected,queries",
@@ -117,3 +125,24 @@ async def test_registry_audience_uses_dns_override_only_for_public_default(
     finally:
         await client.aclose()
     assert authority.queries == [("_awid.example.com.", dns.rdatatype.TXT)] * queries
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [AuthorityAnswer.MALFORMED, AuthorityAnswer.AMBIGUOUS])
+async def test_malformed_dns_is_not_a_read_fallback(registry_audience_dns, answer):
+    from awid.dns_verify import DnsVerificationError
+
+    registry_audience_dns.answer = answer
+    client = RegistryClient("https://api.awid.ai")
+    try:
+        with pytest.raises(RegistryError) as refused:
+            await client.registry_audience("example.com")
+        assert refused.value.status_code == 502
+        assert str(refused.value) == (
+            "AWID registry discovery is invalid for example.com. "
+            "Correct the domain's _awid TXT record and retry."
+        )
+        assert isinstance(refused.value.__cause__, DnsVerificationError)
+    finally:
+        await client.aclose()
+    assert registry_audience_dns.queries == [("_awid.example.com.", dns.rdatatype.TXT)]

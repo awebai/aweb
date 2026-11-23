@@ -247,6 +247,7 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	registry := newAWIDRegistryClient(nil, resolver)
+	trustRecordedRegistryOrigin(registry.Resolver, registryURL, h.record.RegistryOperatorOrigin)
 	issuerKey, err := registry.IDNamespaceController(ctx, h.record.Domain, registryURL, authority)
 	if err != nil {
 		return err

@@ -1,6 +1,8 @@
 package awconfig
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -158,6 +160,9 @@ role_name: developer
 	}
 	if !strings.Contains(err.Error(), legacyWorkspaceSingleTeamError) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !errors.Is(err, ErrLegacyWorkspaceSingleTeam) || !errors.Is(fmt.Errorf("loading workspace: %w", err), ErrLegacyWorkspaceSingleTeam) {
+		t.Fatalf("legacy workspace refusal lost its type: %v", err)
 	}
 }
 

@@ -10,7 +10,7 @@ import uuid
 
 from . import aweb
 from .admission import aweb_requirements
-from .config import load
+from .config import load, select_manifest, select_target
 from .errors import Infrastructure, Refused
 from .lifecycle import write_summary
 from .source import git, prepare
@@ -34,7 +34,8 @@ def parser():
     work.add_argument("--stages")
     work.add_argument("--command")
     run.add_argument("--intent", choices=["branch", "train"], default="branch")
-    run.add_argument("--type", choices=["ccx33", "ccx43"], default="ccx33")
+    run.add_argument("--type", choices=["ccx33", "ccx43"])
+    run.add_argument("--target", choices=["merak", "hetzner"])
     run.add_argument("--timeout", type=int, default=7200)
     snap = sub.add_parser("snapshot")
     snap.add_argument("--sha", required=True)
@@ -75,6 +76,8 @@ def main(argv=None, *, factory=None, out=None):
             directory = Path(config["state_root"]) / "runs" / run_id
             directory.mkdir(parents=True, mode=0o700)
             if args.action == "run":
+                select_target(args, config)
+                select_manifest(config, args.target)
                 if args.timeout <= 0:
                     raise Refused("timeout must be positive")
                 invocation = aweb.command(

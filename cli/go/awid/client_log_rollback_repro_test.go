@@ -180,8 +180,8 @@ func TestLegacyPinWithoutCheckpointMigratesThroughFullLog(t *testing.T) {
 	if pin.DIDKey != f.did2 {
 		t.Fatalf("legacy pin did:key=%q, want rotated %q", pin.DIDKey, f.did2)
 	}
-	if pin.LogSeq != 2 || pin.LogEntryHash == "" {
-		t.Fatalf("legacy pin did not acquire a checkpoint: seq=%d hash=%q", pin.LogSeq, pin.LogEntryHash)
+	if got := checkpointHead(t, f.pins, f.stableID); got.Seq != 2 || got.EntryHash == "" {
+		t.Fatalf("legacy pin did not acquire a checkpoint: seq=%d hash=%q", got.Seq, got.EntryHash)
 	}
 
 	// Now protected: a truncated prefix is refused after the restart.

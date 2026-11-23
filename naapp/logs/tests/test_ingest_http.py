@@ -150,7 +150,7 @@ async def customer_hosted_credential(coordination, member, directory) -> dict[st
         certificate_id=SERVICE_CERTIFICATE_ID,
         alias="logs-service",
     )
-    await coordination.registry.add_certificate(service.certificate())
+    await coordination.registry.add_certificate(service.certificate(), team_key=service.team_key)
     name, domain = member.team_id.split(":", 1)
     await coordination.registry.db.execute(
         "UPDATE {{tables.teams}} SET visibility = 'private' WHERE domain = $1 AND name = $2",
@@ -179,7 +179,7 @@ async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, re
         alias="bond",
         member_key=SigningKey(MEMBER_SEED),
     )
-    await coordination.add_member(member)
+    await coordination.add_member(member, namespace_controller=NAMESPACE_KEY)
     await coordination.publish_server(member)
     await coordination.connect(member)
     # Ingest runs with team-key pins enforced, the state the staged flag ends in.
@@ -548,6 +548,9 @@ async def test_a_revoked_client_certificate_is_refused_by_the_certificate_check(
 
 async def test_client_certificate_verification_reads_the_controller_key_fresh(world):
     assert (await world.send(world.delivery("client"))).status_code == 200
+    # Controller acts use whole seconds. Make this act strictly newer than
+    # the database's first-admission pin, including its fractional seconds.
+    await asyncio.sleep(1)
     await world.coordination.registry.rotate_team_key_by_controller(
         world.member.team_id,
         did_key(bytes(SigningKey.generate())),

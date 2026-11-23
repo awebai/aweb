@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
+from aweb.mcp.tools.federation import mcp_sender_budget_key
+
 import json
 from uuid import UUID
 
 from awid.federation_errors import FederationAuthorityError
+from aweb.mcp.tools.errors import messaging_tool
+from aweb.messaging.sender_membership import sender_memberships
+from aweb.messaging.recipients import RecipientIdentityBinding
+from aweb.messaging.kinds import MessageKind
+from aweb.messaging.refusals import ContactIdentityBindingRequired
+from aweb.mcp.tools.refusals import send_refusal
+from fastapi import HTTPException
 from aweb.identity_auth_deps import participant_dids
-from aweb.mcp.auth import get_auth, primary_auth_did
+from aweb.mcp.auth import get_auth
 from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
 from aweb.mcp.tools.chat import chat_send
-from aweb.mcp.tools.federation import registry_delivery_origin
 from aweb.mcp.tools.mail import mcp_mail_message_from_row, send_mail
-from aweb.messaging.alias_targets import (
-    AmbiguousLocalAddressError,
-    get_agent_by_namespace_alias,
-)
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
-from aweb.messaging.chat import find_session_between
 from aweb.messaging.contacts import (
     add_contact,
     add_handle_contact,
@@ -30,6 +33,7 @@ from aweb.messaging.verification import verified_signed_recipient_fields
 from aweb.service_errors import ServiceError, ValidationError
 
 
+@messaging_tool
 async def contacts_list(db_infra) -> str:
     """List all contacts for the authenticated identity."""
     auth = get_auth()
@@ -41,13 +45,19 @@ async def contacts_list(db_infra) -> str:
     return json.dumps({"contacts": contacts})
 
 
+@messaging_tool
 async def list_contacts_tool(db_infra) -> str:
     """Consumer-friendly alias for contacts_list."""
     return await contacts_list(db_infra)
 
 
+@messaging_tool
 async def contacts_add(
-    db_infra, *, contact_address: str, label: str = "", federation_authority=None,
+    db_infra,
+    *,
+    contact_address: str,
+    label: str = "",
+    federation_authority=None,
 ) -> str:
     """Add a contact for the authenticated identity."""
     auth = get_auth()
@@ -55,10 +65,12 @@ async def contacts_add(
     owner_did = owner_dids[0] if owner_dids else ""
     try:
         if federation_authority is None:
-            raise FederationAuthorityError("federation_authority_coordination_unavailable")
+            raise FederationAuthorityError(
+                "federation_authority_coordination_unavailable"
+            )
         resolved = await federation_authority.resolve_contact(
             normalize_hosted_handle_reference(contact_address),
-            source_ip="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
+            source_ip=mcp_sender_budget_key(auth),
         )
         result = await add_contact(
             db_infra,
@@ -77,6 +89,7 @@ async def contacts_add(
     return json.dumps(result)
 
 
+@messaging_tool
 async def add_contact_by_handle(db_infra, *, handle: str, label: str = "") -> str:
     """Add a pending contact by @namespace or @namespace/agent."""
     auth = get_auth()
@@ -99,6 +112,7 @@ async def add_contact_by_handle(db_infra, *, handle: str, label: str = "") -> st
     return json.dumps(result)
 
 
+@messaging_tool
 async def add_contact_by_email(db_infra, *, email: str, label: str = "") -> str:
     """Reserve a pending email contact request.
 
@@ -109,9 +123,12 @@ async def add_contact_by_email(db_infra, *, email: str, label: str = "") -> str:
         _normalize_email(email)
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
-    return json.dumps({"error": "Email contact requests are not available on this server"})
+    return json.dumps(
+        {"error": "Email contact requests are not available on this server"}
+    )
 
 
+@messaging_tool
 async def send_message_to_contact(
     db_infra,
     redis=None,
@@ -137,18 +154,20 @@ async def send_message_to_contact(
     try:
         normalized_channel = _normalize_channel(channel)
         contact = await _get_owned_contact(db_infra, contact_id=contact_id)
-        target = await _resolve_contact_target(
-            db_infra,
-            registry_client=registry_client,
-            federation_authority=federation_authority,
-            contact=contact,
-        )
-    except ServiceError as exc:
-        return json.dumps({"error": exc.detail})
+        target = await _target_from_contact_reference(db_infra, contact=contact)
+        target_did = str(target.get("did_aw") or target.get("did_key") or "").strip()
+        if not target_did or (
+            contact["reference_type"] != "handle"
+            and not target_did.startswith("did:aw:")
+        ):
+            raise ContactIdentityBindingRequired()
+        binding = RecipientIdentityBinding(did=target_did)
+    except (ServiceError, HTTPException, FederationAuthorityError) as exc:
+        return send_refusal(exc)
 
     # Pending is receiver-side policy state, not sender-side send authority:
     # sending to a pending contact is the bilateral invite/first-contact flow.
-    if normalized_channel == "mail":
+    if normalized_channel is MessageKind.MAIL:
         return await send_mail(
             db_infra,
             registry_client=registry_client,
@@ -157,31 +176,13 @@ async def send_message_to_contact(
             hosted_encryptor=hosted_encryptor,
             federation_transport=federation_mail_transport,
             public_origin=public_origin,
+            recipient_binding=binding,
             to=target["address"],
             subject=subject,
             body=message,
             priority=priority,
         )
 
-    existing = await _find_existing_chat_session(
-        db_infra, target=target,
-    )
-
-    if existing is not None:
-        return await chat_send(
-            db_infra,
-            redis,
-            registry_client=registry_client,
-            federation_authority=federation_authority,
-            hosted_signer=hosted_signer,
-            hosted_encryptor=hosted_encryptor,
-            federation_transport=federation_chat_transport,
-            public_origin=public_origin,
-            session_id=existing["conversation_id"],
-            message=message,
-            wait=wait,
-            wait_seconds=wait_seconds,
-        )
     return await chat_send(
         db_infra,
         redis,
@@ -191,6 +192,7 @@ async def send_message_to_contact(
         hosted_encryptor=hosted_encryptor,
         federation_transport=federation_chat_transport,
         public_origin=public_origin,
+        recipient_binding=binding,
         to_address=target["address"],
         message=message,
         wait=wait,
@@ -198,6 +200,7 @@ async def send_message_to_contact(
     )
 
 
+@messaging_tool
 async def read_messages_from_contact(
     db_infra,
     *,
@@ -212,17 +215,21 @@ async def read_messages_from_contact(
         limit_value = max(1, min(int(limit), 200))
         contact = await _get_owned_contact(db_infra, contact_id=contact_id)
         target = await _target_from_contact_reference(db_infra, contact=contact)
-    except Exception as exc:
-        detail = getattr(exc, "detail", None)
-        return json.dumps({"error": detail or str(exc)})
+    except (ServiceError, HTTPException, FederationAuthorityError) as exc:
+        return send_refusal(exc)
 
-    if normalized_channel == "mail":
-        messages = await _read_mail_messages_from_target(db_infra, target=target, limit=limit_value)
+    if normalized_channel is MessageKind.MAIL:
+        messages = await _read_mail_messages_from_target(
+            db_infra, target=target, limit=limit_value
+        )
     else:
-        messages = await _read_chat_messages_from_target(db_infra, target=target, limit=limit_value)
+        messages = await _read_chat_messages_from_target(
+            db_infra, target=target, limit=limit_value
+        )
     return json.dumps({"messages": messages})
 
 
+@messaging_tool
 async def contacts_remove(db_infra, *, contact_id: str) -> str:
     """Remove a contact for the authenticated identity."""
     auth = get_auth()
@@ -235,7 +242,7 @@ async def contacts_remove(db_infra, *, contact_id: str) -> str:
     # remove_contact already validated the UUID; normalize for the response.
     try:
         normalized_id = str(UUID(contact_id.strip()))
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         normalized_id = contact_id.strip()
     return json.dumps({"contact_id": normalized_id, "status": "removed"})
 
@@ -267,17 +274,21 @@ def _normalize_email(email: str) -> str:
     return value
 
 
-def _normalize_channel(channel: str) -> str:
+def _normalize_channel(channel: str) -> MessageKind:
     value = (channel or "mail").strip().lower()
-    if value not in {"mail", "chat"}:
-        raise ValidationError("channel must be mail or chat")
-    return value
+    if value == MessageKind.MAIL:
+        return MessageKind.MAIL
+    if value == MessageKind.CHAT:
+        return MessageKind.CHAT
+    raise ValidationError(
+        "channel must be mail or chat. Choose mail or chat and try again."
+    )
 
 
 async def _get_owned_contact(db_infra, *, contact_id: str) -> dict:
     try:
         contact_uuid = UUID(contact_id.strip())
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         raise ValidationError("Invalid contact_id format")
     owner_dids = _owner_dids()
     if not owner_dids:
@@ -326,87 +337,6 @@ async def _target_from_contact_reference(db_infra, *, contact: dict) -> dict:
     }
 
 
-async def _resolve_contact_target(
-    db_infra,
-    *,
-    registry_client,
-    federation_authority,
-    contact: dict,
-) -> dict:
-    if contact["reference_type"] == "handle":
-        target = await resolve_handle_contact_agent(
-            db_infra,
-            handle_namespace=contact["handle_namespace"],
-            target_agent_name=contact["target_agent_name"],
-        )
-        if target is None:
-            raise ValidationError("No active agent found for handle contact")
-        return target
-
-    address = (contact.get("contact_address") or "").strip()
-    if "/" not in address:
-        raise ValidationError("Contact address must be domain/name")
-    bound_did_aw = str(contact.get("contact_did_aw") or "").strip()
-    if not bound_did_aw.startswith("did:aw:"):
-        raise ValidationError("contact_identity_binding_required")
-    domain, name = address.split("/", 1)
-    try:
-        target = await get_agent_by_namespace_alias(
-            db_infra, namespace=domain, alias=name
-        )
-    except AmbiguousLocalAddressError as exc:
-        raise ServiceError(str(exc)) from exc
-    if target is None:
-        resolved = None
-        if federation_authority is not None:
-            try:
-                auth = get_auth()
-                resolved = await federation_authority.resolve_contact(
-                    address,
-                    source_ip="mcp:"
-                    + str(auth.did_key or auth.did_aw or "unknown"),
-                )
-            except FederationAuthorityError as exc:
-                if exc.reason != "recipient_identity_not_found":
-                    raise ServiceError(exc.reason) from exc
-        elif registry_client is not None:
-            resolved = await registry_client.resolve_address(
-                domain, name, did_key=(get_auth().did_key or None)
-            )
-        if resolved is not None and resolved.did_aw:
-            target = {
-                "agent_id": None,
-                "team_id": None,
-                "alias": name,
-                "address": address,
-                "did_aw": resolved.did_aw.strip(),
-                "did_key": (
-                    getattr(resolved, "current_did_key", "") or ""
-                ).strip(),
-                "delivery_origin": registry_delivery_origin(resolved),
-                "authority_controller_did": str(
-                    getattr(resolved, "controller_did", "") or ""
-                ).strip(),
-                "external": True,
-            }
-    if target is None or str(target.get("did_aw") or "").strip() != bound_did_aw:
-        raise ValidationError("contact_identity_binding_required")
-    copied = dict(target)
-    copied["address"] = (copied.get("address") or "").strip() or address
-    return copied
-
-
-async def _find_existing_chat_session(db_infra, *, target: dict) -> dict | None:
-    auth = get_auth()
-    target_did = (target.get("did_aw") or target.get("did_key") or "").strip()
-    session_id = await find_session_between(
-        db_infra,
-        did_a=primary_auth_did(auth),
-        did_b=target_did,
-    )
-    return {"conversation_id": str(session_id)} if session_id is not None else None
-
-
 def _target_refs(target: dict) -> tuple[list[str], list[str]]:
     dids = [
         value
@@ -424,7 +354,9 @@ def _target_refs(target: dict) -> tuple[list[str], list[str]]:
     return dids, addresses
 
 
-async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int) -> list[dict]:
+async def _read_mail_messages_from_target(
+    db_infra, *, target: dict, limit: int
+) -> list[dict]:
     auth = get_auth()
     actor_dids = participant_dids(auth)
     if not actor_dids:
@@ -448,7 +380,7 @@ async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int)
               )
               AND ca.did <> cb.did
         )
-        SELECT m.message_id, m.conversation_id, m.from_agent_id, m.from_did, m.to_did,
+        SELECT m.team_id, m.message_id, m.conversation_id, m.from_agent_id, m.from_did, m.to_did,
                m.from_alias, m.from_address, m.to_alias, m.subject, m.body, m.priority,
                m.read_at, m.created_at, m.signature, m.signed_payload, m.content_mode,
                m.message_version, m.encrypted_envelope
@@ -462,10 +394,22 @@ async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int)
         target_addresses,
         limit,
     )
-    return [mcp_mail_message_from_row(dict(row), include_bodies=True) for row in rows]
+    memberships = await sender_memberships(auth.request, db_infra, rows)
+    return [
+        mcp_mail_message_from_row(
+            dict(row),
+            include_bodies=True,
+            sender_membership=memberships[
+                (str(row.get("team_id") or ""), str(row.get("from_agent_id") or ""))
+            ],
+        )
+        for row in rows
+    ]
 
 
-async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int) -> list[dict]:
+async def _read_chat_messages_from_target(
+    db_infra, *, target: dict, limit: int
+) -> list[dict]:
     auth = get_auth()
     actor_dids = participant_dids(auth)
     if not actor_dids:
@@ -507,7 +451,9 @@ async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int)
             "from_did": row["from_did"],
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
-            **verified_signed_recipient_fields({**row, "conversation_id": str(row["session_id"])}),
+            **verified_signed_recipient_fields(
+                {**row, "conversation_id": str(row["session_id"])}
+            ),
             "from_alias": row["from_alias"],
             "from_address": row["from_address"],
             "body": row["body"],

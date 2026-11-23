@@ -14,8 +14,10 @@ from awid.e2ee_keys import validate_encryption_key_assertion
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from aweb.deps import get_db
+from aweb.application_state import application_registry_client
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.messages import authorize_message_delivery
+from aweb.messaging.delivery_policy import DeliveryPolicyRefused
 from aweb.messaging.participants import messaging_participant_by_alias
 from aweb.messaging.sender_address import sender_address
 from aweb.service_errors import ServiceError
@@ -44,20 +46,23 @@ async def participant(
         team_id=auth.team_id,
         alias=alias,
         selected_team_id=auth.team_id,
-        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        registry_client=application_registry_client(request.app.state),
     )
     if not row or row.get("status") != "active":
         raise HTTPException(404, detail="Recipient not found")
     try:
         await authorize_message_delivery(
             db,
+            registry_client=application_registry_client(request.app.state),
             recipient_agent=row,
             sender_did=auth.did_aw or auth.did_key,
             sender_address=sender_address(auth),
-            sender_team_id=auth.team_id,
-            sender_verified_team_id=auth.verified_team_id,
             sender_verified_dids=auth_dids(auth),
         )
+    except DeliveryPolicyRefused as error:
+        # Participant discovery keeps its released forbidden response; sends
+        # retain the canonical policy's distinct local-route 404.
+        raise HTTPException(403, detail=error.detail) from error
     except ServiceError as error:
         raise HTTPException(error.status_code, detail=error.detail) from error
     assertion = await db.get_manager("aweb").fetch_one(
@@ -75,9 +80,7 @@ async def participant(
     if assertion:
         try:
             if row.get("did_aw"):
-                registry = getattr(request.app.state, "awid_registry_client", None)
-                if registry is None:
-                    raise HTTPException(503, detail={"code": "authority_unavailable"})
+                registry = application_registry_client(request.app.state)
                 resolution = await registry.resolve_key_fresh(row["did_aw"])
                 if (
                     not resolution
@@ -103,18 +106,14 @@ async def participant(
                 row["agent_id"],
                 exc_info=True,
             )
-            raise HTTPException(
-                422, detail={"code": "invalid_encryption_key_assertion"}
-            ) from error
+            raise HTTPException(422, detail={"code": "invalid_encryption_key_assertion"}) from error
         except Exception as error:
             logger.warning(
                 "Participant current-key authority unavailable for %s",
                 row["agent_id"],
                 exc_info=True,
             )
-            raise HTTPException(
-                503, detail={"code": "authority_unavailable"}
-            ) from error
+            raise HTTPException(503, detail={"code": "authority_unavailable"}) from error
     return {
         **{
             name: str(row[name]) if name == "agent_id" else row.get(name)
@@ -142,9 +141,7 @@ def _service(request):
     if service is None:
         from aweb.human_channels.contract import ContractError
 
-        raise ContractError(
-            "authority_unavailable", "configured custody/access authority"
-        )
+        raise ContractError("authority_unavailable", "configured custody/access authority")
     return service
 
 
@@ -191,9 +188,7 @@ def _refusal(error, family):
 
 
 @router.get("/capabilities")
-async def capabilities(
-    request: Request, auth: MessagingAuth = Depends(get_messaging_auth)
-):
+async def capabilities(request: Request, auth: MessagingAuth = Depends(get_messaging_auth)):
     service = getattr(request.app.state, "human_channels_service", None)
     if service is None:
         return {

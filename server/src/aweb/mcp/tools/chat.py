@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from aweb.messaging.kinds import ContentMode
+
+from aweb.mcp.tools.errors import messaging_tool
+from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.messaging.chat_policy import HumanChatRefused
 from aweb.identity_auth_deps import participant_dids
 
@@ -45,17 +49,24 @@ from aweb.mcp.signing import (
     sign_hosted_message,
 )
 from aweb.mcp.tools.federation import (
+    mcp_sender_budget_key,
     mcp_messaging_auth,
     mcp_messaging_runtime,
 )
-from aweb.mcp.tools.refusals import CONVERSATION_CHANGED_DURING_SEND, send_refusal
+from aweb.mcp.tools.refusals import (
+    CONVERSATION_CHANGED_DURING_SEND,
+    SendRefusalMode,
+    require_send_refusal_mode,
+    send_refusal,
+)
 from aweb.messaging.chat_send import (
     ChatSessionChanged,
+    ChatSessionSelection,
     resolve_actor_agent,
     resolve_chat_targets,
     send_chat,
 )
-from aweb.routes.chat import (
+from aweb.messaging.chat_models import (
     CreateSessionRequest,
     SendMessageRequest as ChatSendMessageRequest,
 )
@@ -93,24 +104,30 @@ def _recipient_signed_fields(rows: list[dict], *, named_alias: str = "") -> tupl
     """
     if named_alias:
         to_value = named_alias
-    elif len(rows) == 1 and (rows[0].get("external") or rows[0].get("delivery_origin")) and rows[0].get("address"):
+    elif (
+        len(rows) == 1
+        and (rows[0].get("external") or rows[0].get("delivery_origin"))
+        and rows[0].get("address")
+    ):
         to_value = rows[0]["address"]
     else:
-        to_value = ",".join(sorted(
-            value
-            for value in (
-                (
-                    row.get("alias")
-                    or row.get("address")
-                    or row.get("did_aw")
-                    or row.get("did_key")
-                    or row.get("did")
-                    or ""
-                ).strip()
-                for row in rows
+        to_value = ",".join(
+            sorted(
+                value
+                for value in (
+                    (
+                        row.get("alias")
+                        or row.get("address")
+                        or row.get("did_aw")
+                        or row.get("did_key")
+                        or row.get("did")
+                        or ""
+                    ).strip()
+                    for row in rows
+                )
+                if value
             )
-            if value
-        ))
+        )
     if len(rows) != 1:
         return to_value, "", ""
     row = rows[0]
@@ -137,7 +154,9 @@ def _signed_chat_fields(
     leaving: bool,
 ) -> dict:
     """The fields a hosted identity signs, or encrypts, for one chat message."""
-    to_value, to_current_did, to_stable_id = _recipient_signed_fields(recipient_rows, named_alias=named_alias)
+    to_value, to_current_did, to_stable_id = _recipient_signed_fields(
+        recipient_rows, named_alias=named_alias
+    )
     signed_fields = {
         "body": message,
         "conversation_id": conversation_id,
@@ -163,11 +182,17 @@ def _signed_chat_fields(
     return signed_fields
 
 
-def _send_refusal(exc: Exception, *, address: str = "", hosted_envelope: bool = False) -> str:
+def _send_refusal(
+    exc: Exception,
+    *,
+    address: str = "",
+    mode: SendRefusalMode = SendRefusalMode.STANDARD,
+) -> str:
     """A chat send the service refused, in this tool's error shape."""
+    require_send_refusal_mode(mode)
     if isinstance(exc, HumanChatRefused):
         return json.dumps({"error": exc.detail, **exc.body()})
-    return send_refusal(exc, address=address, hosted_envelope=hosted_envelope)
+    return send_refusal(exc, address=address, mode=mode)
 
 
 def _chat_recipient_for_encryptor(row: dict) -> dict:
@@ -185,7 +210,7 @@ async def _decrypt_chat_row_for_hosted(
     row: dict,
 ) -> dict[str, object]:
     body = str(row.get("body") or "")
-    if str(row.get("content_mode") or "legacy_plaintext_v1") != "encrypted_v2":
+    if str(row.get("content_mode") or ContentMode.PLAINTEXT) != ContentMode.ENCRYPTED:
         return {"body": body, "decryptable": True, "content_notice": None}
     try:
         decrypted = await decrypt_hosted_message_row(
@@ -206,7 +231,11 @@ async def _decrypt_chat_row_for_hosted(
             ),
         }
     return {
-        **(readable_attachments(decrypted.attachments) if decrypted.attachments_available else {"attachments": [], "attachments_available": False}),
+        **(
+            readable_attachments(decrypted.attachments)
+            if decrypted.attachments_available
+            else {"attachments": [], "attachments_available": False}
+        ),
         "body": decrypted.body,
         "decryptable": bool(decrypted.decryptable),
         "content_notice": decrypted.content_notice,
@@ -230,7 +259,9 @@ async def _wait_for_replies(
     deadline = start + wait_seconds
 
     await register_waiting(redis, session_id_str, participant_did)
-    await wake_chat_session_participants(aweb_db, current_agent_wake_publisher(), session_id=session_id)
+    await wake_chat_session_participants(
+        aweb_db, current_agent_wake_publisher(), session_id=session_id
+    )
     last_refresh = time.monotonic()
     last_seen_seq = after_seq
 
@@ -285,7 +316,9 @@ async def _wait_for_replies(
                             "from_did": row["from_did"],
                             "signature": row.get("signature"),
                             "signed_payload": row.get("signed_payload"),
-                            **verified_signed_recipient_fields({**row, "conversation_id": session_id_str}),
+                            **verified_signed_recipient_fields(
+                                {**row, "conversation_id": session_id_str}
+                            ),
                             "body": content["body"],
                             "attachments": content.get("attachments", []),
                             "attachments_available": content.get("attachments_available", False),
@@ -307,9 +340,37 @@ async def _wait_for_replies(
         return [], True
     finally:
         await unregister_waiting(redis, session_id_str, participant_did)
-        await wake_chat_session_participants(aweb_db, current_agent_wake_publisher(), session_id=session_id)
+        await wake_chat_session_participants(
+            aweb_db, current_agent_wake_publisher(), session_id=session_id
+        )
 
 
+async def _resolve_chat_target_for_tool(
+    db,
+    *,
+    sender,
+    selector: CreateSessionRequest | str,
+    runtime,
+    source: str,
+    recipient_binding: RecipientIdentityBinding | None = None,
+):
+    """Resolve a tool's named recipient or its stored session through one owner."""
+    if isinstance(selector, CreateSessionRequest):
+        return await resolve_chat_targets(
+            db,
+            sender,
+            selector,
+            runtime,
+            source,
+            session_selection=ChatSessionSelection.REUSE_PAIR,
+            recipient_binding=recipient_binding,
+        )
+    return await resolve_chat_targets(
+        db, sender, selector, runtime, source, recipient_binding=recipient_binding
+    )
+
+
+@messaging_tool
 async def chat_send(
     db_infra,
     redis,
@@ -331,6 +392,7 @@ async def chat_send(
     plaintext: bool = False,
     federation_transport=None,
     public_origin: str | None = None,
+    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> str:
     auth = get_auth()
     sender = mcp_messaging_auth(auth)
@@ -349,7 +411,9 @@ async def chat_send(
     else:
         to_address = normalize_hosted_handle_reference(to_address, require_agent=True)
 
-    recipient_modes = int(bool(to_alias.strip())) + int(bool(to_did.strip())) + int(bool(to_address.strip()))
+    recipient_modes = (
+        int(bool(to_alias.strip())) + int(bool(to_did.strip())) + int(bool(to_address.strip()))
+    )
     if not session_id and recipient_modes != 1:
         return json.dumps({"error": "Provide exactly one of to_alias, to_did, or to_address"})
     if session_id and recipient_modes != 0:
@@ -359,10 +423,13 @@ async def chat_send(
         return json.dumps({"error": "Authenticated identity is missing a routing DID"})
 
     runtime = mcp_messaging_runtime(
-        auth, public_origin=public_origin, registry_client=registry_client,
-        federation_authority=federation_authority, chat_transport=federation_transport,
+        auth,
+        public_origin=public_origin,
+        registry_client=registry_client,
+        federation_authority=federation_authority,
+        chat_transport=federation_transport,
     )
-    source = "mcp:" + str(auth.did_key or auth.did_aw or "unknown")
+    source = mcp_sender_budget_key(auth)
     address_ref = to_address.strip()
     named_alias = ""
     selector = None
@@ -383,7 +450,7 @@ async def chat_send(
     else:
         try:
             UUID(session_id.strip())
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             return json.dumps({"error": "Invalid session_id format"})
 
     # A send that names its recipient goes to the session the two share, or
@@ -392,12 +459,14 @@ async def chat_send(
     # and the fields are resolved and signed again.
     for _ in range(SESSION_ATTEMPTS):
         try:
-            if selector is not None:
-                target = await resolve_chat_targets(
-                    db_infra, sender, selector, runtime, source, reuse_or_create=True,
-                )
-            else:
-                target = await resolve_chat_targets(db_infra, sender, session_id, runtime, source)
+            target = await _resolve_chat_target_for_tool(
+                db_infra,
+                sender=sender,
+                selector=selector if selector is not None else session_id,
+                runtime=runtime,
+                source=source,
+                recipient_binding=recipient_binding,
+            )
         except (HTTPException, FederationAuthorityError, ServiceError) as exc:
             return _send_refusal(exc, address=address_ref)
 
@@ -449,7 +518,7 @@ async def chat_send(
         sent_fields = dict(
             hang_on=hang_on,
             wait_seconds=wait_seconds if wait else None,
-            content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
+            content_mode=encrypted.content_mode if encrypted is not None else ContentMode.PLAINTEXT,
             message_version=encrypted.message_version if encrypted is not None else 1,
             encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
             leaving=leaving,
@@ -461,20 +530,31 @@ async def chat_send(
         )
         if continues_session:
             payload = ChatSendMessageRequest.model_construct(
-                body="" if encrypted is not None else message, **sent_fields,
+                body="" if encrypted is not None else message,
+                **sent_fields,
             )
         else:
-            payload = selector.model_copy(update=dict(
-                session_id=str(sid),
-                message="" if encrypted is not None else message,
-                **sent_fields,
-            ))
+            payload = selector.model_copy(
+                update=dict(
+                    session_id=str(sid),
+                    message="" if encrypted is not None else message,
+                    **sent_fields,
+                )
+            )
         try:
             sent = await send_chat(db_infra, sender, target, payload, runtime)
         except ChatSessionChanged:
             continue
-        except Exception as exc:
-            return _send_refusal(exc, address=address_ref, hosted_envelope=encrypted is not None)
+        except (ServiceError, HTTPException, FederationAuthorityError) as exc:
+            return _send_refusal(
+                exc,
+                address=address_ref,
+                mode=(
+                    SendRefusalMode.HOSTED_ENVELOPE
+                    if encrypted is not None
+                    else SendRefusalMode.STANDARD
+                ),
+            )
         break
     else:
         return json.dumps({"error": CONVERSATION_CHANGED_DURING_SEND})
@@ -502,6 +582,7 @@ async def chat_send(
     return json.dumps(result)
 
 
+@messaging_tool
 async def chat_pending(
     db_infra,
     redis,
@@ -510,7 +591,7 @@ async def chat_pending(
 ) -> str:
     auth = get_auth()
     actor_dids = _actor_dids()
-    actor_agent = await resolve_actor_agent(db_infra, actor_dids)
+    actor_agent = await resolve_actor_agent(db_infra, actor_dids, team_id=auth.team_id)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     conversations_by_session: dict[str, dict] = {}
@@ -528,7 +609,7 @@ async def chat_pending(
             auth=auth,
             hosted_decryptor=hosted_decryptor,
             row={
-                "content_mode": row.get("last_message_content_mode") or "legacy_plaintext_v1",
+                "content_mode": row.get("last_message_content_mode") or ContentMode.PLAINTEXT,
                 "message_version": row.get("last_message_version") or 1,
                 "encrypted_envelope": row.get("last_encrypted_envelope"),
                 "body": row.get("last_message") or "",
@@ -555,6 +636,7 @@ async def chat_pending(
     return json.dumps({"pending": pending})
 
 
+@messaging_tool
 async def chat_history(
     db_infra,
     *,
@@ -567,11 +649,13 @@ async def chat_history(
     actor_dids = _actor_dids()
     try:
         session_uuid = UUID(session_id.strip())
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         return json.dumps({"error": "Invalid session_id format"})
 
     aweb_db = db_infra.get_manager("aweb")
-    sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
+    sess = await aweb_db.fetch_one(
+        "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid
+    )
     if not sess:
         return json.dumps({"error": "Session not found"})
 
@@ -633,6 +717,7 @@ async def chat_history(
     )
 
 
+@messaging_tool
 async def chat_read(
     db_infra,
     *,
@@ -645,7 +730,7 @@ async def chat_read(
 
     try:
         session_uuid = UUID(session_id.strip())
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         return json.dumps({"error": "Invalid session_id format"})
 
     normalized_message_ids: list[str] | None = None
@@ -653,14 +738,14 @@ async def chat_read(
     if up_to_message_id is not None:
         try:
             normalized_watermark = str(UUID(up_to_message_id.strip()))
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             return json.dumps({"error": "Invalid message_id format"})
     if message_ids is not None:
         if not message_ids:
             return json.dumps({"error": "message_ids is required"})
         try:
             normalized_message_ids = [str(UUID(message_id.strip())) for message_id in message_ids]
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             return json.dumps({"error": "Invalid message_id format"})
     elif normalized_watermark is None:
         return json.dumps({"error": "up_to_message_id or message_ids is required"})

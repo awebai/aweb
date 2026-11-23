@@ -38,6 +38,14 @@ compose() {
 
 cleanup() {
   local status=$?
+  local output
+  if [[ $status -ne 0 ]]; then
+    for output in "$RUNTIME"/*.json; do
+      [[ -f "$output" ]] || continue
+      printf '\nFederation worker output: %s\n' "${output##*/}" >&2
+      cat "$output" >&2 || true
+    done
+  fi
   if [[ $status -ne 0 && -f "$COMPOSE_FILE" ]]; then
     compose logs --tail 120 --no-color awid-a awid-b aweb-a-1 aweb-a-2 aweb-b-1 aweb-b-2 >&2 || true
   fi

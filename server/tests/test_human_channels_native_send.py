@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from test_mcp_mail_conversation_parity import mail_server as mail_server
 from aweb.human_channels.contract import ContractError, canonical_record, decode_record
 from aweb.human_channels.native import NativeMessagingService
 from aweb.identity_auth_deps import MessagingAuth
@@ -17,6 +18,8 @@ from test_messages_http import (
     _insert_team,
     _make_keypair,
 )
+
+__all__ = ["mail_server"]
 
 
 def dto(schema, value):
@@ -144,7 +147,10 @@ async def native_send(aweb_cloud_db):
     provider = HostAuthority(db, service_binding)
     # No publisher until explicitly recovered: simulates commit->process crash.
     service = NativeMessagingService(
-        _build_test_app(db, None).state.db, authority=provider, service=service_binding
+        _build_test_app(db, None).state.db,
+        authority=provider,
+        service=service_binding,
+        registry_client=None,
     )
     auth = MessagingAuth(
         did_key=a_did,
@@ -370,6 +376,7 @@ async def test_committed_intent_recovers_without_second_message(native_send):
         authority=env["provider"],
         service=env["service"].service,
         publisher=publish,
+        registry_client=None,
     )
     await service.publish_pending()
     await service.publish_pending()
@@ -611,6 +618,7 @@ async def test_human_discovery_withholds_unverified_global_claim(native_send):
         team_id=env["auth"].team_id,
         selected_team_id=env["auth"].team_id,
         alias="human",
+        registry_client=env["service"].registry_client,
     )
     assert row["did_key"] == env["recipient_did"]
     assert row["did_aw"] is None
@@ -701,3 +709,42 @@ async def test_native_facts_project_identity_in_endpoint_team(native_send):
     assert facts.value['principal'] == {'kind': 'native', 'did': 'did:aw:human'}
     assert facts.value['actor_id'] == env['b']
     assert facts.value['team_id'] == env['auth'].team_id
+
+
+@pytest.mark.asyncio
+async def test_legacy_native_policy_retains_forbidden_contract_after_local_refusal(mail_server):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from aweb.application_state import RegistryClientUnavailable
+    from test_local_policy_refusal_boundaries import admitted_local_recipient
+
+    env = mail_server
+    # Only the configured SDK resource is supplied to this policy seam.
+    service = SimpleNamespace(registry_client=env.registry)
+    bob = await admitted_local_recipient(env)
+    recipient = await env.db.fetch_one(
+        "SELECT * FROM {{tables.agents}} WHERE agent_id=$1", UUID(bob.id)
+    )
+    outsider = MessagingAuth(
+        did_key=env.pilot_did, did_aw=env.pilot_stable, address=None,
+        team_id="ops:acme.com", verified_team_id="ops:acme.com",
+    )
+    with pytest.raises(ContractError) as refused:
+        await NativeMessagingService._policy(service, env.fixture.infra, outsider, recipient)
+    assert refused.value.code == "forbidden"
+    assert refused.value.field == (
+        "The recipient is not reachable from outside its team. "
+        "Use a teammate alias from inside its team, or ask the recipient "
+        "for a registered address and retry."
+    )
+    member = replace(outsider, did_key=bob.did, did_aw=None, team_id=bob.team,
+                     verified_team_id=bob.team)
+    await NativeMessagingService._policy(service, env.fixture.infra, member, recipient)
+    service.registry_client = None
+    with pytest.raises(RegistryClientUnavailable) as unavailable:
+        await NativeMessagingService._policy(service, env.fixture.infra, member, recipient)
+    assert unavailable.value.status_code == 503
+    assert unavailable.value.detail == {
+        "code": RegistryClientUnavailable.code,
+        "message": RegistryClientUnavailable.message,
+    }

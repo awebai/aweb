@@ -277,7 +277,8 @@ class Ingestor:
         except HTTPException as exc:
             if _private_team_unreadable(exc):
                 raise IngestRefused(403, PRIVATE_TEAM_UNREADABLE) from exc
-            if (exc.status_code, exc.detail) == (401, "team_key_unverified"):
+            code = exc.detail.partition(":")[0] if isinstance(exc.detail, str) else None
+            if (exc.status_code, code) == (401, "team_key_unverified"):
                 # The registry names a key no namespace-controller act establishes.
                 raise IngestRefused(401, "team_key_unverified") from exc
             raise IngestRefused(503, "client_authority_unavailable") from exc

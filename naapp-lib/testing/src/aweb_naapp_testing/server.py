@@ -34,9 +34,15 @@ from dataclasses import dataclass
 import httpx
 import pytest_asyncio
 from aweb.testing import Server, running_server
-from awid.dns_verify import DnsVerificationError, DomainAuthority
-from awid_service.deps import get_domain_verifier
-from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry, running_registry
+from awid.dns_verify import DomainAuthority
+from awid_service.testing import (
+    REGISTRY_URL,
+    SERVICE_TOKEN,
+    Registry,
+    fixture_domain_authority,
+    running_registry,
+)
+from nacl.signing import SigningKey
 from redis.asyncio import Redis
 
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
@@ -54,15 +60,19 @@ class Coordination:
     # Where the server listens: its public origin, its DNS and its CA.
     site: TeamServerSite
 
-    async def add_member(self, member: Member) -> None:
+    async def add_member(
+        self, member: Member, *, namespace_controller: SigningKey | None = None
+    ) -> None:
         """Registers the member's team, if new, and its certificate in AWID."""
         name, domain = member.team_id.split(":", 1)
         known = await self.registry.db.fetch_value(
             "SELECT 1 FROM {{tables.teams}} WHERE domain = $1 AND name = $2", domain, name
         )
         if known is None:
-            await self.registry.add_team(member.team_id, member.team_did_key)
-        await self.registry.add_certificate(member.certificate())
+            await self.registry.add_team(
+                member.team_id, member.team_did_key, namespace_controller=namespace_controller
+            )
+        await self.registry.add_certificate(member.certificate(), team_key=member.team_key)
 
     async def publish_server(self, member: Member) -> None:
         """Publishes the server as the member's team server, signed by the team key."""
@@ -113,10 +123,7 @@ def awid_dns(registry: Registry):
     record at all (tests never reach real DNS)."""
 
     async def verify(domain: str) -> DomainAuthority:
-        override = registry.app.dependency_overrides.get(get_domain_verifier)
-        if override is None:
-            raise DnsVerificationError(f"No TXT records found for _awid.{domain}")
-        return await override()(domain)
+        return await fixture_domain_authority(registry.app.dependency_overrides, domain)
 
     return verify
 

@@ -31,7 +31,7 @@ import {
 
 export const DEFAULT_PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
 export const DEFAULT_DELIVERY_STORE_PATH = join(homedir(), ".config", "aw", "channel-delivered-ids.json");
-export const DEFAULT_UNDELIVERED_LOG_PATH = join(homedir(), ".config", "aw", "channel-undelivered.jsonl");
+const DEFAULT_UNDELIVERED_LOG_PATH = join(homedir(), ".config", "aw", "channel-undelivered.jsonl");
 const MAX_DISPATCHED_IDS = 2000;
 const MAX_DELIVERED_IDS = 5000;
 const DELIVERED_IDS_TTL_MS = 24 * 60 * 60 * 1000;
@@ -1198,7 +1198,7 @@ async function resolveChatForDelivery(
 export function trustWarningLine(status: VerificationStatus | undefined): string {
   if (isTrustedVerificationStatus(status)) return "";
   if (status === "verification_stale") {
-    return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
+    return "WARNING: sender signature verified, but the sender's current registry binding could not be confirmed (it could not be refreshed, or the registry no longer has the sender's address). This is not an identity-mismatch finding; retry verification or confirm the sender another way before sensitive work.";
   }
   if (status === "pin_conflict") {
     return "WARNING: two pin records conflict for this sender. Stable-identity migration was refused to avoid discarding trust state; inspect and repair the pin store before trusting the sender.";
@@ -1208,7 +1208,7 @@ export function trustWarningLine(status: VerificationStatus | undefined): string
 
 // MAIL_THREAD_TEACHING is the one wording every mail surface uses: a thread
 // is a conversation, continued by reply.
-export const MAIL_THREAD_TEACHING =
+const MAIL_THREAD_TEACHING =
   "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.";
 
 function awakeningClosingLine(kind: ChannelAwakening["kind"]): string {

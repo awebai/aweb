@@ -2,6 +2,7 @@ package awid
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -77,13 +78,15 @@ func TestAliasReuseAgreeingPinVerifiesGlobalSender(t *testing.T) {
 // roster names the alias's current holder, so a reissue is authorized by the
 // roster rather than by a signature the new holder cannot hold - and the
 // previous holder's binding is cleared as a result, not left to be tripped over.
-func TestAliasReuseLocalSenderVerifiesAndClearsPreviousHolderPin(t *testing.T) {
+func TestAliasReuseLocalSenderVerifiesAndRetiresPreviousHolderPin(t *testing.T) {
 	c, err := New("http://example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	pins := NewPinStore()
 	pins.StorePin(previousHolderKey, reuseAddress, "", "")
+	pins.Pins[previousHolderKey].LogSeq = 7
+	pins.Pins[previousHolderKey].LogEntryHash = strings.Repeat("a", 64)
 	c.SetPinStore(pins, "")
 	c.SetResolver(&localFreshResolver{
 		cached: &ResolvedIdentity{DID: previousHolderKey, IdentityScope: IdentityModeLocal, Custody: CustodySelf},
@@ -100,7 +103,36 @@ func TestAliasReuseLocalSenderVerifiesAndClearsPreviousHolderPin(t *testing.T) {
 	if pinKey, ok := pins.Addresses[reuseAddress]; ok {
 		t.Fatalf("previous holder's binding survived as %q: the next holder inherits it", pinKey)
 	}
-	if _, ok := pins.Pins[previousHolderKey]; ok {
-		t.Fatal("previous holder's pin survived in the pin map")
+	// The server's roster frees the name; it cannot erase the client's memory of
+	// the previous holder: its record and anchor move to a retired key that no
+	// lookup reaches (Antares 2e8881d7).
+	pin, ok := pins.Pins[previousHolderKey]
+	if !ok || !strings.HasPrefix(pin.Address, "retired:"+reuseAddress+"@") || pins.Addresses[pin.Address] != previousHolderKey {
+		t.Fatalf("previous holder's pin not kept under a retired key: pin=%+v addresses=%v", pin, pins.Addresses)
+	}
+	if pin.LogSeq != 7 || pin.LogEntryHash != strings.Repeat("a", 64) {
+		t.Fatalf("previous holder's anchor lost: %+v", pin)
+	}
+}
+
+// A real address is never a team-scoped name: the roster's word about a local
+// identity there leaves any pin at that address untouched.
+func TestLocalSenderAtARealAddressLeavesItsPinUntouched(t *testing.T) {
+	c, err := New("http://example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pins := NewPinStore()
+	pins.StorePin(previousHolderStID, "acme.com/kestrel", "", "")
+	c.SetPinStore(pins, "")
+	c.SetResolver(&localFreshResolver{
+		cached: &ResolvedIdentity{DID: currentHolderKey, IdentityScope: IdentityModeLocal, Custody: CustodySelf},
+		fresh:  &ResolvedIdentity{DID: currentHolderKey, IdentityScope: IdentityModeLocal, Custody: CustodySelf},
+	})
+
+	c.NormalizeSenderTrust(context.Background(), Verified, "acme.com/kestrel", currentHolderKey, "", nil, nil, nil)
+
+	if pins.Addresses["acme.com/kestrel"] != previousHolderStID {
+		t.Fatalf("the pin at a real address was moved or removed: %v", pins.Addresses)
 	}
 }

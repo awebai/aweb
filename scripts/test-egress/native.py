@@ -50,17 +50,45 @@ def socket_owner(client_port, proxy_port):
 
 def process_facts(pid):
     """(parent pid, executable, working directory) of pid. Never its
-    arguments: a command line can carry a credential."""
-    if Path(f'/proc/{pid}').exists():
-        stat = Path(f'/proc/{pid}/stat').read_text()
-        parent = int(stat.rsplit(')', 1)[1].split()[1])
-        return parent, os.readlink(f'/proc/{pid}/exe'), os.readlink(f'/proc/{pid}/cwd')
+    arguments: a command line can carry a credential.
+
+    Raises ProcessLookupError once pid has exited: a client can give up and
+    exit while the guard is still reading it, between any two reads."""
+    if Path('/proc/net/tcp').exists():
+        try:
+            stat = Path(f'/proc/{pid}/stat').read_text()
+            parent = int(stat.rsplit(')', 1)[1].split()[1])
+            return parent, os.readlink(f'/proc/{pid}/exe'), os.readlink(f'/proc/{pid}/cwd')
+        except FileNotFoundError as error:
+            raise ProcessLookupError(pid) from error
     parent, _, executable = subprocess.run(['ps', '-o', 'ppid=,comm=', '-p', str(pid)],
                                            capture_output=True, text=True).stdout.strip().partition(' ')
+    if not parent:
+        raise ProcessLookupError(pid)
     cwd = subprocess.run(['lsof', '-a', '-p', str(pid), '-d', 'cwd', '-Fn'],
                          capture_output=True, text=True).stdout
-    directory = next((field[1:] for field in cwd.splitlines() if field.startswith('n')), '?')
+    directory = next((field[1:] for field in cwd.splitlines() if field.startswith('n')), None)
+    if directory is None:
+        os.kill(pid, 0)  # ProcessLookupError if it exited after ps read it
+        directory = 'unavailable'
     return int(parent), executable.strip(), directory
+
+
+def process_chain(pid, guard_child):
+    """pid and its parents up to the guarded command, as far as they can
+    still be read."""
+    chain = []
+    while pid and pid > 1 and len(chain) < 6:
+        try:
+            parent, executable, cwd = process_facts(pid)
+        except ProcessLookupError:
+            chain.append(f'pid={pid} exited during attribution')
+            break
+        chain.append(f'pid={pid} exe={executable} cwd={cwd}')
+        if pid == guard_child:
+            break
+        pid = parent
+    return 'client=' + ' <- '.join(chain)
 
 
 def client_attribution(client_port, proxy_port, guard_child):
@@ -71,14 +99,7 @@ def client_attribution(client_port, proxy_port, guard_child):
         pid = socket_owner(client_port, proxy_port)
         if pid is None:
             return 'client=unknown (no process holds the connection any more)'
-        chain = []
-        while pid and pid > 1 and len(chain) < 6:
-            parent, executable, cwd = process_facts(pid)
-            chain.append(f'pid={pid} exe={executable} cwd={cwd}')
-            if pid == guard_child:
-                break
-            pid = parent
-        return 'client=' + ' <- '.join(chain)
+        return process_chain(pid, guard_child)
     except (OSError, ValueError, IndexError) as error:
         return f'client=unknown ({type(error).__name__}: {error})'
 

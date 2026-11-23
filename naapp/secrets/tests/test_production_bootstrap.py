@@ -105,7 +105,7 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
                     certificate_id="secrets-service",
                     alias="secrets-service",
                 )
-                await registry.add_certificate(service_member.certificate())
+                await registry.add_certificate(service_member.certificate(), team_key=service_member.team_key)
                 key_file = tmp_path / "service-member.key"
                 key_file.write_text(
                     "-----BEGIN ED25519 PRIVATE KEY-----\n"

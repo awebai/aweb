@@ -23,6 +23,8 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_identity_grants import _session_keypair
 from tests.js_runtime_tree import runtime_repo
 
+__all__ = ["privacy_app"]
+
 SOURCE_REPO = Path(__file__).resolve().parents[2]
 REPO = runtime_repo(SOURCE_REPO)
 HOST = REPO / "server/tests/activity_emitter_host.mjs"
