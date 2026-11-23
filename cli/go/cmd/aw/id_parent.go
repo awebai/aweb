@@ -124,6 +124,7 @@ type requester struct {
 	domain         string
 	kind           string
 	dir            string
+	identity       *awconfig.ResolvedIdentity
 	signer         func(description string) awid.IDCertificateSigner
 	human          *awconfig.HumanRecord
 	session        *humanParticipation
@@ -170,7 +171,7 @@ func selectRequester(opts idParentOptions) (*requester, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &requester{id: id, didKey: identity.DID, domain: domain, kind: "agent", dir: dir,
+		return &requester{id: id, didKey: identity.DID, domain: domain, kind: "agent", dir: dir, identity: identity,
 			signer: func(string) awid.IDCertificateSigner { return awid.KeySigner(key) }}, nil
 	}
 	domain, err := normalizeIDCreateDomain(opts.Domain, false)

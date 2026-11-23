@@ -71,6 +71,9 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 		return override, nil
 	case registryIdentityEvidenceRoute, registryIdentityIssuanceRoute:
 		recorded := recordedPrivateIdentityRegistry(req.Identity)
+		if req.Kind == registryIdentityIssuanceRoute && req.Identity != nil {
+			recorded = strings.TrimSpace(req.Identity.RegistryURL)
+		}
 		if recorded == "" {
 			return resolveRegistryAuthority(ctx, registryAuthorityRequest{
 				Kind: registryDNSAuthority, Authority: req.Authority, Override: override,

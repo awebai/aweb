@@ -220,7 +220,7 @@ func prepareHostedIdentityCreation(cmd *cobra.Command, options hostedIdentityOpt
 		if options.HumanParent != "" || options.RootParent {
 			return usageError("the selected native owner is the parent; omit --human-parent and --root-parent")
 		}
-		selectedIssuer, err = hostedOwnerIssuer(ctx, wd, owner, registry, nil)
+		selectedIssuer, err = hostedOwnerIssuer(ctx, wd, owner, registry, nil, options.RegistryURL)
 	} else {
 		human, err = selectHostedPersonParent(account, strings.TrimSpace(options.HumanParent), options.RootParent)
 	}
@@ -238,6 +238,7 @@ func prepareHostedIdentityCreation(cmd *cobra.Command, options hostedIdentityOpt
 	}
 	if selectedIssuer != nil {
 		association.Domain = selectedIssuer.domain
+		association.RegistryURL = selectedIssuer.registryURL
 		association.ParentKind = "identity"
 		parentID, valid := selectedIssuer.parent["id"].(string)
 		if !valid || strings.TrimSpace(parentID) == "" {
@@ -250,7 +251,7 @@ func prepareHostedIdentityCreation(cmd *cobra.Command, options hostedIdentityOpt
 		association.ParentKind = "identity"
 		association.ParentID = human.ID
 	}
-	if association.Domain != "" {
+	if association.Domain != "" && selectedIssuer == nil {
 		_, origin, routeErr := childIssuerRegistry(ctx, idChildOptions{RegistryURL: options.RegistryURL}, association.Domain)
 		if routeErr != nil {
 			return routeErr
@@ -314,6 +315,10 @@ func createHostedIdentity(operation hostedIdentityCreation) (resultErr error) {
 	state, err := loadHostedIdentityRecovery(statePath)
 	if err != nil {
 		return err
+	}
+	// Older recovery records already retained the route in the creation context.
+	if state.IDTree != nil && state.IDTree.RegistryURL == "" {
+		state.IDTree.RegistryURL = association.RegistryURL
 	}
 	var nativeChain map[string]any
 	if selectedIssuer != nil && state.ResponseJSON == "" {

@@ -161,7 +161,9 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
 	scope, err := selectedIdentityRegistryScope(opts.WorkingDir)
 	if err != nil {
-		return messageVerificationFailure(subject.ID, "evidence_unavailable", false)
+		out := messageVerificationFailure(subject.ID, "evidence_unavailable", false)
+		out.registryError = &cliError{code: 2, msg: err.Error()}
+		return out
 	}
 	resolveRoute := func(domain string) (identityEvidenceRoute, error) {
 		return resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, registryIdentityEvidenceRoute, scope, domain, opts.RegistryURL)

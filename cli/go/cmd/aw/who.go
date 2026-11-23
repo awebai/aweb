@@ -168,8 +168,7 @@ func verifyWhoPresentation(ctx context.Context, subject awid.IDChainSubject, bun
 		var err error
 		scope, err = selectedIdentityRegistryScope(opts.WorkingDir)
 		if err != nil {
-			out.IDChainResult = preflight
-			return out, nil
+			return whoOutput{}, err
 		}
 	}
 	private := recordedPrivateIdentityRegistry(scope.identity) != "" && (opts.ownIdentity != nil || scope.applies(domain))

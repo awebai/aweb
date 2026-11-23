@@ -27,30 +27,36 @@ func selectedIdentityRegistryScope(wd string) (identityRegistryScope, error) {
 	if wd == "" {
 		return identityRegistryScope{}, nil
 	}
-	home, err := identityHomeForDir(wd)
-	if err != nil {
-		return identityRegistryScope{}, err
-	}
-	if !home.External() {
-		if _, err := os.Lstat(home.Root); errors.Is(err, os.ErrNotExist) {
-			return identityRegistryScope{}, nil
-		}
-	}
-	return identityRegistryScopeAt(wd, home.Root)
+	identity, err := resolveIdentityForDir(wd)
+	return loadIdentityRegistryScope(identity, err)
 }
 
 func identityRegistryScopeAt(wd, home string) (identityRegistryScope, error) {
 	if home == "" {
 		return identityRegistryScope{}, nil
 	}
-	identity, err := awconfig.ResolveIdentityFromHome(wd, home)
+	identity, err := resolveIdentityAtHome(wd, awconfig.IdentityHome{Root: home, Source: awconfig.IdentityHomeFlag})
+	return loadIdentityRegistryScope(identity, err)
+}
+
+func loadIdentityRegistryScope(identity *awconfig.ResolvedIdentity, err error) (identityRegistryScope, error) {
+	if errors.Is(err, errIdentityAbsent) {
+		return identityRegistryScope{}, nil
+	}
 	if err != nil {
-		return identityRegistryScope{}, err
+		return identityRegistryScope{}, fmt.Errorf("read identity registry context: %w", err)
+	}
+	if recordedPrivateIdentityRegistry(identity) == "" {
+		return identityRegistryScope{}, nil
 	}
 	installed, err := awconfig.LoadInstalledIDChain(filepath.Dir(identity.SigningKeyPath))
 	if err != nil {
 		return identityRegistryScope{}, err
 	}
+	return identityRegistryScopeFor(identity, installed)
+}
+
+func identityRegistryScopeFor(identity *awconfig.ResolvedIdentity, installed *awconfig.InstalledIDChain) (identityRegistryScope, error) {
 	if recordedPrivateIdentityRegistry(identity) == "" {
 		return identityRegistryScope{}, nil
 	}
@@ -76,8 +82,7 @@ type inviteIdentityHomes struct {
 
 func (homes inviteIdentityHomes) registryScope() (identityRegistryScope, error) {
 	scope, err := identityRegistryScopeAt(homes.workingDir, homes.recipient)
-	// A new recipient can have just a key and chain at this point.
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
 		return identityRegistryScope{}, err
 	}
 	if scope.identity != nil || homes.parent == "" {
@@ -87,12 +92,7 @@ func (homes inviteIdentityHomes) registryScope() (identityRegistryScope, error) 
 	if _, err := os.Stat(filepath.Join(parent, "signing.key")); errors.Is(err, os.ErrNotExist) {
 		parent = filepath.Join(parent, ".aw")
 	}
-	scope, err = identityRegistryScopeAt(homes.workingDir, parent)
-	// A legacy local parent can be represented by its team certificate.
-	if errors.Is(err, os.ErrNotExist) {
-		return identityRegistryScope{}, nil
-	}
-	return scope, err
+	return identityRegistryScopeAt(homes.workingDir, parent)
 }
 
 type identityEvidenceRoute struct {

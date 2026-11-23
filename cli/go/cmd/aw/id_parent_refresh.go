@@ -32,18 +32,14 @@ func init() {
 	idParentCmd.AddCommand(idParentRefreshCmd)
 }
 
-func parentRegistry(ctx context.Context, opts idParentOptions, domain string) (*awid.RegistryClient, string, error) {
-	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
-	if err != nil {
-		return nil, "", err
-	}
-	origin, err := domainRegistryURL(authority, opts.RegistryURL)
-	if err != nil {
-		return nil, "", err
-	}
+func parentRegistry(ctx context.Context, opts idParentOptions, domain string) (*awid.RegistryClient, identityEvidenceRoute, error) {
 	registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
-	registry.DefaultRegistryURL = origin
-	return registry, origin, nil
+	route, err := resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, registryIdentityEvidenceRoute, opts.registryScope, domain, opts.RegistryURL)
+	if err != nil {
+		return nil, identityEvidenceRoute{}, err
+	}
+	registry.DefaultRegistryURL = route.origin
+	return registry, route, nil
 }
 
 func executeIDParentRefresh(ctx context.Context, opts idParentOptions) (*awid.IDChainResult, error) {
@@ -76,7 +72,11 @@ func executeIDParentRefresh(ctx context.Context, opts idParentOptions) (*awid.ID
 	if !strings.HasPrefix(anchor, "did:aw:") {
 		return nil, usageError("local ancestry needs its parent: use `aw id parent request --resign`, then import the parent's response")
 	}
-	registry, origin, err := parentRegistry(ctx, opts, r.domain)
+	opts.registryScope, err = identityRegistryScopeFor(r.identity, installed)
+	if err != nil {
+		return nil, err
+	}
+	registry, route, err := parentRegistry(ctx, opts, r.domain)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func executeIDParentRefresh(ctx context.Context, opts idParentOptions) (*awid.ID
 	if installed != nil {
 		old = installed.Bundle
 	}
-	evidence := idStatusAt(registry, opts.TXTResolver, origin).IDChainEvidence(ctx, old, subject, r.domain)
+	evidence := route.status(registry).IDChainEvidence(ctx, old, subject, r.domain)
 	chain, err := awid.RegisteredIDChain(evidence.Status, anchor)
 	if err != nil {
 		return nil, err

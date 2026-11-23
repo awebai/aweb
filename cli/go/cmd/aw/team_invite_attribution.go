@@ -275,7 +275,7 @@ func completeTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite,
 	}
 	childOpts.RegistryURL = issuer.registryURL
 	childOpts.registryScope, err = identityRegistryScopeAt(wd, link.IssuerHome)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err != nil {
 		return err
 	}
 	_, err = executeIDParentImport(ctx, childOpts, response)

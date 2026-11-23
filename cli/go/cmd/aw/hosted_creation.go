@@ -24,6 +24,7 @@ type hostedIDTreeRecovery struct {
 	Mode                  string         `json:"mode,omitempty" yaml:"mode,omitempty"`
 	RequestID             string         `json:"request_id" yaml:"request_id"`
 	Domain                string         `json:"domain,omitempty" yaml:"domain,omitempty"`
+	RegistryURL           string         `json:"registry_url,omitempty" yaml:"registry_url,omitempty"`
 	Parent                map[string]any `json:"parent,omitempty" yaml:"parent,omitempty"`
 	NativeChainHeader     string         `json:"native_chain_header,omitempty" yaml:"native_chain_header,omitempty"`
 	ResponseFieldsPresent *bool          `json:"response_fields_present,omitempty" yaml:"response_fields_present,omitempty"`
@@ -35,7 +36,7 @@ func newHostedIDTreeRecovery(association hostedIdentityContext) (*hostedIDTreeRe
 	if err != nil {
 		return nil, err
 	}
-	tree := &hostedIDTreeRecovery{RequestID: id, Domain: association.Domain}
+	tree := &hostedIDTreeRecovery{RequestID: id, Domain: association.Domain, RegistryURL: association.RegistryURL}
 	if association.ParentID != "" {
 		tree.Parent = map[string]any{"kind": association.ParentKind, "id": association.ParentID}
 	}
@@ -166,7 +167,7 @@ func requireLegacyHostedOwner(ctx context.Context, owner *hostedOwnerAuthority, 
 // The selected native owner supplies its own verified agent ancestry. A missing
 // file is only legacy after current key-route enrollment proves that omission
 // is permitted; malformed or revoked ancestry never falls through to legacy.
-func hostedOwnerIssuer(ctx context.Context, workingDir string, owner *hostedOwnerAuthority, registry *awid.RegistryClient, resolver awid.TXTResolver) (*selectedChildIssuer, error) {
+func hostedOwnerIssuer(ctx context.Context, workingDir string, owner *hostedOwnerAuthority, registry *awid.RegistryClient, resolver awid.TXTResolver, registryOverride ...string) (*selectedChildIssuer, error) {
 	chain, err := awconfig.LoadInstalledIDChain(owner.home)
 	if err != nil {
 		return nil, err
@@ -183,11 +184,19 @@ func hostedOwnerIssuer(ctx context.Context, workingDir string, owner *hostedOwne
 		return nil, fmt.Errorf("%w: a registered child requires a registered identity parent; select a global owner with its installed chain", &awid.IDCertificateError{Code: "unregistered_parent"})
 	}
 	domain := leaf["domain"].(string)
-	_, origin, err := childIssuerRegistry(ctx, idChildOptions{TXTResolver: resolver}, domain)
+	identity, err := resolveIDExchangeIdentity(workingDir, owner.home)
 	if err != nil {
 		return nil, err
 	}
-	issuer, err := currentAgentIssuer(idChildOptions{WorkingDir: workingDir, IdentityHome: owner.home, RegistryURL: origin, TXTResolver: resolver})
+	scope, err := identityRegistryScopeFor(identity, chain)
+	if err != nil {
+		return nil, err
+	}
+	route, err := resolveIdentityEvidenceRoute(ctx, registry, resolver, registryIdentityIssuanceRoute, scope, domain, firstNonEmpty(registryOverride...))
+	if err != nil {
+		return nil, err
+	}
+	issuer, err := currentAgentIssuer(idChildOptions{WorkingDir: workingDir, IdentityHome: owner.home, RegistryURL: route.origin, TXTResolver: resolver, HTTPClient: registry.HTTPClient})
 	if err != nil {
 		return nil, err
 	}
@@ -241,11 +250,18 @@ func finishHostedIDTree(ctx context.Context, tree *hostedIDTreeRecovery, respons
 			return nil, &awid.IDCertificateError{Code: "request_binding_mismatch"}
 		}
 	}
-	_, origin, err := childIssuerRegistry(ctx, idChildOptions{TXTResolver: resolver}, tree.Domain)
+	scope := identityRegistryScope{}
+	if tree.RegistryURL != "" {
+		scope = identityRegistryScope{
+			identity: &awconfig.ResolvedIdentity{RegistryURL: tree.RegistryURL},
+			domain:   tree.Domain,
+		}
+	}
+	route, err := resolveIdentityEvidenceRoute(ctx, registry, resolver, registryIdentityIssuanceRoute, scope, tree.Domain, "")
 	if err != nil {
 		return nil, err
 	}
-	evidence := idStatusAt(registry, resolver, origin).IDChainEvidence(ctx, bundle, subject, tree.Domain)
+	evidence := route.status(registry).IDChainEvidence(ctx, bundle, subject, tree.Domain)
 	if response.RegistrationRequest != nil {
 		if _, err := awid.ImportIDCertificateChain(expected, bundle, evidence, tree.Domain); err != nil {
 			return nil, fmt.Errorf("creation chain binding or issuer refused: %w", err)
@@ -254,7 +270,7 @@ func finishHostedIDTree(ctx context.Context, tree *hostedIDTreeRecovery, respons
 			return nil, errors.New("local child must not request registry registration")
 		}
 		args := response.RegistrationRequest
-		if _, err := registry.RegisterIDCertificateAt(ctx, origin, bundle, awid.KeySigner(material.SigningKey), args.ExpectedHead, args.InvitationID); err != nil {
+		if _, err := registry.RegisterIDCertificateAt(ctx, route.origin, bundle, awid.KeySigner(material.SigningKey), args.ExpectedHead, args.InvitationID); err != nil {
 			return nil, fmt.Errorf("identity registration pending, retain recovery and retry: %w", err)
 		}
 	}
@@ -262,7 +278,7 @@ func finishHostedIDTree(ctx context.Context, tree *hostedIDTreeRecovery, respons
 	// may legitimately lack this child for the entire normal cache lifetime.
 	fresh := evidence
 	if response.RegistrationRequest != nil {
-		fresh = idStatusAt(registry, resolver, origin).IDChainEvidence(ctx, bundle, subject, tree.Domain)
+		fresh = idStatusAt(registry, resolver, route.origin).IDChainEvidence(ctx, bundle, subject, tree.Domain)
 	}
 	verdict := awid.VerifyIDChain(bundle, subject, fresh, tree.Domain)
 	if verdict.IdentityValid == nil || !*verdict.IdentityValid {
