@@ -391,18 +391,21 @@ lint-naapp:
 	done
 
 test-naapp: production-awid-sync
-	set -e; \
+	status=0; \
 	if [ "$${AWEB_NAAPP_TEST_DIAGNOSTICS:-}" = 1 ]; then \
 		export PYTHONPATH="$(CURDIR)/scripts/test-egress$${PYTHONPATH:+:$$PYTHONPATH}"; \
 		export PYTEST_PLUGINS="naapp_diagnostics$${PYTEST_PLUGINS:+,$$PYTEST_PLUGINS}"; \
 	fi; \
 	for package in $(NAAPP_PACKAGES); do \
 		echo "=== test $$package ==="; \
-		uv sync --frozen --project $$package; \
-		UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
-			NAAPP_REQUIRE_TEST_DATABASE=1 LIBRARY_REQUIRE_TEST_DATABASE=1 $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
-		git diff --exit-code -- $$package/uv.lock; \
-	done
+		if uv sync --frozen --project "$$package"; then \
+			UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
+				NAAPP_REQUIRE_TEST_DATABASE=1 LIBRARY_REQUIRE_TEST_DATABASE=1 $(TEST_EGRESS_RUNNER) $(MAKE) -C "$$package" test || status=$$?; \
+		else \
+			status=$$?; \
+		fi; \
+		git diff --exit-code -- "$$package/uv.lock" || status=$$?; \
+	done; exit "$$status"
 
 test-awid: production-awid-sync
 	cd awid && uv sync --frozen
