@@ -232,6 +232,9 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, joinFrom, joinTeam string) e
 	if !uncertain && hostedInviteDefinitiveRefusal(err) {
 		return errors.Join(err, releaseInitInviteRecovery(path, wd, home.Root))
 	}
+	if cause := hostedInviteRetryCause(err); cause != nil {
+		return hostedJoinFromRetryError(cause, cmd, prior)
+	}
 	return err
 }
 

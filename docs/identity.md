@@ -272,6 +272,18 @@ A definitive hosted human-condition refusal releases the pending join when no
 earlier submission is uncertain. The identity, key and chain remain available
 for a correct invite. An interrupted attempt or unavailable evidence keeps the
 original invite and selection for resumption.
+
+On a hosted accept-invite HTTP 409 with code `registry_operation_in_progress`,
+`aw` can repeat the same signed acceptance with the same body, key and request
+ID. It makes at most three attempts, with replays limited to five seconds
+from the start of the original POST. A `Retry-After` that exceeds that budget
+ends automatic retries. Other 409s and HTTP 503
+`registry_operation_incomplete` return immediately. For a persistent overlap
+or incomplete operation, preserve the identity home and run the printed
+recovery command from the same directory after the service is ready. Repeat
+`aw init --join-from` with the same selection, or reuse the original supplied
+invite in `aw team join` or `aw id team accept-invite` as directed.
+
 If a first submission timed out and its retry then returned 409, or an invite
 expired after a possibly applied submission, the earlier attempt may have
 succeeded. State stays in `<identity-home>/hosted-invite-creation.json`, with

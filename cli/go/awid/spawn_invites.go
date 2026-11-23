@@ -6,10 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
-const spawnAcceptInvitePath = "/api/v1/spawn/accept-invite"
+const (
+	spawnAcceptInvitePath  = "/api/v1/spawn/accept-invite"
+	spawnInviteRetryWindow = 5 * time.Second
+	spawnInviteRetryDelay  = 200 * time.Millisecond
+	spawnInviteMaxAttempts = 3
+)
 
 // SpawnCreateInviteRequest selects a hosted invitation's human condition,
 // issuer chain and lifetime; the service still checks the authenticated issuer.
@@ -163,10 +170,44 @@ func (c *Client) AcceptSpawnInvite(ctx context.Context, req *SpawnAcceptInviteRe
 	if err != nil {
 		return nil, err
 	}
-	headers := onboardingDIDKeyHeaders(http.MethodPost, spawnAcceptInvitePath, bodyBytes, c.signingKey)
-
 	var out SpawnAcceptInviteResponse
-	if err := postJSONWithHeaders(ctx, c.baseURL, spawnAcceptInvitePath, bodyBytes, headers, &out); err != nil {
+	send := func(ctx context.Context) (string, error) {
+		headers := onboardingDIDKeyHeaders(http.MethodPost, spawnAcceptInvitePath, bodyBytes, c.signingKey)
+		return postJSONWithRetryAfter(ctx, c.baseURL, spawnAcceptInvitePath, bodyBytes, headers, &out)
+	}
+
+	// The initial POST keeps its normal timeout. Replays must fit in five
+	// seconds from its start, even if the overlap response arrives late.
+	replayCtx, cancel := context.WithTimeout(ctx, spawnInviteRetryWindow)
+	defer cancel()
+	deadline, _ := replayCtx.Deadline()
+	retryAfter, err := send(ctx)
+	for attempt := 1; attempt < spawnInviteMaxAttempts; attempt++ {
+		if !spawnInviteOperationInProgress(err) {
+			break
+		}
+		now := time.Now()
+		delay := max(spawnInviteRetryDelay<<uint(attempt-1), spawnInviteRetryAfter(retryAfter, now))
+		if delay >= deadline.Sub(now) {
+			break
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-replayCtx.Done():
+			timer.Stop()
+		}
+		if replayCtx.Err() != nil {
+			break
+		}
+		nextAfter, nextErr := send(replayCtx)
+		if errors.Is(replayCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil && errors.Is(nextErr, context.DeadlineExceeded) {
+			// Keep the typed server refusal when our replay budget expires.
+			break
+		}
+		retryAfter, err = nextAfter, nextErr
+	}
+	if err != nil {
 		// A rejected token can be echoed by a service. Preserve status/diagnostics
 		// without exposing the submitted credential to CLI errors or callers.
 		var registryErr *RegistryError
@@ -178,6 +219,32 @@ func (c *Client) AcceptSpawnInvite(ctx context.Context, req *SpawnAcceptInviteRe
 		return nil, err
 	}
 	return &out, nil
+}
+
+func spawnInviteOperationInProgress(err error) bool {
+	status, ok := HTTPStatusCode(err)
+	return ok && status == http.StatusConflict && RefusalCode(err) == "registry_operation_in_progress"
+}
+
+// SpawnInviteRecoveryNeeded reports whether an AcceptSpawnInvite refusal asks
+// the caller to preserve the invitation and repeat the same acceptance later.
+func SpawnInviteRecoveryNeeded(err error) bool {
+	if spawnInviteOperationInProgress(err) {
+		return true
+	}
+	status, ok := HTTPStatusCode(err)
+	return ok && status == http.StatusServiceUnavailable && RefusalCode(err) == "registry_operation_incomplete"
+}
+
+func spawnInviteRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseUint(value, 10, 64); err == nil || errors.Is(err, strconv.ErrRange) {
+		return time.Duration(min(seconds, uint64(spawnInviteRetryWindow/time.Second))) * time.Second
+	}
+	if date, err := http.ParseTime(value); err == nil {
+		return date.Sub(now)
+	}
+	return 0
 }
 
 // UnmarshalJSON preserves explicit ID-tree nulls versus released omission.

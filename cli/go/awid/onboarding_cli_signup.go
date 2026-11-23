@@ -175,6 +175,19 @@ func postJSONWithHeaders(
 	headers map[string]string,
 	out any,
 ) error {
+	_, err := postJSONWithRetryAfter(ctx, baseURL, path, bodyBytes, headers, out)
+	return err
+}
+
+// postJSONWithRetryAfter returns the server's hint on error and sends once.
+// Only the caller knows whether repeating this signed operation is safe.
+func postJSONWithRetryAfter(
+	ctx context.Context,
+	baseURL, path string,
+	bodyBytes []byte,
+	headers map[string]string,
+	out any,
+) (string, error) {
 	requestPath := path
 	if strings.HasSuffix(strings.TrimRight(baseURL, "/"), "/api") && strings.HasPrefix(requestPath, "/api/") {
 		requestPath = strings.TrimPrefix(requestPath, "/api")
@@ -182,7 +195,7 @@ func postJSONWithHeaders(
 	u := strings.TrimRight(baseURL, "/") + requestPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return "", fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -192,20 +205,20 @@ func postJSONWithHeaders(
 
 	resp, err := DoServerRequest(&http.Client{Timeout: APITimeout(), Transport: NewAPITransport()}, req, baseURL)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &RegistryError{StatusCode: resp.StatusCode, Detail: ReadErrorExcerpt(resp.Body)}
+		return resp.Header.Get("Retry-After"), &RegistryError{StatusCode: resp.StatusCode, Detail: ReadErrorExcerpt(resp.Body)}
 	}
 
 	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if out == nil {
-		return nil
+		return "", nil
 	}
-	return json.Unmarshal(data, out)
+	return "", json.Unmarshal(data, out)
 }

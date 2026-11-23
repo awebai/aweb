@@ -174,9 +174,26 @@ func obtainHostedInviteResponse(ctx context.Context, request hostedInviteRespons
 	}
 	response, err := client.AcceptSpawnInvite(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("accept hosted team invite: %w", err)
+		return nil, &hostedInviteSubmissionError{err}
 	}
 	return response, nil
+}
+
+type hostedInviteSubmissionError struct{ cause error }
+
+func (err *hostedInviteSubmissionError) Error() string {
+	return "accept hosted team invite: " + err.cause.Error()
+}
+
+func (err *hostedInviteSubmissionError) Unwrap() error { return err.cause }
+
+// Use the original accept refusal when we have a command that can replay it.
+func hostedInviteRetryCause(err error) error {
+	var submission *hostedInviteSubmissionError
+	if errors.As(err, &submission) && awid.SpawnInviteRecoveryNeeded(submission.cause) {
+		return submission
+	}
+	return nil
 }
 
 type hostedInviteAcceptanceRequest struct {

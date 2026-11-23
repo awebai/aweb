@@ -454,7 +454,12 @@ func runInitIndependentInvite(cmd *cobra.Command, input initInviteInput) error {
 	if err != nil {
 		return err
 	}
-	return acceptInitInviteAndConnect(cmd, initInviteConnection{WorkingDir: wd, Token: raw, PreferredAwebURL: origin, ParentHome: initParent})
+	err = acceptInitInviteAndConnect(cmd, initInviteConnection{WorkingDir: wd, Token: raw, PreferredAwebURL: origin, ParentHome: initParent})
+	if cause := hostedInviteRetryCause(err); cause != nil {
+		return hostedTokenRetryError(cause, cmd, []string{"team", "join"}, resolveAliasValue(resolveInitLocalName()),
+			initInviteServiceEnvironment(cmd, origin))
+	}
+	return err
 }
 
 func runInitJoinFrom(cmd *cobra.Command) error {

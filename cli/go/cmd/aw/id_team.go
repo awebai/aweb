@@ -1164,6 +1164,13 @@ func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamI
 		Store: teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), Activation: membershipMakeActive},
 	})
 	if err != nil {
+		if cause := hostedInviteRetryCause(err); cause != nil {
+			retry := []string{"id", "team", "accept-invite"}
+			if connectWorkspace {
+				retry = []string{"team", "join"}
+			}
+			return hostedTokenRetryError(cause, cmd, retry, teamAcceptAlias, nil)
+		}
 		return err
 	}
 	accepted.Output.localJoinMember = connectWorkspace && accepted.Certificate != nil && awid.NormalizeIdentityScope(accepted.Certificate.IdentityScope) == awid.IdentityModeLocal
