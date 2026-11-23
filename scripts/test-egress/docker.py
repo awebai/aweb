@@ -5,11 +5,13 @@ Image preparation can download dependencies; the test runner has no external rou
 Evidence survives cleanup. No host credentials or identity directories are mounted.
 """
 import argparse
-import json
 import importlib.util
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+from threading import Event, Thread
 import time
 import uuid
 
@@ -57,7 +59,10 @@ def postgres_args(runner, port=5432, parallel=False):
             '--tmpfs', '/var/lib/postgresql/data:rw,noexec,nosuid,size=1g',
             '-e', 'PGDATA=/var/lib/postgresql/data/pgdata',
             '-e', 'POSTGRES_PASSWORD=postgres', 'postgres:17',
-            '-c', 'max_wal_size=128MB', '-c', 'min_wal_size=32MB', *port_args]
+            '-c', 'max_wal_size=128MB', '-c', 'min_wal_size=32MB',
+            '-c', 'log_lock_waits=on', '-c', 'log_min_duration_statement=1000',
+            '-c', 'log_parameter_max_length=0', '-c', 'log_parameter_max_length_on_error=0',
+            *port_args]
 
 
 def redis_args(runner, port=6379, parallel=False):
@@ -113,6 +118,17 @@ def require_memory_postgres(container, port=5432):
     return storage
 
 
+def record_host_load(path, done):
+    try:
+        with path.open('w', buffering=1) as log:
+            while True:
+                print(json.dumps({'time': time.time(), 'loadavg': os.getloadavg()}), file=log)
+                if done.wait(5):
+                    return
+    except OSError as error:
+        print(f'TEST HOST LOAD CAPTURE FAILED: {error}', file=sys.stderr, flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence', type=Path, required=True)
@@ -145,7 +161,15 @@ def run_suite(args):
     token = 'aw-egress-' + uuid.uuid4().hex[:12]
     image = args.image or token
     containers = []
+    postgres_log_readers = []
     network = None
+    sampling_done = Event()
+    sampler = Thread(target=record_host_load, args=(evidence / 'host-load.jsonl', sampling_done), daemon=True)
+    try:
+        sampler.start()
+    except RuntimeError as error:
+        print(f'TEST HOST LOAD CAPTURE FAILED: {error}', file=sys.stderr, flush=True)
+        sampler = None
     try:
         if not args.image:
             prepare_image(ROOT, evidence, image)
@@ -168,6 +192,15 @@ def run_suite(args):
             port = plan['postgres_port']
             pg = docker(*postgres_args(runner, port, bool(args.server_workers)))
             containers.append(pg)
+            # Stream from the start so a timeout can still leave diagnostic evidence.
+            try:
+                with (evidence / f'postgres-{port}.log').open('w') as log:
+                    postgres_log_readers.append(subprocess.Popen(
+                        ['docker', 'logs', '--follow', '--timestamps', pg],
+                        stdout=log, stderr=subprocess.STDOUT,
+                    ))
+            except OSError as error:
+                print(f'TEST POSTGRES LOG CAPTURE FAILED (port {port}): {error}', file=sys.stderr, flush=True)
             redis = docker(*redis_args(runner, plan['redis_port'], bool(args.server_workers)))
             containers.append(redis)
             wait_for_postgres(pg, port)
@@ -204,7 +237,9 @@ def run_suite(args):
         # Retain inspect evidence proving that the runner has only the internal network.
         (evidence / 'network.json').write_text(docker('network', 'inspect', token))
         (evidence / 'runner.json').write_text(docker('inspect', runner))
-        command_env = ['-e', 'CANDIDATE_LOG_DIR=/tmp'] if args.collect_summary else []
+        command_env = ['-e', 'AWEB_NAAPP_TEST_DIAGNOSTICS=1']
+        if args.collect_summary:
+            command_env += ['-e', 'CANDIDATE_LOG_DIR=/tmp']
         if args.collect_summary and args.server_workers:
             shard_services = [
                 {key: plan[key] for key in ('postgres_port', 'redis_port')}
@@ -234,12 +269,23 @@ def run_suite(args):
                 status = status or 1
         return status
     finally:
-        for container in reversed(containers):
-            subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL, check=True)
-        if network:
-            subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL, check=True)
-        if not args.image:
-            subprocess.run(['docker', 'image', 'rm', image], stdout=subprocess.DEVNULL, check=False)
+        try:
+            for container in reversed(containers):
+                subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL, check=True)
+            if network:
+                subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL, check=True)
+            if not args.image:
+                subprocess.run(['docker', 'image', 'rm', image], stdout=subprocess.DEVNULL, check=False)
+        finally:
+            sampling_done.set()
+            if sampler is not None:
+                sampler.join(timeout=1)
+            for reader in postgres_log_readers:
+                try:
+                    reader.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    reader.kill()
+                    reader.wait()
 
 
 if __name__ == '__main__':

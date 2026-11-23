@@ -33,6 +33,17 @@ expanding into queries for the host's network. Refused DNS retains normal connec
 the runner's network namespace, so fixtures remain loopback. A denied DNS query
 fails the run independently of the test process status. Logs and network inspect
 receipts remain in `TEST_EGRESS_EVIDENCE` (a new directory per run).
+The isolated unit runner streams timestamped `postgres-<port>.log` evidence
+from each test database before suites start. Postgres logs lock waits and
+statements that take at least 1,000 ms. PostgreSQL's bind-parameter logging is
+disabled for both statement and error logs. SQL text and error messages can
+still contain values, so use bind parameters for secrets and keep secrets out
+of SQL text and application error messages. `host-load.jsonl` records the runner
+host's 1-, 5- and 15-minute load averages every five seconds with Unix timestamps.
+The shared naapp pytest fixture records each test's UTC start in `suite.log`.
+It reports garbage collections longer than 0.5 s and dumps the main thread's
+stack when the running asyncio loop misses its heartbeat for 2 s. These
+observations leave pytest's capture, verdicts and timeouts in place.
 
 `denied-reads.json` is empty: no production destination is exempt from failing
 receipts. The init default-selection test checks selection without network I/O;

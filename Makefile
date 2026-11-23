@@ -391,7 +391,12 @@ lint-naapp:
 	done
 
 test-naapp: production-awid-sync
-	set -e; for package in $(NAAPP_PACKAGES); do \
+	set -e; \
+	if [ "$${AWEB_NAAPP_TEST_DIAGNOSTICS:-}" = 1 ]; then \
+		export PYTHONPATH="$(CURDIR)/scripts/test-egress$${PYTHONPATH:+:$$PYTHONPATH}"; \
+		export PYTEST_PLUGINS="naapp_diagnostics$${PYTEST_PLUGINS:+,$$PYTEST_PLUGINS}"; \
+	fi; \
+	for package in $(NAAPP_PACKAGES); do \
 		echo "=== test $$package ==="; \
 		uv sync --frozen --project $$package; \
 		UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
