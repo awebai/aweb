@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/spf13/cobra"
 )
 
 func TestIdentityRegistryRouting(t *testing.T) {
@@ -57,6 +59,17 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 			backend = httputil.NewSingleHostReverseProxy(origin)
 		}
 		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost && r.URL.Path == "/v1/did" {
+				reads.Add(1)
+				var registration struct {
+					DIDKey string `json:"new_did_key"`
+				}
+				if json.NewDecoder(r.Body).Decode(&registration) != nil || registration.DIDKey != v.Keys["coordinator"].DIDKey {
+					t.Error("hosted retry did not use its original signing key")
+				}
+				http.Error(w, "fixture stopped at original registration", http.StatusUnprocessableEntity)
+				return
+			}
 			if r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/example.com/teams/backend/certificates" {
 				if backend != nil {
 					backend.ServeHTTP(w, r)
@@ -125,6 +138,7 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 	const readers = "who verify status"
 	for _, tc := range []struct {
 		name, verbs, stored, env, flag, txt string
+		metadata                            string
 		private, public                     bool
 		global, foreign, unmarked           bool
 		broken, txtConflict, absent         bool
@@ -138,6 +152,7 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 		{name: "recorded with different private TXT", verbs: all, stored: private.URL, txt: namedPrivateURL, txtConflict: true, conflicts: []string{private.URL, namedPrivateURL}},
 		{name: "global key and status", verbs: "who status", stored: private.URL, private: true, global: true},
 		{name: "hosted owner and finish use private", verbs: "hosted-owner hosted-finish", stored: private.URL, private: true, global: true},
+		{name: "hosted retry keeps released route", verbs: "hosted-retry", stored: private.URL, public: true, global: true},
 		{name: "global conflict before key read", verbs: "who status", stored: private.URL, txt: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}, global: true},
 		{name: "recorded wins over env", verbs: all, stored: private.URL, env: awid.DefaultAWIDRegistryURL, private: true},
 		{name: "conflicting flag", verbs: readers, stored: private.URL, flag: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
@@ -146,6 +161,9 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 		{name: "hosted", verbs: all, stored: awid.DefaultAWIDRegistryURL, public: true},
 		{name: "no record", verbs: all, public: true},
 		{name: "no selected home", verbs: "verify", public: true, absent: true},
+		{name: "workspace without teams", verbs: "verify", public: true, absent: true, metadata: "workspace"},
+		{name: "teams without active membership", verbs: "verify", public: true, absent: true, metadata: "teams"},
+		{name: "damaged team state", verbs: "verify", broken: true, absent: true, metadata: "damaged"},
 		{name: "empty identity home", verbs: "verify", public: true, absent: true, certOnly: true},
 		{name: "certificate only public", verbs: "who verify", stored: awid.DefaultAWIDRegistryURL, public: true, certOnly: true},
 		{name: "certificate only private", verbs: "who verify", stored: private.URL, private: true, certOnly: true},
@@ -200,6 +218,9 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 								t.Fatal(err)
 							}
 						}
+						if tc.metadata != "" {
+							writeUnselectedHomeRegistryFixture(t, dir, tc.metadata)
+						}
 					} else if tc.certOnly {
 						makeCertificateOnlyRegistryHome(t, dir, tc.stored, identity.DID, v.Keys["seat"].SeedHex)
 					}
@@ -213,7 +234,8 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 					env := append(withoutEnvForTest(testCommandEnv(t.TempDir()), "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy"), "AW_REGISTRY_ROUTE_CHILD=1",
 						"AW_REGISTRY_ROUTE_TXT="+record, "AW_REGISTRY_ROUTE_CA="+rootFile,
 						"GODEBUG=x509usefallbackroots=1", "HTTPS_PROXY="+proxy, "NO_PROXY=registry.test", "APP_ENV=production",
-						"AW_REGISTRY_ROUTE_ENV="+tc.env, "AW_REGISTRY_ROUTE_TEAM_SEED="+v.Keys["seat"].SeedHex)
+						"AW_REGISTRY_ROUTE_ENV="+tc.env, "AW_REGISTRY_ROUTE_TEAM_SEED="+v.Keys["seat"].SeedHex,
+						"AW_REGISTRY_ROUTE_CHILD_SEED="+v.Keys["coordinator"].SeedHex)
 
 					args := []string{verb, "--json"}
 					var input []byte
@@ -232,6 +254,9 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 					beforePrivate, beforePublic := privateReads.Load(), publicReads.Load()
 					output, err := cmd.CombinedOutput()
 					gotPrivate, gotPublic := privateReads.Load()-beforePrivate, publicReads.Load()-beforePublic
+					if verb == "hosted-retry" && (gotPrivate != 0 || gotPublic != 2) {
+						t.Errorf("expected original owner evidence and child registration only: %d/%d, %s", gotPrivate, gotPublic, output)
+					}
 					if tc.global && private && verb == "who" && gotPrivate != 2 {
 						t.Errorf("private evidence calls = %d, want key and status: %s (%v)", gotPrivate, output, err)
 					}
@@ -285,7 +310,7 @@ func TestIdentityRegistryRouteChild(t *testing.T) {
 		if arg == "--" {
 			args := os.Args[i+1:]
 			switch args[0] {
-			case "hosted-owner", "hosted-finish":
+			case "hosted-owner", "hosted-finish", "hosted-retry":
 				testHostedRegistryRoute(t, args[0])
 				return
 			case "invite", "join", "accept-invite":
@@ -316,8 +341,13 @@ func testHostedRegistryRoute(t *testing.T, command string) {
 	}
 	resolver := &awid.NetTXTResolver{}
 	registry := newAWIDRegistryClient(nil, resolver)
+	owner := &hostedOwnerAuthority{home: home, did: identity.DID, stableID: identity.StableID, registryURL: identity.RegistryURL}
+	if command == "hosted-retry" {
+		testHostedRegistryRetry(t, owner, registry)
+		return
+	}
 	if command == "hosted-owner" {
-		issuer, err := hostedOwnerIssuer(t.Context(), wd, &hostedOwnerAuthority{home: home, did: identity.DID, stableID: identity.StableID, registryURL: identity.RegistryURL}, registry, resolver)
+		issuer, err := hostedOwnerIssuer(t.Context(), wd, owner, registry, resolver)
 		if err != nil || issuer == nil {
 			t.Fatalf("hosted owner route: %v", err)
 		}
@@ -345,6 +375,38 @@ func testHostedRegistryRoute(t *testing.T, command string) {
 		t.TempDir(), registry, resolver)
 	if err != nil || result == nil || result.Reason != "verified" {
 		t.Fatalf("hosted completion route: %+v %v", result, err)
+	}
+}
+
+func testHostedRegistryRetry(t *testing.T, owner *hostedOwnerAuthority, registry *awid.RegistryClient) {
+	t.Helper()
+	seed, err := hex.DecodeString(os.Getenv("AW_REGISTRY_ROUTE_CHILD_SEED"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := awconfig.IdentityHome{Root: t.TempDir()}
+	association := hostedIdentityContext{
+		OwnerDIDKey: owner.did, Issuer: "https://fixture.invalid", Org: "fixture", TeamID: "backend",
+		Name: "child", InboundMode: "contacts_only", Domain: "example.com", ParentKind: "identity", ParentID: owner.stableID,
+		RegistryURL: awid.DefaultAWIDRegistryURL,
+	}
+	// Released recovery files only stored the route on the association.
+	tree, err := newHostedIDTreeRecovery(association)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree.RegistryURL = ""
+	if err := saveHostedIdentityRecovery(filepath.Join(home.Root, "hosted-identity-create.json"), &hostedIdentityRecovery{
+		Version: 1, Context: association, SigningSeed: base64.StdEncoding.EncodeToString(seed), IDTree: tree,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	association.RegistryURL = owner.registryURL
+	err = createHostedIdentity(hostedIdentityCreation{
+		Context: t.Context(), Command: &cobra.Command{}, Home: home, Owner: owner, Registry: registry, Association: association,
+	})
+	if err == nil || !strings.Contains(err.Error(), "fixture stopped at original registration") {
+		t.Fatalf("expected to reach the original registry with the retained key, got %v", err)
 	}
 }
 
@@ -388,6 +450,30 @@ func identityRegistryTestTeamCommand(t *testing.T, command string) []string {
 		args = []string{"team", "join", "--no-connect"}
 	}
 	return append(args, token, "--parent", parent, "--name", "child-"+id[:8], "--json")
+}
+
+func writeUnselectedHomeRegistryFixture(t *testing.T, dir, layout string) {
+	t.Helper()
+	if err := os.MkdirAll(awconfig.WorktreeIdentityHome(dir), 0700); err != nil {
+		t.Fatal(err)
+	}
+	switch layout {
+	case "workspace":
+		if err := awconfig.SaveWorktreeWorkspaceTo(awconfig.WorktreeWorkspacePath(dir), &awconfig.WorktreeWorkspace{
+			AwebURL: "https://fixture.invalid", WorkspacePath: dir,
+			Memberships: []awconfig.WorktreeMembership{{TeamID: "backend:example.com", CertPath: ".aw/team-cert.json"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	case "teams":
+		if err := os.WriteFile(awconfig.TeamStatePath(dir), []byte("memberships:\n- team_id: backend:example.com\n  cert_path: .aw/team-cert.json\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	case "damaged":
+		if err := os.WriteFile(awconfig.TeamStatePath(dir), []byte("memberships: [broken"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func makeCertificateOnlyRegistryHome(t *testing.T, dir, origin, did, seedHex string) {
