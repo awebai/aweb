@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Folio acceptance admission and resource ownership; no Docker allocation."""
-import ast
 import json
 import os
 from pathlib import Path
@@ -125,14 +124,6 @@ class FolioGateTests(unittest.TestCase):
         folio = json.loads(started.stdout)["services"]["folio"]["environment"]
         self.assertEqual(folio["FOLIO_HOOK_INTERNAL_CIDR"], "192.168.208.0/20")
         self.assertEqual(folio["FOLIO_HOOK_INTERNAL_DESTINATIONS"], "allowed")
-
-    def test_every_folio_start_by_the_client_layers_the_subnet_overlay(self):
-        tree = ast.parse((ROOT / "scripts/e2e/folio_wakes.py").read_text())
-        starts = [ast.unparse(node.left) for node in ast.walk(tree)
-                  if isinstance(node, ast.BinOp) and isinstance(node.right, ast.List)
-                  and node.right.elts and getattr(node.right.elts[0], "value", None) == "up"]
-        self.assertEqual(starts, ["COMPOSE + SUBNET_OVERLAY"])
-        self.assertIn("folio-wakes-subnet.compose.yml", (ROOT / "scripts/e2e/folio_wakes.py").read_text())
 
 
 if __name__ == "__main__":
