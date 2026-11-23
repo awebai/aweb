@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Hosted invite acceptance briefly retries when the registry reports an
+  overlapping operation, using the same invitation, name, and signing key.
+  If the service still reports overlap or an incomplete operation, `aw`
+  prints the command to resume the join.
+- For the selected identity's own namespace, `aw who` and `aw verify`
+  use the home's recorded registry when DNS supplies only the public default.
+- When hosted `aw init` receives a setup response and is interrupted before
+  saving the workspace, `aw check` reports the interrupted setup and tells
+  you to rerun the same `aw init` command from the original folder.
+
 - Self-hosted CLI and wake processes retain access to private or HTTP AWID
   registries chosen by the operator. `aw` records a saved `--registry`,
   `--awid-registry` or `AWID_REGISTRY_URL` choice, and treats the identity’s

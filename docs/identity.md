@@ -280,12 +280,12 @@ from the start of the original POST. A `Retry-After` that exceeds that budget
 ends automatic retries. `aw` returns other 409s and HTTP 503
 `registry_operation_incomplete` without sending another POST.
 
-With Cloud 0.8.82, the server itself queues an overlapping acceptance for up
-to 20 seconds. If it waits the full 20 seconds and returns
+Cloud 0.8.83 queues acceptance behind another request using the same
+invitation or holding the lease for the requested name. Those waits share a
+20-second budget. If the server waits the full 20 seconds and returns
 `registry_operation_in_progress` or `registry_operation_incomplete`, `aw`
 prints the recovery command without replaying. The client retry helps with
-Cloud 0.8.81 and when the lease for the requested name causes an early
-overlap response.
+early overlap responses from Cloud 0.8.81.
 
 For a persistent overlap or incomplete operation, preserve the identity home
 and run the printed recovery command from the same directory after the service
