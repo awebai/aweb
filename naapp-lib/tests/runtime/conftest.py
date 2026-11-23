@@ -21,6 +21,26 @@ from aweb_naapp.runtime.team_auth import (
 )
 
 
+async def _relying(request: Request) -> Any:
+    # Module-level, reading this app's state: FastAPI keeps every endpoint it
+    # has classified, so a closure over a test's cache would keep that test's world.
+    state = request.app.state
+    principal = await authenticate_request(request, **state.authentication)
+    if state.on_principal is not None:
+        return await state.on_principal(request, principal)
+    return {
+        "team_id": principal.team_id,
+        "did_key": principal.did_key,
+        "did_aw": principal.did_aw,
+        "did_aw_registry_verified": principal.did_aw_registry_verified,
+        "address": principal.address,
+        "alias": principal.alias,
+        "certificate_id": principal.certificate_id,
+        "team_did_key": principal.team_did_key,
+        "cached_body": request.state.cached_body.decode(),
+    }
+
+
 @asynccontextmanager
 async def relying_app(
     registry: Registry,
@@ -36,28 +56,14 @@ async def relying_app(
     """A naapp whose every route authenticates the request and echoes the principal."""
     cache = cache or AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport)
     app = FastAPI()
-
-    @app.api_route("/{route:path}", methods=["GET", "POST", "PUT", "DELETE"])
-    async def relying(request: Request):
-        kwargs: dict[str, Any] = {"now": now} if now is not None else {}
-        if timestamp_skew_seconds is not None:
-            kwargs["timestamp_skew_seconds"] = timestamp_skew_seconds
-        if did_aw_profile is not None:
-            kwargs["did_aw_profile"] = did_aw_profile
-        principal = await authenticate_request(request, public_origin=public_origin, team_cache=cache, **kwargs)
-        if on_principal is not None:
-            return await on_principal(request, principal)
-        return {
-            "team_id": principal.team_id,
-            "did_key": principal.did_key,
-            "did_aw": principal.did_aw,
-            "did_aw_registry_verified": principal.did_aw_registry_verified,
-            "address": principal.address,
-            "alias": principal.alias,
-            "certificate_id": principal.certificate_id,
-            "team_did_key": principal.team_did_key,
-            "cached_body": request.state.cached_body.decode(),
-        }
+    kwargs: dict[str, Any] = {"now": now} if now is not None else {}
+    if timestamp_skew_seconds is not None:
+        kwargs["timestamp_skew_seconds"] = timestamp_skew_seconds
+    if did_aw_profile is not None:
+        kwargs["did_aw_profile"] = did_aw_profile
+    app.state.authentication = {"public_origin": public_origin, "team_cache": cache, **kwargs}
+    app.state.on_principal = on_principal
+    app.add_api_route("/{route:path}", _relying, methods=["GET", "POST", "PUT", "DELETE"], response_model=None)
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, root_path=root_path), base_url=public_origin) as client:
         yield client, cache
