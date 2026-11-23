@@ -51,6 +51,9 @@ func formatTeamAcceptInvite(v any) string {
 	}
 	if out.Connected != nil && *out.Connected {
 		sb.WriteString(fmt.Sprintf("Connected to %s as %s\n", strings.TrimSpace(out.AwebURL), strings.TrimSpace(out.Alias)))
+		if out.nextCheckCommand != "" {
+			fmt.Fprintf(&sb, "Next, run `%s` to verify this workspace.\n", out.nextCheckCommand)
+		}
 	} else if strings.TrimSpace(out.ConnectCommand) != "" {
 		sb.WriteString(fmt.Sprintf("Not connected. Run: %s\n", strings.TrimSpace(out.ConnectCommand)))
 	} else if out.Connected != nil {

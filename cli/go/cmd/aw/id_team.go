@@ -43,17 +43,18 @@ type teamInviteOutput struct {
 }
 
 type teamAcceptInviteOutput struct {
-	TeamKey        *awid.TeamKeyEvidence `json:"team_key,omitempty"`
-	IDRegistration string                `json:"id_registration,omitempty"`
-	Responsibility *awid.IDChainResult   `json:"responsibility,omitempty"`
-	HarnessSetup   *joinHarnessResult    `json:"harness_setup,omitempty"`
-	Status         string                `json:"status"`
-	TeamID         string                `json:"team_id"`
-	Alias          string                `json:"alias"`
-	CertPath       string                `json:"cert_path"`
-	Connected      *bool                 `json:"connected,omitempty"`
-	AwebURL        string                `json:"aweb_url,omitempty"`
-	ConnectCommand string                `json:"connect_command,omitempty"`
+	TeamKey          *awid.TeamKeyEvidence `json:"team_key,omitempty"`
+	IDRegistration   string                `json:"id_registration,omitempty"`
+	Responsibility   *awid.IDChainResult   `json:"responsibility,omitempty"`
+	HarnessSetup     *joinHarnessResult    `json:"harness_setup,omitempty"`
+	Status           string                `json:"status"`
+	TeamID           string                `json:"team_id"`
+	Alias            string                `json:"alias"`
+	CertPath         string                `json:"cert_path"`
+	Connected        *bool                 `json:"connected,omitempty"`
+	AwebURL          string                `json:"aweb_url,omitempty"`
+	ConnectCommand   string                `json:"connect_command,omitempty"`
+	nextCheckCommand string
 }
 
 type teamAddMemberOutput struct {
@@ -1229,6 +1230,13 @@ func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamI
 			return errors.Join(fmt.Errorf("team membership and workspace connection completed, but harness setup failed: %w\nRun `%s` here to retry setup without reusing the invite", setupErr, setup.RetryCommand), outputErr)
 		}
 		return outputErr
+	}
+	if connectWorkspace {
+		args := []string{"aw"}
+		if home.External() {
+			args = append(args, "--identity-home", home.Root)
+		}
+		accepted.Output.nextCheckCommand = formatShellCommand(append(args, "check", "--online"))
 	}
 	return printOutput(*accepted.Output, formatTeamAcceptInvite)
 }

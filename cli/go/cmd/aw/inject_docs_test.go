@@ -162,14 +162,21 @@ func TestPublicTeamJoinGuidanceConnectsByDefault(t *testing.T) {
 	connected := true
 	formatted := formatTeamAcceptInvite(teamAcceptInviteOutput{
 		Status: "accepted", TeamID: "default:example.com", Alias: "bob", CertPath: ".aw/team-certs/default_example.com.json", Connected: &connected, AwebURL: "https://app.example/api",
+		nextCheckCommand: "aw check --online",
 	})
 	if !strings.Contains(formatted, "Connected to https://app.example/api as bob") {
 		t.Fatalf("team join output does not report the connection it completed:\n%s", formatted)
+	}
+	if !strings.Contains(formatted, "Next, run `aw check --online` to verify this workspace.") {
+		t.Fatalf("team join output is missing its next step:\n%s", formatted)
 	}
 	notConnected := false
 	legacyFormatted := formatTeamAcceptInvite(teamAcceptInviteOutput{Connected: &notConnected})
 	if !strings.Contains(legacyFormatted, "aw workspace connect --service '<url>'") {
 		t.Fatalf("legacy membership-only output does not shell-quote its URL placeholder:\n%s", legacyFormatted)
+	}
+	if strings.Contains(legacyFormatted, "aw check --online") {
+		t.Fatalf("unconnected join recommended checking its workspace:\n%s", legacyFormatted)
 	}
 	if got := formatTeamInvite(teamInviteOutput{Token: "token", PorcelainJoin: true}); !strings.Contains(got, "aw team join --token-file <file> --name <name>") {
 		t.Fatalf("human invite does not print the porcelain join path:\n%s", got)
