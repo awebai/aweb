@@ -117,7 +117,7 @@ def awid_dns(registry: Registry):
     record at all (tests never reach real DNS)."""
 
     async def verify(domain: str) -> DomainAuthority:
-        return await fixture_domain_authority(registry.app.dependency_overrides, domain)
+        return await fixture_domain_authority(registry.app, domain)
 
     return verify
 

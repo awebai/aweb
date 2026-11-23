@@ -22,7 +22,7 @@ import base64
 import os
 import subprocess
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 from pgdbm.testing import DatabaseTestConfig
@@ -162,14 +162,30 @@ SERVICE_TOKEN = "awid-testing-service-token-32-bytes"
 ResponseFault = Callable[[httpx.Request, httpx.Response], httpx.Response | None]
 
 
-async def fixture_domain_authority(
-    overrides: Mapping[Callable[..., Any], Callable[[], DomainVerifier | Awaitable[DomainVerifier]]],
-    domain: str,
-) -> DomainAuthority:
+class _FixtureAuthorityApp(Protocol):
+    @property
+    def state(self) -> Any: ...
+
+    @property
+    def dependency_overrides(self) -> Mapping[Callable[..., Any], Callable[..., Any]]: ...
+
+
+def _namespace_verifier_for(app: _FixtureAuthorityApp) -> DomainVerifier:
+    registry: Registry = app.state.fixture_namespace_registry
+    return registry.namespace_authority
+
+
+async def _fixture_namespace_verifier(request: Request) -> DomainVerifier:
+    return _namespace_verifier_for(request.app)
+
+
+async def fixture_domain_authority(app: _FixtureAuthorityApp, domain: str) -> DomainAuthority:
     """Resolve the fixture's DNS override outside FastAPI dependency injection."""
-    factory = overrides.get(get_domain_verifier)
+    factory = app.dependency_overrides.get(get_domain_verifier)
     if factory is None:
         raise DnsVerificationError(f"No TXT records found for _awid.{domain}")
+    if factory is _fixture_namespace_verifier:
+        return await _namespace_verifier_for(app)(domain)
     verifier = factory()
     if isawaitable(verifier):
         verifier = await verifier
@@ -293,17 +309,19 @@ class Registry:
         if key is None:
             key, _ = generate_keypair()
         self._namespace_keys[domain] = key
-        if get_domain_verifier not in self.app.dependency_overrides:
-            async def get_namespace_verifier() -> DomainVerifier:
-                return self.namespace_authority
-
-            self.app.dependency_overrides[get_domain_verifier] = get_namespace_verifier
+        self._install_namespace_verifier()
         try:
             await client.register_namespace(domain, did_key_from_signing_key(key), key)
         except Exception:
             del self._namespace_keys[domain]
             raise
         return key
+
+    def _install_namespace_verifier(self) -> None:
+        if get_domain_verifier not in self.app.dependency_overrides:
+            # FastAPI can retain dependency callables after their app is unused.
+            self.app.state.fixture_namespace_registry = self
+            self.app.dependency_overrides[get_domain_verifier] = _fixture_namespace_verifier
 
     async def namespace_authority(self, domain: str) -> DomainAuthority:
         """The DNS authority published by this fixture's explicit namespace controller."""
