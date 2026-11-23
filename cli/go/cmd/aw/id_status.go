@@ -140,19 +140,9 @@ func inspectIdentityInitialization(home awconfig.IdentityHome) (identityStatusOu
 			return out, err
 		}
 	}
-	partialPath, err := awconfig.IdentityHomePath(home, "partial-init.yaml")
+	out.PartialInit, err = inspectAPIKeyInitRecovery(home)
 	if err != nil {
 		return out, err
-	}
-	partial, err := loadAPIKeyPartialInit(partialPath)
-	if err != nil {
-		return out, err
-	}
-	if partial != nil {
-		out.PartialInit = initRecoveryStatus{Present: true, Stage: initRecoveryPrepared}
-		if partial.ResponseJSON != "" || (partial.IDTree != nil && partial.IDTree.ResponseJSON != "") {
-			out.PartialInit.Stage = initRecoveryResponse
-		}
 	}
 	pendingPath, err := awconfig.IdentityHomePath(home, "pending-hosted-accept")
 	if err != nil {
@@ -165,6 +155,22 @@ func inspectIdentityInitialization(home awconfig.IdentityHome) (identityStatusOu
 	out.PendingHostedAccept = err == nil
 	out.MintComplete = out.SigningKeyPresent && out.IdentityPresent && out.IdentityRegistered && out.CertificatePresent && out.WorkspaceBound && !out.PartialInit.Present && !out.PendingHostedAccept
 	return out, nil
+}
+
+func inspectAPIKeyInitRecovery(home awconfig.IdentityHome) (initRecoveryStatus, error) {
+	path, err := awconfig.IdentityHomePath(home, "partial-init.yaml")
+	if err != nil {
+		return initRecoveryStatus{}, err
+	}
+	partial, err := loadAPIKeyPartialInit(path)
+	if partial == nil || err != nil {
+		return initRecoveryStatus{Stage: initRecoveryAbsent}, err
+	}
+	stage := initRecoveryPrepared
+	if partial.ResponseJSON != "" || (partial.IDTree != nil && partial.IDTree.ResponseJSON != "") {
+		stage = initRecoveryResponse
+	}
+	return initRecoveryStatus{Present: true, Stage: stage}, nil
 }
 
 func inspectInitializationMembership(home awconfig.IdentityHome, state *awconfig.TeamState, out *identityStatusOutput) error {

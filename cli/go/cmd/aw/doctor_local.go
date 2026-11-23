@@ -83,6 +83,18 @@ func (r *doctorRunner) runLocalChecks() {
 	workspace, workspacePath, err := loadDoctorWorkspaceAt(r.workingDir, r.identityHome)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			home := awconfig.IdentityHome{Root: firstNonEmpty(r.identityHome, awconfig.WorktreeIdentityHome(r.workingDir))}
+			if recovery, err := inspectAPIKeyInitRecovery(home); err == nil && recovery.Stage == initRecoveryResponse {
+				r.add(localPathCheck(
+					doctorCheckWorkspaceExists,
+					doctorStatusWarn,
+					state.workspacePath,
+					"This folder has a saved setup response and no workspace binding.",
+					"Correct the setup error, then rerun the same `aw init` command from the original folder.",
+					map[string]any{"state": "missing", "init_recovery_stage": string(recovery.Stage)},
+				))
+				return
+			}
 			nextStep := "Run `aw init` when you are ready to connect this directory."
 			if recovery, ok := workspaceConnectRecoveryCommand(r.workingDir, r.identityHome); ok {
 				nextStep = "Run `" + recovery + "` to connect this identity."

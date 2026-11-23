@@ -303,6 +303,48 @@ func TestAwCheckHumanOutputWithoutWorkspace(t *testing.T) {
 	}
 }
 
+func TestAwCheckReportsInterruptedHostedSetup(t *testing.T) {
+	t.Parallel()
+
+	bin, workingDir := buildDoctorBinary(t)
+	home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(workingDir)}
+	const privateValue = "test-only-private-init-response"
+	if err := saveAPIKeyPartialInit(home, &apiKeyPartialInitState{
+		Version:      apiKeyPartialInitVersion,
+		ResponseJSON: `{"api_key":"` + privateValue + `"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	retainedBefore, err := os.ReadFile(apiKeyPartialInitPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, mode := range [][]string{nil, {"--online"}} {
+		args := append([]string{"check"}, mode...)
+		out, err := runDoctorCLI(t, bin, workingDir, args...)
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+		if !strings.Contains(string(out), "Doctor: workspace setup incomplete.") ||
+			!strings.Contains(string(out), "rerun the same `aw init` command") || strings.Contains(string(out), privateValue) {
+			t.Errorf("%v did not report recoverable setup safely:\n%s", args, out)
+		}
+	}
+	out, err := runDoctorCLI(t, bin, workingDir, "check", "--online", "--json")
+	if err != nil || strings.Contains(string(out), privateValue) {
+		t.Fatal("check --online --json did not emit a safe report")
+	}
+	check := requireDoctorCheckStatus(t, decodeDoctorOutput(t, out), doctorCheckWorkspaceExists, doctorStatusWarn)
+	if check.Detail["state"] != "missing" || check.Detail["init_recovery_stage"] != string(initRecoveryResponse) {
+		t.Errorf("unexpected workspace check detail: %v", check.Detail)
+	}
+	retainedAfter, err := os.ReadFile(apiKeyPartialInitPath(home))
+	if err != nil || string(retainedAfter) != string(retainedBefore) {
+		t.Fatal("check changed the interrupted init's recovery state")
+	}
+}
+
 // aweb-abfb: the verdict must be computable as success on a healthy install.
 // Deliberately skipped checks (offline/auto mode, no safe probe) must not
 // dominate the verdict, info folds into ok, and anything that actually ran and

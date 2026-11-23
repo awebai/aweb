@@ -541,19 +541,23 @@ func doctorStatusRank(status doctorStatus) int {
 func formatDoctorOutput(v any) string {
 	out := v.(doctorOutput)
 	var sb strings.Builder
+	status := string(out.Status)
 	var workspaceSetup string
-	if out.Status == doctorStatusOK {
-		for _, check := range out.Checks {
-			if check.ID == doctorCheckWorkspaceExists && check.Detail["state"] == "missing" {
-				workspaceSetup = check.NextStep
-				break
-			}
+	for _, check := range out.Checks {
+		if check.ID != doctorCheckWorkspaceExists || check.Detail["state"] != "missing" {
+			continue
 		}
+		switch {
+		case out.Status == doctorStatusOK:
+			status, workspaceSetup = "no workspace here.", check.NextStep
+		case out.Status == doctorStatusWarn && check.Detail["init_recovery_stage"] == string(initRecoveryResponse):
+			status, workspaceSetup = "workspace setup incomplete.", check.NextStep
+		}
+		break
 	}
+	fmt.Fprintf(&sb, "Doctor: %s\n", status)
 	if workspaceSetup != "" {
-		fmt.Fprintf(&sb, "Doctor: no workspace here.\nNext:   %s\n", workspaceSetup)
-	} else {
-		fmt.Fprintf(&sb, "Doctor: %s\n", out.Status)
+		fmt.Fprintf(&sb, "Next:   %s\n", workspaceSetup)
 	}
 	sb.WriteString(fmt.Sprintf("Mode:   %s\n", out.Mode))
 	if out.SkippedChecks > 0 && workspaceSetup == "" {

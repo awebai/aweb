@@ -36,7 +36,11 @@ active, including the legacy certificate layout when no teams state exists.
 singleton workspace.
 
 `aw check --online --json` retains the doctor report and exits nonzero if a
-check fails. `aw doctor` remains a report command. `aw init --join-from SOURCE
+check fails. If an API-key init retained a response and the local workspace
+binding is missing, the `local.workspace_yaml.exists` check warns with
+`detail.init_recovery_stage: response_received`. The recovery action is to
+correct the init error and repeat the same command from the original folder.
+`aw doctor` remains a report command. `aw init --join-from SOURCE
 --join-team T --identity-home FRESH --name NAME` performs the invite and join in
 one process without returning its token. FRESH must be explicitly selected and
 free of existing identity credentials or workspace bindings; an inherited identity home is never an implicit creation destination.
