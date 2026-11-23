@@ -10,16 +10,13 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 source = os.environ.get("HERMES_AGENT_SOURCE")
 if not source:
     raise unittest.SkipTest("Set HERMES_AGENT_SOURCE to a real Hermes checkout")
 sys.path.insert(0, str(Path(source).resolve()))
-
-from gateway.config import Platform, PlatformConfig
-from gateway.platform_registry import platform_registry
-from gateway.run_adapters import GatewayAdapterLifecycleMixin
 
 spec = importlib.util.spec_from_file_location(
     "aweb_lifecycle_adapter", Path(__file__).resolve().parents[1] / "adapter.py"
@@ -31,6 +28,9 @@ spec.loader.exec_module(adapter_module)
 class HermesLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_initial_and_reconnect_reach_adapter_validation(self):
         # Register with Hermes itself: this checks the real PlatformEntry kwargs too.
+        from gateway.config import Platform, PlatformConfig
+        from gateway.platform_registry import platform_registry
+        from gateway.run_adapters import GatewayAdapterLifecycleMixin
         from hermes_cli.plugins import PluginContext, PluginManifest, PluginManager
 
         manager = PluginManager()
@@ -38,10 +38,14 @@ class HermesLifecycleTests(unittest.IsolatedAsyncioTestCase):
         adapter_module.register(context)
         platform = Platform("aweb")
         lifecycle = GatewayAdapterLifecycleMixin()
-        with tempfile.TemporaryDirectory() as root:
+        # The registry checks executable availability before seeing PlatformConfig.
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch.dict(os.environ, {"AWEB_PLATFORM_AW_BIN": sys.executable}),
+        ):
             # An absent workdir makes real adapter validation fail before any aw
             # subprocess starts. No gateway method or transport is substituted.
-            config = PlatformConfig(extra={"aw_bin": sys.executable, "workdir": str(Path(root) / "absent")})
+            config = PlatformConfig(extra={"workdir": str(Path(root) / "absent")})
             for reconnect in (False, True):
                 with self.subTest(is_reconnect=reconnect):
                     adapter = platform_registry.create_adapter("aweb", config)
