@@ -8,6 +8,7 @@ WORKDIR /src
 COPY . .
 RUN git init && git fetch source.bundle HEAD && git reset FETCH_HEAD && rm source.bundle
 RUN uv sync --frozen --project server && uv sync --frozen --project awid \
+    && uv sync --frozen --project key-holder \
     && make production-awid-sync \
     && cd cli/go && go mod download
 # The isolated runner's Postgres is 17, and pg_dump refuses a newer server, so

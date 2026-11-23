@@ -403,6 +403,11 @@ test-awid: production-awid-sync
 	cd awid && uv sync --frozen
 	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
+.PHONY: test-key-holder
+test-key-holder:
+	cd key-holder && uv sync --frozen
+	cd key-holder && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+
 .PHONY: check-secrets-shards
 check-secrets-shards:
 	uv sync --frozen --project naapp/secrets
