@@ -17,6 +17,7 @@ const (
 	registryDomainRoute
 	registryDNSAuthority
 	registryIdentityEvidenceRoute
+	registryIdentityIssuanceRoute
 	registryIdentityRoute
 	registryIdentityLookup
 	registryInviteIssuerRoute
@@ -33,7 +34,6 @@ type registryAuthorityRequest struct {
 	Override         string
 	DefaultURL       string
 	Domain           string
-	HasIDChain       bool
 	TeamID           string
 	Identity         *awconfig.ResolvedIdentity
 	LookupDID        string
@@ -69,7 +69,7 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 			return "", usageError("--registry %s contradicts the registry %s that %s names", override, named, req.Authority.DNSName)
 		}
 		return override, nil
-	case registryIdentityEvidenceRoute:
+	case registryIdentityEvidenceRoute, registryIdentityIssuanceRoute:
 		recorded := recordedPrivateIdentityRegistry(req.Identity)
 		if recorded == "" {
 			return resolveRegistryAuthority(ctx, registryAuthorityRequest{
@@ -82,10 +82,13 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 		}
 		// An omitted registry field supplies a public default, not a second
 		// claim about the origin of this locally known identity.
+		namedRegistry := ""
+		if req.Kind == registryIdentityEvidenceRoute && req.Authority.RegistryNamed {
+			namedRegistry = req.Authority.RegistryURL
+		}
 		for _, named := range []struct{ source, origin string }{
 			{"--registry", override},
-			{"AWID_REGISTRY_URL", strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))},
-			{req.Authority.DNSName, namedDNSRegistry(req.Authority)},
+			{req.Authority.DNSName, namedRegistry},
 		} {
 			if named.origin == "" {
 				continue
@@ -95,7 +98,7 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 				return "", usageError("invalid %s registry: %v", named.source, err)
 			}
 			if origin != recorded {
-				return "", usageError("%s registry %s contradicts the identity's recorded registry %s", named.source, origin, recorded)
+				return "", usageError("%s registry %s contradicts the identity's recorded registry %s. If the registry moved, confirm the new origin with the identity operator and update registry_url in the selected home's identity.yaml", named.source, origin, recorded)
 			}
 		}
 		return recorded, nil
@@ -235,18 +238,8 @@ func resolveIdentityRegistryAuthority(ctx context.Context, req registryAuthority
 		identity = nil
 	}
 	if req.Kind == registryInviteIssuerRoute && identity != nil {
-		if pin := recordedPrivateIdentityRegistry(identity); pin != "" {
-			authority := awid.DomainAuthority{}
-			// Chainless enrollment is a key-route read. Only a presented
-			// chain needs the namespace's current DNS statement.
-			if req.HasIDChain && req.Domain != "" {
-				var err error
-				authority, err = awid.DiscoverAuthoritativeRegistry(ctx, req.TXTResolver, req.Domain)
-				if err != nil {
-					return "", err
-				}
-			}
-			req.Kind, req.Authority = registryIdentityEvidenceRoute, authority
+		if recordedPrivateIdentityRegistry(identity) != "" {
+			req.Kind = registryIdentityIssuanceRoute
 			return resolveRegistryAuthority(ctx, req)
 		}
 		if pin := firstNonEmpty(identity.RegistryURL, req.Override); pin != "" {
@@ -285,13 +278,6 @@ func recordedPrivateIdentityRegistry(identity *awconfig.ResolvedIdentity) string
 		return ""
 	}
 	return strings.TrimSpace(identity.RegistryURL)
-}
-
-func namedDNSRegistry(authority awid.DomainAuthority) string {
-	if authority.RegistryNamed {
-		return authority.RegistryURL
-	}
-	return ""
 }
 
 func identityRegistryDomain(req registryAuthorityRequest) string {

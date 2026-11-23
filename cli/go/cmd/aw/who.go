@@ -165,13 +165,18 @@ func verifyWhoPresentation(ctx context.Context, subject awid.IDChainSubject, bun
 	reader := opts.Status
 	scope := identityRegistryScope{identity: opts.ownIdentity, domain: domain}
 	if opts.ownIdentity == nil {
-		scope = selectedIdentityRegistryScope(opts.WorkingDir)
+		var err error
+		scope, err = selectedIdentityRegistryScope(opts.WorkingDir)
+		if err != nil {
+			out.IDChainResult = preflight
+			return out, nil
+		}
 	}
 	private := recordedPrivateIdentityRegistry(scope.identity) != "" && (opts.ownIdentity != nil || scope.applies(domain))
 	var route identityEvidenceRoute
 	if reader == nil && domain != "" && (bundle != nil || opts.RegistryURL != "") {
 		var err error
-		route, err = resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, scope, domain, opts.RegistryURL)
+		route, err = resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, registryIdentityEvidenceRoute, scope, domain, opts.RegistryURL)
 		if err != nil {
 			var refusal *cliError
 			if opts.RegistryURL != "" || errors.As(err, &refusal) {
@@ -229,7 +234,7 @@ func verifyWhoPresentation(ctx context.Context, subject awid.IDChainSubject, bun
 	}
 	if reader == nil && private {
 		scope.domain = domain
-		route, err := resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, scope, domain, opts.RegistryURL)
+		route, err := resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, registryIdentityEvidenceRoute, scope, domain, opts.RegistryURL)
 		if err != nil {
 			var refusal *cliError
 			if errors.As(err, &refusal) {

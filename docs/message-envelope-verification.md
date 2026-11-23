@@ -128,8 +128,12 @@ Omission of an enrolled sender's chain does not bypass its current registration.
 
 For the selected identity home's own namespace, a recorded non-default
 registry supplies the origin when the `_awid` record omits its registry field.
-If `--registry`, `AWID_REGISTRY_URL` or the TXT record names a different
-origin, the command refuses and names both origins. When this rule selects
+The recorded origin takes precedence over `AWID_REGISTRY_URL`. If
+`--registry` or the TXT record names a different origin, the command refuses
+and names both origins. For a registry move, confirm the new origin with the
+identity operator and update `registry_url` in the selected home's
+`identity.yaml`. For a private origin you operate or trust, run
+`aw id registry-trust <new-origin>` from the same home selection. When this rule selects
 the registry for a presented chain, global key and continuity reads use that
 origin too. Otherwise `--registry ORIGIN` fills the DNS default as before.
 Registry transport trust is checked independently under the operator's

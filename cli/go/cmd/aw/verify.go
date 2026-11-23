@@ -77,7 +77,10 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	out := verifyExportedMessage(ctx, raw, whoOptions{WorkingDir: wd, RegistryURL: verifyRegistry, TXTResolver: &awid.NetTXTResolver{}})
 	if err := printOutput(out, formatVerifiedMessage); err != nil {
 		return err
@@ -156,7 +159,13 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 		return whoOutput{ID: subject.ID, IDChainResult: preflight}
 	}
 	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
-	scope := selectedIdentityRegistryScope(opts.WorkingDir)
+	scope, err := selectedIdentityRegistryScope(opts.WorkingDir)
+	if err != nil {
+		return messageVerificationFailure(subject.ID, "evidence_unavailable", false)
+	}
+	resolveRoute := func(domain string) (identityEvidenceRoute, error) {
+		return resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, registryIdentityEvidenceRoute, scope, domain, opts.RegistryURL)
+	}
 	routeFailure := func(err error) whoOutput {
 		result := messageVerificationFailure(subject.ID, "evidence_unavailable", false)
 		var refusal *cliError
@@ -174,7 +183,7 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 			return messageVerificationFailure(subject.ID, "malformed_envelope", true)
 		}
 		statusDomain, _ = plan["domain"].(string)
-		route, err = resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, scope, statusDomain, opts.RegistryURL)
+		route, err = resolveRoute(statusDomain)
 		if err != nil {
 			return routeFailure(err)
 		}
@@ -195,7 +204,7 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 				}
 				registryURL = route.origin
 			} else {
-				keyRoute, err := resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, scope, domain, opts.RegistryURL)
+				keyRoute, err := resolveRoute(domain)
 				if err != nil {
 					return routeFailure(err)
 				}
@@ -231,7 +240,7 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 		}
 	}
 	opts.RegistryURL = "" // The selected status route already enforces the explicit override.
-	out, err := executeWhoReceived(ctx, message, opts)
+	out, err = executeWhoReceived(ctx, message, opts)
 	if err != nil {
 		return messageVerificationFailure(subject.ID, "evidence_unavailable", false)
 	}

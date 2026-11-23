@@ -23,52 +23,76 @@ func (s identityRegistryScope) applies(domain string) bool {
 	return s.domain != "" && awconfig.NormalizeDomain(s.domain) == awconfig.NormalizeDomain(domain)
 }
 
-func selectedIdentityRegistryScope(wd string) identityRegistryScope {
+func selectedIdentityRegistryScope(wd string) (identityRegistryScope, error) {
 	if wd == "" {
-		return identityRegistryScope{}
+		return identityRegistryScope{}, nil
 	}
 	home, err := identityHomeForDir(wd)
 	if err != nil {
-		return identityRegistryScope{}
+		return identityRegistryScope{}, err
+	}
+	if !home.External() {
+		if _, err := os.Lstat(home.Root); errors.Is(err, os.ErrNotExist) {
+			return identityRegistryScope{}, nil
+		}
 	}
 	return identityRegistryScopeAt(wd, home.Root)
 }
 
-func identityRegistryScopeAt(wd, home string) identityRegistryScope {
+func identityRegistryScopeAt(wd, home string) (identityRegistryScope, error) {
 	if home == "" {
-		return identityRegistryScope{}
+		return identityRegistryScope{}, nil
 	}
 	identity, err := awconfig.ResolveIdentityFromHome(wd, home)
-	if err != nil || recordedPrivateIdentityRegistry(identity) == "" {
-		return identityRegistryScope{}
+	if err != nil {
+		return identityRegistryScope{}, err
 	}
 	installed, err := awconfig.LoadInstalledIDChain(filepath.Dir(identity.SigningKeyPath))
 	if err != nil {
-		return identityRegistryScope{}
+		return identityRegistryScope{}, err
+	}
+	if recordedPrivateIdentityRegistry(identity) == "" {
+		return identityRegistryScope{}, nil
 	}
 	domain := identity.Domain
 	if installed != nil {
 		subject := awid.IDChainSubject{ID: identityID(identity), DIDKey: identity.DID}
 		plan, err := awid.IDStatusRequest(installed.Bundle, subject, "")
 		if err != nil {
-			return identityRegistryScope{}
+			return identityRegistryScope{}, err
 		}
 		domain, _ = plan["domain"].(string)
 	}
-	return identityRegistryScope{identity: identity, domain: domain}
+	return identityRegistryScope{identity: identity, domain: domain}, nil
 }
 
 // An explicit parent can supply the route for the just-issued chain. This
 // permission is scoped to the parent home selected on this machine.
-func inviteIdentityRegistryScope(wd, home, parent string) identityRegistryScope {
-	scope := identityRegistryScopeAt(wd, home)
-	if scope.identity != nil || parent == "" {
-		return scope
+type inviteIdentityHomes struct {
+	workingDir string
+	recipient  string
+	parent     string
+}
+
+func (homes inviteIdentityHomes) registryScope() (identityRegistryScope, error) {
+	scope, err := identityRegistryScopeAt(homes.workingDir, homes.recipient)
+	// A new recipient can have just a key and chain at this point.
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return identityRegistryScope{}, err
 	}
+	if scope.identity != nil || homes.parent == "" {
+		return scope, nil
+	}
+	parent := homes.parent
 	if _, err := os.Stat(filepath.Join(parent, "signing.key")); errors.Is(err, os.ErrNotExist) {
 		parent = filepath.Join(parent, ".aw")
 	}
-	return identityRegistryScopeAt(wd, parent)
+	scope, err = identityRegistryScopeAt(homes.workingDir, parent)
+	// A legacy local parent can be represented by its team certificate.
+	if errors.Is(err, os.ErrNotExist) {
+		return identityRegistryScope{}, nil
+	}
+	return scope, err
 }
 
 type identityEvidenceRoute struct {
@@ -77,7 +101,7 @@ type identityEvidenceRoute struct {
 	authority awid.DomainAuthority
 }
 
-func resolveIdentityEvidenceRoute(ctx context.Context, registry *awid.RegistryClient, resolver awid.TXTResolver, scope identityRegistryScope, domain, override string) (identityEvidenceRoute, error) {
+func resolveIdentityEvidenceRoute(ctx context.Context, registry *awid.RegistryClient, resolver awid.TXTResolver, kind registryAuthorityKind, scope identityRegistryScope, domain, override string) (identityEvidenceRoute, error) {
 	dnsContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	authority, err := awid.DiscoverAuthoritativeRegistry(dnsContext, resolver, domain)
@@ -89,7 +113,7 @@ func resolveIdentityEvidenceRoute(ctx context.Context, registry *awid.RegistryCl
 		identity = scope.identity
 	}
 	origin, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
-		Kind: registryIdentityEvidenceRoute, Authority: authority, Identity: identity, Override: override,
+		Kind: kind, Authority: authority, Identity: identity, Override: override,
 	})
 	if err != nil {
 		return identityEvidenceRoute{}, err

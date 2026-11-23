@@ -463,7 +463,7 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	}
 	call, cancel := commandAPIContext(nil, ctx)
 	registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
-	route, err := resolveIdentityEvidenceRoute(call, registry, opts.TXTResolver, opts.registryScope, r.domain, opts.RegistryURL)
+	route, err := resolveIdentityEvidenceRoute(call, registry, opts.TXTResolver, registryIdentityIssuanceRoute, opts.registryScope, r.domain, opts.RegistryURL)
 	cancel()
 	if err != nil {
 		return idParentImportOutput{}, err

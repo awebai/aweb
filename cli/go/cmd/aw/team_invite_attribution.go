@@ -57,7 +57,7 @@ func identityKeyRoute(ctx context.Context, identity *awconfig.ResolvedIdentity, 
 // Membership routing never replaces an issuer's own home registry. With no
 // saved pin, the operation route can fill the same namespace's missing routing
 // information, subject to its independently discovered registry constraint.
-func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity *awconfig.ResolvedIdentity, domain string, hasIDChain bool) (string, error) {
+func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity *awconfig.ResolvedIdentity, domain string) (string, error) {
 	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
 		return "", err
@@ -66,7 +66,7 @@ func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity
 		registry.Resolver.DNSResolver = opts.TXTResolver
 	}
 	return resolveRegistryAuthority(ctx, registryAuthorityRequest{
-		Kind: registryInviteIssuerRoute, Registry: registry, Identity: identity, Domain: domain, HasIDChain: hasIDChain, Override: opts.RegistryURL,
+		Kind: registryInviteIssuerRoute, Registry: registry, Identity: identity, Domain: domain, Override: opts.RegistryURL,
 		TXTResolver: opts.TXTResolver, TeamRegistry: opts.TeamRegistryURL, TeamDomain: opts.TeamRegistryDomain,
 	})
 }
@@ -122,7 +122,7 @@ func prepareTeamInviteAuthority(ctx context.Context, input teamInviteAuthorityRe
 		}
 		domain = leaf.Domain()
 	}
-	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, domain, chain != nil)
+	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, domain)
 	if err != nil {
 		return nil, nil, fmt.Errorf("inviter cannot select its identity registry: %w", err)
 	}
@@ -219,7 +219,7 @@ func linkedTeamInviteIssuer(ctx context.Context, link *awconfig.TeamInviteIDChil
 	if err != nil {
 		return opts, nil, err
 	}
-	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, link.Domain, true)
+	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, link.Domain)
 	if err != nil {
 		return opts, nil, err
 	}
@@ -274,7 +274,10 @@ func completeTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite,
 		return err
 	}
 	childOpts.RegistryURL = issuer.registryURL
-	childOpts.registryScope = identityRegistryScopeAt(wd, link.IssuerHome)
+	childOpts.registryScope, err = identityRegistryScopeAt(wd, link.IssuerHome)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	_, err = executeIDParentImport(ctx, childOpts, response)
 	return err
 }

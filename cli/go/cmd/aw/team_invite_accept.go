@@ -457,7 +457,7 @@ func completeHostedInviteAcceptance(ctx context.Context, request hostedInviteAcc
 		if scope == awid.IdentityModeGlobal {
 			subjectID = stableID
 		}
-		membershipResult, err = verifyInviteMembership(ctx, creation.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: didKey}, creation.ForHuman, opts.Registry, opts.TXTResolver, inviteIdentityRegistryScope(request.WorkingDir, home.Root, opts.ParentHome))
+		membershipResult, err = verifyInviteMembership(ctx, creation.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: didKey}, creation.ForHuman, opts.Registry, opts.TXTResolver, inviteIdentityHomes{workingDir: request.WorkingDir, recipient: home.Root, parent: opts.ParentHome})
 		if err != nil {
 			return nil, err
 		}
@@ -579,8 +579,8 @@ func prepareNativeInviteAttribution(ctx context.Context, request nativeInviteAtt
 	if parent == "" && request.Attribution == nativeInviteChildIdentity {
 		parent = invite.IDChild.IssuerHome
 	}
-	scope := inviteIdentityRegistryScope(workingDir, home.Root, parent)
-	if _, err := verifyInviteMembership(ctx, bundle, awid.IDChainSubject{ID: subjectID, DIDKey: plan.MemberDIDKey}, invite.ForHuman, registry, opts.TXTResolver, scope); err != nil {
+	homes := inviteIdentityHomes{workingDir: workingDir, recipient: home.Root, parent: parent}
+	if _, err := verifyInviteMembership(ctx, bundle, awid.IDChainSubject{ID: subjectID, DIDKey: plan.MemberDIDKey}, invite.ForHuman, registry, opts.TXTResolver, homes); err != nil {
 		return err
 	}
 	return nil
