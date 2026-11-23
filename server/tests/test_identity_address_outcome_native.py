@@ -5,7 +5,8 @@ time out through the real SDK; key binding is warmed from that same registry.
 No registry, authentication, database or delivery behavior is substituted.
 """
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
 import json
 from urllib.parse import urlsplit
@@ -107,6 +108,29 @@ async def stalled_address_read(env):
     async with env.registry_db.transaction() as lock:
         await lock.execute("LOCK TABLE {{tables.public_addresses}} IN ACCESS EXCLUSIVE MODE")
         yield
+
+
+@contextmanager
+def slow_setup_key_read(env):
+    """Delay one real key read past the outage deadline during healthy setup."""
+    app = env.registry_app
+    registry_app = app.middleware_stack
+    delayed = False
+
+    async def delay(scope, receive, send):
+        nonlocal delayed
+        path = scope.get("path", "")
+        if not delayed and scope.get("method") == "GET" and path.startswith("/v1/did/") and path.endswith("/key"):
+            delayed = True
+            await asyncio.sleep(1.1)
+        await registry_app(scope, receive, send)
+
+    app.middleware_stack = delay
+    try:
+        yield
+    finally:
+        app.middleware_stack = registry_app
+    assert delayed
 
 
 async def projection(env, actor):
@@ -299,7 +323,8 @@ async def test_conflicting_verified_stored_addresses_refuse_during_outage_before
 ):
     env = address_world
     async with address_reader(env):
-        actor = await prepare_actor(env, "alice", address="example.test/alice")
+        with slow_setup_key_read(env):
+            actor = await prepare_actor(env, "alice", address="example.test/alice")
         recipient = await admit_messaging_actor(env, alias="bob", team_id=TEAM, local=True)
         other_domain = "second-member.test"
         other_address = f"{other_domain}/alice"
