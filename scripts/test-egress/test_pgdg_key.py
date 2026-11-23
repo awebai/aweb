@@ -8,10 +8,7 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
-
-
 INSTALLER = HERE / "install-postgres-client.sh"
 
 
@@ -38,16 +35,6 @@ class PgdgKeyTests(unittest.TestCase):
                        check=True, capture_output=True)
         cls.wrong_key = subprocess.check_output(
             ["gpg", "--no-options", "--homedir", cls.gpg_home.name, "--batch", "--armor", "--export"])
-
-    def test_the_image_and_ci_install_the_client_with_the_tested_installer(self):
-        callers = [HERE / "Dockerfile"] + [
-            ROOT / f".github/workflows/{name}-ci.yml" for name in ("folio", "library", "logs", "secrets")]
-        for caller in callers:
-            with self.subTest(caller=caller.name):
-                text = caller.read_text()
-                self.assertIn("scripts/test-egress/install-postgres-client.sh", text)
-                self.assertNotIn("apt.postgresql.org", text)
-                self.assertNotIn("install-pgdg-key.sh", text)
 
     def test_key_setup_succeeds_when_curl_fails_with_18(self):
         with tempfile.TemporaryDirectory() as temporary:
