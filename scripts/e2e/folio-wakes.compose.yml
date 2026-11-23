@@ -120,11 +120,8 @@ services:
       FOLIO_APP_EVENTS_ORIGIN: https://folio-wakes.test:38000
       # The team server folio_wakes.py publishes: this stack's own aweb, the
       # operator's own on the stack's network, reached through Folio's egress
-      # guard and trusted through the fixture's CA.
-      FOLIO_HOOK_INTERNAL_DESTINATIONS: allowed
-      # Docker's private address pool, whichever network the stack is given
-      # (the candidate gate puts it on its own).
-      FOLIO_HOOK_INTERNAL_CIDR: 172.16.0.0/12
+      # guard and trusted through the fixture's CA. The network itself comes
+      # from scripts/e2e/folio-wakes-subnet.compose.yml.
       FOLIO_TEAM_SERVER_INTERNAL_ORIGINS: '["https://folio-wakes.test:38000"]'
       FOLIO_HOOK_CA_FILE: /fixture/tls/ca.pem
       # App events go to aweb over the same TLS origin.

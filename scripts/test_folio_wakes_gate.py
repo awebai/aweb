@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Folio acceptance admission and resource ownership; no Docker allocation."""
+import ast
 import json
 import os
 from pathlib import Path
@@ -36,7 +37,10 @@ class FolioGateTests(unittest.TestCase):
         docker = root / "docker"
         docker.write_text('#!/usr/bin/env python3\nimport json, os, sys\n'
                           'with open(os.environ["CALLS"], "a") as f: f.write(json.dumps(sys.argv[1:])+"\\n")\n'
-                          'if sys.argv[1] == "ps" and os.environ.get("EXISTING_PROJECT"): print("existing")\n')
+                          'if sys.argv[1] == "ps" and os.environ.get("EXISTING_PROJECT"): print("existing")\n'
+                          'if sys.argv[1:3] == ["network", "inspect"]:\n'
+                          '    subnets = os.environ.get("SUBNETS", "192.168.208.0/20").split()\n'
+                          '    print(json.dumps([{"IPAM": {"Config": [{"Subnet": s} for s in subnets]}}]))\n')
         docker.chmod(0o755)
         env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}", CALLS=str(root / "calls"),
                    FOLIO_WAKE_EVIDENCE=str(root / "evidence"))
@@ -80,6 +84,55 @@ class FolioGateTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("occupied-folio project already exists", result.stderr)
             self.assertEqual(len(calls), 1, "Must not allocate or clean another run's project")
+
+    def test_the_client_starts_folio_with_the_stack_networks_own_subnet(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, calls = self.run_harness(Path(directory), FOLIO_WAKES_PROJECT="local-folio",
+                                             SUBNETS="192.168.208.0/20 fd00:1::/64")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(["network", "inspect", "local-folio_default"], calls)
+            client = next(args for args in calls if args[0] == "compose" and "run" in args)
+            self.assertIn("FOLIO_WAKES_STACK_SUBNET=192.168.208.0/20", client)
+
+    def test_a_network_without_exactly_one_ipv4_subnet_stops_the_run_and_is_removed(self):
+        for subnets in ("fd00:1::/64", "172.30.0.0/16 172.31.0.0/16"):
+            with self.subTest(subnets=subnets), tempfile.TemporaryDirectory() as directory:
+                result, calls = self.run_harness(Path(directory), SUBNETS=subnets)
+                self.assertNotEqual(result.returncode, 0)
+                compose = [args for args in calls if args[0] == "compose"]
+                self.assertFalse(any("run" in args for args in compose))
+                self.assertIn("down", compose[-1])
+
+    def compose_config(self, *files, **changes):
+        env = {name: value for name, value in os.environ.items() if name != "FOLIO_WAKES_STACK_SUBNET"}
+        env.update(FOLIO_WAKES_ORIGIN="https://folio-wakes.test:8765", FOLIO_WAKES_APP_KEY_FILES="{}", **changes)
+        args = ["docker", "compose", "-p", "proof", "--project-directory", str(ROOT)]
+        for file in files:
+            args += ["-f", str(ROOT / "scripts/e2e" / file)]
+        return subprocess.run([*args, "config", "--format", "json"], env=env, text=True, capture_output=True)
+
+    def test_folio_starts_only_with_its_stack_network_as_operator_network(self):
+        stack, overlay = "folio-wakes.compose.yml", "folio-wakes-subnet.compose.yml"
+        base = self.compose_config(stack)
+        self.assertEqual(base.returncode, 0, base.stderr)
+        folio = json.loads(base.stdout)["services"]["folio"]["environment"]
+        self.assertNotIn("FOLIO_HOOK_INTERNAL_CIDR", folio)
+        refused = self.compose_config(stack, overlay)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("FOLIO_WAKES_STACK_SUBNET", refused.stderr)
+        started = self.compose_config(stack, overlay, FOLIO_WAKES_STACK_SUBNET="192.168.208.0/20")
+        self.assertEqual(started.returncode, 0, started.stderr)
+        folio = json.loads(started.stdout)["services"]["folio"]["environment"]
+        self.assertEqual(folio["FOLIO_HOOK_INTERNAL_CIDR"], "192.168.208.0/20")
+        self.assertEqual(folio["FOLIO_HOOK_INTERNAL_DESTINATIONS"], "allowed")
+
+    def test_every_folio_start_by_the_client_layers_the_subnet_overlay(self):
+        tree = ast.parse((ROOT / "scripts/e2e/folio_wakes.py").read_text())
+        starts = [ast.unparse(node.left) for node in ast.walk(tree)
+                  if isinstance(node, ast.BinOp) and isinstance(node.right, ast.List)
+                  and node.right.elts and getattr(node.right.elts[0], "value", None) == "up"]
+        self.assertEqual(starts, ["COMPOSE + SUBNET_OVERLAY"])
+        self.assertIn("folio-wakes-subnet.compose.yml", (ROOT / "scripts/e2e/folio_wakes.py").read_text())
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+# Test-only overlay: Folio's operator network is exactly its stack's network.
+# The client layers it over folio-wakes.compose.yml when it starts Folio, after
+# the network exists (scripts/candidate-network.py subnet). Without it Folio
+# refuses to start: it lists a team server inside its operator's network and
+# names no network.
+services:
+  folio:
+    environment:
+      FOLIO_HOOK_INTERNAL_DESTINATIONS: allowed
+      FOLIO_HOOK_INTERNAL_CIDR: ${FOLIO_WAKES_STACK_SUBNET:?the subnet of the stack network, from scripts/candidate-network.py subnet}

@@ -51,4 +51,5 @@ docker container rm "$SEED" >/dev/null
 "${COMPOSE[@]}" exec -T postgres psql -v ON_ERROR_STOP=1 -U aweb -d aweb \
   -c 'CREATE DATABASE library OWNER aweb'
 git -C "$ROOT" rev-parse HEAD >"$EVIDENCE/source-sha.txt"
-"${COMPOSE[@]}" run --rm --no-deps client 2>&1 | tee "$EVIDENCE/acceptance.log"
+FOLIO_WAKES_STACK_SUBNET="$(python3 "$ROOT/scripts/candidate-network.py" subnet "${FOLIO_WAKES_PROJECT}_default")"
+"${COMPOSE[@]}" run --rm --no-deps -e "FOLIO_WAKES_STACK_SUBNET=$FOLIO_WAKES_STACK_SUBNET" client 2>&1 | tee "$EVIDENCE/acceptance.log"

@@ -22,6 +22,7 @@ SERVER = 'https://folio-wakes.test:38000'
 FOLIO = os.environ['FOLIO_WAKES_ORIGIN']
 PROJECT = os.environ.get('FOLIO_WAKES_PROJECT', 'abrm-folio')
 COMPOSE = ['docker', 'compose', '-p', PROJECT, '--project-directory', str(ROOT), '-f', str(ROOT / 'scripts/e2e/folio-wakes.compose.yml')]
+SUBNET_OVERLAY = ['-f', str(ROOT / 'scripts/e2e/folio-wakes-subnet.compose.yml')]
 
 def run(args, **kw):
     result = subprocess.run(args, text=True, capture_output=True, **kw)
@@ -45,7 +46,7 @@ def configure_manifest(version, events=True, manifest_version=1, extra_emitter=N
     paths = {'folio:grant-read-1': '/fixture/tls/grant-read.key', 'folio:emit-other': '/fixture/tls/emit-other.key'}
     os.environ['FOLIO_WAKES_APP_KEY_FILES'] = json.dumps({key['kid']: paths[key['kid']] for key in keys if key['kid'] in paths})
     # Recreate applies both the changed bytes and purpose-specific key files.
-    run(COMPOSE + ['up', '--no-build', '--no-deps', '-d', '--force-recreate', 'folio'])
+    run(COMPOSE + SUBNET_OVERLAY + ['up', '--no-build', '--no-deps', '-d', '--force-recreate', 'folio'])
     deadline = time.monotonic() + 60
     while True:
         container = run(COMPOSE + ['ps', '--all', '--quiet', 'folio']).strip()
