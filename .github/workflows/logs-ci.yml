@@ -76,6 +76,10 @@ jobs:
       - name: Prepare the pinned production AWID
         run: make production-awid-sync
 
+      - name: Install the logs test browser
+        working-directory: naapp/logs
+        run: uv run --no-sync playwright install --with-deps --only-shell chromium
+
       - name: Lint and type-check
         working-directory: naapp/logs
         run: make lint
