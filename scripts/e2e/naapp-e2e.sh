@@ -32,7 +32,7 @@ if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
   trap cleanup EXIT
   "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   "${compose[@]}" up --build -d
-  env "$enable=1" NAAPP_E2E_CONTAINER_NETWORK=1 uv run pytest -q -m e2e
+  env "$enable=1" NAAPP_E2E_CONTAINER_NETWORK=1 uv run pytest -q -m e2e -p aweb_naapp_testing.deployment_logs
   exit 0
 fi
 
@@ -72,5 +72,5 @@ docker run --rm \
     (cd /src/cli/go && go build -o /tmp/aw/aw ./cmd/aw)
     export PATH="/tmp/aw:$PATH"
     uv sync --frozen
-    uv run --frozen pytest -q -m e2e -p no:cacheprovider --basetemp=/tmp/pytest
+    uv run --frozen pytest -q -m e2e -p aweb_naapp_testing.deployment_logs -p no:cacheprovider --basetemp=/tmp/pytest
   '

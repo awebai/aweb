@@ -24,6 +24,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -40,15 +41,13 @@ import httpx
 import pytest
 from awid.signing import load_signing_key_pem
 
+from aweb_naapp_testing.deployment_logs import logged_process, redacted
 from aweb_naapp_testing.network import Certificates, local_address, make_certificates
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 # The locked server source environment runs the stack server, not an installed aweb artifact.
 STACK_SERVER = REPOSITORY_ROOT / "scripts" / "e2e" / "stack_server.py"
 SERVER_PROJECT = REPOSITORY_ROOT / "server"
-# How long a deployed app may take to stop after SIGTERM; one that has to be
-# killed fails its deployment.
-STOP_TIMEOUT_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -583,18 +582,21 @@ def running_app(
         for variable in drop_env:
             env.pop(variable, None)
         env.update(env_for(proxy_origin))
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", factory, "--factory", "--fd", str(listener.fileno())],
-            env=env,
-            pass_fds=(listener.fileno(),),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+        log_path = Path(setup.enter_context(tempfile.TemporaryDirectory())) / "app.log"
+        setup.enter_context(
+            logged_process(
+                [sys.executable, "-m", "uvicorn", factory]
+                + ["--factory", "--fd", str(listener.fileno())],
+                name=name,
+                log_path=log_path,
+                env=env,
+                pass_fds=(listener.fileno(),),
+                stop_codes=(0, -15),
+            )
         )
         listener.close()
         thread = threading.Thread(target=proxy.serve_forever, name=f"{name}-e2e-proxy", daemon=True)
         thread.start()
-        setup_error: Exception | None = None
         try:
             ca_file = certificates.ca_file if certificates else None
             with pytest.MonkeyPatch.context() as patch:
@@ -616,8 +618,10 @@ def running_app(
                 try:
                     wait_http_ok(f"{proxy_origin}/health", ca_file=ca_file)
                 except Exception as exc:
-                    setup_error = exc
-                    raise
+                    raise RuntimeError(
+                        f"{name} did not start: {exc}; its output:\n"
+                        + redacted(log_path.read_text(errors="replace"))
+                    ) from exc
                 manifest = httpx.get(
                     f"{proxy_origin}/aweb-app.json",
                     timeout=10.0,
@@ -635,32 +639,6 @@ def running_app(
             proxy.shutdown()
             proxy.server_close()
             thread.join(timeout=5)
-            proc.terminate()
-            killed = False
-            try:
-                proc.wait(timeout=STOP_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=STOP_TIMEOUT_SECONDS)
-                killed = True
-            failed = killed or proc.returncode not in (0, -15, None)
-            show_logs = failed or setup_error is not None
-            stdout = proc.stdout.read() if show_logs and proc.stdout else ""
-            stderr = proc.stderr.read() if show_logs and proc.stderr else ""
-            if proc.stdout:
-                proc.stdout.close()
-            if proc.stderr:
-                proc.stderr.close()
-            if show_logs:
-                stopped = (
-                    f"uvicorn did not stop within {STOP_TIMEOUT_SECONDS} s of SIGTERM and was "
-                    "killed"
-                    if killed
-                    else f"uvicorn exited with {proc.returncode}"
-                )
-                raise RuntimeError(
-                    f"{stopped}; setup error: {setup_error}\nstdout:\n{stdout}\nstderr:\n{stderr}"
-                ) from setup_error
 
 
 def _served_app_id(manifest: object) -> str:
@@ -717,50 +695,39 @@ def running_coordination_server(
         AWID_REGISTRY_URL=stack.awid_url,
         AWID_SERVICE_TOKEN=awid_service_token,
     )
-    with (tmp_path / "coordination.log").open("w+") as log:
-        proc = subprocess.Popen(
-            [
-                "uv",
-                "run",
-                "--offline",
-                "--frozen",
-                "--project",
-                str(SERVER_PROJECT),
-                "python",
-                str(STACK_SERVER),
-                "--app-origin",
-                app_origin,
-                "--ca-file",
-                str(certificates.ca_file),
-                "--user-agent",
-                "naapp-install-test/1",
-                "--fd",
-                str(listener.fileno()),
-                "--tls-certfile",
-                str(certificates.cert_file),
-                "--tls-keyfile",
-                str(certificates.key_file),
-            ],
-            env=env,
-            stdout=log,
-            stderr=log,
-            pass_fds=(listener.fileno(),),
-        )
+    with logged_process(
+        [
+            "uv",
+            "run",
+            "--offline",
+            "--frozen",
+            "--project",
+            str(SERVER_PROJECT),
+            "python",
+            str(STACK_SERVER),
+            "--app-origin",
+            app_origin,
+            "--ca-file",
+            str(certificates.ca_file),
+            "--user-agent",
+            "naapp-install-test/1",
+            "--fd",
+            str(listener.fileno()),
+            "--tls-certfile",
+            str(certificates.cert_file),
+            "--tls-keyfile",
+            str(certificates.key_file),
+        ],
+        name="coordination server",
+        log_path=tmp_path / "coordination.log",
+        env=env,
+        pass_fds=(listener.fileno(),),
+        # uv may report forwarded SIGTERM as 128 + SIGTERM.
+        stop_codes=(0, -15, 143),
+    ):
         listener.close()
-        try:
-            wait_http_ok(f"{origin}/health", ca_file=certificates.ca_file)
-            yield CoordinationServer(origin=origin, env=env, operator=operator)
-        finally:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=10)
-            # uv may report forwarded SIGTERM as 128 + SIGTERM.
-            if proc.returncode not in (0, -15, 143, None):
-                log.seek(0)
-                raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
+        wait_http_ok(f"{origin}/health", ca_file=certificates.ca_file)
+        yield CoordinationServer(origin=origin, env=env, operator=operator)
 
 
 @contextmanager
