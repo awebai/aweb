@@ -57,16 +57,27 @@ async def add_filler_certificates(registry, member, first, last):
         await registry.add_certificate(filler.certificate(), team_key=filler.team_key)
 
 
-@pytest.fixture(params=["public", "private"])
-async def team(registry, request) -> Member:
-    """201 certificates precede the target, so it sits beyond AWID's and the client's first page."""
+async def registered_target(registry, *, visibility: str, preceding: int) -> Member:
+    """A team whose ``target`` certificate follows ``preceding`` others in its history."""
     member = Member(team_id=TEAM_ID, certificate_id="target", alias="target")
-    await registry.add_team(TEAM_ID, member.team_did_key, visibility=request.param)
-    await add_filler_certificates(registry, member, 1, 200)
+    await registry.add_team(TEAM_ID, member.team_did_key, visibility=visibility)
+    await add_filler_certificates(registry, member, 1, preceding)
     await registry.add_certificate(member.certificate(), team_key=member.team_key)
     # From this boundary, counters describe verification, not SDK world creation.
     registry.transport.calls.clear()
     return member
+
+
+@pytest.fixture(params=["public", "private"])
+async def team(registry, request) -> Member:
+    """The target's certificate is the team's only one."""
+    return await registered_target(registry, visibility=request.param, preceding=0)
+
+
+@pytest.fixture(params=["public", "private"])
+async def team_past_first_page(registry, request) -> Member:
+    """200 certificates precede the target, so it sits beyond AWID's and the client's first page."""
+    return await registered_target(registry, visibility=request.param, preceding=200)
 
 
 def get_items(member):
@@ -77,14 +88,14 @@ def get_items(member):
 
 
 @pytest.mark.parametrize("revoked", [False, True])
-async def test_history_finds_the_certificate_beyond_the_first_page(registry, team, revoked):
+async def test_history_finds_the_certificate_beyond_the_first_page(registry, team_past_first_page, revoked):
     if revoked:
         await registry.revoke("target", team_id=TEAM_ID)
     # Revocation is arrangement; history authorization is the operation below.
     registry.transport.calls.clear()
     cache = history_cache(registry)
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
-        response = await client.get("/v1/items", headers=get_items(team))
+        response = await client.get("/v1/items", headers=get_items(team_past_first_page))
     assert response.status_code == (401 if revoked else 200), response.text
     pages = certificate_pages(registry)
     assert len(pages) == 2 and pages[1].url.params["cursor"]
@@ -110,38 +121,38 @@ async def test_history_facts_are_reused_for_at_most_a_minute(registry, team):
     assert 0 < cache._cache[TEAM_ID].expires_at - time.monotonic_ns() <= seconds_to_ns(60)
 
 
-async def test_history_page_bound_fails_closed_without_caching_partial_facts(registry, team, history_clock):
-    await add_filler_certificates(registry, team, 201, 19999)
+async def test_history_page_bound_fails_closed_without_caching_partial_facts(registry, team_past_first_page, history_clock):
+    await add_filler_certificates(registry, team_past_first_page, 201, 19999)
     complete = history_cache(registry)
     async with relying_app(registry, public_origin=ORIGIN, cache=complete) as (client, _):
-        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
+        assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 200
     assert TEAM_ID in complete._cache
     assert len(certificate_pages(registry)) == 100
 
     # One more genuinely registered certificate requires a 101st page.
-    await add_filler_certificates(registry, team, 20000, 20000)
+    await add_filler_certificates(registry, team_past_first_page, 20000, 20000)
     registry.transport.calls.clear()
     incomplete = history_cache(registry)
     async with relying_app(registry, public_origin=ORIGIN, cache=incomplete) as (client, _):
-        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+        assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 503
         assert not incomplete._cache
         assert len(certificate_pages(registry)) == 100
-        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+        assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 503
         assert len(certificate_pages(registry)) == 100
         history_clock[0] += seconds_to_ns(5)
-        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+        assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 503
     assert not incomplete._cache
     assert len(certificate_pages(registry)) == 200
 
 
-async def test_history_refresh_failure_never_reuses_expired_facts(registry, team, caplog):
+async def test_history_refresh_failure_never_reuses_expired_facts(registry, team_past_first_page, caplog):
     cache = history_cache(registry)
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
-        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
+        assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 200
         expired = replace(cache._cache[TEAM_ID], expires_at=-1)
         cache._cache[TEAM_ID] = expired
-        await add_filler_certificates(registry, team, 201, 20000)
-        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+        await add_filler_certificates(registry, team_past_first_page, 201, 20000)
+        assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 503
     assert cache._cache[TEAM_ID] is expired
     assert "AWID team facts refresh failed" in caplog.text
 
@@ -201,26 +212,26 @@ def later_page_fault(kind: str, first_cursor: dict):
     "missing_certificate_id", "oversized_page", "missing_cursor", "repeated_cursor", "blank_cursor",
     "invalid_cursor", "cycling_cursor", "http", "transport",
 ])
-async def test_history_later_page_fault_fails_closed_then_recovers(registry, team, kind, caplog, history_clock):
+async def test_history_later_page_fault_fails_closed_then_recovers(registry, team_past_first_page, kind, caplog, history_clock):
     cache = history_cache(registry)
     first_cursor: dict = {}
     registry.transport.fault = later_page_fault(kind, first_cursor)
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
-        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+        assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 503
         assert not cache._cache
         pages = certificate_pages(registry)
         assert len(pages) == (3 if kind == "cycling_cursor" else 2)
         assert pages[1].url.params["cursor"] == first_cursor["value"]
         assert "AWID team facts refresh failed" in caplog.text
         registry.transport.fault = None
-        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+        assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 503
         assert len(certificate_pages(registry)) == len(pages)
         history_clock[0] += seconds_to_ns(5)
-        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
+        assert (await client.get("/v1/items", headers=get_items(team_past_first_page))).status_code == 200
     assert TEAM_ID in cache._cache
 
 
-async def test_history_private_denial_is_classified(registry, team):
+async def test_history_private_denial_is_classified(registry, team_past_first_page):
     cache = history_cache(registry)
     registry.transport.fault = later_page_fault("private", {})
     with pytest.raises(HTTPException) as caught:
