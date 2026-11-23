@@ -21,6 +21,10 @@ RUN bash /src/scripts/test-egress/install-pgdg-key.sh \
     && rm -rf /var/lib/apt/lists/* \
     && pg_dump --version | grep -q ' 17\.' \
     && python3 scripts/test-egress/test_pgdg_key.py -v
+# Fetch the historical CLI while preparation has registry access. The unit suite
+# verifies and runs these bytes on its isolated network.
+RUN python3 scripts/fetch_released_aw.py --version 1.36.58 /opt/aw-1.36.58 \
+    && cd /opt/aw-1.36.58 && sha256sum aw > aw.sha256 && chmod 0555 aw && rm ./*.tgz
 RUN make naapp-sync
 # Headless Chromium for naapp-lib's browser tests, installed by the Playwright
 # version naapp-lib locks, with its system libraries. The tests run headless,

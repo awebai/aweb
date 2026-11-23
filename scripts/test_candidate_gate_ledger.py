@@ -131,6 +131,7 @@ class CompleteGateVerdictTests(unittest.TestCase):
             "unit/test-awid": "PASSED",
             "unit/test-naapp": "PASSED",
             "unit/test-cli": "FAILED",
+            "unit/_candidate-registry-upgrade": "PASSED",
             "unit/test-cli-auth-v2": "PASSED",
             "unit/_candidate-unit-channel": "PASSED",
             "unit/test-channel-name-live-contract": "PASSED",

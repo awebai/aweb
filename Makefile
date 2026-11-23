@@ -19,7 +19,7 @@ SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER
 	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	cli-e2e _candidate-gate-docker-boundaries _candidate-gate-compose-adoption _candidate-channel-version _candidate-node-deps \
-	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
+	_candidate-registry-upgrade _candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
 	_candidate-artifact-naapp-package check-naapp-lib-package \
 	_candidate-artifact-channel _candidate-artifact-pi _candidate-artifact-skills _candidate-artifact-a2a-image
@@ -666,6 +666,12 @@ test-candidate-ledger:
 	$(MAKE) test-naapp-e2e
 	python3 scripts/test_candidate_make_environment.py
 	python3 scripts/test_candidate_gate_ledger.py
+
+_candidate-registry-upgrade:
+	cd /opt/aw-1.36.58 && sha256sum --check aw.sha256 && cat aw.sha256 && ./aw version
+	cd cli/go && AW_TEST_AW_13658=/opt/aw-1.36.58/aw GOCACHE=/tmp/go-build \
+		go test ./cmd/aw -run '^TestRegistryUpgradeFrom13658$$' -count=1 -v; \
+		status=$$?; echo "Registry upgrade Go exit: $$status"; exit $$status
 
 _candidate-unit-suites:
 	python3 scripts/test-egress/docker.py --profile $(CANDIDATE_UNIT_PROFILE) --server-workers $(if $(filter ccx33,$(CANDIDATE_UNIT_PROFILE)),7,0) --evidence "$$CANDIDATE_LOG_DIR/test-egress" --collect-summary --command bash scripts/candidate-suite.sh --isolated-suites

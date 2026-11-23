@@ -295,8 +295,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("destination", type=Path, nargs="?")
     parser.add_argument("--resolve-only", type=Path)
-    parser.add_argument("--metadata-input", type=Path)
-    parser.add_argument("--freeze-latest", type=Path)
+    selector = parser.add_mutually_exclusive_group()
+    selector.add_argument("--metadata-input", type=Path)
+    selector.add_argument("--version", help="fetch this exact published final release")
+    selector.add_argument("--freeze-latest", type=Path)
     args = parser.parse_args()
     if args.freeze_latest:
         print(freeze_latest(args.freeze_latest))
@@ -311,4 +313,6 @@ if __name__ == "__main__":
         metadata = (
             json.loads(args.metadata_input.read_text()) if args.metadata_input else None
         )
+        if args.version is not None:
+            metadata = release_metadata(version=args.version)
         print(json.dumps(fetch(args.destination, metadata=metadata)))

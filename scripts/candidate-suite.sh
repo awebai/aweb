@@ -50,6 +50,7 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   run test-awid
   run test-naapp
   run test-cli
+  run _candidate-registry-upgrade
   run test-cli-auth-v2
   run _candidate-unit-channel
   run test-channel-name-live-contract
