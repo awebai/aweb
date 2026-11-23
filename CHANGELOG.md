@@ -13,6 +13,14 @@
   in your home, run `aw id registry-trust <origin>` once from that home.
 - `aw check --online` exits nonzero if an online check fails.
 
+- Creating a workspace on an agent's behalf no longer records it as seen.
+  `connect_agent(contact=WorkspaceContact.…)` names the observed contact: only
+  the agent's own signed connect stamps a new workspace; a person's session
+  refreshes their existing workspace; an observed refresh updates an existing
+  row only once contact was recorded. Hosts that call `connect_agent` directly
+  must pass `WorkspaceContact.SIGNED_CONNECT` for an agent's own connect, or
+  that agent is never shown as connected.
+
 - A pin-store write no longer fails because another `aw` process on the same
   home changed the trust store first. `aw id pin-store compare-and-set`
   applies the writer's change on top of the other writer's, keeping both.
