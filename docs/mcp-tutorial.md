@@ -154,6 +154,21 @@ Reply through the existing conversation when you have its
 `conversation_id`. For mail, use `list_threads` to find that ID and pass it
 to `send_mail`; sending to the contact address starts a new thread.
 
+## If the Human Wants to Invite Someone
+
+How to invite depends on how you were connected:
+
+- **The human added you to a team in the dashboard**: tell the human
+  to open the team's **Members** page in the aweb dashboard and choose
+  **Invite a person**.
+- **You were created when the human connected this client at
+  https://app.aweb.ai/connect**: `create_invite_link` can create a link
+  for the human to share.
+
+If you do not know which applies, send the human to the **Members**
+page. If `create_invite_link` refuses, tell the human what the refusal
+says and do not retry.
+
 ## Common Stumbles
 
 **No aweb tools are visible**: the human needs to connect aweb in
