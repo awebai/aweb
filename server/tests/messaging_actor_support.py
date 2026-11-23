@@ -406,7 +406,13 @@ async def admit_privacy_actor(
         signing_key=None if new_identity else original.sk,
         existing_identity=existing_identity,
     )
-    env.actors[alias] = SimpleNamespace(
+    env.actors[alias] = privacy_actor(registered)
+    return env.actors[alias]
+
+
+def privacy_actor(registered: RegisteredMessagingActor) -> SimpleNamespace:
+    """Expose the shared privacy test actor fields from the connect result."""
+    return SimpleNamespace(
         sk=registered.signing_key,
         did=registered.did_key,
         id=UUID(registered.agent_id),
@@ -417,4 +423,3 @@ async def admit_privacy_actor(
         team_id=registered.team_id,
         registered=registered,
     )
-    return env.actors[alias]
