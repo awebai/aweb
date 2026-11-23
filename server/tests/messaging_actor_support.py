@@ -15,6 +15,7 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.identity_observation import IdentityKind
 from awid.registry import RegistryClient
+from awid.team_certificate import issue_team_certificate
 from awid_service.testing import Registry
 from aweb.application_state import application_registry_client
 from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
@@ -144,18 +145,16 @@ async def admit_messaging_actor(
         )
     if kind is not IdentityKind.UNKNOWN:
         await _certify_kind(env, kind=kind, stable_id=stable_id, key=key)
-    certificate_fields = _make_certificate(
-        env.team_sk,
-        env.team_did,
-        did_key,
+    certificate_fields, certificate = issue_team_certificate(
         team_id=team_id,
+        team_signing_key=env.team_sk,
+        member_did_key=did_key,
         alias=alias,
         identity_scope="local" if local else "global",
         member_did_aw=stable_id,
         member_address=address,
         certificate_id=f"messaging-{uuid4()}",
     )
-    certificate = _encode_certificate(certificate_fields)
     team_name, team_domain = team_id.split(":", 1)
     await registry.register_team_certificate(
         team_domain,

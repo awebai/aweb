@@ -253,7 +253,7 @@
     "server/tests/test_installation_requests.py": 1,
     "server/tests/test_installation_views.py": 3,
     "server/tests/test_lifecycle.py": 18,
-    "server/tests/test_local_recipient_address.py": 6,
+    "server/tests/test_local_recipient_address.py": 1,
     "server/tests/test_mail_conversation_pagination.py": 4,
     "server/tests/test_mail_explicit_conversations.py": 2,
     "server/tests/test_mail_send_retry.py": 1,
