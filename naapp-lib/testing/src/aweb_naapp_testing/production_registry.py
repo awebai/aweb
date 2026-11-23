@@ -25,6 +25,7 @@ import dataclasses
 import json
 import os
 import socket
+import subprocess
 import tempfile
 import uuid
 from collections.abc import AsyncIterator
@@ -80,6 +81,24 @@ def _project() -> Path:
         raise RuntimeError(
             f"no locked production AWID project at {project}: set PRODUCTION_AWID_PROJECT "
             "and run uv sync --frozen there"
+        )
+    return project
+
+
+def _prepared_project(env: dict[str, str]) -> Path:
+    """The locked project, whose environment was synced before the tests ran
+    (make production-awid-sync); the fixture starts it as it is and never syncs."""
+    project = _project()
+    check = subprocess.run(
+        ["uv", "sync", "--offline", "--frozen", "--check", "--project", str(project)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode != 0:
+        raise RuntimeError(
+            f"the production AWID environment of {project} is not prepared: "
+            f"run make production-awid-sync first ({check.stderr.strip()})"
         )
     return project
 
@@ -160,12 +179,14 @@ async def running_production_registry(
     """The production release on the PostgreSQL at ``database_url``, applying
     its own migrations to a schema it alone uses, which is dropped on exit."""
     schema = _SCHEMA_PREFIX + uuid.uuid4().hex
+    env = {name: value for name, value in os.environ.items() if name != "PYTHONPATH"}
+    env.pop("VIRTUAL_ENV", None)
+    project = _prepared_project(env)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         sock.listen()
         port = sock.getsockname()[1]
         origin = f"http://127.0.0.1:{port}"
-        env = {name: value for name, value in os.environ.items() if name != "PYTHONPATH"}
         env.update(
             AWID_DATABASE_URL=database_url,
             AWID_DB_SCHEMA=schema,
@@ -176,7 +197,6 @@ async def running_production_registry(
             APP_ENV="test",
         )
         env.pop("AWID_SKIP_DNS_VERIFY", None)
-        env.pop("VIRTUAL_ENV", None)
         app = ReleaseApp()
         authority = await _serve_authority(app)
         authority_port = authority.sockets[0].getsockname()[1]
@@ -185,8 +205,9 @@ async def running_production_registry(
             "run",
             "--offline",
             "--frozen",
+            "--no-sync",
             "--project",
-            str(_project()),
+            str(project),
             "python",
             "-c",
             _SERVE_RELEASE,

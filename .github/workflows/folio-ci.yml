@@ -20,9 +20,12 @@ on:
 permissions:
   contents: read
 
+# Every commit on main keeps its own run to the end: one group per commit, since
+# a group also cancels its waiting run when another queues. Elsewhere a newer
+# run replaces an older one.
 concurrency:
-  group: folio-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: folio-ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   quality:
@@ -37,7 +40,7 @@ jobs:
       TEST_DB_PASSWORD: postgres
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -96,6 +99,11 @@ jobs:
         working-directory: naapp-lib
         run: uv sync --locked
 
+      # The production AWID fixture starts this pinned project as prepared
+      # here, and never syncs it during the tests.
+      - name: Prepare the pinned production AWID
+        run: make production-awid-sync
+
       # The runtime's console tests exercise real WebAuthn in Chromium.
       - name: Install the runtime test browser
         working-directory: naapp-lib
@@ -107,6 +115,13 @@ jobs:
           UV_OFFLINE: "1"
           UV_FROZEN: "1"
         run: make lint
+
+      # The tests back up and restore with the client of the server's major
+      # version, installed as the gate installs it.
+      - name: Install the PostgreSQL client of the server's major version
+        run: |
+          sudo bash scripts/test-egress/install-postgres-client.sh
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
 
       # The same path as make test-naapp: behind the test egress guard, which
       # forwards the governance browser's RP host to loopback for Chromium and
