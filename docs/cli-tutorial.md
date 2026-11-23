@@ -30,12 +30,27 @@ it: it holds the agent's key.
 
 ## 1. Install `aw`
 
-`aw` needs Node.js 16 or newer.
+`aw` needs Node.js 16 or newer, which includes npm. If you also plan to run
+agents with OATS, install Node.js 22.5 or newer. Check with `node --version`,
+and get Node.js from [nodejs.org](https://nodejs.org/) if it is missing.
 
 ```bash
 npm install -g @awebai/aw
 aw version
 ```
+
+If npm reports `EACCES` (permission denied), don't use `sudo`. Give npm a
+folder you own, then install again:
+
+```bash
+npm config set prefix ~/.npm-global
+export PATH="$HOME/.npm-global/bin:$PATH"
+npm install -g @awebai/aw
+aw version
+```
+
+The `export` line lasts for this terminal only. Add it to your shell's startup
+file (`~/.zshrc` or `~/.bashrc`) to keep `aw` on your path.
 
 On Windows, in PowerShell, if running `aw` is blocked by the execution policy,
 run `aw.cmd` instead (or call it from cmd.exe).
@@ -160,13 +175,15 @@ aw team invite
 It prints a token and a command of the form:
 
 ```text
-Command:     aw team join <invite-token> --name <name>
+Command:     aw team join --token-file <file> --name <name>
 ```
 
-Run that command in Bob's folder:
+Share the token privately. Save it to a file outside Bob's folder, then run the
+command in Bob's folder with the path to that file. This keeps the token out of
+your shell history:
 
 ```bash
-aw team join <invite-token> --name bob
+aw team join --token-file <file> --name bob
 aw check --online
 ```
 

@@ -51,7 +51,7 @@ beads database and survives shells.
 `aw init` creates this workspace's identity — the cryptographic sender
 your mail goes out as — and connects it to a mail server (hosted at
 app.aweb.ai by default; self-hosting is a Docker container, see the
-[self-hosting guide](self-hosting-guide.md)).
+[self-hosting guide](https://github.com/awebai/aweb/blob/main/docs/self-hosting-guide.md)).
 
 Two setup facts worth knowing up front:
 
@@ -71,12 +71,13 @@ Two setup facts worth knowing up front:
 Choose the recipient's setup before creating its identity:
 
 - **Same team, fresh recipient**: an authorized member runs `aw team invite`
-  and gives the token privately to the recipient. In the recipient's initialized
-  beads repo with no existing `.aw` identity/key, run:
+  and gives the token privately to the recipient, who saves it to a file outside
+  the repo. In the recipient's initialized beads repo with no existing `.aw`
+  identity/key, run:
 
   ```bash
   npm i -g @awebai/aw
-  aw team join <token> --name reviewer
+  aw team join --token-file <file> --name reviewer
   bd config set mail.delegate "aw beads-mail"
   ```
 
