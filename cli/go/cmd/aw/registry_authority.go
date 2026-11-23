@@ -26,21 +26,22 @@ const (
 )
 
 type registryAuthorityRequest struct {
-	Kind         registryAuthorityKind
-	Registry     *awid.RegistryClient
-	Override     string
-	DefaultURL   string
-	Domain       string
-	TeamID       string
-	Identity     *awconfig.ResolvedIdentity
-	LookupDID    string
-	WorkingDir   string
-	IdentityHome string
-	AwebURL      string
-	Authority    awid.DomainAuthority
-	TXTResolver  awid.TXTResolver
-	TeamDomain   string
-	TeamRegistry string
+	Kind             registryAuthorityKind
+	Registry         *awid.RegistryClient
+	DeliveryResolver *awid.RegistryResolver
+	Override         string
+	DefaultURL       string
+	Domain           string
+	TeamID           string
+	Identity         *awconfig.ResolvedIdentity
+	LookupDID        string
+	WorkingDir       string
+	IdentityHome     string
+	AwebURL          string
+	Authority        awid.DomainAuthority
+	TXTResolver      awid.TXTResolver
+	TeamDomain       string
+	TeamRegistry     string
 }
 
 // resolveRegistryAuthority selects the origin for the subject of the operation.
@@ -73,6 +74,10 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 		if err != nil {
 			return "", err
 		}
+		if legacyOrigin := legacyLocalMembershipRegistryOrigin(membership, req.WorkingDir, req.IdentityHome); legacyOrigin != "" {
+			trustRecordedRegistryOrigin(req.DeliveryResolver, legacyOrigin, legacyOrigin)
+			return awid.CanonicalRegistryServerOrigin(legacyOrigin)
+		}
 		if membership != nil && strings.TrimSpace(membership.RegistryURL) != "" {
 			return awid.CanonicalRegistryServerOrigin(membership.RegistryURL)
 		}
@@ -87,6 +92,9 @@ func resolveRegistryAuthority(ctx context.Context, req registryAuthorityRequest)
 			return "", fmt.Errorf("load controller metadata for %s: %w", domain, err)
 		}
 		if meta != nil && strings.TrimSpace(meta.RegistryURL) != "" {
+			if req.Registry != nil {
+				trustRecordedRegistryOrigin(req.Registry.Resolver, meta.RegistryURL, controllerRegistryOperatorOrigin(domain, meta))
+			}
 			return awid.CanonicalRegistryServerOrigin(meta.RegistryURL)
 		}
 		if req.Kind == registryAddressClaimRoute {
@@ -238,8 +246,13 @@ func resolveTeamCommandRegistry(ctx context.Context, registry *awid.RegistryClie
 	if err != nil {
 		return "", err
 	}
-	return resolveRegistryAuthority(ctx, registryAuthorityRequest{
+	origin, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
 		Kind: registryTeamRoute, Override: override, DefaultURL: registry.DefaultRegistryURL,
 		Domain: domain, TeamID: teamID, WorkingDir: workingDir, IdentityHome: externalIdentityHomeRoot(home),
 	})
+	if err != nil {
+		return "", err
+	}
+	trustControllerRegistryOrigin(registry.Resolver, domain, origin)
+	return origin, nil
 }

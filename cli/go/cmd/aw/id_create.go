@@ -279,7 +279,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (output idCreateOu
 		return idCreateOutput{}, err
 	}
 
-	if err := awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
+	if err := saveWorktreeIdentityWithRegistryOrigin(plan.IdentityPath, &awconfig.WorktreeIdentity{
 		DID:            plan.DIDKey,
 		StableID:       plan.DIDAW,
 		Address:        plan.Address,
@@ -772,10 +772,11 @@ func resolveOrCreateControllerKey(domain, registryURL, createdAt string) (ed2551
 				return nil, "", false, err
 			}
 			if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
-				Domain:        domain,
-				ControllerDID: controllerDID,
-				RegistryURL:   registryURL,
-				CreatedAt:     createdAt,
+				Domain:                 domain,
+				ControllerDID:          controllerDID,
+				RegistryURL:            registryURL,
+				RegistryOperatorOrigin: operatorRegistryOrigin(registryURL, ""),
+				CreatedAt:              createdAt,
 			}); err != nil {
 				return nil, "", false, err
 			}
@@ -792,10 +793,11 @@ func resolveOrCreateControllerKey(domain, registryURL, createdAt string) (ed2551
 		return nil, "", false, err
 	}
 	if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
-		Domain:        domain,
-		ControllerDID: controllerDID,
-		RegistryURL:   registryURL,
-		CreatedAt:     createdAt,
+		Domain:                 domain,
+		ControllerDID:          controllerDID,
+		RegistryURL:            registryURL,
+		RegistryOperatorOrigin: operatorRegistryOrigin(registryURL, ""),
+		CreatedAt:              createdAt,
 	}); err != nil {
 		// Clean up the key file so the next retry starts fresh
 		keyPath, _ := awconfig.ControllerKeyPath(domain)

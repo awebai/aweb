@@ -8,19 +8,16 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
+INSTALLER = HERE / "install-postgres-client.sh"
 
 
 def pgdg_key_step():
-    # Execute the image's actual key setup, stopping before apt repository I/O.
-    logical = (HERE / "Dockerfile").read_text().replace("\\\n", " ")
-    step = next(line[4:] for line in logical.splitlines()
-                if line.startswith("RUN ") and "/etc/apt/keyrings/pgdg.gpg" in line)
-    setup, separator, _ = step.partition("&& echo")
-    if not separator:
+    # Execute the installer's actual key setup, stopping before apt repository I/O.
+    setup, separator, _ = INSTALLER.read_text().partition("# shellcheck source=/dev/null\n")
+    if not separator or "install-pgdg-key.sh" not in setup or "apt-get" in setup:
         raise AssertionError("cannot isolate key setup from apt repository configuration")
-    return setup.strip()
+    return setup
 
 
 class PgdgKeyTests(unittest.TestCase):
@@ -39,7 +36,7 @@ class PgdgKeyTests(unittest.TestCase):
         cls.wrong_key = subprocess.check_output(
             ["gpg", "--no-options", "--homedir", cls.gpg_home.name, "--batch", "--armor", "--export"])
 
-    def test_image_key_setup_succeeds_when_curl_fails_with_18(self):
+    def test_key_setup_succeeds_when_curl_fails_with_18(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             marker = directory / "curl-called"
@@ -48,15 +45,14 @@ class PgdgKeyTests(unittest.TestCase):
                             "echo 'simulated curl (18): HTTP/2 stream failure' >&2\nexit 18\n")
             curl.chmod(0o755)
             keyring = directory / "pgdg.gpg"
-            command = pgdg_key_step().replace("/src", shlex.quote(str(ROOT)))
-            command = command.replace("/etc/apt/keyrings/pgdg.gpg", shlex.quote(str(keyring)))
+            command = pgdg_key_step().replace("/etc/apt/keyrings", shlex.quote(str(directory)))
             environment = {**os.environ, "PATH": str(directory) + os.pathsep + os.environ["PATH"],
                            "CURL_CALLED": str(marker), "GNUPGHOME": self.gpg_home.name,
                            "LC_ALL": "C"}
-            result = subprocess.run(["bash", "-c", command], env=environment,
+            result = subprocess.run(["bash", "-c", command, str(INSTALLER)], env=environment,
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertFalse(marker.exists(), "image key setup attempted a network fetch")
+            self.assertFalse(marker.exists(), "key setup attempted a network fetch")
             self.assertTrue(keyring.is_file())
             inspected = subprocess.check_output(
                 ["gpg", "--no-options", "--homedir", self.gpg_home.name, "--batch", "--with-colons",

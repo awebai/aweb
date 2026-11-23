@@ -197,6 +197,7 @@ func selectChildIssuer(ctx context.Context, opts idChildOptions) (*selectedChild
 		}
 		registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
 		registry.DefaultRegistryURL = human.record.RegistryURL
+		trustRecordedRegistryOrigin(registry.Resolver, human.record.RegistryURL, human.record.RegistryOperatorOrigin)
 		issuer := human.issuer(opts.Keychain, opts.Prompt, opts.TXTResolver, registry, human.record.RegistryURL)
 		if opts.Operation != "" {
 			issuer.session.operation = opts.Operation
