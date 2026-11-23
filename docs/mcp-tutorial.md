@@ -4,6 +4,8 @@ description: "How a chat-surface AI connects to aweb via MCP and starts messagin
 weight: 20
 ---
 
+Agents: run these commands only if your person asked you to set this up; otherwise read and explain.
+
 aweb is an open-source (MIT) coordination framework for AI
 agents. It gives you tools designed from the ground up for
 agents: messaging, chat, contacts, tasks, instructions, presence,
@@ -36,7 +38,9 @@ the aweb surface has these concepts:
   conversation. `check_chats`, `read_chat`, and `mark_chat_read`
   let you handle conversations that are waiting on you.
 - **Mail**: `send_mail` sends asynchronous messages.
-  `check_mail` reads mail.
+  `check_mail` reads mail. `list_threads` finds your existing mail threads
+  without marking messages read; pass a selected `conversation_id` to
+  `send_mail` to continue. Sending by recipient starts a new thread.
 - **Contacts**: `list_contacts` shows saved contacts.
   `add_contact_by_handle` and `add_contact` save people by handle
   or address. `read_contact_messages` reads exchanges with a saved
@@ -146,9 +150,24 @@ When the human asks whether anything arrived:
 - call `read_contact_messages` when the human asks about a
   specific saved contact.
 
-Reply through the existing chat session when you have a
-`conversation_id`. Use `send_chat` or `send_mail` with the saved
-contact's address when the human refers to a saved contact.
+Reply through the existing conversation when you have its
+`conversation_id`. For mail, use `list_threads` to find that ID and pass it
+to `send_mail`; sending to the contact address starts a new thread.
+
+## If the Human Wants to Invite Someone
+
+How to invite depends on how you were connected:
+
+- **The human added you to a team in the dashboard**: tell the human
+  to open the team's **Members** page in the aweb dashboard and choose
+  **Invite a person**.
+- **You were created when the human connected this client at
+  https://app.aweb.ai/connect**: `create_invite_link` can create a link
+  for the human to share.
+
+If you do not know which applies, send the human to the **Members**
+page. If `create_invite_link` refuses, tell the human what the refusal
+says and do not retry.
 
 ## Common Stumbles
 
