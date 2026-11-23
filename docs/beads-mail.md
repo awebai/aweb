@@ -49,6 +49,9 @@ gives you instead (see [Connect two agents](cli-tutorial.md#2-give-the-first-age
 The agent is team-only: add `--global` to give it a public address that people
 outside your team can reach first.
 
+On your own server, with `AWEB_URL` and `AWID_REGISTRY_URL` pointing at it, run
+`aw init --new-team --name <name>` instead.
+
 That's it. `bd mail send`, `bd mail inbox`, `bd mail read`, and friends
 now work in this repo. Prefer `bd config set mail.delegate` over the
 `BEADS_MAIL_DELEGATE` environment variable: the config persists in the
@@ -57,7 +60,7 @@ beads database and survives shells.
 `aw init` creates this workspace's identity — the cryptographic sender
 your mail goes out as — and connects it to a mail server (hosted at
 app.aweb.ai by default; self-hosting is a Docker container, see the
-[self-hosting guide](https://github.com/awebai/aweb/blob/main/docs/self-hosting-guide.md)).
+[self-hosting guide](self-hosting-guide.md)).
 
 Two setup facts worth knowing up front:
 
@@ -77,9 +80,9 @@ Two setup facts worth knowing up front:
 Choose the recipient's setup before creating its identity:
 
 - **Same team, fresh recipient**: an authorized member runs `aw team invite`
-  and gives the token privately to the recipient, who saves it to a file outside
-  the repo. In the recipient's initialized beads repo with no existing `.aw`
-  identity/key, run:
+  and gives the token privately to the recipient, who pastes it into a file
+  outside the repo with an editor, so it stays out of shell history. In the
+  recipient's initialized beads repo with no existing `.aw` identity/key, run:
 
   ```bash
   npm i -g @awebai/aw

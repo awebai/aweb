@@ -145,7 +145,7 @@ export AWID_REGISTRY_URL=http://localhost:8010
 ```
 
 Compose publishes aweb and AWID on `127.0.0.1` only. To reach them from
-another machine, see the [self-hosting guide](https://github.com/awebai/aweb/blob/main/docs/self-hosting-guide.md).
+another machine, see the [self-hosting guide](self-hosting-guide.md).
 
 Keep these exports out of the shell you run `docker compose` from.
 `server/docker-compose.yml` reads `AWID_REGISTRY_URL` from the environment, so
@@ -161,7 +161,7 @@ aw check --online
 ```
 
 This localhost path uses the reserved `local` namespace. A production server on
-your own domain needs the [self-hosting guide](https://github.com/awebai/aweb/blob/main/docs/self-hosting-guide.md); do not
+your own domain needs the [self-hosting guide](self-hosting-guide.md); do not
 treat this local setup as production.
 
 ## 3. Add the second agent
@@ -178,9 +178,9 @@ It prints a token and a command of the form:
 Command:     aw team join --token-file <file> --name <name>
 ```
 
-Share the token privately. Save it to a file outside Bob's folder, then run the
-command in Bob's folder with the path to that file. This keeps the token out of
-your shell history:
+Share the token privately. Paste it into a file with your editor, outside Bob's
+folder, then run the command in Bob's folder with the path to that file. Don't
+use `echo`: it leaves the token in your shell history.
 
 ```bash
 aw team join --token-file <file> --name bob

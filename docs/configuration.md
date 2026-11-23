@@ -426,5 +426,5 @@ Use that file for `aw run` prompt defaults and local runtime settings.
 Server-side deployment environment variables are not stored in `.aw/`. For
 operator-facing configuration, see:
 
-- [self-hosting-guide.md](https://github.com/awebai/aweb/blob/main/docs/self-hosting-guide.md)
+- [self-hosting-guide.md](self-hosting-guide.md)
 - [server/README.md](../server/README.md)
