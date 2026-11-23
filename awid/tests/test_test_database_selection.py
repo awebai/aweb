@@ -43,10 +43,19 @@ def no_selection(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     return monkeypatch
 
 
-def test_a_run_that_names_no_server_is_refused(
-    no_selection: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    "named",
+    [{}, {"TEST_DB_HOST": "127.0.0.1"}, {"TEST_DB_PORT": "15432"}],
+    ids=["neither", "only-host", "only-port"],
+)
+def test_a_run_that_does_not_name_host_and_port_is_refused(
+    no_selection: pytest.MonkeyPatch, named: dict[str, str]
 ) -> None:
-    with pytest.raises(PostgresNotSelected):
+    for name, value in named.items():
+        no_selection.setenv(name, value)
+    missing = " and ".join(name for name in _SELECTIONS if name not in named)
+
+    with pytest.raises(PostgresNotSelected, match=f"^{missing} unset"):
         selected_test_database_config()
 
 

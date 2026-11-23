@@ -13,6 +13,7 @@ import pytest
 from awid.did import stable_id_from_did_key
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
+from awid_service.testing import selected_test_database_config
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
@@ -530,10 +531,9 @@ async def test_operator_verification_restores_only_bound_projections(privacy_app
         child_env = dict(os.environ)
         user = quote(os.environ.get("TEST_DB_USER", "postgres"), safe="")
         password = quote(os.environ.get("TEST_DB_PASSWORD", "postgres"), safe="")
-        host = os.environ.get("TEST_DB_HOST", "localhost")
-        port = os.environ.get("TEST_DB_PORT", "5432")
+        postgres = selected_test_database_config()
         child_env.update(
-            AWEB_DATABASE_URL=f"postgresql://{user}:{password}@{host}:{port}/{db_name}",
+            AWEB_DATABASE_URL=f"postgresql://{user}:{password}@{postgres.host}:{postgres.port}/{db_name}",
             AWID_REGISTRY_URL=origin,
         )
 
