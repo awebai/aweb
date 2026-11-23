@@ -15,7 +15,7 @@ import pytest
 from aweb_naapp_testing import Member, attested, did_key
 from awid.attestation_records import ATTESTATION_HEADER
 from awid.did import stable_id_from_did_key
-from awid_service.testing import REGISTRY_URL
+from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from fastapi import Depends, FastAPI, Request
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
@@ -208,6 +208,56 @@ async def test_an_unsigned_request_is_refused_and_not_recorded(
     async for runtime, client in _running(registry, app_database_url, tmp_path, grants):
         assert (await client.post("/v1/things", content=b"{}")).status_code == 401
         assert await _observed(runtime) == (0, 0)
+
+
+@pytest.mark.parametrize("refused", ["tampered-body", "altered-certificate", "revoked"])
+async def test_a_member_who_fails_authentication_is_not_recorded(
+    registry, member: Member, app_database_url: str, tmp_path: Path, refused: str
+) -> None:
+    request = _signed(member, "/v1/things")
+    if refused == "tampered-body":
+        request["content"] = b'{"tampered": true}'
+    elif refused == "altered-certificate":
+        altered = {**member.certificate(), "alias": "mallory"}
+        request["headers"] = member.headers(
+            aud=ORIGIN, method="POST", path="/v1/things", body=b"{}", cert=altered
+        )
+    else:
+        leaver = Member(
+            team_id=member.team_id, team_key=member.team_key, certificate_id="cert-2", alias="bob"
+        )
+        await registry.add_certificate(leaver.certificate(), team_key=leaver.team_key)
+        await registry.revoke(leaver.certificate_id)
+        request = _signed(leaver, "/v1/things")
+    grants = InstalledTeams({member.team_id: frozenset({"example:write"})})
+    async for runtime, client in _running(registry, app_database_url, tmp_path, grants):
+        assert (await client.post("/v1/things", **request)).status_code == 401
+        assert await _observed(runtime) == (0, 0)
+        admitted = await client.post("/v1/things", **_signed(member, "/v1/things"))
+        assert admitted.status_code == 200, admitted.text
+        assert await _observed(runtime) == (1, 1)
+
+
+async def test_the_runtime_reads_a_members_certificates_with_its_service_token(
+    registry, app_database_url: str, tmp_path: Path
+) -> None:
+    member = Member(team_id="backend:example.com")
+    await registry.add_team(member.team_id, member.team_did_key, visibility="private")
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
+    async for _, client in _running(
+        registry,
+        app_database_url,
+        tmp_path,
+        InstalledTeams({}),
+        awid_service_token=SERVICE_TOKEN,
+    ):
+        registry.transport.calls.clear()
+        response = await client.post("/v1/whoami", **_signed(member, "/v1/whoami"))
+        assert response.status_code == 200, response.text
+    # Without the token the runtime reads one certificate's status instead.
+    reads = [r for r in registry.transport.calls if r.url.path.endswith("/certificates")]
+    assert reads
+    assert all(r.headers.get("X-AWID-Service-Token") == SERVICE_TOKEN for r in reads)
 
 
 async def test_principal_authenticates_only_and_records_nothing(

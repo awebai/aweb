@@ -181,6 +181,9 @@ def later_page_fault(kind: str, first_cursor: dict):
         elif kind == "private":
             response.status_code = 403
             payload = {"detail": {"code": "team_private"}}
+        elif kind == "forbidden":
+            response.status_code = 403
+            payload = {"detail": {"code": "other"}}
         else:
             payload["has_more"] = True
             if kind == "cycling_cursor" and request.url.params["cursor"] == first_cursor["value"]:
@@ -199,7 +202,7 @@ def later_page_fault(kind: str, first_cursor: dict):
 @pytest.mark.parametrize("kind", [
     "payload", "json", "missing_has_more", "has_more", "certificates", "row", "missing_revoked_at",
     "missing_certificate_id", "oversized_page", "missing_cursor", "repeated_cursor", "blank_cursor",
-    "invalid_cursor", "cycling_cursor", "http", "transport",
+    "invalid_cursor", "cycling_cursor", "http", "forbidden", "transport",
 ])
 async def test_history_later_page_fault_fails_closed_then_recovers(registry, team, kind, caplog, history_clock):
     cache = history_cache(registry)
@@ -218,6 +221,35 @@ async def test_history_later_page_fault_fails_closed_then_recovers(registry, tea
         history_clock[0] += seconds_to_ns(5)
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
     assert TEAM_ID in cache._cache
+
+
+async def test_history_later_page_timeout_never_reuses_expired_facts(registry, team, caplog):
+    cache = history_cache(registry)
+    async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
+        expired = replace(cache._cache[TEAM_ID], expires_at=-1)
+        cache._cache[TEAM_ID] = expired
+        registry.transport.calls.clear()
+        registry.transport.fault = later_page_fault("transport", {})
+        assert (await client.get("/v1/items", headers=get_items(team))).status_code == 503
+    assert len(certificate_pages(registry)) == 2
+    assert cache._cache[TEAM_ID] is expired
+    assert "injected later-page timeout" in caplog.text
+
+
+async def test_history_unrecognised_first_page_refusal_is_unavailable(registry, team):
+    def fault(request, response):
+        if request.url.path.endswith("/certificates"):
+            response.status_code = 403
+            response._content = json.dumps({"detail": {"code": "other"}}).encode()
+
+    registry.transport.fault = fault
+    cache = history_cache(registry)
+    with pytest.raises(HTTPException) as caught:
+        await cache.get(TEAM_ID, "target")
+    assert caught.value.status_code == 503
+    assert len(certificate_pages(registry)) == 1
+    assert not cache._cache
 
 
 async def test_history_private_denial_is_classified(registry, team):
@@ -473,7 +505,7 @@ async def test_without_a_certificate_id_the_team_key_is_a_plain_read(registry, t
     assert caught.value.detail["code"] == "team_private_unreadable"
 
 
-@pytest.mark.parametrize("kind", [404, 429, 503, "timeout", "json"])
+@pytest.mark.parametrize("kind", [403, 404, 429, 503, "timeout", "json"])
 async def test_status_refresh_failure_has_no_stale_fallback(registry, team, kind):
     cache = status_cache(registry)
     await cache.get(TEAM_ID, "target")
