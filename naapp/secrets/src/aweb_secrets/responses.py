@@ -57,6 +57,30 @@ class BrokeredResult:
     truncated: bool
     upstream_bytes: int
 
+    @classmethod
+    def withheld(
+        cls,
+        *,
+        status: int,
+        reason: _WithheldReason,
+        truncated: bool,
+        upstream_bytes: int,
+        headers: list[tuple[str, str]] | None = None,
+        redaction_count: int = 0,
+        undeclared: bool = False,
+    ) -> BrokeredResult:
+        return cls(
+            status=status,
+            headers=[] if headers is None else headers,
+            body=None,
+            disposition="withheld",
+            withheld_reason=reason,
+            undeclared_credential=undeclared,
+            redaction_count=redaction_count,
+            truncated=truncated,
+            upstream_bytes=upstream_bytes,
+        )
+
 
 def _passes(name: str) -> bool:
     lowered = name.lower()
@@ -164,13 +188,11 @@ def handle_response(
     scan = scan or CredentialScan()
 
     def withheld(reason: _WithheldReason, undeclared: bool = False) -> BrokeredResult:
-        return BrokeredResult(
+        return BrokeredResult.withheld(
             status=status,
             headers=passed,
-            body=None,
-            disposition="withheld",
-            withheld_reason=reason,
-            undeclared_credential=undeclared,
+            reason=reason,
+            undeclared=undeclared,
             redaction_count=redaction_count,
             truncated=truncated,
             upstream_bytes=upstream_bytes,
@@ -220,9 +242,10 @@ def handle_response(
                 body, count = redact(body)
                 redaction_count += count
 
+        scan.check()
         if names_credential or has_credential_shape(body, scan=scan):
             return withheld("credential_shaped", not token_issuing)
-    except (CredentialScanUnavailable, RecursionError):
+    except (CredentialScanUnavailable, RecursionError, UnicodeError):
         return withheld("response_scan_unavailable")
     return BrokeredResult(
         status=status,

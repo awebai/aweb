@@ -3,10 +3,12 @@
 import asyncio
 import copy
 import json
+from threading import Event
 
 import pytest
 from fastapi import Response
 
+from aweb_secrets import responses
 from aweb_secrets.change import ChangeRefused, covered_bytes, parse_change, validate_change
 from aweb_secrets.console_forms.grants import _configuration
 from aweb_secrets.destination import DestinationInvalid, DestinationRecord
@@ -213,28 +215,26 @@ async def test_small_broker_request_completes_while_maximum_response_is_processe
             idempotency_key=charge,
         )
 
-    completed = []
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), Event()
+    scan = responses.has_credential_shape
 
-    async def call(charge):
-        result = (await _send(upstream, request(charge))).result
-        completed.append(charge)
-        return result
+    def hold_large_scan(body, **kwargs):
+        if len(body) == CEILING:
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(10), "peer did not release the large scanner"
+        return scan(body, **kwargs)
 
+    monkeypatch.setattr(responses, "has_credential_shape", hold_large_scan)
     async with asyncio.TaskGroup() as tasks:
-        send = upstream.egress.send
-        small = []
+        large = tasks.create_task(_send(upstream, request("ch_large")))
+        try:
+            async with asyncio.timeout(12):
+                await entered.wait()
+                small = await _send(upstream, request("ch_small"))
+            assert small.result.body == small_body
+            assert not large.done()
+        finally:
+            release.set()
 
-        async def send_and_start_small(*args, **kwargs):
-            received = await send(*args, **kwargs)
-            if len(received.body) == CEILING:
-                # Schedule the peer at the handoff after real DNS/TLS egress,
-                # so completing during the large download cannot pass the test.
-                small.append(tasks.create_task(call("ch_small")))
-            return received
-
-        monkeypatch.setattr(upstream.egress, "send", send_and_start_small)
-        large = tasks.create_task(call("ch_large"))
-
-    assert completed == ["ch_small", "ch_large"]
-    assert small[0].result().body == small_body
-    assert large.result().body == large_body
+    assert large.result().result.body == large_body

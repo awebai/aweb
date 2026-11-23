@@ -241,3 +241,35 @@ async def test_recorded_upgrade_purges_broker_payloads_before_immutable_import(d
                 dispatch_id,
                 json.dumps(legacy),
             )
+
+
+async def test_scan_unavailable_reason_is_added_to_the_installed_metadata_filter(db, tmp_path):
+    source = Path(__file__).parents[1] / "src/aweb_secrets/broker_outcome_migrations"
+    first = source / "001_purge_legacy.sql"
+    (tmp_path / first.name).write_bytes(first.read_bytes())
+    await AsyncMigrationManager(
+        db, migrations_path=str(tmp_path), module_name="aweb_secrets_broker_outcomes"
+    ).apply_pending_migrations()
+
+    async def metadata(code):
+        result = await db.fetch_value(
+            "SELECT {{tables.secrets_broker_metadata}}($1::jsonb)",
+            json.dumps(
+                {
+                    "state": "result_withheld",
+                    "code": code,
+                    "result": {"status": 200, "body": {"message": "raw response"}},
+                }
+            ),
+        )
+        return json.loads(result) if isinstance(result, str) else result
+
+    code = "response_scan_unavailable"
+    assert "code" not in await metadata(code)
+    await prepare_legacy_broker_outcomes(db)
+    assert await metadata(code) == {
+        "state": "result_withheld",
+        "code": code,
+        "result": {"status": 200, "body": None, "headers": None},
+    }
+    assert "code" not in await metadata("unreviewed_code")

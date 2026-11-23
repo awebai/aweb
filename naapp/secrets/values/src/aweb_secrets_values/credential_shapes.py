@@ -37,8 +37,11 @@ class CredentialScan:
         return cls(monotonic() + min(_SCAN_SECONDS, seconds))
 
     def check(self) -> None:
-        if monotonic() >= self.deadline:
+        if self.remaining() <= 0:
             raise CredentialScanUnavailable()
+
+    def remaining(self) -> float:
+        return self.deadline - monotonic()
 
 
 # Credential field names, compared lowercased with "_" and "-" removed.
@@ -75,6 +78,7 @@ _BASE64URL = r"[A-Za-z0-9_-]"
 _BASE64URL_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 _JWT_MIDDLE = re.compile(rf"\.eyJ(?={_BASE64URL}{{8,}}+\.{_BASE64URL}{{16}})")
 _JWT_START = re.compile(r"\beyJ")
+_JWT_CHECK_INTERVAL = 64 * 1024
 
 # Vendor rules have no right boundary. Matching the minimum already proves
 # existence and bounds the work at each candidate, regardless of its suffix.
@@ -130,22 +134,26 @@ def _json_has_credential_field(value: Any, *, in_credential_field: bool = False)
     return False
 
 
-def _has_jwt(text: str) -> bool:
+def _has_jwt(text: str, scan: CredentialScan | None) -> bool:
     # Only a dot can start a middle segment. Each candidate consumes a
     # disjoint base64url run in the lookahead. The left runs are also
     # disjoint; look for eyJ with eight characters still available.
     for middle in _JWT_MIDDLE.finditer(text):
+        if scan is not None:
+            scan.check()
         dot = middle.start()
         start = dot
         while start > 0 and text[start - 1] in _BASE64URL_CHARS:
             start -= 1
+            if scan is not None and start % _JWT_CHECK_INTERVAL == 0:
+                scan.check()
         if dot - start >= 11 and _JWT_START.search(text, start, dot - 8):
             return True
     return False
 
 
 def _has_token_pattern(text: str, scan: CredentialScan | None = None) -> bool:
-    if _has_jwt(text):
+    if _has_jwt(text, scan):
         return True
     for pattern in _TOKEN_PATTERNS:
         if scan is not None:

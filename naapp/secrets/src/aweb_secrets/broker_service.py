@@ -57,7 +57,7 @@ from pgdbm.core import TransactionManager
 
 from aweb_secrets import derived_lineage, tool_results
 from aweb_secrets.admission import Admission, AdmissionRefused, admit_use
-from aweb_secrets.broker import broker_operation
+from aweb_secrets.broker import BrokerInspectionCancelled, broker_operation
 from aweb_secrets.broker_audit import (
     BrokerAudit,
     freeze_broker_audit,
@@ -76,6 +76,7 @@ from aweb_secrets.response_capacity import (
     DEFAULT_RESPONSE_BUDGET_BYTES,
     ResponseBudget,
     ResponseCapacityUnavailable,
+    ResponseReservation,
 )
 from aweb_secrets.status_service import UseStatus
 from aweb_secrets.tokens import TokenCache
@@ -703,15 +704,15 @@ class BrokerRequests:
         submission: MemberSubmission,
         view: RegistrationView | None,
     ) -> ToolReply:
-        with self._response_budget.reservation() as reserve:
-            return await self._dispatch_reserved(use, submission, view, reserve)
+        with self._response_budget.reservation() as reservation:
+            return await self._dispatch_reserved(use, submission, view, reservation)
 
     async def _dispatch_reserved(
         self,
         use: _PreparedUse,
         submission: MemberSubmission,
         view: RegistrationView | None,
-        reserve: Callable[[int], None],
+        reservation: ResponseReservation,
     ) -> ToolReply:
         try:
             observation = await self._opener.observe(_context(use.call))
@@ -748,7 +749,7 @@ class BrokerRequests:
                         await self._fence.check(tx, use.admission.installation)
                         return reply
                     return await self._publication_receipt(tx, use)
-                reserve(final.broker.call.rendered.max_bytes)
+                reservation.charge(final.broker.call.rendered.max_bytes)
                 if current.state in {State.RECEIVED, State.AWAITING_APPROVAL}:
                     current = await self._machine(view).admit(tx, use.dispatch_id, fence=final)
                 send_until = asyncio.get_running_loop().time() + final.send_budget()
@@ -820,6 +821,9 @@ class BrokerRequests:
         request_id, request_ref = use.inputs.request.request_id, use.admission.intent_id
         audit = None
         sending = False
+        result = None
+        interrupted: asyncio.CancelledError | None = None
+        state = State.COMPLETED
         try:
             async with asyncio.timeout_at(send_until) as send_timeout:
                 plaintext = await self._opener.open(_context(call))
@@ -837,22 +841,26 @@ class BrokerRequests:
                     tokens=self._tokens,
                     secret=call.secret,
                     send_timeout=send_timeout,
+                    reservation=reservation,
                 )
-            reply = broker_result_reply(
-                outcome.result, request_id=request_id, request_ref=request_ref
-            )
-            state, audit = State.COMPLETED, outcome.audit.fields()
+        except BrokerInspectionCancelled as exc:
+            result, audit = exc.result, exc.audit.fields()
+            interrupted = exc
         except EgressOutcomeUnknown:
             state = State.OUTCOME_UNKNOWN
         except TimeoutError:
             state = State.OUTCOME_UNKNOWN if sending else State.NOT_SENT
         except (CustodyUnavailable, ValueInvalid, EgressRefused, EgressNotSent):
             state = State.NOT_SENT
-        if state is State.OUTCOME_UNKNOWN:
+        else:
+            result, audit = outcome.result, outcome.audit.fields()
+        if result is not None:
+            reply = broker_result_reply(result, request_id=request_id, request_ref=request_ref)
+        elif state is State.OUTCOME_UNKNOWN:
             reply = ToolReply(
                 200, tool_results.outcome_unknown(request_id=request_id, request_ref=request_ref)
             )
-        elif state is State.NOT_SENT:
+        else:
             reply = ToolReply(
                 503,
                 {
@@ -862,6 +870,31 @@ class BrokerRequests:
                     "next": "resubmit",
                 },
             )
+        settlement = self._settle_dispatch(use, current.attempts, state, reply, audit)
+        if state is not State.COMPLETED:
+            return await settlement
+
+        # A definite response must reach settlement even if the caller
+        # disconnects. Join settlement before releasing the dispatch scope.
+        completing = asyncio.create_task(settlement)
+        while not completing.done():
+            try:
+                await asyncio.shield(completing)
+            except asyncio.CancelledError as exc:
+                interrupted = exc
+        settled = completing.result()
+        if interrupted is not None:
+            raise interrupted
+        return settled
+
+    async def _settle_dispatch(
+        self,
+        use: _PreparedUse,
+        attempt: int,
+        state: State,
+        reply: ToolReply,
+        audit: Mapping[str, Any] | None,
+    ) -> ToolReply:
         async with self._db.transaction() as tx:
             approval = await self._lock_outcome(tx, use.dispatch_id)
             committed = await self._settle_locked(
@@ -871,7 +904,7 @@ class BrokerRequests:
                 reply,
                 audit,
                 approval,
-                expected_attempt=current.attempts,
+                expected_attempt=attempt,
             )
             if not committed:
                 return await self._receipt(tx, use.admission, use.dispatch_id)

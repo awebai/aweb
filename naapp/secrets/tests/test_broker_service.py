@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from threading import Event
 
 import pytest
 from aweb_naapp.dispatch import apply_dispatch_migrations
@@ -18,6 +19,7 @@ from aweb_naapp_testing.network import make_certificates
 from aweb_secrets_values import credential_shapes
 from fastapi import Request, Response
 
+from aweb_secrets import broker as broker_module
 from aweb_secrets import records
 from aweb_secrets.broker_service import BrokerRequests
 from aweb_secrets.custody import (
@@ -30,11 +32,21 @@ from aweb_secrets.custody.opening import UseSecretOpener
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.member_types import MemberSubmission, ToolReply
 from aweb_secrets.response_audit import ResponseKey
+from aweb_secrets.response_capacity import ResponseReservation
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import apply_use_approval_migrations
 from aweb_secrets.use_context import UseCommitter, apply_use_context_migrations
 from tests.harness import running_upstream
-from tests.test_admission import ALICE, BOB, NOW, SECRET, TEAM, _grant_source_grant, _install
+from tests.test_admission import (
+    ALICE,
+    BOB,
+    NOW,
+    POLICY_BODY,
+    SECRET,
+    TEAM,
+    _grant_source_grant,
+    _install,
+)
 from tests.test_broker_audit import INSTALLATION, envelopes, source, view
 from tests.test_broker_audit import db as db
 from tests.test_broker_audit import fence as fence
@@ -346,6 +358,90 @@ async def test_expired_inspection_withholds_a_completed_use_and_replay(
             "dispatching",
             "completed",
         ]
+
+
+@pytest.mark.parametrize("interruption", ["deadline", "cancellation"])
+async def test_a_held_inspection_settles_and_retains_capacity_until_worker_exit(
+    db, fence, tmp_path, monkeypatch, interruption
+):
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), Event()
+    inspect = broker_module.handle_response
+    retain = ResponseReservation.retain_until
+    workers = []
+
+    def held_inspection(**kwargs):
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(20), "test did not release the inspection"
+        return inspect(**kwargs)
+
+    def remember_worker(reservation, worker):
+        retain(reservation, worker)
+        workers.append(worker)
+
+    monkeypatch.setattr(broker_module, "handle_response", held_inspection)
+    monkeypatch.setattr(ResponseReservation, "retain_until", remember_worker)
+    if interruption == "deadline":
+        monkeypatch.setattr(credential_shapes, "_SCAN_SECONDS", 2.0)
+
+    async with running_upstream(tmp_path) as upstream:
+        service = await setup(
+            db,
+            fence,
+            tmp_path,
+            upstream,
+            response_budget_bytes=POLICY_BODY["result"]["max_bytes"],
+            policy_body={**POLICY_BODY, "rate": []},
+        )
+        original = submission(upstream)
+        sender = asyncio.create_task(service.submit(secret=SECRET["ref"], submission=original))
+        try:
+            async with asyncio.timeout(10):
+                await entered.wait()
+                if interruption == "cancellation":
+                    sender.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await sender
+                else:
+                    live = await sender
+                    assert live.body["state"] == "result_withheld"
+                    assert live.body["code"] == "response_scan_unavailable"
+                    assert live.body["result"]["headers"] == []
+            assert not workers[0].done()
+
+            # Make the original row old enough for the production sweeper
+            # while the inspection still holds its raw response.
+            await db.execute(
+                "UPDATE {{tables.dispatches}} SET sweep_after=clock_timestamp()-interval '1 second'"
+            )
+            assert await service.sweep() == 0
+            replay = await service.submit(secret=SECRET["ref"], submission=original)
+            assert replay.status == 200
+            assert replay.body["state"] == "result_withheld"
+            assert replay.body["code"] == "response_scan_unavailable"
+            assert replay.body["result"]["status"] == 200
+            assert replay.body["result"]["body"] is None
+            assert replay.body["result"]["headers"] is None
+            assert replay.body["result"]["undeclared_credential"] is False
+            assert await db.fetch_value("SELECT state FROM {{tables.dispatches}}") == "completed"
+            assert [e["payload"]["action"] for e in await envelopes(db)] == [
+                "admitted",
+                "dispatching",
+                "completed",
+            ]
+
+            following = submission(upstream, request_id="after-held-inspection")
+            blocked = await service.submit(secret=SECRET["ref"], submission=following)
+            assert blocked.status == 503 and blocked.body["code"] == "capacity_unavailable"
+            assert upstream.paths == ["/bearer/echo"]
+            release.set()
+            await asyncio.shield(workers[0])
+            retried = await service.submit(secret=SECRET["ref"], submission=following)
+            assert retried.body["state"] == "completed"
+            assert upstream.paths == ["/bearer/echo", "/bearer/echo"]
+        finally:
+            release.set()
+            await asyncio.gather(sender, *workers, return_exceptions=True)
 
 
 @pytest.mark.parametrize("next_call", ["same-pair", "different-url", "different-principal"])

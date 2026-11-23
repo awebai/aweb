@@ -9,6 +9,7 @@ import json
 import secrets
 
 import pytest
+from aweb_secrets_values import credential_shapes
 
 from aweb_secrets.redaction import KnownValues
 from aweb_secrets.responses import handle_response
@@ -46,6 +47,27 @@ def test_an_ordinary_response_is_returned_whole() -> None:
     assert result.undeclared_credential is False
     assert result.truncated is False
     assert result.upstream_bytes == len(body)
+
+
+def test_expiry_in_final_projection_redaction_is_not_a_credential_finding(monkeypatch) -> None:
+    known = _known()
+    redact_json = known.redact_json
+    now = 0.0
+    monkeypatch.setattr(credential_shapes, "monotonic", lambda: now)
+
+    def redact_and_advance(data):
+        nonlocal now
+        result = redact_json(data)
+        if "/password" in json.loads(data):
+            now = 100.0
+        return result
+
+    monkeypatch.setattr(known, "redact_json", redact_and_advance)
+    result = _handle(b'{"password":"generated"}', projection=["/password"], known=known)
+    assert result.disposition == "withheld"
+    assert result.withheld_reason == "response_scan_unavailable"
+    assert result.body is None
+    assert not result.undeclared_credential
 
 
 def test_only_allowed_headers_without_credential_shapes_pass() -> None:
@@ -100,7 +122,9 @@ def test_a_projection_returns_only_the_pointed_values() -> None:
 
 
 def test_a_projection_of_a_body_that_is_not_json_returns_nothing() -> None:
-    result = _handle(b"<html>not json</html>", headers=[("Content-Type", "text/html")], projection=["/id"])
+    result = _handle(
+        b"<html>not json</html>", headers=[("Content-Type", "text/html")], projection=["/id"]
+    )
     assert json.loads(result.body) == {}
 
 
@@ -155,12 +179,16 @@ def test_a_projection_that_drops_the_credential_fields_is_returned() -> None:
     "pointer", ["/access_token", "/Credentials/SessionToken", "/Credentials/secret-access-key"]
 )
 @pytest.mark.parametrize("token_issuing", [True, False])
-def test_a_projection_that_names_a_credential_field_is_withheld(pointer: str, token_issuing: bool) -> None:
+def test_a_projection_that_names_a_credential_field_is_withheld(
+    pointer: str, token_issuing: bool
+) -> None:
     document = {
         "access_token": "issued",
         "Credentials": {"SessionToken": "issued", "secret-access-key": "issued"},
     }
-    result = _handle(json.dumps(document).encode(), projection=[pointer], token_issuing=token_issuing)
+    result = _handle(
+        json.dumps(document).encode(), projection=[pointer], token_issuing=token_issuing
+    )
     assert result.disposition == "withheld"
     assert result.withheld_reason == "credential_shaped"
     assert result.body is None
@@ -173,9 +201,13 @@ def test_a_projection_naming_an_empty_credential_field_is_returned() -> None:
     assert result.disposition == "returned"
 
 
-@pytest.mark.parametrize("field", ["token", "client_token", "authToken", "bearer-token", "secret_key"])
+@pytest.mark.parametrize(
+    "field", ["token", "client_token", "authToken", "bearer-token", "secret_key"]
+)
 @pytest.mark.parametrize("project_parent", [True, False])
-def test_common_credential_fields_are_withheld_through_a_projection(field: str, project_parent: bool) -> None:
+def test_common_credential_fields_are_withheld_through_a_projection(
+    field: str, project_parent: bool
+) -> None:
     body = json.dumps({"auth": {field: secrets.token_urlsafe(24)}}).encode()
     projection = ["/auth"] if project_parent else [f"/auth/{field}"]
     result = _handle(body, projection=projection, token_issuing=True)
@@ -190,10 +222,22 @@ def test_a_bare_key_field_is_still_an_ordinary_projected_value() -> None:
     assert json.loads(result.body) == {"/key": "item-reference"}
 
 
-@pytest.mark.parametrize("pointer", ["/Credentials", "/Credentials/SessionToken", "/Credentials/SessionToken/0", "/Credentials/SessionToken/0/value"])
+@pytest.mark.parametrize(
+    "pointer",
+    [
+        "/Credentials",
+        "/Credentials/SessionToken",
+        "/Credentials/SessionToken/0",
+        "/Credentials/SessionToken/0/value",
+    ],
+)
 @pytest.mark.parametrize("token_issuing", [True, False])
-def test_projecting_a_credential_array_or_its_descendants_is_withheld(pointer: str, token_issuing: bool) -> None:
-    body = json.dumps({"Credentials": {"SessionToken": [{"value": secrets.token_urlsafe(24)}]}}).encode()
+def test_projecting_a_credential_array_or_its_descendants_is_withheld(
+    pointer: str, token_issuing: bool
+) -> None:
+    body = json.dumps(
+        {"Credentials": {"SessionToken": [{"value": secrets.token_urlsafe(24)}]}}
+    ).encode()
     result = _handle(body, projection=[pointer], token_issuing=token_issuing)
     assert result.disposition == "withheld"
     assert result.withheld_reason == "credential_shaped"
@@ -209,16 +253,35 @@ def test_projecting_a_credential_string_array_is_withheld(pointer: str) -> None:
     assert result.body is None
 
 
-@pytest.mark.parametrize("body", [b'{"id":"ok"}', b'{"access_token":"issued"}', b'error'])
+@pytest.mark.parametrize("body", [b'{"id":"ok"}', b'{"access_token":"issued"}', b"error"])
 @pytest.mark.parametrize("header_name", ["Location", "X-Request-Id", "ETag"])
-@pytest.mark.parametrize("field", ["access_token", "access%5Ftoken", "token", "client_token", "authToken", "bearer-token", "secret_key"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "access_token",
+        "access%5Ftoken",
+        "token",
+        "client_token",
+        "authToken",
+        "bearer-token",
+        "secret_key",
+    ],
+)
 @pytest.mark.parametrize("separator", ["?", "#"])
-def test_an_issued_credential_in_an_allowed_header_is_never_returned(body: bytes, header_name: str, field: str, separator: str) -> None:
+def test_an_issued_credential_in_an_allowed_header_is_never_returned(
+    body: bytes, header_name: str, field: str, separator: str
+) -> None:
     # The new value is not in KnownValues. A safe projection or an error body
     # must not let it leave through headers, even if the body is withheld.
     result = _handle(
         body,
-        headers=[("Content-Type", "application/json"), (header_name, f"https://upstream.example/next{separator}{field}={secrets.token_urlsafe(24)}")],
+        headers=[
+            ("Content-Type", "application/json"),
+            (
+                header_name,
+                f"https://upstream.example/next{separator}{field}={secrets.token_urlsafe(24)}",
+            ),
+        ],
         projection=["/id"],
         token_issuing=True,
     )
@@ -228,7 +291,9 @@ def test_an_issued_credential_in_an_allowed_header_is_never_returned(body: bytes
 def test_withholding_the_body_does_not_return_credential_shaped_headers() -> None:
     result = _handle(
         json.dumps({"SessionToken": secrets.token_urlsafe(24)}).encode(),
-        headers=[("Location", f"https://upstream.example/next?access_token={secrets.token_urlsafe(24)}")],
+        headers=[
+            ("Location", f"https://upstream.example/next?access_token={secrets.token_urlsafe(24)}")
+        ],
         token_issuing=True,
     )
     assert result.disposition == "withheld"
@@ -305,7 +370,9 @@ def test_a_compressed_response_is_withheld(encoding: str) -> None:
 
 
 def test_an_identity_encoded_response_is_returned() -> None:
-    result = _handle(b"{}", headers=[("Content-Type", "application/json"), ("Content-Encoding", "identity")])
+    result = _handle(
+        b"{}", headers=[("Content-Type", "application/json"), ("Content-Encoding", "identity")]
+    )
     assert result.disposition == "returned"
 
 
