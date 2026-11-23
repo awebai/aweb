@@ -46,7 +46,9 @@ func formatTeamAcceptInvite(v any) string {
 	if text := teamKeyConfirmationText(out.TeamKey); text != "" {
 		sb.WriteString(text + "\n")
 	}
-	if out.IDRegistration != "" {
+	if out.localJoinMember {
+		sb.WriteString("ID registration: not required for a local identity\n")
+	} else if out.IDRegistration != "" {
 		sb.WriteString(fmt.Sprintf("ID registration: %s\n", out.IDRegistration))
 	}
 	if out.Connected != nil && *out.Connected {

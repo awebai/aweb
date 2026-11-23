@@ -2578,12 +2578,15 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 }
 
 func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
-	testHostedLocalAcceptInviteIntoExternalIdentityHome(t, false)
+	testHostedLocalAcceptInviteIntoExternalIdentityHome(t, false, teamInviteInstallMembership)
 }
 func TestHostedLocalAcceptInviteIntoExternalIdentityHomeStdin(t *testing.T) {
-	testHostedLocalAcceptInviteIntoExternalIdentityHome(t, true)
+	testHostedLocalAcceptInviteIntoExternalIdentityHome(t, true, teamInviteInstallMembership)
 }
-func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdin bool) {
+func TestHostedLocalJoinIntoExternalIdentityHome(t *testing.T) {
+	testHostedLocalAcceptInviteIntoExternalIdentityHome(t, false, teamInviteConnectWorkspace)
+}
+func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdin bool, completion teamInviteCompletionMode) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -2712,6 +2715,9 @@ func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdi
 
 	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "aw_inv_external_local", "--name", "alice", "--local", "--json")
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	if completion == teamInviteConnectWorkspace {
+		run.Args = []string{bin, "--identity-home", identityHome, "team", "join", "aw_inv_external_local", "--name", "alice", "--local"}
+	}
 	if tokenStdin {
 		run.Args = []string{bin, "--identity-home", identityHome, "id", "team", "accept-invite", "--token-stdin", "--name", "alice", "--local", "--json"}
 		run.Stdin = strings.NewReader(" aw_inv_external_local\n")
@@ -2727,12 +2733,27 @@ func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdi
 	if tokenStdin && strings.Contains(string(out)+stderr.String(), "aw_inv_external_local") {
 		t.Fatal("trace/output leaked invite token")
 	}
-	var got map[string]any
-	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
-		t.Fatalf("invalid json: %v\n%s", err, out)
-	}
-	if got["team_id"] != teamID || got["alias"] != "alice" || got["connected"] != true {
-		t.Fatalf("output=%v", got)
+	if completion == teamInviteConnectWorkspace {
+		for _, want := range []string{
+			"ID registration: not required for a local identity",
+			"Connected to " + server.URL + " as alice",
+			"Next, run `" + formatShellCommand([]string{"aw", "--identity-home", identityHome, "check", "--online"}) + "`",
+		} {
+			if !strings.Contains(string(out), want) {
+				t.Errorf("hosted join output missing %q:\n%s", want, out)
+			}
+		}
+		if strings.Contains(string(out), "ID registration: unknown") {
+			t.Errorf("hosted local join reported unknown ID registration:\n%s", out)
+		}
+	} else {
+		var got map[string]any
+		if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+			t.Fatalf("invalid json: %v\n%s", err, out)
+		}
+		if got["team_id"] != teamID || got["alias"] != "alice" || got["connected"] != true || got["id_registration"] != "unknown" {
+			t.Fatalf("output=%v", got)
+		}
 	}
 	if !sawConnect {
 		t.Fatal("external local accept did not auto-connect")

@@ -55,6 +55,7 @@ type teamAcceptInviteOutput struct {
 	AwebURL          string                `json:"aweb_url,omitempty"`
 	ConnectCommand   string                `json:"connect_command,omitempty"`
 	nextCheckCommand string
+	localJoinMember  bool
 }
 
 type teamAddMemberOutput struct {
@@ -1165,6 +1166,7 @@ func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamI
 	if err != nil {
 		return err
 	}
+	accepted.Output.localJoinMember = connectWorkspace && accepted.Certificate != nil && awid.NormalizeIdentityScope(accepted.Certificate.IdentityScope) == awid.IdentityModeLocal
 	connectionFailure := func(cause error) error {
 		if connectWorkspace && teamHumanJoinHarness != "" {
 			connected := false
