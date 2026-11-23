@@ -1,7 +1,7 @@
 """Real CLI/AWID/aweb: an unavailable selected-team roster cannot select a peer.
 
-Disposable SQL provisions two teams. All certificate registrations/revocations,
-roster reads, mail/chat sends and inbox reads use real production services. The
+Both teams and their members are registered and admitted by the production
+services, which also handle roster reads, sends, revocations and inbox reads. The
 fault is a genuinely unreachable client-only registry origin, a conflicting
 registry pin, or a dropped agent-list TCP connection; no decision is replaced.
 """
@@ -17,16 +17,23 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 import uvicorn
 from aweb_naapp_testing.network import make_certificates
 import yaml
-from awid.signing import canonical_json_bytes, load_signing_key_pem, sign_message
+from awid.identity_observation import IdentityKind
+from awid.team_certificate import decode_team_certificate, issue_team_certificate
 
+from messaging_actor_support import admit_messaging_actor, privacy_actor, register_messaging_team
 from tests.test_addressless_sender_cli import _registry_http
-from tests.test_dashboard_privacy import TEAM, privacy_app as privacy_app  # noqa: F401
-from tests.test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_identity_headers
+from tests.test_dashboard_privacy import TEAM, privacy_stack
+from tests.test_messages_http import _make_keypair, _signed_identity_headers
 
-__all__ = ["privacy_app"]
+
+@pytest_asyncio.fixture
+async def alias_world(shared_test_pool, monkeypatch):
+    async with privacy_stack(shared_test_pool, monkeypatch, aliases=()) as env:
+        yield env
 
 
 @asynccontextmanager
@@ -142,23 +149,17 @@ async def run_aw(binary, cwd, env, *args):
     return process.returncode, json.loads(out or b"{}"), err.decode()
 
 
-async def register(env, team, controller, actor, alias):
-    domain, name = team.split(":", 1)[1], team.split(":", 1)[0]
-    certificate = _make_certificate(controller, "", actor.did, team_id=team, alias=alias,
-        identity_scope="local", certificate_id=str(uuid4()))
-    # Local membership has no invented global identity/address.
-    for field in ("member_did_aw", "member_address", "signature"):
-        certificate.pop(field)
-    from awid.did import did_from_public_key
-    from nacl.signing import SigningKey
-
-    certificate["team_did_key"] = did_from_public_key(bytes(SigningKey(controller).verify_key))
-    certificate["signature"] = sign_message(controller, canonical_json_bytes(certificate))
+async def register_sender(env, team, controller, did):
+    name, domain = team.split(":", 1)
+    certificate, wire = issue_team_certificate(
+        team_id=team, team_signing_key=controller, member_did_key=did,
+        alias="sender", identity_scope="local",
+    )
     await env.app.state.awid_registry_client.register_team_certificate(
         domain, name, team_controller_signing_key=controller,
-        certificate_id=certificate["certificate_id"], member_did_key=actor.did,
-        member_did_aw=None, member_address=None, alias=alias, identity_scope="local",
-        certificate=_encode_certificate(certificate),
+        certificate_id=certificate["certificate_id"], member_did_key=did,
+        member_did_aw=None, member_address=None, alias="sender", identity_scope="local",
+        certificate=wire,
     )
     return certificate
 
@@ -168,30 +169,20 @@ async def memberships(env, tmp_path, registry_url, *, missing):
 
     beta = f"alias-{uuid4().hex[:12]}:example.test"
     beta_key, _, beta_did = _make_keypair()
-    await env.db.execute(
-        "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES($1,'example.test',$2,$3)",
-        beta, beta.split(":", 1)[0], beta_did,
+    beta_world = SimpleNamespace(
+        app=env.app, client=env.client, registry=env.registry,
+        team_sk=beta_key, team_did=beta_did,
     )
-    await env.registry_db.execute(
-        "INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) VALUES('example.test',$1,$2,'public')",
-        beta.split(":", 1)[0], beta_did,
-    )
-    alice, carol = (env.actors[name] for name in ("alice", "carol"))
+    await register_messaging_team(beta_world, team_id=beta)
     alpha_alias = "someone-else" if missing else "reviewer"
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET alias=$1,agent_type='human',human_verified_key=did_key WHERE agent_id=$2",
-        alpha_alias, alice.id,
-    )
-    await env.db.execute("UPDATE {{tables.workspaces}} SET alias=$1 WHERE workspace_id=$2", alpha_alias, alice.workspace)
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET team_id=$1,alias='reviewer',accepted_team_did_key=$2 WHERE agent_id=$3",
-        beta, beta_did, carol.id,
-    )
-    await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$1,alias='reviewer' WHERE workspace_id=$2", beta, carol.workspace)
-    human_certificate = await register(env, TEAM, env.team_sk, alice, alpha_alias)
-    peer_certificate = await register(env, beta, beta_key, carol, "reviewer")
-    for actor, cert in ((alice, human_certificate), (carol, peer_certificate)):
-        await env.db.execute("UPDATE {{tables.agents}} SET certificate_id=$1 WHERE agent_id=$2", cert["certificate_id"], actor.id)
+    alice = privacy_actor(await admit_messaging_actor(
+        env, alias=alpha_alias, team_id=TEAM, kind=IdentityKind.HUMAN,
+    ))
+    bob = privacy_actor(await admit_messaging_actor(env, alias="bob", team_id=TEAM, local=True))
+    carol = privacy_actor(await admit_messaging_actor(
+        beta_world, alias="reviewer", team_id=beta, local=True,
+    ))
+    env.actors.update(alice=alice, bob=bob, carol=carol)
     projection = await env.db.fetch_one(
         """SELECT did_aw, did_aw_verified_key, human_verified_key
            FROM {{tables.agents}} WHERE agent_id=$1""",
@@ -199,6 +190,7 @@ async def memberships(env, tmp_path, registry_url, *, missing):
     )
     assert projection is not None
     assert (projection["did_aw"] or "").startswith("did:aw:")
+    assert projection["did_aw"] == alice.stable_id
     assert projection["did_aw_verified_key"] == alice.did
     assert projection["human_verified_key"] == alice.did
     home = tmp_path / "sender-home"
@@ -210,11 +202,11 @@ async def memberships(env, tmp_path, registry_url, *, missing):
     code, identity, stderr = await run_aw(binary, tmp_path, child_env,
         "--identity-home", str(home), "id", "create", "--local")
     assert code == 0, (identity, stderr)
-    sender = SimpleNamespace(did=identity["did_key"], sk=load_signing_key_pem((home / "signing.key").read_bytes()))
+    sender_did = identity["did_key"]
     # Let the real CLI write every identity, certificate, membership and
     # workspace file. Registry pins belong to teams.yaml, never workspace.yaml.
     for team, key in ((TEAM, env.team_sk), (beta, beta_key)):
-        cert = await register(env, team, key, sender, "sender")
+        cert = await register_sender(env, team, key, sender_did)
         code, fetched, stderr = await run_aw(binary, tmp_path, child_env,
             "id", "team", "fetch-cert", "--team", team.split(":", 1)[0],
             "--namespace", "example.test", "--cert-id", cert["certificate_id"], "--registry", registry_url)
@@ -228,15 +220,16 @@ async def memberships(env, tmp_path, registry_url, *, missing):
     code, status, stderr = await run_aw(binary, tmp_path, child_env, "workspace", "status")
     assert code == 0, (status, stderr)
     assert status["selected_team"] == TEAM
-    alpha_sender = await env.db.fetch_value("SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND did_key=$2", TEAM, sender.did)
-    beta_sender = await env.db.fetch_value("SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND did_key=$2", beta, sender.did)
+    alpha_sender = await env.db.fetch_value("SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND did_key=$2", TEAM, sender_did)
+    beta_sender = await env.db.fetch_value("SELECT agent_id FROM {{tables.agents}} WHERE team_id=$1 AND did_key=$2", beta, sender_did)
     assert alpha_sender is not None and beta_sender is not None
-    return SimpleNamespace(beta=beta, alpha_sender=alpha_sender, beta_sender=beta_sender, human=human_certificate,
+    return SimpleNamespace(beta=beta, alpha_sender=alpha_sender, beta_sender=beta_sender,
+        human=decode_team_certificate(alice.certificate),
         env=child_env, home=home)
 
 
 async def inbox(env, actor):
-    response = await env.client.get("/v1/messages/inbox", headers=_signed_identity_headers(actor.sk, actor.did, "", b""))
+    response = await env.client.get("/v1/messages/inbox", headers=_signed_identity_headers(actor.sk, actor.did, actor.stable_id, b""))
     assert response.status_code == 200, response.text
     return response.json()["messages"]
 
@@ -252,9 +245,9 @@ async def inbox(env, actor):
     ("agent_list_unavailable", "chat"), ("listed_agent", "chat"), ("unknown", "chat"),
     ("agent_list_unavailable", "chat_wait"), ("unreachable", "chat_wait"),
 ])
-async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_path, monkeypatch, condition, kind):
+async def test_bare_alias_never_changes_team_on_unknown_roster(alias_world, tmp_path, monkeypatch, condition, kind):
     tmp_path = tmp_path.resolve()
-    env = privacy_app
+    env = alias_world
     async with (
         registry_origin(env, tmp_path, monkeypatch, condition == "https") as registry_url,
         unavailable_origin() as down,

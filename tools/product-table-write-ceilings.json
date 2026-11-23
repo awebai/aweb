@@ -196,7 +196,6 @@
     "server/tests/test_chat_session_seq.py": 9,
     "server/tests/test_chat_stream_commit_order.py": 1,
     "server/tests/test_cli_agent_status.py": 1,
-    "server/tests/test_cli_alias_team_resolution.py": 7,
     "server/tests/test_cli_human_reply.py": 5,
     "server/tests/test_cli_never_grants.py": 6,
     "server/tests/test_closed_task_claims.py": 3,
