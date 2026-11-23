@@ -470,6 +470,9 @@ func resolveRegistryClientForLookup(workingDir string) (*awid.RegistryClient, *a
 	if err != nil {
 		return nil, nil, err
 	}
+	if identity != nil {
+		trustStoredRegistryOrigins(registry.Resolver, workingDir, identity.IdentityHome)
+	}
 	return registry, identity, nil
 }
 
@@ -482,7 +485,11 @@ func resolveIdentityRegistryClient(identity *awconfig.ResolvedIdentity) (*awid.R
 	if err != nil {
 		return nil, err
 	}
-	return newRegistryClientWithPreferredBaseURL(baseURL)
+	registry, err := newRegistryClientWithPreferredBaseURL(baseURL)
+	if err == nil && identity != nil {
+		trustRecordedRegistryOrigin(registry.Resolver, identity.RegistryURL, identity.RegistryOperatorOrigin)
+	}
+	return registry, err
 }
 
 func resolveIdentitySigningKey(identity *awconfig.ResolvedIdentity) (ed25519.PrivateKey, error) {
@@ -500,7 +507,11 @@ func resolveIdentitySigningKey(identity *awconfig.ResolvedIdentity) (ed25519.Pri
 }
 
 func resolveOptionalGlobalIdentityForLookup(workingDir string) (*awconfig.ResolvedIdentity, error) {
-	identity, err := awconfig.ResolveIdentity(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	identity, err := awconfig.ResolveIdentityFromHome(workingDir, home.Root)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil

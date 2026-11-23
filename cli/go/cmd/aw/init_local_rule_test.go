@@ -290,6 +290,14 @@ func TestImplicitLocalInitRecordsTheRegistryItUsesNow(t *testing.T) {
 	if meta.RegistryURL != registry.URL {
 		t.Fatalf("controller record keeps registry %q, want %q", meta.RegistryURL, registry.URL)
 	}
+	if meta.RegistryOperatorOrigin != registry.URL {
+		t.Fatalf("operator choice was not stored for registry %q", registry.URL)
+	}
+	t.Setenv("AWID_REGISTRY_URL", "")
+	client := awid.NewAWIDRegistryClient(nil, nil)
+	if _, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{Kind: registryTeamRoute, Registry: client, WorkingDir: t.TempDir(), Domain: "local"}); err != nil || !client.Resolver.RegistryOriginTrusted(registry.URL) {
+		t.Fatalf("recorded controller registry was not trusted after the environment was removed: %v", err)
+	}
 	if got, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{Kind: registryTeamRoute, WorkingDir: t.TempDir(), Domain: "local"}); err != nil || got != registry.URL {
 		if err != nil {
 			t.Fatal(err)

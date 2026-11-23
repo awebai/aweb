@@ -98,7 +98,7 @@ func createUnaddressedIdentity(ctx context.Context, c unaddressedCreate) (map[st
 		identity.RegistryURL, identity.RegistryStatus = c.RegistryURL, "registered"
 		result["did_aw"], result["registry_url"] = stableID, c.RegistryURL
 	}
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(c.Root, "identity.yaml"), identity); err != nil {
+	if err := saveWorktreeIdentityWithRegistryOrigin(filepath.Join(c.Root, "identity.yaml"), identity); err != nil {
 		return nil, err
 	}
 	if err := os.Remove(statePath); err != nil {
