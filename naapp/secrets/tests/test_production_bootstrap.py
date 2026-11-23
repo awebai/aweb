@@ -26,9 +26,7 @@ from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
 from aweb_naapp_testing.smtp import SmtpServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.did import did_from_public_key
-from awid.dns_verify import DnsVerificationError
-from awid_service.deps import get_domain_verifier
-from awid_service.testing import SERVICE_TOKEN
+from awid_service.testing import SERVICE_TOKEN, fixture_domain_authority
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from nacl.signing import SigningKey
 
@@ -69,10 +67,7 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
     async def domain_authority(domain):
         # Forward the test registry's actual namespace authority, never a
         # fabricated record or fallback to the public example.com DNS.
-        configured = registry.app.dependency_overrides.get(get_domain_verifier)
-        if configured is None:
-            raise DnsVerificationError("the test registry has no namespace verifier")
-        return await configured()(domain)
+        return await fixture_domain_authority(registry.app, domain)
 
     private = options.get("private_team", False)
     async with authority(
