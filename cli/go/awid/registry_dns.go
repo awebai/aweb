@@ -34,6 +34,7 @@ func (r *NetTXTResolver) LookupTXT(ctx context.Context, name string) ([]string, 
 type DomainAuthority struct {
 	ControllerDID string
 	RegistryURL   string
+	RegistryNamed bool
 	DNSName       string
 	Inherited     bool
 }
@@ -115,6 +116,7 @@ func ParseAWIDTXTRecord(record, dnsName string) (DomainAuthority, error) {
 	}
 
 	registry := strings.TrimSpace(fields["registry"])
+	named := registry != ""
 	if registry == "" {
 		registry = DefaultAWIDRegistryURL
 	} else {
@@ -128,6 +130,7 @@ func ParseAWIDTXTRecord(record, dnsName string) (DomainAuthority, error) {
 	return DomainAuthority{
 		ControllerDID: controller,
 		RegistryURL:   registry,
+		RegistryNamed: named,
 		DNSName:       dnsName,
 	}, nil
 }

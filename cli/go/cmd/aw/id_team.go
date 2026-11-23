@@ -1989,7 +1989,7 @@ func acceptHostedTeamInviteWithDetails(input teamInviteAcceptanceRequest) (resul
 		if subjectID == "" {
 			subjectID = prior.DIDKey
 		}
-		_, refusal := verifyInviteMembership(ctx, prior.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: prior.DIDKey}, prior.ForHuman, opts.Registry, opts.TXTResolver)
+		_, refusal := verifyInviteMembership(ctx, prior.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: prior.DIDKey}, prior.ForHuman, opts.Registry, opts.TXTResolver, inviteIdentityRegistryScope(workingDir, home.Root, prior.ParentHome))
 		if awid.IDCertificateErrorCode(refusal) == "human_mismatch" {
 			if err := discardHostedInviteAttempt(recoveryPath); err != nil {
 				return nil, errors.Join(refusal, err)

@@ -19,7 +19,7 @@ import (
 
 // Verify the presented identity in its own namespace, independently of the team
 // it is joining. All signature, ancestry and current-status rules are SDK rules.
-func verifyInviteMembership(ctx context.Context, bundle map[string]any, subject awid.IDChainSubject, required *string, registry *awid.RegistryClient, resolver awid.TXTResolver) (*awid.IDChainResult, error) {
+func verifyInviteMembership(ctx context.Context, bundle map[string]any, subject awid.IDChainSubject, required *string, registry *awid.RegistryClient, resolver awid.TXTResolver, scope identityRegistryScope) (*awid.IDChainResult, error) {
 	if bundle == nil {
 		return nil, missingInviteHumanChain(required)
 	}
@@ -28,17 +28,17 @@ func verifyInviteMembership(ctx context.Context, bundle map[string]any, subject 
 		return nil, err
 	}
 	domain := plan["domain"].(string)
-	_, origin, err := childIssuerRegistry(ctx, idChildOptions{TXTResolver: resolver}, domain)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", &awid.IDCertificateError{Code: "evidence_unavailable"}, err)
-	}
 	if registry == nil {
 		registry, err = newConfiguredRegistryClient(nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-	evidence := idStatusAt(registry, resolver, origin).IDChainEvidence(ctx, bundle, subject, domain)
+	route, err := resolveIdentityEvidenceRoute(ctx, registry, resolver, scope, domain, "")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", &awid.IDCertificateError{Code: "evidence_unavailable"}, err)
+	}
+	evidence := route.status(registry).IDChainEvidence(ctx, bundle, subject, domain)
 	verdict := awid.VerifyIDChain(bundle, subject, evidence, domain)
 	if verdict.IdentityValid == nil || !*verdict.IdentityValid {
 		return nil, &awid.IDCertificateError{Code: verdict.Reason}

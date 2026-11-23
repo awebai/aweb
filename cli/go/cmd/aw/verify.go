@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	proof "github.com/awebai/approval-service/verify"
 	"github.com/awebai/aw/approval"
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
@@ -52,7 +54,7 @@ evidence or unreadable input.`,
 }
 
 func init() {
-	verifyCmd.Flags().StringVar(&verifyRegistry, "registry", "", "Registry origin, when the domain's _awid record names none (same restriction as aw who)")
+	verifyCmd.Flags().StringVar(&verifyRegistry, "registry", "", "Registry origin when neither the identity home nor DNS names a non-default registry")
 	verifyCmd.GroupID = groupIdentity
 	rootCmd.AddCommand(verifyCmd)
 	identityHomeNeutralCommandExemptions[verifyCmd] = struct{}{}
@@ -75,8 +77,14 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
-	out := verifyExportedMessage(ctx, raw, whoOptions{RegistryURL: verifyRegistry, TXTResolver: &awid.NetTXTResolver{}})
-	printOutput(out, formatVerifiedMessage)
+	wd, _ := os.Getwd()
+	out := verifyExportedMessage(ctx, raw, whoOptions{WorkingDir: wd, RegistryURL: verifyRegistry, TXTResolver: &awid.NetTXTResolver{}})
+	if err := printOutput(out, formatVerifiedMessage); err != nil {
+		return err
+	}
+	if out.registryError != nil {
+		return out.registryError
+	}
 	if out.IdentityValid != nil && !*out.IdentityValid {
 		return &cliError{code: 1, msg: "invalid message proof: " + out.Reason}
 	}
@@ -148,16 +156,29 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 		return whoOutput{ID: subject.ID, IDChainResult: preflight}
 	}
 	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
-	status := awid.NewIDStatusClient(registry, opts.TXTResolver)
-	override := opts.RegistryURL
-	// Select every domain's registry under the same rule as who. Keeping route
-	// failures inside the shared status client makes DNS outages unavailable too.
-	status.Route = func(ctx context.Context, domain string) (string, error) {
-		authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
-		if err != nil {
-			return "", err
+	scope := selectedIdentityRegistryScope(opts.WorkingDir)
+	routeFailure := func(err error) whoOutput {
+		result := messageVerificationFailure(subject.ID, "evidence_unavailable", false)
+		var refusal *cliError
+		if errors.As(err, &refusal) {
+			result.registryError = refusal
 		}
-		return domainRegistryURL(authority, override)
+		return result
+	}
+	status := awid.NewIDStatusClient(registry, opts.TXTResolver)
+	var statusDomain string
+	var route identityEvidenceRoute
+	if export.IDChain != nil {
+		plan, err := awid.IDStatusRequest(export.IDChain, subject, "")
+		if err != nil {
+			return messageVerificationFailure(subject.ID, "malformed_envelope", true)
+		}
+		statusDomain, _ = plan["domain"].(string)
+		route, err = resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, scope, statusDomain, opts.RegistryURL)
+		if err != nil {
+			return routeFailure(err)
+		}
+		status = route.status(registry)
 	}
 	if strings.HasPrefix(subject.ID, "did:aw:") {
 		// An addressless proof supplies its domain through the certificate.
@@ -168,10 +189,17 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 			return messageVerificationFailure(subject.ID, "malformed_envelope", true)
 		}
 		if domain != "" {
-			var err error
-			registryURL, err = status.Route(ctx, domain)
-			if err != nil {
-				return messageVerificationFailure(subject.ID, "evidence_unavailable", false)
+			if statusDomain != "" && (awconfig.NormalizeDomain(domain) == statusDomain || scope.applies(statusDomain)) {
+				if scope.applies(statusDomain) && route.authority.ControllerDID == "" {
+					return routeFailure(nil)
+				}
+				registryURL = route.origin
+			} else {
+				keyRoute, err := resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, scope, domain, opts.RegistryURL)
+				if err != nil {
+					return routeFailure(err)
+				}
+				registryURL = keyRoute.origin
 			}
 		}
 		if registryURL == "" {
@@ -202,7 +230,7 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 			return &checked, nil
 		}
 	}
-	opts.RegistryURL = "" // The route above already enforces the explicit override.
+	opts.RegistryURL = "" // The selected status route already enforces the explicit override.
 	out, err := executeWhoReceived(ctx, message, opts)
 	if err != nil {
 		return messageVerificationFailure(subject.ID, "evidence_unavailable", false)

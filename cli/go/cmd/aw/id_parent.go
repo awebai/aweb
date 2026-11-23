@@ -101,6 +101,7 @@ type idParentOptions struct {
 	HumanAtTerminal func() error
 	Keychain        awid.HumanKeyStore
 	Prompt          awid.PassphrasePrompt
+	registryScope   identityRegistryScope
 }
 
 func idParentOptionsFromFlags(commands ...*cobra.Command) idParentOptions {
@@ -461,16 +462,13 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 		r.domain = domain
 	}
 	call, cancel := commandAPIContext(nil, ctx)
-	authority, err := awid.DiscoverAuthoritativeRegistry(call, opts.TXTResolver, r.domain)
+	registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
+	route, err := resolveIdentityEvidenceRoute(call, registry, opts.TXTResolver, opts.registryScope, r.domain, opts.RegistryURL)
 	cancel()
-	if err != nil {
-		return idParentImportOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(r.domain), err)
-	}
-	registryURL, err := domainRegistryURL(authority, opts.RegistryURL)
 	if err != nil {
 		return idParentImportOutput{}, err
 	}
-	registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
+	registryURL := route.origin
 	registry.DefaultRegistryURL = registryURL
 
 	chain := response.Chain().Bundle()
@@ -483,7 +481,7 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 			return idParentImportOutput{}, err
 		}
 		subject := awid.IDChainSubject{ID: r.id, DIDKey: r.didKey}
-		evidence := idStatusAt(registry, opts.TXTResolver, registryURL).IDChainEvidence(ctx, chain, subject, r.domain)
+		evidence := route.status(registry).IDChainEvidence(ctx, chain, subject, r.domain)
 		if err := validateParentReplacement(r, outgoing, signed, chain); err != nil {
 			return idParentImportOutput{}, err
 		}

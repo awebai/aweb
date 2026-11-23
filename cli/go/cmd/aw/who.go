@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,7 +35,7 @@ with an optional --message-id for chat. These reads do not acknowledge messages.
 }
 
 func init() {
-	whoCmd.Flags().StringVar(&whoRegistry, "registry", "", "Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)")
+	whoCmd.Flags().StringVar(&whoRegistry, "registry", "", "Registry origin when neither the identity home nor DNS names a non-default registry")
 	whoCmd.Flags().StringVar(&whoMessageID, "message-id", "", "Inspect the sender of this received mail or chat message")
 	whoCmd.Flags().StringVar(&whoSessionID, "session-id", "", "Inspect received chat in this session")
 	whoCmd.Flags().BoolVar(&whoRoom, "room", false, "Inspect an exact team room post (requires --message-id)")
@@ -55,6 +56,7 @@ type whoOptions struct {
 	WorkingDir         string
 	RegistryURL        string
 	TXTResolver        awid.TXTResolver
+	ownIdentity        *awconfig.ResolvedIdentity
 }
 
 // whoLink is one verified certificate of the chain, root side first.
@@ -67,8 +69,9 @@ type whoOutput struct {
 	ID     string `json:"id"`
 	Domain string `json:"domain"`
 	awid.IDChainResult
-	Chain    []whoLink                 `json:"chain,omitempty"`
-	Evidence []approval.EvidenceReport `json:"evidence,omitempty"`
+	Chain         []whoLink                 `json:"chain,omitempty"`
+	Evidence      []approval.EvidenceReport `json:"evidence,omitempty"`
+	registryError error
 }
 
 func runWho(cmd *cobra.Command, args []string) error {
@@ -146,15 +149,7 @@ func executeWho(ctx context.Context, opts whoOptions) (whoOutput, error) {
 		certificates := bundle["certificates"].([]any)
 		domain, _ = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
 	}
-	if strings.HasPrefix(id, "did:aw:") && opts.ReceivedEnrollment == nil {
-		// The identity's own key route is independent of a presented chain.
-		opts.ReceivedEnrollment = func(ctx context.Context, id, key string) awid.IDTreeEnrollmentResult {
-			if resolution, err := identityKeyRoute(ctx, identity, ""); err == nil {
-				return resolution.IDTreeEnrollmentOf(id, key, time.Now())
-			}
-			return awid.IDTreeEnrollmentResult{State: "unknown"}
-		}
-	}
+	opts.ownIdentity = identity
 	return verifyWhoPresentation(ctx, awid.IDChainSubject{ID: id, DIDKey: identity.DID}, bundle, domain, opts)
 }
 
@@ -166,10 +161,53 @@ func verifyWhoPresentation(ctx context.Context, subject awid.IDChainSubject, bun
 		out.IDChainResult = preflight
 		return out, nil
 	}
+	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
+	reader := opts.Status
+	scope := identityRegistryScope{identity: opts.ownIdentity, domain: domain}
+	if opts.ownIdentity == nil {
+		scope = selectedIdentityRegistryScope(opts.WorkingDir)
+	}
+	private := recordedPrivateIdentityRegistry(scope.identity) != "" && (opts.ownIdentity != nil || scope.applies(domain))
+	var route identityEvidenceRoute
+	if reader == nil && domain != "" && (bundle != nil || opts.RegistryURL != "") {
+		var err error
+		route, err = resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, scope, domain, opts.RegistryURL)
+		if err != nil {
+			var refusal *cliError
+			if opts.RegistryURL != "" || errors.As(err, &refusal) {
+				return whoOutput{}, err
+			}
+			out.IDChainResult = preflight
+			return out, nil
+		}
+		reader = route.status(registry)
+	}
 	if strings.HasPrefix(subject.ID, "did:aw:") {
 		enrollment := awid.IDTreeEnrollmentResult{State: "unknown"}
-		if opts.ReceivedEnrollment != nil {
+		if private && route.origin != "" && opts.ownIdentity == nil {
+			if route.authority.ControllerDID != "" {
+				enrollment = keyRouteEnrollment(ctx, registry, route.origin, subject)
+			}
+		} else if opts.ReceivedEnrollment != nil {
 			enrollment = opts.ReceivedEnrollment(ctx, subject.ID, subject.DIDKey)
+		} else if opts.ownIdentity != nil {
+			if private {
+				if bundle == nil {
+					origin, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+						Kind: registryIdentityEvidenceRoute, Identity: opts.ownIdentity, Override: opts.RegistryURL,
+					})
+					if err != nil {
+						return whoOutput{}, err
+					}
+					trustRecordedRegistryOrigin(registry.Resolver, origin, opts.ownIdentity.RegistryOperatorOrigin)
+					route.origin = origin
+				}
+				if route.authority.ControllerDID != "" || bundle == nil {
+					enrollment = keyRouteEnrollment(ctx, registry, route.origin, subject)
+				}
+			} else if key, err := identityKeyRoute(ctx, opts.ownIdentity, ""); err == nil {
+				enrollment = key.IDTreeEnrollmentOf(subject.ID, subject.DIDKey, time.Now())
+			}
 		}
 		switch {
 		case enrollment.State == "not_enrolled":
@@ -189,22 +227,21 @@ func verifyWhoPresentation(ctx context.Context, subject awid.IDChainSubject, bun
 			return out, nil
 		}
 	}
-	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
-	status := awid.NewIDStatusClient(registry, opts.TXTResolver)
-	if strings.TrimSpace(opts.RegistryURL) != "" {
-		authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
+	if reader == nil && private {
+		scope.domain = domain
+		route, err := resolveIdentityEvidenceRoute(ctx, registry, opts.TXTResolver, scope, domain, opts.RegistryURL)
 		if err != nil {
-			return whoOutput{}, fmt.Errorf("lookup %s: %w", awid.AWIDTXTName(domain), err)
+			var refusal *cliError
+			if errors.As(err, &refusal) {
+				return whoOutput{}, err
+			}
+			out.IDChainResult = preflight
+			return out, nil
 		}
-		registryURL, err := domainRegistryURL(authority, opts.RegistryURL)
-		if err != nil {
-			return whoOutput{}, err
-		}
-		status = idStatusAt(registry, opts.TXTResolver, registryURL)
+		reader = route.status(registry)
 	}
-	reader := whoStatus(status)
-	if opts.Status != nil {
-		reader = opts.Status
+	if reader == nil {
+		reader = awid.NewIDStatusClient(registry, opts.TXTResolver)
 	}
 	evidence := reader.IDChainEvidence(ctx, bundle, subject, domain)
 	out.IDChainResult = awid.VerifyIDChain(bundle, subject, evidence, domain)
@@ -215,6 +252,14 @@ func verifyWhoPresentation(ctx context.Context, subject awid.IDChainSubject, bun
 		}
 	}
 	return out, nil
+}
+
+func keyRouteEnrollment(ctx context.Context, registry *awid.RegistryClient, origin string, subject awid.IDChainSubject) awid.IDTreeEnrollmentResult {
+	key, err := registry.ResolveKeyAt(ctx, origin, subject.ID)
+	if err != nil {
+		return awid.IDTreeEnrollmentResult{State: "unknown"}
+	}
+	return key.IDTreeEnrollmentOf(subject.ID, subject.DIDKey, time.Now())
 }
 
 func formatWho(v any) string {
