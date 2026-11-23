@@ -13,6 +13,7 @@ import pytest
 from awid.did import stable_id_from_did_key
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
+from awid.team_certificate import decode_team_certificate
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
@@ -659,6 +660,21 @@ async def test_verified_proxy_context_rechecks_subject_binding(privacy_app, monk
         assert refused.value.status_code == 403
 
 
+async def assert_policy_admissions(env, actors):
+    for actor, team_id in actors:
+        row = await env.db.fetch_one(
+            """SELECT a.certificate_id, a.accepted_team_did_key, a.did_aw_verified_key
+               FROM {{tables.agents}} a JOIN {{tables.workspaces}} w USING (agent_id)
+               WHERE a.team_id = $1 AND w.team_id = $1
+                 AND a.agent_id = $2 AND w.workspace_id = $3""",
+            team_id, actor.id, actor.workspace,
+        )
+        assert row is not None
+        assert row["certificate_id"] == decode_team_certificate(actor.certificate)["certificate_id"]
+        assert row["accepted_team_did_key"] == env.team_did
+        assert row["did_aw_verified_key"] == actor.did
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target_kind", ["did_key", "did_aw"])
 @pytest.mark.parametrize("keep_marker", [False, True], ids=["historical", "verified"])
@@ -713,6 +729,8 @@ async def test_stored_mail_and_chat_routes_keep_recipient_policy(
                     certificate_id=f"policy-{name}",
                 )
             )
+
+        await assert_policy_admissions(env, ((sender, outside), (recipient, TEAM)))
 
         async def signed(actor, method, path, payload=None):
             body = json.dumps(payload).encode() if payload is not None else b""
@@ -876,6 +894,8 @@ async def test_retired_group_member_does_not_relax_live_member_policy(privacy_ap
                     certificate_id=f"group-{name}",
                 )
             )
+
+        await assert_policy_admissions(env, ((sender, outside), (bob, TEAM), (retired, TEAM)))
 
         async def signed(actor, method, path, payload=None):
             body = json.dumps(payload).encode() if payload is not None else b""
