@@ -33,6 +33,8 @@ name: Library CI
 # request, preferred over a gate that can be silently skipped.
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -42,9 +44,12 @@ permissions:
 env:
   LIBRARY_REQUIRE_TEST_DATABASE: "1"
 
+# Every commit on main keeps its own run to the end: one group per commit, since
+# a group also cancels its waiting run when another queues. Elsewhere a newer
+# run replaces an older one.
 concurrency:
-  group: library-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: library-ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   quality:
@@ -149,7 +154,7 @@ jobs:
       TEST_DB_PASSWORD: postgres
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -190,6 +195,12 @@ jobs:
         working-directory: naapp-lib
         run: uv sync --locked
 
+      # The production AWID fixture starts this pinned project as prepared
+      # here, and never syncs it during the tests.
+      - name: Prepare the pinned production AWID
+        working-directory: naapp-lib
+        run: make -C .. production-awid-sync
+
       - name: Install the runtime test browser
         working-directory: naapp-lib
         run: uv run --no-sync playwright install --with-deps --only-shell chromium
@@ -199,6 +210,14 @@ jobs:
         run: |
           uv run ruff check .
           uv run mypy src
+
+      # The tests back up and restore with the client of the server's major
+      # version, installed as the gate installs it.
+      - name: Install the PostgreSQL client of the server's major version
+        working-directory: naapp-lib
+        run: |
+          sudo bash ../scripts/test-egress/install-postgres-client.sh
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
 
       # The same path as make test-naapp: behind the test egress guard, which
       # forwards the governance browser's RP host to loopback for Chromium and
