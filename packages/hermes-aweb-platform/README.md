@@ -250,6 +250,13 @@ subjects prevented command parsing. Remote command dispatch is now forbidden;
 current probes check content-only delivery and local prompt refusal instead.
 The earlier comparison did not exercise model inference.
 
+Candidate unit tests run the local package contract files against the checked
+v0.23.1 revision. The gate prepares the locked Hermes environment before
+isolating the runner. For a standalone run, prepare the server lock with
+`uv sync --frozen --project server`, then use `make hermes-test-sync` and
+`make test-hermes-aweb-platform`. The live model check runs in Cloud's Hermes
+stage. The package's opt-in transport probes use the fixtures below.
+
 For a Hermes upgrade, inspect those boundaries at the new commit and run the
 following targeted checks before advancing the supported version:
 

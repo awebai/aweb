@@ -48,6 +48,10 @@ class MemoryTransport(adapter_module.AwebAdapter):
     async def _run_event_stream(self):
         await asyncio.Event().wait()
 
+    def _write_runtime_status_safe(self, *args, **kwargs):
+        # Policy tests do not own the gateway's background status-file writes.
+        pass
+
 
 class TeamPolicyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -58,7 +62,6 @@ class TeamPolicyTests(unittest.IsolatedAsyncioTestCase):
         env.start()
         self.addCleanup(env.stop)
         self.adapter = MemoryTransport()
-        self.adapter._write_runtime_status_safe = lambda *a, **k: None
         self.addAsyncCleanup(self.adapter.disconnect)
 
     async def deliver(self, kind, membership, message_id="input"):
@@ -118,7 +121,6 @@ class TeamPolicyTests(unittest.IsolatedAsyncioTestCase):
         for settings in ({"AWEB_ALLOW_ALL_USERS": "true"}, {"AWEB_ALLOWED_USERS": "example.test/alice"}):
             with self.subTest(settings=settings), patch.dict(os.environ, settings):
                 adapter = MemoryTransport()
-                adapter._write_runtime_status_safe = lambda *a, **k: None
                 try:
                     self.assertFalse(await adapter.connect())
                     self.assertEqual(adapter.fatal_error_code, "team_policy_conflict")
@@ -150,7 +152,6 @@ class TeamPolicyTests(unittest.IsolatedAsyncioTestCase):
         for response in ({}, {"selected_team": ""}, {"selected_team": None}):
             with self.subTest(response=response):
                 adapter = MemoryTransport()
-                adapter._write_runtime_status_safe = lambda *a, **k: None
                 original = adapter._run_aw_json
                 async def missing(*args, response=response, original=original):
                     return response if args[:2] == ("workspace", "status") else await original(*args)
@@ -242,7 +243,6 @@ class TeamPolicyTests(unittest.IsolatedAsyncioTestCase):
                 from gateway.run import _profile_runtime_scope
                 with patch.dict(os.environ, {"AWEB_ALLOW_TEAM": "false"}), _profile_runtime_scope(secondary):
                     scoped_adapter = MemoryTransport()
-                    scoped_adapter._write_runtime_status_safe = lambda *a, **k: None
                     self.addAsyncCleanup(scoped_adapter.disconnect)
                     self.assertTrue(scoped_adapter._allow_team, "TEAM mode used ambient instead of served profile policy")
                 self.assertFalse(await self.adapter.connect(), "served profile grant was ignored")

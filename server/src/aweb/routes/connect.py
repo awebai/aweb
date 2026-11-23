@@ -67,6 +67,15 @@ class _ProfileUpdate(StrEnum):
     IMPORT = "import"
 
 
+class WorkspaceContact(StrEnum):
+    """The observed contact a constructor caller can attest to."""
+
+    NONE = "none"
+    SIGNED_CONNECT = "signed_connect"
+    PERSON_SESSION = "person_session"
+    OBSERVED_REFRESH = "observed_refresh"
+
+
 class WorkspaceProfile(StrEnum):
     """Host-requested kinds for an admitted workspace without a repository."""
 
@@ -398,6 +407,7 @@ async def _ensure_workspace(
     planned_workspace_id: uuid.UUID | None = None,
     workspace_profile: WorkspaceProfile | None = None,
     profile_update: _ProfileUpdate = _ProfileUpdate.RECONNECT,
+    contact: WorkspaceContact = WorkspaceContact.NONE,
 ) -> _ConnectedWorkspace:
     """Find or create a workspace row. Returns workspace_id as string.
 
@@ -434,7 +444,13 @@ async def _ensure_workspace(
             UPDATE {{tables.workspaces}}
             SET hostname = $1, workspace_path = $2, role = $3,
                 human_name = $4, repo_id = COALESCE($5, repo_id),
-                agent_id = $6, last_seen_at = NOW(), updated_at = NOW(), workspace_type = $8
+                agent_id = $6, last_seen_at = CASE
+                    WHEN $9 IN ('signed_connect', 'person_session')
+                        OR ($9 = 'observed_refresh' AND last_seen_at IS NOT NULL)
+                    THEN NOW()
+                    ELSE last_seen_at
+                END,
+                updated_at = NOW(), workspace_type = $8
             WHERE workspace_id = $7
             """,
             hostname,
@@ -445,6 +461,7 @@ async def _ensure_workspace(
             uuid.UUID(agent_id),
             workspace_id,
             workspace_type,
+            contact.value,
         )
         return _ConnectedWorkspace(str(workspace_id), workspace_type)
 
@@ -471,7 +488,7 @@ async def _ensure_workspace(
                 INSERT INTO {{tables.workspaces}}
                     (workspace_id, team_id, agent_id, repo_id, alias, human_name,
                      role, hostname, workspace_path, workspace_type, last_seen_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CASE WHEN $11 = 'signed_connect' THEN NOW() END)
                 RETURNING workspace_id
                 """,
                 workspace_id,
@@ -484,6 +501,7 @@ async def _ensure_workspace(
                 hostname,
                 workspace_path,
                 workspace_type,
+                contact.value,
             )
         assert row is not None  # This INSERT always returns the workspace it created.
         return _ConnectedWorkspace(str(row["workspace_id"]), workspace_type)
@@ -539,6 +557,7 @@ async def connect_agent(
     generation: VerifiedCertificateGeneration | None = None,
     controller_import: VerifiedControllerImportMember | None = None,
     workspace_profile: WorkspaceProfile | None = None,
+    contact: WorkspaceContact = WorkspaceContact.NONE,
 ) -> dict[str, Any]:
     """Auto-provision team + agent + workspace from certificate info.
 
@@ -559,6 +578,9 @@ async def connect_agent(
         planned_ids: Retained creation IDs; existing projections must match both exactly.
         workspace_profile: Explicit non-repository kind; an existing repository
             always keeps agent kind. Omission preserves an existing workspace kind.
+        contact: Signed connect records contact on insert and update. A current
+            person session refreshes an existing row. An observed refresh updates
+            an existing row only once contact has already been recorded.
         controller_import: Actual live APPLY member from verify_controller_import.
             It is separate from generation/request proof, needs independent global
             binding/kind observations and preserves existing profiles on reuse.
@@ -729,6 +751,7 @@ async def connect_agent(
             else None,
             workspace_profile=workspace_profile,
             profile_update=profile_update,
+            contact=contact,
         )
         if controller_import is not None:
             controller_import.require_freshness()
@@ -784,6 +807,7 @@ async def connect_endpoint(
             role=payload.role,
             human_name=payload.human_name,
             agent_type=payload.agent_type,
+            contact=WorkspaceContact.SIGNED_CONNECT,
         )
     except AliasConflictError as exc:
         raise HTTPException(

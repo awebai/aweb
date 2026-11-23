@@ -48,6 +48,8 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   : > "$summary"
   run test-server
   run test-awid
+  run test-key-holder
+  run test-hermes-aweb-platform
   run test-naapp
   run test-cli
   run test-cli-auth-v2
@@ -80,9 +82,11 @@ checks() {
   run test-generated-copies
   run check-private-boundary
   run _candidate-gate-docker-boundaries
+  run test-egress-controls
+  run _candidate-test-docker-dns
   run _candidate-gate-compose-adoption
   run test-shipping
-  run check-page-renderer-bundle
+  run test-page-renderer
   run check-aw-commit-repo-stamp
   run check-cli-go-tidy
   run check-cli-release-vcs-stamps

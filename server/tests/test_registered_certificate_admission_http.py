@@ -215,9 +215,50 @@ async def test_unregistered_certificate_reuses_exact_refusal(privacy_app, monkey
 @pytest.mark.asyncio
 async def test_point_budget_overflow_shares_the_next_list(privacy_app, monkeypatch):  # noqa: F811
     async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport):
+        cached = privacy_app.app.state.awid_registry_client
+        redis = privacy_app.redis
+        client_type = type(cached)
+        admit_read = client_type._admit_team_certificate_read
+        window_key: str | None = None
+        overflow_waits: list[int] | None = None
+        both_admitted = asyncio.Event()
+        release_overflow = asyncio.Event()
+
+        async def observe_admission(client, key, *, allow_point):
+            nonlocal window_key
+            admission = await admit_read(client, key, allow_point=allow_point)
+            if client is cached and allow_point:
+                window_key = key
+                if overflow_waits is not None:
+                    overflow_waits.append(admission)
+                    if len(overflow_waits) == 2:
+                        both_admitted.set()
+                    await release_overflow.wait()
+            return admission
+
+        monkeypatch.setattr(client_type, "_admit_team_certificate_read", observe_admission)
         await connect(await member("first-member"))
+        assert (transport.reads, transport.point_reads) == (1, 0)
+        assert window_key is not None
+        # Keep the post-list window open while the test registers and admits the
+        # point readers. The real Redis script still owns every slot decision.
+        assert await redis.set(window_key, 0, ex=60)
         admitted = await asyncio.gather(*(member(f"member-{i}") for i in range(18)))
-        await asyncio.gather(*(connect(credential) for credential in admitted))
+        await asyncio.gather(*(connect(credential) for credential in admitted[:16]))
+        assert (transport.reads, transport.point_reads) == (1, 16)
+
+        overflow_waits = []
+        async with asyncio.timeout(15), asyncio.TaskGroup() as overflow:
+            for credential in admitted[16:]:
+                overflow.create_task(connect(credential))
+            try:
+                await both_admitted.wait()
+                assert all(wait_ms > 0 for wait_ms in overflow_waits), overflow_waits
+                # Both callers observed the exhausted budget. Open the next
+                # window explicitly, then let them share its one list producer.
+                assert await redis.delete(window_key) == 1
+            finally:
+                release_overflow.set()
         assert (transport.reads, transport.point_reads) == (2, 16)
 
 

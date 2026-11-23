@@ -115,7 +115,7 @@ test("dark mode preserves contrast and English chrome", async ({ page }) => {
   const background = await page.evaluate(
     () => getComputedStyle(document.documentElement).backgroundColor,
   );
-  expect(background).toBe("rgb(11, 10, 9)");
+  expect(background).toBe("rgb(23, 25, 28)");
   const { default: AxeBuilder } = await import("@axe-core/playwright");
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

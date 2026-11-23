@@ -129,6 +129,8 @@ class CompleteGateVerdictTests(unittest.TestCase):
         self.assertEqual(rows, {
             "unit/test-server": "FAILED",
             "unit/test-awid": "PASSED",
+            "unit/test-key-holder": "PASSED",
+            "unit/test-hermes-aweb-platform": "PASSED",
             "unit/test-naapp": "PASSED",
             "unit/test-cli": "FAILED",
             "unit/test-cli-auth-v2": "PASSED",

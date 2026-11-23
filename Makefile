@@ -7,7 +7,7 @@ SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
 CANDIDATE_UNIT_PROFILE ?= $(or $(AWEB_GATE_UNIT_PROFILE),portable)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
-.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping production-awid-sync released-aw-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -355,6 +355,23 @@ PRODUCTION_AWID_PROJECT := scripts/test-egress/production-awid
 production-awid-sync:
 	uv sync --frozen --project $(PRODUCTION_AWID_PROJECT)
 
+# The aw release whose homes the upgrade tests open, fetched before isolation.
+# provenance.json is the fetch's last write.
+RELEASED_AW_13658 := .cache/released-aw/1.36.58
+
+released-aw-sync:
+	test -f $(RELEASED_AW_13658)/provenance.json || python3 scripts/fetch_released_aw.py $(RELEASED_AW_13658) --metadata-input scripts/test-egress/released-aw-1.36.58.json
+
+# Use the same prepared source on the Mac and inside the isolated unit image.
+HERMES_TEST_SOURCE := .cache/hermes-agent/0.23.1
+
+.PHONY: hermes-test-sync test-hermes-aweb-platform
+hermes-test-sync:
+	HERMES_AGENT_SOURCE="$(abspath $(HERMES_TEST_SOURCE))" bash scripts/test-hermes-aweb-platform.sh --prepare
+
+test-hermes-aweb-platform:
+	HERMES_AGENT_SOURCE="$(abspath $(HERMES_TEST_SOURCE))" bash scripts/test-hermes-aweb-platform.sh
+
 # Unique loopback Compose services; this does not use an existing host database.
 .PHONY: test-server-local
 test-server-local:
@@ -403,6 +420,11 @@ test-awid: production-awid-sync
 	cd awid && uv sync --frozen
 	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
+.PHONY: test-key-holder
+test-key-holder:
+	cd key-holder && uv sync --frozen
+	cd key-holder && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+
 .PHONY: check-secrets-shards
 check-secrets-shards:
 	uv sync --frozen --project naapp/secrets
@@ -420,7 +442,7 @@ test-awid-pooler:
 		TEST_DB_HOST=127.0.0.1 TEST_DB_PORT=$${AWID_TEST_POSTGRES_PORT:-56432} \
 		PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_database_session_settings.py
 
-test-cli: production-awid-sync
+test-cli: production-awid-sync released-aw-sync
 	python3 scripts/test-egress/test_fixture_imports.py
 	cd cli/go && go mod download
 	cd awid && uv sync --frozen
@@ -839,11 +861,21 @@ test-egress-controls:
 	python3 scripts/test-egress/test_dns.py -v
 	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v
 
+.PHONY: _candidate-test-docker-dns
+_candidate-test-docker-dns:
+	python3 scripts/test-egress/test_docker_dns.py --image "$${CANDIDATE_GATE_IMAGE:?candidate image is required}" \
+		--evidence "$${CANDIDATE_LOG_DIR:?candidate log directory is required}/docker-dns" -v
+
 # The shared page renderer is packaged in the Python wheel. Rebuild from its
 # exact npm lock and compare without rewriting committed bytes.
 .PHONY: check-page-renderer-bundle
 check-page-renderer-bundle:
 	cd naapp-lib/renderer && npm ci --ignore-scripts && node build.mjs --check
+
+.PHONY: test-page-renderer
+test-page-renderer: check-page-renderer-bundle
+	uv sync --frozen --project naapp-lib
+	cd naapp-lib/renderer && npm test
 
 .PHONY: e2e-user-paths
 e2e-user-paths:
