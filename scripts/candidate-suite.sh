@@ -82,7 +82,7 @@ checks() {
   run _candidate-gate-docker-boundaries
   run _candidate-gate-compose-adoption
   run test-shipping
-  run check-page-renderer-bundle
+  run test-page-renderer
   run check-aw-commit-repo-stamp
   run check-cli-go-tidy
   run check-cli-release-vcs-stamps
