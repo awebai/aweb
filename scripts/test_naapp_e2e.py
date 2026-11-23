@@ -124,6 +124,45 @@ class NaappE2ETest(unittest.TestCase):
         self.assertIn("/src/server/.venv", mounted)
         self.assertFalse([arg for arg in runs[0] if arg.startswith("UV_PROJECT_ENVIRONMENT=")])
 
+    def container_uv_calls(self, *, playwright):
+        """The uv commands the container's own script runs, for a package whose
+        environment has Playwright or not."""
+        script = next(args for _, args in self.run_package() if args[0] == "run")[-1]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "package"
+            (package / ".venv/bin").mkdir(parents=True)
+            (root / "cli/go").mkdir(parents=True)
+            (root / "bin").mkdir()
+            for name in ("git", "go", "uv"):
+                tool = root / "bin" / name
+                tool.write_text(f'#!/bin/sh\necho "{name} $*" >> "$CALLS"\n', encoding="utf-8")
+                tool.chmod(0o755)
+            if playwright:
+                binary = package / ".venv/bin/playwright"
+                binary.touch()
+                binary.chmod(0o755)
+            calls = root / "calls"
+            result = subprocess.run(
+                ["bash", "-c", script.replace("/src/", f"{root}/")], cwd=package,
+                env={**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}", "CALLS": str(calls)},
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return [line for line in calls.read_text().splitlines() if line.startswith("uv ")]
+
+    def test_outside_the_gate_a_package_with_playwright_gets_its_locked_browser(self):
+        calls = self.container_uv_calls(playwright=True)
+        install = "uv run --frozen playwright install --with-deps --only-shell chromium"
+        self.assertIn(install, calls)
+        self.assertLess(calls.index("uv sync --frozen"), calls.index(install))
+        self.assertLess(calls.index(install), next(i for i, c in enumerate(calls) if " pytest " in c))
+
+    def test_outside_the_gate_a_package_without_playwright_gets_no_browser(self):
+        calls = self.container_uv_calls(playwright=False)
+        self.assertFalse([call for call in calls if "playwright" in call])
+        self.assertTrue([call for call in calls if " pytest " in call])
+
 
 if __name__ == "__main__":
     unittest.main()

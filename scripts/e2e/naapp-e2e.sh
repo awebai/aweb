@@ -82,5 +82,9 @@ docker run --rm \
     uv sync --frozen
     # The fixtures start this separate project with offline, frozen uv.
     uv sync --frozen --project /src/server
+    # A package whose lock has Playwright gets that version of the browser.
+    if [[ -x .venv/bin/playwright ]]; then
+      uv run --frozen playwright install --with-deps --only-shell chromium
+    fi
     uv run --frozen pytest -q -m e2e -p aweb_naapp_testing.deployment_logs -p no:cacheprovider --basetemp=/tmp/pytest
   '
