@@ -26,7 +26,7 @@ func createHostedTeamInvite(request teamInviteMintRequest) (*awid.SpawnCreateInv
 		}
 	}
 	if request.ExpiresAfter != 0 {
-		return nil, usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
+		return nil, usageError(hostedInviteExpiryMessage)
 	}
 	source := request.Plan.Source
 	workingDir, identityHome := source.WorkingDir, externalIdentityHomeRoot(source.Home)

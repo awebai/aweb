@@ -808,7 +808,7 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, style teamInvite
 	scope := inviteMemberScopeFromFlags(inviteMemberScopeFlags{Global: global})
 	request := teamInviteMintRequest{Plan: plan, Scope: scope, ForHuman: humanCondition, ExpiresAfter: teamInviteExpiresAfter}
 	if plan.Kind == inviteAuthorityHosted && cmd.Flags().Changed("expires") {
-		return usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
+		return usageError(hostedInviteExpiryMessage)
 	}
 	if teamInvitePreflight {
 		preview, err := preflightTeamInviteMint(request)

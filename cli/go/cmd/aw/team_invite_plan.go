@@ -25,6 +25,8 @@ const (
 	inviteOutputJoin
 )
 
+const hostedInviteExpiryMessage = "--expires applies to invites signed with a local team key. The hosted service sets its own expiry. Run the command again without --expires."
+
 type inviteMemberScopeFlags struct{ Global bool }
 
 // The public --global/member-global flags opt into global membership; the
@@ -107,7 +109,7 @@ func mintPlannedTeamInvite(request teamInviteMintRequest) (mintedTeamInvite, err
 	}
 	if request.Plan.Kind == inviteAuthorityHosted {
 		if request.ExpiresAfter != 0 {
-			return mintedTeamInvite{}, usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
+			return mintedTeamInvite{}, usageError(hostedInviteExpiryMessage)
 		}
 		created, err := createHostedTeamInvite(request)
 		if err != nil {
@@ -143,7 +145,7 @@ func preflightTeamInviteMint(request teamInviteMintRequest) (teamInvitePreflight
 			return out, usageError("--member-global is not supported for hosted team invites")
 		}
 		if request.ExpiresAfter != 0 {
-			return out, usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
+			return out, usageError(hostedInviteExpiryMessage)
 		}
 	case inviteAuthorityController:
 		lifetime, err := resolveControllerInviteLifetime(awconfig.TeamInviteLifetimeRequest{Now: time.Now(), Duration: request.ExpiresAfter})
@@ -163,7 +165,7 @@ func init() {
 	teamInviteCmd.MarkFlagsMutuallyExclusive("team-id", "namespace")
 	for _, cmd := range []*cobra.Command{teamInviteCmd, teamHumanInviteCmd} {
 		cmd.Flags().BoolVar(&teamInvitePreflight, "preflight", false, "Show the mint authority without creating a token or child invitation")
-		cmd.Flags().DurationVar(&teamInviteExpiresAfter, "expires", 0, "Controller invite lifetime (default 24h; maximum 720h)")
+		cmd.Flags().DurationVar(&teamInviteExpiresAfter, "expires", 0, "Invite lifetime when signing with a local team key (default 24h; maximum 720h). Hosted teams set their own expiry.")
 		if cmd.Annotations == nil {
 			cmd.Annotations = map[string]string{}
 		}

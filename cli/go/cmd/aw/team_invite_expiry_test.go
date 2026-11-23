@@ -59,6 +59,13 @@ func TestOATSControllerInviteExpiresFlagUsesTheSavedLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, prefix := range [][]string{{"team", "invite"}, {"id", "team", "invite"}} {
+		help := exec.Command(bin, append(prefix, "--help")...)
+		help.Dir = dir
+		help.Env = append(testCommandEnv(dir), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=")
+		helpOut, err := help.CombinedOutput()
+		if err != nil || !strings.Contains(string(helpOut), "signing with a local team key (default 24h; maximum 720h). Hosted teams set their own expiry.") {
+			t.Fatalf("invite help does not explain whose expiry --expires controls: %v\n%s", err, helpOut)
+		}
 		cmd := exec.Command(bin, append(prefix, "--team-id", "one:example.com", "--expires", "48h", "--json")...)
 		cmd.Dir = dir
 		cmd.Env = append(testCommandEnv(dir), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=")
@@ -96,8 +103,8 @@ func TestOATSControllerInviteExpiresFlagUsesTheSavedLifetime(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(testCommandEnv(dir), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=")
 	out, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "--expires selects a local controller invite lifetime; the hosted service sets its own expiry") {
-		t.Fatalf("hosted explicit lifetime was admitted: %v\n%s", err, out)
+	if err == nil || !strings.Contains(string(out), "The hosted service sets its own expiry. Run the command again without --expires.") {
+		t.Fatalf("hosted --expires did not explain how to retry: %v\n%s", err, out)
 	}
 }
 
