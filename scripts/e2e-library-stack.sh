@@ -139,11 +139,13 @@ stack_up() {
   # must not silently reuse state or redirect cleanup to another invocation.
   remove_stack
   "${COMPOSE[@]}" build
-  # Creating the services creates the project-labelled fixture and
-  # library-source volumes the preparation writes into.
+  # Creating the services creates the stack's network, and the project-labelled
+  # fixture and library-source volumes the preparation writes into.
   "${COMPOSE[@]}" create --no-build
   prepare_fixture
-  "${COMPOSE[@]}" up --no-build -d --wait
+  LIBRARY_E2E_STACK_SUBNET="$(python3 "$REPO_ROOT/scripts/candidate-network.py" subnet "${PROJECT}_default")"
+  export LIBRARY_E2E_STACK_SUBNET
+  "${COMPOSE[@]}" -f "$REPO_ROOT/scripts/e2e/stack-subnet.compose.yml" up --no-build -d --wait
   echo "  stack healthy: awid=$AWID_URL aweb=$AWEB_URL library=$LIBRARY_URL"
 }
 
@@ -156,7 +158,7 @@ prepare_fixture() {
   docker create --name "$PREPARATION_SEED" --label "com.docker.compose.project=$PROJECT" \
     --user 0 --entrypoint /app/.venv/bin/python \
     -v "$PROJECT-fixture:/fixture" -e PYTHONPATH=/fixture/test-support \
-    "$PROJECT-aweb" /fixture/e2e/stack_tls_prepare.py "$LIBRARY_E2E_LIBRARY_HOST" "$LIBRARY_E2E_AWEB_HOST" >/dev/null
+    "$PROJECT-aweb" /fixture/e2e/stack_tls_prepare.py "$LIBRARY_E2E_LIBRARY_HOST" "$LIBRARY_E2E_AWEB_HOST" localhost >/dev/null
   local status=0
   {
     docker cp "$REPO_ROOT/scripts/e2e/." "$PREPARATION_SEED:/fixture/e2e" &&

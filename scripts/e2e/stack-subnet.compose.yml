@@ -1,0 +1,10 @@
+# Test-only overlay: Library's operator network is exactly its stack's network.
+# The stack's runner layers it over docker-compose.e2e.yml when it starts
+# Library, after the network exists (scripts/candidate-network.py subnet).
+# Without it Library refuses to start: it lists a team server inside its
+# operator's network and names no network.
+services:
+  library:
+    environment:
+      LIBRARY_HOOK_INTERNAL_DESTINATIONS: allowed
+      LIBRARY_HOOK_INTERNAL_CIDR: ${LIBRARY_E2E_STACK_SUBNET:?the subnet of the stack network, from scripts/candidate-network.py subnet}

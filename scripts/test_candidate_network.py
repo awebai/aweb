@@ -454,7 +454,8 @@ class EndpointTests(unittest.TestCase):
                 node
                 for node in tree.body
                 if isinstance(node, (ast.ClassDef, ast.FunctionDef))
-                and node.name in ("E2EStack", "e2e_stack", "candidate_hostname")
+                and node.name
+                in ("E2EStack", "e2e_stack", "candidate_hostname", "candidate_network")
             ]
             namespace = {
                 "__file__": str(path),
@@ -794,6 +795,61 @@ class ComposeConfigTests(unittest.TestCase):
                 self.assertEqual(
                     merged["services"]["aweb"]["environment"]["AWEB_PUBLIC_ORIGIN"],
                     original["services"]["aweb"]["environment"]["AWEB_PUBLIC_ORIGIN"],
+                )
+
+    def test_library_starts_only_with_its_stack_network_as_operator_network(self):
+        docker = shutil.which("docker")
+        self.assertIsNotNone(
+            docker, "Docker Compose CLI is required for fixture validation"
+        )
+        overlay = "scripts/e2e/stack-subnet.compose.yml"
+        grant_app = "scripts/e2e/grant-app-acceptance.compose.yml"
+        for files in (
+            ["docker-compose.e2e.yml"],
+            ["docker-compose.e2e.yml", grant_app],
+        ):
+
+            def config(files, **extra):
+                env = {
+                    name: value
+                    for name, value in os.environ.items()
+                    if name != "LIBRARY_E2E_STACK_SUBNET"
+                }
+                args = [
+                    docker,
+                    "compose",
+                    "-p",
+                    "proof",
+                    "--project-directory",
+                    str(ROOT),
+                ]
+                for file in files:
+                    args += ["-f", str(ROOT / file)]
+                return subprocess.run(
+                    [*args, "config", "--format", "json"],
+                    env={**env, "GRANT_APP_E2E_PROJECT": "proof", **extra},
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+
+            with self.subTest(files=files):
+                self.assertEqual(config(files).returncode, 0)
+                refused = config([*files, overlay])
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn("LIBRARY_E2E_STACK_SUBNET", refused.stderr)
+                started = config(
+                    [*files, overlay], LIBRARY_E2E_STACK_SUBNET="192.168.208.0/20"
+                )
+                self.assertEqual(started.returncode, 0, started.stderr)
+                library = json.loads(started.stdout)["services"]["library"][
+                    "environment"
+                ]
+                self.assertEqual(
+                    library["LIBRARY_HOOK_INTERNAL_CIDR"], "192.168.208.0/20"
+                )
+                self.assertEqual(
+                    library["LIBRARY_HOOK_INTERNAL_DESTINATIONS"], "allowed"
                 )
 
 

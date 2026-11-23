@@ -38,7 +38,8 @@ host:
   an HTTPS team server outside loopback, so aweb serves TLS from the same CA.
   Library reads a team's grant from it only through its egress guard, as its
   operator's own listed team server on the stack's network
-  (`LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS`, `LIBRARY_HOOK_INTERNAL_CIDR`), and
+  (`LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS`, and the network's own subnet as
+  `LIBRARY_HOOK_INTERNAL_CIDR`, from `scripts/e2e/stack-subnet.compose.yml`), and
   trusts that CA (`LIBRARY_HOOK_CA_FILE`);
 - Library admits a member request only for a team that installed it and
   granted the operation's scopes, so every journey team publishes the stack's

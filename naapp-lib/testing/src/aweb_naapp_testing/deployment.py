@@ -61,11 +61,13 @@ class E2EStack:
     redis_url: str | None = None
 
 
-def candidate_hostname(*, project: str, service: str) -> str:
+def candidate_network(*args: str) -> str:
     helper = REPOSITORY_ROOT / "scripts/candidate-network.py"
-    return subprocess.check_output(
-        [sys.executable, str(helper), "hostname", project, service], text=True
-    ).strip()
+    return subprocess.check_output([sys.executable, str(helper), *args], text=True).strip()
+
+
+def candidate_hostname(*, project: str, service: str) -> str:
+    return candidate_network("hostname", project, service)
 
 
 def e2e_stack(env: Mapping[str, str], *, project: str, database: str) -> E2EStack:
@@ -234,24 +236,8 @@ def stack_runner(stack: E2EStack) -> StackRunner:
             f"{alias} does not resolve: the e2e tests run on the stack's network, "
             "in the gate's runner or the one `make e2e` starts"
         ) from exc
-    network = f"{stack.project}_default"
-    inspected = subprocess.run(
-        ["docker", "network", "inspect", network],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    if inspected.returncode != 0:
-        raise AssertionError(f"docker network inspect {network} failed: {inspected.stderr}")
-    subnets = [
-        config["Subnet"]
-        for config in json.loads(inspected.stdout)[0]["IPAM"]["Config"]
-        if "." in config.get("Subnet", "")
-    ]
-    if len(subnets) != 1:
-        raise AssertionError(f"{network} has IPv4 subnets {subnets}, expected exactly one")
-    return StackRunner(alias=alias, address=address, subnet=subnets[0])
+    subnet = candidate_network("subnet", f"{stack.project}_default")
+    return StackRunner(alias=alias, address=address, subnet=subnet)
 
 
 @dataclass(frozen=True)

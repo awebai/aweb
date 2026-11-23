@@ -106,8 +106,8 @@ services:
       awid:
         condition: service_healthy
     healthcheck:
-      # Its own public origin, https here; an overlay may serve it over loopback http.
-      test: ["CMD-SHELL", "curl -fsS --cacert /fixture/tls/ca.pem \"$$AWEB_PUBLIC_ORIGIN/ready\""]
+      # The stack's certificate names localhost for this probe.
+      test: ["CMD", "curl", "-fsS", "--cacert", "/fixture/tls/ca.pem", "https://localhost:8000/ready"]
       interval: 2s
       timeout: 5s
       start_period: 5s
@@ -128,11 +128,8 @@ services:
       LIBRARY_APP_KEY_FILES: '{"library:grant-read-1": "/fixture/library/grant-read.hex"}'
       # The stack's own coordination server, the one team server Library reads
       # grants from: its operator's own, on the stack's network, reached
-      # through Library's egress guard and trusted through the stack CA.
-      LIBRARY_HOOK_INTERNAL_DESTINATIONS: allowed
-      # Docker's private address pool, whichever network the stack is given
-      # (the candidate gate puts it on its own).
-      LIBRARY_HOOK_INTERNAL_CIDR: 172.16.0.0/12
+      # through Library's egress guard and trusted through the stack CA. The
+      # network itself comes from scripts/e2e/stack-subnet.compose.yml.
       LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS: '["https://${LIBRARY_E2E_AWEB_HOST:-aweb}:8000"]'
       LIBRARY_HOOK_CA_FILE: /fixture/tls/ca.pem
       # The stack CA signs the team server Library reads grants from.

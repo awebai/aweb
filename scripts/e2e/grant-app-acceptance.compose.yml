@@ -59,10 +59,8 @@ services:
       LIBRARY_APP_KEY_FILES: '{"library:grant-read-1": "/fixture/library/grant-read.hex"}'
       # The stack's aweb is the team server Library reads grants from: its
       # operator's own, on the stack's network, reached through Library's
-      # egress guard and trusted through the stack CA.
-      LIBRARY_HOOK_INTERNAL_DESTINATIONS: allowed
-      # Docker's private address pool, whichever network the stack is given.
-      LIBRARY_HOOK_INTERNAL_CIDR: 172.16.0.0/12
+      # egress guard and trusted through the stack CA. The network itself comes
+      # from scripts/e2e/stack-subnet.compose.yml.
       LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS: '["https://aweb-grant.test:8000"]'
       LIBRARY_HOOK_CA_FILE: /fixture/tls/ca.pem
     volumes:
