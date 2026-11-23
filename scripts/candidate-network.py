@@ -174,6 +174,26 @@ def disconnect(project: str) -> None:
             run("network", "disconnect", network_id, runner)
 
 
+def subnet(network: str) -> str:
+    """``network``'s one IPv4 subnet: the operator network an app on it lists
+    for its in-network team server (aweb-acgh.5)."""
+    inspected = subprocess.run(
+        ["docker", "network", "inspect", network],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    subnets = [
+        config["Subnet"]
+        for config in json.loads(inspected.stdout)[0]["IPAM"]["Config"]
+        if "." in config.get("Subnet", "")
+    ]
+    if len(subnets) != 1:
+        raise ValueError(f"{network} has IPv4 subnets {subnets}, expected exactly one")
+    return subnets[0]
+
+
 if __name__ == "__main__":
     try:
         if sys.argv[1] == "hostname":
@@ -182,6 +202,8 @@ if __name__ == "__main__":
             print(override(json.load(sys.stdin)), end="")
         elif sys.argv[1] == "prepare":
             prepare(json.load(sys.stdin))
+        elif sys.argv[1] == "subnet":
+            print(subnet(sys.argv[2]))
         elif sys.argv[1] == "disconnect":
             disconnect(sys.argv[2])
         else:

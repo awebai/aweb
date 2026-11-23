@@ -826,6 +826,50 @@ exit 0
 """
 
 
+SUBNET_STUB = r"""#!/usr/bin/env bash
+# Answers `docker network inspect <name>` with the subnets in $SUBNETS.
+[[ "$1 $2" == "network inspect" ]] || exit 1
+python3 -c 'import json,os; print(json.dumps([{"IPAM": {"Config": [{"Subnet": s} for s in os.environ["SUBNETS"].split()]}}]))'
+"""
+
+
+class SubnetTests(unittest.TestCase):
+    def subnet(self, subnets: str) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "docker"
+            stub.write_text(SUBNET_STUB)
+            stub.chmod(0o755)
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/candidate-network.py"),
+                    "subnet",
+                    "proof_default",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env={
+                    **os.environ,
+                    "PATH": f"{tmp}:{os.environ['PATH']}",
+                    "SUBNETS": subnets,
+                },
+            )
+
+    def test_a_stack_network_answers_its_one_ipv4_subnet(self):
+        # An app lists exactly its stack network as its operator's network (aweb-acgh.5).
+        result = self.subnet("192.168.208.0/20 fd00:1::/64")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "192.168.208.0/20\n")
+
+    def test_a_network_without_exactly_one_ipv4_subnet_is_refused(self):
+        for subnets in ("fd00:1::/64", "172.30.0.0/16 172.31.0.0/16"):
+            with self.subTest(subnets=subnets):
+                result = self.subnet(subnets)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+
+
 class PrepareTests(unittest.TestCase):
     def test_the_runner_joins_each_stack_network_under_its_scoped_runner_name(self):
         # An app on the stack network reaches the runner's own services by name (aweb-acgh.5).
