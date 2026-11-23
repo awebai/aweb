@@ -286,7 +286,7 @@
     "server/tests/test_resource_visibility.py": 7,
     "server/tests/test_retired_mail_participant.py": 5,
     "server/tests/test_retired_signer_upgrade.py": 4,
-    "server/tests/test_revocation_index_http.py": 3,
+    "server/tests/test_revocation_index_http.py": 1,
     "server/tests/test_room_notice_count.py": 9,
     "server/tests/test_rotated_address_locality.py": 2,
     "server/tests/test_same_origin_delivery.py": 17,
