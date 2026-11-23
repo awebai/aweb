@@ -14,6 +14,7 @@ from awid.a2a_publication import (
     A2A_DELEGATION_OPERATION,
     A2A_PUBLICATION_OPERATION,
     A2A_STATUS_ACTIVE,
+    A2A_STATUS_REVOKED,
     A2ADelegationFields,
     A2APublicationFields,
     a2a_delegation_canonical,
@@ -27,6 +28,7 @@ from awid.a2a_publication import (
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.log import identity_state_hash, log_entry_payload, sha256_hex
 from awid.signing import canonical_json_bytes, sign_message
+from awid_service.routes import a2a_publications
 
 from conftest import build_signed_headers
 
@@ -290,6 +292,15 @@ async def _counts(awid_db_infra) -> tuple[int, int]:
     return delegations["count"], publications["count"]
 
 
+def _resign_publication(seed: dict, publication: dict, **changes: str) -> dict:
+    payload = {k: v for k, v in publication.items() if k != "signature"}
+    payload.update(changes)
+    return {
+        **payload,
+        "signature": sign_message(seed["identity_signing_key"], canonical_json_bytes(payload)),
+    }
+
+
 @pytest.mark.asyncio
 async def test_a2a_delegation_publication_and_anonymous_lookup(client, awid_db_infra, controller_identity):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
@@ -345,10 +356,7 @@ async def test_a2a_publication_same_active_route_digest_is_idempotent(client, aw
     assert first_resp.status_code == 200, first_resp.text
     assert first_resp.json()["status"] == "applied"
 
-    second = _publication_body(seed, delegation)
-    second["assertion_id"] = "pub_test_02"
-    second_canonical = canonical_json_bytes({k: v for k, v in second.items() if k != "signature"})
-    second["signature"] = sign_message(seed["identity_signing_key"], second_canonical)
+    second = _resign_publication(seed, first, assertion_id="pub_test_02")
     second_resp = await client.post("/v1/a2a/publications", json=second)
 
     assert second_resp.status_code == 200, second_resp.text
@@ -553,31 +561,118 @@ async def test_a2a_publication_delegation_digest_mismatch_fails_before_write(
     assert await _counts(awid_db_infra) == (1, 0)
 
 
+@pytest.mark.parametrize("terminal_state", ["expired", "revoked"])
 @pytest.mark.asyncio
-async def test_a2a_revoked_delegation_suppresses_delegated_publication_lookup(
+async def test_a2a_terminal_delegation_allows_withdrawal_and_replacement(
     client,
     awid_db_infra,
     controller_identity,
+    monkeypatch,
+    terminal_state,
 ):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     delegation = _delegation_body(seed)
-    assert (await client.post("/v1/a2a/delegations", json=delegation)).status_code == 200
+    delegated = await client.post("/v1/a2a/delegations", json=delegation)
+    assert delegated.status_code == 200, delegated.text
     publication = _publication_body(seed, delegation)
-    assert (await client.post("/v1/a2a/publications", json=publication)).status_code == 200
+    published = await client.post("/v1/a2a/publications", json=publication)
+    assert published.status_code == 200, published.text
+    assert published.json()["status"] == "applied"
 
-    revoked = _delegation_body(
+    lookup_url = "/v1/namespaces/example.com/addresses/research/a2a"
+    revocation_digest = None
+    if terminal_state == "expired":
+        # Advance the registry's delegation check to the exact expiry boundary.
+        expiry = parse_contract_time(delegation["expires_at"], field_name="expires_at")
+        monkeypatch.setattr(a2a_publications, "_now", lambda: expiry)
+    else:
+        revoked = _delegation_body(
+            seed,
+            status=A2A_STATUS_REVOKED,
+            revoked_at=_contract_timestamp(datetime.now(timezone.utc)),
+            revocation_reason="operator_revoked",
+        )
+        revoke_resp = await client.post("/v1/a2a/delegations", json=revoked)
+        assert revoke_resp.status_code == 200, revoke_resp.text
+        assert revoke_resp.json()["status"] == "revoked"
+        revocation_digest = revoke_resp.json()["assertion_digest"]
+        assert revocation_digest != publication["delegation_digest"]
+        lookup = await client.get(lookup_url)
+        assert lookup.status_code == 200, lookup.text
+        assert "a2a" not in lookup.json()
+
+    active = await client.post("/v1/a2a/publications", json=publication)
+    assert active.status_code == 409, active.text
+    assert active.json()["detail"]["code"] == f"a2a_delegation_{terminal_state}"
+
+    replacement = _publication_body(seed, None, direct=True, assertion_id="pub_test_02")
+    blocked = await client.post("/v1/a2a/publications", json=replacement)
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"]["code"] == "a2a_publication_exists_different_gateway"
+
+    withdrawal = _resign_publication(
         seed,
-        status="revoked",
-        revoked_at=_contract_timestamp(datetime.now(timezone.utc)),
-        revocation_reason="operator_revoked",
+        publication,
+        status=A2A_STATUS_REVOKED,
+        published_at=_contract_timestamp(datetime.now(timezone.utc)),
     )
-    revoke_resp = await client.post("/v1/a2a/delegations", json=revoked)
-    assert revoke_resp.status_code == 200, revoke_resp.text
-    assert revoke_resp.json()["status"] == "revoked"
+    unknown = _resign_publication(seed, withdrawal, assertion_id="pub_unknown")
+    refused = await client.post("/v1/a2a/publications", json=unknown)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == f"a2a_delegation_{terminal_state}"
+    assert await _counts(awid_db_infra) == (1, 1)
 
-    lookup = await client.get("/v1/namespaces/example.com/addresses/research/a2a")
+    if revocation_digest is not None:
+        wrong_reference = _resign_publication(seed, withdrawal, delegation_digest=revocation_digest)
+        refused = await client.post("/v1/a2a/publications", json=wrong_reference)
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["detail"] == {
+            "code": "a2a_delegation_digest_mismatch",
+            "message": "A2A withdrawal delegation reference mismatch. "
+            "Use the delegation ID and digest recorded in the publication.",
+        }
+
+    withdrawn = await client.post("/v1/a2a/publications", json=withdrawal)
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert withdrawn.json()["status"] == "revoked"
+    assert withdrawn.json()["assertion_id"] == publication["assertion_id"]
+
+    lookup = await client.get(lookup_url)
     assert lookup.status_code == 200, lookup.text
     assert "a2a" not in lookup.json()
+
+    replaced = await client.post("/v1/a2a/publications", json=replacement)
+    assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["status"] == "applied"
+    assert replaced.json()["assertion_id"] == replacement["assertion_id"]
+
+    lookup = await client.get(lookup_url)
+    assert lookup.status_code == 200, lookup.text
+    assert lookup.json()["a2a"]["publication_assertion_id"] == replacement["assertion_id"]
+
+
+@pytest.mark.asyncio
+async def test_a2a_live_delegation_withdrawal_rejects_digest_mismatch(client, awid_db_infra, controller_identity):
+    seed = await _seed_address(client, awid_db_infra, controller_identity)
+    delegation = _delegation_body(seed)
+    delegated = await client.post("/v1/a2a/delegations", json=delegation)
+    assert delegated.status_code == 200, delegated.text
+    publication = _publication_body(seed, delegation)
+    published = await client.post("/v1/a2a/publications", json=publication)
+    assert published.status_code == 200, published.text
+
+    withdrawal = _resign_publication(
+        seed,
+        publication,
+        status=A2A_STATUS_REVOKED,
+        delegation_digest="sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    )
+    refused = await client.post("/v1/a2a/publications", json=withdrawal)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["code"] == "a2a_delegation_digest_mismatch"
+    lookup = await client.get("/v1/namespaces/example.com/addresses/research/a2a")
+    assert lookup.status_code == 200, lookup.text
+    assert lookup.json()["a2a"]["publication_assertion_id"] == publication["assertion_id"]
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,9 @@ package awid
 
 import (
 	"encoding/json"
+	"log/slog"
 	"strings"
+	"sync/atomic"
 )
 
 type signedEnvelopeMetadata struct {
@@ -120,4 +122,25 @@ func (c *Client) signedMailDisplayMatches(payload string, fields map[string]stri
 		}
 	}
 	return signedDisplayMatches(payload, fields)
+}
+
+var noncanonicalSignedMetadataCount atomic.Uint64
+
+// Only call after verifying the signature. Preserve the released case-insensitive
+// struct interpretation and measure it before a separately approved cutoff.
+func recordNoncanonicalSignedMetadata(payload string) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(payload), &fields) != nil {
+		return
+	}
+	names := []string{"from", "to", "from_did", "to_did", "from_stable_id", "to_stable_id", "conversation_id"}
+	for field := range fields {
+		for _, name := range names {
+			if field != name && strings.EqualFold(field, name) {
+				value := noncanonicalSignedMetadataCount.Add(1)
+				slog.Info("Noncanonical signed metadata retained for compatibility.", "event", "aw_noncanonical_signed_metadata_verified", "value", value)
+				return
+			}
+		}
+	}
 }

@@ -7,13 +7,13 @@ consumed in the transaction that applies the act's effect.
 
 from __future__ import annotations
 
-import base64
 import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from awid.signing import sign_message
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from nacl.signing import SigningKey
 from pgdbm.core import TransactionManager
@@ -70,7 +70,7 @@ class TeamOwner:
             "nonce": secrets.token_hex(16),
         }
         signing = PREFIX + canonical(fields)
-        signature = base64.b64encode(self.team_key.sign(signing).signature).decode().rstrip("=")
+        signature = sign_message(bytes(self.team_key), signing)
         return signing, signature
 
     async def prepare(self, act: str, subject: dict[str, Any]) -> PreparedOwnerAct:

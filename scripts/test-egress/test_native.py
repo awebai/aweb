@@ -128,5 +128,27 @@ class NativeGuard(unittest.TestCase):
             self.assertIn('CONNECT api.awid.ai:443', result.stdout)
 
 
+    def test_denial_names_the_client_process_without_its_arguments(self):
+        # A test's own temporary directory names it, as Go's t.TempDir does;
+        # the child's argument stands in for a credential on a command line.
+        with tempfile.TemporaryDirectory() as tmp:
+            test_dir = (Path(tmp) / 'TestEgressAttributionProbe123' / '001').resolve()
+            test_dir.mkdir(parents=True)
+            pid_file = test_dir / 'pid'
+            code = ('import os, sys, urllib.request\n'
+                    f'open({str(pid_file)!r}, "w").write(str(os.getpid()))\n'
+                    'try:\n urllib.request.urlopen("https://api.awid.ai/v1/did", timeout=2)\n'
+                    'except OSError:\n pass\n')
+            result = subprocess.run(
+                [sys.executable, str(RUNNER), '--', sys.executable, '-c', code, 'secret-token-arg'],
+                capture_output=True, text=True, cwd=test_dir, timeout=30)
+            pid = pid_file.read_text()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        denied = [line for line in result.stdout.splitlines() if 'CONNECT api.awid.ai:443' in line]
+        self.assertEqual(len(denied), 1, result.stdout)
+        self.assertIn(f'client=pid={pid} exe=', denied[0])
+        self.assertIn(f'cwd={test_dir}', denied[0])
+        self.assertNotIn('secret-token-arg', result.stdout + result.stderr)
+
 if __name__ == '__main__':
     unittest.main()

@@ -312,6 +312,8 @@ async def test_the_lifespan_ends_after_the_database_drops_its_connections_and_a_
             assert [row["terminated"] for row in terminated] == [True] * len(held)
             async with asyncio.timeout(SHUTDOWN_BOUND_SECONDS):
                 await relay.wait_for_held_closes(len(held))
+            # The relay holding the close decides the outcome; this wait only
+            # orders the client's read of the FATAL before its next query.
             await asyncio.sleep(CLIENT_READS_DELIVERED_BYTES_SECONDS)
 
             async with httpx.AsyncClient(

@@ -133,7 +133,7 @@ func TestLibraryManifestMaterializeTargetLocalWritesCurrentHomeAndPrunes(t *test
 	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.json"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	oldRef := recordedProfileRef{ProfileRef: "developer", ProfileVersion: "0.1.0", ProfileDigest: "sha256:old", RuntimeKind: "claude-code", ManagedSet: []string{"obsolete.md", ".aw/profile/ref.json"}}
+	oldRef := recordedProfileRef{ProfileRef: "developer", ProfileVersion: "0.1.0", ProfileDigest: "sha256:old", RuntimeKind: "claude-code", ManagedSet: []string{"artifacts/obsolete.md", ".aw/profile/ref.json"}}
 	oldRefData, err := json.Marshal(oldRef)
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +144,10 @@ func TestLibraryManifestMaterializeTargetLocalWritesCurrentHomeAndPrunes(t *test
 	if err := os.WriteFile(filepath.Join(home, ".aw", "profile", "ref.json"), oldRefData, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "obsolete.md"), []byte("old\n"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, "artifacts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "artifacts/obsolete.md"), []byte("old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, "local-state.txt"), []byte("keep\n"), 0o644); err != nil {
@@ -174,7 +177,7 @@ func TestLibraryManifestMaterializeTargetLocalWritesCurrentHomeAndPrunes(t *test
 	if target, err := os.Readlink(filepath.Join(home, "CLAUDE.md")); err != nil || target != "AGENTS.md" {
 		t.Fatalf("CLAUDE.md target=%q err=%v", target, err)
 	}
-	if _, err := os.Lstat(filepath.Join(home, "obsolete.md")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(home, "artifacts/obsolete.md")); !os.IsNotExist(err) {
 		t.Fatalf("obsolete managed file survived: %v", err)
 	}
 	if data, err := os.ReadFile(filepath.Join(home, "local-state.txt")); err != nil || string(data) != "keep\n" {
@@ -190,5 +193,38 @@ func TestLibraryManifestMaterializeTargetLocalWritesCurrentHomeAndPrunes(t *test
 	}
 	if got.ProfileVersion != "0.2.0" || len(got.ManagedSet) != len(managed) {
 		t.Fatalf("recorded ref=%+v", got)
+	}
+}
+
+func TestLibraryMaterializeResponseCannotOverwriteIdentityState(t *testing.T) {
+	home := t.TempDir()
+	managed := []string{"AGENTS.md", ".aw/signing.key", ".aw/profile/ref.json"}
+	pin := recordedProfileRef{ProfileRef: "developer", ProfileVersion: "1", ProfileDigest: "sha256:self-asserted", RuntimeKind: "claude-code", ManagedSet: managed}
+	pinBytes, err := json.Marshal(pin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := libraryMaterializeResponse{
+		ProfileRef: pin.ProfileRef, ProfileVersion: pin.ProfileVersion, ProfileDigest: pin.ProfileDigest,
+		HomeFiles: []blueprint.LibraryHomeFile{
+			{Path: "AGENTS.md", Kind: "file", ContentUTF8: "should not appear"},
+			{Path: ".aw/signing.key", Kind: "file", ContentUTF8: "replacement key"},
+			{Path: ".aw/profile/ref.json", Kind: "file", ContentUTF8: string(pinBytes)},
+		},
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = withWorkingDir(home, func() error {
+		return applyLibraryManifestLocalMaterialize("library", "materialize", map[string]any{"target": "local", "runtime_kind": "claude-code"}, body)
+	})
+	if err == nil || !strings.Contains(err.Error(), "Use a profile destination") {
+		t.Fatalf("identity write accepted or unactionable refusal: %v", err)
+	}
+	for _, rel := range managed {
+		if _, err := os.Lstat(filepath.Join(home, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Fatalf("partial/identity write %s: %v", rel, err)
+		}
 	}
 }

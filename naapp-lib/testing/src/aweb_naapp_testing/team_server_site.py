@@ -139,6 +139,7 @@ async def team_server_site(
     # The refusals mean something only for an address the public policy denies.
     if not ipaddress.ip_address(host).is_private:
         raise RuntimeError(f"the team-server site needs a private address on this host, not {host}")
+    directory.mkdir(parents=True, exist_ok=True)
     certificates = make_certificates(directory, [name, *also_names], [host])
     dns = DnsServer(records={(each, "A"): [host] for each in (name, *also_names)})
     tls = TlsServer(certificates, host)

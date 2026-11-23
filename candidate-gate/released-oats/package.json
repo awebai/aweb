@@ -1,0 +1,8 @@
+{
+  "name": "aweb-user-paths-released-kernel",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@awebai/oats": "0.69.19"
+  }
+}

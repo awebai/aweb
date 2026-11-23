@@ -920,7 +920,7 @@ func TestEncryptionKeyEnsureRebindsGlobalAssertionWithoutRotatingActiveKey(t *te
 	if active.KeyID != oldRecord.KeyID {
 		t.Fatalf("identity rebind rotated active E2E key: got %s want %s", active.KeyID, oldRecord.KeyID)
 	}
-	assertion, err := loadEncryptionAssertion(tmp, active.AssertionPath)
+	assertion, err := loadEncryptionAssertionAt(tmp, "", active.AssertionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1049,7 +1049,7 @@ func TestE2EESendOwnHomePreservesActiveLocalCertificate(t *testing.T) {
 	if state.ActiveRecord().KeyID != keyBefore {
 		t.Fatal("send rotated active encryption key")
 	}
-	assertion, err := loadEncryptionAssertion(tmp, state.ActiveRecord().AssertionPath)
+	assertion, err := loadEncryptionAssertionAt(tmp, "", state.ActiveRecord().AssertionPath)
 	if err != nil {
 		t.Fatal(err)
 	}

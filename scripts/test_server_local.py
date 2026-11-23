@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from enum import StrEnum
@@ -158,7 +159,7 @@ def invoke(
     cwd: Path = ROOT,
     env: dict[str, str] | None = None,
     stdout: int | None = subprocess.PIPE,
-    timeout: int | None = 120,
+    timeout: float | None = 120,
     termination_grace_seconds: int = 10,
 ) -> subprocess.CompletedProcess[str]:
     """Terminate this command's process group before its owner removes services."""
@@ -294,6 +295,132 @@ def published_port(value: str) -> int:
             f"Port readback ({len(value)} characters): {value[:512]!r}. "
             "Inspect the local Docker port binding and rerun."
         ) from exc
+
+
+# Inspect only public binding/ownership fields, never Config.Env or credentials.
+PORT_INSPECT = (
+    '{"id":{{json .Id}},'
+    '"project":{{json (index .Config.Labels "com.docker.compose.project")}},'
+    '"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
+    '"ports":{{json .NetworkSettings.Ports}}}'
+)
+
+
+def binding_port(
+    value: str, *, container: str, project: str, service: str, target: int
+) -> int | None:
+    record = json.loads(value)
+    if not isinstance(record, dict) or any(
+        record.get(key) != expected
+        for key, expected in (
+            ("id", container),
+            ("project", project),
+            ("service", service),
+        )
+    ):
+        raise Refused(
+            "Docker binding ownership changed. Inspect the disposable project and rerun."
+        )
+    ports = record.get("ports")
+    if ports is None:
+        return None
+    if not isinstance(ports, dict):
+        raise ValueError("missing NetworkSettings.Ports")
+    rows = ports.get(f"{target}/tcp") or []
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise ValueError("invalid port bindings")
+    candidates = set()
+    for row in rows:
+        if row.get("HostIp") == "127.0.0.1" and row.get("HostPort") not in (
+            None,
+            "",
+            "0",
+        ):
+            candidates.add(published_port(f"127.0.0.1:{row['HostPort']}"))
+    if len(candidates) > 1:
+        raise Refused(
+            "Docker published ambiguous loopback bindings. Inspect the disposable project and rerun."
+        )
+    return next(iter(candidates), None)
+
+
+def port_observation(command: list[str], *, timeout: float) -> dict[str, object]:
+    try:
+        result = invoke(command, timeout=timeout, termination_grace_seconds=1)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"error": type(exc).__name__}
+    return {
+        "exit": result.returncode,
+        "output": result.stdout[:8192],
+        "characters": len(result.stdout),
+        "truncated": len(result.stdout) > 8192,
+    }
+
+
+def owned_published_port(
+    *,
+    compose: list[str],
+    container: str,
+    project: str,
+    service: str,
+    target: int,
+) -> int:
+    """Wait only for the selected container's mapping; never use Compose's summary."""
+    deadline = time.monotonic() + 5
+    observation: dict[str, object] = {}
+    try:
+        if len(container) != 64 or any(
+            char not in "0123456789abcdef" for char in container
+        ):
+            raise Refused(
+                "Docker did not identify one owned container. Inspect the disposable project and rerun."
+            )
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise Refused(
+                    "Docker did not report an owned nonzero loopback binding within five seconds. Inspect the retained port diagnostics and rerun."
+                )
+            observation = port_observation(
+                ["docker", "inspect", "--format", PORT_INSPECT, container],
+                timeout=min(2, remaining),
+            )
+            if observation.get("exit") == 0 and not observation.get("truncated"):
+                try:
+                    port = binding_port(
+                        str(observation["output"]),
+                        container=container,
+                        project=project,
+                        service=service,
+                        target=target,
+                    )
+                except (ValueError, TypeError) as exc:
+                    raise Refused(
+                        "Docker returned malformed binding metadata. Inspect the retained port diagnostics and rerun."
+                    ) from exc
+                if port is not None:
+                    return port
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+    except Refused:
+        # Captured while the owned container still exists, before finally cleanup.
+        summary = port_observation([*compose, "port", service, str(target)], timeout=2)
+        print(
+            "LOCAL_PORT_DIAGNOSTIC "
+            + json.dumps(
+                {
+                    "container": container[:128],
+                    "project": project,
+                    "service": service,
+                    "target": target,
+                    "network_settings_ports": observation,
+                    "compose_port": summary,
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        raise
 
 
 def assert_project_absent(project: str) -> None:
@@ -448,11 +575,19 @@ def local_services(
                 memory_owner().require_memory_postgres(container)
                 plan.append(
                     {
-                        "postgres_port": published_port(
-                            checked([*compose, "port", f"postgres{index}", "5432"])
+                        "postgres_port": owned_published_port(
+                            compose=compose,
+                            container=container,
+                            project=project,
+                            service=f"postgres{index}",
+                            target=5432,
                         ),
-                        "redis_port": published_port(
-                            checked([*compose, "port", f"redis{index}", "6379"])
+                        "redis_port": owned_published_port(
+                            compose=compose,
+                            container=checked([*compose, "ps", "-q", f"redis{index}"]),
+                            project=project,
+                            service=f"redis{index}",
+                            target=6379,
                         ),
                     }
                 )
@@ -468,6 +603,57 @@ def local_services(
             finally:
                 for sig, handler in previous.items():
                     signal.signal(sig, handler)
+
+
+def run_logged_suite(
+    command: list[str], *, environ: dict[str, str], log: Path
+) -> subprocess.CompletedProcess[bytes]:
+    """Drain inherited output through EOF before service cleanup (docs/local-server-tests.md)."""
+    descriptor = os.open(
+        log, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600
+    )
+    with (
+        os.fdopen(descriptor, "wb") as output,
+        subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=environ,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        ) as child,
+    ):
+        assert child.stdout is not None
+        try:
+            while chunk := os.read(child.stdout.fileno(), 65536):
+                output.write(chunk)
+                output.flush()
+            child.wait()
+        except BaseException:
+            # Make/egress wrappers may exit before pytest; communicate waits for
+            # every inherited pipe writer so pytest can finalize its own JUnit.
+            previous = {
+                sig: signal.signal(sig, signal.SIG_IGN)
+                for sig in (signal.SIGINT, signal.SIGTERM)
+            }
+            try:
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    # No owned group remains; still drain output buffered in its pipe.
+                    if child.poll() is None:
+                        raise
+                try:
+                    tail, _stderr = child.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child.pid, signal.SIGKILL)
+                    tail, _stderr = child.communicate()
+                output.write(tail or b"")
+            finally:
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
+            raise
+    return subprocess.CompletedProcess(command, child.returncode)
 
 
 def run_suites(
@@ -487,18 +673,64 @@ def run_suites(
                 file=sys.stderr,
             )
             return prepared.returncode
+    reports = (
+        Path(
+            environ.get(
+                "LOCAL_TEST_REPORT_DIR",
+                str(ROOT / "test-results" / ("server-local-" + uuid.uuid4().hex[:12])),
+            )
+        )
+        .expanduser()
+        .resolve()
+    )
+    reports.mkdir(parents=True, mode=0o700, exist_ok=False)
     for item in selected:
+        directory = reports / item.value
+        directory.mkdir(mode=0o700)
         target = "test-server" if item is Suite.SERVER else "test-awid"
-        env = dict(environ, PYTEST_ADDOPTS=shlex.join(arguments))
-        result = invoke(
-            [
-                "make",
-                target,
-                f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
-            ],
-            env=env,
-            stdout=None,
-            timeout=None,
+        options = [
+            *arguments,
+            "-p",
+            "local_pytest_progress",
+            "--junitxml=" + str(directory / "cases.xml"),
+            "--durations=0",
+            "--durations-min=0",
+        ]
+        env = dict(
+            environ,
+            PYTEST_ADDOPTS=shlex.join(options),
+            PYTHONPATH=os.pathsep.join(
+                filter(
+                    None,
+                    (str(Path(__file__).resolve().parent), environ.get("PYTHONPATH")),
+                )
+            ),
+            PYTHONUNBUFFERED="1",
+            AWEB_LOCAL_PROGRESS_DIR=str(directory),
+        )
+        print(
+            f"Local {item.value} live output: {directory / 'pytest.log'}; worker state: {directory / 'worker-*.json'}; JUnit: {directory / 'cases.xml'}",
+            flush=True,
+        )
+        try:
+            result = run_logged_suite(
+                [
+                    "make",
+                    target,
+                    f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
+                ],
+                environ=env,
+                log=directory / "pytest.log",
+            )
+        except Interrupted as exc:
+            print(
+                f"Local {item.value} interrupted ({exc.number}); retained evidence: {directory}",
+                flush=True,
+            )
+            raise
+        print(
+            f"Local {item.value} exit={result.returncode}; evidence: {directory}",
+            flush=True,
         )
         if result.returncode:
             return result.returncode

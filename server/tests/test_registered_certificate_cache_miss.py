@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from uuid import uuid4
 
 import awid.registry as registry_module
 import httpx
@@ -15,13 +17,13 @@ from awid.registry import CachedRegistryClient
 from team_facts_fixtures import LegacyTeamFacts
 from awid.signing import canonical_json_bytes, sign_message
 from fastapi import HTTPException
+from redis.asyncio import Redis
 from test_team_auth_deps import (
     _encode_certificate,
     _make_certificate,
     _make_keypair,
     _request_with_app_state,
 )
-from test_team_key_rotation_cache import _Redis
 
 
 class LegacyCacheRegistry(LegacyTeamFacts, CachedRegistryClient):
@@ -37,7 +39,7 @@ async def world(monkeypatch, aweb_cloud_db):
     member, _, member_did = _make_keypair()
     env = SimpleNamespace(
         clock=clock, team=team, team_did=team_did, member=member, member_did=member_did,
-        registered=["cert-earlier"], revoked=[], list_reads=0, list_status=200, clients=[],
+        registered=["cert-earlier"], revoked=[], list_reads=0, point_reads=0, list_status=200, clients=[],
         entered=asyncio.Event(), release=None, registry_key=team_did,
         # The real aweb schema: certificate verification reads the team-key pins.
         db=SimpleNamespace(get_manager=lambda _name: aweb_cloud_db.aweb_db),
@@ -47,6 +49,15 @@ async def world(monkeypatch, aweb_cloud_db):
         if request.url.path.endswith("/revocations"):
             return httpx.Response(200, json={
                 "revocations": [{"certificate_id": value} for value in env.revoked], "has_more": False,
+            })
+        if "/certificates/" in request.url.path and request.url.path.endswith("/status"):
+            env.point_reads += 1
+            cert_id = request.url.path.split("/")[-2]
+            if cert_id not in env.registered:
+                return httpx.Response(404, json={"detail": "Certificate not found"})
+            return httpx.Response(200, json={
+                "team_id": "backend:acme.com", "team_did_key": env.registry_key,
+                "status": "active", "revoked_at": None,
             })
         if request.url.path.endswith("/certificates"):
             env.list_reads += 1
@@ -64,28 +75,31 @@ async def world(monkeypatch, aweb_cloud_db):
             "team_did_key": env.registry_key, "created_at": "2026-01-01T00:00:00Z",
         })
 
-    env.redis = _Redis(clock)
+    env.origin = f"http://{uuid4().hex}.registry.test"
+    env.window_key = f"awid:team_certificates_miss_refresh:{env.origin}:acme.com/backend"
+    async with Redis.from_url(os.environ["REDIS_URL"], decode_responses=True) as redis:
+        env.redis = redis
 
-    def client(**kwargs):
-        value = LegacyCacheRegistry(
-            registry_url="http://registry.test", redis_client=env.redis,
-            transport=httpx.MockTransport(handler), **kwargs,
-        )
-        env.clients.append(value)
-        return value
+        def client(**kwargs):
+            value = LegacyCacheRegistry(
+                registry_url=env.origin, redis_client=redis,
+                transport=httpx.MockTransport(handler), **kwargs,
+            )
+            env.clients.append(value)
+            return value
 
-    env.client = client
-    env.registry = client()
-    await env.registry.get_team_public_key("acme.com", "backend")
-    await env.registry.get_team_revocations("acme.com", "backend")
-    await env.registry.list_team_certificates("acme.com", "backend", active_only=False)
-    env.list_reads = 0
-    env.entered.clear()
-    try:
-        yield env
-    finally:
-        for value in env.clients:
-            await value.aclose()
+        env.client = client
+        env.registry = client()
+        await env.registry.get_team_public_key("acme.com", "backend")
+        await env.registry.get_team_revocations("acme.com", "backend")
+        await env.registry.list_team_certificates("acme.com", "backend", active_only=False)
+        env.list_reads = 0
+        env.entered.clear()
+        try:
+            yield env
+        finally:
+            for value in env.clients:
+                await value.aclose()
 
 
 async def _verify(env, certificate_id, *, signer=None, registry=None, bad_request=False):
@@ -121,16 +135,11 @@ async def test_new_registration_behind_warm_list_is_accepted_and_cached(world):
 
 
 @pytest.mark.asyncio
-async def test_absent_stays_refused_with_budget_shared_across_clients(world):
-    for index, registry in enumerate((world.registry, world.registry, world.client())):
+async def test_absent_stays_refused_with_cache_shared_across_clients(world):
+    for registry in (world.registry, world.registry, world.client()):
         error = await _refused(world, "cert-never", registry=registry)
-        assert error.status_code == (401 if index == 0 else 503)
-        if index == 0:
-            assert error.detail == "unregistered"
-    assert world.list_reads == 1
-    world.clock[0] += 5
-    await _refused(world, "cert-never")
-    assert world.list_reads == 2
+        assert (error.status_code, error.detail) == (401, "unregistered")
+    assert (world.list_reads, world.point_reads) == (1, 1)
 
 
 @pytest.mark.asyncio
@@ -152,27 +161,30 @@ async def test_forged_signature_does_not_spend_list_refresh_budget(world, bad_re
     assert error.status_code == 401
     assert error.detail != "unregistered"
     assert world.list_reads == 0
-    assert not any(key.startswith("awid:team_certificates_miss_refresh:") for key in world.redis.values)
+    assert await world.redis.get(world.window_key) is None
     if bad_request:
-        assert not any(key.startswith("awid:team_key_signature_refresh:") for key in world.redis.values)
+        assert await world.redis.get(f"awid:team_key_signature_refresh:{world.origin}:acme.com/backend") is None
     world.registered.append("cert-new")
     assert (await _verify(world, "cert-new"))["certificate_id"] == "cert-new"
     assert world.list_reads == 1
 
 
 @pytest.mark.asyncio
-async def test_registry_failure_fails_closed_and_is_not_retried_within_budget(world):
+async def test_list_failure_fails_closed_and_point_read_can_recover(world):
     world.registered.append("cert-new")
     world.list_status = 503
     assert (await _refused(world, "cert-new")).status_code == 503
     assert world.list_reads == 1
-    assert (await _refused(world, "cert-new")).status_code == 503
-    assert world.list_reads == 1
+    assert (await _verify(world, "cert-new"))["certificate_id"] == "cert-new"
+    assert (world.list_reads, world.point_reads) == (1, 1)
 
 
 @pytest.mark.asyncio
-async def test_redis_admission_failure_never_fetches_authority(world):
-    world.redis.deny_admission = True
+async def test_redis_admission_failure_never_fetches_authority(world, monkeypatch):
+    async def unavailable(*args, **kwargs):
+        raise OSError("Redis admission unavailable")
+
+    monkeypatch.setattr(world.redis, "eval", unavailable)
     error = await _refused(world, "cert-never")
     assert error.status_code == 503
     assert world.list_reads == 0
@@ -181,29 +193,33 @@ async def test_redis_admission_failure_never_fetches_authority(world):
 @pytest.mark.asyncio
 async def test_concurrent_misses_share_inflight_refresh_past_admission_window(world):
     world.release = asyncio.Event()
+    world.registered.append("cert-new")
     # Count the callers that reached the shared refresh: verification awaits
     # its database before it, so they arrive asynchronously.
-    arrived = []
+    arrived = 0
+    all_arrived = asyncio.Event()
     refresh = world.registry.refresh_team_certificates_after_miss
 
     async def counted_refresh(*args, **kwargs):
-        arrived.append(None)
+        nonlocal arrived
+        arrived += 1
+        if arrived == 24:
+            all_arrived.set()
         return await refresh(*args, **kwargs)
 
     world.registry.refresh_team_certificates_after_miss = counted_refresh
-    calls = [asyncio.create_task(_refused(world, "cert-never")) for _ in range(12)]
+    calls = [asyncio.create_task(_verify(world, "cert-new")) for _ in range(12)]
     try:
         await asyncio.wait_for(world.entered.wait(), 1)
-        world.clock[0] += 6
-        calls.extend(asyncio.create_task(_refused(world, "cert-never")) for _ in range(12))
-        async with asyncio.timeout(5):
-            while len(arrived) < len(calls):
-                await asyncio.sleep(0.01)
+        await world.redis.delete(world.window_key)
+        calls.extend(asyncio.create_task(_verify(world, "cert-new")) for _ in range(12))
+        await asyncio.wait_for(all_arrived.wait(), 5)
         assert world.list_reads == 1
     finally:
         world.release.set()
-        await asyncio.gather(*calls)
-    assert world.list_reads == 1
+        results = await asyncio.gather(*calls)
+    assert all(result["certificate_id"] == "cert-new" for result in results)
+    assert (world.list_reads, world.point_reads) == (1, 0)
 
 
 @pytest.mark.asyncio
@@ -275,16 +291,20 @@ async def test_refresh_writes_only_its_reader_authority_partition(world):
     assert "cert-new" not in {cert.certificate_id for cert in await world.registry.list_team_certificates(
         "acme.com", "backend", active_only=False,
     )}
-    # The independent reader cannot reuse private facts or bypass the shared budget.
-    assert (await _refused(world, "cert-new")).status_code == 503
-    assert world.list_reads == 1
+    # The exact standing can be shared without updating the ordinary list or
+    # exposing the service reader's member metadata.
+    assert (await _verify(world, "cert-new"))["certificate_id"] == "cert-new"
+    assert (world.list_reads, world.point_reads) == (1, 0)
+    assert "cert-new" not in {cert.certificate_id for cert in await world.registry.list_team_certificates(
+        "acme.com", "backend", active_only=False,
+    )}
 
 
 @pytest.mark.asyncio
 async def test_existing_positive_never_acquires_miss_admission(world):
-    world.redis.deny_admission = True
     assert (await _verify(world, "cert-earlier"))["certificate_id"] == "cert-earlier"
-    assert world.list_reads == 0
+    assert await world.redis.get(world.window_key) is None
+    assert (world.list_reads, world.point_reads) == (0, 0)
 
 
 @pytest.mark.asyncio

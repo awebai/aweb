@@ -137,7 +137,11 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 				}
 			}
 			if scenario == "legacy local condition mismatch" {
-				accepted, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_second", opts)
+				accepted, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+					WorkingDir: wd,
+					Token:      "aw_inv_second",
+					Options:    opts,
+				})
 				if err != nil || accepted == nil {
 					t.Fatalf("retained refused home cannot try correct invite directly: %+v %v", accepted, err)
 				}
@@ -155,7 +159,11 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 				}
 				return
 			}
-			_, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_first", opts)
+			_, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+				WorkingDir: wd,
+				Token:      "aw_inv_first",
+				Options:    opts,
+			})
 			if err == nil {
 				t.Fatal("first attempt must refuse or be interrupted")
 			}
@@ -184,7 +192,11 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 			nextToken := "aw_inv_second"
 			if !definitive {
 				oldPreviews, oldAccepts := previews, accepts
-				if _, err := acceptHostedTeamInviteWithDetails(wd, nextToken, opts); err == nil || !strings.Contains(err.Error(), "retry changed") {
+				if _, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+					WorkingDir: wd,
+					Token:      nextToken,
+					Options:    opts,
+				}); err == nil || !strings.Contains(err.Error(), "retry changed") {
 					t.Fatalf("interrupted operation changed invite: %v", err)
 				}
 				if previews != oldPreviews || accepts != oldAccepts {
@@ -194,7 +206,11 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 			}
 			if scenario == "accept unavailable" {
 				refuseRetry = true
-				if _, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_first", opts); err == nil {
+				if _, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+					WorkingDir: wd,
+					Token:      "aw_inv_first",
+					Options:    opts,
+				}); err == nil {
 					t.Fatal("expected explicit refusal after ambiguous acceptance")
 				}
 				if state, err := loadHostedInviteCreation(recoveryPath); err != nil || state == nil {
@@ -203,7 +219,11 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 				refuseRetry = false
 			}
 			registryUnavailable = false
-			accepted, err := acceptHostedTeamInviteWithDetails(wd, nextToken, opts)
+			accepted, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+				WorkingDir: wd,
+				Token:      nextToken,
+				Options:    opts,
+			})
 			if err != nil || accepted == nil || accepted.Certificate.MemberDIDAW != actor.DIDAW {
 				t.Fatalf("correct invite/resume failed: %+v %v", accepted, err)
 			}

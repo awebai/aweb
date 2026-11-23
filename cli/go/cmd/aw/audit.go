@@ -49,10 +49,7 @@ func init() {
 	auditVerifyCmd.Flags().StringArrayVar(&auditVerifyReceiptKeys, "receipt-key", nil, "A did:key you accept for receipts (repeatable)")
 	auditVerifyCmd.Flags().StringArrayVar(&auditVerifyCheckpointKeys, "checkpoint-key", nil, "A did:key you accept for checkpoints (repeatable)")
 	auditVerifyCmd.Flags().StringArrayVar(&auditVerifyWitnesses, "witness", nil, "A file of receipts and checkpoints you hold (repeatable)")
-	auditVerifyCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		// Parsing stopped before --json could be read; the refusal still
-		// answers in the form asked for.
-		jsonFlag = jsonFlag || argsContainJSONFlag(os.Args[1:])
+	setCLIFlagErrorFunc(auditVerifyCmd, func(_ *cobra.Command, err error) error {
 		return auditVerifyError("usage", "%v", err)
 	})
 	auditCmd.AddCommand(auditVerifyCmd)
@@ -159,6 +156,15 @@ func auditVerifySummary(report logschain.BundleReport) string {
 		b.WriteString("The bundle is intact.\n")
 	} else {
 		b.WriteString("The bundle is NOT intact.\n")
+	}
+	if len(report.AttestedEpochs) == 0 {
+		b.WriteString("attested: none. Supply a receipt or checkpoint signed by an accepted key to attest an epoch.\n")
+	} else {
+		epochs := make([]string, 0, len(report.AttestedEpochs))
+		for _, epoch := range report.AttestedEpochs {
+			epochs = append(epochs, fmt.Sprint(epoch))
+		}
+		fmt.Fprintf(&b, "attested: epochs %s (accepted receipt or checkpoint).\n", strings.Join(epochs, ", "))
 	}
 	unanchored := false
 	for _, epoch := range report.Epochs {

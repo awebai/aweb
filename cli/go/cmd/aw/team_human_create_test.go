@@ -21,6 +21,33 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// serveProvisionedConnectForTest extends creator-focused HTTP fixtures with
+// admission before publication (docs/identity.md:514-519). Server authority is
+// exercised by the real-command world; this response preserves these fixtures'
+// certificate subject while their placement and recovery assertions run.
+func serveProvisionedConnectForTest(t *testing.T, w http.ResponseWriter, r *http.Request) bool {
+	t.Helper()
+	if r.Method != http.MethodPost || (r.URL.Path != "/v1/connect" && r.URL.Path != "/api/v1/connect") {
+		return false
+	}
+	certificate := requireCertificateAuthForTest(t, r)
+	var request connectRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		t.Fatal(err)
+	}
+	if request.WorkspacePath == "" {
+		t.Fatal("provisioned connect must identify its workspace")
+	}
+	if err := json.NewEncoder(w).Encode(connectResponse{
+		TeamID: certificate.Team, Alias: certificate.Alias,
+		AgentID: "agent-" + certificate.Alias, WorkspaceID: "workspace-" + certificate.Alias,
+		TeamDIDKey: certificate.TeamDIDKey,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return true
+}
+
 func resetTeamHumanCreateGlobals(t *testing.T) {
 	t.Helper()
 	// The roster path materializes an agent home, which sets up the Claude Code
@@ -1749,6 +1776,9 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
 			http.NotFound(w, r)
@@ -1859,6 +1889,9 @@ func TestTeamHumanCreateBYOTWithAgentsCreatesTeamAndRoster(t *testing.T) {
 			return
 		}
 
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
@@ -2005,6 +2038,9 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
 			if !namespaceCreated {
@@ -2123,6 +2159,9 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 		if serveUnadvertisedHealth(w, r) {
 			return
 		}
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
 			http.NotFound(w, r)
@@ -2156,6 +2195,7 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 		}
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	teamHumanCreateBYOT = true
 	teamHumanCreateNamespace = "acme.com"
 	teamHumanCreateRegistryURL = server.URL
@@ -2239,6 +2279,9 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 			return
 		}
 
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
@@ -2318,6 +2361,9 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRequiresTeamKeyForHostedRoll
 	removeCalls := 0
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
@@ -2422,6 +2468,9 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 	justCreatedCertID := ""
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveProvisionedConnectForTest(t, w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})

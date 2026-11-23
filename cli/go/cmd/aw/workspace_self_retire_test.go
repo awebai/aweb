@@ -409,7 +409,7 @@ func TestAwWorkspaceDeleteExternalIdentityHomeHasNoGenericFallback(t *testing.T)
 		t.Fatalf("expected external global self-delete refusal, got success:\n%s", out)
 	}
 	text := string(out)
-	if !strings.Contains(text, "only own hosted local self-release is supported") || !strings.Contains(text, aliasReleaseGlobalIdentity) {
+	if !strings.Contains(text, "only own local retirement is supported") || !strings.Contains(text, aliasReleaseGlobalIdentity) || !strings.HasSuffix(text, "Select that local member's own retained identity home, or ask its team controller for team-authorized removal.\n") {
 		t.Fatalf("unexpected refusal:\n%s", text)
 	}
 	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {

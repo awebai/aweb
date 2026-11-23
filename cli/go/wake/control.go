@@ -10,16 +10,16 @@ import (
 	"net"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 )
 
 // The control surface is a local unix socket under the state directory.
 //
 // register, deregister, pause, resume and status talk to the running daemon
-// over it, and fall back to writing the state files directly when the daemon
-// is down, so an OATS hook never fails because the broker is restarting. The
-// daemon reconciles the files on start and on a timer, so a fallback write is
-// picked up either way.
+// over it. Mutation fallback holds the daemon lock while updating state files;
+// a failed exchange with a live daemon is a refusal, not permission to write.
+// The daemon reconciles offline registrations on start and on a timer.
 
 // ControlOp names a control request.
 type ControlOp string
@@ -216,7 +216,8 @@ func writeControlResponse(conn net.Conn, resp ControlResponse) {
 }
 
 // Call sends one control request to the daemon. It returns ErrDaemonDown when
-// nothing is listening, which is the caller's signal to use the file fallback.
+// the socket is missing or refuses a connection. A mutation fallback must also
+// hold the daemon lock through WithDaemonStopped; transport failure is not absence.
 func Call(socketPath string, req ControlRequest) (ControlResponse, error) {
 	return callWithTimeout(socketPath, req, controlDeadline)
 }
@@ -226,17 +227,23 @@ func callWithTimeout(socketPath string, req ControlRequest, timeout time.Duratio
 		if req.Op == OpDeregisterManaged {
 			return fmt.Errorf("E_WAKE_STOP_UNKNOWN: control transport: %w", err)
 		}
-		return fmt.Errorf("%w: %v", ErrDaemonDown, err)
+		return fmt.Errorf("wake: control exchange failed; retry or inspect the daemon: %w", err)
 	}
 	if err := custodypath.Check(socketPath); err != nil {
 		if os.IsNotExist(err) {
-			return ControlResponse{}, transportError(err)
+			if req.Op == OpDeregisterManaged {
+				return ControlResponse{}, transportError(err)
+			}
+			return ControlResponse{}, fmt.Errorf("%w: %w", ErrDaemonDown, err)
 		}
 		return ControlResponse{}, fmt.Errorf("wake: control socket: %w", err)
 	}
 	deadline := time.Now().Add(timeout)
 	conn, err := net.DialTimeout("unix", socketPath, timeout)
 	if err != nil {
+		if req.Op != OpDeregisterManaged && (errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED)) {
+			return ControlResponse{}, fmt.Errorf("%w: %w", ErrDaemonDown, err)
+		}
 		return ControlResponse{}, transportError(err)
 	}
 	defer conn.Close()
@@ -244,7 +251,9 @@ func callWithTimeout(socketPath string, req ControlRequest, timeout time.Duratio
 		// Preserve the ordinary call's separate dial and exchange budgets.
 		deadline = time.Now().Add(timeout)
 	}
-	_ = conn.SetDeadline(deadline)
+	if err := conn.SetDeadline(deadline); err != nil {
+		return ControlResponse{}, transportError(err)
+	}
 
 	data, err := json.Marshal(req)
 	if err != nil {
@@ -254,7 +263,7 @@ func callWithTimeout(socketPath string, req ControlRequest, timeout time.Duratio
 		return ControlResponse{}, transportError(err)
 	}
 	line, err := bufio.NewReader(conn).ReadBytes('\n')
-	if err != nil && (req.Op == OpDeregisterManaged || len(strings.TrimSpace(string(line))) == 0) {
+	if err != nil {
 		return ControlResponse{}, transportError(err)
 	}
 	var resp ControlResponse
@@ -283,7 +292,11 @@ func StatusFromStore(store *Store, maxStreams int) (Status, error) {
 		Instances:          []InstanceStatus{},
 		RegistrationFaults: faults,
 	}
-	if pid, alive := LockOwner(store.LockPath()); alive {
+	pid, alive, err := LockOwner(store.LockPath())
+	if err != nil {
+		return Status{}, err
+	}
+	if alive {
 		status.DaemonRunning = true
 		status.DaemonPID = pid
 	}

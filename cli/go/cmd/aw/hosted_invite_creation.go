@@ -306,7 +306,7 @@ func pendingHostedInviteRequester(opts idParentOptions) (*requester, error) {
 
 // A condition refusal grants no membership. It releases the operation selection,
 // never the identity, signed ancestry, or a retained successful Cloud answer.
-func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) error {
+func releaseRefusedHostedInvite(recoveryPath string, marker acceptanceMintedKey, refusal error) error {
 	definitive := awid.IDCertificateErrorCode(refusal) == "human_mismatch"
 	status, hasStatus := awid.HTTPStatusCode(refusal)
 	if hasStatus && status == http.StatusConflict && awid.RefusalCode(refusal) == "human_condition_mismatch" {
@@ -315,14 +315,14 @@ func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) 
 	if !definitive {
 		return refusal
 	}
-	if err := discardHostedInviteAttempt(recoveryPath, markerPath); err != nil {
+	if err := discardHostedInviteAttempt(recoveryPath, marker); err != nil {
 		return errors.Join(refusal, err)
 	}
 	return refusal
 }
 
-func discardHostedInviteAttempt(recoveryPath, markerPath string) error {
-	if err := removeHostedAcceptPendingMarker(markerPath); err != nil {
+func discardHostedInviteAttempt(recoveryPath string, marker acceptanceMintedKey) error {
+	if err := marker.remove(); err != nil {
 		return fmt.Errorf("release refused invite marker: %w", err)
 	}
 	if err := os.Remove(recoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {

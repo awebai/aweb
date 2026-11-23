@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/canonicaljson"
+	"github.com/awebai/aw/signaturewire"
 )
 
 // TeamCertificate is a team membership proof signed by the team controller.
@@ -75,8 +77,8 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	memberDIDAW := strings.TrimSpace(fields.MemberDIDAW)
 	memberAddress := strings.TrimSpace(fields.MemberAddress)
 
-	payload := canonicalCertificatePayload(certID, fields.Team, teamDIDKey, fields.MemberDIDKey, memberDIDAW, memberAddress, fields.Alias, identityScope, issuedAt, false)
-	sig := ed25519.Sign(teamKey, []byte(payload))
+	payload := canonicalCertificatePayload(certificatePayloadFields{CertificateID: certID, TeamID: fields.Team, TeamDIDKey: teamDIDKey, MemberDIDKey: fields.MemberDIDKey, MemberDIDAW: memberDIDAW, MemberAddress: memberAddress, Alias: fields.Alias, Scope: identityScope, IssuedAt: issuedAt, ScopeField: certificateIdentityScopeField})
+	sig := signaturewire.SignBytes(teamKey, []byte(payload))
 
 	return &TeamCertificate{
 		Version:       1,
@@ -255,60 +257,44 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 // The payload must match exactly what the verifier reconstructs: the certificate
 // JSON (minus signature) serialized with sorted keys, no whitespace, and native
 // types (version as int, omitted empty optional fields).
-func canonicalCertificatePayload(certID, team, teamDIDKey, memberDIDKey, memberDIDAW, memberAddress, alias, scopeOrLifetime, issuedAt string, legacyLifetime bool) string {
-	type entry struct {
-		key string
-		val string // serialized JSON value (already quoted for strings)
-	}
+type certificateScopeField string
 
-	scopeKey := "identity_scope"
-	if legacyLifetime {
-		scopeKey = "lifetime"
-	}
-	entries := []entry{
-		{"alias", jsonString(alias)},
-		{"certificate_id", jsonString(certID)},
-		{"issued_at", jsonString(issuedAt)},
-		{scopeKey, jsonString(scopeOrLifetime)},
-	}
-	if memberAddress != "" {
-		entries = append(entries, entry{"member_address", jsonString(memberAddress)})
-	}
-	if memberDIDAW != "" {
-		entries = append(entries, entry{"member_did_aw", jsonString(memberDIDAW)})
-	}
-	entries = append(entries,
-		entry{"member_did_key", jsonString(memberDIDKey)},
-		entry{"team_did_key", jsonString(teamDIDKey)},
-		entry{"team_id", jsonString(team)},
-		entry{"version", "1"},
-	)
+const (
+	certificateIdentityScopeField certificateScopeField = "identity_scope"
+	certificateLifetimeField      certificateScopeField = "lifetime"
+)
 
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].key < entries[j].key
-	})
-
-	var b strings.Builder
-	b.WriteByte('{')
-	for i, e := range entries {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('"')
-		b.WriteString(e.key)
-		b.WriteString(`":`)
-		b.WriteString(e.val)
-	}
-	b.WriteByte('}')
-	return b.String()
+type certificatePayloadFields struct {
+	CertificateID string
+	TeamID        string
+	TeamDIDKey    string
+	MemberDIDKey  string
+	MemberDIDAW   string
+	MemberAddress string
+	Alias         string
+	Scope         string
+	IssuedAt      string
+	ScopeField    certificateScopeField
 }
 
-func jsonString(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	writeEscapedString(&b, s)
-	b.WriteByte('"')
-	return b.String()
+func canonicalCertificatePayload(certificate certificatePayloadFields) string {
+	fields := map[string]any{
+		"alias":                        certificate.Alias,
+		"certificate_id":               certificate.CertificateID,
+		"issued_at":                    certificate.IssuedAt,
+		string(certificate.ScopeField): certificate.Scope,
+		"member_did_key":               certificate.MemberDIDKey,
+		"team_did_key":                 certificate.TeamDIDKey,
+		"team_id":                      certificate.TeamID,
+		"version":                      1,
+	}
+	if certificate.MemberAddress != "" {
+		fields["member_address"] = certificate.MemberAddress
+	}
+	if certificate.MemberDIDAW != "" {
+		fields["member_did_aw"] = certificate.MemberDIDAW
+	}
+	return canonicaljson.Object(fields)
 }
 
 func firstNonEmpty(values ...string) string {

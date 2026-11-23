@@ -21,6 +21,11 @@ from folio.presentation import (
 )
 
 
+def _served(asset_id: UUID) -> str:
+    """Where a read-only link serves a shown image (present_routes)."""
+    return f"https://folio.aweb.ai/present/link-token/assets/{asset_id}"
+
+
 def test_render_presented_markdown_sanitizes_untrusted_html() -> None:
     html = render_presented_markdown(
         "# Hello\n\n<script>alert('x')</script>\n\n<img src=x onerror=alert(1)>\n\nA **safe** [link](https://example.com)."
@@ -52,12 +57,13 @@ def test_render_presented_markdown_allows_only_our_origin_allowed_asset_images()
             ]
         ),
         public_origin="https://folio.aweb.ai",
-        allowed_asset_ids={safe_id},
+        asset_embeds={safe_id: {"kind": "image", "url": _served(safe_id)}},
     )
 
+    # Each reference to the shown image, absolute or relative, loads it from
+    # the capability that serves it; the reference itself is not a src.
     assert html.count("<img") == 3
-    assert f'src="https://folio.aweb.ai/assets/{safe_id}"' in html
-    assert f'src="/assets/{safe_id}"' in html
+    assert html.count(f'src="{_served(safe_id)}"') == 3
     assert "safe alt" in html
     assert "relative ok" in html
     assert "onerror" not in html.lower()
@@ -574,7 +580,12 @@ _ORIGIN = "https://folio.aweb.ai"
 
 def _render_media(body: str) -> str:
     return render_presented_markdown(
-        body, public_origin=_ORIGIN, allowed_asset_ids={_MEDIA_A, _MEDIA_B}
+        body,
+        public_origin=_ORIGIN,
+        asset_embeds={
+            asset_id: {"kind": "image", "url": _served(asset_id)}
+            for asset_id in (_MEDIA_A, _MEDIA_B)
+        },
     )
 
 
@@ -593,7 +604,7 @@ def test_media_directive_emits_allowlisted_figure() -> None:
         )
     )
     assert '<figure class="folio-media folio-wrap-right folio-w-third">' in html
-    assert f'src="/assets/{_MEDIA_A}"' in html
+    assert f'src="{_served(_MEDIA_A)}"' in html
     assert 'alt="A line graph of weekly active users"' in html
     assert "<figcaption>WAU growth, Q1 2026</figcaption>" in html
 

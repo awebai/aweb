@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 type RegistryError struct {
@@ -420,7 +422,7 @@ func (c *RegistryClient) RotateDIDKey(
 		AuthorizedBy:   oldDID,
 		Timestamp:      timestamp,
 	})
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(oldSigningKey, []byte(signaturePayload)))
+	signature := signaturewire.SignStd(oldSigningKey, []byte(signaturePayload))
 	req := didUpdateRequest{
 		Operation:     "rotate_key",
 		NewDIDKey:     newDID,
@@ -690,7 +692,7 @@ func signedPathHeaders(method, path string, signingKey ed25519.PrivateKey) map[s
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	payload := timestamp + "\n" + method + "\n" + path
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(payload)))
+	signature := signaturewire.SignStd(signingKey, []byte(payload))
 	return map[string]string{
 		"Authorization":    fmt.Sprintf("DIDKey %s %s", did, signature),
 		"X-AWEB-Timestamp": timestamp,

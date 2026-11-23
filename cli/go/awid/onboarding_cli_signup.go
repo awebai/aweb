@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 // Onboarding HTTP helpers for the hosted onboarding endpoints.
@@ -136,7 +138,7 @@ func onboardingDIDKeyHeaders(
 ) map[string]string {
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	payload := onboardingDIDKeySignPayload(method, path, timestamp, body)
-	sig := ed25519.Sign(signingKey, payload)
+	sig := signaturewire.SignBytes(signingKey, payload)
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	return map[string]string{
 		"Authorization":    fmt.Sprintf("DIDKey %s %s", did, base64.RawStdEncoding.EncodeToString(sig)),

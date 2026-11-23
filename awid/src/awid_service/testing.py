@@ -27,7 +27,7 @@ from pgdbm import AsyncDatabaseManager, DatabaseConfig
 from redis.asyncio import Redis
 
 from awid.attestation_records import sign_record
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.external_authority import DNSLookup
 from awid.ratelimit import NoOpRateLimiter
 from awid.registry import RegistryClient
@@ -69,7 +69,7 @@ class ServiceTransport(httpx.AsyncBaseTransport):
 
 
 def _did_key(key: SigningKey) -> str:
-    return did_from_public_key(bytes(key.verify_key))
+    return did_key_from_signing_key(bytes(key))
 
 
 class TXTAnswers:

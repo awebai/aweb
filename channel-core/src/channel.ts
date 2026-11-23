@@ -15,11 +15,13 @@ import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { fetchRoomMessage, ackRoomNotice } from "./api/room.js";
 import { terminalInputSafeText } from "./terminal.js";
+import { messageTrustMetadata, presentMessageAwakening } from "./message_presentation.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
 import { RegistryResolver, type ResolveTxt } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
 import { isEncryptedMessage, verifyDecryptedMessage } from "./identity/encrypted.js";
-import type { VerificationStatus } from "./identity/signing.js";
+import { isTrustedVerificationStatus, type VerificationStatus } from "./identity/signing.js";
+export { isTrustedVerificationStatus } from "./identity/signing.js";
 import {
   createLocalAWDecryptProvider,
   createLocalAWPinStoreWriter,
@@ -835,20 +837,21 @@ async function dispatchMailEvent(
       continue;
     }
 
-    let from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    const transport: Record<string, string> = { message_id: msg.message_id };
+    if (conversationID) transport.conversation_id = conversationID;
     emitTrace(options, "decrypt_started", messageEvent, "mail");
     const decrypt = await resolveMailForDelivery(options, msg);
     emitTrace(options, "decrypt_completed", messageEvent, "mail");
-    if (!decrypt.ok) {
-      await deliverAwakening(options, {
+    if (!decrypt) {
+      await deliverAwakening(options, presentMessageAwakening({
         kind: "mail",
         content: "",
-        meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error),
+        meta: { ...transport, from: senderDisplayAddress(msg.from_alias, msg.from_address), decrypted: "false" },
         deliveryIntent: "wake",
-      });
+      }));
       continue;
     }
-    from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    const from = senderDisplayAddress(msg.from_alias, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, "mail");
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -866,29 +869,22 @@ async function dispatchMailEvent(
     const responsibility = typeof options.trust.verifyResponsibility === "function"
       ? await options.trust.verifyResponsibility(msg, authenticated)
       : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
-    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
-      msg.verification_status = "failed";
-    }
-
     const meta: Record<string, string> = {
       type: "mail",
       from,
-      message_id: msg.message_id,
-      responsibility: JSON.stringify(responsibility),
-      trust_status: msg.verification_status || "unknown",
-      verified: String(isTrustedVerificationStatus(msg.verification_status)),
+      ...transport,
+      ...messageTrustMetadata({ status: msg.verification_status, subject: receivedIdSubject(msg), responsibility }),
     };
-    if (conversationID) meta.conversation_id = conversationID;
     if (msg.subject) meta.subject = msg.subject;
     if (msg.priority && msg.priority !== "normal") meta.priority = msg.priority;
 
     emitTrace(options, "notification_started", messageEvent, "mail");
-    await deliverAwakening(options, {
+    await deliverAwakening(options, presentMessageAwakening({
       kind: "mail",
       content: msg.body,
       meta,
       deliveryIntent: "wake",
-    });
+    }));
     emitTrace(options, "notification_accepted", messageEvent, "mail");
     await persistDeliveryMark(options, dispatched, key, messageEvent, "mail");
     if (options.mailAcknowledgment !== "manual") {
@@ -954,22 +950,23 @@ async function dispatchChatEvent(
       continue;
     }
 
-    let from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const transport: Record<string, string> = { session_id: event.session_id, message_id: msg.message_id };
+    if (conversationID) transport.conversation_id = conversationID;
     const encrypted = isEncryptedMessage(msg);
     emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
-    if (!decrypt.ok) {
+    if (!decrypt) {
       options.onChatPresented?.(event.session_id, { encrypted });
-      await deliverAwakening(options, {
+      await deliverAwakening(options, presentMessageAwakening({
         kind: "chat",
         content: "",
-        meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id),
+        meta: { ...transport, from: senderDisplayAddress(msg.from_agent, msg.from_address), decrypted: "false" },
         deliveryIntent: event.sender_waiting ? "steer" : "wake",
-      });
+      }));
       continue;
     }
-    from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const from = senderDisplayAddress(msg.from_agent, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, lane);
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -987,31 +984,23 @@ async function dispatchChatEvent(
     const responsibility = typeof options.trust.verifyResponsibility === "function"
       ? await options.trust.verifyResponsibility(msg, authenticated)
       : await readReceivedIdChain(msg, authenticated, { evidence: async () => null });
-    if (authenticated && idRequestDisposition(responsibility, receivedIdSubject(msg), true).ordinary === "refuse") {
-      msg.verification_status = "failed";
-    }
-
     const meta: Record<string, string> = {
       type: "chat",
       from,
-      session_id: event.session_id,
-      message_id: msg.message_id,
-      responsibility: JSON.stringify(responsibility),
-      trust_status: msg.verification_status || "unknown",
-      verified: String(isTrustedVerificationStatus(msg.verification_status)),
+      ...transport,
+      ...messageTrustMetadata({ status: msg.verification_status, subject: receivedIdSubject(msg), responsibility }),
     };
-    if (conversationID) meta.conversation_id = conversationID;
     if (event.sender_waiting) meta.sender_waiting = "true";
     if (msg.sender_leaving) meta.sender_leaving = "true";
 
     emitTrace(options, "notification_started", messageEvent, lane);
     options.onChatPresented?.(event.session_id, { encrypted });
-    await deliverAwakening(options, {
+    await deliverAwakening(options, presentMessageAwakening({
       kind: "chat",
       content: msg.body,
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake",
-    });
+    }));
     emitTrace(options, "notification_accepted", messageEvent, lane);
     await persistDeliveryMark(options, dispatched, key, messageEvent, lane);
     presentedMessageIds.push(msg.message_id);
@@ -1154,15 +1143,13 @@ async function normalizeMessageTrust(
 async function resolveMailForDelivery(
   options: Pick<ChannelLoopOptions, "localDecrypt" | "self">,
   msg: InboxMessage,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (!isEncryptedMessage(msg)) return { ok: true };
-  if (!options.localDecrypt?.mailMessage) {
-    return { ok: false, error: "local aw decrypt provider is not configured" };
-  }
+): Promise<boolean> {
+  if (!isEncryptedMessage(msg)) return true;
+  if (!options.localDecrypt?.mailMessage) return false;
   try {
     const decrypted = await options.localDecrypt.mailMessage(msg.message_id);
     if (!decrypted || typeof decrypted.body !== "string") {
-      return { ok: false, error: "local aw did not return decrypted mail body" };
+      return false;
     }
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "mail", msg.conversation_id, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
@@ -1173,9 +1160,11 @@ async function resolveMailForDelivery(
     }
     msg.subject = decrypted.subject;
     msg.body = decrypted.body;
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return true;
+  } catch {
+    // The projection reports a fixed failure code. Provider exceptions can
+    // contain private or remote text and must not cross into an awakening.
+    return false;
   }
 }
 
@@ -1183,15 +1172,13 @@ async function resolveChatForDelivery(
   options: Pick<ChannelLoopOptions, "localDecrypt" | "self">,
   sessionID: string,
   msg: ChatMessage,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (!isEncryptedMessage(msg)) return { ok: true };
-  if (!options.localDecrypt?.chatMessage) {
-    return { ok: false, error: "local aw decrypt provider is not configured" };
-  }
+): Promise<boolean> {
+  if (!isEncryptedMessage(msg)) return true;
+  if (!options.localDecrypt?.chatMessage) return false;
   try {
     const decrypted = await options.localDecrypt.chatMessage(sessionID, msg.message_id);
     if (!decrypted || typeof decrypted.body !== "string") {
-      return { ok: false, error: "local aw did not return decrypted chat body" };
+      return false;
     }
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "chat", sessionID, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
@@ -1201,35 +1188,11 @@ async function resolveChatForDelivery(
       if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
     }
     msg.body = decrypted.body;
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return true;
+  } catch {
+    // Provider exceptions are not part of the model-facing failure contract.
+    return false;
   }
-}
-
-function encryptedDeliveryFailureMeta(
-  type: "mail" | "chat",
-  from: string,
-  messageID: string,
-  conversationID: string | undefined,
-  error: string,
-  sessionID?: string,
-): Record<string, string> {
-  const meta: Record<string, string> = {
-    type,
-    from,
-    message_id: messageID,
-    encrypted: "true",
-    decrypted: "false",
-    decrypt_error: error,
-  };
-  if (conversationID) meta.conversation_id = conversationID;
-  if (sessionID) meta.session_id = sessionID;
-  return meta;
-}
-
-export function isTrustedVerificationStatus(status: VerificationStatus | undefined): boolean {
-  return status === "verified" || status === "verified_custodial";
 }
 
 export function trustWarningLine(status: VerificationStatus | undefined): string {
@@ -1261,7 +1224,8 @@ export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
   const rawType = awakening.meta.type || awakening.kind;
   const type = awakening.kind === "app" ? sanitizeSummaryComponent(rawType) || "app" : rawType;
   const lines: string[] = [`aweb ${type} event received.`];
-  const warning = Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status")
+  const withheld = awakening.meta.content_withheld === "true";
+  const warning = !withheld && Object.prototype.hasOwnProperty.call(awakening.meta, "trust_status")
     ? trustWarningLine(awakening.meta.trust_status as VerificationStatus | undefined)
     : "";
   if (warning) lines.push("", warning);
@@ -1273,10 +1237,12 @@ export function formatAwakeningForAgent(awakening: ChannelAwakening): string {
   if (awakening.kind === "app") {
     const summary = sanitizeSummaryComponent(awakening.content) || formatAppEventMetaSummary(awakening.meta);
     if (summary) lines.push("", "App event:", summary);
+  } else if (withheld) {
+    lines.push("", awakening.content);
   } else if (awakening.content) {
     lines.push("", "Message:", awakening.content);
   }
-  lines.push("", awakeningClosingLine(awakening.kind));
+  if (!withheld) lines.push("", awakeningClosingLine(awakening.kind));
   return lines.join("\n");
 }
 

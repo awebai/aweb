@@ -35,4 +35,5 @@ COPY --from=channel-build /journey/channel-core/dist /journey/channel-core/dist
 COPY --from=channel-build /journey/channel-core/node_modules /journey/channel-core/node_modules
 COPY --chmod=0644 channel-core/package.json /journey/channel-core/package.json
 COPY --chmod=0644 scripts/cross-registry-inbound-verifier.mjs /journey/scripts/cross-registry-inbound-verifier.mjs
+RUN chmod 0755 /journey/scripts
 ENTRYPOINT ["/usr/local/bin/aw"]

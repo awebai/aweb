@@ -154,8 +154,13 @@ test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-ide
 # Discover the host/script controls together, including generators that import
 # the server's MCP registration. Use the locked server environment rather than
 # whichever Python happens to be installed on the host.
-.PHONY: test-scripts
-test-scripts:
+.PHONY: test-scripts prepare-released-kernel-test
+prepare-released-kernel-test:
+	@if [ ! -f /opt/user-paths/released-oats/node_modules/@awebai/oats/bin/oats.mjs ]; then \
+		npm ci --ignore-scripts --no-audit --no-fund --prefix candidate-gate/released-oats; \
+	fi
+
+test-scripts: prepare-released-kernel-test
 	PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts -p 'test_*.py' -v
 
 # Package configurations own rules; the root owner compares raw findings once.
@@ -169,6 +174,11 @@ check-python-static: prepare-python-static
 
 test-python-static:
 	uv run --offline --frozen --project server python -m unittest discover -s scripts -p test_python_static.py -v
+
+# AST-only test-state ceiling; no package preparation, services or network.
+.PHONY: check-product-table-writes
+check-product-table-writes:
+	python3 scripts/product_table_writes.py $(PRODUCT_TABLE_WRITE_ARGS)
 
 test-shipping: test-scripts
 	$(MAKE) test-vm-gate
@@ -388,7 +398,7 @@ test-naapp: production-awid-sync
 		git diff --exit-code -- $$package/uv.lock; \
 	done
 
-test-awid:
+test-awid: production-awid-sync
 	cd awid && uv sync --frozen
 	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
@@ -403,6 +413,7 @@ test-awid-pooler:
 		PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_database_session_settings.py
 
 test-cli: production-awid-sync
+	python3 scripts/test-egress/test_fixture_imports.py
 	cd cli/go && go mod download
 	cd awid && uv sync --frozen
 	# A short, canonical temp root avoids macOS /var symlinks and socket limits.
@@ -651,7 +662,7 @@ test-candidate-ledger:
 	python3 scripts/test_candidate_gate_ledger.py
 
 _candidate-unit-suites:
-	python3 scripts/test-egress/docker.py --profile $(CANDIDATE_UNIT_PROFILE) --server-workers $(if $(filter ccx33,$(CANDIDATE_UNIT_PROFILE)),7,0) --evidence "$$CANDIDATE_LOG_DIR/test-egress" --command bash scripts/candidate-suite.sh --isolated-suites
+	python3 scripts/test-egress/docker.py --profile $(CANDIDATE_UNIT_PROFILE) --server-workers $(if $(filter ccx33,$(CANDIDATE_UNIT_PROFILE)),7,0) --evidence "$$CANDIDATE_LOG_DIR/test-egress" --collect-summary --command bash scripts/candidate-suite.sh --isolated-suites
 
 # The gate's own ledger test runs first, on the host, so a gate change that
 # breaks it stops every train and release candidate before any stage runs.

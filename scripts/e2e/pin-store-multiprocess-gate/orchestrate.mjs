@@ -9,7 +9,6 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -19,11 +18,8 @@ const CHANNEL_CORE = join(WORKTREE, "channel-core");
 const DIST = join(CHANNEL_CORE, "dist", "index.js");
 const LIVE_STORE = join(homedir(), ".config", "aw", "known_agents.yaml");
 
-const require = createRequire(join(CHANNEL_CORE, "package.json"));
-const ed = require("@noble/ed25519");
-const { sha512 } = require("@noble/hashes/sha2.js");
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 const { computeDIDKey } = await import(DIST);
+const { publicKeyFromSeed, signBytes } = await import(join(CHANNEL_CORE, "dist", "identity", "signature_wire.js"));
 
 const TEAM = "backend:acme.com";
 const SENDER_ALIAS = "grace";
@@ -46,12 +42,12 @@ async function digest(path) {
   }
 }
 
-async function signedMessage(did, messageID, delayMs) {
+function signedMessage(did, messageID, delayMs) {
   const payload = JSON.stringify({
     from: SENDER_ADDRESS, from_did: did, from_stable_id: SENDER_STABLE_ID,
     to_did: SELF.did, to_stable_id: SELF.stableID, message_id: messageID,
   });
-  const signature = await ed.signAsync(new TextEncoder().encode(payload), SEED);
+  const signature = signBytes({ message: new TextEncoder().encode(payload), seed: SEED });
   return {
     signed_payload: payload,
     signature: Buffer.from(signature).toString("base64").replace(/=+$/, ""),
@@ -113,7 +109,7 @@ export async function runArm({ name, agents, lastSeenOffsetMs, plan, root }) {
   await mkdir(join(devHome, ".config", "aw"), { recursive: true });
   const storePath = join(devHome, ".config", "aw", "known_agents.yaml");
 
-  const did = computeDIDKey(await ed.getPublicKeyAsync(SEED));
+  const did = computeDIDKey(publicKeyFromSeed(SEED));
   const lastSeen = new Date(Date.now() - lastSeenOffsetMs).toISOString().replace(/\.\d{3}Z$/, "Z");
   await seedStore(storePath, did, lastSeen);
 
@@ -124,7 +120,7 @@ export async function runArm({ name, agents, lastSeenOffsetMs, plan, root }) {
   for (let i = 0; i < agents; i++) {
     const messages = [];
     for (const step of plan) {
-      messages.push(await signedMessage(did, `${name}-a${i}-${step.id}`, step.delayMs || 0));
+      messages.push(signedMessage(did, `${name}-a${i}-${step.id}`, step.delayMs || 0));
     }
     const cfgPath = join(armRoot, `agent${i}.json`);
     const cfg = {

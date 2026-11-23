@@ -57,21 +57,25 @@ var workspaceMigrateMultiTeamCmd = &cobra.Command{
 }
 
 var workspaceDeleteCmd = &cobra.Command{
-	Use:   "delete <workspace-id-or-name>",
-	Short: "Delete a local workspace and its local identity, retiring yourself when it is your own",
+	Annotations: map[string]string{identityNoRenewalAnnotation: "true"},
+	Use:         "delete <workspace-id-or-name>",
+	Short:       "Delete a local workspace and its local identity, retiring yourself when it is your own",
 	Long: `Delete a local workspace and its local identity.
 
-Deleting YOUR OWN workspace on a hosted team, with a local identity, retires you:
-the hosted team controller revokes your membership certificate, so your name
-becomes reusable by a later "aw team join". Any other target is a local delete
-only, and does not release the name.
+Deleting YOUR OWN workspace with a local identity can retire its membership.
+On a hosted team, the service controller revokes the membership certificate.
+On a non-hosted team, the command deletes the workspace while the member
+credential is valid, saves a local receipt, then revokes with the local team key.
+If revocation cannot finish, retain the home and receipt and follow next_step.
+Retrying uses the receipt and performs only the remaining controller operation.
 
 Read alias_released in the output, not identity_deleted. Deleting local state
 says nothing about the membership certificate, and an active certificate is what
 makes a rejoin under the same name fail. alias_released_reason says why:
 
   not_own_workspace        the target is not the workspace you are running as
-  team_not_hosted          self-hosted or BYOT; no cloud-held controller to revoke
+  controller_key_missing  workspace deleted; give next_step to the team key holder
+  retired_revocation_pending  workspace deleted; retry using the retained receipt
   global_identity          global identities are retired by team-authorized removal
   no_workspace_credential  no workspace-bound key and no team certificate in local
                            config to authenticate with
@@ -80,9 +84,8 @@ When this command can retire you, it does not fall back to a plain delete: a
 failure is reported as a failure, because a success report for a retirement that
 did not happen is what leaks names.
 
-With --identity-home, the only destructive operation admitted for an external
-principal is this own hosted local self-release path. Non-eligible external
-principals fail closed instead of falling back to generic workspace delete.`,
+With --identity-home, own local retirement uses the selected home. Global and
+other-member targets fail closed instead of falling back to generic deletion.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runWorkspaceDelete,
 }
@@ -99,7 +102,7 @@ type workspaceStatusOutput struct {
 	Workspace          aweb.WorkspaceInfo                `json:"workspace"`
 	ContextKind        string                            `json:"context_kind"`
 	Locks              []aweb.ReservationView            `json:"locks,omitempty"`
-	Team               []aweb.WorkspaceInfo              `json:"team,omitempty"`
+	Team               []aweb.WorkspaceInfo              `json:"team"`
 	TeamHasMore        bool                              `json:"team_has_more"`
 	TeamLimit          int                               `json:"team_limit"`
 	TeamLocks          map[string][]aweb.ReservationView `json:"team_locks,omitempty"`
@@ -143,7 +146,10 @@ type workspaceDeleteOutput struct {
 	// field rather than silently reading a missing one.
 	AliasReleased bool `json:"alias_released"`
 	// Why. Empty only when nothing was attempted.
-	AliasReleasedReason string `json:"alias_released_reason,omitempty"`
+	AliasReleasedReason string            `json:"alias_released_reason,omitempty"`
+	RetirementCode      retirementOutcome `json:"retirement_code,omitempty"`
+	ReceiptPath         string            `json:"receipt_path,omitempty"`
+	NextStep            string            `json:"next_step,omitempty"`
 }
 
 var saveWorktreeWorkspaceTo = awconfig.SaveWorktreeWorkspaceTo
@@ -167,7 +173,10 @@ func init() {
 }
 
 func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
-	workingDir, _ := os.Getwd()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	home, err := identityHomeForDir(workingDir)
 	if err != nil {
 		return err
@@ -273,7 +282,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	printOutput(workspaceStatusOutput{
+	if err := printOutput(workspaceStatusOutput{
 		SelectedTeam:       strings.TrimSpace(sel.TeamID),
 		Memberships:        membershipItemsForWorkspaceState(state, teamState, strings.TrimSpace(sel.TeamID), workspaceStatusAll),
 		Workspace:          self,
@@ -285,7 +294,9 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		TeamLocks:          teamLocks,
 		EscalationsPending: statusResp.EscalationsPending,
 		ConflictCount:      len(statusResp.Conflicts),
-	}, formatWorkspaceStatus)
+	}, formatWorkspaceStatus); err != nil {
+		return fmt.Errorf("write workspace status: %w. Check the output destination, then rerun aw workspace status.", err)
+	}
 
 	// Opportunistically clean up workspaces whose directories have disappeared.
 	if gone := detectGoneWorkspaces(client, workspaceID); len(gone) > 0 {
@@ -304,11 +315,21 @@ func loadCurrentWorkspaceAndTeamState(workingDir, identityHome string) (*awconfi
 // workspaceDeleteRefusal refuses a delete through an external identity home.
 // Its alias-release reason is also its --json error code.
 func workspaceDeleteRefusal(selection *awconfig.Selection, reason string) error {
-	return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
+	if reason == aliasReleaseNotHosted {
+		// Released OATS matches this exact sentence before handing off to the controller.
+		return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
+	}
+	return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own local retirement is supported for an external identity home (reason: %s). Select that local member's own retained identity home, or ask its team controller for team-authorized removal.", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
 }
 
 func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
-	workingDir, _ := os.Getwd()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if resumed, err := resumeLocalControllerRetirement(localRetirementRequest{Command: cmd, WorkingDir: workingDir, Target: strings.TrimSpace(args[0])}); resumed || err != nil {
+		return err
+	}
 	client, selection, err := resolveClientSelectionForDir(workingDir)
 	if err != nil {
 		return err
@@ -369,6 +390,9 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	// held, and falling back to the plain delete would reproduce the exact defect
 	// this change exists to fix - a success report for a retirement that did not
 	// happen.
+	if handled, err := retireLocalControllerMember(localRetirementRequest{Command: cmd, WorkingDir: workingDir, Target: workspaceID, Client: client, Selection: selection}); handled || err != nil {
+		return err
+	}
 	plan := planSelfRetire(workingDir, selection, workspaceID)
 	if selection != nil && selection.ExternalIdentityHome && !plan.eligible {
 		return workspaceDeleteRefusal(selection, plan.reason)
@@ -388,7 +412,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 				retired.AliasReleasedReason,
 			)
 		}
-		printOutput(workspaceDeleteOutput{
+		return writeWorkspaceDeleteOutput(workspaceDeleteOutput{
 			WorkspaceID: retired.WorkspaceID,
 			Alias:       retired.Alias,
 			// Empty on purpose: the retirement response does not carry the
@@ -399,8 +423,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 			IdentityDeleted:     true,
 			AliasReleased:       true,
 			AliasReleasedReason: retired.AliasReleasedReason,
-		}, formatWorkspaceDelete)
-		return nil
+		})
 	}
 
 	ctx, cancel := commandAPIContext(cmd)
@@ -415,7 +438,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	if deleteResp == nil {
 		return fmt.Errorf("workspace %s not found or already deleted", workspaceID)
 	}
-	printOutput(workspaceDeleteOutput{
+	return writeWorkspaceDeleteOutput(workspaceDeleteOutput{
 		WorkspaceID: deleteResp.WorkspaceID,
 		Alias:       deleteResp.Alias,
 		DeletedAt:   deleteResp.DeletedAt,
@@ -425,12 +448,14 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		IdentityDeleted:     deleteResp.IdentityDeleted,
 		AliasReleased:       false,
 		AliasReleasedReason: plan.reason,
-	}, formatWorkspaceDelete)
-	return nil
+	})
 }
 
 func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
-	workingDir, _ := os.Getwd()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	root, err := currentGitWorktreeRootFromDir(workingDir)
 	if err != nil {
 		return usageError("workspace add-worktree requires a git worktree")
@@ -562,22 +587,17 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("check team key: %w", err)
 	}
 
+	child := worktreeAgentCreation{
+		WorkingDir: workingDir, CreatorHome: home, WorktreePath: worktreePath, RepoRoot: root,
+		BranchName: branchName, BranchCreated: branchCreated, ServerURL: sourceServerURL, TeamID: teamID,
+		Alias: alias, Role: role, Workspace: state, APIKey: strings.TrimSpace(state.APIKey),
+	}
 	if hasTeamKey {
-		_, err = addWorktreeViaLocalTeamKey(
-			worktreePath, root, branchName, branchCreated,
-			teamID, teamDomain, teamName, sourceServerURL, workingDir, sourceIdentityHome,
-			alias, role, state,
-		)
+		_, err = addWorktreeViaLocalTeamKey(child)
 	} else if strings.TrimSpace(state.APIKey) != "" {
-		_, err = addWorktreeViaCloudBootstrap(
-			worktreePath, root, branchName, branchCreated,
-			sourceServerURL, alias, role, state,
-		)
+		_, err = addWorktreeViaCloudBootstrap(child)
 	} else {
-		_, err = addWorktreeViaPrimaryInvite(
-			workingDir, sourceIdentityHome, worktreePath, root, branchName, branchCreated,
-			sourceServerURL, alias, role, state,
-		)
+		_, err = addWorktreeViaPrimaryInvite(child)
 	}
 	if err != nil {
 		return err
@@ -589,108 +609,10 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		Branch:       branchName,
 		WorktreePath: worktreePath,
 	}
-	if jsonFlag {
-		printJSON(output)
-	} else {
-		printOutput(output, formatWorkspaceAddWorktree)
+	if err := printOutput(output, formatWorkspaceAddWorktree); err != nil {
+		return fmt.Errorf("write add-worktree result: %w. Check the output destination and inspect the created worktree at %s before retrying.", err, worktreePath)
 	}
 	return nil
-}
-
-func addWorktreeViaLocalTeamKey(
-	worktreePath, root, branchName string, branchCreated bool,
-	teamID, teamDomain, teamName, sourceServerURL, workingDir, sourceIdentityHome string,
-	alias, role string, state *awconfig.WorktreeWorkspace,
-) (connectOutput, error) {
-	registryURL, err := resolveWorkspaceTeamRegistryURLAt(workingDir, sourceIdentityHome, sourceServerURL, teamDomain)
-	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, err
-	}
-
-	_, inviteToken, err := createTeamInviteTokenAt(teamDomain, teamName, registryURL, sourceServerURL, true, "", workingDir, sourceIdentityHome)
-	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("create local team invite for %s: %w", teamID, err)
-	}
-	acceptedInvite, err := acceptTeamInviteWithDetails(worktreePath, inviteToken, teamAcceptInviteOptions{
-		IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
-		Name:         alias,
-		Scope:        awid.IdentityModeLocal,
-	})
-	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("accept team invite in new worktree: %w", err)
-	}
-
-	rollback := func(step string, cause error) (connectOutput, error) {
-		rollbackErr := revokeAcceptedTeamCertificate(acceptedInvite)
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		if rollbackErr != nil {
-			return connectOutput{}, fmt.Errorf("%s: %w (rollback revoke failed: %v)", step, cause, rollbackErr)
-		}
-		return connectOutput{}, fmt.Errorf("%s: %w", step, cause)
-	}
-
-	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
-	connectResult, err := initCertificateConnectWithOptions(worktreePath, sourceServerURL, certificateConnectOptions{
-		Role:      role,
-		HumanName: strings.TrimSpace(state.HumanName),
-		AgentType: strings.TrimSpace(state.AgentType),
-	})
-	if err != nil {
-		return rollback("connect new worktree", err)
-	}
-	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
-		return rollback(
-			"validate new worktree name",
-			fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(connectResult.Alias), alias),
-		)
-	}
-	return connectResult, nil
-}
-
-func addWorktreeViaCloudBootstrap(
-	worktreePath, root, branchName string, branchCreated bool,
-	sourceServerURL, alias, role string, state *awconfig.WorktreeWorkspace,
-) (connectOutput, error) {
-	apiKey := strings.TrimSpace(state.APIKey)
-	if apiKey == "" {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, usageError(
-			"no local team key and no workspace API key; " +
-				"run `aw id team create` to manage teams locally, " +
-				"or re-initialize with an API key from the dashboard",
-		)
-	}
-
-	awebURL, err := normalizeAPIKeyBootstrapBaseURL(sourceServerURL)
-	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, err
-	}
-
-	fmt.Fprintln(os.Stderr, "Requesting certificate from cloud...")
-	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-		WorkingDir:   worktreePath,
-		IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
-		AwebURL:      awebURL,
-		APIKey:       apiKey,
-		Alias:        alias,
-		Role:         role,
-		HumanName:    strings.TrimSpace(state.HumanName),
-		AgentType:    strings.TrimSpace(state.AgentType),
-		Global:       false,
-	})
-	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("cloud bootstrap for new worktree: %w", err)
-	}
-	if strings.TrimSpace(result.Alias) != "" && !strings.EqualFold(strings.TrimSpace(result.Alias), alias) {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(result.Alias), alias)
-	}
-	return result, nil
 }
 
 func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
@@ -727,8 +649,7 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 		if activeMembership := awconfig.ActiveMembershipFor(workspace, teamState); activeMembership != nil {
 			output.CertPath = strings.TrimSpace(activeMembership.CertPath)
 		}
-		printOutput(output, formatWorkspaceMigrateMultiTeam)
-		return nil
+		return writeWorkspaceMigrationResult(output)
 	} else if err != nil && !strings.Contains(err.Error(), awconfig.LegacyWorkspaceSingleTeamError()) {
 		return err
 	}
@@ -737,7 +658,13 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(output, formatWorkspaceMigrateMultiTeam)
+	return writeWorkspaceMigrationResult(output)
+}
+
+func writeWorkspaceMigrationResult(output workspaceMigrateMultiTeamOutput) error {
+	if err := printOutput(output, formatWorkspaceMigrateMultiTeam); err != nil {
+		return fmt.Errorf("write workspace migration result: %w. Check the output destination and run aw workspace status to inspect the workspace.", err)
+	}
 	return nil
 }
 
@@ -909,6 +836,15 @@ func formatWorkspaceDelete(v any) string {
 	}
 	if strings.TrimSpace(out.DeletedAt) != "" {
 		sb.WriteString(fmt.Sprintf("Deleted at: %s\n", out.DeletedAt))
+	}
+	if out.RetirementCode != "" {
+		fmt.Fprintf(&sb, "Retirement: %s\n", out.RetirementCode)
+	}
+	if out.ReceiptPath != "" {
+		fmt.Fprintf(&sb, "Receipt: %s\n", out.ReceiptPath)
+	}
+	if out.NextStep != "" {
+		fmt.Fprintf(&sb, "%s\n", out.NextStep)
 	}
 	return sb.String()
 }

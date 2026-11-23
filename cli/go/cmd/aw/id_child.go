@@ -245,9 +245,12 @@ func currentAgentIssuer(opts idChildOptions) (*selectedChildIssuer, error) {
 	if chain == nil {
 		return nil, usageError("%s has no installed chain, so it issues no children; select --as-root or --human", identity.StableID)
 	}
-	certificates := chain.Bundle["certificates"].([]any)
-	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-	domain := leaf["domain"].(string)
+	checkedChain, err := awid.IDChainFromBundle(chain.Bundle)
+	if err != nil {
+		return nil, err
+	}
+	certificates := checkedChain.SignedCertificates()
+	domain := checkedChain.Leaf().Domain()
 	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
 		return nil, err

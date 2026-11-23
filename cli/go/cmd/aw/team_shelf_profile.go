@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/awebai/aw/internal/blueprint"
@@ -197,9 +198,8 @@ func resolveTeamProfileSourcesForPlans(teamAuthorityDir string, plans []teamHuma
 // branches on that field alone, so recording it would make this home correct exactly
 // once and send its next refresh back to the public catalog.
 func applyTeamLibraryProfileToHome(homeDir string, selector libraryProfileSelector, source *teamProfileSource, force bool) (*blueprint.MaterializeResult, []string, error) {
-	// An unresolved source is a wiring mistake, not a public profile. Defaulting it
-	// would make a call site that skipped the preflight materialize stock bytes and
-	// report success - the exact failure this change exists to remove.
+	// A source must be resolved before writing so a failed shelf lookup cannot
+	// substitute public-profile bytes for the team's selected profile.
 	if source == nil {
 		return nil, nil, fmt.Errorf("internal: the profile source for %s was not resolved before materialization", homeDir)
 	}
@@ -232,6 +232,9 @@ func applyTeamLibraryProfileToHome(homeDir string, selector libraryProfileSelect
 		return nil
 	})
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := writeMaterializationWarnings(os.Stderr, materialized); err != nil {
 		return nil, nil, err
 	}
 	return materialized, materialized.FilesWritten, nil

@@ -25,6 +25,7 @@ from awid.federation_errors import FederationAuthorityError
 from awid.id_tree_requests import CONTROLLER_REQUEST_TYPE
 from awid.signing import verify_did_key_signature
 from awid.team_ids import parse_team_id
+from awid.utc_timestamps import ZonedTimestampProfile, parse_zoned_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,11 @@ class TeamKeyAct:
 
 
 def _decode_payload(value: Any) -> bytes:
-    if not isinstance(value, str) or not value or len(value) > MAX_SIGNED_PAYLOAD_BYTES * 2:
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > MAX_SIGNED_PAYLOAD_BYTES * 2
+    ):
         raise TeamKeyActError("malformed", "signed_payload")
     try:
         raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
@@ -70,15 +75,16 @@ def _parse_timestamp(value: Any) -> datetime:
     if not isinstance(value, str):
         raise TeamKeyActError("malformed", "timestamp")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_zoned_timestamp(
+            value, profile=ZonedTimestampProfile.SIGNED_TEAM_KEY_ACT
+        )
     except ValueError as exc:
         raise TeamKeyActError("malformed", "timestamp") from exc
-    if parsed.tzinfo is None:
-        raise TeamKeyActError("malformed", "timestamp")
-    return parsed
 
 
-def verify_team_key_act(record: Any, *, domain: str, name: str, team_did_key: str) -> TeamKeyAct:
+def verify_team_key_act(
+    record: Any, *, domain: str, name: str, team_did_key: str
+) -> TeamKeyAct:
     """Check that ``record`` is a ``rotate_team_key`` act for exactly this team
     and key, signed by its stated signer. Who the signer must be is the
     caller's DNS question (``verify_team_key_change``)."""
@@ -95,7 +101,9 @@ def verify_team_key_act(record: Any, *, domain: str, name: str, team_did_key: st
         raise TeamKeyActError("malformed", "signed_payload") from exc
     if not isinstance(payload, dict):
         raise TeamKeyActError("malformed", "signed_payload")
-    if "v" in payload and (payload.get("v") != 2 or payload.get("type") != CONTROLLER_REQUEST_TYPE):
+    if "v" in payload and (
+        payload.get("v") != 2 or payload.get("type") != CONTROLLER_REQUEST_TYPE
+    ):
         raise TeamKeyActError("malformed", "envelope version")
     signed_at = _parse_timestamp(payload.get("timestamp"))
     if payload.get("operation") != ROTATE_TEAM_KEY_OPERATION:
@@ -108,7 +116,13 @@ def verify_team_key_act(record: Any, *, domain: str, name: str, team_did_key: st
         verify_did_key_signature(did_key=signer, payload=raw, signature_b64=signature)
     except ValueError as exc:
         raise TeamKeyActError("bad_signature") from exc
-    return TeamKeyAct(domain=domain, name=name, team_did_key=team_did_key, signer_did_key=signer, signed_at=signed_at)
+    return TeamKeyAct(
+        domain=domain,
+        name=name,
+        team_did_key=team_did_key,
+        signer_did_key=signer,
+        signed_at=signed_at,
+    )
 
 
 async def dns_namespace_controller(domain: str, resolver: TXTOutcomeResolver) -> str:
@@ -117,7 +131,9 @@ async def dns_namespace_controller(domain: str, resolver: TXTOutcomeResolver) ->
     try:
         authority = await discover_registry_authority(domain, resolver)
     except FederationAuthorityError as exc:
-        raise TeamKeyActError("controller_unavailable", f"DNS lookup for {domain} failed") from exc
+        raise TeamKeyActError(
+            "controller_unavailable", f"DNS lookup for {domain} failed"
+        ) from exc
     if authority.selection != "dns" or not authority.controller_did:
         raise TeamKeyActError("controller_unavailable", f"no _awid record for {domain}")
     return authority.controller_did
@@ -135,7 +151,9 @@ async def verify_team_key_change(
     """The act that moves a pinned team key to ``team_did_key``: a valid
     ``rotate_team_key`` act, newer than ``pinned_at`` (the act behind the
     current pin, if any), signed by the controller DNS names for ``domain``."""
-    act = verify_team_key_act(record, domain=domain, name=name, team_did_key=team_did_key)
+    act = verify_team_key_act(
+        record, domain=domain, name=name, team_did_key=team_did_key
+    )
     if pinned_at is not None and act.signed_at <= pinned_at:
         raise TeamKeyActError("not_newer")
     controller = await dns_namespace_controller(domain, resolver)
@@ -163,7 +181,9 @@ class TeamKeyPinStore(Protocol):
         """Record ``team_did_key`` as the pin of a team never seen, and return
         the pin now held (another writer's, if it got there first)."""
 
-    async def move(self, team_id: str, *, expected: TeamKeyPin, new: TeamKeyPin) -> bool:
+    async def move(
+        self, team_id: str, *, expected: TeamKeyPin, new: TeamKeyPin
+    ) -> bool:
         """Replace ``expected`` with ``new``; False when the pin is no longer ``expected``."""
 
 
@@ -179,7 +199,9 @@ class MemoryTeamKeyPins:
     async def first_sight(self, team_id: str, team_did_key: str) -> TeamKeyPin:
         return self._pins.setdefault(team_id, TeamKeyPin(team_did_key, None))
 
-    async def move(self, team_id: str, *, expected: TeamKeyPin, new: TeamKeyPin) -> bool:
+    async def move(
+        self, team_id: str, *, expected: TeamKeyPin, new: TeamKeyPin
+    ) -> bool:
         if self._pins.get(team_id) != expected:
             return False
         self._pins[team_id] = new
@@ -193,14 +215,20 @@ class TeamKeyMemo:
     under the same served key reads neither the pin nor the act again, also
     while the answer is the pinned key rather than the served one."""
 
-    def __init__(self, seconds: float = 60, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self, seconds: float = 60, clock: Callable[[], float] = time.monotonic
+    ) -> None:
         self._seconds = seconds
         self._clock = clock
         self._entries: dict[str, tuple[str, str, float]] = {}
 
     def get(self, team_id: str, served_key: str) -> str | None:
         entry = self._entries.get(team_id)
-        if entry is None or entry[0] != served_key or self._clock() - entry[2] >= self._seconds:
+        if (
+            entry is None
+            or entry[0] != served_key
+            or self._clock() - entry[2] >= self._seconds
+        ):
             return None
         return entry[1]
 
@@ -250,7 +278,12 @@ async def pinned_team_key(
         if record is None:
             raise TeamKeyActError("no_act")
         act = await verify_team_key_change(
-            record, domain=domain, name=name, team_did_key=served_key, pinned_at=pin.act_at, resolver=resolver,
+            record,
+            domain=domain,
+            name=name,
+            team_did_key=served_key,
+            pinned_at=pin.act_at,
+            resolver=resolver,
         )
     except TeamKeyActError as exc:
         if exc.reason == "key_mismatch":
@@ -259,42 +292,64 @@ async def pinned_team_key(
             # moves the pin in either mode.
             logger.warning(
                 "team_key_pin_kept team=%s pinned=%s served=%s reason=%s",
-                team_id, pin.team_did_key, served_key, exc.reason,
+                team_id,
+                pin.team_did_key,
+                served_key,
+                exc.reason,
             )
             return pin.team_did_key
         _mismatch(team_id, pin.team_did_key, served_key, exc.reason, enforce=enforce)
         return await _move_without_act(team_id, pins, pin, served_key, exc.reason)
-    if not await pins.move(team_id, expected=pin, new=TeamKeyPin(served_key, act.signed_at)):
+    if not await pins.move(
+        team_id, expected=pin, new=TeamKeyPin(served_key, act.signed_at)
+    ):
         current = await pins.pin(team_id)
         if current is not None and current.team_did_key == served_key:
             return served_key
         pinned = current or pin
-        _mismatch(team_id, pinned.team_did_key, served_key, "pin_moved", enforce=enforce)
+        _mismatch(
+            team_id, pinned.team_did_key, served_key, "pin_moved", enforce=enforce
+        )
         return await _move_without_act(team_id, pins, pinned, served_key, "pin_moved")
     logger.warning(
         "team key pin for %s moved from %s to %s by the namespace controller act signed %s by %s",
-        team_id, pin.team_did_key, served_key, act.signed_at.isoformat(), act.signer_did_key,
+        team_id,
+        pin.team_did_key,
+        served_key,
+        act.signed_at.isoformat(),
+        act.signer_did_key,
     )
     return served_key
 
 
-def _mismatch(team_id: str, pinned: str, served: str, reason: str, *, enforce: bool) -> None:
+def _mismatch(
+    team_id: str, pinned: str, served: str, reason: str, *, enforce: bool
+) -> None:
     """Log the one ``team_key_pin_mismatch`` line; refuse when enforcing."""
     logger.warning(
         "team_key_pin_mismatch team=%s pinned=%s served=%s reason=%s enforced=%s",
-        team_id, pinned, served, reason, "true" if enforce else "false",
+        team_id,
+        pinned,
+        served,
+        reason,
+        "true" if enforce else "false",
     )
     if enforce:
         raise TeamKeyUnverified(team_id, reason)
 
 
-async def _move_without_act(team_id: str, pins: TeamKeyPinStore, pin: TeamKeyPin, served: str, reason: str) -> str:
+async def _move_without_act(
+    team_id: str, pins: TeamKeyPinStore, pin: TeamKeyPin, served: str, reason: str
+) -> str:
     """Before enforcement, the tolerated ``served`` key becomes the pin, so the
     key a member was verified under is the team's current key on this server.
     The time of the last accepted act is kept: no act moved it."""
     if await pins.move(team_id, expected=pin, new=TeamKeyPin(served, pin.act_at)):
         logger.warning(
             "team_key_pin_moved_without_act team=%s from=%s to=%s reason=%s",
-            team_id, pin.team_did_key, served, reason,
+            team_id,
+            pin.team_did_key,
+            served,
+            reason,
         )
     return served

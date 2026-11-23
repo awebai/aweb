@@ -3,9 +3,49 @@
 # runs their existing product targets and writes their real results.
 set -euo pipefail
 
-run() { printf '\n=== candidate: %s ===\n' "$1"; make "$1"; }
+log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
+summary="$log_dir/summary.tsv"
+
+target_result() {
+  local target="$1" verdict="$2" elapsed="$3" note="${4:-}"
+  printf 'candidate: %s %s%s\n' "$target" "$verdict" "${note:+ ($note)}"
+  printf '%s/%s\t%s\t%s\t%ss\t%s\n' \
+    "$stage" "$target" "$verdict" "$target_log" "$elapsed" "$note" >> "$summary"
+}
+
+run_step() {
+  local target="$1" started=$SECONDS status
+  shift
+  printf '\n=== candidate: %s ===\n' "$target"
+  if "$@"; then
+    target_result "$target" PASSED "$((SECONDS-started))"
+  else
+    status=$?
+    if [[ "$stage_status" == 0 ]]; then stage_status=$status; fi
+    target_result "$target" FAILED "$((SECONDS-started))" "exit $status"
+  fi
+}
+
+run() {
+  # These journeys use the CLI built in this runner. The other integration
+  # targets build their own inputs or have no dependency on a stage artifact.
+  case "$stage/$1" in
+    integration/_candidate-oats|integration/e2e-naapp)
+      if grep -Eq '^(artifacts|integration)/build'$'\tFAILED\t' "$summary"; then
+        if [[ "$stage_status" == 0 ]]; then stage_status=1; fi
+        target_result "$1" SKIPPED 0 "build FAILED"
+        return
+      fi ;;
+  esac
+  run_step "$1" make "$1"
+}
+
 if [[ "${1:-}" == "--isolated-suites" ]]; then
   export TEST_EGRESS_RUNNER=
+  stage=unit
+  target_log=test-egress/suite.log
+  stage_status=0
+  : > "$summary"
   run test-server
   run test-awid
   run test-naapp
@@ -15,14 +55,26 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   run test-channel-name-live-contract
   run _candidate-unit-channel-core
   run _candidate-unit-pi
-  exit 0
+  exit "$stage_status"
 fi
 
-log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
-stages="${1:-checks user-paths unit artifacts integration}"
+all_stages="checks user-paths unit artifacts integration"
+requested="${1:-$all_stages}"
+selected=" "
+for stage in $requested; do
+  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
+  selected+="$stage "
+done
+
+host_published_port() {
+  cat "$log_dir/host-published-port.log" || return
+  return "${CANDIDATE_HOST_PORT_STATUS:-0}"
+}
+
 checks() {
   run check-python-static
-  cat "$log_dir/host-published-port.log"
+  run check-product-table-writes
+  run_step host-published-port host_published_port
   run check-generated-copies
   run test-generated-copies
   run check-private-boundary
@@ -53,17 +105,22 @@ user-paths() {
   run e2e-user-paths
 }
 unit() {
-  # These source checks belong to every unit proof, including unit-only runs.
-  # Refuse before node preparation or the expensive isolated product suites.
+  # Keep source controls first, and keep collecting the independent results
+  # when one of them finds a defect.
   run test-identity-primitives
   run test-vector-provenance
   run test-sot-source-inventories
   run test-python-locks
   run lint-naapp
-  if [[ "$node_ready" == 0 ]]; then run _candidate-node-deps; fi
+  prepare_node
   run _candidate-unit-suites
+  if [[ -f "$log_dir/test-egress/summary.tsv" ]]; then
+    cat "$log_dir/test-egress/summary.tsv" >> "$summary"
+  fi
 }
 artifacts() {
+  prepare_node
+  prepare_cli
   run _candidate-artifact-server
   run _candidate-artifact-awid-package
   run _candidate-artifact-awid-image
@@ -72,11 +129,11 @@ artifacts() {
   run _candidate-artifact-pi
   run _candidate-artifact-skills
   run _candidate-artifact-a2a-image
-  docker buildx prune --all --force --keep-storage=10GB --builder "${BUILDX_BUILDER:?}"
+  run_step prune-builder prune_builder
 }
 integration() {
-  # A reused stage proves its tests, not the continued existence of its
-  # disposable build outputs. Prepare the inputs needed in this new runner.
+  prepare_node
+  prepare_cli
   run freshness
   run test-channel-core-process-guard
   run _candidate-oats
@@ -94,35 +151,55 @@ integration() {
   run test-oci-exact-publish
 }
 
-# Prepare disposable outputs once when their first consumer is reached, even
-# if the stage that previously built them was reused from the ledger.
-node_ready=0
-cli_ready=0
-: > "$log_dir/summary.tsv"
-for stage in $stages; do
-  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
-  case "$stage" in
-    artifacts|integration)
-      if [[ "$node_ready" == 0 ]]; then run _candidate-node-deps; node_ready=1; fi ;;
-  esac
-  case "$stage" in
-    artifacts|integration)
-      if [[ "$cli_ready" == 0 ]]; then run build; cli_ready=1; fi ;;
-  esac
+prune_builder() {
+  if [[ -z "${BUILDX_BUILDER:-}" ]]; then
+    echo 'BUILDX_BUILDER is required' >&2
+    return 2
+  fi
+  docker buildx prune --all --force --keep-storage=10GB --builder "$BUILDX_BUILDER"
+}
+
+prepare_node() {
+  if ! grep -Eq '^(unit|artifacts|integration)/_candidate-node-deps'$'\t' "$summary"; then
+    run _candidate-node-deps
+  fi
+}
+
+prepare_cli() {
+  # A reused artifact stage has no files in this runner.
+  if ! grep -Eq '^(artifacts|integration)/build'$'\t' "$summary"; then
+    run build
+  fi
+}
+
+suite_status=0
+: > "$summary"
+for stage in $all_stages; do
+  [[ "$selected" == *" $stage "* ]] || continue
   started=$SECONDS
+  target_log="$stage.log"
   set +e
-  ( set -e; "$stage" ) 2>&1 | tee "$log_dir/$stage.log"
-  status=${PIPESTATUS[0]}
+  ( set -e; stage_status=0; "$stage"; exit "$stage_status" ) 2>&1 | tee "$log_dir/$stage.log"
+  statuses=("${PIPESTATUS[@]}")
   set -e
-  result=PASSED
-  [[ "$status" == 0 ]] || result=FAILED
+  status=${statuses[0]}
+  if [[ "${statuses[1]}" != 0 ]]; then status=${statuses[1]}; fi
+  if [[ "$status" == 0 ]]; then
+    result=PASSED
+  else
+    result=FAILED
+    if [[ "$suite_status" == 0 ]]; then suite_status=$status; fi
+  fi
   coverage=""
   if [[ "$stage" == user-paths && -f "$log_dir/user-paths/coverage-summary.txt" ]]; then
     coverage="$(cat "$log_dir/user-paths/coverage-summary.txt")"
     printf 'user-paths coverage: %s\n' "$coverage"
   fi
-  printf '%s\t%s\t%s.log\t%ss\t%s\n' "$stage" "$result" "$stage" "$((SECONDS-started))" "$coverage" >> "$log_dir/summary.tsv"
-  [[ "$status" == 0 ]] || exit "$status"
-  [[ "$stage" != unit ]] || node_ready=1
+  printf '%s\t%s\t%s.log\t%ss\t%s\n' "$stage" "$result" "$stage" "$((SECONDS-started))" "$coverage" >> "$summary"
 done
-printf '\ncandidate suite PASSED\n'
+if [[ "$suite_status" == 0 ]]; then
+  printf '\ncandidate suite PASSED\n'
+else
+  printf '\ncandidate suite FAILED\n'
+fi
+exit "$suite_status"

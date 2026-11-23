@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from awid.did import did_from_public_key
+from awid.did import did_key_from_signing_key
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_ids import parse_team_id
 from nacl.signing import SigningKey
@@ -234,7 +234,7 @@ def app_usage_credential(
     timestamp: str,
 ) -> dict[str, str]:
     """Headers for one report under the app credential family's app-usage purpose."""
-    did_key = did_from_public_key(bytes(signing_key.verify_key))
+    did_key = did_key_from_signing_key(bytes(signing_key))
     payload = {
         "v": 1,
         "auth": "app-usage",

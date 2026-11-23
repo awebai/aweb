@@ -6,11 +6,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/pem"
 	"fmt"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 const (
@@ -89,29 +89,19 @@ func SaveX25519PrivateKey(path string, priv *ecdh.PrivateKey) error {
 	if priv == nil {
 		return fmt.Errorf("missing x25519 private key")
 	}
-	data := pem.EncodeToMemory(&pem.Block{
-		Type:  "X25519 PRIVATE KEY",
-		Bytes: priv.Bytes(),
-	})
-	return atomicWriteFile(path, data)
+	return writePrivatePEM(privateKeyFile{Path: path, Kind: x25519PrivateKey, Bytes: priv.Bytes(), Mode: replaceKeyAtomically})
 }
 
 func LoadX25519PrivateKey(path string) (*ecdh.PrivateKey, error) {
-	data, err := os.ReadFile(path)
+	data, err := ReadPrivateKeyFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, fmt.Errorf("no PEM block in %s", path)
+	seed, err := parsePrivatePEM(data, x25519PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("%w in %s", err, path)
 	}
-	if block.Type != "X25519 PRIVATE KEY" {
-		return nil, fmt.Errorf("unexpected PEM type %q in %s", block.Type, path)
-	}
-	if len(block.Bytes) != 32 {
-		return nil, fmt.Errorf("invalid x25519 private key size %d in %s", len(block.Bytes), path)
-	}
-	priv, err := ecdh.X25519().NewPrivateKey(block.Bytes)
+	priv, err := ecdh.X25519().NewPrivateKey(seed)
 	if err != nil {
 		return nil, fmt.Errorf("parse x25519 private key %s: %w", path, err)
 	}
@@ -181,7 +171,7 @@ func SignEncryptionKeyAssertion(assertion *EncryptionKeyAssertion, signingKey ed
 	if err != nil {
 		return err
 	}
-	assertion.Signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(payload)))
+	assertion.Signature = signaturewire.SignStd(signingKey, []byte(payload))
 	return nil
 }
 
@@ -260,11 +250,11 @@ func VerifyEncryptionKeyAssertion(assertion *EncryptionKeyAssertion, currentDIDK
 	if err != nil {
 		return fmt.Errorf("extract current did:key: %w", err)
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(assertion.Signature)
+	sig, err := signaturewire.DecodeStd(assertion.Signature)
 	if err != nil {
 		return fmt.Errorf("decode encryption key assertion signature: %w", err)
 	}
-	if !ed25519.Verify(pub, []byte(payload), sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: pub, Payload: []byte(payload), Signature: sig}) {
 		return fmt.Errorf("invalid encryption key assertion signature")
 	}
 	return nil

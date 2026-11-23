@@ -19,7 +19,7 @@ to refresh it.
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `verify`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
-| Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
+| Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `validate`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
 ## Global Flags
@@ -70,10 +70,13 @@ envelope.
 | `encryption_key_missing` | An encrypted message needs a local encryption private key this identity does not have. |
 | `decrypt_failed` | An encrypted message could not be opened or validated. |
 | `recipient_custodial_no_e2ee` | An end-to-end encrypted send names a hosted agent, whose signed encryption key assertion says aweb's service holds its key; nothing was sent. Send it again without `--e2ee`. |
-| `team_not_hosted` | `aw workspace delete` through an external identity home: the team is not hosted, so no cloud-held controller can release the alias. |
+| `team_not_hosted` | The hosted self-release path is unavailable for this team. Own non-hosted local retirement uses the controller receipt flow. |
 | `global_identity` | `aw workspace delete` through an external identity home: a global identity's alias is released by its team, not by itself. |
 | `not_own_workspace` | `aw workspace delete` through an external identity home names another workspace. |
 | `no_workspace_credential` | `aw workspace delete` through an external identity home has no member credential to act with. |
+
+Offline status, additional refusal codes, wake readiness and local retirement
+outcomes are documented in the [CLI integration contract](cli-integration-contract.md).
 
 `aw wake status --json` describes a receive stream's error the same way:
 beside the `stream_error` text, `stream_error_detail` holds its `code`,
@@ -265,17 +268,20 @@ Flags:
 
 Delete a local workspace and its local identity.
 
-Deleting YOUR OWN workspace on a hosted team, with a local identity, retires you:
-the hosted team controller revokes your membership certificate, so your name
-becomes reusable by a later "aw team join". Any other target is a local delete
-only, and does not release the name.
+Deleting YOUR OWN workspace with a local identity can retire its membership.
+On a hosted team, the service controller revokes the membership certificate.
+On a non-hosted team, the command deletes the workspace while the member
+credential is valid, saves a local receipt, then revokes with the local team key.
+If revocation cannot finish, retain the home and receipt and follow next_step.
+Retrying uses the receipt and performs only the remaining controller operation.
 
 Read alias_released in the output, not identity_deleted. Deleting local state
 says nothing about the membership certificate, and an active certificate is what
 makes a rejoin under the same name fail. alias_released_reason says why:
 
   not_own_workspace        the target is not the workspace you are running as
-  team_not_hosted          self-hosted or BYOT; no cloud-held controller to revoke
+  controller_key_missing  workspace deleted; give next_step to the team key holder
+  retired_revocation_pending  workspace deleted; retry using the retained receipt
   global_identity          global identities are retired by team-authorized removal
   no_workspace_credential  no workspace-bound key and no team certificate in local
                            config to authenticate with
@@ -284,9 +290,8 @@ When this command can retire you, it does not fall back to a plain delete: a
 failure is reported as a failure, because a success report for a retirement that
 did not happen is what leaks names.
 
-With --identity-home, the only destructive operation admitted for an external
-principal is this own hosted local self-release path. Non-eligible external
-principals fail closed instead of falling back to generic workspace delete.
+With --identity-home, own local retirement uses the selected home. Global and
+other-member targets fail closed instead of falling back to generic deletion.
 
 Flags:
 - `-h, --help help for delete`
@@ -425,6 +430,7 @@ Subcommands:
 - `rotate-key` Rotate the current global identity signing key at the registry
 - `show` Show the current identity and registry status
 - `sign` Sign user data with a domain-separated local identity signature
+- `status` Inspect local identity, membership, binding and unfinished initialization
 - `team` Team membership plus protocol/admin certificate operations
 - `verify` Verify the full audit log for a did:aw
 
@@ -482,6 +488,7 @@ Show the current team certificate
 
 Flags:
 - `-h, --help help for show`
+- `--team string Override the selected team_id for this command`
 
 ## `id child`
 
@@ -1271,6 +1278,16 @@ Flags:
 - `--payload string JSON object to sign`
 - `--payload-file string Read the JSON payload to sign from a file`
 
+## `id status`
+
+### `id status`
+
+Read recorded local initialization state without contacting a service. This does not prove live registry or server status. Missing state is reported as incomplete; unreadable or invalid state is an error.
+
+Flags:
+- `-h, --help help for status`
+- `--team string Override the selected team_id for this command`
+
 ## `id team`
 
 ### `id team`
@@ -1285,6 +1302,7 @@ holders, service projection, or diagnostics.
 Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Protocol/admin: add a member by signing a team certificate
+- `check-invite` Inspect a saved invite and check its exact attempted certificate online
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Create a hosted sibling team or a customer-controlled AWID team
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
@@ -1299,6 +1317,8 @@ Subcommands:
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
+- `resume-invite` Resume the exact saved certificate into its original recipient home
+- `revoke-invite` Cancel an unused local controller invite; issued membership certificates remain valid
 - `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
 - `set-server` Publish the team's coordination server at AWID, signed by the team controller key
 - `show-server` Show and verify the team's published coordination server
@@ -1370,6 +1390,16 @@ Flags:
 - `--name string Member name to use with --did`
 - `--namespace string Namespace domain`
 - `--team string Team name`
+
+## `id team check-invite`
+
+### `id team check-invite`
+
+Inspect a saved invite and check its exact attempted certificate online
+
+Flags:
+- `-h, --help help for check-invite`
+- `--invite-id string Saved local invite_id to inspect`
 
 ## `id team cleanup-cloud`
 
@@ -1518,12 +1548,15 @@ Invites create local workspace members unless --member-global is set. Hosted tea
 invite authority; local-controller teams use the local team controller key.
 
 Flags:
+- `--expires duration Controller invite lifetime (default 24h; maximum 720h)`
 - `--for-human string Admit agents whose verified nearest human is this did:aw person`
 - `-h, --help help for invite`
 - `--member-global Create global member invite`
 - `--member-local Create local workspace member invite (default)`
 - `--namespace string Namespace domain`
+- `--preflight Show the mint authority without creating a token or child invitation`
 - `--team string Team name`
+- `--team-id string Canonical team ID; use instead of --team and --namespace`
 
 ## `id team leave`
 
@@ -1675,6 +1708,26 @@ Flags:
 - `-h, --help help for request`
 - `--name string Suggested member name for the new team membership`
 - `--team string Canonical team ID (<name>:<domain>)`
+
+## `id team resume-invite`
+
+### `id team resume-invite`
+
+Resume the exact saved certificate into its original recipient home
+
+Flags:
+- `-h, --help help for resume-invite`
+- `--invite-id string Saved invite_id whose exact issuance is resumed`
+
+## `id team revoke-invite`
+
+### `id team revoke-invite`
+
+Cancel an unused local controller invite; issued membership certificates remain valid
+
+Flags:
+- `-h, --help help for revoke-invite`
+- `--invite-id string Local invite_id to cancel`
 
 ## `id team rotate-key`
 
@@ -1894,10 +1947,12 @@ Subcommands:
 - `inspect` Inspect an invite from stdin without redeeming it
 
 Flags:
+- `--expires duration Controller invite lifetime (default 24h; maximum 720h)`
 - `--for-human string Admit agents whose verified nearest human is this did:aw person`
 - `-h, --help help for invite`
 - `--member-global Create global member invite`
 - `--member-local Create local workspace member invite (default)`
+- `--preflight Show the mint authority without creating a token or child invitation`
 - `--team-id string Canonical team id (<name>:<namespace>) to invite from (defaults to active team)`
 
 ## `team invite inspect`
@@ -3638,7 +3693,9 @@ Report per-home broker lifecycle, readiness, and delivery status
 
 Flags:
 - `-h, --help help for status`
+- `--home string Report readiness for this absolute instance home`
 - `--max-streams int Stream bound reported when the daemon is down (default 128)`
+- `--min-daemon-version string Required daemon release version for the readiness verdict`
 - `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
 
 ## `activity`
@@ -4889,6 +4946,47 @@ Upgrade aw to the latest version
 
 Flags:
 - `-h, --help help for upgrade`
+
+## `validate`
+
+### `validate`
+
+Query the CLI's identifier and URL rules without identity or network access
+
+Subcommands:
+- `alias` Check a workspace alias using the CLI's alias rule
+- `team-id` Parse and normalize a team ID using the SDK's input rule
+- `team-server-url` Query canonical team-server URL and audience spelling
+
+Flags:
+- `-h, --help help for validate`
+
+## `validate alias`
+
+### `validate alias`
+
+Check a workspace alias using the CLI's alias rule
+
+Flags:
+- `-h, --help help for alias`
+
+## `validate team-id`
+
+### `validate team-id`
+
+Parse and normalize a team ID using the SDK's input rule
+
+Flags:
+- `-h, --help help for team-id`
+
+## `validate team-server-url`
+
+### `validate team-server-url`
+
+Query canonical team-server URL and audience spelling
+
+Flags:
+- `-h, --help help for team-server-url`
 
 ## `version`
 

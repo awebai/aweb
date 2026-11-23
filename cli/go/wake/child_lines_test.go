@@ -19,7 +19,7 @@ func TestChildReadersDrainOversizedLinesAndResume(t *testing.T) {
 			if stderr {
 				go func() { child.readStderr(reader); close(done) }()
 			} else {
-				go child.readStatus(reader, done)
+				go child.readStatus(reader, done, childStatusOptions{})
 			}
 			go func() {
 				defer writer.Close()
@@ -45,7 +45,7 @@ func TestChildStatusAcceptsLargeLine(t *testing.T) {
 	child := &ChannelCoreChild{}
 	message := strings.Repeat("x", 128*1024)
 	done := make(chan struct{})
-	child.readStatus(strings.NewReader("{\"type\":\"status\",\"last_error\":\""+message+"\"}\n"), done)
+	child.readStatus(strings.NewReader("{\"type\":\"status\",\"last_error\":\""+message+"\"}\n"), done, childStatusOptions{})
 	if child.Status().LastError != message {
 		t.Fatal("status line below 1 MiB was discarded")
 	}

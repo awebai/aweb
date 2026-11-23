@@ -5,9 +5,9 @@ uninstall/reinstall. These tests isolate persisted legacy decisions and races.
 """
 
 import asyncio
+import base64
 from datetime import timedelta
 from enum import StrEnum
-from uuid import uuid4
 
 import httpx
 import pytest
@@ -16,6 +16,8 @@ from test_present_privacy import OWNER, mint, present_world
 
 from folio import installation_access
 from folio.link_secrets import read_only_link_key
+from folio.models import ImageAssetUploadRequest
+from folio.repository import append_version, upload_image_asset
 
 __all__ = ["present_world"]
 
@@ -187,29 +189,29 @@ async def test_link_that_expires_during_a_lock_wait_serves_nothing(
 ):
     """A read that began before the link's expiry and waited on the link row past it
     is refused: the deadline is checked on live time after every wait."""
-    app, db, _ = present_world
-    asset_id = uuid4()
-    await db.execute(
-        """INSERT INTO {{tables.assets}} (asset_id, team_id, kind, bytes, content_type)
-        VALUES ($1, $2, 'image', $3, 'image/png')""",
-        asset_id,
-        OWNER.team_id,
-        _PNG,
+    app, db, settings = present_world
+    uploaded = await upload_image_asset(
+        db,
+        principal=OWNER,
+        settings=settings,
+        image=ImageAssetUploadRequest(
+            content_type="image/png", data_base64=base64.b64encode(_PNG).decode()
+        ),
     )
-    await db.execute(
-        "UPDATE {{tables.document_versions}} SET body=$1",
-        f"![shown](/assets/{asset_id})",
+    asset_id = uploaded["asset_id"]
+    await append_version(
+        db,
+        principal=OWNER,
+        events=app.state.folio_runtime.app_events,
+        slug="draft",
+        body=f"![shown](/assets/{asset_id})",
     )
-    link = await mint(present_world, editable=False)
+    # A three-second link, so it expires while the read below waits on its row.
+    link = await mint(present_world, editable=False, ttl_seconds=3)
     key = read_only_link_key(link["token"])
     url = link["url"] if served is Served.PAGE else f"{link['url']}/assets/{asset_id}"
     assert (await client.get(url)).status_code == 200
 
-    await db.execute(
-        """UPDATE {{tables.presentation_links}}
-        SET expires_at=clock_timestamp() + interval '3 seconds' WHERE token=$1""",
-        key,
-    )
     locked, release = asyncio.Event(), asyncio.Event()
 
     async def hold_link_row() -> None:

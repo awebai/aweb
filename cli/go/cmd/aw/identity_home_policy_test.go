@@ -18,7 +18,7 @@ import (
 )
 
 func TestIdentityHomeNeutralExemptionsAreExact(t *testing.T) {
-	want := []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd, authLoginCmd, authStatusCmd, authLogoutCmd, teamAdmissionInviteCmd, orgCreateCmd, orgListCmd, orgAvailabilityCmd, auditVerifyCmd, verifyCmd}
+	want := []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd, authLoginCmd, authStatusCmd, authLogoutCmd, teamAdmissionInviteCmd, orgCreateCmd, orgListCmd, orgAvailabilityCmd, auditVerifyCmd, verifyCmd, validateAliasCmd, validateTeamIDCmd, validateTeamServerURLCmd, teamRevokeInviteCmd, teamCheckInviteCmd, teamResumeInviteCmd}
 	if len(identityHomeNeutralCommandExemptions) != len(want) {
 		t.Fatalf("identity-neutral exemption count=%d want %d", len(identityHomeNeutralCommandExemptions), len(want))
 	}
@@ -30,8 +30,8 @@ func TestIdentityHomeNeutralExemptionsAreExact(t *testing.T) {
 }
 
 func TestOfflineCommandsAreExactAndIdentityHomeNeutral(t *testing.T) {
-	if len(offlineCommands) != 2 {
-		t.Fatalf("offline command count=%d want 2", len(offlineCommands))
+	if len(offlineCommands) != 5 {
+		t.Fatalf("offline command count=%d want 5", len(offlineCommands))
 	}
 	if _, ok := offlineCommands[auditVerifyCmd]; !ok {
 		t.Fatal("aw audit verify is not an offline command")
@@ -46,7 +46,7 @@ func TestOfflineCommandsAreExactAndIdentityHomeNeutral(t *testing.T) {
 	}
 }
 
-func TestInitExternalIdentityHomeAllowedOnlyForWorkspaceTeam(t *testing.T) {
+func TestInitExternalIdentityHomeRefusesUnsupportedOutcomes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -69,7 +69,6 @@ func TestInitExternalIdentityHomeAllowedOnlyForWorkspaceTeam(t *testing.T) {
 	}{
 		{name: "hosted-new-account", args: []string{"init", "--new-account", "--username", "alice", "--name", "alice"}},
 		{name: "self-hosted-new-team", args: []string{"init", "--new-team", "--name", "alice"}},
-		{name: "join-from", args: []string{"init", "--join-from", filepath.Join(root, "source")}},
 		{name: "admission-team-id", args: []string{"init", "--admission-team-id", "team:example.com"}},
 		{name: "api-key", args: []string{"init", "--new-account", "--username", "alice", "--name", "alice"}, env: []string{"AWEB_API_KEY=secret"}},
 	} {

@@ -27,7 +27,7 @@ function fixture(kind: "mail" | "chat", state: string | (() => string), input: (
 }
 
 describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgment", (kind) => {
-  test.each(["unverified", "unknown", "failed", "identity_mismatch", "verification_stale", "pin_conflict", "verified_legacy", undefined])("holds %s sender state with only a fixed notice and no acknowledgment", async (status) => {
+  test.each(["unverified", "unknown", "verification_stale", "pin_conflict", undefined])("holds %s sender state with only a fixed notice and no acknowledgment", async (status) => {
     const input = vi.fn(async (_home: string, _text: string) => {});
     const { client, options } = fixture(kind, "idle", input);
     options.trust.normalizeResolvedTrust = vi.fn(async () => ({ status, stored: false })) as never;
@@ -36,6 +36,22 @@ describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgmen
       type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID,
     })).rejects.toThrow("terminal delivery held");
     expect(input).toHaveBeenCalledExactlyOnceWith("/agent", `[aweb] 1 message held (unverified sender). Run: aw ${kind === "mail" ? "mail inbox" : "chat pending"}`);
+    expect(client.post).not.toHaveBeenCalled();
+    expect(dispatched.size).toBe(0);
+  });
+
+  test.each(["failed", "identity_mismatch"])("renders the withheld notice for %s without acknowledging", async (status) => {
+    const input = vi.fn(async (_home: string, _text: string) => {});
+    const { client, options } = fixture(kind, "idle", input);
+    options.trust.normalizeResolvedTrust = vi.fn(async () => ({ status, stored: false })) as never;
+    const handler = options.onAwakening;
+    const dispatched = new Set<string>();
+    await expect(dispatchAgentEvent({ ...options, onAwakening: (awakening) => handler(awakening, "/joined identity") }, dispatched, {
+      type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID,
+    })).rejects.toThrow("terminal delivery held");
+    const read = kind === "mail" ? `mail show --message-id ${messageID}` : `chat history --session-id ${sessionID} --message-id ${messageID}`;
+    expect(input).toHaveBeenCalledExactlyOnceWith("/agent",
+      `Withheld ${kind} from claimed sender "acme.com/alice": ${status}. Body and subject were not delivered. To read it deliberately, use aw --identity-home '/joined identity' ${read}. Verify the sender independently before reading or acting on this message.`);
     expect(client.post).not.toHaveBeenCalled();
     expect(dispatched.size).toBe(0);
   });
@@ -66,7 +82,7 @@ describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgmen
     expect(client.post).not.toHaveBeenCalled();
   });
 
-  test.each(["verified", "verified_custodial"])("accepts %s authorship", async (status) => {
+  test.each(["verified", "verified_legacy", "verified_custodial"])("accepts %s authorship", async (status) => {
     const input = vi.fn(async () => {});
     const { client, options } = fixture(kind, "idle", input);
     options.trust.normalizeResolvedTrust = vi.fn(async () => ({ status, stored: false })) as never;

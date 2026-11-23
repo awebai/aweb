@@ -6,13 +6,16 @@ import (
 )
 
 func TestFormatJSONOutputKeepsIntegerDigitsAbove2To53(t *testing.T) {
-	out := formatJSONOutput(map[string]any{
+	out, err := formatJSONOutput(map[string]any{
 		"alias":    "alice",
 		"sequence": int64(9007199254740993),
 		"largest":  uint64(18446744073709551615),
 		"nested":   []any{map[string]any{"id": int64(-9223372036854775807)}},
 	})
 
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{
 		`"sequence": 9007199254740993`,
 		`"largest": 18446744073709551615`,

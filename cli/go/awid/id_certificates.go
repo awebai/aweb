@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"filippo.io/edwards25519"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/mr-tron/base58"
 )
 
@@ -120,17 +120,7 @@ func idCertificateDomain(value any) bool {
 // A nonidentity canonical point is in the prime subgroup iff undoing its
 // cofactor multiplication with 8^-1 mod L recovers the same point. The library
 // performs the point arithmetic; no new curve implementation is introduced.
-func idCertificatePrimePoint(raw []byte) bool {
-	p, err := new(edwards25519.Point).SetBytes(raw)
-	if err != nil || !bytes.Equal(p.Bytes(), raw) || p.Equal(edwards25519.NewIdentityPoint()) == 1 {
-		return false
-	}
-	eight := [32]byte{8}
-	s, _ := new(edwards25519.Scalar).SetCanonicalBytes(eight[:])
-	inv := new(edwards25519.Scalar).Invert(s)
-	q := new(edwards25519.Point).MultByCofactor(p)
-	return q.ScalarMult(inv, q).Equal(p) == 1
-}
+func idCertificatePrimePoint(raw []byte) bool { return signaturewire.PrimePoint(raw) }
 
 // IDTreeEnrollmentResult is a parsed location claim, not verified authority.
 // State is enrolled, not_enrolled, unknown (absent), or malformed (present).
@@ -266,8 +256,8 @@ func idCertificateDecodeB64(value string) ([]byte, error) {
 	if !idCertificateB64URL.MatchString(value) {
 		return nil, idCertificateRefusal("invalid_encoding")
 	}
-	b, e := base64.RawURLEncoding.Strict().DecodeString(value)
-	if e != nil || base64.RawURLEncoding.EncodeToString(b) != value {
+	b, e := signaturewire.DecodeCanonicalURL(value)
+	if e != nil {
 		return nil, idCertificateRefusal("invalid_encoding")
 	}
 	return b, nil
@@ -310,11 +300,7 @@ func idSignatureBytes(signature any) ([]byte, error) {
 // own point the caller has already checked at shape time. A signature of the
 // wrong length is refused here, whatever the caller checked.
 func idStrictVerify(key string, b []byte, payload func() ([]byte, error)) error {
-	if len(b) != ed25519.SignatureSize || !idCertificatePrimePoint(b[:32]) {
-		return idCertificateRefusal("invalid_signature")
-	}
-	// Redundant with crypto/ed25519; kept to pin the profile.
-	if _, err := new(edwards25519.Scalar).SetCanonicalBytes(b[32:]); err != nil {
+	if !signaturewire.ValidIDSignatureShape(b) {
 		return idCertificateRefusal("invalid_signature")
 	}
 	k, e := ExtractPublicKey(key)
@@ -325,7 +311,7 @@ func idStrictVerify(key string, b []byte, payload func() ([]byte, error)) error 
 	if e != nil {
 		return e
 	}
-	if !ed25519.Verify(k, message, b) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: k, Payload: message, Signature: b}) {
 		return idCertificateRefusal("invalid_signature")
 	}
 	return nil
