@@ -424,7 +424,8 @@ test-cli: production-awid-sync
 	cd awid && uv sync --frozen
 	# A short, canonical temp root avoids macOS /var symlinks and socket limits.
 	cd cli/go && TMPDIR="$$(python3 -c 'import os; print(os.path.realpath("/tmp"))')" \
-		GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1 -timeout 20m
+		AW_REGISTRY_ROUTE_LIVE_AWID=1 GOCACHE=/tmp/go-build \
+		$(TEST_EGRESS_RUNNER) go test -v ./... -count=1 -timeout 20m
 
 # Exercise current SDK/CLI request auth against actual aweb/AWID/PG/Redis.
 test-cli-auth-v2:
