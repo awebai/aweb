@@ -29,8 +29,8 @@ environment variables only; it does not load a checkout's `.env`.
 
 | Input | Required setting |
 | --- | --- |
-| `SECRETS_DATABASE_URL_FILE` | Mounted UTF-8 file containing the whole customer PostgreSQL DSN, including its role password; migrations run on startup. No DSN value in the environment file. |
-| `SECRETS_DB_SCHEMA` | App schema, default `public`; use an app-owned database role. |
+| `SECRETS_DATABASE_URL_FILE` | Mounted UTF-8 file containing the runtime PostgreSQL DSN and role password. The operator prepares the schema on first install, and startup verifies it. Keep the DSN out of the environment file. |
+| `SECRETS_DB_SCHEMA` | Operator-prepared app schema, default `public`. Use the restricted runtime role bound during first install. |
 | `SECRETS_APP_ID` | Stable customer app ID, chosen before installation. |
 | `SECRETS_PUBLIC_ORIGIN` | HTTPS agent API origin. |
 | `SECRETS_CONSOLE_ORIGIN` | Distinct HTTPS console origin. |
@@ -118,6 +118,10 @@ The hosted HO5 restriction is separate: hosted production must not set
 recipe and environment interface do not lift it.
 
 ## Start and check
+
+Prepare the Secrets schema and erasure ledger before starting the container.
+Follow the [Secrets first-install procedure](../../../deploy/team/OPERATIONS.md#secrets-first-installation-and-destruction-deadlines)
+and mount the DSN for the restricted runtime role below.
 
 ```sh
 docker run --detach --name customer-secrets \

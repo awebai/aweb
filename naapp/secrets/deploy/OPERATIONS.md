@@ -256,13 +256,17 @@ keys and witnesses; no step may silently rewrite or re-sign the ledger.
 
 ## Upgrade and migration
 
-**Pending.** Both apps run their pgdbm migrations at startup. Existing
-migrations are never edited. Record the current schema/source/artifact identity
-and take the supported protected backup before the upgrade; the backup/restore
-gap above prevents promising rollback through a dump today.
+**Pending.** The operator prepares the Secrets schema on first install.
+Secrets verifies that schema at startup. Logs applies its pgdbm migrations
+at startup. Existing migrations are never edited.
 
-The lab exercise must install a qualified prior release, create real state,
-upgrade using the exact new digest/distributions, run migrations, and verify
+An initialised Secrets store refuses an image with a different prepared-schema
+fingerprint. This release also refuses existing Secrets content without its
+matching retained erasure ledger, including content from before `adje.16`.
+A supported in-place upgrade and adoption procedure is pending (`aweb-adtj`).
+
+Once that procedure exists, the lab must install a qualified prior release,
+create real state, upgrade using the exact new digest/distributions, and verify
 existing authority, bindings, credentials, Logs chain/read access and runner
 state. Check readiness and an actual broker/job/delivery/read journey. Record
 the supported upgrade range. Binary downgrade is not a migration rollback;

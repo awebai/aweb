@@ -216,10 +216,12 @@ The eventual receipt must name the actual Compose file and source SHA/checksum;
    ingest18403 and console18404. Host routing must match the actual origins and
    preserve TLS verification. A fresh host needs its own explicit DNS/TLS and
    externally reachable route if a remote browser is used; no TLS bypass.
-2. Provision app-owned PostgreSQL roles/databases using the existing operator
-   route; migrations run in each root's lifespan. Do not create Secrets or Logs
-   domain authority rows directly. Keep dependency services alive until drains
-   and app lifespans finish.
+2. Provision PostgreSQL roles and databases using the existing operator route.
+   Prepare the Secrets schema and initialise its erasure ledger with the
+   operator role before first start. Secrets uses the restricted runtime role
+   to verify the prepared store. Logs applies its migrations at startup. Do
+   not create Secrets or Logs domain authority rows directly. Keep dependency
+   services alive until drains and app lifespans finish.
 3. Populate Secrets' environment-only recipe in `naapp/secrets/deploy/README.md`:
    DATABASE_URL, DB_SCHEMA, APP_ID, PUBLIC_ORIGIN, CONSOLE_ORIGIN,
    AWID_REGISTRY_URL, the chosen custody inputs, SECRET_REQUEST_KEY_FILE,
@@ -373,9 +375,10 @@ proof. No stronger per-worker claim follows from the broker's correct role check
 ## 7. Operations and teardown (row6)
 
 Use `naapp/secrets/deploy/OPERATIONS.md` and its exact arrangement/backend
-matrix. Exercise restart with persistent state, supported upgrade with prior
-state, revoke/containment and metadata-only incident diagnosis. A clean idle
-restart does not prove durable pending-result acknowledgement. Logs reader
+matrix. Exercise restart with persistent state, revoke/containment and
+metadata-only incident diagnosis. Secrets upgrade with prior state remains
+pending under `aweb-adtj`. A clean idle restart does not prove durable
+pending-result acknowledgement. Logs reader
 revocation must end the existing session on its next authorized read.
 
 Backup/restore (pre-serve tombstones and expiry), native/Logs signing-key

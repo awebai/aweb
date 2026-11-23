@@ -250,12 +250,17 @@ The images are pinned by digest in `deployment.yaml`. Secrets requires
 operator-owned schema preparation before its runtime integrity check; the
 runtime cannot apply DDL. Other components apply their migrations at startup.
 Existing migrations are never edited.
-Before changing a digest, `stop` and `backup`. There is no supported rollback:
-starting an older image on a migrated database is not a migration rollback, and
-restore is not supported. The Secrets procedure is pending
-(`naapp/secrets/deploy/OPERATIONS.md`, "Upgrade and migration").
 
-### Before upgrading Secrets to team-scoped installations (`aweb-acxc.45`)
+An initialised Secrets store refuses an image with a different prepared-schema
+fingerprint. Existing Secrets content without its matching retained erasure
+ledger is also refused. A supported Secrets upgrade and adoption procedure is
+pending (`aweb-adtj`; see `naapp/secrets/deploy/OPERATIONS.md`, "Upgrade and
+migration"). For a supported upgrade of another component, `stop` and `backup`
+before changing a digest. There is no supported rollback: starting an older
+image on a migrated database is not a migration rollback, and restore is not
+supported.
+
+### Team-scoped Secrets attribution preflight (`aweb-acxc.45`)
 
 That Secrets version gives every installation's policies, grant templates,
 change-set settings and configuration revisions the team that owns them. Its
@@ -265,7 +270,8 @@ exactly one. An installation with none, or with more than one, makes the
 migration refuse, naming the table, and Secrets does not start. That is by
 design: an installation id is not team authority.
 
-Run the read-only count first, with every writer stopped and after `backup`:
+Use the read-only count to inspect attribution, with every writer stopped and
+after `backup`:
 
 ```sh
 <the deployment's docker compose command> exec -T postgres \
@@ -283,8 +289,9 @@ was run on PostgreSQL against fixtures with one, several and no teams, a fresh
 schema and a missing schema (source `1217f9b21`, SHA-256 `40f41cd3…`, gate
 `a2930875`), apart from that gate's unrelated infrastructure status.
 
-- **Only if the command finishes successfully, reports all four tables, and
-  every `zero_teams` and `multiple_teams` is 0:** upgrade.
+- If the command reports all four tables successfully and every `zero_teams`
+  and `multiple_teams` is 0, record the attribution result. The Secrets
+  upgrade procedure remains pending.
 - **Any command error, timeout or missing table result, or any nonzero
   `zero_teams` or `multiple_teams`:** stop before migration. Keep the old
   image running, the backup and the output. Which team owns those installations needs an explicit,
