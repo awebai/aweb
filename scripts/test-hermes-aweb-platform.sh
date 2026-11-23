@@ -16,8 +16,8 @@ verify_source() {
 }
 
 if [[ "${1:-}" == --prepare ]]; then
+    source_parent=$(dirname "$source_dir")
     if [[ ! -e "$source_dir" ]]; then
-        source_parent=$(dirname "$source_dir")
         mkdir -p "$source_parent"
         checkout=$(mktemp -d "$source_parent/.fetch.XXXXXXXX")
         trap 'rm -rf "$checkout"' EXIT
@@ -29,7 +29,9 @@ if [[ "${1:-}" == --prepare ]]; then
         mv "$checkout" "$source_dir"
     fi
     verify_source "$source_dir"
-    exec uv sync --frozen --python 3.14 --project "$source_dir"
+    # Keep Hermes' managed interpreter out of the other image projects' discovery.
+    UV_PYTHON_INSTALL_DIR="$source_parent/python" \
+        exec uv sync --frozen --python 3.14 --project "$source_dir"
 fi
 
 verify_source "$source_dir"
