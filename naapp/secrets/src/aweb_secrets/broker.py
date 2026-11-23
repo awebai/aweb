@@ -281,26 +281,27 @@ async def broker(
             scan_budget = send_until - asyncio.get_running_loop().time()
         send_timeout.reschedule(None)
     scan = CredentialScan() if scan_budget is None else CredentialScan.within(scan_budget)
-    worker = asyncio.create_task(
-        asyncio.to_thread(
-            handle_response,
-            status=response.status,
-            headers=response.headers,
-            body=response.body,
-            truncated=response.truncated,
-            max_bytes=max_bytes,
-            projection=projection,
-            known=injection.known,
-            token_issuing=token_issuing,
-            content_types=content_types,
-            scan=scan,
-        )
-    )
-    worker.add_done_callback(_observe_worker)
-    if reservation is not None:
-        reservation.retain_until(worker)
     cancelled = False
     try:
+        scan.check()
+        worker = asyncio.create_task(
+            asyncio.to_thread(
+                handle_response,
+                status=response.status,
+                headers=response.headers,
+                body=response.body,
+                truncated=response.truncated,
+                max_bytes=max_bytes,
+                projection=projection,
+                known=injection.known,
+                token_issuing=token_issuing,
+                content_types=content_types,
+                scan=scan,
+            )
+        )
+        worker.add_done_callback(_observe_worker)
+        if reservation is not None:
+            reservation.retain_until(worker)
         async with asyncio.timeout(scan.remaining()):
             result = await asyncio.shield(worker)
             scan.check()
