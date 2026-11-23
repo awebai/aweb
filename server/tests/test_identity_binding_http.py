@@ -13,7 +13,6 @@ import pytest
 from awid.did import stable_id_from_did_key
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
-from awid_service.testing import selected_test_database_config
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
@@ -497,11 +496,12 @@ async def test_cached_prior_key_cannot_change_routing_markers(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_operator_verification_restores_only_bound_projections(privacy_app):
+async def test_operator_verification_restores_only_bound_projections(
+    privacy_app, shared_test_database
+):
     import asyncio
     import os
     import sys
-    from urllib.parse import quote
     from aweb.messaging.messages import resolve_agent_by_did
 
     env = privacy_app
@@ -527,13 +527,9 @@ async def test_operator_verification_restores_only_bound_projections(privacy_app
             TEAM,
             claimless_key,
         )
-        db_name = await env.db.fetch_value("SELECT current_database()")
         child_env = dict(os.environ)
-        user = quote(os.environ.get("TEST_DB_USER", "postgres"), safe="")
-        password = quote(os.environ.get("TEST_DB_PASSWORD", "postgres"), safe="")
-        postgres = selected_test_database_config()
         child_env.update(
-            AWEB_DATABASE_URL=f"postgresql://{user}:{password}@{postgres.host}:{postgres.port}/{db_name}",
+            AWEB_DATABASE_URL=shared_test_database.dsn,
             AWID_REGISTRY_URL=origin,
         )
 
