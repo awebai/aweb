@@ -17,7 +17,7 @@ lint:
 	uv run mypy src
 
 e2e:
-	NAAPP_E2E_PROJECT=$(NAAPP_E2E_PROJECT) bash ../../scripts/e2e/naapp-e2e.sh naapp/folio FOLIO_E2E
+	$(MAKE) -C ../.. naapp-package-e2e PACKAGE=naapp/folio ENABLE=FOLIO_E2E
 
 e2e-up:
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d

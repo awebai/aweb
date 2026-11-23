@@ -111,7 +111,7 @@ help:
 	@echo "  release-publish TAG=<tag>             publish one local tag without GitHub Actions"
 	@echo "  clean        Remove all build artifacts and caches"
 
-.PHONY: e2e-naapp e2e-folio-wakes naapp-e2e-packages
+.PHONY: e2e-naapp e2e-folio-wakes naapp-e2e-packages naapp-package-e2e
 # A new package joins the integration gate by joining this list.
 NAAPP_E2E_PACKAGES := naapp/folio naapp/library
 
@@ -138,6 +138,11 @@ e2e-naapp:
 			$(MAKE) -C "$$package" e2e; \
 		fi; \
 	done
+
+# One package's real-stack e2e; the package's own `make e2e` calls this with its
+# directory and the variable that enables its e2e tests.
+naapp-package-e2e:
+	bash scripts/e2e/naapp-e2e.sh "$(PACKAGE)" "$(ENABLE)"
 
 e2e-folio-wakes:
 	bash scripts/e2e-folio-wakes.sh

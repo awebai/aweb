@@ -53,7 +53,7 @@ run:
 	PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m uvicorn library.api:app --host 127.0.0.1 --port $(API_PORT) --reload
 
 e2e:
-	NAAPP_E2E_PROJECT=$(NAAPP_E2E_PROJECT) bash ../../scripts/e2e/naapp-e2e.sh naapp/library LIBRARY_E2E
+	$(MAKE) -C ../.. naapp-package-e2e PACKAGE=naapp/library ENABLE=LIBRARY_E2E
 
 e2e-up:
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
