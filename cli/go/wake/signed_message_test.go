@@ -34,27 +34,32 @@ func signedWakeMessage(t *testing.T, kind string, message map[string]any) map[st
 	return signedMessageFrom(t, wakeSenderKey, kind, message)
 }
 
-// signedMessageFrom signs the message as mail or chat with the sender's key. A
-// message signer always signs type, subject and body.
+// signedMessageFrom signs the message as aw signs mail or chat from bob to
+// alice, a team alias the server resolves, so the envelope binds no to_did.
 func signedMessageFrom(t *testing.T, key ed25519.PrivateKey, kind string, message map[string]any) map[string]any {
 	t.Helper()
-	payload := map[string]any{
-		"type": kind, "subject": "", "body": "",
-		"from": "bob", "from_did": awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)),
+	text := func(field string) string {
+		value, _ := message[field].(string)
+		return value
 	}
-	for _, field := range []string{"message_id", "conversation_id", "subject", "body"} {
-		if value, ok := message[field]; ok {
-			payload[field] = value
-		}
+	env := &awid.MessageEnvelope{
+		From:           "bob",
+		FromDID:        awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)),
+		To:             "alice",
+		Type:           kind,
+		Subject:        text("subject"),
+		Body:           text("body"),
+		Timestamp:      "2026-01-01T00:00:00Z",
+		MessageID:      text("message_id"),
+		ConversationID: text("conversation_id"),
 	}
-	payload["timestamp"] = "2026-01-01T00:00:00Z"
-	canonical, err := awid.CanonicalJSONValue(payload)
+	signature, err := awid.SignMessage(key, env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	message["from_did"] = payload["from_did"]
-	message["signature"] = base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, []byte(canonical)))
-	message["signed_payload"] = canonical
+	message["from_did"] = env.FromDID
+	message["signature"] = signature
+	message["signed_payload"] = awid.CanonicalJSON(env)
 	return message
 }
 
