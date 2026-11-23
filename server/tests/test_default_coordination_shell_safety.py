@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from aweb.coordination.defaults import get_default_team_instructions
+
 
 DEFAULTS = Path(__file__).parents[1] / "src" / "aweb" / "defaults"
 
@@ -20,7 +22,7 @@ def test_default_roles_use_file_inputs_for_multiline_reports() -> None:
 
 
 def test_default_team_instructions_teach_shell_safe_long_bodies() -> None:
-    instructions = read_default("team_instructions.md")
+    instructions = get_default_team_instructions()["body_md"]
 
     # The hazard is an interpolating CONTEXT, not one command's argument. The earlier
     # wording named the surface - a double-quoted argument to `aw` - and someone
@@ -36,5 +38,6 @@ def test_default_team_instructions_teach_shell_safe_long_bodies() -> None:
     assert "cannot distinguish" in instructions
     assert "Markdown, reports, or command examples" in instructions
     assert instructions.count("--body-file") >= 7
+    assert "this has happened here" not in instructions
     assert '--body "' not in instructions
     assert '<alias> "question"' not in instructions

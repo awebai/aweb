@@ -35,11 +35,8 @@ printf "..." interpolates          printf '%s'  does not
 echo "..."   interpolates          a quoted heredoc into a file  does not
 ```
 
-Using `--body-file` protects the last layer only. A file written by an *unquoted*
-heredoc is already corrupted before `aw` reads it — this has happened here, in a
-document about not trusting unreviewed text, and nothing failed: the writer
-reported success and the diff reported the expected line count. Both were true and
-neither measured the thing that mattered.
+Use a quoted heredoc when writing a file for `--body-file` so the shell preserves
+backticks and `$(...)` in the file.
 
 **The check is a read-back, not more care.** After writing any file you intend to
 publish, read the bytes back and look for the characters you meant to write:
