@@ -6,13 +6,14 @@ No registry, authentication, database or delivery behavior is substituted.
 """
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 import json
-from types import SimpleNamespace
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
+import pytest_asyncio
 from starlette.requests import Request
 
 from aweb.identity_auth_deps import get_messaging_auth, resolve_identity_auth
@@ -20,11 +21,15 @@ from aweb.identity_binding import verify_identity_binding
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.mcp.tools.federation import mcp_messaging_auth
 from awid.registry import RegistryClient, RegistryError
-from identity_binding_support import register_global_identity
-from tests.test_dashboard_privacy import TEAM, privacy_app as privacy_app  # noqa: PLC0414
+from messaging_actor_support import admit_messaging_actor, privacy_actor, register_messaging_team
+from tests.test_dashboard_privacy import TEAM, privacy_stack
 from tests.test_messages_http import _signed_identity_headers
 
-__all__ = ["privacy_app"]
+
+@pytest_asyncio.fixture
+async def address_world(shared_test_pool, monkeypatch):
+    async with privacy_stack(shared_test_pool, monkeypatch, aliases=()) as env:
+        yield env
 
 
 def identity_request(env, actor):
@@ -47,25 +52,17 @@ def identity_request(env, actor):
 
 
 async def prepare_actor(env, name, *, address):
-    original = env.actors[name]
-    stable_id = await register_global_identity(env, original, address)
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET identity_scope='global', did_aw=$1, "
-        "address=$2, did_aw_verified_key=did_key WHERE agent_id=$3",
-        stable_id,
-        address or None,
-        original.id,
-    )
-    actor = SimpleNamespace(**vars(original), stable_id=stable_id, address=address)
+    member = await admit_messaging_actor(env, alias=name, team_id=TEAM, address=address)
+    actor = privacy_actor(member)
     # These are actual observations, not seeded positive cache entries. Do not
     # warm reverse enumeration: the subsequent failure must reach the registry.
     request = identity_request(env, actor)
-    await verify_identity_binding(request, did_key=actor.did, did_aw=stable_id)
+    await verify_identity_binding(request, did_key=actor.did, did_aw=actor.stable_id)
     if address:
         await verify_identity_binding(
             request,
             did_key=actor.did,
-            did_aw=stable_id,
+            did_aw=actor.stable_id,
             address=address,
         )
     await assert_registered_identity_membership(env, actor, team_id=TEAM)
@@ -129,11 +126,11 @@ async def send(env, actor, body):
 
 @pytest.mark.asyncio
 async def test_failed_reverse_read_is_unknown_and_recovers_without_empty_evidence(
-    privacy_app, caplog
+    address_world, caplog
 ):
-    env = privacy_app
+    env = address_world
     async with address_reader(env):
-        actor = await prepare_actor(env, "alice", address=f"example.test/adbv-{uuid4().hex}")
+        actor = await prepare_actor(env, "alice", address="example.test/alice")
         before = await projection(env, actor)
         async with stalled_address_read(env):
             # Establish the actual dependency failure independently of auth's
@@ -183,10 +180,11 @@ async def test_failed_reverse_read_is_unknown_and_recovers_without_empty_evidenc
 
 
 @pytest.mark.asyncio
-async def test_successful_empty_reverse_read_is_distinct_from_unknown(privacy_app):
-    env = privacy_app
+async def test_successful_empty_reverse_read_is_distinct_from_unknown(address_world):
+    env = address_world
     async with address_reader(env):
         actor = await prepare_actor(env, "bob", address="")
+        recipient = await admit_messaging_actor(env, alias="carol", team_id=TEAM, local=True)
         identity = await resolve_identity_auth(identity_request(env, actor))
         assert identity.address is None
         outcome = getattr(identity, "address_resolution", None)
@@ -200,7 +198,7 @@ async def test_successful_empty_reverse_read_is_distinct_from_unknown(privacy_ap
             env,
             actor,
             {
-                "to_did": env.actors["carol"].did,
+                "to_did": recipient.did_key,
                 "message_id": str(message_id),
                 "subject": "known addressless",
                 "body": "no invented From",
@@ -216,13 +214,15 @@ async def test_successful_empty_reverse_read_is_distinct_from_unknown(privacy_ap
 
 @pytest.mark.asyncio
 async def test_address_outage_preserves_verified_sender_and_refuses_unknown_before_effect(
-    privacy_app,
+    address_world,
 ):
-    env = privacy_app
+    env = address_world
     async with address_reader(env):
-        verified = await prepare_actor(env, "alice", address=f"example.test/adbv-{uuid4().hex}")
+        verified = await prepare_actor(env, "alice", address="example.test/alice")
         verified_empty = await prepare_actor(env, "bob", address="")
         unknown = await prepare_actor(env, "carol", address="")
+        # Preserve the legacy projection case where a DID was stored before
+        # verification evidence was retained.
         await env.db.execute(
             "UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1",
             unknown.id,
@@ -295,50 +295,28 @@ async def test_address_outage_preserves_verified_sender_and_refuses_unknown_befo
 
 @pytest.mark.asyncio
 async def test_conflicting_verified_stored_addresses_refuse_during_outage_before_effect(
-    privacy_app,
+    address_world,
 ):
-    env = privacy_app
+    env = address_world
     async with address_reader(env):
-        actor = await prepare_actor(env, "alice", address=f"example.test/adbv-{uuid4().hex}")
-        # A real second address for the same identity, positively verified by
-        # the same registry before recording the second membership's marker.
-        other_name = f"adbv-other-{uuid4().hex}"
-        other_address = f"example.test/{other_name}"
-        namespace_id = await env.registry_db.fetch_value(
-            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain='example.test'",
+        actor = await prepare_actor(env, "alice", address="example.test/alice")
+        recipient = await admit_messaging_actor(env, alias="bob", team_id=TEAM, local=True)
+        other_domain = "second-member.test"
+        other_address = f"{other_domain}/alice"
+        other_team_id = f"second:{other_domain}"
+        controller = await env.registry.ensure_namespace(domain=other_domain)
+        registry = env.app.state.awid_registry_client
+        await registry.register_address(
+            other_domain, "alice", actor.stable_id, controller, current_did_key=actor.did,
         )
-        await env.registry_db.execute(
-            "INSERT INTO {{tables.public_addresses}} (namespace_id,name,did_aw) VALUES ($1,$2,$3)",
-            namespace_id,
-            other_name,
-            actor.stable_id,
+        await register_messaging_team(env, team_id=other_team_id)
+        second = await admit_messaging_actor(
+            env,
+            alias="alice",
+            team_id=other_team_id,
+            existing_identity=replace(actor.registered, address=other_address),
         )
-        await verify_identity_binding(
-            identity_request(env, actor),
-            did_key=actor.did,
-            did_aw=actor.stable_id,
-            address=other_address,
-        )
-        other_team_name = f"adbv-{uuid4().hex}"
-        other_team_id = f"{other_team_name}:example.test"
-        other_agent_id = uuid4()
-        await env.db.execute(
-            "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) "
-            "VALUES ($1,'example.test',$2,$3)",
-            other_team_id,
-            other_team_name,
-            env.team_did,
-        )
-        await env.db.execute(
-            "INSERT INTO {{tables.agents}} "
-            "(agent_id,team_id,did_key,alias,identity_scope,did_aw,address,did_aw_verified_key,inbound_mode) "
-            "VALUES ($1,$2,$3,'alice','global',$4,$5,$3,'open')",
-            other_agent_id,
-            other_team_id,
-            actor.did,
-            actor.stable_id,
-            other_address,
-        )
+        await assert_registered_identity_membership(env, privacy_actor(second), team_id=other_team_id)
         before = [
             dict(row)
             for row in await env.db.fetch_all(
@@ -348,6 +326,7 @@ async def test_conflicting_verified_stored_addresses_refuse_during_outage_before
             )
         ]
         assert len(before) == 2
+        assert {row["agent_id"] for row in before} == {actor.id, UUID(second.agent_id)}
         assert {row["address"] for row in before} == {actor.address, other_address}
         assert all(row["did_aw_verified_key"] == actor.did for row in before)
         dispatched = len(env.dispatched)
@@ -362,7 +341,7 @@ async def test_conflicting_verified_stored_addresses_refuse_during_outage_before
                 env,
                 actor,
                 {
-                    "to_did": env.actors["bob"].did,
+                    "to_did": recipient.did_key,
                     "message_id": str(message_id),
                     "subject": "ambiguous stored From",
                     "body": "must not choose either address",
