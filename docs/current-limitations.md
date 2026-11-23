@@ -30,8 +30,9 @@ must not be used as a prerequisite in a shipped tutorial.
 - The hosted BYOT wizard path is not currently a rendered onboarding option.
 - A keys-only agent port remains gated on CLI work in the current release
   train; the executed whole-home copy procedure is the supported path today.
-- Retiring an agent takes the command for its case: `aw workspace delete` in
-  its own folder retires a team-only agent on a hosted team and frees its name;
+- Retiring an agent takes the command for its case:
+  `aw workspace delete <workspace-id-or-name>` in its own folder retires a
+  team-only agent on a hosted team and frees its name;
   `aw team admin remove-agent` retires another agent, releasing its task claims
   and then revoking its certificate. Deleting local files alone does not revoke
   membership or remove a global identity.
