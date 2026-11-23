@@ -3,7 +3,7 @@ type: Decision
 title: Released clients are a permanent constraint
 description: Once a client that sends a shape is published, the server accepts that shape until it is measured that nothing sends it; contract changes are additive by default, narrowing names every consumer and proves each deploys atomically, and removal is a separate change.
 tags: [decision, compatibility, release, clients, contracts]
-timestamp: 2026-11-04
+timestamp: 2026-11-21
 ---
 
 Decided on 2026-07-27 after a chat mark-read change made a new field required
@@ -60,6 +60,30 @@ Rulings and review misses from October 2026 mark the edges of the rule.
   new duty stated in a docstring. See
   [removing an implicit side effect is a contract change](/aweb-protocol-expert/lessons/removing-an-implicit-side-effect-is-a-contract-change.md)
   (2026-11-04).
+- **Headless human assurance is opt-in** (2026-11-21). The supported headless
+  path of a released CLI or OATS workflow is a consumer too. A new
+  human-validation or hardening step that must happen before the command sends
+  anything (a dashboard visit, a prompt, a manual permissions fix) breaks
+  existing automation even when commands, flags and wire shapes are unchanged.
+  Keep the headless path as the default and make the new step an explicit
+  opt-in. The supported journey decides what must keep working; for Codex
+  under OATS that is the host wake broker (see
+  [Codex live delivery is the OATS wake](/aweb-protocol-expert/decisions/codex-live-delivery-is-the-oats-wake.md)).
+  Judge a preflight by running the built CLI with the invocation and
+  environment the automation uses, not by reading the source: a source-only
+  review missed that a warning had become an exit failure. The regression test
+  that reproduces this must fail before the fix. Example: `aw wake` state in a
+  0770 directory the current user owns printed the shared-permissions warning,
+  then the broker failed to start. The corrected built binary keeps the
+  warning, starts, registers an OATS-style session and returns usable JSON
+  status. A state directory owned by another user is still refused: the
+  existing layout is kept, but ownership of the control path does not become
+  optional. Status: 1817d992a on the source's review branch, not on main, as of
+  2026-11-21. Acceptance: source-reported. The founder's direction was relayed
+  to the source seat by coordinator mail 43804622 (2026-11-21); the harvester
+  could not read that record. Evidence: OKF proposal from
+  aweb-protocol-expert/aweb-protocol-expert-signer-boundary, 2026-11-21;
+  notes/headless-human-assurance-is-opt-in.md.
 - **A dated exception, by the operator.** On 2026-10-20, relayed by the naapps
   and secrets coordinators, the operator waived the additive default for the
   naapp install surfaces, released aw clients included, on the premise that no
