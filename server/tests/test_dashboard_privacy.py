@@ -256,6 +256,33 @@ async def privacy_stack(
             await db.close()
 
 
+@pytest.mark.asyncio
+async def test_privacy_actors_have_registered_memberships(privacy_app):
+    env = privacy_app
+    registry = env.app.state.awid_registry_client
+    certificates = await registry.list_team_certificates(
+        "example.test", TEAM_NAME, active_only=True
+    )
+    assert {certificate.member_did_key for certificate in certificates} == {
+        actor.did for actor in env.actors.values()
+    }
+    registered_ids = {
+        certificate.member_did_key: certificate.certificate_id
+        for certificate in certificates
+    }
+    for actor in env.actors.values():
+        row = await env.db.fetch_one(
+            """SELECT a.certificate_id, a.accepted_team_did_key
+               FROM {{tables.agents}} a
+               JOIN {{tables.workspaces}} w ON w.agent_id = a.agent_id
+               WHERE a.agent_id = $1 AND a.team_id = $2 AND w.workspace_id = $3""",
+            actor.id, TEAM, actor.workspace,
+        )
+        assert row is not None
+        assert row["certificate_id"] == registered_ids[actor.did]
+        assert row["accepted_team_did_key"] == env.team_did
+
+
 async def _request(env, actor, method, path, body=None):
     identity = env.actors[actor]
     content = json.dumps(body).encode() if body is not None else b""
