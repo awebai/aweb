@@ -103,7 +103,7 @@ def _runtime(
 async def _member_of_team_serving_at(registry, server_url: str) -> Member:
     member = Member(team_id=TEAM_ID)
     await registry.add_team(TEAM_ID, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     with pytest.MonkeyPatch.context() as environment:
         if server_url.startswith("http://"):
             # AWID stores a plain-http loopback server only as a development
