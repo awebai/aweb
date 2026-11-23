@@ -127,8 +127,14 @@ BEGIN
     IF carrier_name IS NULL THEN
         RAISE SQLSTATE 'SE001' USING MESSAGE='Secrets erasure carrier is unsupported';
     END IF;
-    IF carrier_name='pin' THEN dispatch_name := NEW.dispatch_id::text; END IF;
-    IF carrier_name='reference' AND NEW.binding IS NULL THEN RETURN NEW; END IF;
+    -- Resolve carrier-specific record fields only in their own branches.
+    IF carrier_name='pin' THEN
+        dispatch_name := NEW.dispatch_id::text;
+    ELSIF carrier_name='reference' THEN
+        IF NEW.binding IS NULL THEN
+            RETURN NEW;
+        END IF;
+    END IF;
     IF EXISTS(SELECT 1 FROM secrets_erasure.erasures
        WHERE carrier=carrier_name AND installation_id=NEW.installation_id
          AND team_id=NEW.team_id AND secret_id=NEW.secret_id AND version=NEW.version
