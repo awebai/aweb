@@ -12,6 +12,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ErrNoActiveTeamMembership identifies well-formed team state with no selection.
+var ErrNoActiveTeamMembership = errors.New("teams.yaml is missing active_team")
+
 type TeamMembership struct {
 	TeamKey     *awid.TeamKeyEvidence `yaml:"team_key,omitempty"`
 	TeamID      string                `yaml:"team_id"`
@@ -80,10 +83,10 @@ func (s *TeamState) validate() error {
 		return errors.New("nil team state")
 	}
 	if len(s.Memberships) == 0 {
+		if s.ActiveTeam == "" {
+			return fmt.Errorf("teams.yaml must contain at least one membership: %w", ErrNoActiveTeamMembership)
+		}
 		return errors.New("teams.yaml must contain at least one membership")
-	}
-	if strings.TrimSpace(s.ActiveTeam) == "" {
-		return errors.New("teams.yaml is missing active_team")
 	}
 	seen := make(map[string]struct{}, len(s.Memberships))
 	for _, membership := range s.Memberships {
@@ -102,6 +105,9 @@ func (s *TeamState) validate() error {
 			return fmt.Errorf("teams.yaml contains duplicate membership for %q", membership.TeamID)
 		}
 		seen[key] = struct{}{}
+	}
+	if s.ActiveTeam == "" {
+		return ErrNoActiveTeamMembership
 	}
 	if s.ActiveMembership() == nil {
 		return fmt.Errorf("teams.yaml active_team %q is not present in memberships", s.ActiveTeam)
@@ -227,6 +233,9 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	*s = raw.normalizedTeamState()
+	if s.ActiveTeam == "" && len(raw.Memberships) > len(s.Memberships) {
+		return errors.New("teams.yaml membership is missing team_id")
+	}
 	return s.validate()
 }
 

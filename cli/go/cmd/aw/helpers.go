@@ -239,10 +239,10 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 				return nil, fmt.Errorf("%w: %w", errIdentityAbsent, err)
 			}
 			if err != nil {
-				return nil, fmt.Errorf("read %s: %w", awconfig.TeamStatePath(workingDir), err)
+				return nil, localIdentityStateError(fmt.Errorf("read %s: %w", awconfig.TeamStatePath(workingDir), err))
 			}
 		} else {
-			return nil, fmt.Errorf("invalid worktree workspace: %w", err)
+			return nil, localIdentityStateError(fmt.Errorf("invalid worktree workspace: %w", err))
 		}
 	}
 	activeMembership := awconfig.ActiveMembershipFor(workspace, teamState)
@@ -254,7 +254,11 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 		activeTeamID = strings.TrimSpace(teamState.ActiveTeam)
 	}
 	if activeTeamID == "" {
-		return nil, usageError("current worktree is missing active_team membership; run `aw init` first")
+		err := usageError("current worktree is missing active_team membership; run `aw init` first")
+		if teamState == nil || strings.TrimSpace(teamState.ActiveTeam) == "" {
+			return nil, fmt.Errorf("%w: %w", errIdentityAbsent, err)
+		}
+		return nil, err
 	}
 
 	cert, err := awconfig.LoadTeamCertificateForTeam(workingDir, activeTeamID)
@@ -306,6 +310,13 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 		RegistryOperatorOrigin: strings.TrimSpace(operatorOrigin),
 		CreatedAt:              "",
 	}, nil
+}
+
+func localIdentityStateError(err error) error {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, awconfig.ErrNoActiveTeamMembership) {
+		return fmt.Errorf("%w: %w", errIdentityAbsent, err)
+	}
+	return err
 }
 
 func validateResolvedIdentity(identity *awconfig.ResolvedIdentity) error {

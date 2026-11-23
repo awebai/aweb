@@ -164,6 +164,7 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 		{name: "workspace without teams", verbs: "verify", public: true, absent: true, metadata: "workspace"},
 		{name: "teams without active membership", verbs: "verify", public: true, absent: true, metadata: "teams"},
 		{name: "damaged team state", verbs: "verify", broken: true, absent: true, metadata: "damaged"},
+		{name: "unselected damaged membership", verbs: "verify", broken: true, absent: true, metadata: "damaged membership"},
 		{name: "empty identity home", verbs: "verify", public: true, absent: true, certOnly: true},
 		{name: "certificate only public", verbs: "who verify", stored: awid.DefaultAWIDRegistryURL, public: true, certOnly: true},
 		{name: "certificate only private", verbs: "who verify", stored: private.URL, private: true, certOnly: true},
@@ -343,11 +344,11 @@ func testHostedRegistryRoute(t *testing.T, command string) {
 	registry := newAWIDRegistryClient(nil, resolver)
 	owner := &hostedOwnerAuthority{home: home, did: identity.DID, stableID: identity.StableID, registryURL: identity.RegistryURL}
 	if command == "hosted-retry" {
-		testHostedRegistryRetry(t, owner, registry)
+		testHostedRegistryRetry(t, wd, owner, registry)
 		return
 	}
 	if command == "hosted-owner" {
-		issuer, err := hostedOwnerIssuer(t.Context(), wd, owner, registry, resolver)
+		issuer, err := hostedOwnerIssuer(t.Context(), wd, owner, registry, resolver, "", nil)
 		if err != nil || issuer == nil {
 			t.Fatalf("hosted owner route: %v", err)
 		}
@@ -378,7 +379,7 @@ func testHostedRegistryRoute(t *testing.T, command string) {
 	}
 }
 
-func testHostedRegistryRetry(t *testing.T, owner *hostedOwnerAuthority, registry *awid.RegistryClient) {
+func testHostedRegistryRetry(t *testing.T, wd string, owner *hostedOwnerAuthority, registry *awid.RegistryClient) {
 	t.Helper()
 	seed, err := hex.DecodeString(os.Getenv("AW_REGISTRY_ROUTE_CHILD_SEED"))
 	if err != nil {
@@ -404,6 +405,7 @@ func testHostedRegistryRetry(t *testing.T, owner *hostedOwnerAuthority, registry
 	association.RegistryURL = owner.registryURL
 	err = createHostedIdentity(hostedIdentityCreation{
 		Context: t.Context(), Command: &cobra.Command{}, Home: home, Owner: owner, Registry: registry, Association: association,
+		WorkingDir: wd,
 	})
 	if err == nil || !strings.Contains(err.Error(), "fixture stopped at original registration") {
 		t.Fatalf("expected to reach the original registry with the retained key, got %v", err)
@@ -471,6 +473,10 @@ func writeUnselectedHomeRegistryFixture(t *testing.T, dir, layout string) {
 		}
 	case "damaged":
 		if err := os.WriteFile(awconfig.TeamStatePath(dir), []byte("memberships: [broken"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	case "damaged membership":
+		if err := os.WriteFile(awconfig.TeamStatePath(dir), []byte("memberships: [{}]\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}

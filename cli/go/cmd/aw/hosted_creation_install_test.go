@@ -304,7 +304,7 @@ func TestHostedLocalOwnerCannotCreateRegisteredChild(t *testing.T) {
 
 	registry := awid.NewAWIDRegistryClient(nil, staticTXTResolver{})
 	registry.DefaultRegistryURL = "http://127.0.0.1:1"
-	issuer, err := hostedOwnerIssuer(t.Context(), t.TempDir(), owner, registry, resolver)
+	issuer, err := hostedOwnerIssuer(t.Context(), t.TempDir(), owner, registry, resolver, "", nil)
 	if issuer != nil || awid.IDCertificateErrorCode(err) != "unregistered_parent" || resolver.calls != 0 {
 		t.Fatalf("local parent was not refused before global creation: %+v %v", issuer, err)
 	}

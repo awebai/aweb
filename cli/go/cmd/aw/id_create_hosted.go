@@ -214,13 +214,11 @@ func prepareHostedIdentityCreation(cmd *cobra.Command, options hostedIdentityOpt
 			return err
 		}
 	}
-	var selectedIssuer *selectedChildIssuer
 	var human *hostedHumanParent
 	if owner != nil {
 		if options.HumanParent != "" || options.RootParent {
 			return usageError("the selected native owner is the parent; omit --human-parent and --root-parent")
 		}
-		selectedIssuer, err = hostedOwnerIssuer(ctx, wd, owner, registry, nil, options.RegistryURL)
 	} else {
 		human, err = selectHostedPersonParent(account, strings.TrimSpace(options.HumanParent), options.RootParent)
 	}
@@ -236,22 +234,10 @@ func prepareHostedIdentityCreation(cmd *cobra.Command, options hostedIdentityOpt
 	if owner != nil {
 		association.OwnerDIDKey = owner.did
 	}
-	if selectedIssuer != nil {
-		association.Domain = selectedIssuer.domain
-		association.RegistryURL = selectedIssuer.registryURL
-		association.ParentKind = "identity"
-		parentID, valid := selectedIssuer.parent["id"].(string)
-		if !valid || strings.TrimSpace(parentID) == "" {
-			return errors.New("selected owner certificate has no parent ID; inspect the owner's identity with aw doctor before retrying")
-		}
-		association.ParentID = parentID
-	}
 	if human != nil {
 		association.Domain = human.Domain
 		association.ParentKind = "identity"
 		association.ParentID = human.ID
-	}
-	if association.Domain != "" && selectedIssuer == nil {
 		_, origin, routeErr := childIssuerRegistry(ctx, idChildOptions{RegistryURL: options.RegistryURL}, association.Domain)
 		if routeErr != nil {
 			return routeErr
@@ -260,27 +246,29 @@ func prepareHostedIdentityCreation(cmd *cobra.Command, options hostedIdentityOpt
 	}
 	return createHostedIdentity(hostedIdentityCreation{
 		Context: ctx, Command: cmd, Home: home, Config: cfg, Owner: owner,
-		Issuer: selectedIssuer, Human: human, Registry: registry, APIBase: apiBase, Association: association,
+		Human: human, Registry: registry, APIBase: apiBase, Association: association,
+		WorkingDir: wd, RegistryOverride: options.RegistryURL,
 	})
 }
 
 type hostedIdentityCreation struct {
-	Context     context.Context
-	Command     *cobra.Command
-	Home        awconfig.IdentityHome
-	Config      cliAuthConfig
-	Owner       *hostedOwnerAuthority
-	Issuer      *selectedChildIssuer
-	Human       *hostedHumanParent
-	Registry    *awid.RegistryClient
-	APIBase     string
-	Association hostedIdentityContext
+	Context          context.Context
+	Command          *cobra.Command
+	Home             awconfig.IdentityHome
+	Config           cliAuthConfig
+	Owner            *hostedOwnerAuthority
+	Human            *hostedHumanParent
+	Registry         *awid.RegistryClient
+	APIBase          string
+	Association      hostedIdentityContext
+	WorkingDir       string
+	RegistryOverride string
 }
 
 func createHostedIdentity(operation hostedIdentityCreation) (resultErr error) {
 	ctx, cmd := operation.Context, operation.Command
 	home, cfg, owner := operation.Home, operation.Config, operation.Owner
-	selectedIssuer, human := operation.Issuer, operation.Human
+	human := operation.Human
 	registry, apiBase, association := operation.Registry, operation.APIBase, operation.Association
 	org, teamID, name, mode := association.Org, association.TeamID, association.Name, association.InboundMode
 	statePath := filepath.Join(home.Root, "hosted-identity-create.json")
@@ -299,6 +287,20 @@ func createHostedIdentity(operation hostedIdentityCreation) (resultErr error) {
 			resultErr = errors.Join(resultErr, fmt.Errorf("close hosted identity recovery lock: %w. Run aw doctor on the selected identity home before retrying", err))
 		}
 	}()
+	var selectedIssuer *selectedChildIssuer
+	if owner != nil {
+		selectedIssuer, err = hostedOwnerIssuer(ctx, operation.WorkingDir, owner, registry, nil, operation.RegistryOverride, func(domain, parentID string, scope identityRegistryScope) (identityRegistryScope, error) {
+			association.Domain, association.ParentKind, association.ParentID = domain, "identity", parentID
+			return hostedOwnerRecoveryScope(statePath, association, scope)
+		})
+		if err != nil {
+			return err
+		}
+		if selectedIssuer != nil {
+			defer selectedIssuer.close()
+			association.RegistryURL = selectedIssuer.registryURL
+		}
+	}
 	material, err := prepareHostedIdentity(home.Root, statePath, association)
 	if err != nil {
 		return err
@@ -448,27 +450,39 @@ func createHostedIdentity(operation hostedIdentityCreation) (resultErr error) {
 	})
 }
 
-func prepareHostedIdentity(root, statePath string, association hostedIdentityContext) (workspaceTeamIdentityMaterial, error) {
+func readHostedIdentityRecovery(statePath string) (*hostedIdentityRecovery, error) {
 	if err := pathpreflight.PreflightFile(statePath, "hosted identity recovery state", pathpreflight.Options{}); err != nil {
-		return workspaceTeamIdentityMaterial{}, err
+		return nil, err
 	}
-	var key ed25519.PrivateKey
 	data, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(statePath)}, Name: filepath.Base(statePath)}).Read()
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(statePath)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		return nil, errors.New("hosted identity recovery state must be private (0600)")
+	}
+	var state hostedIdentityRecovery
+	if json.Unmarshal(data, &state) != nil || state.Version != 1 {
+		return nil, errors.New("invalid hosted identity recovery state; retain the original root for reconciliation")
+	}
+	return &state, nil
+}
+
+func hostedIdentityParametersMismatch() error {
+	return usageError("hosted identity root belongs to different creation parameters; retry the original account, organization, team, name, mode and registry")
+}
+
+func prepareHostedIdentity(root, statePath string, association hostedIdentityContext) (workspaceTeamIdentityMaterial, error) {
+	var key ed25519.PrivateKey
+	state, err := readHostedIdentityRecovery(statePath)
 	switch {
 	case err == nil:
-		info, err := os.Stat(statePath)
-		if err != nil {
-			return workspaceTeamIdentityMaterial{}, err
-		}
-		if info.Mode().Perm()&0077 != 0 {
-			return workspaceTeamIdentityMaterial{}, errors.New("hosted identity recovery state must be private (0600)")
-		}
-		var state hostedIdentityRecovery
-		if json.Unmarshal(data, &state) != nil || state.Version != 1 {
-			return workspaceTeamIdentityMaterial{}, errors.New("invalid hosted identity recovery state; retain the original root for reconciliation")
-		}
 		if state.Context != association {
-			return workspaceTeamIdentityMaterial{}, usageError("hosted identity root belongs to different creation parameters; retry the original account, organization, team, name, mode and registry")
+			return workspaceTeamIdentityMaterial{}, hostedIdentityParametersMismatch()
 		}
 		seed, err := base64.StdEncoding.DecodeString(state.SigningSeed)
 		if err != nil || len(seed) != ed25519.SeedSize {
@@ -480,7 +494,7 @@ func prepareHostedIdentity(root, statePath string, association hostedIdentityCon
 			if err != nil {
 				return workspaceTeamIdentityMaterial{}, err
 			}
-			if err := saveHostedIdentityRecovery(statePath, &state); err != nil {
+			if err := saveHostedIdentityRecovery(statePath, state); err != nil {
 				return workspaceTeamIdentityMaterial{}, err
 			}
 		}
@@ -502,11 +516,7 @@ func prepareHostedIdentity(root, statePath string, association hostedIdentityCon
 		if err != nil {
 			return workspaceTeamIdentityMaterial{}, err
 		}
-		data, err = json.Marshal(hostedIdentityRecovery{Version: 1, Context: association, SigningSeed: base64.StdEncoding.EncodeToString(key.Seed()), IDTree: tree})
-		if err != nil {
-			return workspaceTeamIdentityMaterial{}, err
-		}
-		if err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(statePath)}, Name: filepath.Base(statePath)}).Write(data); err != nil {
+		if err := saveHostedIdentityRecovery(statePath, &hostedIdentityRecovery{Version: 1, Context: association, SigningSeed: base64.StdEncoding.EncodeToString(key.Seed()), IDTree: tree}); err != nil {
 			return workspaceTeamIdentityMaterial{}, err
 		}
 	default:
