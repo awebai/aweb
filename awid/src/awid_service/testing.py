@@ -20,12 +20,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from inspect import isawaitable
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
@@ -94,6 +97,44 @@ def require_selected_test_database(config: DatabaseTestConfig) -> None:
             f"names {selected.host}:{selected.port}. Set TEST_DB_HOST and TEST_DB_PORT "
             "before the test run starts, so pgdbm reads them when it loads."
         )
+
+
+# Code that keeps a child test run off every server, whatever its plugins do.
+NO_NETWORK = """
+import socket
+
+def _refuse(*args, **kwargs):
+    raise OSError("this test run may not open network connections")
+
+socket.socket.connect = _refuse
+socket.socket.connect_ex = _refuse
+"""
+
+
+def run_without_a_named_server(
+    test: str, *, cwd: Path, scratch: Path
+) -> subprocess.CompletedProcess[str]:
+    """Run one test (a pytest node id with an absolute path) from ``cwd`` in a
+    child pytest that names no Postgres server and can reach none. The child
+    loads the test's own suite, so it shows what that suite does."""
+    (scratch / "no_network.py").write_text(NO_NETWORK)
+    # The parent's worker and options are not the child's.
+    environ = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in _SELECTION and not name.startswith("PYTEST_")
+    }
+    environ["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (str(scratch), os.environ.get("PYTHONPATH")))
+    )
+    return subprocess.run(
+        [sys.executable, "-P", "-m", "pytest", "-q", "-p", "no_network", "-p", "no:cacheprovider"]
+        + [f"--basetemp={scratch / 'child'}", test],
+        cwd=cwd,
+        env=environ,
+        capture_output=True,
+        text=True,
+    )
 
 
 SERVICE_TOKEN = "awid-testing-service-token-32-bytes"

@@ -15,6 +15,7 @@ from conftest import aw_cli_binary, shared_test_pool  # noqa: F401
 from conftest import shared_test_database as shared_test_database
 from awid.did import stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
+from awid_service.testing import run_without_a_named_server
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_messages_http import _signed_identity_headers
 
@@ -125,3 +126,17 @@ async def test_production_cli_connect_and_event_stream_use_v2(privacy_app, aw_cl
     finally:
         rows = await env.db.fetch_all("SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1", actor.id)
         await clear_workspace_presence(env.redis, [str(row["workspace_id"]) for row in rows])
+
+
+def test_wants_a_database(test_db_factory) -> None:
+    """Sets the factory up, which creates no database; run alone below."""
+
+
+def test_an_unnamed_database_server_is_refused(request, tmp_path):
+    child = run_without_a_named_server(
+        f"{__file__}::test_wants_a_database",
+        cwd=request.config.invocation_params.dir,
+        scratch=tmp_path,
+    )
+    assert child.returncode == 1, child.stdout + child.stderr
+    assert "PostgresNotSelected" in child.stdout, child.stdout + child.stderr

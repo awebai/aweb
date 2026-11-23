@@ -13,22 +13,13 @@ import pytest
 from pgdbm.testing import DatabaseTestConfig
 
 from awid_service.testing import (
+    NO_NETWORK,
     PostgresNotSelected,
     require_selected_test_database,
     selected_test_database_config,
 )
 
 _SELECTIONS = ("TEST_DB_HOST", "TEST_DB_PORT")
-# The child cannot reach any server, whatever its plugins do.
-_NO_NETWORK = """
-import socket
-
-def _refuse(*args, **kwargs):
-    raise OSError("this test run may not open network connections")
-
-socket.socket.connect = _refuse
-socket.socket.connect_ex = _refuse
-"""
 # Requests pgdbm's factory; setting it up creates no database.
 _WANTS_A_DATABASE = """
 def test_it(test_db_factory):
@@ -83,7 +74,7 @@ def test_a_config_for_another_server_is_refused(
 def _child_run(
     tmp_path: Path, conftest: str, environ: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
-    (tmp_path / "conftest.py").write_text(_NO_NETWORK + conftest)
+    (tmp_path / "conftest.py").write_text(NO_NETWORK + conftest)
     (tmp_path / "test_wants_a_database.py").write_text(_WANTS_A_DATABASE)
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(tmp_path)],
