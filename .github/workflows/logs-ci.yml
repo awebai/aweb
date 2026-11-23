@@ -12,6 +12,8 @@ name: logs CI
 # how naapp coverage went missing before.
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

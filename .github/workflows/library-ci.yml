@@ -33,6 +33,8 @@ name: Library CI
 # request, preferred over a gate that can be silently skipped.
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
