@@ -137,10 +137,11 @@ def test_ci_gate_policy_contract_rejects_semantic_weakening(semantic_group: str)
         _assert_gate_policy_contract(readme.replace(semantic_group, "", 1))
 
 
-def test_ci_runs_every_make_gate_on_pull_request_and_manual_retry() -> None:
+def test_ci_runs_every_make_gate_on_main_pull_request_and_manual_retry() -> None:
     workflow = _workflow()
 
-    assert set(workflow["on"]) == {"pull_request", "workflow_dispatch"}
+    assert set(workflow["on"]) == {"push", "pull_request", "workflow_dispatch"}
+    assert workflow["on"]["push"] == {"branches": ["main"]}
     steps = [step for job in workflow["jobs"].values() for step in job["steps"]]
     commands = "\n".join(step.get("run", "") for step in steps)
     for target in ("lint", "aatk-spec-check", "test", "e2e"):
