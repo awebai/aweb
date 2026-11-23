@@ -1,10 +1,10 @@
 package blueprint
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,10 +12,13 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/internal/agentdocs"
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"gopkg.in/yaml.v3"
 )
 
+// MaterializeOptions selects a local blueprint profile and its home layout.
+// Force permits replacing existing profile files after destination preflight.
 type MaterializeOptions struct {
 	SourceDir   string
 	ProfileID   string
@@ -24,6 +27,8 @@ type MaterializeOptions struct {
 	RuntimeKind string
 }
 
+// MaterializeResult records the selected profile, upstream provenance, files
+// written and assets the consumer could not place.
 type MaterializeResult struct {
 	ProfileRef             string   `json:"profile_ref"`
 	ProfileVersion         string   `json:"profile_version"`
@@ -53,6 +58,9 @@ type materializeProvenance struct {
 	LibraryURL      string
 }
 
+// MaterializeLocalProfile validates a local blueprint and writes its selected
+// profile into the bounded home layout described in
+// docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 200–214.
 func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error) {
 	if strings.TrimSpace(opts.ProfileID) == "" {
 		return nil, fmt.Errorf("profile id is required")
@@ -68,10 +76,25 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 	if runtimeKind == "" {
 		runtimeKind = "claude-code"
 	}
-	return materializeLoadedProfile(bp, opts.ProfileID, opts.TargetDir, opts.Force, runtimeKind, materializeProvenance{SourceBlueprint: true})
+	return materializeLoadedProfile(loadedProfileOptions{Blueprint: bp, ProfileID: opts.ProfileID, TargetDir: opts.TargetDir, Overwrite: opts.Force, RuntimeKind: runtimeKind, Provenance: materializeProvenance{SourceBlueprint: true}})
 }
 
-func materializeLoadedProfile(bp *Blueprint, profileID, targetDir string, force bool, runtimeKind string, provenance materializeProvenance) (*MaterializeResult, error) {
+type loadedProfileOptions struct {
+	Blueprint   *Blueprint
+	ProfileID   string
+	TargetDir   string
+	Overwrite   bool
+	RuntimeKind string
+	Provenance  materializeProvenance
+}
+
+func materializeLoadedProfile(options loadedProfileOptions) (*MaterializeResult, error) {
+	bp := options.Blueprint
+	profileID := options.ProfileID
+	targetDir := options.TargetDir
+	force := options.Overwrite
+	runtimeKind := options.RuntimeKind
+	provenance := options.Provenance
 	runtimeKind = strings.TrimSpace(runtimeKind)
 	if runtimeKind == "" {
 		runtimeKind = "claude-code"
@@ -88,10 +111,15 @@ func materializeLoadedProfile(bp *Blueprint, profileID, targetDir string, force 
 	if err != nil {
 		return nil, err
 	}
-	if err := preflightMaterializeWrites(absTarget, ops, force); err != nil {
+	policy := preserveExistingProfileFiles
+	if force {
+		policy = replaceExistingProfileFiles
+	}
+	plan := materializeWritePlan{TargetRoot: absTarget, Operations: ops, CollisionPolicy: policy}
+	if err := plan.preflight(); err != nil {
 		return nil, err
 	}
-	written, err := writeMaterializedFiles(absTarget, ops)
+	written, err := plan.write()
 	if err != nil {
 		return nil, err
 	}
@@ -263,8 +291,14 @@ func composeAgentsMarkdown(bp *Blueprint, profile Profile, instructions []byte, 
 		writeParagraph("Actions requiring human approval", bulletLines(profile.ApprovalRequired))
 	}
 	if len(profile.MemoryPolicy) > 0 {
-		mode, _ := profile.MemoryPolicy["mode"].(string)
-		proposalTarget, _ := profile.MemoryPolicy["proposal_target"].(string)
+		mode, err := requiredStringMapValue("memory_policy", profile.MemoryPolicy, "mode")
+		if err != nil {
+			return nil, err
+		}
+		proposalTarget, err := requiredStringMapValue("memory_policy", profile.MemoryPolicy, "proposal_target")
+		if err != nil {
+			return nil, err
+		}
 		if strings.TrimSpace(mode) != "" || strings.TrimSpace(proposalTarget) != "" {
 			lines := []string{"Mode: " + mode, "Proposal target: " + proposalTarget, "", "Your full profile is kept under .aw/profile/. To change how you work, propose a", "new profile version from there; " + proposalTarget + " reviews and mints it."}
 			writeParagraph("Memory and learning", lines)
@@ -340,6 +374,9 @@ func resourceSourceRel(profileID, category, blueprintRelativePath string) (strin
 	return rel, nil
 }
 
+// LibraryHomeFile is one file or runtime symlink in a materialize response.
+// Path is relative to the home and remains subject to ValidateHomePath; a
+// response never authorizes writes outside the profile layout.
 type LibraryHomeFile struct {
 	Path        string `json:"path"`
 	Kind        string `json:"kind"`
@@ -347,12 +384,16 @@ type LibraryHomeFile struct {
 	Target      string `json:"target,omitempty"`
 }
 
+// LibraryProfilePayloadFile is one UTF-8 file in a profile-relative Library
+// payload. SHA256, when present, must match ContentUTF8 before materialization.
 type LibraryProfilePayloadFile struct {
 	Path        string `json:"path"`
 	SHA256      string `json:"sha256,omitempty"`
 	ContentUTF8 string `json:"content_utf8,omitempty"`
 }
 
+// ValidateLibraryProfilePayloadOptions binds a Library payload to the requested
+// profile identity and the nonempty digest supplied by its producer.
 type ValidateLibraryProfilePayloadOptions struct {
 	ProfileRef     string
 	ProfileVersion string
@@ -360,6 +401,9 @@ type ValidateLibraryProfilePayloadOptions struct {
 	Files          []LibraryProfilePayloadFile
 }
 
+// MaterializeLibraryProfilePayloadOptions supplies a fetched profile, its
+// source provenance and the destination home. Force permits replacing existing
+// profile files, subject to the same path and symlink preflight.
 type MaterializeLibraryProfilePayloadOptions struct {
 	TargetDir        string
 	LibraryURL       string
@@ -374,6 +418,10 @@ type MaterializeLibraryProfilePayloadOptions struct {
 	Force            bool
 }
 
+// ValidateLibraryProfilePayloadDigest verifies the profile shape, per-file
+// hashes and required profile digest without writing files. The result proves
+// byte consistency, not independent publisher authentication
+// (docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 168–176).
 func ValidateLibraryProfilePayloadDigest(opts ValidateLibraryProfilePayloadOptions) (string, error) {
 	if err := validateProfileID("profile_ref", opts.ProfileRef); err != nil {
 		return "", err
@@ -381,11 +429,14 @@ func ValidateLibraryProfilePayloadDigest(opts ValidateLibraryProfilePayloadOptio
 	if err := validateRequiredString("profile_version", opts.ProfileVersion); err != nil {
 		return "", err
 	}
-	_, digest, err := validateLibraryProfilePayload(opts.ProfileRef, opts.ProfileVersion, opts.ProfileDigest, opts.Files)
+	_, digest, err := validateLibraryProfilePayload(ValidateLibraryProfilePayloadOptions{ProfileRef: opts.ProfileRef, ProfileVersion: opts.ProfileVersion, ProfileDigest: opts.ProfileDigest, Files: opts.Files})
 	return digest, err
 }
 
-func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptions) (*MaterializeResult, error) {
+// MaterializeLibraryProfilePayload validates the fetched profile before writing
+// its declared assets into the bounded home layout. It records upstream
+// provenance and reports undeclared assets as warnings.
+func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptions) (result *MaterializeResult, err error) {
 	if strings.TrimSpace(opts.TargetDir) == "" {
 		return nil, fmt.Errorf("target directory is required")
 	}
@@ -404,7 +455,7 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if err := validateRequiredString("profile_version", opts.ProfileVersion); err != nil {
 		return nil, err
 	}
-	files, _, err := validateLibraryProfilePayload(opts.ProfileRef, opts.ProfileVersion, opts.ProfileDigest, opts.Files)
+	files, _, err := validateLibraryProfilePayload(ValidateLibraryProfilePayloadOptions{ProfileRef: opts.ProfileRef, ProfileVersion: opts.ProfileVersion, ProfileDigest: opts.ProfileDigest, Files: opts.Files})
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +463,18 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() {
+		if cleanupErr := os.RemoveAll(tmp); cleanupErr != nil {
+			warning := fmt.Errorf("remove temporary Library payload %s: %w. Remove that temporary directory manually", tmp, cleanupErr)
+			if result != nil {
+				// The home is already materialized; cleanup must not turn its
+				// accepted result into a retry that writes the home again.
+				result.Warnings = append(result.Warnings, warning.Error())
+			} else {
+				err = errors.Join(err, warning)
+			}
+		}
+	}()
 	profileDir := filepath.Join(tmp, "profiles", opts.ProfileRef)
 	if err := writeLibraryProfilePayloadFiles(tmp, profileDir, files); err != nil {
 		return nil, err
@@ -445,7 +507,8 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := findProfile(bp, opts.ProfileRef); !ok {
+	profile, ok := findProfile(bp, opts.ProfileRef)
+	if !ok {
 		return nil, fmt.Errorf("profile %q not found in library payload", opts.ProfileRef)
 	}
 	bp.Source.Kind = "library_blueprint_profile_payload"
@@ -454,11 +517,10 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	// not leak the synthetic one-profile wrapper digest into the home pin. Shelf
 	// and local callers that have a real upstream blueprint digest pass it here.
 	bp.Source.Digest = strings.TrimSpace(opts.BlueprintDigest)
-	result, err := materializeLoadedProfile(bp, opts.ProfileRef, opts.TargetDir, opts.Force, opts.RuntimeKind, materializeProvenance{SourceBlueprint: hasSourceBlueprint, LibraryURL: opts.LibraryURL})
+	result, err = materializeLoadedProfile(loadedProfileOptions{Blueprint: bp, ProfileID: opts.ProfileRef, TargetDir: opts.TargetDir, Overwrite: opts.Force, RuntimeKind: opts.RuntimeKind, Provenance: materializeProvenance{SourceBlueprint: hasSourceBlueprint, LibraryURL: opts.LibraryURL}})
 	if err != nil {
 		return nil, err
 	}
-	profile, _ := findProfile(bp, opts.ProfileRef)
 	result.Warnings = undeclaredLibraryProfileAssetWarnings(bp, profile)
 	return result, nil
 }
@@ -499,7 +561,14 @@ func undeclaredLibraryProfileAssetWarnings(bp *Blueprint, profile Profile) []str
 	return warnings
 }
 
-func validateLibraryProfilePayload(profileRef, profileVersion, profileDigest string, files []LibraryProfilePayloadFile) ([]LibraryProfilePayloadFile, string, error) {
+// validateLibraryProfilePayload implements docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 168–176.
+// Network payload structure and hashes are checked before any target write.
+func validateLibraryProfilePayload(options ValidateLibraryProfilePayloadOptions) ([]LibraryProfilePayloadFile, string, error) {
+	profileRef := options.ProfileRef
+	profileVersion := options.ProfileVersion
+	profileDigest := options.ProfileDigest
+	files := options.Files
+
 	validated, err := validateLibraryProfilePayloadStructure(profileRef, profileVersion, files)
 	if err != nil {
 		return nil, "", err
@@ -508,7 +577,10 @@ func validateLibraryProfilePayload(profileRef, profileVersion, profileDigest str
 	if err != nil {
 		return nil, "", err
 	}
-	if strings.TrimSpace(profileDigest) != "" && strings.TrimSpace(profileDigest) != digest {
+	if strings.TrimSpace(profileDigest) == "" {
+		return nil, "", fmt.Errorf("library profile response is missing its digest. Fetch the profile again from a Library that supplies a profile digest")
+	}
+	if strings.TrimSpace(profileDigest) != digest {
 		return nil, "", fmt.Errorf("library profile payload digest mismatch: fetched files digest %s, expected %s", digest, strings.TrimSpace(profileDigest))
 	}
 	return validated, digest, nil
@@ -614,7 +686,34 @@ func writeLibraryProfilePayloadFiles(root, profileDir string, files []LibraryPro
 	return nil
 }
 
+// WriteLibraryHomeFiles preflights every response entry, then writes only the
+// profile layout permitted by docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 200–214.
+// The released force argument selects collision handling; the internal write
+// plan uses a named policy. No writes occur when preflight rejects any entry.
 func WriteLibraryHomeFiles(targetDir string, files []LibraryHomeFile, force bool) ([]string, error) {
+	policy := preserveExistingProfileFiles
+	if force {
+		policy = replaceExistingProfileFiles
+	}
+	return writeLibraryHomeFiles(libraryHomeWriteOptions{TargetDir: targetDir, Files: files, CollisionPolicy: policy})
+}
+
+type materializeCollisionPolicy uint8
+
+const (
+	preserveExistingProfileFiles materializeCollisionPolicy = iota
+	replaceExistingProfileFiles
+)
+
+type libraryHomeWriteOptions struct {
+	TargetDir       string
+	Files           []LibraryHomeFile
+	CollisionPolicy materializeCollisionPolicy
+}
+
+func writeLibraryHomeFiles(options libraryHomeWriteOptions) ([]string, error) {
+	targetDir, files := options.TargetDir, options.Files
+
 	if strings.TrimSpace(targetDir) == "" {
 		return nil, fmt.Errorf("target directory is required")
 	}
@@ -624,21 +723,22 @@ func WriteLibraryHomeFiles(targetDir string, files []LibraryHomeFile, force bool
 	}
 	ops := make([]materializeWriteOp, 0, len(files))
 	for _, file := range files {
-		rel := filepath.ToSlash(strings.TrimSpace(file.Path))
-		kind := strings.TrimSpace(file.Kind)
+		rel := file.Path
+		kind := materializeWriteKind(strings.TrimSpace(file.Kind))
 		switch kind {
-		case "file":
+		case opFile:
 			ops = append(ops, materializeWriteOp{Kind: opFile, Rel: rel, Data: []byte(file.ContentUTF8)})
-		case "symlink":
+		case opSymlink:
 			ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: rel, LinkTarget: filepath.ToSlash(strings.TrimSpace(file.Target))})
 		default:
-			return nil, fmt.Errorf("unsupported materialized home file kind %q for %s", file.Kind, rel)
+			return nil, fmt.Errorf("unsupported materialized home file kind %q for %s. Use file or a documented runtime symlink", file.Kind, rel)
 		}
 	}
-	if err := preflightMaterializeWrites(absTarget, ops, force); err != nil {
+	plan := materializeWritePlan{TargetRoot: absTarget, Operations: ops, CollisionPolicy: options.CollisionPolicy}
+	if err := plan.preflight(); err != nil {
 		return nil, err
 	}
-	return writeMaterializedFiles(absTarget, ops)
+	return plan.write()
 }
 
 type materializeWriteKind string
@@ -669,7 +769,14 @@ func materializeCopyOp(sourceRoot, sourceRel, destRel string) (materializeWriteO
 	return materializeWriteOp{Kind: opFile, Rel: filepath.ToSlash(destRel), Data: data}, nil
 }
 
-func preflightMaterializeWrites(targetRoot string, ops []materializeWriteOp, force bool) error {
+type materializeWritePlan struct {
+	TargetRoot      string
+	Operations      []materializeWriteOp
+	CollisionPolicy materializeCollisionPolicy
+}
+
+func (plan materializeWritePlan) preflight() error {
+	targetRoot, ops := plan.TargetRoot, plan.Operations
 	if err := ensureMaterializeTargetRoot(targetRoot); err != nil {
 		return err
 	}
@@ -680,7 +787,13 @@ func preflightMaterializeWrites(targetRoot string, ops []materializeWriteOp, for
 			return fmt.Errorf("duplicate materialized destination %s", rel)
 		}
 		seen[rel] = true
-		if err := validateMaterializeDestination(targetRoot, op, force); err != nil {
+		if err := ValidateHomePath(op.Rel); err != nil {
+			return err
+		}
+		if err := validateMaterializeDestination(targetRoot, op, plan.CollisionPolicy); err != nil {
+			return err
+		}
+		if err := validateHomeOp(op); err != nil {
 			return err
 		}
 	}
@@ -698,7 +811,7 @@ func ensureMaterializeTargetRoot(targetRoot string) error {
 	return pathpreflight.PreflightDir(clean, "target directory", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
-func validateMaterializeDestination(targetRoot string, op materializeWriteOp, force bool) error {
+func validateMaterializeDestination(targetRoot string, op materializeWriteOp, policy materializeCollisionPolicy) error {
 	rel := filepath.ToSlash(op.Rel)
 	if err := validateRelativePath("destination", rel); err != nil {
 		return err
@@ -723,7 +836,7 @@ func validateMaterializeDestination(targetRoot string, op materializeWriteOp, fo
 		if err := pathpreflight.PreflightFile(path, rel, pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 			return err
 		}
-		if _, err := os.Lstat(path); err == nil && !force {
+		if _, err := os.Lstat(path); err == nil && policy == preserveExistingProfileFiles {
 			return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
 		} else if err != nil && !os.IsNotExist(err) {
 			return err
@@ -741,24 +854,24 @@ func validateMaterializeDestination(targetRoot string, op materializeWriteOp, fo
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		if force {
+		if policy == replaceExistingProfileFiles {
 			return nil
 		}
 		return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
 	}
-	if force && info.IsDir() {
-		legacy, err := isLegacyClaudeSkillFileLinkDir(path, op)
+	if policy == replaceExistingProfileFiles && info.IsDir() {
+		fileProjection, err := isClaudeSkillFileProjectionDirectory(path, op)
 		if err != nil {
 			return err
 		}
-		if legacy {
+		if fileProjection {
 			return nil
 		}
 	}
 	return fmt.Errorf("%s already exists and is not a symlink", rel)
 }
 
-func isLegacyClaudeSkillFileLinkDir(path string, op materializeWriteOp) (bool, error) {
+func isClaudeSkillFileProjectionDirectory(path string, op materializeWriteOp) (bool, error) {
 	rel := filepath.ToSlash(op.Rel)
 	parts := strings.Split(rel, "/")
 	if len(parts) != 3 || parts[0] != ".claude" || parts[1] != "skills" || parts[2] == "" {
@@ -817,47 +930,40 @@ func rejectSymlinkedExistingSymlinkTarget(targetRoot, baseDir, linkTarget, label
 	return nil
 }
 
-func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]string, error) {
-	written := make([]string, 0, len(ops))
-	for _, op := range ops {
-		path := filepath.Join(targetRoot, filepath.FromSlash(op.Rel))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, err
+// write carries preflight's collision policy into publication. Exclusive file
+// commits and symlink creation preserve a destination created concurrently
+// (docs/blueprint-materialization-contract.md, “5. Materialization semantics,” lines 200–214).
+func (plan materializeWritePlan) write() ([]string, error) {
+	written := make([]string, 0, len(plan.Operations))
+	for _, op := range plan.Operations {
+		path := filepath.Join(plan.TargetRoot, filepath.FromSlash(op.Rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return nil, materializePublicationError(op.Rel, err)
 		}
 		if op.Kind == opSymlink {
-			info, err := os.Lstat(path)
-			if err == nil && info.IsDir() {
-				legacy, legacyErr := isLegacyClaudeSkillFileLinkDir(path, op)
-				if legacyErr != nil {
-					return nil, legacyErr
-				}
-				if !legacy {
-					return nil, fmt.Errorf("%s existing directory is not a legacy Claude skill link", filepath.ToSlash(op.Rel))
-				}
-				err = os.RemoveAll(path)
-			} else if err == nil {
-				err = os.Remove(path)
+			var err error
+			if plan.CollisionPolicy == preserveExistingProfileFiles {
+				err = os.Symlink(op.LinkTarget, path)
+			} else {
+				err = replaceRuntimeProjection(path, op)
 			}
-			if err != nil && !os.IsNotExist(err) {
-				return nil, err
-			}
-			if err := os.Symlink(op.LinkTarget, path); err != nil {
-				return nil, err
+			if err != nil {
+				return nil, materializePublicationError(op.Rel, err)
 			}
 		} else {
 			data := op.Data
-			// The profile owns the generated AGENTS.md body; team doc injection owns
-			// only its marker-delimited region inside that file.
+			// The profile owns the body; doc injection owns its marked block.
 			if filepath.ToSlash(op.Rel) == "AGENTS.md" {
 				existing, err := os.ReadFile(path)
 				if err == nil {
 					data = []byte(agentdocs.PreserveMarkedBlock(string(existing), string(data)))
 				} else if !os.IsNotExist(err) {
-					return nil, err
+					return nil, materializePublicationError(op.Rel, err)
 				}
 			}
-			if err := os.WriteFile(path, data, 0o644); err != nil {
-				return nil, err
+			options := atomicfile.Options{Mode: 0644, Exclusive: plan.CollisionPolicy == preserveExistingProfileFiles}
+			if err := options.Write(path, data); err != nil {
+				return nil, materializePublicationError(op.Rel, err)
 			}
 		}
 		written = append(written, filepath.ToSlash(op.Rel))
@@ -865,49 +971,35 @@ func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]stri
 	return written, nil
 }
 
-func compareMaterializedTrees(wantDir, gotDir string) error {
-	return filepath.WalkDir(wantDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, _ := filepath.Rel(wantDir, path)
-		gotPath := filepath.Join(gotDir, rel)
-		wantInfo, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		gotInfo, err := os.Lstat(gotPath)
-		if err != nil {
-			return err
-		}
-		if wantInfo.Mode()&os.ModeSymlink != 0 {
-			if gotInfo.Mode()&os.ModeSymlink == 0 {
-				return fmt.Errorf("%s: got non-symlink", rel)
+func materializePublicationError(rel string, err error) error {
+	if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("profile destination %q appeared during materialization: %w. Use another home or resolve the conflicting destination before retrying", rel, err)
+	}
+	return fmt.Errorf("publish profile destination %q: %w. Repair the destination before retrying", rel, err)
+}
+
+// replaceRuntimeProjection replaces a symlink or the file projection written by
+// aw-v1.32.5's blueprint materializer; unmanaged directories remain untouched.
+func replaceRuntimeProjection(path string, op materializeWriteOp) error {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.IsDir() {
+			fileProjection, err := isClaudeSkillFileProjectionDirectory(path, op)
+			if err != nil {
+				return err
 			}
-			wantLink, _ := os.Readlink(path)
-			gotLink, _ := os.Readlink(gotPath)
-			if wantLink != gotLink {
-				return fmt.Errorf("%s: symlink target %q, want %q", rel, gotLink, wantLink)
+			if !fileProjection {
+				return fmt.Errorf("%s existing directory is not a Claude skill file projection", op.Rel)
 			}
-			return nil
+			err = os.RemoveAll(path)
+		} else if info.Mode()&os.ModeSymlink != 0 {
+			err = os.Remove(path)
+		} else {
+			return fmt.Errorf("%s existing file is not a runtime projection", op.Rel)
 		}
-		if gotInfo.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%s: got symlink, want file", rel)
-		}
-		want, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		got, err := os.ReadFile(gotPath)
-		if err != nil {
-			return err
-		}
-		if !bytes.Equal(want, got) {
-			return fmt.Errorf("%s: file content mismatch", rel)
-		}
-		return nil
-	})
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(op.LinkTarget, path)
 }

@@ -7,8 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
+
+	"github.com/awebai/aw/canonicaljson"
 )
 
 type didRegisterRequest struct {
@@ -31,7 +32,7 @@ func RegisterIdentity(
 	stableID string,
 	signingKey ed25519.PrivateKey,
 ) error {
-	registryBaseURL, err := canonicalServerOrigin(registryBaseURL)
+	registryBaseURL, err := CanonicalRegistryServerOrigin(registryBaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid registry URL: %w", err)
 	}
@@ -45,30 +46,12 @@ func RegisterIdentity(
 	return err
 }
 
-func canonicalRegistryServerOrigin(raw string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimRight(parsed.Path, "/") == "/api" {
-		parsed.Path = ""
-		parsed.RawPath = ""
-	}
-	return canonicalServerOrigin(parsed.String())
-}
-
 func stableIdentityStateHash(stableID string, did string) string {
 	payload := canonicalStateJSON(stableID, did)
 	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:])
 }
 
-func canonicalStateJSON(stableID string, did string) string {
-	var b strings.Builder
-	b.WriteByte('{')
-	writeJSONField(&b, "current_did_key", did)
-	b.WriteByte(',')
-	writeJSONField(&b, "did_aw", stableID)
-	b.WriteByte('}')
-	return b.String()
+func canonicalStateJSON(stableID, did string) string {
+	return canonicaljson.Object(map[string]any{"current_did_key": did, "did_aw": stableID})
 }

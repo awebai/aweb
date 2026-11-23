@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "owner": "docs/cli-integration-contract.md",
+  "cli_error_codes": [
+    "invite_not_created", "alias_conflict", "outcome_unknown",
+    "controller_key_missing", "team_name_unconfirmed", "grant_not_found",
+    "certificate_persistence_incomplete", "certificate_rollback_pending", "retirement_receipt_unavailable",
+    "workspace_cleanup_incomplete", "invite_issuance_pending", "invite_unknown_or_expired",
+    "invalid_alias", "invalid_team_id",
+    "invalid_team_server_url", "native_agent_signature_pending"
+  ],
+  "cli_error_classifications": [
+    "team_server_record_missing", "team_name_taken", "team_name_unconfirmed"
+  ],
+  "invite_cancellation": {
+    "states": ["cancelled", "absent", "already_used", "attempted"],
+    "codes": ["invite_cancelled", "invite_absent", "invite_already_used", "invite_issuance_pending"],
+    "linked_child_dispositions": ["none", "voided", "already_issued", "absent", "retained"]
+  },
+  "invite_inspection": {
+    "states": ["unused", "expired", "attempted", "consumed"],
+    "codes": ["invite_unused", "invite_expired", "invite_already_used", "invite_issuance_pending", "invite_certificate_active", "invite_certificate_revoked", "outcome_unknown"],
+    "unknown_check_exits_nonzero": true,
+    "absent_after_uncertain_submission_allows_cancellation": false
+  },
+  "wake_readiness": {
+    "codes": [
+      "ready", "daemon_unavailable", "daemon_not_running",
+      "daemon_version_unknown", "daemon_outdated", "home_not_registered",
+      "registration_mismatch", "foreign_grant_home", "stream_not_connected",
+      "worker_not_running", "worker_error", "paused", "binding_error",
+      "inspection_failed", "endpoint_unusable", "session_waiting",
+      "status_timestamp_unknown", "observation_invalid"
+    ],
+    "advisories": ["observation_aged", "observation_unproven", "inspection_pending"]
+  },
+  "local_retirement": {
+    "outcomes": ["retired_and_revoked", "retired_revocation_pending", "retired_key_holder_required"],
+    "complete_requires_alias_released": true
+  },
+  "service_refusal_codes_are_open": true
+}

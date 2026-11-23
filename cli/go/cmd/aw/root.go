@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -30,103 +32,12 @@ const (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "aw",
-	Short: "aweb CLI",
-	Long:  "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		if _, independent := offlineCommands[cmd]; independent {
-			return nil // Export verification never selects or unlocks an acting human.
-		}
-		idSelection, err := prepareIDHumanSelection(cmd)
-		if err != nil {
-			return err
-		}
-		if idSelection && humanFlag != "" {
-			return nil
-		}
-		if cmd.Annotations[humanCommandAnnotation] != "" && !humanSelectionRequested() {
-			return usageError("select your human key with --human ID --human-domain DOMAIN; prepare it with aw id human init")
-		}
-		if humanSelectionRequested() && !idSelection {
-			return prepareHumanParticipation(cmd)
-		}
-		// Offline key preparation validates its explicit destination itself.
-		// Do not renew keys or contact update services before its two-state
-		// check, including on a refusal.
-		if flag := cmd.Annotations[identityKeyPreparationAnnotation]; flag != "" && cmd.Flags().Changed(flag) {
-			enabled, _ := cmd.Flags().GetBool(flag)
-			if enabled {
-				return nil
-			}
-		}
-		// Explicit Claude settings cleanup uses cwd only; no credential selection,
-		// assertion renewal or update checks are needed for this local action.
-		if isIdentityHomeNeutralCommand(cmd) || (cmd == initCmd && initRemoveNotifyHook) {
-			return nil
-		}
-		if !debugFlag && os.Getenv("AW_DEBUG") == "1" {
-			debugFlag = true
-		}
-		if traceFlag {
-			_ = os.Setenv("AW_TRACE", "1")
-		}
-		identityHomeEnv, hadIdentityHomeEnv := os.LookupEnv(awconfig.IdentityHomeEnv)
-		previousActiveIdentityHome := activeIdentityHome
-		home, err := awconfig.ResolveIdentityHome("", identityHomeFlag)
-		if err != nil {
-			return err
-		}
-		pendingExchange, err := pendingHostedExchangeTarget(cmd, home)
-		if err != nil {
-			return err
-		}
-		if home.External() {
-			// A fresh destination is meaningful only when explicitly named for an
-			// operation which creates identity state. An inherited selector is
-			// always an acting principal, never an implicit creation destination.
-			freshTarget := home.Source == awconfig.IdentityHomeFlag && cmd.Annotations[identityCreationTargetAnnotation] == "true"
-			keyOnlyTarget := false
-			if home.Source == awconfig.IdentityHomeFlag && cmd.Annotations[identityKeyOnlyTargetAnnotation] == "true" {
-				path, pathErr := awconfig.IdentityHomePath(home, "signing.key")
-				if pathErr == nil {
-					keyOnlyTarget, _ = teamRequestKeyOnly(home.Root, path)
-				}
-			}
-			if !freshTarget && !keyOnlyTarget && !pendingExchange {
-				if err := validateSelectedIdentityHome(home); err != nil {
-					return err
-				}
-			}
-		}
-		activeIdentityHome = awconfig.IdentityHome{}
-		if home.External() {
-			_ = os.Setenv(awconfig.IdentityHomeEnv, home.Root)
-			activeIdentityHome = home
-		}
-		restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)
-		if pendingExchange {
-			return nil
-		}
-		if cmd == idCreateCmd && (cmd.Flags().Changed("org") || cmd.Flags().Changed("owner-identity-home") || cmd.Flags().Changed("no-address") || cmd.Flags().Changed("local")) {
-			// Validate the original creation association before any key renewal or network work.
-			return nil
-		}
-		if cmd == teamInstallCertCmd {
-			// Check the certificate before any key renewal or network work; a
-			// verified install ensures the encryption key itself.
-			return nil
-		}
-		if isAgentStatusCommand(cmd) || isActivityCommand(cmd) {
-			return nil // Producer commands never renew encryption keys or check updates.
-		}
-		if !isTeamInviteInspectCommand(cmd) && cmd.Name() != "help" {
-			maybeRenewIdentityEncryptionAssertion(cmd.Context(), mustGetwd(), currentEncryptionKeyIdentityHome(), cmd.ErrOrStderr())
-		}
-		maybeCheckLatestVersion(cmd)
-		return nil
-	},
-	SilenceUsage:  true,
-	SilenceErrors: true,
+	Use:               "aw",
+	Short:             "aweb CLI",
+	Long:              "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
+	PersistentPreRunE: prepareRootCommand,
+	SilenceUsage:      true,
+	SilenceErrors:     true,
 }
 
 var versionCmd = &cobra.Command{
@@ -166,6 +77,7 @@ func init() {
 	// Cobra normally runs only the nearest persistent hook. Traversal makes the
 	// root identity selection run before commands with their own hooks.
 	cobra.EnableTraverseRunHooks = true
+	setCLIFlagErrorFunc(rootCmd, rootCmd.FlagErrorFunc())
 	rootCmd.AddGroup(
 		&cobra.Group{ID: groupWorkspace, Title: "Workspace Setup"},
 		&cobra.Group{ID: groupIdentity, Title: "Identity"},
@@ -209,7 +121,7 @@ func init() {
 	rootCmd.SetHelpCommandGroupID(groupUtility)
 	rootCmd.SetCompletionCommandGroupID(groupUtility)
 
-	rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Override the server host or name for this command")
+	rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Server label for workspace commands; service URL for auth and admission")
 	rootCmd.PersistentFlags().StringVar(&humanFlag, "human", "", "Sign interactively as this locally enrolled human did:aw")
 	rootCmd.PersistentFlags().StringVar(&humanDomainFlag, "human-domain", "", "Namespace of the selected human ID")
 	rootCmd.PersistentFlags().StringVar(&identityHomeFlag, "identity-home", "", "Use this absolute credential directory (contains signing.key or grant.yaml; usually <workspace>/.aw, not its parent)")
@@ -240,36 +152,6 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(upgradeCmd)
 	rootCmd.AddCommand(a2aCmd)
-}
-
-func restoreIdentityHomeAfterCommand(cmd *cobra.Command, previousEnv string, hadPreviousEnv bool, previousActive awconfig.IdentityHome) {
-	restore := func() {
-		if hadPreviousEnv {
-			_ = os.Setenv(awconfig.IdentityHomeEnv, previousEnv)
-		} else {
-			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
-		}
-		activeIdentityHome = previousActive
-	}
-	if runE := cmd.RunE; runE != nil {
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			defer func() {
-				restore()
-				cmd.RunE = runE
-			}()
-			return runE(cmd, args)
-		}
-		return
-	}
-	if run := cmd.Run; run != nil {
-		cmd.Run = func(cmd *cobra.Command, args []string) {
-			defer func() {
-				restore()
-				cmd.Run = run
-			}()
-			run(cmd, args)
-		}
-	}
 }
 
 func bindTeamSelector(cmd *cobra.Command) {
@@ -311,18 +193,32 @@ func refuseUnknownSubcommands(cmd *cobra.Command) {
 	}
 }
 
+type cliFlagParsingError struct{ cause error }
+
+func (e *cliFlagParsingError) Error() string { return e.cause.Error() }
+func (e *cliFlagParsingError) Unwrap() error { return e.cause }
+
+// Mark errors at Cobra's ParseFlags callback, before command execution.
+func setCLIFlagErrorFunc(cmd *cobra.Command, classify func(*cobra.Command, error) error) {
+	cmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return &cliFlagParsingError{cause: classify(cmd, err)}
+	})
+}
+
 func Execute() {
 	finishHTTPDiagnostics := awid.StartHTTPDiagnostics()
 	refuseUnknownSubcommands(rootCmd)
 	if argsContainTraceFlag(os.Args[1:]) {
-		_ = os.Setenv("AW_TRACE", "1")
+		if err := os.Setenv("AW_TRACE", "1"); err != nil {
+			finishHTTPDiagnostics(err)
+			os.Exit(exitCode(reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))))
+		}
 	}
 	restorePluginIdentityHome, err := activateIdentityHomeForPluginDispatch(os.Args[1:])
 	if err != nil {
 		finishHTTPDiagnostics(err)
 		err = normalizeStatusCommandError(os.Args[1:], err)
-		reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))
-		os.Exit(exitCode(err))
+		os.Exit(exitCode(reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))))
 	}
 	defer restorePluginIdentityHome()
 	if code, dispatched := dispatchPluginIfRequested(os.Args[1:]); dispatched {
@@ -346,8 +242,14 @@ func Execute() {
 		if hint := checkVerificationRequired(err); hint != "" {
 			msg = hint
 		}
-		reportCLIError(err, msg, jsonFlag)
-		os.Exit(exitCode(err))
+		// docs/cli-command-reference.md, Errors under --json: flag refusals
+		// also carry an envelope, even when parsing stops before --json.
+		asJSON := jsonFlag
+		var flagErr *cliFlagParsingError
+		if errors.As(err, &flagErr) && !rootCmd.PersistentFlags().Changed("json") {
+			asJSON = argsContainJSONFlag(os.Args[1:])
+		}
+		os.Exit(exitCode(reportCLIError(err, msg, asJSON)))
 	}
 }
 
@@ -355,7 +257,7 @@ func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
 	if namesOfflineCommand(args) {
 		return func() {}, nil
 	}
-	previous, existed := os.LookupEnv(awconfig.IdentityHomeEnv)
+	previous := captureIdentityHomeEnvironment()
 	explicit := identityHomeForPluginDispatch(args)
 	home, err := awconfig.ResolveIdentityHome("", explicit)
 	if err != nil {
@@ -367,10 +269,8 @@ func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
 		}
 	}
 	return func() {
-		if existed {
-			_ = os.Setenv(awconfig.IdentityHomeEnv, previous)
-		} else {
-			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
+		if err := previous.restore(); err != nil {
+			debugLog("restore identity selection after plugin dispatch: %v", err)
 		}
 	}, nil
 }
@@ -467,12 +367,16 @@ func checkVersionFromHeader() {
 // reportCLIError prints a failed command's error on stderr and, under --json,
 // its error envelope on stdout. stdout carries one document: a command that
 // already printed its own output keeps it, without a second document.
-func reportCLIError(err error, msg string, asJSON bool) {
+func reportCLIError(err error, msg string, asJSON bool) error {
 	msg = codedRefusalText(err, msg)
 	writeCLIError(os.Stderr, msg)
-	if asJSON && !commandStdout.written {
-		writeCLIErrorEnvelope(commandStdout, err, msg)
+	if !commandStdout.written {
+		if writeErr := writeCLIErrorResult(commandStdout, cliErrorResult{Refusal: err, Message: msg, JSON: asJSON}); writeErr != nil {
+			writeCLIError(os.Stderr, writeErr.Error())
+			return errors.Join(err, writeErr)
+		}
 	}
+	return err
 }
 
 // codedRefusalText says a coded server refusal in the server's own words: the
@@ -507,17 +411,28 @@ func (t *trackedStdout) Fd() uintptr {
 	return os.Stdout.Fd()
 }
 
-// argsContainJSONFlag reads --json before flags are parsed.
+// argsContainJSONFlag reads the requested JSON mode before flags are parsed.
+// Repeated boolean assignments apply in order; -- ends flag selection.
 func argsContainJSONFlag(args []string) bool {
+	asJSON := false
 	for _, arg := range args {
 		if arg == "--" {
-			return false
+			break
 		}
 		if arg == "--json" {
-			return true
+			asJSON = true
+			continue
+		}
+		if value, assigned := strings.CutPrefix(arg, "--json="); assigned {
+			enabled, err := strconv.ParseBool(value)
+			if err != nil {
+				// Cobra reports the invalid value; retain the preceding mode.
+				return asJSON
+			}
+			asJSON = enabled
 		}
 	}
-	return false
+	return asJSON
 }
 
 // writeCLIError prints a command's error, which may carry a server's text.

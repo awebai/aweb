@@ -654,6 +654,7 @@ async def publish_a2a_route(
         )
         if fields.gateway_identity != fields.did_aw and not fields.delegation_id:
             raise _error(409, _DELEGATION_MISSING, "delegated gateway publication requires a delegation")
+        delegation = None
         if fields.delegation_id:
             delegation = await tx.fetch_one(
                 """
@@ -666,11 +667,40 @@ async def publish_a2a_route(
             )
             if delegation is None:
                 raise _error(409, _DELEGATION_MISSING, "A2A bridge delegation is missing")
-            if delegation["status"] != A2A_STATUS_ACTIVE or delegation["revoked_at"] is not None:
-                raise _error(409, _DELEGATION_REVOKED, "A2A bridge delegation is revoked")
-            if delegation["expires_at"] <= _now():
-                raise _error(409, _DELEGATION_EXPIRED, "A2A bridge delegation is expired")
-            if _row_delegation_digest(delegation) != fields.delegation_digest:
+
+        existing_assertion = await tx.fetch_one(
+            """
+            SELECT assertion_id, address, did_aw, current_did_key, gateway_identity, route_id,
+                   assertion_digest, delegation_id, delegation_digest
+            FROM {{tables.a2a_route_publications}}
+            WHERE assertion_id = $1
+            FOR UPDATE
+            """,
+            fields.assertion_id,
+        )
+        withdrawing = fields.status == A2A_STATUS_REVOKED
+        if delegation is not None:
+            terminal_error = None
+            if delegation["status"] == A2A_STATUS_REVOKED or delegation["revoked_at"] is not None:
+                terminal_error = (_DELEGATION_REVOKED, "A2A bridge delegation is revoked")
+            elif delegation["expires_at"] <= _now():
+                terminal_error = (_DELEGATION_EXPIRED, "A2A bridge delegation is expired")
+
+            if terminal_error is not None:
+                if not withdrawing or existing_assertion is None:
+                    raise _error(409, *terminal_error)
+                # Revocation replaces the delegation's digest, so bind the withdrawal to the stored reference.
+                if (existing_assertion["delegation_id"], existing_assertion["delegation_digest"]) != (
+                    fields.delegation_id,
+                    fields.delegation_digest,
+                ):
+                    raise _error(
+                        409,
+                        _DELEGATION_DIGEST_MISMATCH,
+                        "A2A withdrawal delegation reference mismatch. "
+                        "Use the delegation ID and digest recorded in the publication.",
+                    )
+            elif _row_delegation_digest(delegation) != fields.delegation_digest:
                 raise _error(409, _DELEGATION_DIGEST_MISMATCH, "A2A bridge delegation digest mismatch")
             for field_name in ("address", "route_id", "card_url", "rpc_url", "card_digest"):
                 if delegation[field_name] != getattr(fields, field_name):
@@ -679,18 +709,8 @@ async def publish_a2a_route(
             if delegation["delegated_gateway_identity"] != fields.gateway_identity:
                 raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_GATEWAY, "gateway identity mismatch")
 
-        existing_assertion = await tx.fetch_one(
-            """
-            SELECT assertion_id, address, did_aw, current_did_key, gateway_identity, route_id,
-                   assertion_digest
-            FROM {{tables.a2a_route_publications}}
-            WHERE assertion_id = $1
-            FOR UPDATE
-            """,
-            fields.assertion_id,
-        )
         if existing_assertion is not None:
-            if fields.status == A2A_STATUS_REVOKED:
+            if withdrawing:
                 for field_name in ("address", "did_aw", "current_did_key", "gateway_identity", "route_id"):
                     if existing_assertion[field_name] != getattr(fields, field_name):
                         raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, f"publication {field_name} mismatch")
@@ -726,7 +746,7 @@ async def publish_a2a_route(
                     route_id=fields.route_id,
                 )
             raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "publication id exists with different digest")
-        if fields.status == A2A_STATUS_REVOKED:
+        if withdrawing:
             raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "cannot revoke a publication that is not registered")
 
         if fields.status == A2A_STATUS_ACTIVE:

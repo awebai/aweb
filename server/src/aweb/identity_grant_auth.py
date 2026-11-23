@@ -18,21 +18,22 @@ from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from fastapi import HTTPException, Request
 
-from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext
+from aweb.application_state import application_registry_client
+from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext, MessagingAuth, TeamIdentity
 from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
-from aweb.config import get_settings, require_registered_certificates
-from aweb.member_team_key import grant_issuer_current, member_key_columns_sql
+from aweb.certificate_registration import configured_registration_mode
+from aweb.config import get_settings
 from aweb.grant_expiry import never_expires
-from aweb.identity_auth_deps import MessagingAuth
-from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
-from aweb.team_auth_deps import (
-    TeamIdentity,
-    _aweb_db,
-    _get_registered_certificates,
-    _get_revoked_certificates,
+from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
+from aweb.identity_grant_status import GrantValidityState, grant_validity
+from aweb.member_team_key import (
+    GRANT_ISSUER_RECOVERY_DETAIL,
+    member_key_columns_sql,
 )
+from aweb.request_body import request_body_sha256
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
+from aweb.team_registry import native_database_manager
 
 GRANT_AUTH_SCHEME = "AWEB-Grant "
 GRANT_AUTH_PREFIX = "AWEB-Grant DIDKey "
@@ -53,7 +54,7 @@ def _app_relative_path(request: Request) -> str:
     path = str(request.scope.get("path") or request.url.path or "/")
     root_path = str(request.scope.get("root_path") or "")
     if root_path and path.startswith(root_path):
-        path = path[len(root_path):] or "/"
+        path = path[len(root_path) :] or "/"
     return path
 
 
@@ -63,8 +64,20 @@ def required_grant_scope(method: str, path: str) -> str | None:
     Raises HTTPException(403) for every path outside the grant surface.
     """
     method = method.upper()
-    if ((path in ("/v1/messaging/capabilities", "/v1/messaging/resolve", "/v1/messaging/prepare"))
-            or (method in _READ_METHODS and (path.startswith("/v1/messaging/participants/") or path.startswith("/v1/messaging/ingress-results/")))):
+    if (
+        path
+        in (
+            "/v1/messaging/capabilities",
+            "/v1/messaging/resolve",
+            "/v1/messaging/prepare",
+        )
+    ) or (
+        method in _READ_METHODS
+        and (
+            path.startswith("/v1/messaging/participants/")
+            or path.startswith("/v1/messaging/ingress-results/")
+        )
+    ):
         # Discovery has no send effects. Prepare/accept and result recovery
         # enforce the native kind's send scope after decoding the typed DTO.
         return None
@@ -95,11 +108,13 @@ def required_grant_scope(method: str, path: str) -> str | None:
 _USE_PATH_SCOPE = object()
 
 
-async def _verify_identity_grant_row(request: Request, db, *, required_scope=_USE_PATH_SCOPE) -> tuple[dict, GrantContext]:
+async def _verify_identity_grant_row(
+    request: Request, db, *, required_scope=_USE_PATH_SCOPE
+) -> tuple[dict, GrantContext]:
     auth = (request.headers.get("Authorization") or "").strip()
     if not auth.startswith(GRANT_AUTH_PREFIX):
         raise HTTPException(status_code=401, detail="Missing identity grant Authorization header")
-    rest = auth[len(GRANT_AUTH_PREFIX):].strip()
+    rest = auth[len(GRANT_AUTH_PREFIX) :].strip()
     parts = rest.split()
     if len(parts) != 2:
         raise HTTPException(status_code=401, detail="Malformed identity grant Authorization header")
@@ -114,13 +129,12 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
 
-    body_sha256 = getattr(request.state, "body_sha256", None)
-    if body_sha256 is None:
-        import hashlib as _hashlib
-        body_sha256 = _hashlib.sha256(getattr(request.state, "cached_body", b"") or b"").hexdigest()
+    body_sha256 = request_body_sha256(request)
 
     try:
-        canonical = decode_signed_payload_header(str(request.headers.get("X-AWEB-Signed-Payload") or "").strip())
+        canonical = decode_signed_payload_header(
+            str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()
+        )
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL) from exc
     try:
@@ -160,14 +174,16 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL) from exc
 
-    aweb_db = _aweb_db(db)
+    aweb_db = native_database_manager(db)
     row = await aweb_db.fetch_one(
         """
         SELECT g.team_id, g.grant_did_key, g.scopes, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
                a.did_key AS subject_did_key, a.did_aw, a.address, a.alias,
-               a.agent_id, a.identity_scope, a.status, a.deleted_at,
-               a.certificate_id, """ + member_key_columns_sql("a") + """
+               a.agent_id, a.identity_scope, a.status AS subject_status, a.deleted_at AS subject_deleted_at,
+               a.certificate_id, """
+        + member_key_columns_sql("a")
+        + """
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
         WHERE g.grant_id = $1::UUID
@@ -176,35 +192,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     )
     if row is None or row["grant_did_key"] != did_key:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
-    if row["revoked_at"] is not None:
-        raise HTTPException(status_code=403, detail="grant revoked")
-    if not never_expires(row.get("issued_at"), row["expires_at"]) and row["expires_at"] <= datetime.now(UTC):
-        raise HTTPException(status_code=403, detail="grant expired")
-    if row["status"] != "active" or row["deleted_at"] is not None:
-        raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
-    if not grant_issuer_current(row):
-        raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
-    # A grant is a delegation from a membership; revoking the issuing
-    # certificate must end the delegation with it (aweb-abfn). Grants minted
-    # before issued_by_certificate_id was recorded cannot be checked and are
-    # bounded by their own expiry. Registry unavailability fails closed with
-    # the same 503 the certificate-presenting path raises.
-    issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
-    if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(request, row["team_id"], certificate_ids=[issuing_certificate_id])
-        if issuing_certificate_id in revoked_certs:
-            raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
-        # Staged existence requirement (default OFF): an unregistered issuing
-        # certificate is unrevocable, so with
-        # AWEB_REQUIRE_REGISTERED_CERTIFICATES on it must exist at the
-        # registry or the delegation ends, mirroring the certificate paths.
-        # Ordering preserved: revocation keeps its own distinct verdict above.
-        if require_registered_certificates():
-            registered_certs = await _get_registered_certificates(request, row["team_id"])
-            if issuing_certificate_id not in registered_certs:
-                raise HTTPException(
-                    status_code=403, detail="grant issuing certificate not registered"
-                )
+    issuing_certificate_id = await _require_request_grant_validity(request, row)
 
     required = (
         required_grant_scope(request.method, _app_relative_path(request))
@@ -216,11 +204,18 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         raise HTTPException(status_code=403, detail=_OUT_OF_SCOPE_DETAIL)
 
     binding = await verify_identity_binding(
-        request, did_key=row["subject_did_key"], did_aw=row.get("did_aw") or "",
+        request,
+        did_key=row["subject_did_key"],
+        did_aw=row.get("did_aw") or "",
         address=row.get("address") or "",
     )
     await authenticate_id_chain(request, binding)
-    await refresh_projection_binding(aweb_db, agent_id=row["agent_id"], did_key=row["subject_did_key"], binding=binding)
+    await refresh_projection_binding(
+        aweb_db,
+        agent_id=row["agent_id"],
+        did_key=row["subject_did_key"],
+        binding=binding,
+    )
     row = {**dict(row), "did_aw": binding.did_aw, "address": binding.address}
     grant = GrantContext(
         grant_id=grant_id,
@@ -231,6 +226,39 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         never_expires=never_expires(row.get("issued_at"), row["expires_at"]),
     )
     return dict(row), grant
+
+
+async def _require_request_grant_validity(request: Request, row) -> str:
+    """Map the common grant observation to the released request refusals."""
+    observation = await grant_validity(
+        row=row,
+        now=datetime.now(UTC),
+        registry_client=application_registry_client(request.app.state),
+        registration_mode=configured_registration_mode(),
+        request=request,
+    )
+    observation.raise_if_unavailable()
+    state = observation.state
+    if state is GrantValidityState.REVOKED:
+        raise HTTPException(status_code=403, detail="grant revoked")
+    if state is GrantValidityState.EXPIRED:
+        raise HTTPException(status_code=403, detail="grant expired")
+    if state is GrantValidityState.SUBJECT_INACTIVE:
+        raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
+    if state in (
+        GrantValidityState.ISSUER_SUPERSEDED,
+        GrantValidityState.ISSUER_REVOKED,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="grant issuing certificate revoked. " + GRANT_ISSUER_RECOVERY_DETAIL,
+        )
+    if state is GrantValidityState.ISSUER_UNREGISTERED:
+        raise HTTPException(
+            status_code=403,
+            detail="grant issuing certificate not registered. " + GRANT_ISSUER_RECOVERY_DETAIL,
+        )
+    return str(row.get("issued_by_certificate_id") or "").strip()
 
 
 async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
@@ -250,7 +278,9 @@ async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
     )
 
 
-async def verify_identity_grant_team_identity(request: Request, db, *, required_scope: str) -> TeamIdentity:
+async def verify_identity_grant_team_identity(
+    request: Request, db, *, required_scope: str
+) -> TeamIdentity:
     row, grant = await _verify_identity_grant_row(request, db, required_scope=required_scope)
     return TeamIdentity(
         team_id=row["team_id"],

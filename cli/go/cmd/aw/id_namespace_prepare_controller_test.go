@@ -17,6 +17,8 @@ import (
 func TestIDNamespacePrepareControllerCreatesLocalKeyAndDNSValueOnly(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	// The DNS value omits the registry only when none is named.
+	t.Setenv("AWID_REGISTRY_URL", "")
 
 	now := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC)
 	out, err := executeIDNamespacePrepareController(idNamespacePrepareControllerOptions{
@@ -72,6 +74,8 @@ func TestIDNamespacePrepareControllerCreatesLocalKeyAndDNSValueOnly(t *testing.T
 func TestIDNamespaceCheckTXTMatchesLocalControllerKey(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	// The DNS value omits the registry only when none is named.
+	t.Setenv("AWID_REGISTRY_URL", "")
 
 	prepared, err := executeIDNamespacePrepareController(idNamespacePrepareControllerOptions{
 		Domain: "acme.com",

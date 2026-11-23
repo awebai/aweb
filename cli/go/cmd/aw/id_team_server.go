@@ -123,11 +123,13 @@ func teamServerTarget(ctx context.Context, opts teamServerOptions) (*awid.Regist
 	if strings.Contains(teamName, "/") || strings.Contains(teamName, ":") {
 		return nil, "", "", "", usageError("--team must be a team name, not a full team id")
 	}
-	registry, err := newRegistryClientWithPreferredBaseURL(opts.RegistryURL)
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, "", "", "", err
 	}
-	registryURL, err := registry.DiscoverRegistry(ctx, domain)
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Registry: registry, Override: opts.RegistryURL, Domain: domain,
+	})
 	if err != nil {
 		return nil, "", "", "", fmt.Errorf("discover registry for %s: %w", domain, err)
 	}
@@ -215,6 +217,20 @@ func executeTeamSetServer(ctx context.Context, opts teamServerOptions) (teamServ
 	}, nil
 }
 
+// teamServerReadKey is the key that signs the read of a team's current key:
+// a private team's is readable with the local team key, a public team's
+// anonymously, so with no local team key the read goes out unsigned.
+func teamServerReadKey(domain, teamName string) (ed25519.PrivateKey, error) {
+	teamKey, err := awconfig.LoadTeamKey(domain, teamName)
+	if errors.Is(err, awconfig.ErrTeamKeyUnconfirmed) {
+		return nil, err
+	}
+	if err == nil {
+		return teamKey, nil
+	}
+	return nil, nil
+}
+
 func executeTeamShowServer(ctx context.Context, opts teamServerOptions) (teamServerOutput, error) {
 	registry, registryURL, domain, teamName, err := teamServerTarget(ctx, opts)
 	if err != nil {
@@ -224,15 +240,13 @@ func executeTeamShowServer(ctx context.Context, opts teamServerOptions) (teamSer
 	stored, err := registry.GetTeamServerRecord(ctx, registryURL, domain, teamName)
 	if err != nil {
 		if code, ok := registryStatusCode(err); ok && code == http.StatusNotFound {
-			return teamServerOutput{}, fmt.Errorf("no team server record is published for %s", teamID)
+			return teamServerOutput{}, withErrorClassification(codeTeamServerRecordMissing, fmt.Errorf("no team server record is published for %s", teamID))
 		}
 		return teamServerOutput{}, fmt.Errorf("read team server for %s: %w", teamID, err)
 	}
-	// A private team's current key is readable with the local team key; a
-	// public team's anonymously.
-	var readKey ed25519.PrivateKey
-	if teamKey, err := awconfig.LoadTeamKey(domain, teamName); err == nil {
-		readKey = teamKey
+	readKey, err := teamServerReadKey(domain, teamName)
+	if err != nil {
+		return teamServerOutput{}, err
 	}
 	team, err := registry.GetTeam(ctx, registryURL, domain, teamName, readKey)
 	if err != nil {

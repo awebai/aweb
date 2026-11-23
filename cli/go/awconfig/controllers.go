@@ -2,12 +2,12 @@ package awconfig
 
 import (
 	"crypto/ed25519"
-	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/awebai/aw/awid"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,6 +16,29 @@ type ControllerMeta struct {
 	ControllerDID string `yaml:"controller_did"`
 	RegistryURL   string `yaml:"registry_url"`
 	CreatedAt     string `yaml:"created_at"`
+
+	RegistryOperatorOrigin string `yaml:"registry_operator_origin"`
+	LegacyRegistryOrigin   bool   `yaml:"-"`
+}
+
+func (m *ControllerMeta) UnmarshalYAML(value *yaml.Node) error {
+	var wire struct {
+		Domain                 string  `yaml:"domain"`
+		ControllerDID          string  `yaml:"controller_did"`
+		RegistryURL            string  `yaml:"registry_url"`
+		CreatedAt              string  `yaml:"created_at"`
+		RegistryOperatorOrigin *string `yaml:"registry_operator_origin"`
+	}
+	if err := value.Decode(&wire); err != nil {
+		return err
+	}
+	*m = ControllerMeta{Domain: wire.Domain, ControllerDID: wire.ControllerDID,
+		RegistryURL: wire.RegistryURL, CreatedAt: wire.CreatedAt,
+		LegacyRegistryOrigin: wire.RegistryOperatorOrigin == nil}
+	if wire.RegistryOperatorOrigin != nil {
+		m.RegistryOperatorOrigin = *wire.RegistryOperatorOrigin
+	}
+	return nil
 }
 
 func ControllerKeyPath(domain string) (string, error) {
@@ -81,7 +104,7 @@ func LoadControllerKey(domain string) (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := awid.ReadPrivateKeyFile(path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
@@ -90,22 +113,12 @@ func LoadControllerKey(domain string) (ed25519.PrivateKey, error) {
 		if legacyErr != nil {
 			return nil, legacyErr
 		}
-		data, err = os.ReadFile(legacyPath)
+		data, err = awid.ReadPrivateKeyFile(legacyPath)
 		if err != nil {
 			return nil, err
 		}
 	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, errors.New("no PEM block in controller key")
-	}
-	if block.Type != "ED25519 PRIVATE KEY" {
-		return nil, errors.New("unexpected controller key PEM type")
-	}
-	if len(block.Bytes) != ed25519.SeedSize {
-		return nil, errors.New("invalid controller key seed size")
-	}
-	return ed25519.NewKeyFromSeed(block.Bytes), nil
+	return awid.ParseSigningKey(data)
 }
 
 func SaveControllerKey(domain string, key ed25519.PrivateKey) error {
@@ -116,11 +129,7 @@ func SaveControllerKey(domain string, key ed25519.PrivateKey) error {
 	if err != nil {
 		return err
 	}
-	data := pem.EncodeToMemory(&pem.Block{
-		Type:  "ED25519 PRIVATE KEY",
-		Bytes: key.Seed(),
-	})
-	return atomicWriteFile(path, data)
+	return awid.StoreSigningKeyFile(awid.SigningKeyFile{Path: path, Key: key, PathPolicy: awid.OperatorManagedAuthorityPath})
 }
 
 func LoadControllerMeta(domain string) (*ControllerMeta, error) {

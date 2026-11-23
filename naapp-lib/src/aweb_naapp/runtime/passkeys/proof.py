@@ -325,9 +325,8 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
     prefixes = {
         "approval": b"aweb.approval-challenge/1\n",
         "login": b"aweb.passkey-login/1\n",
-        "contact_change": b"aweb.passkey-contact-change/1\n",
-        "contact_cancel": b"aweb.passkey-contact-cancel/1\n",
     }
+    _require(context["binding_kind"] in prefixes)
     prefix = prefixes[context["binding_kind"]]
     _require(proof.challenge_preimage.startswith(prefix))
     fields = parse_request_json(proof.challenge_preimage[len(prefix) :])
@@ -398,20 +397,8 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
     else:
         _require(not (set(metadata) & APPROVAL_FIELDS) and proof.covered_request is None)
         _require(fields["subject"] == metadata["subject"])
-        if context["binding_kind"] == "login":
-            _require(set(fields) == {"nonce", "scope", "subject"})
-            _require(metadata["purpose"] == "login" and fields["scope"] == context["scope"])
-        else:
-            key = (
-                "contact_sha256"
-                if context["binding_kind"] == "contact_change"
-                else "pending_contact_sha256"
-            )
-            _require(set(fields) == {"nonce", "subject", key})
-            _require(
-                metadata["purpose"] == "contact_change"
-                and bool(re.fullmatch(r"[0-9a-f]{64}", fields[key]))
-            )
+        _require(set(fields) == {"nonce", "scope", "subject"})
+        _require(metadata["purpose"] == "login" and fields["scope"] == context["scope"])
     _require(hashlib.sha256(proof.challenge_preimage).digest() == proof.expected_challenge)
     rp = RelyingParty(context["origin"], "retained proof")
     _require(rp.rp_id == context["rp_id"])

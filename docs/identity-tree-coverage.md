@@ -1,9 +1,8 @@
 # Identity creation coverage and primitive boundary
 
 [identity-tree-coverage.json](identity-tree-coverage.json) contains the identity
-creation paths and one list of existing legacy primitive files. Call counts,
-public-API inventories and per-function conversion bookkeeping are removed by
-Juan's cut 4. Cloud coverage belongs in the application repository.
+creation paths and one list of individual primitive call exemptions. Cloud
+coverage belongs in the application repository.
 
 A path is `converted` only when its constructor and a real journey show the
 required chain or refusal. A `candidate` path has its constructor but not yet
@@ -19,15 +18,22 @@ find raw primitive calls/references in tracked and new nonignored source. Tests
 and fixture paths are excluded; production test-like names under `src/` stay
 included. The shared verifier and point predicate are named exceptions. Python's
 shared key generator is also named; creating keys is separate from verifying
-certificates. Existing released signed families and key-custody helpers have
-explicit legacy-file reasons in the JSON. Adding a raw primitive elsewhere
-refuses; using the public shared verifier does not require any inventory update.
-There are no exact counts, stale-site checks or public-API allowlists.
+certificates. Each `primitive_guard.exempt_calls` entry names a repository-relative
+`file`, enclosing `symbol`, resolved `callee`, and nonblank `reason`. The Python, Go and
+TypeScript/JavaScript guards select their entries by source extension, check that
+listed local source files exist, and require each exemption to match exactly one
+raw call. Duplicate, unused and multiply matching entries fail the check. A
+neighboring call or a reference to a primitive still needs to use the shared
+owner. Calling the shared owner requires no inventory entry.
 
 The parser resolves ordinary imports/aliases, callback references and CommonJS
 loaders. The JS check classifies WebCrypto roots consistently; ordinary hashing
-and randomness are outside the Ed25519 boundary. It does not prove dynamic
-control flow or identify every possible crypto package. In particular `jose`
+and randomness are outside the Ed25519 boundary. For sign and verify calls and
+`SigningKey.verify_key` reads, Python follows local key bindings, annotated
+parameters, same-file function results, and direct `self` fields it can type
+from class annotations or assignments. The check has no dynamic control-flow
+analysis, and Python method results, inherited fields and cross-module return
+types are outside its inference. In particular `jose`
 is a known package-discovery limit; this check is not an adversarial repository
 sandbox. Reviews and real journey tests establish the behavior that ships.
 

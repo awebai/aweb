@@ -32,7 +32,7 @@ func TestDirectHostedRequestCompression(t *testing.T) {
 			return err
 		}},
 		{"replace_key", func(base string) error {
-			_, err := postLocalIdentityKeyReplacementOnce(context.Background(), base, "alice", localIdentityKeyReplacementRequest{TeamID: cert.Team}, key)
+			_, err := postLocalIdentityKeyReplacementOnce(context.Background(), awid.LocalIdentityKeyReplacementInput{ServiceURL: base, Alias: "alice", Request: localIdentityKeyReplacementRequest{TeamID: cert.Team}, TeamKey: key})
 			return err
 		}},
 		{"remove_member", func(base string) error {
@@ -221,13 +221,14 @@ func TestAwMailSendNegotiatesRequestCompression(t *testing.T) {
 }
 
 func TestCompressionDiscoveryDoesNotLookForAnAnsweringMount(t *testing.T) {
+	const probePath = "/v1/compression-probe"
 	var probes, writes, recovery atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/health":
 			probes.Add(1)
 			w.WriteHeader(404)
-		case "/api/v1/test":
+		case "/api" + probePath:
 			writes.Add(1)
 			if r.Header.Get("Content-Encoding") != "" {
 				t.Error("unsupported base got gzip")
@@ -245,7 +246,7 @@ func TestCompressionDiscoveryDoesNotLookForAnAnsweringMount(t *testing.T) {
 	state := &answeringMountState{configuredBaseURL: base}
 	c, _ := awid.New(base)
 	c.SetHTTPClient(&http.Client{Transport: &answeringMountTransport{base: awid.NewAPITransport(), state: state}})
-	resp, err := c.DoRaw(context.Background(), "POST", "/v1/test", "application/json", map[string]string{"body": "test"})
+	resp, err := c.DoRaw(context.Background(), "POST", probePath, "application/json", map[string]string{"body": "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -296,7 +296,7 @@ func TestBundledGrantChatReadMarksReadWithGrantAuth(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions/sess-1/messages":
 			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, "chat", map[string]any{
-				"message_id": "chat-1", "conversation_id": "conv-1", "from_agent": "bob", "body": "grant chat", "timestamp": "2026-01-01T00:00:00Z", "sender_leaving": false,
+				"message_id": "chat-1", "conversation_id": "sess-1", "from_agent": "bob", "body": "grant chat", "timestamp": "2026-01-01T00:00:00Z", "sender_leaving": false,
 			})}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions/sess-1/read":
 			mu.Lock()
@@ -314,7 +314,7 @@ func TestBundledGrantChatReadMarksReadWithGrantAuth(t *testing.T) {
 	child := NewChannelCoreRunner(store).StartChild(context.Background(), reg, channelCoreChildConfig{OatsBin: oats, AWCommand: writeFakeAW(t, root, "")})
 	defer child.Stop()
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.Running && st.LastError == "" })
-	child.Offer(reg.ReceiveBindings()[0], awid.AgentEvent{Type: awid.AgentEventActionableChat, MessageID: "chat-1", SessionID: "sess-1", ConversationID: "conv-1"})
+	child.Offer(reg.ReceiveBindings()[0], awid.AgentEvent{Type: awid.AgentEventActionableChat, MessageID: "chat-1", SessionID: "sess-1", ConversationID: "sess-1"})
 	waitForFileContains(t, inputPath, "grant chat")
 	waitForCond(t, "grant chat markRead", func() bool {
 		mu.Lock()
@@ -385,7 +385,7 @@ func TestChannelCoreBindingErrorClearsOnlyOnCompletedTrace(t *testing.T) {
 	child := &ChannelCoreChild{done: make(chan struct{})}
 	done := make(chan struct{})
 	go func() {
-		child.readStatus(reader, make(chan struct{}))
+		child.readStatus(reader, make(chan struct{}), childStatusOptions{})
 		close(done)
 	}()
 	writeLine := func(line string) {

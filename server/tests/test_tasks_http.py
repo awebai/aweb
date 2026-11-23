@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import aweb.coordination.routes.tasks as tasks_routes
 from aweb.coordination.routes.tasks import router as tasks_router
 from aweb.coordination.tasks_service import (
     create_task,
@@ -31,14 +30,15 @@ class _DbShim:
         return self._db
 
 
-def _build_tasks_app(aweb_db) -> FastAPI:
+def _build_tasks_app(aweb_db, *, identity: TeamIdentity | None = None) -> FastAPI:
     app = FastAPI()
     app.include_router(tasks_router)
     app.state.db = _DbShim(aweb_db)
     app.state.on_mutation = None
+    member = identity or member_identity()
 
     async def _fake_dependency() -> TeamIdentity:
-        return await _fake_team_identity()
+        return member
 
     app.dependency_overrides[get_team_identity] = _fake_dependency
     for route in app.routes:
@@ -64,10 +64,6 @@ def member_identity(alias: str = "alice", *, team_id: str = TEAM_ID) -> TeamIden
         identity_scope="global",
         certificate_id="cert-001",
     )
-
-
-async def _fake_team_identity(request=None, db_infra=None) -> TeamIdentity:
-    return member_identity()
 
 
 async def _seed_team(aweb_db) -> None:
@@ -177,7 +173,8 @@ async def test_task_routes_filter_reparent_and_unassign(aweb_cloud_db, monkeypat
 
 @pytest.mark.asyncio
 async def test_combined_reparent_and_claim_uses_new_hierarchy_apex(aweb_cloud_db, monkeypatch):
-    app = _build_tasks_app(aweb_cloud_db.aweb_db)
+    actor = member_identity()
+    app = _build_tasks_app(aweb_cloud_db.aweb_db, identity=actor)
     await _seed_team(aweb_cloud_db.aweb_db)
 
     first_epic_id = uuid4()
@@ -234,7 +231,7 @@ async def test_combined_reparent_and_claim_uses_new_hierarchy_apex(aweb_cloud_db
         """,
         workspace_id,
         TEAM_ID,
-        uuid4(),
+        UUID(actor.agent_id),
         repo_id,
         datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
     )
@@ -369,7 +366,7 @@ async def test_a_caller_transaction_holds_the_status_change_its_claim_release_an
     workspace_id = uuid4()
     await db.execute(
         "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) VALUES ($1, $2, $3, 'alice')",
-        workspace_id, TEAM_ID, uuid4(),
+        workspace_id, TEAM_ID, UUID(actor.agent_id),
     )
     task = await create_task(_DbShim(db), actor=actor, on_mutation=None, title="Held by the caller")
     await update_task(_DbShim(db), actor=actor, on_mutation=None, ref=task["task_ref"], status="in_progress")
@@ -484,7 +481,12 @@ async def test_list_active_work_allows_null_updated_at(aweb_cloud_db):
         datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
     )
 
-    tasks = await list_active_work(db, team_id=TEAM_ID)
+    from awid.registry import RegistryClient
+    registry = RegistryClient(registry_url="https://registry.example.test")
+    try:
+        tasks = await list_active_work(db, team_id=TEAM_ID, redis=None, registry_client=registry)
+    finally:
+        await registry.aclose()
 
     assert len(tasks) == 1
     assert tasks[0]["task_id"] == str(task_id)

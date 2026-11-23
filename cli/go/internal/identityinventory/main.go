@@ -1,4 +1,4 @@
-// Command identityinventory checks the raw primitive boundary without a call-count catalog.
+// Command identityinventory checks the raw primitive boundary and its call exemptions.
 // It is a syntactic drift guard, not a control-flow or dynamic-dispatch proof.
 package main
 
@@ -17,41 +17,79 @@ import (
 	"strings"
 )
 
-type legacyFile struct {
+type callExemption struct {
 	File   string `json:"file"`
+	Symbol string `json:"symbol"`
+	Callee string `json:"callee"`
 	Reason string `json:"reason"`
 }
 type inventory struct {
 	PrimitiveGuard struct {
-		LegacyFiles []legacyFile `json:"legacy_files"`
+		ExemptCalls []callExemption `json:"exempt_calls"`
 	} `json:"primitive_guard"`
+	CreationPaths []struct {
+		Repo  string   `json:"repo"`
+		Files []string `json:"files"`
+	} `json:"creation_paths"`
 }
 type siteKey struct{ File, Symbol string }
+type callKey struct {
+	siteKey
+	Callee string
+}
 
-const strictModule = "cli/go/awid/id_certificates.go"
+func (k callKey) String() string { return k.File + ":" + k.Symbol + ": " + k.Callee }
+
+const strictModule = "cli/go/signaturewire/signature.go"
+const signerSign = "crypto.Signer.Sign"
 
 func excluded(file string) bool {
 	return strings.HasSuffix(file, "_test.go") || strings.Contains("/"+file, "/testdata/") || file == "cli/go/internal/identityinventory/main.go"
 }
 
 func cryptoPrimitive(name string) bool {
+	if name == signerSign {
+		return true
+	}
 	for _, module := range []string{"crypto/ed25519", "golang.org/x/crypto/ed25519", "filippo.io/edwards25519"} {
 		if strings.HasPrefix(name, module+".") {
 			if module == "filippo.io/edwards25519" {
 				return true
 			}
 			operation := strings.TrimPrefix(name, module+".")
-			return operation == "Sign" || operation == "Verify" || operation == "GenerateKey" || operation == "NewKeyFromSeed"
+			switch operation {
+			case "Sign", "Verify", "VerifyWithOptions", "GenerateKey", "NewKeyFromSeed":
+				return true
+			}
+			return false
 		}
 	}
 	return false
+}
+
+// A zero hash option passes the original message to a crypto.Signer.
+func signsUnhashedMessage(call *ast.CallExpr, name func(ast.Node) string) bool {
+	selector, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Sign" || len(call.Args) != 3 {
+		return false
+	}
+	option, ok := ast.Unparen(call.Args[2]).(*ast.CallExpr)
+	if !ok || name(option.Fun) != "crypto.Hash" || len(option.Args) != 1 {
+		return false
+	}
+	literal, ok := ast.Unparen(option.Args[0]).(*ast.BasicLit)
+	if !ok || literal.Kind != token.INT {
+		return false
+	}
+	value, err := strconv.ParseUint(literal.Value, 0, 64)
+	return err == nil && value == 0
 }
 
 func primitiveModule(module string) bool {
 	return module == "crypto/ed25519" || module == "golang.org/x/crypto/ed25519" || strings.HasPrefix(module, "filippo.io/edwards25519")
 }
 
-func scanGoSource(source []byte) (map[string]map[string]bool, error) {
+func scanGoSource(source []byte) (map[string]map[string]int, error) {
 	tree, err := parser.ParseFile(token.NewFileSet(), "source.go", source, 0)
 	if err != nil {
 		return nil, err
@@ -97,12 +135,12 @@ func scanGoSource(source []byte) (map[string]map[string]bool, error) {
 		}
 		return "<expression>"
 	}
-	result := map[string]map[string]bool{}
+	result := map[string]map[string]int{}
 	record := func(symbol, callee string) {
 		if result[symbol] == nil {
-			result[symbol] = map[string]bool{}
+			result[symbol] = map[string]int{}
 		}
-		result[symbol][callee] = true
+		result[symbol][callee]++
 	}
 	for _, decl := range tree.Decls {
 		if gen, ok := decl.(*ast.GenDecl); ok && gen.Tok == token.IMPORT {
@@ -135,6 +173,8 @@ func scanGoSource(source []byte) (map[string]map[string]bool, error) {
 				callee := name(n.Fun)
 				if cryptoPrimitive(callee) {
 					record(symbol, callee)
+				} else if signsUnhashedMessage(n, name) {
+					record(symbol, signerSign)
 				}
 			case *ast.SelectorExpr, *ast.Ident:
 				// Definitions, field names and selector receivers are not value loads.
@@ -179,38 +219,59 @@ func scanGoSource(source []byte) (map[string]map[string]bool, error) {
 	return result, nil
 }
 
-func checkPrimitiveUses(observed map[siteKey]map[string]bool, legacy []legacyFile) []string {
+func checkPrimitiveUses(observed map[siteKey]map[string]int, exemptions []callExemption) []string {
 	var errors []string
-	files := map[string]bool{}
-	for _, entry := range legacy {
-		if entry.File == "" || strings.TrimSpace(entry.Reason) == "" {
-			errors = append(errors, "legacy primitive file requires a reason")
-		} else {
-			files[entry.File] = true
+	matches := map[callKey]int{}
+	for _, entry := range exemptions {
+		key := callKey{siteKey{entry.File, entry.Symbol}, entry.Callee}
+		if strings.TrimSpace(entry.File) == "" || strings.TrimSpace(entry.Symbol) == "" || strings.TrimSpace(entry.Callee) == "" || strings.TrimSpace(entry.Reason) == "" {
+			errors = append(errors, "primitive exemption requires file, symbol, callee and reason")
+			continue
+		}
+		if !cryptoPrimitive(entry.Callee) {
+			errors = append(errors, "primitive exemption must name a call: "+key.String())
+			continue
+		}
+		if _, found := matches[key]; found {
+			errors = append(errors, "duplicate primitive exemption: "+key.String())
+			continue
+		}
+		matches[key] = 0
+	}
+	for key, uses := range observed {
+		// Raw signing, verification and profile checks live in signaturewire.
+		shared := key.File == strictModule && (key.Symbol == "Verify" || key.Symbol == "SignBytes" || key.Symbol == "PrimePoint" || key.Symbol == "ValidIDSignatureShape")
+		if shared {
+			continue
+		}
+		for callee, count := range uses {
+			call := callKey{key, callee}
+			if _, found := matches[call]; found {
+				matches[call] = count
+			} else {
+				errors = append(errors, "raw Go crypto must use the shared verifier: "+call.String())
+			}
 		}
 	}
-	for key := range observed {
-		// idStrictVerify is the one shared strict verifier for certificates,
-		// requests and covering envelopes; idCertificatePrimePoint is its
-		// point check.
-		shared := key.File == strictModule && (key.Symbol == "idStrictVerify" || key.Symbol == "idCertificatePrimePoint")
-		if !shared && !files[key.File] {
-			errors = append(errors, "raw Go crypto must use the shared verifier: "+fmt.Sprint(key))
+	for key, count := range matches {
+		if count == 0 {
+			errors = append(errors, "unused primitive exemption: "+key.String())
+		} else if count != 1 {
+			errors = append(errors, fmt.Sprintf("primitive exemption matches %d calls: %s", count, key))
 		}
 	}
 	sort.Strings(errors)
 	return errors
 }
 
-func scanRepository(root string) (map[siteKey]map[string]bool, error) {
+func scanRepository(root string) (map[siteKey]map[string]int, error) {
 	command := exec.Command("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.go")
 	command.Dir = root
 	output, err := command.Output()
 	if err != nil {
 		return nil, err
 	}
-	result := map[siteKey]map[string]bool{}
-	sources := map[string][]byte{}
+	result := map[siteKey]map[string]int{}
 	seen := map[string]bool{}
 	for _, file := range strings.Split(string(output), "\x00") {
 		if file == "" || seen[file] || excluded(file) {
@@ -218,15 +279,9 @@ func scanRepository(root string) (map[siteKey]map[string]bool, error) {
 		}
 		seen[file] = true
 		source, e := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
-		if os.IsNotExist(e) {
-			continue
-		}
 		if e != nil {
-			return nil, e
+			return nil, fmt.Errorf("cannot scan %s: %w", file, e)
 		}
-		sources[file] = source
-	}
-	for file, source := range sources {
 		calls, e := scanGoSource(source)
 		if e != nil {
 			return nil, fmt.Errorf("cannot scan %s: %w", file, e)
@@ -238,6 +293,23 @@ func scanRepository(root string) (map[siteKey]map[string]bool, error) {
 	return result, nil
 }
 
+func checkListedFile(root, file string) error {
+	if !filepath.IsLocal(file) || path.Clean(file) != file {
+		return fmt.Errorf("listed source file must be a repository-relative path: %s", file)
+	}
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(file)))
+	if os.IsNotExist(err) {
+		return fmt.Errorf("listed source file %s is missing", file)
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("listed source file %s must be a regular file", file)
+	}
+	return nil
+}
+
 func run(root string) error {
 	data, err := os.ReadFile(filepath.Join(root, "docs/identity-tree-coverage.json"))
 	if err != nil {
@@ -247,11 +319,34 @@ func run(root string) error {
 	if err = json.Unmarshal(data, &coverage); err != nil {
 		return err
 	}
+	if coverage.PrimitiveGuard.ExemptCalls == nil {
+		return fmt.Errorf("primitive_guard.exempt_calls must be an array")
+	}
+	var exemptions []callExemption
+	for _, entry := range coverage.PrimitiveGuard.ExemptCalls {
+		if strings.HasSuffix(entry.File, ".go") {
+			if err := checkListedFile(root, entry.File); err != nil {
+				return err
+			}
+			exemptions = append(exemptions, entry)
+		}
+	}
+	for _, row := range coverage.CreationPaths {
+		if row.Repo == "aweb" {
+			for _, file := range row.Files {
+				if strings.HasSuffix(file, ".go") {
+					if err := checkListedFile(root, file); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
 	observed, err := scanRepository(root)
 	if err != nil {
 		return err
 	}
-	if errors := checkPrimitiveUses(observed, coverage.PrimitiveGuard.LegacyFiles); len(errors) > 0 {
+	if errors := checkPrimitiveUses(observed, exemptions); len(errors) > 0 {
 		return fmt.Errorf("%s", strings.Join(errors, "\n"))
 	}
 	fmt.Println("Go primitive-use boundary passed")

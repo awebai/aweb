@@ -261,7 +261,7 @@ async def test_signed_api_owner_only_and_strict_action_fields(uses):
     outsider = Member(
         team_id=TEAM, team_key=owner.team_key, certificate_id="role-outsider", alias="role-outsider"
     )
-    await registry.add_certificate(outsider.certificate())
+    await registry.add_certificate(outsider.certificate(), team_key=outsider.team_key)
 
     async with running(uses, registry) as api:
 

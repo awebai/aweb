@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from awid.atomic_claim import canonical_registry_origin, normalize_claim_custody
 from awid.did import validate_stable_id
+from awid.signature_wire import Base64Profile, decode_base64
 from awid.signing import canonical_json_bytes
 from awid.utc_timestamps import parse_utc_seconds
 
@@ -123,14 +124,18 @@ def decode_raw_standard_b64(value: str, *, field_name: str) -> bytes:
     if "=" in value:
         raise ValueError(f"{field_name} must be standard base64 without padding")
     try:
-        return base64.b64decode(value + "=" * (-len(value) % 4), validate=True)
+        return decode_base64(value, profile=Base64Profile.UNPADDED_STANDARD)
     except Exception as exc:
-        raise ValueError(f"{field_name} must be standard base64 without padding") from exc
+        raise ValueError(
+            f"{field_name} must be standard base64 without padding"
+        ) from exc
 
 
 def signed_assertion_digest(canonical: bytes, signature: str) -> str:
     signature_bytes = decode_raw_standard_b64(signature, field_name="signature")
-    return "sha256:" + raw_standard_b64(hashlib.sha256(canonical + signature_bytes).digest())
+    return "sha256:" + raw_standard_b64(
+        hashlib.sha256(canonical + signature_bytes).digest()
+    )
 
 
 def parse_contract_time(value: str, *, field_name: str) -> datetime:
@@ -235,7 +240,9 @@ def _optional_nonempty(value: str | None) -> str | None:
     return value or None
 
 
-def normalize_a2a_publication_fields(fields: A2APublicationFields) -> A2APublicationFields:
+def normalize_a2a_publication_fields(
+    fields: A2APublicationFields,
+) -> A2APublicationFields:
     operation = (fields.operation or "").strip() or A2A_PUBLICATION_OPERATION
     if operation != A2A_PUBLICATION_OPERATION:
         raise ValueError(f"operation must be {A2A_PUBLICATION_OPERATION}")
@@ -247,16 +254,22 @@ def normalize_a2a_publication_fields(fields: A2APublicationFields) -> A2APublica
     delegation_id = _optional_nonempty(fields.delegation_id)
     delegation_digest = _optional_nonempty(fields.delegation_digest)
     if bool(delegation_id) != bool(delegation_digest):
-        raise ValueError("delegation_id and delegation_digest must be supplied together")
+        raise ValueError(
+            "delegation_id and delegation_digest must be supplied together"
+        )
     if delegation_digest:
-        delegation_digest = validate_signed_digest(delegation_digest, field_name="delegation_digest")
+        delegation_digest = validate_signed_digest(
+            delegation_digest, field_name="delegation_digest"
+        )
     signer_did = _did_key(fields.signer_did, field_name="signer_did")
     signer_kid = (fields.signer_kid or "").strip()
     if signer_kid != signer_did + "#ed25519":
         raise ValueError("signer_kid must be signer_did#ed25519")
     return A2APublicationFields(
         operation=operation,
-        assertion_id=validate_assertion_id(fields.assertion_id, field_name="assertion_id"),
+        assertion_id=validate_assertion_id(
+            fields.assertion_id, field_name="assertion_id"
+        ),
         address=address,
         did_aw=_did_aw(fields.did_aw, field_name="did_aw"),
         current_did_key=_did_key(fields.current_did_key, field_name="current_did_key"),
@@ -266,7 +279,9 @@ def normalize_a2a_publication_fields(fields: A2APublicationFields) -> A2APublica
         rpc_url=rpc_url,
         route_id=route_id,
         tenant=tenant,
-        gateway_identity=_did_aw(fields.gateway_identity, field_name="gateway_identity"),
+        gateway_identity=_did_aw(
+            fields.gateway_identity, field_name="gateway_identity"
+        ),
         delegation_id=delegation_id,
         delegation_digest=delegation_digest,
         card_digest_alg=validate_card_digest_alg(fields.card_digest_alg),
@@ -274,8 +289,12 @@ def normalize_a2a_publication_fields(fields: A2APublicationFields) -> A2APublica
         card_revision=(fields.card_revision or "").strip(),
         default_for_host=bool(fields.default_for_host),
         status=_status(fields.status),
-        published_at=_format_contract_time(parse_contract_time(fields.published_at, field_name="published_at")),
-        expires_at=_format_contract_time(parse_contract_time(fields.expires_at, field_name="expires_at")),
+        published_at=_format_contract_time(
+            parse_contract_time(fields.published_at, field_name="published_at")
+        ),
+        expires_at=_format_contract_time(
+            parse_contract_time(fields.expires_at, field_name="expires_at")
+        ),
         registry_url=canonical_registry_origin(fields.registry_url),
         identity_custody=normalize_claim_custody(fields.identity_custody),
         authority_source=(fields.authority_source or "").strip(),
@@ -296,23 +315,36 @@ def normalize_a2a_delegation_fields(fields: A2ADelegationFields) -> A2ADelegatio
     if ops != A2A_MIN_ALLOWED_OPERATIONS:
         raise ValueError("allowed_operations must equal the v1 product operation order")
     custody_mode = (fields.custody_mode or "").strip()
-    if custody_mode not in {A2A_CUSTODY_DELEGATED_BRIDGE, A2A_CUSTODY_HOSTED_DELEGATED_BRIDGE}:
+    if custody_mode not in {
+        A2A_CUSTODY_DELEGATED_BRIDGE,
+        A2A_CUSTODY_HOSTED_DELEGATED_BRIDGE,
+    }:
         raise ValueError("unsupported custody_mode")
     revoked_at = _optional_nonempty(fields.revoked_at)
     if fields.status == A2A_STATUS_REVOKED and not revoked_at:
         raise ValueError("revoked_at is required when status is revoked")
     if revoked_at:
-        revoked_at = _format_contract_time(parse_contract_time(revoked_at, field_name="revoked_at"))
+        revoked_at = _format_contract_time(
+            parse_contract_time(revoked_at, field_name="revoked_at")
+        )
     signer_did = _did_key(fields.signer_did, field_name="signer_did")
     signer_kid = (fields.signer_kid or "").strip()
     if signer_kid != signer_did + "#ed25519":
         raise ValueError("signer_kid must be signer_did#ed25519")
     return A2ADelegationFields(
         operation=operation,
-        delegation_id=validate_assertion_id(fields.delegation_id, field_name="delegation_id"),
-        delegator_did_aw=_did_aw(fields.delegator_did_aw, field_name="delegator_did_aw"),
-        delegator_current_did_key=_did_key(fields.delegator_current_did_key, field_name="delegator_current_did_key"),
-        delegated_gateway_identity=_did_aw(fields.delegated_gateway_identity, field_name="delegated_gateway_identity"),
+        delegation_id=validate_assertion_id(
+            fields.delegation_id, field_name="delegation_id"
+        ),
+        delegator_did_aw=_did_aw(
+            fields.delegator_did_aw, field_name="delegator_did_aw"
+        ),
+        delegator_current_did_key=_did_key(
+            fields.delegator_current_did_key, field_name="delegator_current_did_key"
+        ),
+        delegated_gateway_identity=_did_aw(
+            fields.delegated_gateway_identity, field_name="delegated_gateway_identity"
+        ),
         address=address,
         route_id=route_id,
         card_url=card_url,
@@ -324,8 +356,12 @@ def normalize_a2a_delegation_fields(fields: A2ADelegationFields) -> A2ADelegatio
         authority_source=(fields.authority_source or "").strip(),
         signer_did=signer_did,
         signer_kid=signer_kid,
-        issued_at=_format_contract_time(parse_contract_time(fields.issued_at, field_name="issued_at")),
-        expires_at=_format_contract_time(parse_contract_time(fields.expires_at, field_name="expires_at")),
+        issued_at=_format_contract_time(
+            parse_contract_time(fields.issued_at, field_name="issued_at")
+        ),
+        expires_at=_format_contract_time(
+            parse_contract_time(fields.expires_at, field_name="expires_at")
+        ),
         status=_status(fields.status),
         revoked_at=revoked_at,
         revocation_reason=_optional_nonempty(fields.revocation_reason),
@@ -334,7 +370,12 @@ def normalize_a2a_delegation_fields(fields: A2ADelegationFields) -> A2ADelegatio
 
 
 def _format_contract_time(value: datetime) -> str:
-    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        value.astimezone(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _omit_empty(fields: dict[str, Any]) -> dict[str, Any]:

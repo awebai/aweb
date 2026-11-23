@@ -1,15 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +26,10 @@ var (
 	teamHumanReplaceKeyRegistryURL    string
 )
 
+// Local participants retain their literal did:key; replacement grants no
+// predecessor participation (docs/identity-messaging-contract.md:96-100).
+const replacementConversationNotice = "The new key will not have the old key's mail or chat conversations."
+
 var teamHumanReplaceKeyCmd = &cobra.Command{
 	Use:   "replace-key <agent-alias>",
 	Short: "Replace a local agent identity key under team-controller authority",
@@ -39,18 +38,12 @@ var teamHumanReplaceKeyCmd = &cobra.Command{
 		"team certificate, registers a new certificate, and records the controller-authorized\n" +
 		"transition. When a real local home has lost signing.key, --generate-new-key creates\n" +
 		"and retains a replacement key without overwriting an existing one. Hosted teams require\n" +
-		"the pending AC owner/admin integration or operator support.",
+		"the pending AC owner/admin integration or operator support.\n\n" + replacementConversationNotice,
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanReplaceKey,
 }
 
-type localIdentityKeyReplacementRequest struct {
-	TeamID           string `json:"team_id"`
-	OldDIDKey        string `json:"old_did_key"`
-	NewDIDKey        string `json:"new_did_key"`
-	OldCertificateID string `json:"old_certificate_id"`
-	NewCertificateID string `json:"new_certificate_id"`
-}
+type localIdentityKeyReplacementRequest = awid.LocalIdentityKeyReplacementRequest
 
 // maxReplaceKeyResponseBytes bounds the replace-key response body so a
 // compromised or MITM'd server cannot exhaust client memory. It is a var, not a
@@ -65,36 +58,25 @@ type replacementRosterOutcomeUnknownError struct {
 func (e *replacementRosterOutcomeUnknownError) Error() string { return e.err.Error() }
 func (e *replacementRosterOutcomeUnknownError) Unwrap() error { return e.err }
 
-type localIdentityKeyReplacementResponse struct {
-	Status           string `json:"status"`
-	AuditID          string `json:"audit_id"`
-	AgentID          string `json:"agent_id"`
-	TeamID           string `json:"team_id"`
-	Alias            string `json:"alias"`
-	OldDIDKey        string `json:"old_did_key"`
-	NewDIDKey        string `json:"new_did_key"`
-	OldCertificateID string `json:"old_certificate_id"`
-	NewCertificateID string `json:"new_certificate_id"`
-	AuthorizedBy     string `json:"authorized_by"`
-	AuthorizedAt     string `json:"authorized_at"`
-}
+type localIdentityKeyReplacementResponse = awid.LocalIdentityKeyReplacementResponse
 
 type teamHumanReplaceKeyOutput struct {
-	Status           string `json:"status"`
-	TeamID           string `json:"team_id"`
-	Alias            string `json:"alias"`
-	OldDIDKey        string `json:"old_did_key"`
-	NewDIDKey        string `json:"new_did_key"`
-	OldCertificateID string `json:"old_certificate_id"`
-	NewCertificateID string `json:"new_certificate_id"`
-	AuditID          string `json:"audit_id"`
-	AuthorizedBy     string `json:"authorized_by"`
-	AuthorizedAt     string `json:"authorized_at"`
-	CertificatePath  string `json:"certificate_path,omitempty"`
-	SigningKeyPath   string `json:"signing_key_path,omitempty"`
-	EncryptionKeyID  string `json:"encryption_key_id,omitempty"`
-	TeamCertificate  string `json:"team_certificate,omitempty"`
-	Placement        string `json:"placement,omitempty"`
+	Status             awid.LocalIdentityKeyReplacementState `json:"status"`
+	TeamID             string                                `json:"team_id"`
+	Alias              string                                `json:"alias"`
+	OldDIDKey          string                                `json:"old_did_key"`
+	NewDIDKey          string                                `json:"new_did_key"`
+	OldCertificateID   string                                `json:"old_certificate_id"`
+	NewCertificateID   string                                `json:"new_certificate_id"`
+	AuditID            string                                `json:"audit_id"`
+	AuthorizedBy       string                                `json:"authorized_by"`
+	AuthorizedAt       string                                `json:"authorized_at"`
+	CertificatePath    string                                `json:"certificate_path,omitempty"`
+	SigningKeyPath     string                                `json:"signing_key_path,omitempty"`
+	EncryptionKeyID    string                                `json:"encryption_key_id,omitempty"`
+	TeamCertificate    string                                `json:"team_certificate,omitempty"`
+	Placement          string                                `json:"placement,omitempty"`
+	ConversationAccess string                                `json:"conversation_access"`
 }
 
 func init() {
@@ -110,21 +92,7 @@ func init() {
 }
 
 func localIdentityKeyReplacementAuthPayload(alias string, payload localIdentityKeyReplacementRequest, timestamp string) ([]byte, error) {
-	// The server verifies over Python canonical_json_bytes of these fields.
-	canonical, err := awid.CanonicalJSONValue(map[string]any{
-		"agent_alias":        alias,
-		"new_certificate_id": payload.NewCertificateID,
-		"new_did_key":        payload.NewDIDKey,
-		"old_certificate_id": payload.OldCertificateID,
-		"old_did_key":        payload.OldDIDKey,
-		"operation":          "replace_local_identity_key",
-		"team_id":            payload.TeamID,
-		"timestamp":          timestamp,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return []byte(canonical), nil
+	return awid.LocalIdentityKeyReplacementPayload(awid.LocalIdentityKeyReplacementPayloadInput{Alias: alias, Request: payload, Timestamp: timestamp})
 }
 
 func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
@@ -181,6 +149,13 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 	}
 	controllerDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
 
+	// Disclose this before generating a key or changing any remote state.
+	if cmd != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), replacementConversationNotice)
+	} else {
+		fmt.Fprintln(os.Stderr, replacementConversationNotice)
+	}
+
 	homeDir := strings.TrimSpace(teamHumanReplaceKeyHome)
 	oldCertificateID := strings.TrimSpace(teamHumanReplaceKeyOldCertID)
 	generatedKeyPath := ""
@@ -190,9 +165,9 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 			return err
 		}
 		if generateNewKey {
-			oldCertificateID, newDIDKey, generatedKeyPath, err = prepareGeneratedReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, oldCertificateID)
+			oldCertificateID, newDIDKey, generatedKeyPath, err = prepareGeneratedReplacementAgentHome(replacementAgentHome{HomeDir: homeDir, TeamID: teamID, Alias: alias, OldDIDKey: oldDIDKey, OldCertificateID: oldCertificateID})
 		} else {
-			oldCertificateID, err = preflightReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, newDIDKey, oldCertificateID)
+			oldCertificateID, err = preflightReplacementAgentHome(replacementAgentHome{HomeDir: homeDir, TeamID: teamID, Alias: alias, OldDIDKey: oldDIDKey, NewDIDKey: newDIDKey, OldCertificateID: oldCertificateID})
 		}
 		if err != nil {
 			return err
@@ -218,9 +193,14 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 	if serviceURL == "" {
 		return usageError("no aweb service URL is recorded for team %s; pass --aweb-url", teamID)
 	}
-	registryURL := strings.TrimSpace(teamHumanReplaceKeyRegistryURL)
-	if registryURL == "" {
-		registryURL = strings.TrimSpace(registryURLForTeamInvite(wd, domain, serviceURL))
+	ctx, cancel := commandAPIContext(cmd)
+	defer cancel()
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Override: teamHumanReplaceKeyRegistryURL, Domain: domain,
+		TeamID: teamID, WorkingDir: wd, AwebURL: serviceURL,
+	})
+	if err != nil {
+		return err
 	}
 	if registryURL == "" {
 		return usageError("no AWID registry URL is recorded for team %s; pass --registry", teamID)
@@ -230,8 +210,9 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 		return fmt.Errorf("invalid registry URL: %w", err)
 	}
 
-	newCertificate, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team: teamID, MemberDIDKey: newDIDKey, Alias: alias, IdentityScope: awid.IdentityModeLocal,
+	issuer := teamMembershipIssuer{TeamID: teamID, Key: teamKey, Registry: registry, RegistryURL: registryURL}
+	newCertificate, err := issuer.sign(awid.TeamCertificateFields{
+		MemberDIDKey: newDIDKey, Alias: alias, IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		return fmt.Errorf("mint replacement team certificate: %w", err)
@@ -244,9 +225,7 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 		TeamID: teamID, OldDIDKey: oldDIDKey, NewDIDKey: newDIDKey,
 		OldCertificateID: oldCertificateID, NewCertificateID: newCertificate.CertificateID,
 	}
-	ctx, cancel := commandAPIContext(cmd)
-	defer cancel()
-	rosterResult, err := postLocalIdentityKeyReplacement(ctx, serviceURL, alias, requestPayload, teamKey)
+	rosterResult, err := postLocalIdentityKeyReplacement(ctx, awid.LocalIdentityKeyReplacementInput{ServiceURL: serviceURL, Alias: alias, Request: requestPayload, TeamKey: teamKey})
 	if err != nil {
 		var unknown *replacementRosterOutcomeUnknownError
 		if errors.As(err, &unknown) {
@@ -258,15 +237,16 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 	if err := registry.RevokeCertificate(ctx, registryURL, domain, teamName, oldCertificateID, teamKey); err != nil {
 		return fmt.Errorf("replace-key partial state: roster row was replaced and audit %s was written; old certificate %s was not revoked; new certificate %s was not registered or installed: %w; retain this exact audited replacement certificate material for recovery: %s", rosterResult.AuditID, oldCertificateID, newCertificate.CertificateID, err, encodedCertificate)
 	}
-	if err := registry.RegisterCertificate(ctx, registryURL, domain, teamName, newCertificate, teamKey); err != nil {
+	if err := issuer.register(ctx, newCertificate); err != nil {
 		return fmt.Errorf("replace-key partial state: roster row was replaced and audit %s was written; old certificate was revoked; new certificate was not registered or installed (certificate_id %s): %w; replacement certificate material for recovery: %s", rosterResult.AuditID, newCertificate.CertificateID, err, encodedCertificate)
 	}
 
 	output := teamHumanReplaceKeyOutput{
-		Status: "replaced", TeamID: teamID, Alias: alias,
+		Status: awid.LocalIdentityKeyReplaced, TeamID: teamID, Alias: alias,
 		OldDIDKey: oldDIDKey, NewDIDKey: newDIDKey,
 		OldCertificateID: oldCertificateID, NewCertificateID: newCertificate.CertificateID,
 		AuditID: rosterResult.AuditID, AuthorizedBy: controllerDID, AuthorizedAt: rosterResult.AuthorizedAt,
+		ConversationAccess: replacementConversationNotice,
 	}
 	if homeDir != "" {
 		certPath, err := awconfig.SaveTeamCertificateForTeam(homeDir, teamID, newCertificate)
@@ -308,11 +288,23 @@ func loadLocalReplaceKeyController(domain, teamName string) (ed25519.PrivateKey,
 	return key, nil
 }
 
-func preflightReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, newDIDKey, explicitOldCertificateID string) (string, error) {
-	if err := validateReplacementAgentHomeState(homeDir, teamID, alias); err != nil {
+type replacementAgentHome struct {
+	HomeDir          string
+	TeamID           string
+	Alias            string
+	OldDIDKey        string
+	NewDIDKey        string
+	OldCertificateID string
+}
+
+func preflightReplacementAgentHome(input replacementAgentHome) (string, error) {
+	homeDir, teamID, alias := input.HomeDir, input.TeamID, input.Alias
+	oldDIDKey, newDIDKey, explicitOldCertificateID := input.OldDIDKey, input.NewDIDKey, input.OldCertificateID
+
+	if err := validateReplacementAgentHomeState(replacementAgentHome{HomeDir: homeDir, TeamID: teamID, Alias: alias}); err != nil {
 		return "", err
 	}
-	oldCertificateID, _, err := loadReplacementAgentOldCertificate(homeDir, teamID, alias, oldDIDKey, newDIDKey, explicitOldCertificateID)
+	oldCertificateID, _, err := loadReplacementAgentOldCertificate(replacementAgentHome{HomeDir: homeDir, TeamID: teamID, Alias: alias, OldDIDKey: oldDIDKey, NewDIDKey: newDIDKey, OldCertificateID: explicitOldCertificateID})
 	if err != nil {
 		return "", err
 	}
@@ -326,11 +318,13 @@ func preflightReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, newDIDKey,
 	return oldCertificateID, nil
 }
 
-func prepareGeneratedReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, explicitOldCertificateID string) (string, string, string, error) {
-	if err := validateReplacementAgentHomeState(homeDir, teamID, alias); err != nil {
+func prepareGeneratedReplacementAgentHome(input replacementAgentHome) (string, string, string, error) {
+	homeDir, teamID, alias := input.HomeDir, input.TeamID, input.Alias
+	oldDIDKey, explicitOldCertificateID := input.OldDIDKey, input.OldCertificateID
+	if err := validateReplacementAgentHomeState(replacementAgentHome{HomeDir: homeDir, TeamID: teamID, Alias: alias}); err != nil {
 		return "", "", "", err
 	}
-	oldCertificateID, oldCertificate, err := loadReplacementAgentOldCertificate(homeDir, teamID, alias, oldDIDKey, "generated key", explicitOldCertificateID)
+	oldCertificateID, oldCertificate, err := loadReplacementAgentOldCertificate(replacementAgentHome{HomeDir: homeDir, TeamID: teamID, Alias: alias, OldDIDKey: oldDIDKey, NewDIDKey: "generated key", OldCertificateID: explicitOldCertificateID})
 	if err != nil {
 		return "", "", "", err
 	}
@@ -353,7 +347,8 @@ func prepareGeneratedReplacementAgentHome(homeDir, teamID, alias, oldDIDKey, exp
 	return oldCertificateID, awid.ComputeDIDKey(publicKey), keyPath, nil
 }
 
-func validateReplacementAgentHomeState(homeDir, teamID, alias string) error {
+func validateReplacementAgentHomeState(input replacementAgentHome) error {
+	homeDir, teamID, alias := input.HomeDir, input.TeamID, input.Alias
 	teamState, err := awconfig.LoadTeamState(homeDir)
 	if err != nil {
 		return fmt.Errorf("load replacement home teams.yaml: %w", err)
@@ -373,7 +368,9 @@ func validateReplacementAgentHomeState(homeDir, teamID, alias string) error {
 	return nil
 }
 
-func loadReplacementAgentOldCertificate(homeDir, teamID, alias, oldDIDKey, newDIDKey, explicitOldCertificateID string) (string, *awid.TeamCertificate, error) {
+func loadReplacementAgentOldCertificate(input replacementAgentHome) (string, *awid.TeamCertificate, error) {
+	homeDir, teamID, alias := input.HomeDir, input.TeamID, input.Alias
+	oldDIDKey, newDIDKey, explicitOldCertificateID := input.OldDIDKey, input.NewDIDKey, input.OldCertificateID
 	oldCertificate, err := awconfig.LoadTeamCertificateForTeam(homeDir, teamID)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) && explicitOldCertificateID != "" {
@@ -393,10 +390,10 @@ func loadReplacementAgentOldCertificate(homeDir, teamID, alias, oldDIDKey, newDI
 	return oldCertificate.CertificateID, oldCertificate, nil
 }
 
-func postLocalIdentityKeyReplacement(ctx context.Context, serviceURL, alias string, payload localIdentityKeyReplacementRequest, teamKey ed25519.PrivateKey) (*localIdentityKeyReplacementResponse, error) {
+func postLocalIdentityKeyReplacement(ctx context.Context, input awid.LocalIdentityKeyReplacementInput) (*localIdentityKeyReplacementResponse, error) {
 	var firstUnknown error
 	for attempt := 0; attempt < 2; attempt++ {
-		out, err := postLocalIdentityKeyReplacementOnce(ctx, serviceURL, alias, payload, teamKey)
+		out, err := postLocalIdentityKeyReplacementOnce(ctx, input)
 		if err == nil {
 			return out, nil
 		}
@@ -423,57 +420,21 @@ func postLocalIdentityKeyReplacement(ctx context.Context, serviceURL, alias stri
 	return nil, &replacementRosterOutcomeUnknownError{err: fmt.Errorf("exact replay could not reconcile roster outcome: %w", firstUnknown)}
 }
 
-func postLocalIdentityKeyReplacementOnce(ctx context.Context, serviceURL, alias string, payload localIdentityKeyReplacementRequest, teamKey ed25519.PrivateKey) (*localIdentityKeyReplacementResponse, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	path := "/v1/agents/" + url.PathEscape(alias) + "/replace-key"
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	canonical, err := localIdentityKeyReplacementAuthPayload(alias, payload, timestamp)
-	if err != nil {
-		return nil, err
-	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, canonical))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(serviceURL, "/")+path, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "DIDKey "+awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))+" "+signature)
-	req.Header.Set("X-AWEB-Timestamp", timestamp)
-	resp, err := awid.DoServerRequest(&http.Client{Timeout: awid.APITimeout()}, req, serviceURL)
-	if err != nil {
+func postLocalIdentityKeyReplacementOnce(ctx context.Context, input awid.LocalIdentityKeyReplacementInput) (*localIdentityKeyReplacementResponse, error) {
+	input.MaxResponseBytes = maxReplaceKeyResponseBytes
+	result, err := awid.ReplaceLocalIdentityKey(ctx, input)
+	var unknown *awid.LocalIdentityKeyReplacementUnknownError
+	if errors.As(err, &unknown) {
 		return nil, &replacementRosterOutcomeUnknownError{err: err}
 	}
-	defer resp.Body.Close()
-	responseBody, err := readAllBounded(resp.Body, maxReplaceKeyResponseBytes)
-	if err != nil {
-		return nil, &replacementRosterOutcomeUnknownError{err: err}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		err := fmt.Errorf("aweb replace-key returned %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
-		if resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= 500 {
-			return nil, &replacementRosterOutcomeUnknownError{err: err}
-		}
-		return nil, err
-	}
-	var out localIdentityKeyReplacementResponse
-	if err := json.Unmarshal(responseBody, &out); err != nil {
-		return nil, &replacementRosterOutcomeUnknownError{err: fmt.Errorf("decode aweb replace-key response: %w", err)}
-	}
-	controllerDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
-	if out.Status != "replaced" || out.AuditID == "" || out.AgentID == "" || out.AuthorizedAt == "" || out.AuthorizedBy != controllerDID || out.TeamID != payload.TeamID || out.Alias != alias || out.OldDIDKey != payload.OldDIDKey || out.NewDIDKey != payload.NewDIDKey || out.OldCertificateID != payload.OldCertificateID || out.NewCertificateID != payload.NewCertificateID {
-		return nil, &replacementRosterOutcomeUnknownError{err: errors.New("aweb replace-key response does not match the authorized transition")}
-	}
-	return &out, nil
+	return result, err
 }
 
 func formatTeamHumanReplaceKey(v any) string {
 	out := v.(teamHumanReplaceKeyOutput)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Replaced local identity key for %s in %s\n", out.Alias, out.TeamID)
+	fmt.Fprintln(&b, replacementConversationNotice)
 	fmt.Fprintf(&b, "  old did:key: %s\n  new did:key: %s\n", out.OldDIDKey, out.NewDIDKey)
 	fmt.Fprintf(&b, "  audit: %s (authorized by %s at %s)\n", out.AuditID, out.AuthorizedBy, out.AuthorizedAt)
 	if out.CertificatePath != "" {

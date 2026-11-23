@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"testing"
 	"time"
 )
@@ -215,13 +216,14 @@ func TestRegistryConformanceVectors(t *testing.T) {
 			client := &Client{}
 			client.SetResolver(&conformanceRegistryResolver{state: vector.RegistryState})
 
-			gotStatus, gotConfirmed, _ := client.checkStableIdentityRegistry(
+			evidence := client.checkStableIdentityRegistry(
 				context.Background(),
 				VerificationStatus(vector.InitialStatus),
 				vector.TrustAddress,
 				vector.FromDID,
 				vector.FromStableID,
 			)
+			gotStatus, gotConfirmed := evidence.status, evidence.currentKeyConfirmed
 			if gotStatus != VerificationStatus(vector.ExpectedStatus) {
 				t.Fatalf("status=%q, want %q", gotStatus, vector.ExpectedStatus)
 			}
@@ -265,22 +267,66 @@ func TestTOFUConformanceVectors(t *testing.T) {
 				meta.DID = vector.FromDID
 			}
 
-			got := client.checkTOFUPinWithMeta(
-				context.Background(),
-				VerificationStatus(vector.InitialStatus),
-				vector.RawAddress,
-				vector.TrustAddress,
-				vector.FromDID,
-				vector.FromStableID,
-				rotation,
-				replacement,
-				meta,
-				vector.RegistryConfirmedCurrentKey,
-			)
+			// The pin check runs under the sender-trust owner's rule for a
+			// legacy-format signature (checkedAsVerified).
+			got, _ := checkedAsVerified(VerificationStatus(vector.InitialStatus), func(status VerificationStatus) (VerificationStatus, *bool) {
+				return client.checkResolvedSenderPin(context.Background(), resolvedSenderPinCheck{
+					Status: status, RawAddress: vector.RawAddress,
+					TrustAddress: vector.TrustAddress, FromDID: vector.FromDID, FromStableID: vector.FromStableID,
+					Rotation: rotation, Replacement: replacement, Metadata: meta,
+					Registry: registryEvidence{status: status, currentKeyConfirmed: vector.RegistryConfirmedCurrentKey},
+				}), nil
+			})
 			if got != VerificationStatus(vector.ExpectedStatus) {
 				t.Fatalf("status=%q, want %q", got, vector.ExpectedStatus)
 			}
 
+			expected := &vector.PinStoreBefore
+			if vector.ExpectedPinStoreAfter != nil {
+				expected = vector.ExpectedPinStoreAfter
+			}
+			assertPinStoreMatchesVector(t, pins, *expected, vector.PinStoreBefore)
+		})
+	}
+}
+
+type localSenderVectorFile struct {
+	Schema  string              `json:"schema"`
+	Vectors []localSenderVector `json:"vectors"`
+}
+
+type localSenderVector struct {
+	Name                  string          `json:"name"`
+	RawAddress            string          `json:"raw_address"`
+	TrustAddress          string          `json:"trust_address"`
+	FromDID               string          `json:"from_did"`
+	RosterDID             string          `json:"roster_did"`
+	PinStoreBefore        pinStoreVector  `json:"pin_store_before"`
+	ExpectedStatus        string          `json:"expected_status"`
+	ExpectedPinStoreAfter *pinStoreVector `json:"expected_pin_store_after"`
+}
+
+func TestLocalSenderConformanceVectors(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "test-vectors", "trust", "local-sender-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors localSenderVectorFile
+	if err := json.Unmarshal(raw, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	if vectors.Schema != "aweb.trust.local-sender.v1" {
+		t.Fatalf("schema=%q", vectors.Schema)
+	}
+	for _, vector := range vectors.Vectors {
+		t.Run(vector.Name, func(t *testing.T) {
+			pins := pinStoreFromVector(vector.PinStoreBefore)
+			client := &Client{pinStore: pins}
+			roster := &agentMeta{DID: vector.RosterDID, IdentityScope: IdentityModeLocal, Resolved: true, Authoritative: true}
+			got := client.verifyResolvedLocalSender(roster, vector.RawAddress, vector.TrustAddress, vector.FromDID, Verified)
+			if got != VerificationStatus(vector.ExpectedStatus) {
+				t.Fatalf("status=%q, want %q", got, vector.ExpectedStatus)
+			}
 			expected := &vector.PinStoreBefore
 			if vector.ExpectedPinStoreAfter != nil {
 				expected = vector.ExpectedPinStoreAfter
@@ -412,9 +458,24 @@ func privateKeyFromSeedByte(seedByte int) ed25519.PrivateKey {
 	return ed25519.NewKeyFromSeed(seed)
 }
 
+// retiredAddressPattern is a retired pin's address: the released address and
+// when it was released. A vector writes it as $RETIRED:<address>.
+var retiredAddressPattern = regexp.MustCompile(`^retired:(.+)@(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)$`)
+
+func vectorAddress(address string) string {
+	if m := retiredAddressPattern.FindStringSubmatch(address); m != nil {
+		return "$RETIRED:" + m[1]
+	}
+	return address
+}
+
 func assertPinStoreMatchesVector(t *testing.T, got *PinStore, expected pinStoreVector, before pinStoreVector) {
 	t.Helper()
-	if !reflect.DeepEqual(got.Addresses, expected.Addresses) {
+	addresses := make(map[string]string, len(got.Addresses))
+	for address, pinKey := range got.Addresses {
+		addresses[vectorAddress(address)] = pinKey
+	}
+	if !reflect.DeepEqual(addresses, expected.Addresses) {
 		t.Fatalf("addresses=%#v, want %#v", got.Addresses, expected.Addresses)
 	}
 	if len(got.Pins) != len(expected.Pins) {
@@ -426,7 +487,7 @@ func assertPinStoreMatchesVector(t *testing.T, got *PinStore, expected pinStoreV
 			t.Fatalf("missing pin %q", key)
 		}
 		beforePin := before.Pins[key]
-		assertPinField(t, key, "address", gotPin.Address, expectedPin.Address, beforePin.Address)
+		assertPinField(t, key, "address", vectorAddress(gotPin.Address), expectedPin.Address, beforePin.Address)
 		assertPinField(t, key, "stable_id", gotPin.StableID, expectedPin.StableID, beforePin.StableID)
 		assertPinField(t, key, "did_key", gotPin.DIDKey, expectedPin.DIDKey, beforePin.DIDKey)
 		assertPinField(t, key, "confirmed_by", gotPin.ConfirmedBy, expectedPin.ConfirmedBy, beforePin.ConfirmedBy)

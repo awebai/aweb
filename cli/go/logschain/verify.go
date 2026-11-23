@@ -6,6 +6,37 @@ import (
 	"github.com/awebai/aw/hookevent"
 )
 
+// logRecordKind is the closed vocabulary in docs/logs-chain.md, “The bundle,” lines 269–277.
+type logRecordKind string
+
+const (
+	genesisRecord    logRecordKind = "genesis"
+	eventRecord      logRecordKind = "event"
+	receiptRecord    logRecordKind = "receipt"
+	checkpointRecord logRecordKind = "checkpoint"
+)
+
+// chainFault is the ordered verification vocabulary in docs/logs-chain.md, “Verifying a chain,” lines 150–180.
+type chainFault string
+
+const (
+	noChainFault           chainFault = ""
+	sequenceDuplicateFault chainFault = "sequence_duplicate"
+	misplacedFault         chainFault = "misplaced"
+	wrongChainFault        chainFault = "wrong_chain"
+	previousHashFault      chainFault = "prev_hash_mismatch"
+	eventHashFault         chainFault = "event_hash_mismatch"
+	contentMissingFault    chainFault = "content_missing"
+	commitmentFault        chainFault = "commitment_mismatch"
+	provenanceFault        chainFault = "provenance_invalid"
+	skeletonFault          chainFault = "skeleton_mismatch"
+	signatureFault         chainFault = "signature_invalid"
+	notInChainFault        chainFault = "not_in_chain"
+	hashMismatchFault      chainFault = "hash_mismatch"
+	eventMismatchFault     chainFault = "event_mismatch"
+	epochAbsentFault       chainFault = "epoch_absent"
+)
+
 // Content is an event's retained content, and the producer key ingest
 // verified it against.
 type Content struct {
@@ -96,52 +127,35 @@ func VerifyChain(
 	receiptKeys, checkpointKeys map[string]bool,
 	receipts, checkpoints []Artefact,
 ) (Report, error) {
-	state, err := newEpochState(genesis)
+	// The compatibility API takes unordered epoch data. Sort it at this input
+	// boundary; the export reader intentionally preserves and checks wire order.
+	positions := map[int64]bool{}
+	for _, event := range events {
+		positions[event.Link.TeamSeq] = true
+	}
+	epoch, err := newBundleEpoch(epochVerificationOptions{Genesis: genesis, LinkedToPredecessor: true, WitnessedPositions: positions})
 	if err != nil {
 		return Report{}, err
 	}
-	hashes := map[int64]string{0: state.genesisHash}
-	stored := map[int64]StoredEvent{}
-
 	ordered := append([]StoredEvent{}, events...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Link.TeamSeq < ordered[j].Link.TeamSeq })
 	for _, event := range ordered {
-		seq := event.Link.TeamSeq
-		if _, seen := hashes[seq]; seen {
-			state.fail(seq, "sequence_duplicate")
-			continue
-		}
-		state.add(event)
-		hashes[seq] = event.EventHash
-		stored[seq] = event
+		epoch.event(event)
 	}
-
-	contradiction := func(kind string, artefact Artefact, keys map[string]bool) string {
-		opened, reason := acceptedArtefact(kind, artefact, keys, genesis)
-		if opened == nil {
-			return reason
-		}
-		hash, present := hashes[opened.teamSeq]
-		if !present {
-			return "not_in_chain"
-		}
-		event, held := stored[opened.teamSeq]
-		if !held {
-			return opened.atPosition(hash, nil)
-		}
-		return opened.atPosition(hash, &event)
-	}
-	for index, artefact := range receipts {
-		if reason := contradiction("receipt", artefact, receiptKeys); reason != "" {
-			state.report.Contradicted = append(state.report.Contradicted, Contradiction{"receipt", index, reason})
+	for _, given := range []struct {
+		kind   logRecordKind
+		values []Artefact
+		keys   map[string]bool
+	}{
+		{receiptRecord, receipts, receiptKeys}, {checkpointRecord, checkpoints, checkpointKeys},
+	} {
+		for index, artefact := range given.values {
+			if reason := epoch.witnessFault(witness{kind: given.kind, artefact: artefact}, given.keys); reason != noChainFault {
+				epoch.state.report.Contradicted = append(epoch.state.report.Contradicted, Contradiction{string(given.kind), index, string(reason)})
+			}
 		}
 	}
-	for index, artefact := range checkpoints {
-		if reason := contradiction("checkpoint", artefact, checkpointKeys); reason != "" {
-			state.report.Contradicted = append(state.report.Contradicted, Contradiction{"checkpoint", index, reason})
-		}
-	}
-	return state.report, nil
+	return epoch.state.report, nil
 }
 
 // epochState is the running check of one epoch's events, taken in increasing
@@ -163,9 +177,9 @@ func newEpochState(genesis Genesis) (*epochState, error) {
 	return &epochState{genesis: genesis, genesisHash: hash, prevHash: hash, expected: 1}, nil
 }
 
-func (s *epochState) fail(seq int64, reason string) {
+func (s *epochState) fail(seq int64, reason chainFault) {
 	if s.report.FirstBreak == nil {
-		s.report.FirstBreak = &Break{TeamSeq: seq, Reason: reason}
+		s.report.FirstBreak = &Break{TeamSeq: seq, Reason: string(reason)}
 	}
 }
 
@@ -178,7 +192,7 @@ func (s *epochState) add(event StoredEvent) {
 	} else {
 		linked = event.Link.PrevEventHash == s.prevHash
 	}
-	if reason := eventFault(s.genesis, event, linked); reason != "" {
+	if reason := (eventVerification{Genesis: s.genesis, Event: event, LinkedToPrevious: linked}).fault(); reason != noChainFault {
 		s.fail(seq, reason)
 	}
 	if event.Content == nil && event.PurgeAct != "" {
@@ -188,37 +202,45 @@ func (s *epochState) add(event StoredEvent) {
 	s.expected = seq + 1
 }
 
-// eventFault is the first fault of one stored event, in the contract's order.
-func eventFault(genesis Genesis, event StoredEvent, linked bool) string {
+// eventVerification checks one stored event in the fault order of
+// docs/logs-chain.md, “Verifying a chain,” lines 150–164.
+type eventVerification struct {
+	Genesis          Genesis
+	Event            StoredEvent
+	LinkedToPrevious bool
+}
+
+func (verification eventVerification) fault() chainFault {
+	genesis, event, linked := verification.Genesis, verification.Event, verification.LinkedToPrevious
 	link := event.Link
 	if link.TeamID != genesis.TeamID || link.ChainEpoch != genesis.ChainEpoch {
-		return "wrong_chain"
+		return wrongChainFault
 	}
 	if !linked {
-		return "prev_hash_mismatch"
+		return previousHashFault
 	}
 	if hash, err := link.EventHash(); err != nil || hash != event.EventHash {
-		return "event_hash_mismatch"
+		return eventHashFault
 	}
 	content := event.Content
 	if content == nil {
 		if event.PurgeAct != "" {
-			return ""
+			return noChainFault
 		}
-		return "content_missing"
+		return contentMissingFault
 	}
 	commitment, err := ContentCommitment(content.Salt, content.SigningBytes, content.Signature)
 	if err != nil || commitment != link.ContentCommitment {
-		return "commitment_mismatch"
+		return commitmentFault
 	}
 	envelope, err := hookevent.Verify(content.SigningBytes, content.Signature, hookevent.VerifyOptions{TeamID: genesis.TeamID})
 	if err != nil || envelope.ProducerDIDKey != content.ProducerDIDKey {
-		return "provenance_invalid"
+		return provenanceFault
 	}
 	if envelope.Hook != link.Hook || ProducerOrigin(envelope) != link.ProducerOrigin {
-		return "skeleton_mismatch"
+		return skeletonFault
 	}
-	return ""
+	return noChainFault
 }
 
 func extendPurged(purged []PurgedRange, seq int64, act string) []PurgedRange {
@@ -239,44 +261,44 @@ type openedArtefact struct {
 
 // acceptedArtefact opens a receipt or checkpoint signed by one of keys for this
 // epoch, or says why it is contradicted before its position is looked at.
-func acceptedArtefact(kind string, artefact Artefact, keys map[string]bool, genesis Genesis) (*openedArtefact, string) {
+func acceptedArtefact(kind logRecordKind, artefact Artefact, keys map[string]bool, genesis Genesis) (*openedArtefact, chainFault) {
 	var didKey, teamID, origin string
 	var epoch int64
 	opened := &openedArtefact{}
-	if kind == "receipt" {
+	if kind == receiptRecord {
 		receipt, err := OpenReceipt(artefact.SigningBytes, artefact.Signature)
 		if err != nil {
-			return nil, "signature_invalid"
+			return nil, signatureFault
 		}
 		didKey, teamID, epoch, origin = receipt.DIDKey, receipt.TeamID, receipt.ChainEpoch, receipt.LogsOrigin
 		opened.teamSeq, opened.eventHash, opened.receipt = receipt.TeamSeq, receipt.EventHash, receipt
 	} else {
 		checkpoint, err := OpenCheckpoint(artefact.SigningBytes, artefact.Signature)
 		if err != nil {
-			return nil, "signature_invalid"
+			return nil, signatureFault
 		}
 		didKey, teamID, epoch, origin = checkpoint.DIDKey, checkpoint.TeamID, checkpoint.ChainEpoch, checkpoint.LogsOrigin
 		opened.teamSeq, opened.eventHash = checkpoint.TeamSeq, checkpoint.EventHash
 	}
 	if !keys[didKey] {
-		return nil, "signature_invalid"
+		return nil, signatureFault
 	}
 	if teamID != genesis.TeamID || epoch != genesis.ChainEpoch || origin != genesis.LogsOrigin {
-		return nil, "wrong_chain"
+		return nil, wrongChainFault
 	}
-	return opened, ""
+	return opened, noChainFault
 }
 
 // atPosition is why the chain at the artefact's position, holding storedHash
 // and the stored event (nil at the genesis), contradicts it, or "".
-func (a *openedArtefact) atPosition(storedHash string, stored *StoredEvent) string {
+func (a *openedArtefact) atPosition(storedHash string, stored *StoredEvent) chainFault {
 	if storedHash != a.eventHash {
-		return "hash_mismatch"
+		return hashMismatchFault
 	}
 	if a.receipt != nil && (stored == nil || !receiptNamesEvent(a.receipt, *stored)) {
-		return "event_mismatch"
+		return eventMismatchFault
 	}
-	return ""
+	return noChainFault
 }
 
 // receiptNamesEvent is whether a receipt names the event stored at its

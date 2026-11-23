@@ -124,11 +124,25 @@ every future change to the file without anyone reading it.
 
 ### Messages whose sender is not verified
 
-The mail and chat that wake the agent are placed in its prompt. When a
-message's sender could not be verified (the signature is missing or does not
-match, the identity does not match the address, or the check could not be
-made), the prompt says so next to that message and tells the agent to treat
-the text as untrusted.
+Mail and chat are fetched from durable messages before entering the prompt.
+When verification is `failed` or `identity_mismatch`, the launcher withholds
+the body and subject. It presents the claimed sender, the verification failure,
+and an `aw mail show --message-id ...` or `aw chat history --session-id ...`
+command for a deliberate read. A claimed sender from any message or event field
+is shown only when it is a valid alias, domain/name address, `did:key` or
+`did:aw`, using the existing identifier validators. Other labels are omitted. The notice format is shared with the
+[autonomous message presentation contract](receiving-events.md#autonomous-message-presentation).
+Withheld mail remains unread. Chat omits withheld IDs from its acknowledgement
+request. An older server can still apply its compatibility read watermark.
+
+Unsigned, stale, missing and unknown verification results keep a warning next
+to the content. A warning does not establish authorship; retry verification
+before sensitive work. Verified messages keep their normal reply flow.
+
+A failed history read is reported with a command to fetch the conversation.
+An unsigned `last_message` preview from a pending conversation never replaces
+that history in the prompt. A wake without a durable reference supplies only
+a command to inspect pending messages.
 
 ## In-Session Controls
 

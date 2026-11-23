@@ -2,7 +2,9 @@ package awid
 
 import (
 	"encoding/json"
+	"log/slog"
 	"strings"
+	"sync/atomic"
 )
 
 type signedEnvelopeMetadata struct {
@@ -88,6 +90,26 @@ func signedDisplayMatches(payload string, fields map[string]string) bool {
 	return true
 }
 
+// chatDisplay is what a reader shows of a plaintext chat message, taken from
+// the message as received, before signed metadata is projected over it.
+type chatDisplay struct {
+	Body           string
+	MessageID      string
+	ConversationID string
+	FromDID        string
+	ToDID          string
+}
+
+// signedChatDisplayMatches reports whether a plaintext chat message shows
+// what its signed payload says.
+func signedChatDisplayMatches(payload string, display chatDisplay) bool {
+	return signedDisplayMatches(payload, map[string]string{
+		"type": "chat", "body": display.Body,
+		"message_id": display.MessageID, "conversation_id": display.ConversationID,
+		"from_did": display.FromDID, "to_did": display.ToDID,
+	})
+}
+
 // signedMailDisplayMatches permits the legacy empty recipient-key claim only
 // for mail delivered to this reader. The authenticated read establishes the
 // recipient; authenticated sender-visible reads also preserve the reader's own
@@ -120,4 +142,25 @@ func (c *Client) signedMailDisplayMatches(payload string, fields map[string]stri
 		}
 	}
 	return signedDisplayMatches(payload, fields)
+}
+
+var noncanonicalSignedMetadataCount atomic.Uint64
+
+// Only call after verifying the signature. Preserve the released case-insensitive
+// struct interpretation and measure it before a separately approved cutoff.
+func recordNoncanonicalSignedMetadata(payload string) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(payload), &fields) != nil {
+		return
+	}
+	names := []string{"from", "to", "from_did", "to_did", "from_stable_id", "to_stable_id", "conversation_id"}
+	for field := range fields {
+		for _, name := range names {
+			if field != name && strings.EqualFold(field, name) {
+				value := noncanonicalSignedMetadataCount.Add(1)
+				slog.Info("Noncanonical signed metadata retained for compatibility.", "event", "aw_noncanonical_signed_metadata_verified", "value", value)
+				return
+			}
+		}
+	}
 }

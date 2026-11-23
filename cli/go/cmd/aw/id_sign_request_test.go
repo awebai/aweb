@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -239,6 +240,50 @@ func TestAwIDRequestRawPrintsBodyOnly(t *testing.T) {
 	}
 	if sawStableID != stableID {
 		t.Fatalf("raw request X-AWEB-DID-AW=%q want %q", sawStableID, stableID)
+	}
+}
+
+// --raw is the documented way to save a response, such as an image, to a
+// file: stdout carries the upstream body byte for byte, and only the status
+// line goes to stderr.
+func TestAwIDRequestRawWritesBodyByteExact(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	body := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00, 0xff, 0xfe, 'e', 'n', 'd'}
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(body)
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", did, stableID, "https://api.awid.ai", priv)
+
+	run := exec.CommandContext(ctx, bin, "id", "request", "GET", server.URL+"/chart.png", "--raw")
+	run.Env = idCreateCommandEnv(tmp)
+	run.Dir = tmp
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	if err := run.Run(); err != nil {
+		t.Fatalf("id request --raw failed: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if !bytes.Equal(stdout.Bytes(), body) {
+		t.Fatalf("stdout=%q, want the body byte for byte %q", stdout.Bytes(), body)
+	}
+	if stderr.String() != "HTTP 200\n" {
+		t.Fatalf("stderr=%q, want the status line only", stderr.String())
 	}
 }
 

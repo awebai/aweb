@@ -38,6 +38,17 @@ reviewer can verify which old groups the new owner replaces. A bare increase
 or a relocation with an unchanged total is refused even when the tools fit the
 candidate budget. Missing Git/reference evidence fails as setup.
 
+The candidate gate owns supplying `refs/remotes/origin/main` in its private
+checkout at the exact synchronized main commit recorded in the gate inputs.
+A local clone does not copy the source checkout's remote-tracking refs. The
+gate must materialize and verify that recorded ref before running the checker;
+a missing or changed source ref must be refused by gate preparation. The checker
+only reads the supplied ref: it never fetches, repairs a checkout or substitutes
+the candidate's own ceiling. Its real CLI control starts with a detached
+candidate and no remote refs, observes the missing-baseline setup refusal,
+then supplies the recorded main ref and distinguishes it from a candidate
+budget increase.
+
 ## Source exemptions
 
 Mypy source exemptions are findings under the same reviewed ceiling. Python's

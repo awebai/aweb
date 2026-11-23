@@ -300,11 +300,10 @@ var wakeDeregisterCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			printOutput(receipt, func(v any) string {
+			return printOutput(receipt, func(v any) string {
 				r := v.(*wake.ManagedStopReceipt)
 				return fmt.Sprintf("managed worker joined: home=%s generation=%d completed_at=%s; accepted input completion NOT certified", r.Receiver.Registration.Home, r.Receiver.Generation, r.CompletedAt.Format(time.RFC3339Nano))
 			})
-			return nil
 		}
 		if wakeDeregisterExpected != "" {
 			return usageError("--expect-registration requires --require-managed-stop")
@@ -356,29 +355,7 @@ var wakeResumeCmd = &cobra.Command{
 var wakeStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Report per-home broker lifecycle, readiness, and delivery status",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		store, err := wakeStore()
-		if err != nil {
-			return err
-		}
-		var status wake.Status
-		resp, callErr := wake.Call(store.SocketPath(), wake.ControlRequest{Op: wake.OpStatus})
-		switch {
-		case callErr == nil && resp.Status != nil:
-			status = *resp.Status
-		case callErr != nil && errors.Is(callErr, wake.ErrDaemonDown):
-			status, err = wake.StatusFromStore(store, wakeMaxStreams)
-			if err != nil {
-				return err
-			}
-		case callErr != nil:
-			return callErr
-		}
-		// Only the daemon's own report counts; an older daemon stays unknown.
-		status.ClassifyDaemonVersion()
-		printOutput(status, formatWakeStatus)
-		return nil
-	},
+	RunE:  runWakeStatus,
 }
 
 func wakeSetPaused(cmd *cobra.Command, home string, paused bool) error {
@@ -407,23 +384,59 @@ func wakeSetPaused(cmd *cobra.Command, home string, paused bool) error {
 	return nil
 }
 
-// wakeCallOrFallback sends a control request to the running daemon, and writes
-// the state files directly when nothing is listening.
-//
-// The fallback is what keeps an OATS hook from failing because the broker
-// happens to be restarting: the daemon reconciles registry.d on start and on a
-// timer, so a file written here is picked up either way. It is not a bypass of
-// the exclusivity check — Registration.Validate runs on the command side, and
-// the daemon re-validates every file it reconciles.
+// wakeRestartWait outlasts a broker restart: the daemon holds its lock with the
+// socket closed while its channel-core children stop (up to their 5 s grace
+// plus 2 s of output), and from taking the lock until it listens.
+const (
+	wakeRestartWait = 15 * time.Second
+	wakeRestartPoll = 50 * time.Millisecond
+)
+
+// wakeCallOrFallback writes state files only while holding the daemon lock.
+// A missing socket can mean startup or failure of a live daemon, so only the
+// lock permits mutation fallback (docs/terminal-wake-broker.md, Local state).
+// A restart is waited out: while the lock is held and nothing answers, the
+// request is retried until the daemon answers or the lock frees. Every request
+// sent here is idempotent, so retrying an exchange that broke is safe.
 func wakeCallOrFallback(store *wake.Store, req wake.ControlRequest, fallback func() error) (wake.ControlResponse, error) {
-	resp, err := wake.Call(store.SocketPath(), req)
-	if err == nil {
-		return resp, nil
+	deadline := time.Now().Add(wakeRestartWait)
+	for {
+		resp, err := wake.Call(store.SocketPath(), req)
+		if err == nil {
+			return resp, nil
+		}
+		if errors.Is(err, wake.ErrDaemonDown) {
+			err = wake.WithDaemonStopped(store, fallback)
+			if err == nil {
+				return wake.ControlResponse{OK: true}, nil
+			}
+			if !errors.Is(err, wake.ErrDaemonOwnsState) {
+				return wake.ControlResponse{}, err
+			}
+		} else if !errors.Is(err, wake.ErrControlTransport) {
+			return resp, err
+		}
+		if !time.Now().Before(deadline) {
+			return wake.ControlResponse{}, wakeDaemonUnresponsive(store, err)
+		}
+		time.Sleep(wakeRestartPoll)
 	}
-	if !errors.Is(err, wake.ErrDaemonDown) {
-		return resp, err
+}
+
+// wakeDaemonUnresponsive names the daemon that held its lock through the whole
+// restart wait without answering: it is wedged, not restarting.
+func wakeDaemonUnresponsive(store *wake.Store, last error) error {
+	var owner string
+	switch pid, alive, err := wake.LockOwner(store.LockPath()); {
+	case err != nil:
+		owner = fmt.Sprintf("a wake broker (pid unreadable: %v)", err)
+	case alive && pid > 0:
+		owner = fmt.Sprintf("the wake broker (pid %d)", pid)
+	default:
+		owner = "a wake broker (pid not recorded)"
 	}
-	return wake.ControlResponse{OK: true}, fallback()
+	return fmt.Errorf("wake: %s holds its state but has not answered for %s; stop it and restart the broker with aw wake run, then retry: %w",
+		owner, wakeRestartWait, last)
 }
 
 // wakeStore resolves the state directory: the flag, then AW_WAKE_STATE_DIR,

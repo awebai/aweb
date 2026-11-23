@@ -62,14 +62,19 @@ class LedgerLease:
         rows = delta.splitlines(keepends=True)
         for row in rows:
             fields = row.rstrip(b"\n").split(b"\t")
-            if (
-                len(fields) != 10
-                or not fields[0].startswith((self.tree + "-").encode())
-                or fields[2] not in {b"passed", b"failed"}
-            ):
+            if len(fields) != 10 or not fields[0].startswith((self.tree + "-").encode()):
                 raise Infrastructure(
                     "VM ledger appended malformed or unrelated-tree rows"
                 )
+            status = fields[2]
+            target = re.fullmatch(
+                rb"(checks|user-paths|unit|artifacts|integration)/[A-Za-z0-9_.-]+",
+                fields[1],
+            )
+            if status not in {b"passed", b"failed"} and not (
+                status == b"skipped" and target
+            ):
+                raise Infrastructure("VM ledger appended an invalid verdict")
         with self.writer():
             current = self.path.read_bytes() if self.path.exists() else b""
             if not current.startswith(before) or (

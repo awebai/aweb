@@ -11,6 +11,8 @@ from identity_binding_support import register_global_identity
 from test_dashboard_privacy import TEAM, _request as _key_request, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair, _signed_identity_headers
 
+__all__ = ["privacy_app"]
+
 
 async def _request(env, actor, method, path, body=None):
     if actor != "bob":

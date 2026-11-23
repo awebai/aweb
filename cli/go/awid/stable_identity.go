@@ -1,13 +1,14 @@
 package awid
 
 import (
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/canonicaljson"
+	"github.com/awebai/aw/signaturewire"
 )
 
 type StableIdentityOutcome string
@@ -82,6 +83,12 @@ type StableIdentityVerification struct {
 	// the caller can persist it as an anti-rollback checkpoint alongside the pin
 	// (default-aajc.8). Set only when Outcome is StableIdentityVerified.
 	VerifiedHead *VerifiedLogHead
+	// RegistryURL is the registry that answered; a checkpoint belongs to it.
+	RegistryURL string
+	// NewCheckpoint says the registry had no checkpoint for this identity
+	// before this verification: across it, only the pin's key binding
+	// protects (docs/trust-model.md).
+	NewCheckpoint bool
 }
 
 type VerifiedLogHead struct {
@@ -192,7 +199,7 @@ func VerifyDidKeyResolution(res *DidKeyResolution, cached *VerifiedLogHead, now 
 		return StableIdentityHardError, nil, fmt.Errorf("entry_hash mismatch")
 	}
 
-	sig, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(head.Signature))
+	sig, err := signaturewire.DecodeStd(strings.TrimSpace(head.Signature))
 	if err != nil {
 		return StableIdentityHardError, nil, fmt.Errorf("decode log_head signature: %w", err)
 	}
@@ -200,7 +207,7 @@ func VerifyDidKeyResolution(res *DidKeyResolution, cached *VerifiedLogHead, now 
 	if err != nil {
 		return StableIdentityHardError, nil, fmt.Errorf("extract authorized_by key: %w", err)
 	}
-	if !ed25519.Verify(pub, []byte(payload), sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: pub, Payload: []byte(payload), Signature: sig}) {
 		return StableIdentityHardError, nil, fmt.Errorf("invalid log_head signature")
 	}
 
@@ -275,49 +282,24 @@ func VerifyDidLogEntries(didAW string, entries []DidKeyEvidence, now time.Time) 
 }
 
 func CanonicalDidLogPayload(didAW string, head *DidKeyEvidence) string {
-	var b strings.Builder
-	b.WriteByte('{')
-	writeJSONField(&b, "authorized_by", head.AuthorizedBy)
-	b.WriteByte(',')
-	writeJSONField(&b, "did_aw", didAW)
-	b.WriteByte(',')
-	writeJSONField(&b, "new_did_key", head.NewDIDKey)
-	b.WriteByte(',')
-	writeJSONField(&b, "operation", head.Operation)
-	b.WriteByte(',')
-	writeJSONNullableField(&b, "prev_entry_hash", head.PrevEntryHash)
-	b.WriteByte(',')
-	writeJSONNullableField(&b, "previous_did_key", head.PreviousDIDKey)
-	b.WriteByte(',')
-	b.WriteString(`"seq":`)
-	b.WriteString(fmt.Sprintf("%d", head.Seq))
-	b.WriteByte(',')
-	writeJSONField(&b, "state_hash", head.StateHash)
-	b.WriteByte(',')
-	writeJSONField(&b, "timestamp", head.Timestamp)
-	b.WriteByte('}')
-	return b.String()
-}
-
-func writeJSONField(b *strings.Builder, key, value string) {
-	b.WriteByte('"')
-	b.WriteString(key)
-	b.WriteString(`":"`)
-	writeEscapedString(b, value)
-	b.WriteByte('"')
-}
-
-func writeJSONNullableField(b *strings.Builder, key string, value *string) {
-	b.WriteByte('"')
-	b.WriteString(key)
-	b.WriteString(`":`)
-	if value == nil {
-		b.WriteString("null")
-		return
+	fields := map[string]any{
+		"authorized_by":    head.AuthorizedBy,
+		"did_aw":           didAW,
+		"new_did_key":      head.NewDIDKey,
+		"operation":        head.Operation,
+		"seq":              head.Seq,
+		"state_hash":       head.StateHash,
+		"timestamp":        head.Timestamp,
+		"prev_entry_hash":  nil,
+		"previous_did_key": nil,
 	}
-	b.WriteByte('"')
-	writeEscapedString(b, *value)
-	b.WriteByte('"')
+	if head.PrevEntryHash != nil {
+		fields["prev_entry_hash"] = *head.PrevEntryHash
+	}
+	if head.PreviousDIDKey != nil {
+		fields["previous_did_key"] = *head.PreviousDIDKey
+	}
+	return canonicaljson.Object(fields)
 }
 
 func isLowerHex(value string) bool {

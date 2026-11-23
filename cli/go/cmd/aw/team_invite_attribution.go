@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/awebai/aw/awconfig"
@@ -30,7 +29,7 @@ func resolveIDExchangeIdentity(wd, home string) (*awconfig.ResolvedIdentity, err
 	if errors.Is(err, os.ErrNotExist) {
 		identity, err = resolveCertificateIdentityAtHome(wd, home)
 		if err == nil && identity.IdentityScope != awid.IdentityModeLocal {
-			return nil, errors.New("global exchange identity is missing identity.yaml")
+			return nil, missingGlobalIdentityFile()
 		}
 	}
 	if err != nil {
@@ -59,19 +58,6 @@ func identityKeyRoute(ctx context.Context, identity *awconfig.ResolvedIdentity, 
 // saved pin, the operation route can fill the same namespace's missing routing
 // information, subject to its independently discovered registry constraint.
 func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity *awconfig.ResolvedIdentity, domain string) (string, error) {
-	if own := strings.TrimSpace(identity.RegistryURL); own != "" {
-		return own, nil
-	}
-	if selected := strings.TrimSpace(opts.RegistryURL); selected != "" {
-		return selected, nil
-	}
-	if fallback := strings.TrimSpace(opts.TeamRegistryURL); fallback != "" && domain != "" && domain == opts.TeamRegistryDomain {
-		authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)
-		if err != nil {
-			return "", err
-		}
-		return domainRegistryURL(authority, fallback)
-	}
 	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
 		return "", err
@@ -79,21 +65,40 @@ func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity
 	if opts.TXTResolver != nil {
 		registry.Resolver.DNSResolver = opts.TXTResolver
 	}
-	// An installed chain fixes the issuer namespace independently of any
-	// address or team membership. The selector does not mutate identity state.
-	own := *identity
-	own.Domain = domain
-	return currentIdentityRegistryURL(ctx, &own, registry)
+	return resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryInviteIssuerRoute, Registry: registry, Identity: identity, Domain: domain, Override: opts.RegistryURL,
+		TXTResolver: opts.TXTResolver, TeamRegistry: opts.TeamRegistryURL, TeamDomain: opts.TeamRegistryDomain,
+	})
 }
 
-// No chain is the legacy path only when current evidence establishes absence.
+// A local did:key can be chainless: it has no portable enrollment witness.
+// A global did:aw needs authoritative no-enrollment evidence even when only
+// selecting an invite condition. Present unreadable/malformed files refuse.
 // A team key is never an ID-parent credential.
 func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconfig.TeamInviteIDChild, error) {
-	link, _, err := prepareTeamInviteAuthority(ctx, opts, true, nil)
+	link, _, err := prepareTeamInviteAuthority(ctx, teamInviteAuthorityRequest{Issuer: opts, Child: inviteCreatesChild})
 	return link, err
 }
 
-func prepareTeamInviteAuthority(ctx context.Context, opts idChildOptions, createChild bool, requested *string) (*awconfig.TeamInviteIDChild, *string, error) {
+type teamInviteChildPolicy uint8
+
+const (
+	inviteMembershipOnly teamInviteChildPolicy = iota
+	inviteCreatesChild
+)
+
+type teamInviteAuthorityRequest struct {
+	Issuer    idChildOptions
+	Child     teamInviteChildPolicy
+	ForHuman  *string
+	ExpiresAt time.Time
+}
+
+func prepareTeamInviteAuthority(ctx context.Context, input teamInviteAuthorityRequest) (*awconfig.TeamInviteIDChild, *string, error) {
+	if input.Child != inviteMembershipOnly && input.Child != inviteCreatesChild {
+		return nil, nil, errors.New("unknown invite parentage policy")
+	}
+	opts, requested := input.Issuer, input.ForHuman
 	identity, err := resolveIDExchangeIdentity(opts.WorkingDir, opts.IdentityHome)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil
@@ -111,15 +116,15 @@ func prepareTeamInviteAuthority(ctx context.Context, opts idChildOptions, create
 	}
 	domain := identity.Domain
 	if chain != nil {
-		certificates := chain.Bundle["certificates"].([]any)
-		domain = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
+		leaf, err := chain.Leaf()
+		if err != nil {
+			return nil, nil, err
+		}
+		domain = leaf.Domain()
 	}
 	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, domain)
 	if err != nil {
 		return nil, nil, fmt.Errorf("inviter cannot select its identity registry: %w", err)
-	}
-	if chain == nil && !createChild {
-		return nil, nil, nil
 	}
 	if chain == nil {
 		resolution, err := identityKeyRoute(ctx, identity, opts.RegistryURL)
@@ -149,10 +154,22 @@ func prepareTeamInviteAuthority(ctx context.Context, opts idChildOptions, create
 	if err != nil {
 		return nil, nil, err
 	}
-	if !createChild || (requested != nil && (verdict.HumanID == nil || *requested != *verdict.HumanID)) {
+	if input.Child == inviteMembershipOnly || (requested != nil && (verdict.HumanID == nil || *requested != *verdict.HumanID)) {
 		return nil, verdict.HumanID, nil
 	}
-	out, err := executeIDChildInvite(ctx, opts, "agent", "agent spawn", 7*24*time.Hour)
+	expiresAfter := 7 * 24 * time.Hour
+	if !input.ExpiresAt.IsZero() {
+		now := time.Now()
+		if opts.Now != nil {
+			now = opts.Now()
+		}
+		expiresAfter = input.ExpiresAt.Sub(now)
+		if expiresAfter <= 0 {
+			return nil, nil, awconfig.ErrTeamInviteLifetime
+		}
+		opts.Now = func() time.Time { return now }
+	}
+	out, err := executeIDChildInvite(ctx, opts, "agent", "agent spawn", expiresAfter)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -164,7 +181,11 @@ func prepareTeamInviteAuthority(ctx context.Context, opts idChildOptions, create
 	if err := issuer.invitations.PutInvitation(inv); err != nil {
 		return nil, nil, err
 	}
-	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: out.Parent["id"].(string), Domain: out.Domain, IssuerHome: home, RegistryURL: issuer.registryURL}, verdict.HumanID, nil
+	parentID, validParent := out.Parent["id"].(string)
+	if !validParent || parentID == "" {
+		return nil, nil, errors.New("child invitation has no issuer ID; retain its record and restore the issuer's original chain before retrying")
+	}
+	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: parentID, Domain: out.Domain, IssuerHome: home, RegistryURL: issuer.registryURL}, verdict.HumanID, nil
 }
 
 func checkSelectedTeamInviteIssuer(ctx context.Context, issuer *selectedChildIssuer) error {
@@ -288,7 +309,11 @@ func completeHostedProvisioningIDChild(ctx context.Context, anchorDir, issuerHom
 // The caller owns both homes and explicitly provisions a new agent. Ordinary
 // invite accept never guesses where another participant's signer might live.
 func acceptProvisionedTeamInvite(anchorDir, issuerHome, childDir, token string, opts teamAcceptInviteOptions) (*acceptedTeamInvite, error) {
-	accepted, err := acceptTeamInviteWithDetails(childDir, token, opts)
+	accepted, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: childDir,
+		Token:      token,
+		Options:    opts,
+	})
 	var pending *hostedInviteSignaturePendingError
 	if !errors.As(err, &pending) {
 		return accepted, err
@@ -308,7 +333,11 @@ func acceptProvisionedTeamInvite(anchorDir, issuerHome, childDir, token string, 
 	}
 	// Resume with the original child key, request UUID and successful preview.
 	// No Cloud acceptance was sent while the native signature was pending.
-	return acceptTeamInviteWithDetails(childDir, token, opts)
+	return acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: childDir,
+		Token:      token,
+		Options:    opts,
+	})
 }
 
 // Reserve a fresh recipient before minting its key. A prepared identity joins
@@ -325,6 +354,7 @@ func bindTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite, hom
 	} else {
 		for _, name := range []string{"identity.yaml", "signing.key"} {
 			if _, err := os.Stat(filepath.Join(home, name)); err == nil {
+				fmt.Fprintln(os.Stderr, "Joining membership only; this existing identity keeps its parentage.")
 				return false, nil
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return false, err

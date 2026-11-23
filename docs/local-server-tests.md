@@ -27,13 +27,46 @@ channel-core, channel and pi-extension in that order. A preparation failure
 stops before pytest; fix the reported error with `make prepare-server-node`
 and rerun the local target. Registry-only runs do not need this preparation.
 
+## Live progress and interrupted runs
+
+Each invocation retains evidence under a unique `test-results/server-local-*`
+directory. Set `LOCAL_TEST_REPORT_DIR` to a new, unused directory to choose its
+location. The runner prints the paths before each suite; server and registry
+have separate subdirectories:
+
+- `pytest.log` receives native Make/pytest output as it arrives. Use `tail -f`
+  on the printed path while the run is active.
+- `worker-*.json` records each worker's PID, current node ID, phase and UTC time.
+  These files are replaced atomically; `progress.jsonl` retains the event history
+  and pytest's setup/call/teardown durations.
+- `cases.xml` is written by pytest's JUnit plugin. The final log also includes
+  every completed case's duration, including sub-millisecond phases.
+
+The progress plugin records test identities and phase outcomes, never environment
+variables, credentials, fixture values or stack locals. Evidence directories are
+private (0700); progress and log files are 0600. Native pytest output remains in
+the private log, including ordinary failure diagnostics.
+
+On INT or TERM, the launcher requests graceful termination of the owned process
+group. The plugin converts TERM to pytest's normal interruption path so pytest
+can finalize its own summary and JUnit. The launcher drains output through the
+Make/egress wrappers before service cleanup. After ten seconds it force-stops an
+unresponsive group; that case can retain partial logs and worker state without a
+complete JUnit report. It never invents test results. There is no per-test timeout.
+
 ## Guards and cleanup
 
 An inherited database URL or host/port that names a non-loopback host or port
 5432 is refused before creating services. Unset it; this target supplies its own
 `TEST_DB_*`, `TEST_DATABASE_URL`, `PG*`, Redis settings and `AWEB_TEST_SERVICES=1`.
 It does not attach to an existing host database. Each xdist worker binds its own
-ports before fixtures import their database settings.
+ports before fixtures import their database settings. Port discovery reads the
+owned container's `NetworkSettings.Ports`, verifying its ID and Compose project
+and service labels. It waits up to five seconds for a nonzero `127.0.0.1` binding;
+Compose's exposed-port summary is not used as a connection address. A refusal
+prints a bounded `LOCAL_PORT_DIAGNOSTIC` JSON record with the container ID,
+port-map readback and Compose port output before cleanup. No container environment
+or credentials are inspected.
 
 The target resolves Docker's context-over-host precedence before any daemon
 operation, refuses remote endpoints, and pins the selected Unix socket for disk
@@ -61,5 +94,6 @@ Run that native control only when Docker execution on the host is authorized.
 For the isolated head/released and forward/reverse messaging selections, use
 [`make test-user-paths-local`](local-user-paths.md).
 
-Whole-suite invocations share the host-wide [local suite slots](local-suite-slots.md)
-with Cloud (default three), held from preparation through cleanup.
+Focused and whole-suite invocations share the host-wide
+[local suite slots](local-suite-slots.md) with Cloud (default three), held
+from preparation through cleanup.

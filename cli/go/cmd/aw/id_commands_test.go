@@ -29,7 +29,7 @@ import (
 )
 
 func TestPrintJSONOnlyAddsNameCompatibility(t *testing.T) {
-	out := captureIDCommandStdout(t, func() {
+	out := captureStdout(t, func() {
 		printJSON(map[string]any{
 			"alias":    "alice",
 			"lifetime": "persistent",
@@ -56,25 +56,6 @@ func TestPrintJSONOnlyAddsNameCompatibility(t *testing.T) {
 	if _, ok := nested["identity_scope"]; ok {
 		t.Fatalf("generic nested output must not derive identity_scope from lifetime: %v", nested)
 	}
-}
-
-func captureIDCommandStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
-	defer func() { os.Stdout = oldStdout }()
-	fn()
-	_ = w.Close()
-	os.Stdout = oldStdout
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(out)
 }
 
 func TestFormatIDCreateUsesGlobalVocabulary(t *testing.T) {
@@ -920,7 +901,7 @@ func TestEncryptionKeyEnsureRebindsGlobalAssertionWithoutRotatingActiveKey(t *te
 	if active.KeyID != oldRecord.KeyID {
 		t.Fatalf("identity rebind rotated active E2E key: got %s want %s", active.KeyID, oldRecord.KeyID)
 	}
-	assertion, err := loadEncryptionAssertion(tmp, active.AssertionPath)
+	assertion, err := loadEncryptionAssertionAt(tmp, "", active.AssertionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1049,7 +1030,7 @@ func TestE2EESendOwnHomePreservesActiveLocalCertificate(t *testing.T) {
 	if state.ActiveRecord().KeyID != keyBefore {
 		t.Fatal("send rotated active encryption key")
 	}
-	assertion, err := loadEncryptionAssertion(tmp, state.ActiveRecord().AssertionPath)
+	assertion, err := loadEncryptionAssertionAt(tmp, "", state.ActiveRecord().AssertionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1217,7 +1198,7 @@ func TestPrepareIDCreatePlanUsesDNSDiscoveredRegistryURL(t *testing.T) {
 	}
 }
 
-func TestExecuteIDCreateFailsBeforeLocalIdentityWhenAtomicRegistryUnavailable(t *testing.T) {
+func TestExecuteIDCreateRetainsPrivateKeyWhenAtomicRegistryUnavailable(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("AW_CONFIG_PATH", "")
@@ -1251,6 +1232,7 @@ func TestExecuteIDCreateFailsBeforeLocalIdentityWhenAtomicRegistryUnavailable(t 
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	}))
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	_, err = executeIDCreate(tmp, idCreateOptions{
 		Name:          "Alice",
 		Domain:        "acme.com",
@@ -1266,14 +1248,17 @@ func TestExecuteIDCreateFailsBeforeLocalIdentityWhenAtomicRegistryUnavailable(t 
 	if err == nil {
 		t.Fatal("expected id create to fail when atomic claim registry call fails")
 	}
+	if !retainUnfinishedProvisioningIdentity(err) {
+		t.Fatal("retained standalone creation would be removed by its outer caller")
+	}
 	if !strings.Contains(err.Error(), "could not reach AWID registry") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not be written, err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(err) {
-		t.Fatalf("signing.key should not be written, err=%v", err)
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("original private key must be retained: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "encryption.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("encryption.yaml should not be written, err=%v", err)
@@ -1316,8 +1301,8 @@ func TestAwIDCreateFailsBeforeLocalIdentityWhenRegistryUnavailable(t *testing.T)
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not be written, err=%v\n%s", err, string(out))
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(err) {
-		t.Fatalf("signing.key should not be written, err=%v\n%s", err, string(out))
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("original private key must be retained, err=%v\n%s", err, string(out))
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "encryption.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("encryption.yaml should not be written, err=%v\n%s", err, string(out))
@@ -1391,8 +1376,8 @@ func TestAwIDCreateAtomicClaimConflictDoesNotWriteLocalIdentity(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not be written, err=%v\n%s", err, string(out))
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(err) {
-		t.Fatalf("signing.key should not be written, err=%v\n%s", err, string(out))
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("original private key must be retained, err=%v\n%s", err, string(out))
 	}
 }
 
@@ -1459,8 +1444,8 @@ func TestAwIDCreateMissingAtomicPrimitiveDoesNotFallbackToSplitCalls(t *testing.
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("identity.yaml should not be written, err=%v\n%s", err, string(out))
 	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(err) {
-		t.Fatalf("signing.key should not be written, err=%v\n%s", err, string(out))
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); err != nil {
+		t.Fatalf("original private key must be retained, err=%v\n%s", err, string(out))
 	}
 }
 
@@ -2039,7 +2024,8 @@ func TestAwIDVerifyUsesIdentityRegistryURLWithoutWorkspace(t *testing.T) {
 	writeStandaloneSelfCustodyIdentity(t, tmp, "acme.com/alice", did, stableID, registryServer.URL, priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "verify", stableID, "--json")
-	run.Env = append(testCommandEnv(tmp), "AWEB_URL=https://should-not-be-used.example")
+	// No registry is named outside the identity, so its registry_url decides.
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL=https://should-not-be-used.example", "AWID_REGISTRY_URL=")
 	// The identity registry is an isolated host reached in isolated development.
 	run.Env = append(run.Env, "APP_ENV=development", "AWEB_FEDERATION_TEST=1")
 	run.Dir = tmp
@@ -2159,7 +2145,8 @@ func TestAwIDResolveWorksWithoutSigningKeyWhenIdentityRegistryURLPresent(t *test
 	}
 
 	run := exec.CommandContext(ctx, bin, "id", "resolve", stableID, "--json")
-	run.Env = testCommandEnv(tmp)
+	// No registry is named outside the identity, so its registry_url decides.
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=")
 	// The identity registry is an isolated host reached in isolated development.
 	run.Env = append(run.Env, "APP_ENV=development", "AWEB_FEDERATION_TEST=1")
 	run.Dir = tmp
@@ -2181,7 +2168,8 @@ func TestAwIDResolveWorksWithoutSigningKeyWhenIdentityRegistryURLPresent(t *test
 }
 
 func TestResolveRegistryClientForLookupDefaultsWithoutIdentityOrEnv(t *testing.T) {
-	t.Parallel()
+	// Cannot use t.Parallel() — clears AWID_REGISTRY_URL.
+	t.Setenv("AWID_REGISTRY_URL", "")
 
 	tmp := t.TempDir()
 	registry, identity, err := resolveRegistryClientForLookup(tmp)

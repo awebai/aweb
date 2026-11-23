@@ -2,15 +2,18 @@
 
 import json
 import re
-from pathlib import Path, PurePosixPath
 import tarfile
+from pathlib import Path, PurePosixPath
+
 from .errors import Infrastructure
+from .memory import load_samples, summarize_samples
 
 
 def collect_archive(archive, sha, destination):
     destination = Path(destination).resolve()
     destination.mkdir(parents=True, exist_ok=True, mode=0o700)
     stages = []
+    targets = []
     summaries = []
     links = []
     with tarfile.open(archive) as t:
@@ -52,20 +55,26 @@ def collect_archive(archive, sha, destination):
                         seconds = float(fields[3].removesuffix("s"))
                     except ValueError:
                         raise Infrastructure("invalid gate stage duration") from None
-                    stages.append(
-                        {
-                            "stage": fields[0],
-                            "status": fields[1],
-                            "seconds": seconds,
-                            "summary": item.name,
-                        }
-                    )
+                    stage, _, target = fields[0].partition("/")
+                    row = {
+                        "stage": stage,
+                        "status": fields[1],
+                        "seconds": seconds,
+                        "summary": item.name,
+                    }
+                    if target:
+                        targets.append({
+                            **row, "target": target, "log": fields[2],
+                            "detail": fields[4] if len(fields) > 4 else "",
+                        })
+                    else:
+                        stages.append(row)
     output = destination / "var/log/vm-gate/gate-output.log"
     if output.exists():
         for stage, log in re.findall(
             r"^gate: tree [0-9a-f]{40} already passed ([a-z-]+); original log (.+)$",
             output.read_text(errors="replace"),
-            re.M,
+            re.MULTILINE,
         ):
             stages.append(
                 {
@@ -78,30 +87,16 @@ def collect_archive(archive, sha, destination):
     memory_path = destination / "var/log/vm-gate/memory.jsonl"
     memory = None
     if memory_path.exists():
-        samples = [
-            json.loads(line) for line in memory_path.read_text().splitlines() if line
-        ]
-        valid = [s for s in samples if "meminfo_kib" in s and not s.get("sample_error")]
-        if valid:
-            memory = {
-                "samples": len(samples),
-                "valid": len(valid),
-                "host_sample_errors": sum("sample_error" in s for s in samples),
-                "container_read_errors": sum(
-                    len(s.get("container_errors", [])) for s in samples
-                ),
-                "host_sampled_used_peak_bytes": max(
-                    (s["meminfo_kib"]["MemTotal"] - s["meminfo_kib"]["MemAvailable"])
-                    * 1024
-                    for s in valid
-                ),
-                "concurrent_cgroup_current_peak_sum_bytes": max(
-                    sum(int(c["memory.current"]) for c in s.get("containers", []))
-                    for s in valid
-                ),
-            }
+        samples = load_samples(memory_path)
+        memory = summarize_samples(samples)
+    supervision_path = destination / "var/log/vm-gate/supervisor-receipt.json"
+    supervision = (
+        json.loads(supervision_path.read_text()) if supervision_path.exists() else None
+    )
     return {
+        "supervision": supervision,
         "stages": stages,
+        "targets": targets,
         "gate_summaries": summaries,
         "memory": memory,
         "archive_links_omitted": links,

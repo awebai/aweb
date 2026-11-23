@@ -4,7 +4,7 @@
 // redactor is the second line of defence, not the first.
 import { basename, relative, resolve, sep } from "node:path";
 
-export const SUMMARY_MAX_BYTES = 120;
+const SUMMARY_MAX_BYTES = 120;
 
 const FILE_VERBS: Record<string, string> = {
   Read: "Reading",

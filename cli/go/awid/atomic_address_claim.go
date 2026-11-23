@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 const AtomicAddressClaimOperation = "claim_identity_address"
@@ -190,7 +192,7 @@ func BuildAtomicAddressClaimIdentityProof(fields AtomicAddressClaimFields, ident
 		return nil, err
 	}
 	identitySignature := base64.RawStdEncoding.EncodeToString(
-		ed25519.Sign(identitySigningKey, []byte(identityCanonical)),
+		signaturewire.SignBytes(identitySigningKey, []byte(identityCanonical)),
 	)
 	if logProof == nil {
 		stateHash := stableIdentityStateHash(normalized.DIDAW, normalized.CurrentDIDKey)
@@ -214,7 +216,7 @@ func BuildAtomicAddressClaimIdentityProof(fields AtomicAddressClaimFields, ident
 			AuthorizedBy:   normalized.CurrentDIDKey,
 			Timestamp:      normalized.Timestamp,
 			Signature: base64.RawStdEncoding.EncodeToString(
-				ed25519.Sign(identitySigningKey, []byte(didLogPayload)),
+				signaturewire.SignBytes(identitySigningKey, []byte(didLogPayload)),
 			),
 		}
 	}
@@ -268,7 +270,7 @@ func AtomicAddressClaimIdentityProofHash(identityCanonical, identitySignature st
 	if identityCanonical == "" {
 		return "", fmt.Errorf("identity canonical payload is required")
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(identitySignature))
+	sig, err := signaturewire.DecodeStd(strings.TrimSpace(identitySignature))
 	if err != nil {
 		return "", fmt.Errorf("decode identity signature: %w", err)
 	}
@@ -329,7 +331,7 @@ func normalizeAtomicAddressClaimFields(fields AtomicAddressClaimFields) (AtomicA
 	if !strings.HasPrefix(out.CurrentDIDKey, "did:key:") {
 		return AtomicAddressClaimFields{}, fmt.Errorf("current_did_key must start with did:key:")
 	}
-	registryURL, err := canonicalRegistryServerOrigin(out.RegistryURL)
+	registryURL, err := CanonicalRegistryServerOrigin(out.RegistryURL)
 	if err != nil {
 		return AtomicAddressClaimFields{}, fmt.Errorf("registry_url: %w", err)
 	}

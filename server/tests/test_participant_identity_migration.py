@@ -12,6 +12,8 @@ from aweb.routes.conversations import list_conversations_for_auth
 from test_messages_http import _signed_identity_headers
 from test_mcp_mail_conversation_parity import mail_server  # noqa: F401
 
+__all__ = ["mail_server"]
+
 MIGRATION = files('aweb') / 'migrations/aweb/045_canonical_participant_dids.sql'
 
 
@@ -25,7 +27,7 @@ async def seed_thread(env, kind, *, duplicate=False):
         (conversation_id,conversation_type,team_id,created_by_did)
         VALUES ($1,$2,'ops:acme.com',$3)""", cid, kind, env.pilot_did)
     old = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    for did, alias in [(env.pilot_did, 'pilot'), ('did:aw:human', 'human')]:
+    for did, alias in [(env.pilot_did, 'pilot'), (env.human_stable, 'human')]:
         await db.execute("""INSERT INTO {{tables.conversation_participants}}
             (conversation_id,did,alias,transport_hint,joined_at,agent_id,role)
             VALUES ($1,$2,$3,'local',$4,$5,$6)""", cid, did, alias, old,
@@ -33,9 +35,7 @@ async def seed_thread(env, kind, *, duplicate=False):
             'initiator' if alias == 'pilot' else 'participant')
     canonical_id = None
     if duplicate:
-        canonical_id = await db.fetch_val("""INSERT INTO {{tables.conversation_participants}}
-            (conversation_id,did,alias,transport_hint,joined_at)
-            VALUES ($1,'did:aw:pilot','current-label','local',$2) RETURNING participant_id""", cid, old + timedelta(days=1))
+        canonical_id = await db.fetch_val(f"INSERT INTO {{{{tables.conversation_participants}}}}\n            (conversation_id,did,alias,transport_hint,joined_at)\n            VALUES ($1,'{env.pilot_stable}','current-label','local',$2) RETURNING participant_id", cid, old + timedelta(days=1))
     messages = []
     if kind == 'mail':
         mid = uuid4()
@@ -46,13 +46,12 @@ async def seed_thread(env, kind, *, duplicate=False):
         messages.append(mid)
     else:
         await db.execute("INSERT INTO {{tables.chat_sessions}} (session_id,created_by) VALUES ($1,$2)", cid, env.pilot_did)
-        for did, alias in [(env.pilot_did, 'pilot'), ('did:aw:human', 'human')]:
+        for did, alias in [(env.pilot_did, 'pilot'), (env.human_stable, 'human')]:
             await db.execute("""INSERT INTO {{tables.chat_participants}}
                 (session_id,did,alias,joined_at,agent_id,left_at) VALUES ($1,$2,$3,$4,$5,$6)""",
                 cid, did, alias, old, UUID(env.pilot) if alias == 'pilot' else UUID(env.human), old if alias == 'pilot' else None)
         if duplicate:
-            await db.execute("""INSERT INTO {{tables.chat_participants}}
-                (session_id,did,alias,joined_at) VALUES ($1,'did:aw:pilot','current-label',$2)""", cid, old + timedelta(days=1))
+            await db.execute(f"INSERT INTO {{{{tables.chat_participants}}}}\n                (session_id,did,alias,joined_at) VALUES ($1,'{env.pilot_stable}','current-label',$2)", cid, old + timedelta(days=1))
         for day in (1, 2):
             mid = uuid4()
             await db.execute("""INSERT INTO {{tables.chat_messages}}
@@ -65,10 +64,8 @@ async def seed_thread(env, kind, *, duplicate=False):
             (session_id,did,last_read_message_id,last_read_at,agent_id) VALUES ($1,$2,$3,$4,$5)""",
             cid, env.pilot_did, messages[1], old + timedelta(days=3), UUID(env.pilot))
         if duplicate:
-            await db.execute("""INSERT INTO {{tables.chat_message_reads}} (session_id,did,message_id,read_at)
-                VALUES ($1,'did:aw:pilot',$2,$3),($1,'did:aw:pilot',$4,$3)""", cid, messages[0], old + timedelta(days=4), messages[1])
-            await db.execute("""INSERT INTO {{tables.chat_read_receipts}}
-                (session_id,did,last_read_message_id,last_read_at) VALUES ($1,'did:aw:pilot',$2,$3)""",
+            await db.execute(f"INSERT INTO {{{{tables.chat_message_reads}}}} (session_id,did,message_id,read_at)\n                VALUES ($1,'{env.pilot_stable}',$2,$3),($1,'{env.pilot_stable}',$4,$3)", cid, messages[0], old + timedelta(days=4), messages[1])
+            await db.execute(f"INSERT INTO {{{{tables.chat_read_receipts}}}}\n                (session_id,did,last_read_message_id,last_read_at) VALUES ($1,'{env.pilot_stable}',$2,$3)",
                 cid, messages[0], old + timedelta(days=4))
     return cid, messages, canonical_id
 
@@ -79,8 +76,7 @@ async def test_upgrade_preserves_threads_duplicate_state_and_signed_message_byte
     # Multiple verified membership rows naming the SAME global identity are OK.
     await db.execute("""INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key)
         VALUES ('other:else.test','else.test','other','did:key:team')""")
-    await db.execute("""INSERT INTO {{tables.agents}} (team_id,alias,did_key,did_aw,did_aw_verified_key)
-        VALUES ('other:else.test','pilot',$1,'did:aw:pilot',$1)""", env.pilot_did)
+    await db.execute(f"INSERT INTO {{{{tables.agents}}}} (team_id,alias,did_key,did_aw,did_aw_verified_key, inbound_mode)\n        VALUES ('other:else.test','pilot',$1,'{env.pilot_stable}',$1, 'open')", env.pilot_did)
     rows = [(kind, duplicate, await seed_thread(env, kind, duplicate=duplicate))
             for kind in ('mail', 'chat') for duplicate in (False, True)]
     messages_before = [dict(r) for r in await db.fetch_all('SELECT * FROM {{tables.messages}} ORDER BY message_id')]
@@ -88,8 +84,8 @@ async def test_upgrade_preserves_threads_duplicate_state_and_signed_message_byte
     await apply(db)
     for kind, duplicate, (cid, messages, canonical_id) in rows:
         cp = await db.fetch_all('SELECT * FROM {{tables.conversation_participants}} WHERE conversation_id=$1', cid)
-        assert {r['did'] for r in cp} == {'did:aw:pilot', 'did:aw:human'}
-        owner = next(r for r in cp if r['did'] == 'did:aw:pilot')
+        assert {r['did'] for r in cp} == {env.pilot_stable, env.human_stable}
+        owner = next(r for r in cp if r['did'] == env.pilot_stable)
         assert owner['agent_id'] == UUID(env.pilot)
         assert owner['current_did_key'] == env.pilot_did
         assert owner['role'] == 'initiator'
@@ -98,25 +94,25 @@ async def test_upgrade_preserves_threads_duplicate_state_and_signed_message_byte
             assert owner['participant_id'] == canonical_id
             assert owner['alias'] == 'current-label'
         if kind == 'mail':
-            response = await env.client.get(f'/v1/messages/conversations/{cid}', headers=_signed_identity_headers(env.pilot_key, env.pilot_did, 'did:aw:pilot', b''))
+            response = await env.client.get(f'/v1/messages/conversations/{cid}', headers=_signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, b''))
             assert response.status_code == 200, response.text
             assert {UUID(message['message_id']) for message in response.json()['messages']} == set(messages)
         if kind == 'chat':
             peers = await db.fetch_all('SELECT * FROM {{tables.chat_participants}} WHERE session_id=$1', cid)
-            assert {r['did'] for r in peers} == {'did:aw:pilot', 'did:aw:human'}
-            owner = next(r for r in peers if r['did'] == 'did:aw:pilot')
+            assert {r['did'] for r in peers} == {env.pilot_stable, env.human_stable}
+            owner = next(r for r in peers if r['did'] == env.pilot_stable)
             assert owner['agent_id'] == UUID(env.pilot)
             assert owner['current_did_key'] == env.pilot_did
             assert (owner['left_at'] is None) == duplicate
             reads = await db.fetch_all('SELECT * FROM {{tables.chat_message_reads}} WHERE session_id=$1', cid)
-            assert {r['did'] for r in reads} == {'did:aw:pilot'}
+            assert {r['did'] for r in reads} == {env.pilot_stable}
             assert {r['message_id'] for r in reads} == set(messages if duplicate else messages[:1])
             assert next(r for r in reads if r['message_id'] == messages[0])['read_at'].day == (5 if duplicate else 4)
             receipt = await db.fetch_one('SELECT * FROM {{tables.chat_read_receipts}} WHERE session_id=$1', cid)
-            assert receipt['did'] == 'did:aw:pilot'
+            assert receipt['did'] == env.pilot_stable
             assert receipt['last_read_message_id'] == messages[1]
             assert receipt['last_read_at'].day == (5 if duplicate else 4)
-    auth = MessagingAuth(did_key=env.pilot_did, did_aw='did:aw:pilot', address='acme.com/pilot')
+    auth = MessagingAuth(did_key=env.pilot_did, did_aw=env.pilot_stable, address='acme.com/pilot')
     result = await list_conversations_for_auth(SimpleNamespace(get_manager=lambda _: db), auth)
     assert {item.conversation_id for item in result.conversations} == {str(r[2][0]) for r in rows}
     assert [dict(r) for r in await db.fetch_all('SELECT * FROM {{tables.messages}} ORDER BY message_id')] == messages_before
@@ -147,7 +143,7 @@ async def test_empty_migration_is_noop_and_local_identity_is_untouched(aweb_clou
     db = aweb_cloud_db.aweb_db
     await apply(db)
     await db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ('t:local','local','t','did:key:team')")
-    await db.execute("INSERT INTO {{tables.agents}} (team_id,alias,did_key) VALUES ('t:local','local','did:key:local')")
+    await db.execute("INSERT INTO {{tables.agents}} (team_id,alias,did_key, inbound_mode) VALUES ('t:local','local','did:key:local', 'open')")
     cid = uuid4()
     await db.execute("INSERT INTO {{tables.conversations}} (conversation_id,conversation_type,created_by_did) VALUES ($1,'mail','did:key:local')", cid)
     await db.execute("INSERT INTO {{tables.conversation_participants}} (conversation_id,did,alias,transport_hint) VALUES ($1,'did:key:local','local','local')", cid)
@@ -161,8 +157,8 @@ async def test_ambiguous_verified_key_mapping_aborts_without_partial_changes(mai
     env, db = mail_server, mail_server.db
     await seed_thread(env, 'mail')
     await db.execute("INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ('t:other','other','t','did:key:team')")
-    await db.execute("""INSERT INTO {{tables.agents}} (team_id,alias,did_key,did_aw,did_aw_verified_key)
-        VALUES ('t:other','other',$1,'did:aw:someoneelse',$1)""", env.pilot_did)
+    await db.execute("""INSERT INTO {{tables.agents}} (team_id,alias,did_key,did_aw,did_aw_verified_key, inbound_mode)
+        VALUES ('t:other','other',$1,'did:aw:someoneelse',$1, 'open')""", env.pilot_did)
     before = [dict(r) for r in await db.fetch_all('SELECT * FROM {{tables.conversation_participants}} ORDER BY did')]
     with pytest.raises(QueryError, match='ambiguous verified participant'):
         await apply(db)
@@ -184,7 +180,7 @@ async def test_released_hosted_mcp_writer_stores_global_participant_not_signing_
         cid = sent.get('conversation_id')
     assert 'error' not in sent, sent
     assert cid, sent
-    expected = {'did:aw:pilot', 'did:aw:human'}
+    expected = {env.pilot_stable, env.human_stable}
     assert {r['did'] for r in await env.db.fetch_all('SELECT did FROM {{tables.conversation_participants}} WHERE conversation_id=$1', UUID(cid))} == expected
     if kind == 'chat':
         assert {r['did'] for r in await env.db.fetch_all('SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1', UUID(cid))} == expected
@@ -196,4 +192,4 @@ async def test_http_key_selector_stores_verified_global_participants(mail_server
     sent = await env.human_mail(to_did=env.pilot_did)
     assert {r['did'] for r in await env.db.fetch_all(
         'SELECT did FROM {{tables.conversation_participants}} WHERE conversation_id=$1',
-        UUID(sent['conversation_id']))} == {'did:aw:human', 'did:aw:pilot'}
+        UUID(sent['conversation_id']))} == {env.human_stable, env.pilot_stable}

@@ -33,6 +33,8 @@ from test_agent_wake_latency import _open_chat, _quiet, _send_mail, agent_stream
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_team_room import metadata as room_metadata, post_payload as room_post_payload
 
+__all__ = ["privacy_app", "wake_app"]
+
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 

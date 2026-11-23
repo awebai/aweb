@@ -7,10 +7,23 @@ import (
 	"time"
 )
 
+// AuditSink observes gateway decisions without deciding their authority.
 type AuditSink interface {
 	RecordA2A(AuditEvent)
 }
 
+// AuditOutcome names whether an observed gateway action succeeded or was refused.
+type AuditOutcome string
+
+const (
+	AuditAccepted AuditOutcome = "accepted"
+	AuditOK       AuditOutcome = "ok"
+	AuditError    AuditOutcome = "error"
+	AuditDenied   AuditOutcome = "denied"
+	AuditIgnored  AuditOutcome = "ignored"
+)
+
+// AuditEvent is a non-secret observation of an admission, delivery or reply decision.
 type AuditEvent struct {
 	Stage               string `json:"stage"`
 	RequestID           string `json:"request_id,omitempty"`

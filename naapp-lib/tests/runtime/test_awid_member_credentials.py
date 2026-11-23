@@ -43,8 +43,8 @@ async def private_team(registry) -> tuple[Member, Member]:
         team_id=TEAM_ID, team_key=caller.team_key, certificate_id="service", alias="logs"
     )
     await registry.add_team(TEAM_ID, caller.team_did_key, visibility="private")
-    await registry.add_certificate(caller.certificate())
-    await registry.add_certificate(service.certificate())
+    await registry.add_certificate(caller.certificate(), team_key=caller.team_key)
+    await registry.add_certificate(service.certificate(), team_key=service.team_key)
     return caller, service
 
 
@@ -91,17 +91,23 @@ async def running(runtime: NaappRuntime) -> AsyncIterator[httpx.AsyncClient]:
             yield client
 
 
+@pytest.mark.parametrize("trailing_blank_line", [False, True])
 async def test_a_private_teams_member_is_authenticated_with_the_apps_own_certificate(
-    registry, app_database_url, tmp_path
+    registry, app_database_url, tmp_path, trailing_blank_line
 ):
     caller, service = await private_team(registry)
-    settings = settings_for(app_database_url, {TEAM_ID: aw_files(tmp_path / "aw", service)})
+    setup_reads = len(registry.transport.calls)
+    files = aw_files(tmp_path / "aw", service)
+    if trailing_blank_line:
+        with Path(files["signing_key_file"]).open("ab") as key_file:
+            key_file.write(b"\n")
+    settings = settings_for(app_database_url, {TEAM_ID: files})
     async for client in running(runtime_for(registry, settings, tmp_path / "app")):
         response = await client.post("/v1/things", **_signed(caller, "/v1/things"))
     assert response.status_code == 200, response.text
     gated = [
         r
-        for r in registry.transport.calls
+        for r in registry.transport.calls[setup_reads:]
         if r.url.path.endswith(("/teams/backend", "/certificates"))
     ]
     assert gated
@@ -161,6 +167,7 @@ async def test_the_app_does_not_start_on_a_certificate_the_current_team_key_did_
     """After the team key rotates, a certificate signed by the old key is not
     the team's current word for this app."""
     _, service = await private_team(registry)
+    # unreachable-state: operator-corrupted registry key no longer signs the retained service certificate.
     await registry.rotate_team_key(TEAM_ID, Member(team_id=TEAM_ID).team_did_key)
     settings = settings_for(app_database_url, {TEAM_ID: aw_files(tmp_path / "aw", service)})
     with pytest.raises(RuntimeError) as refused:

@@ -78,13 +78,21 @@ func NewStore(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{dir: abs}
-	for _, sub := range []string{"", "registry.d", "instances.d"} {
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		return nil, err
+	}
+	// Check the state root even when the socket is in the shortened-path runtime.
+	if err := checkWakeControlDirectory(abs, false); err != nil {
+		return nil, err
+	}
+	warnWakeDirectory(abs)
+	for _, sub := range []string{"registry.d", "instances.d"} {
 		if err := os.MkdirAll(filepath.Join(abs, sub), 0o700); err != nil {
 			return nil, err
 		}
+		warnWakeDirectory(filepath.Join(abs, sub))
 	}
-	return s, nil
+	return &Store{dir: abs}, nil
 }
 
 func (s *Store) Dir() string      { return s.dir }

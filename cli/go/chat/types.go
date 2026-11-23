@@ -47,11 +47,34 @@ type Event struct {
 	IsContact               *bool                         `json:"is_contact,omitempty"`
 }
 
+// How a chat send ended: the values of SendResult.Status.
+const (
+	// SendSent: delivered, with no wait for a reply.
+	SendSent = "sent"
+	// SendReplied: the target replied.
+	SendReplied = "replied"
+	// SendSenderLeft: the target replied and left the conversation.
+	SendSenderLeft = "sender_left"
+	// SendPending: an unread message is waiting in the conversation.
+	SendPending = "pending"
+	// SendTargetsLeft: the target had already left, so nothing waited.
+	SendTargetsLeft = "targets_left"
+	// SendTimeout: the wait ended with no reply.
+	SendTimeout = "timeout"
+)
+
+// Kinds of chat stream event named by this package: values of Event.Type.
+const (
+	EventMessage                 = "message"
+	EventReadReceipt             = "read_receipt"
+	EventVerificationUnavailable = "verification_unavailable"
+)
+
 // SendResult is the result of sending a message and optionally waiting for a reply.
 type SendResult struct {
 	SessionID          string  `json:"session_id"`
 	MessageID          string  `json:"message_id,omitempty"`
-	Status             string  `json:"status"` // sent, replied, sender_left, pending, targets_left, timeout
+	Status             string  `json:"status"`
 	TargetAgent        string  `json:"target_agent,omitempty"`
 	Reply              string  `json:"reply,omitempty"`
 	Events             []Event `json:"events"`
@@ -71,7 +94,10 @@ type OpenResult struct {
 	// this result presented. Open still succeeds when it is set: the messages
 	// were delivered, they were just not acknowledged, so they will be
 	// presented again.
-	MarkReadError  string `json:"mark_read_error,omitempty"`
+	MarkReadError string `json:"mark_read_error,omitempty"`
+	// ReceiptError reports a failed local write without losing opened messages
+	// or conflating the cache with the server acknowledgement.
+	ReceiptError   string `json:"receipt_error,omitempty"`
 	SenderWaiting  bool   `json:"sender_waiting"`
 	UnreadWasEmpty bool   `json:"unread_was_empty,omitempty"`
 }
@@ -113,16 +139,44 @@ type ExtendWaitResult struct {
 	ExtendsWaitSeconds int    `json:"extends_wait_seconds"`
 }
 
+// E2EEChoice is how a chat send chooses end-to-end encryption; it is
+// awid's, so chat and mail share one continuation rule.
+type E2EEChoice = awid.E2EEChoice
+
+const (
+	E2EEInherit   = awid.E2EEInherit
+	E2EERequired  = awid.E2EERequired
+	E2EEPlaintext = awid.E2EEPlaintext
+)
+
 // SendOptions configures message sending behavior.
 type SendOptions struct {
-	Wait              int  // Seconds to wait for reply (0 = no wait)
-	WaitExplicit      bool // true if caller explicitly set Wait
-	Leaving           bool // Sender is leaving the conversation
-	StartConversation bool // Ignore targets_left, use 5min default wait
-	EncryptE2EE       bool // Send encrypted_v2 chat; fail closed if keys are missing
+	Wait              int        // Seconds to wait for reply (0 = no wait)
+	WaitExplicit      bool       // true if caller explicitly set Wait
+	Leaving           bool       // Sender is leaving the conversation
+	StartConversation bool       // Ignore targets_left, use 5min default wait
+	E2EE              E2EEChoice // How the message chooses end-to-end encryption
+	// EncryptE2EE is the released (aw-v1.36.58) way to require encryption;
+	// true is E2EE: E2EERequired, whatever E2EE says.
+	EncryptE2EE bool
 	// RecipientDID is the DID the caller confirmed for its one target. An
 	// existing session is then selected by this strong identity only.
 	RecipientDID string
+	// ConfirmedRecipient is what the caller's team roster names for its one
+	// alias target; a new session signs it as the recipient binding.
+	ConfirmedRecipient *awid.ConfirmedRecipient
+}
+
+// Encryption is the end-to-end encryption choice the options make.
+func (o SendOptions) Encryption() E2EEChoice {
+	return encryptionChoice(o.EncryptE2EE, o.E2EE)
+}
+
+func encryptionChoice(encryptE2EE bool, choice E2EEChoice) E2EEChoice {
+	if encryptE2EE {
+		return E2EERequired
+	}
+	return choice
 }
 
 // StatusCallback receives protocol status updates.

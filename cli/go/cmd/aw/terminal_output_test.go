@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +10,7 @@ import (
 	"github.com/awebai/aw/a2a"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/chat"
+	"github.com/awebai/aw/internal/testcapture"
 	awrun "github.com/awebai/aw/run"
 )
 
@@ -114,21 +113,12 @@ func TestCLIErrorLineEscapesServerText(t *testing.T) {
 
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	saved := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
-	defer func() { os.Stdout = saved }()
-	fn()
-	w.Close()
-	os.Stdout = saved
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(out)
+	return testcapture.Stdout(t, fn)
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	return testcapture.Stderr(t, fn)
 }
 
 // A one-line field that tries to forge the line after it.

@@ -109,9 +109,9 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 		}
 	}
 	beforeHome, beforeWD := snapshotJoinFiles(t, home), snapshotJoinFiles(t, wd)
-	run := func(input string, extraEnv []string, extraArgs ...string) (map[string]any, string, int) {
+	runWithFlags := func(t *testing.T, input string, extraEnv []string, flags ...string) (map[string]any, string, int) {
 		t.Helper()
-		args := append([]string{"team", "invite", "inspect", "--json", "--trace"}, extraArgs...)
+		args := append([]string{"team", "invite", "inspect", "--trace"}, flags...)
 		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir = wd
 		cmd.Env = append(testCommandEnv(home), "AWEB_IDENTITY_HOME=", "AWEB_API_KEY=synthetic-key-must-not-send", "AWEB_URL="+other.URL, "AW_NO_UPDATE_CHECK=1", "AW_TRACE=1")
@@ -142,6 +142,26 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 			t.Fatal("stdout is not one JSON result")
 		}
 		return result, diagnostic.String(), code
+	}
+	run := func(input string, extraEnv []string, extraArgs ...string) (map[string]any, string, int) {
+		t.Helper()
+		return runWithFlags(t, input, extraEnv, append([]string{"--json"}, extraArgs...)...)
+	}
+	for _, tc := range []struct {
+		name  string
+		flags []string
+	}{
+		{name: "json_before_unknown_flag", flags: []string{"--json", "--bogus"}},
+		{name: "json_after_unknown_flag", flags: []string{"--bogus", "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, diagnostic, exit := runWithFlags(t, "", nil, tc.flags...)
+			refusal, ok := result["error"].(map[string]any)
+			const message = "Invalid inspect flags; use aw team invite inspect --help."
+			if exit != 2 || !ok || refusal["code"] != "malformed_token" || refusal["message"] != message || !strings.Contains(diagnostic, message) {
+				t.Fatalf("wrong flag refusal: exit=%d result=%v diagnostic=%q", exit, result, diagnostic)
+			}
+		})
 	}
 	for _, tc := range []struct{ mode, code string }{
 		{"active", ""}, {"nullable", ""}, {"unbound_scope", ""}, {"expired", "expired"}, {"exhausted", "exhausted"}, {"revoked", "revoked"},

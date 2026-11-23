@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections import OrderedDict
 from dataclasses import replace
+from enum import StrEnum
 from time import monotonic
 
 from awid.identity_observation import (
@@ -15,11 +17,54 @@ from awid.identity_observation import (
 from awid.identity_observation import (
     observe_identity_binding as observe_public_identity_binding,
 )
-from fastapi import HTTPException, Request
+from fastapi import Request
+
+from aweb.application_state import application_registry_client
+from aweb.service_errors import IdentityBindingCode, IdentityBindingError
+
+from aweb.application_state import native_application_state
 
 logger = logging.getLogger(__name__)
 _BINDING_TTL = 60
 _CACHE_LIMIT = 4096
+
+
+class IdentityProjectionField(StrEnum):
+    STABLE_DID = "did_aw"
+    ADDRESS = "address"
+
+
+def verified_key_sql(agent: str = "") -> str:
+    """The SQL form of verified_projection's current-key guard.
+
+    docs/identity.md:598-607 makes global claims conditional on this marker.
+    ``agent`` is a source-code SQL alias, never a value from a request.
+    """
+    if agent and not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", agent):
+        raise ValueError("Invalid identity projection SQL alias")
+    prefix = agent + "." if agent else ""
+    return (
+        f"NULLIF({prefix}did_key, '') IS NOT NULL AND {prefix}did_aw_verified_key = {prefix}did_key"
+    )
+
+
+def verified_identity_field_sql(field: IdentityProjectionField, *, agent: str = "") -> str:
+    """Attribute a stable DID/address through the same verified-key guard."""
+    if not isinstance(field, IdentityProjectionField):
+        raise ValueError("Invalid identity projection field")
+    prefix = agent + "." if agent else ""
+    return f"CASE WHEN {verified_key_sql(agent)} THEN {prefix}{field.value} END"
+
+
+def verified_principal_did_sql(*, agent: str = "") -> str:
+    """Project a member principal without adopting a raw stable-DID claim.
+
+    docs/identity.md:598-609 requires registry-verified marker evidence for
+    stable identity. A local principal remains its literal signing did:key.
+    """
+    stable = verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent=agent)
+    prefix = agent + "." if agent else ""
+    return f"COALESCE(NULLIF(({stable}), ''), {prefix}did_key)"
 
 
 def verified_projection(row):
@@ -27,10 +72,7 @@ def verified_projection(row):
     if row is None:
         return None
     result = dict(row)
-    if (
-        not result.get("did_key")
-        or result.get("did_aw_verified_key") != result["did_key"]
-    ):
+    if not result.get("did_key") or result.get("did_aw_verified_key") != result["did_key"]:
         result["did_aw"] = None
         result["address"] = None
     return result
@@ -45,16 +87,19 @@ async def verify_identity_binding(
     fresh: bool = False,
     registry_client=None,
 ) -> IdentityBinding:
+    """Verify the claimed stable identity and address against the supplied registry evidence."""
     did_aw, address = (did_aw or "").strip(), (address or "").strip()
     if not did_aw and not address:
         return IdentityBinding(did_key=did_key)
     if not did_aw or not did_aw.startswith("did:aw:"):
-        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
-    client = registry_client if registry_client is not None else getattr(request.app.state, "awid_registry_client", None)
-    if client is None:
-        raise HTTPException(status_code=503, detail="identity_binding_unavailable")
+        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+    client = (
+        registry_client
+        if registry_client is not None
+        else application_registry_client(request.app.state)
+    )
     cache = identity_binding_cache(request.app.state)
-    key = (did_aw, did_key, address)
+    key: tuple[str, ...] = (did_aw, did_key, address)
     if registry_client is not None:
         key += (getattr(registry_client, "registry_url", "federation"),)
     observations = getattr(request.state, "identity_binding_observations", None)
@@ -66,8 +111,7 @@ async def verify_identity_binding(
     started = monotonic()
     cached = cache.get(key)
     # Unknown enrollment is refetched rather than pinned by this positive cache.
-    if (not fresh and cached is not None and cached[0] > started
-            and cached[1].id_tree is not None):
+    if not fresh and cached is not None and cached[0] > started and cached[1].id_tree is not None:
         return replace(cached[1], fresh_observation=False)
     binding = await _observe_into_cache(client, cache, key, started)
     observations[key] = binding
@@ -76,6 +120,8 @@ async def verify_identity_binding(
 
 def identity_binding_cache(app_state) -> OrderedDict:
     """The application's cache of observed identity bindings, kept on its state."""
+
+    app_state = native_application_state(app_state)
     cache = getattr(app_state, "identity_binding_cache", None)
     if cache is None:
         cache = OrderedDict()
@@ -84,7 +130,12 @@ def identity_binding_cache(app_state) -> OrderedDict:
 
 
 async def observe_current_identity_binding(
-    registry_client, cache: OrderedDict, *, did_key: str, did_aw: str, address: str = "",
+    registry_client,
+    cache: OrderedDict,
+    *,
+    did_key: str,
+    did_aw: str,
+    address: str = "",
 ) -> IdentityBinding:
     """Observe a did:aw's binding at the registry now and cache it for the application.
 
@@ -92,16 +143,22 @@ async def observe_current_identity_binding(
     """
     did_aw, address = (did_aw or "").strip(), (address or "").strip()
     if not did_aw.startswith("did:aw:"):
-        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
     if registry_client is None:
-        raise HTTPException(status_code=503, detail="identity_binding_unavailable")
-    return await _observe_into_cache(registry_client, cache, (did_aw, did_key, address), monotonic())
+        raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
+    return await _observe_into_cache(
+        registry_client, cache, (did_aw, did_key, address), monotonic()
+    )
 
 
-async def _observe_into_cache(client, cache: OrderedDict, key: tuple, started: float) -> IdentityBinding:
+async def _observe_into_cache(
+    client, cache: OrderedDict, key: tuple, started: float
+) -> IdentityBinding:
     did_aw, did_key, address = key[:3]
     cache.pop(key, None)
-    binding = await observe_identity_binding(client, did_key=did_key, did_aw=did_aw, address=address)
+    binding = await observe_identity_binding(
+        client, did_key=did_key, did_aw=did_aw, address=address
+    )
     # A newly observed current key supersedes older positive cache entries.
     for cached_key in list(cache):
         if cached_key[0] == did_aw and cached_key[1] != did_key:
@@ -113,14 +170,20 @@ async def _observe_into_cache(client, cache: OrderedDict, key: tuple, started: f
     return binding
 
 
-async def observe_identity_binding(client, *, did_key: str, did_aw: str, address: str = "") -> IdentityBinding:
+async def observe_identity_binding(
+    client, *, did_key: str, did_aw: str, address: str = ""
+) -> IdentityBinding:
     """The compatible server adapter for the shared public AWID observation."""
     try:
         return await observe_public_identity_binding(
-            client, did_key=did_key, did_aw=did_aw, address=address,
+            client,
+            did_key=did_key,
+            did_aw=did_aw,
+            address=address,
         )
     except IdentityObservationRefused as exc:
-        status = 403 if exc.code == "identity_binding_mismatch" else 503
+        code = IdentityBindingCode(exc.code)
+        status = 403 if code is IdentityBindingCode.MISMATCH else 503
         delay = getattr(exc, "retry_after_seconds", None)
         headers = None
         if (
@@ -132,12 +195,10 @@ async def observe_identity_binding(client, *, did_key: str, did_aw: str, address
         ):
             # Never shorten an upstream window or busy-loop a zero hint.
             headers = {"Retry-After": str(max(1, math.ceil(delay)))}
-        raise HTTPException(status_code=status, detail=exc.code, headers=headers) from exc
+        raise IdentityBindingError(code, headers=headers) from exc
 
 
-async def refresh_projection_binding(
-    db, *, agent_id, did_key: str, binding: IdentityBinding
-):
+async def refresh_projection_binding(db, *, agent_id, did_key: str, binding: IdentityBinding):
     """A verified request refreshes only its own key's projection."""
     if not binding.fresh_observation:
         return None
@@ -167,7 +228,9 @@ async def refresh_projection_binding(
         )
 
 
-async def verify_pending_identity_bindings(db, registry_client, *, dry_run: bool = False) -> dict[str, int]:
+async def verify_pending_identity_bindings(
+    db, registry_client, *, dry_run: bool = False
+) -> dict[str, int]:
     """Verify historical projections; write only their own marker, never claims."""
     counts = dict(verified=0, self_derived=0, unbound=0, awid_error=0)
     rows = await db.fetch_all(
@@ -181,10 +244,12 @@ async def verify_pending_identity_bindings(db, registry_client, *, dry_run: bool
     for row in rows:
         try:
             binding = await observe_identity_binding(
-                registry_client, did_key=row["did_key"],
-                did_aw=row["did_aw"] or "", address=row["address"] or "",
+                registry_client,
+                did_key=row["did_key"],
+                did_aw=row["did_aw"] or "",
+                address=row["address"] or "",
             )
-        except HTTPException as exc:
+        except IdentityBindingError as exc:
             counts["awid_error" if exc.status_code == 503 else "unbound"] += 1
             continue
         if not dry_run:
@@ -194,7 +259,8 @@ async def verify_pending_identity_bindings(db, registry_client, *, dry_run: bool
                     SELECT did_key, did_aw, address FROM {{tables.agents}}
                     WHERE agent_id=$1 AND deleted_at IS NULL AND did_aw_verified_key IS NULL
                     FOR UPDATE
-                    """, row["agent_id"],
+                    """,
+                    row["agent_id"],
                 )
                 if current is None:
                     continue

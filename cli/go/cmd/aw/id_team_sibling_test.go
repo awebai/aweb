@@ -270,7 +270,7 @@ func TestHostedSiblingCreateRefusalsBinary(t *testing.T) {
 				"grant": "team_key_required", "wrong-team": `team "wrong:aweb.test" is not present in workspace memberships`, "missing-key": "signing key",
 				"missing-teams": "teams.yaml", "namespace-mismatch": "does not match selected source team",
 				"registry": "--registry is a BYOT option", "bad-request-id": "--request-id must be a UUID",
-				"corrupt-controller": "no PEM block in controller key",
+				"corrupt-controller": "load controller key for aweb.test: no PEM block; restore an Ed25519 private key PEM file",
 			}[kind]
 			if !strings.Contains(trace, want) {
 				t.Fatalf("expected refusal %q: %s", want, trace)
@@ -357,7 +357,7 @@ func TestHostedSiblingInviteAcceptsIntoFreshExternalHome(t *testing.T) {
 	fresh := filepath.Join(dir, "fresh", ".aw")
 	accept := exec.CommandContext(ctx, bin, "--identity-home", fresh, "id", "team", "accept-invite", created["token"].(string), "--name", "bob", "--local", "--json")
 	accept.Dir = cwd
-	accept.Env = append(testCommandEnv(dir), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL=", "AW_NO_UPDATE_CHECK=1", "AW_TRACE=")
+	accept.Env = append(testCommandEnv(dir), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AW_NO_UPDATE_CHECK=1", "AW_TRACE=")
 	accepted, err := accept.CombinedOutput()
 	if err != nil {
 		t.Fatalf("accept: %v\n%s", err, accepted)

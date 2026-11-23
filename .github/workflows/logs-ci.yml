@@ -12,15 +12,20 @@ name: logs CI
 # how naapp coverage went missing before.
 
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Every commit on main keeps its own run to the end: one group per commit, since
+# a group also cancels its waiting run when another queues. Elsewhere a newer
+# run replaces an older one.
 concurrency:
-  group: logs-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: logs-ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   quality:
@@ -34,7 +39,7 @@ jobs:
       TEST_DB_PORT: "5432"
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -43,6 +48,16 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      # The production AWID the fixture starts does not start without Redis.
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -66,9 +81,25 @@ jobs:
         working-directory: naapp/logs
         run: uv sync --locked
 
+      # The production AWID fixture starts this pinned project as prepared
+      # here, and never syncs it during the tests.
+      - name: Prepare the pinned production AWID
+        run: make production-awid-sync
+
+      - name: Install the logs test browser
+        working-directory: naapp/logs
+        run: uv run --no-sync playwright install --with-deps --only-shell chromium
+
       - name: Lint and type-check
         working-directory: naapp/logs
         run: make lint
+
+      # The tests back up and restore with the client of the server's major
+      # version, installed as the gate installs it.
+      - name: Install the PostgreSQL client of the server's major version
+        run: |
+          sudo bash scripts/test-egress/install-postgres-client.sh
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
 
       - name: Run unit and contract tests
         working-directory: naapp/logs

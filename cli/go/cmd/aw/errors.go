@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/termtext"
 )
@@ -58,11 +59,37 @@ func withErrorCode(code string, err error) error {
 	return &codedError{code: code, err: err}
 }
 
+// classifiedError gives existing CLI refusals an additive classification.
+type classifiedError struct {
+	classification string
+	err            error
+}
+
+func (e *classifiedError) Error() string { return e.err.Error() }
+
+func (e *classifiedError) Unwrap() error { return e.err }
+
+func withErrorClassification(classification string, err error) error {
+	return &classifiedError{classification: classification, err: err}
+}
+
 // errorCodeOf is err's refusal code, or "" when it has none.
 func errorCodeOf(err error) string {
+	var pending *hostedInviteSignaturePendingError
+	if errors.As(err, &pending) {
+		return codeNativeAgentSignaturePending
+	}
 	var coded *codedError
 	if errors.As(err, &coded) {
 		return coded.code
+	}
+	// Any command that reads a team key refuses one set aside as unconfirmed.
+	if errors.Is(err, awconfig.ErrTeamKeyUnconfirmed) {
+		return codeTeamNameUnconfirmed
+	}
+	var certificate *awid.CurrentTeamCertificateError
+	if errors.As(err, &certificate) {
+		return string(certificate.Code)
 	}
 	return ""
 }
@@ -133,31 +160,63 @@ func nameTakenText(alias, teamID, flag string) string {
 // cliErrorEnvelope is what --json prints for a failed command: the error's
 // awid.ErrorDetail, with the code of a tagged refusal, and its message.
 type cliErrorEnvelope struct {
-	Error cliErrorBody `json:"error"`
+	Error  cliErrorBody      `json:"error"`
+	Invite *inviteInspection `json:"invite,omitempty"`
 }
 
 type cliErrorBody struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	HTTPStatus int    `json:"http_status,omitempty"`
-	Detail     string `json:"detail,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	Code           string `json:"code"`
+	Message        string `json:"message"`
+	HTTPStatus     int    `json:"http_status,omitempty"`
+	Detail         string `json:"detail,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	Classification string `json:"classification,omitempty"`
 }
 
 func errorEnvelope(err error, message string) cliErrorEnvelope {
+	var inspect *inviteInspectError
+	if errors.As(err, &inspect) {
+		envelope := cliErrorEnvelope{Error: cliErrorBody{Code: inspect.Code, Message: inspect.Message}}
+		var failure *inviteInspectionFailure
+		if errors.As(err, &failure) {
+			envelope.Invite = failure.invite
+		}
+		return envelope
+	}
 	detail := awid.DescribeError(err)
 	var plain *plainRefusal
 	if errors.As(err, &plain) && plain.jsonMessage != "" {
 		message = plain.jsonMessage
 	}
-	var coded *codedError
-	if errors.As(err, &coded) {
-		detail.Code = coded.code
+	if code := errorCodeOf(err); code != "" {
+		detail.Code = code
 	}
-	return cliErrorEnvelope{Error: cliErrorBody{Code: detail.Code, Message: message, HTTPStatus: detail.HTTPStatus, Detail: detail.Detail, Reason: detail.Reason}}
+	body := cliErrorBody{Code: detail.Code, Message: message, HTTPStatus: detail.HTTPStatus, Detail: detail.Detail, Reason: detail.Reason}
+	var classified *classifiedError
+	if errors.As(err, &classified) {
+		body.Classification = classified.classification
+	}
+	return cliErrorEnvelope{Error: body}
 }
 
-func writeCLIErrorEnvelope(w io.Writer, err error, message string) {
-	encoded, _ := json.Marshal(errorEnvelope(err, message))
-	fmt.Fprintln(w, string(encoded))
+type cliErrorResult struct {
+	Refusal error
+	Message string
+	JSON    bool
+}
+
+// writeCLIErrorResult owns the JSON error envelope and any retained text
+// result from a failed command. The caller still owns stderr and exit status.
+func writeCLIErrorResult(w io.Writer, result cliErrorResult) error {
+	envelope := errorEnvelope(result.Refusal, result.Message)
+	var err error
+	if result.JSON {
+		err = json.NewEncoder(w).Encode(envelope)
+	} else if envelope.Invite != nil {
+		err = formatInviteInspection(w, envelope.Invite)
+	}
+	if err != nil {
+		return fmt.Errorf("write command output: %w; check the output destination and retry", err)
+	}
+	return nil
 }

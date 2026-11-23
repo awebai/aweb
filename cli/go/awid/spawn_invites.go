@@ -11,6 +11,8 @@ import (
 
 const spawnAcceptInvitePath = "/api/v1/spawn/accept-invite"
 
+// SpawnCreateInviteRequest selects a hosted invitation's human condition,
+// issuer chain and lifetime; the service still checks the authenticated issuer.
 type SpawnCreateInviteRequest struct {
 	ForHuman         *string        `json:"for_human,omitempty"`
 	IDChain          map[string]any `json:"id_chain,omitempty"`
@@ -20,6 +22,8 @@ type SpawnCreateInviteRequest struct {
 	ExpiresInSeconds int            `json:"expires_in_seconds,omitempty"`
 }
 
+// SpawnCreateInviteResponse includes the enrollment bearer and pinned issuer
+// selection. Token is secret; IDTree alone does not prove current ancestry.
 type SpawnCreateInviteResponse struct {
 	ForHuman      *string            `json:"for_human"`
 	IDTree        *SpawnInviteIDTree `json:"id_tree"`
@@ -60,8 +64,11 @@ type SpawnInvitePreviewResponse struct {
 	Status             string                `json:"status"`
 }
 
+// SpawnAcceptInviteRequest binds an invitation to the joining key and any
+// supplied child chain. Membership admission and ancestry are separate checks.
 type SpawnAcceptInviteRequest struct {
-	IDChain            map[string]any                   `json:"id_chain,omitempty"`
+	// Keep the request comparable, as in aw-v1.36.58. A nil pointer omits the chain.
+	IDChain            *map[string]any                  `json:"id_chain,omitempty"`
 	IDTree             *IDTreeCreationRequest           `json:"id_tree,omitempty"`
 	Token              string                           `json:"token"`
 	Alias              string                           `json:"alias,omitempty"`
@@ -76,6 +83,10 @@ type SpawnAcceptInviteRequest struct {
 	AtomicAddressClaim *AtomicAddressClaimIdentityProof `json:"atomic_address_claim,omitempty"`
 }
 
+// SpawnAcceptInviteResponse carries membership installation and attribution
+// results. A caller must verify them against its selected team/registry before
+// installation. APIKey is a released field; identity-key recovery must omit an
+// unused credential from its journal.
 type SpawnAcceptInviteResponse struct {
 	IDTreeCreationResponse
 	OrgID               string `json:"org_id,omitempty"`
@@ -100,10 +111,14 @@ type SpawnAcceptInviteResponse struct {
 	TeamCert            string `json:"team_cert,omitempty"`
 }
 
+// IsHostedSpawnInviteToken recognizes the hosted bearer prefix for routing.
+// It does not establish that the token exists, is valid or is unused.
 func IsHostedSpawnInviteToken(token string) bool {
 	return strings.HasPrefix(strings.TrimSpace(token), "aw_inv_")
 }
 
+// CreateSpawnInvite submits the selected issuance request using the client's
+// authenticated team authority; nil selects the service's default request.
 func (c *Client) CreateSpawnInvite(ctx context.Context, req *SpawnCreateInviteRequest) (*SpawnCreateInviteResponse, error) {
 	if c == nil {
 		return nil, fmt.Errorf("aweb: client is required")
@@ -118,6 +133,9 @@ func (c *Client) CreateSpawnInvite(ctx context.Context, req *SpawnCreateInviteRe
 	return &out, nil
 }
 
+// AcceptSpawnInvite signs acceptance with the joining key, independently of
+// any workspace API credential. A transport failure can follow a committed
+// acceptance, so retain the same key and request for reconciliation.
 func (c *Client) AcceptSpawnInvite(ctx context.Context, req *SpawnAcceptInviteRequest) (*SpawnAcceptInviteResponse, error) {
 	if c == nil {
 		return nil, fmt.Errorf("aweb: client is required")
@@ -162,6 +180,8 @@ func (c *Client) AcceptSpawnInvite(ctx context.Context, req *SpawnAcceptInviteRe
 	return &out, nil
 }
 
+// UnmarshalJSON preserves explicit ID-tree nulls versus released omission.
+// Decoding a response does not verify its chain or membership authority.
 func (response *SpawnAcceptInviteResponse) UnmarshalJSON(raw []byte) error {
 	type plain SpawnAcceptInviteResponse
 	if err := json.Unmarshal(raw, (*plain)(response)); err != nil {
@@ -191,6 +211,8 @@ func (response SpawnAcceptInviteResponse) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fields)
 }
 
+// UnmarshalJSON keeps ID-tree presence and validates the optional creation
+// invitation's shape without treating a preview as current issuer authority.
 func (response *SpawnInvitePreviewResponse) UnmarshalJSON(raw []byte) error {
 	type plain SpawnInvitePreviewResponse
 	if err := json.Unmarshal(raw, (*plain)(response)); err != nil {

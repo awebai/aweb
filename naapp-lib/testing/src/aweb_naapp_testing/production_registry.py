@@ -25,6 +25,7 @@ import dataclasses
 import json
 import os
 import socket
+import subprocess
 import tempfile
 import uuid
 from collections.abc import AsyncIterator
@@ -34,8 +35,13 @@ from types import SimpleNamespace
 
 import httpx
 from awid.dns_verify import DnsVerificationError
-from awid_service.deps import get_domain_verifier
-from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry, ServiceTransport
+from awid_service.testing import (
+    REGISTRY_URL,
+    SERVICE_TOKEN,
+    Registry,
+    ServiceTransport,
+    fixture_domain_authority,
+)
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
 _SCHEMA_PREFIX = "production_awid_"
@@ -75,6 +81,24 @@ def _project() -> Path:
         raise RuntimeError(
             f"no locked production AWID project at {project}: set PRODUCTION_AWID_PROJECT "
             "and run uv sync --frozen there"
+        )
+    return project
+
+
+def _prepared_project(env: dict[str, str]) -> Path:
+    """The locked project, whose environment was synced before the tests ran
+    (make production-awid-sync); the fixture starts it as it is and never syncs."""
+    project = _project()
+    check = subprocess.run(
+        ["uv", "sync", "--offline", "--frozen", "--check", "--project", str(project)],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode != 0:
+        raise RuntimeError(
+            f"the production AWID environment of {project} is not prepared: "
+            f"run make production-awid-sync first ({check.stderr.strip()})"
         )
     return project
 
@@ -119,11 +143,9 @@ async def _serve_authority(app: ReleaseApp) -> asyncio.Server:
             while (await reader.readline()) not in (b"\r\n", b"\n", b""):
                 pass
             domain = httpx.URL(request_line.split()[1]).path.lstrip("/")
-            override = app.dependency_overrides.get(get_domain_verifier)
             try:
-                if override is None:
-                    raise DnsVerificationError(f"No TXT records found for _awid.{domain}")
-                status, body = "200 OK", dataclasses.asdict(await override()(domain))
+                authority = await fixture_domain_authority(app.dependency_overrides, domain)
+                status, body = "200 OK", dataclasses.asdict(authority)
             except DnsVerificationError as refused:
                 status, body = "404 Not Found", {"refused": str(refused)}
             content = json.dumps(body).encode()
@@ -157,12 +179,14 @@ async def running_production_registry(
     """The production release on the PostgreSQL at ``database_url``, applying
     its own migrations to a schema it alone uses, which is dropped on exit."""
     schema = _SCHEMA_PREFIX + uuid.uuid4().hex
+    env = {name: value for name, value in os.environ.items() if name != "PYTHONPATH"}
+    env.pop("VIRTUAL_ENV", None)
+    project = _prepared_project(env)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         sock.listen()
         port = sock.getsockname()[1]
         origin = f"http://127.0.0.1:{port}"
-        env = {name: value for name, value in os.environ.items() if name != "PYTHONPATH"}
         env.update(
             AWID_DATABASE_URL=database_url,
             AWID_DB_SCHEMA=schema,
@@ -173,7 +197,6 @@ async def running_production_registry(
             APP_ENV="test",
         )
         env.pop("AWID_SKIP_DNS_VERIFY", None)
-        env.pop("VIRTUAL_ENV", None)
         app = ReleaseApp()
         authority = await _serve_authority(app)
         authority_port = authority.sockets[0].getsockname()[1]
@@ -182,8 +205,9 @@ async def running_production_registry(
             "run",
             "--offline",
             "--frozen",
+            "--no-sync",
             "--project",
-            str(_project()),
+            str(project),
             "python",
             "-c",
             _SERVE_RELEASE,
@@ -195,6 +219,7 @@ async def running_production_registry(
         )
     db: AsyncDatabaseManager | None = None
     transport: ProductionServiceTransport | None = None
+    registry: Registry | None = None
     try:
         async with httpx.AsyncClient(base_url=origin, timeout=1) as client:
             async with asyncio.timeout(60):
@@ -210,20 +235,25 @@ async def running_production_registry(
         db = AsyncDatabaseManager(DatabaseConfig(connection_string=database_url, schema=schema))
         await db.connect()
         transport = ProductionServiceTransport(origin)
-        yield Registry(app=app, db=db, transport=transport)  # type: ignore[arg-type]
+        registry = Registry(app=app, db=db, transport=transport)  # type: ignore[arg-type]
+        yield registry
     finally:
-        if process.returncode is None:
-            process.terminate()
-            try:
-                async with asyncio.timeout(10):
+        try:
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    async with asyncio.timeout(10):
+                        await process.wait()
+                except TimeoutError:
+                    process.kill()
                     await process.wait()
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-        authority.close()
-        await authority.wait_closed()
-        if transport is not None:
-            await transport._inner.aclose()
-        if db is not None:
-            await db.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-            await db.disconnect()
+            authority.close()
+            await authority.wait_closed()
+            if transport is not None:
+                await transport._inner.aclose()
+            if db is not None:
+                await db.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                await db.disconnect()
+        finally:
+            if registry is not None:
+                await registry.aclose()

@@ -14,7 +14,7 @@ from awid.identity_observation import (
     IdentityObservationRefused,
     observe_identity_binding,
 )
-from fastapi import HTTPException
+from aweb.service_errors import IdentityBindingError
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import privacy_app
 
@@ -48,18 +48,14 @@ async def test_public_and_server_observation_share_exact_registry_binding(privac
         binding = await observe_identity_binding(
             client, did_key=actor.did, did_aw=registered.did_aw
         )
-        adapted = await server_observe(
-            client, did_key=actor.did, did_aw=registered.did_aw
-        )
+        adapted = await server_observe(client, did_key=actor.did, did_aw=registered.did_aw)
         assert isinstance(binding, IdentityBinding)
         assert binding == adapted
         assert binding.did_key == actor.did and binding.did_aw == registered.did_aw
         assert binding.fresh_observation
         with pytest.raises(IdentityObservationRefused) as public_error:
-            await observe_identity_binding(
-                client, did_key=other.did, did_aw=registered.did_aw
-            )
-        with pytest.raises(HTTPException) as server_error:
+            await observe_identity_binding(client, did_key=other.did, did_aw=registered.did_aw)
+        with pytest.raises(IdentityBindingError) as server_error:
             await server_observe(client, did_key=other.did, did_aw=registered.did_aw)
         assert public_error.value.code == "identity_binding_mismatch"
         assert (server_error.value.status_code, server_error.value.detail) == (
@@ -76,9 +72,7 @@ async def test_public_unavailability_keeps_the_existing_server_503():
     from awid.registry import RegistryClient
 
     # An endpoint owned by this test, then actually stopped: no registry stub.
-    listener = await asyncio.start_server(
-        lambda reader, writer: writer.close(), "127.0.0.1", 0
-    )
+    listener = await asyncio.start_server(lambda reader, writer: writer.close(), "127.0.0.1", 0)
     port = listener.sockets[0].getsockname()[1]
     listener.close()
     await listener.wait_closed()
@@ -89,7 +83,7 @@ async def test_public_unavailability_keeps_the_existing_server_503():
     try:
         with pytest.raises(IdentityObservationRefused) as public_error:
             await observe_identity_binding(client, did_key=key, did_aw=identity)
-        with pytest.raises(HTTPException) as server_error:
+        with pytest.raises(IdentityBindingError) as server_error:
             await server_observe(client, did_key=key, did_aw=identity)
         assert public_error.value.code == "identity_binding_unavailable"
         assert (server_error.value.status_code, server_error.value.detail) == (

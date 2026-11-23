@@ -67,7 +67,7 @@ func TestGuidedClaudePollingFallbackExplainsLimitsAndRequiresOptIn(t *testing.T)
 	for _, answer := range []string{"n\n\n", "n\ny\n"} {
 		root := t.TempDir()
 		var out bytes.Buffer
-		if err := runGuidedPostInitSetup(guidedOnboardingRequest{
+		if _, err := runGuidedSetup(guidedOnboardingRequest{
 			WorkingDir: root, AskPostCreateSetup: true, PromptIn: &singleByteReader{data: answer}, PromptOut: &out,
 		}); err != nil {
 			t.Fatal(err)
@@ -362,6 +362,9 @@ func TestCleanupClaudeNotifyHookRefusesConcurrentChanges(t *testing.T) {
 		t.Run(mutation, func(t *testing.T) {
 			original := `{"hooks":{"PostToolUse":[{"command":"aw notify"}]}}`
 			path := writeNotifySettings(t, t.TempDir(), original)
+			if err := os.Chmod(path, 0640); err != nil {
+				t.Fatal(err)
+			}
 			edited := original
 			beforeClaudeNotifyCleanupRecheck = func(target string) {
 				if target != path {

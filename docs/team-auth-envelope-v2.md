@@ -60,6 +60,12 @@ The verifier:
 8. Verifies the team certificate against AWID team authority and revocation
    state, and requires `certificate.member_did_key == signing did:key`.
 
+Aweb refuses a revoked team certificate with HTTP 401 and
+`detail.code = "certificate_revoked"`. `detail.message` tells the caller to
+ask the team's owner for a new certificate. Embedding hosts can catch
+`aweb.team_auth.TeamCertificateRefusal` and check
+`refusal.certificate_error.reason` against `awid.team_certificate.TeamCertificateReason.REVOKED`.
+
 Independent applications without an operator token can obtain the current
 team key and revocation status from AWID's anonymous
 `/v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status`, even
@@ -73,6 +79,12 @@ See [the registry contract](awid-sot.md#teams).
 The verifier must not trust request headers such as `Host` or
 `X-Forwarded-Host` for `aud`. Public origins are configuration, not caller
 input.
+
+Every request-signature family in the server reads body evidence through
+`aweb.request_body.request_body_sha256`: use the middleware's precomputed hash,
+or hash an embedding host's `request.state.cached_body` bytes. A host must cache
+the actual request bytes before authentication. The bodyless default is the
+empty-body hash; it is not a substitute for a nonempty cached body.
 
 ## Compatibility: compact v1
 

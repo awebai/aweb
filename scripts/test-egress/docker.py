@@ -6,12 +6,10 @@ Evidence survives cleanup. No host credentials or identity directories are mount
 """
 import argparse
 import json
-import hashlib
 import importlib.util
 from pathlib import Path
 import subprocess
-import shutil
-import tempfile
+import sys
 import time
 import uuid
 
@@ -21,6 +19,12 @@ _worker_spec = importlib.util.spec_from_file_location(
 _worker_module = importlib.util.module_from_spec(_worker_spec)
 _worker_spec.loader.exec_module(_worker_module)
 service_plan = _worker_module.service_plan
+
+_image_spec = importlib.util.spec_from_file_location(
+    "package_image", Path(__file__).with_name("package_image.py"))
+_image_module = importlib.util.module_from_spec(_image_spec)
+_image_spec.loader.exec_module(_image_module)
+prepare_image = _image_module.prepare_image
 
 
 def runner_args(token, dns_ip, image, profile='portable', server_workers=0):
@@ -120,11 +124,23 @@ def main():
                         help='bounded runner resources; CCX33 unit resource profile')
     parser.add_argument('--server-workers', type=int, choices=(0, 7), default=0,
                         help='seven-worker server services; requires ccx33 profile')
+    parser.add_argument('--collect-summary', action='store_true',
+                        help='collect the isolated candidate suite target summary')
     parser.add_argument('--command', nargs=argparse.REMAINDER, help='guard qualification command instead of make targets')
     parser.add_argument('targets', nargs='*', default=['test-server', 'test-awid', 'test-cli', 'test-channel', 'test-channel-name-live-contract', 'test-channel-core', 'test-pi-extension'])
     args = parser.parse_args()
     if args.server_workers and args.profile != 'ccx33':
         parser.error('seven server workers require --profile ccx33')
+    if sys.platform == 'darwin':
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        from local_suite_slots import Scope, SuiteLabel, suite_slot
+
+        with suite_slot(scope=Scope.WHOLE, label=SuiteLabel.PORTABLE, root=ROOT):
+            return run_suite(args)
+    return run_suite(args)
+
+
+def run_suite(args):
     args.evidence.mkdir(parents=True, exist_ok=False)
     evidence = args.evidence.resolve()
     (evidence / 'source-sha').write_text(subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True))
@@ -135,30 +151,7 @@ def main():
     network = None
     try:
         if not args.image:
-            # Copy only source files and a self-contained Git bundle. A worktree's
-            # .git file points outside it and cannot be copied into the runner.
-            with tempfile.TemporaryDirectory(prefix='aw-egress-source-') as tmp:
-                bundle = Path(tmp) / 'source.bundle'
-                subprocess.run(['git', '-C', str(ROOT), 'bundle', 'create', str(bundle), 'HEAD'], check=True)
-                files = subprocess.check_output(['git', '-C', str(ROOT), 'ls-files', '-z', '--cached', '--others', '--exclude-standard']).decode().split('\0')
-                hashes = []
-                for name in dict.fromkeys(files):
-                    if name and ((ROOT / name).is_file() or (ROOT / name).is_symlink()):
-                        destination = Path(tmp) / name
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(ROOT / name, destination, follow_symlinks=False)
-                        data = destination.readlink().as_posix().encode() if destination.is_symlink() else destination.read_bytes()
-                        hashes.append(hashlib.sha256(data).hexdigest() + "  " + name)
-                (evidence / 'source-files.sha256').write_text('\n'.join(hashes) + '\n')
-                # A docker-container builder cannot resolve a daemon-local tools
-                # image. Build the tools and suite setup in one recipe instead.
-                recipe = ((ROOT / 'candidate-gate/Dockerfile').read_text()
-                          + '\n' + (ROOT / 'scripts/test-egress/Dockerfile').read_text())
-                dockerfile = Path(tmp) / 'isolated.Dockerfile'
-                dockerfile.write_text(recipe)
-                (evidence / 'Dockerfile.generated').write_text(recipe)
-                subprocess.run(['docker', 'build', '-f', str(dockerfile),
-                                '-t', image, tmp], check=True)
+            prepare_image(ROOT, evidence, image)
         # Pull service images before entering isolation.
         for service in ('postgres:17', 'redis:7'):
             subprocess.run(['docker', 'image', 'inspect', service], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -167,7 +160,7 @@ def main():
         dns = docker('run', '-d', '--network', token, '--name', token + '-dns',
                      '--cpus', '.5', '--memory', '128m', '--pids-limit', '128',
                      '-v', f'{evidence}:/evidence', image, 'python3',
-                     'scripts/test-egress/dns.py', '--log', '/evidence/dns-denied.log')
+                     'scripts/test-egress/egress_dns.py', '--log', '/evidence/dns-denied.log')
         containers.append(dns)
         info = json.loads(docker('inspect', dns))[0]
         dns_ip = info['NetworkSettings']['Networks'][token]['IPAddress']
@@ -214,8 +207,15 @@ def main():
         # Retain inspect evidence proving that the runner has only the internal network.
         (evidence / 'network.json').write_text(docker('network', 'inspect', token))
         (evidence / 'runner.json').write_text(docker('inspect', runner))
+        command_env = ['-e', 'CANDIDATE_LOG_DIR=/tmp'] if args.collect_summary else []
+        if args.collect_summary and args.server_workers:
+            shard_services = [
+                {key: plan[key] for key in ('postgres_port', 'redis_port')}
+                for plan in services[:2]
+            ]
+            command_env += ['-e', 'AWEB_SECRETS_SHARD_SERVICES=' + json.dumps(shard_services)]
         with (evidence / 'suite.log').open('w') as log:
-            result = subprocess.run(['docker', 'exec', runner, *(args.command or ['make', 'TEST_EGRESS_RUNNER=', *args.targets])], stdout=log, stderr=subprocess.STDOUT)
+            result = subprocess.run(['docker', 'exec', *command_env, runner, *(args.command or ['make', 'TEST_EGRESS_RUNNER=', *args.targets])], stdout=log, stderr=subprocess.STDOUT)
         print(f'Test child exit status: {result.returncode}; evidence: {evidence}', flush=True)
         if result.returncode:
             print('\n'.join((evidence / 'suite.log').read_text().splitlines()[-100:]), flush=True)
@@ -225,10 +225,17 @@ def main():
         if report.exists():
             print('TEST DNS REFUSED (reserved/allowlisted, no upstream):\n' + report.read_text())
         denied = (evidence / 'dns-denied.log').read_text()
+        status = result.returncode
         if denied:
-            print('TEST DNS EGRESS DENIED:\n' + denied)
-            return 1
-        return result.returncode
+            print('TEST DNS EGRESS DENIED:\n' + denied, flush=True)
+            status = status or 1
+        if args.collect_summary:
+            try:
+                docker('cp', f'{runner}:/tmp/summary.tsv', str(evidence / 'summary.tsv'))
+            except (OSError, subprocess.CalledProcessError) as error:
+                print(f'TEST SUMMARY COPY FAILED: {error}', flush=True)
+                status = status or 1
+        return status
     finally:
         for container in reversed(containers):
             subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL, check=True)

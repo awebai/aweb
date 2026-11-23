@@ -237,11 +237,12 @@ Stop the runtime first, but keep the identity home available until communication
 cleanup finishes. Choose the command that matches identity scope, authority, and
 intended lifecycle; a missing runtime or path is not itself retirement evidence.
 
-### Stale local-identity workspace cleanup
+### Local-identity workspace cleanup
 
-`aw workspace delete` is only the stale local-identity cleanup path. It is not a
-general self-custodial-home retirement command. Inspect identity scope and
-workspace state first:
+A local member can delete its own workspace immediately. Another member can
+clean it up only when its recorded activity is stale. `aw workspace delete`
+is not a general self-custodial-home retirement command. Inspect identity scope
+and workspace state first:
 
 ```bash
 aw whoami --json
@@ -256,13 +257,17 @@ The current server refuses cleanup rather than guessing:
   applicable identity and namespace authorities. The current self-custodial CLI
   has no archive/replace command, so preserve the mapping and credentials and
   hand the lifecycle decision to the authorized owner.
-- `local_workspace_still_active` means the local workspace was seen within the
-  current 1,800-second presence TTL. Stop its runtime, retain the identity home,
-  wait until that recorded presence is stale, and then retry. An immediate retry
-  must not be treated as cleanup progress.
+- `local_workspace_still_active` means another member is trying to delete a
+  local workspace whose activity is within the presence TTL (1,800 seconds by
+  default, configured by `AWEB_PRESENCE_TTL_SECONDS`). Stop the target runtime,
+  retain its identity home, and wait until that activity is stale before retrying
+  through the other member. This waiting period does not apply when the target
+  member authenticates to delete its own workspace. An immediate retry while the
+  target is still active does not establish cleanup progress.
 
-Only for a stopped local-identity workspace whose recorded presence is stale,
-run from that retained identity home:
+After stopping the local member's runtime, run from its retained identity home
+to delete its own workspace immediately. Cleanup through another authorized
+member's identity home requires the target workspace's activity to be stale:
 
 ```bash
 aw workspace delete <workspace-id-or-name> --json
@@ -273,6 +278,40 @@ and releases its task claims. Inspect the structured result, including whether
 identity cleanup was established. On any refusal, error, or indeterminate result,
 persist an explicit partial retirement state and retain the identity home; never
 turn an incomplete result into permission to delete local credentials.
+
+For non-hosted own-member retirement with a local controller key, `retirement_code` distinguishes
+`retired_and_revoked`, `retired_revocation_pending`, and
+`retired_key_holder_required`. Only the first reports `alias_released: true`.
+The latter two exit nonzero and supply `next_step` with the exact key-holder
+command. The CLI prepares the receipt before deleting and durably records
+service-confirmed cleanup before revoking the certificate. A retry matches the
+original team, member, workspace and certificate. A prepared receipt retries
+the exact workspace operation; after confirmed cleanup, a retry needs only the
+controller operation. The private receipt contains no keys or tokens.
+
+Without the local controller key, the implicit workspace command deletes only
+the workspace and reports `alias_released: false` with reason `team_not_hosted`.
+For an explicitly selected external identity home, the command refuses before
+deleting, with JSON code `team_not_hosted` and the released stderr sentence
+used by OATS. The controller handles the remaining team cleanup. Global
+identity and other-member removal stay separate.
+
+For hosted self-retirement, the service may retain the removal intent after
+accepting it with a valid member credential. Its operation owner completes the
+intent under service authorization, even if revocation succeeds before the
+workspace cleanup is recorded and the member never retries.
+
+The verifier refuses a revoked credential. The service may return the
+retained result for an exact retry matching the original certificate
+fingerprint, team, method, raw request target, and body. A pending removal
+returns HTTP 202 with `status: "accepted"`. A completed retry returns HTTP
+200 with the stored removal result. The retry receives a receipt and the
+service owner handles completion.
+
+`aw workspace delete` exits zero on either receipt. While completion is
+pending, `--json` reports `retirement_code: "self_removal_accepted"`,
+`identity_deleted: false`, and `alias_released: false` with reason
+`completion pending`. Wait for a completed receipt before reusing the alias.
 
 ### Team-authorized retirement
 
@@ -330,7 +369,7 @@ same display name.
 | Service projection | `aw workspace connect` / `POST /v1/connect` | Same explicit authority boundary, easier orchestration API. |
 | Wake | Snapshot/diff SSE and maintained runtime adapters | Durable server cursor/resume only after a reviewed protocol exists. |
 | Fetch/reply | Exact mail, conversation, and chat commands/APIs | Stable SDK operations preserving ids and verification metadata. |
-| Retirement | Stale local-identity workspace cleanup plus authority-dependent team removal and independent `agent-status`; global archive/replace is a separate owner-authorized flow | One reconciled lifecycle operation without taking runtime ownership. |
+| Retirement | Local-identity workspace cleanup (immediate for self, stale-only for peers) plus authority-dependent team removal and independent `agent-status`; global archive/replace is a separate owner-authorized flow | One reconciled lifecycle operation without taking runtime ownership. |
 
 Do not write code against the target column as though it already ships.
 

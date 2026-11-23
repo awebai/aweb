@@ -1,6 +1,6 @@
 [project]
 name = "aweb"
-version = "1.27.51rc3"
+version = "1.27.51"
 description = "Agent Web: self-hostable coordination server for AI agents (identity, presence, mail, chat, tasks, locks)"
 readme = "README.md"
 license = "MIT"
@@ -19,9 +19,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = [
-    "awid-service>=0.5.40rc3",
+    "awid-service>=0.5.40",
     # Shared origin egress, manifest reader and hooks; no runtime extra.
-    "aweb-naapp[egress,hooks]>=0.5.2rc3",
+    "aweb-naapp[egress,hooks]>=0.5.2",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",
@@ -29,6 +29,9 @@ dependencies = [
     "httpx>=0.28.1",
     "mcp>=1.26.0,<2",
     "pgdbm>=0.5.0",
+    # asyncpg 0.31.0 never frees a pooled connection that a protocol abort
+    # closed, so closing the pool waits forever; 0.32.0 returns it (aweb-adji).
+    "asyncpg>=0.32.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "publicsuffix2>=2.20191221",
@@ -103,10 +106,6 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "B", "BLE"]
-
-[tool.ruff.lint.per-file-ignores]
-# Imported pytest fixtures are registered by name, then injected by signature.
-"tests/**" = ["F811"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Body"]

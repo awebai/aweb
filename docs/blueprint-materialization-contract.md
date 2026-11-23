@@ -169,7 +169,7 @@ Given a resolved `library-url`, `blueprint`, and `profile`:
    and unique (§2.1); `profile.yaml` is present and parseable; and its `id` /
    `version` equal the response `profile_ref` / `version`. Any failure rejects
    the payload; nothing is written.
-3. **Verify integrity:** recompute the profile digest (§3) over the returned
+3. **Verify integrity:** require a nonempty profile digest, then recompute the profile digest (§3) over the returned
    `files` and require it to equal `digest`. Also verify each file's
    `content_utf8` against its per-file `sha256`. Any mismatch fails closed;
    nothing is written. (This replaces the old get-profile-vs-shelf cross-check —
@@ -196,6 +196,22 @@ Given a resolved `library-url`, `blueprint`, and `profile`:
      proposals before minting.
 5. Write the pin (§6), recording the exact ordered set of paths written as the
    **managed set**.
+
+The client's profile destination policy applies before writing or pruning any
+managed path: `AGENTS.md`, `CLAUDE.md`, `skills/`, `artifacts/`, `.aw/profile/`
+and Claude skill projections under `.claude/skills/`. Other identity state,
+harness settings, repository metadata and working files are outside this scope.
+A recorded managed set does not authorize additional destinations. Symlinks are
+only runtime projections: `CLAUDE.md -> AGENTS.md` or
+`.claude/skills/<name> -> ../../skills/<name>`. Refresh can prune the older
+`.claude/skills/<name>/SKILL.md` projection while migrating it to a directory
+link. Nested identity, harness and version-control state directories are refused
+inside resource trees too. A rejected batch writes no files; ordinary profile
+files are replaced atomically.
+
+The response's digest checks consistency of the returned files. It is not an
+independent signature by a publisher. Adoption checks the independently recorded
+pin; a refresh may intentionally select a newer version and digest.
 
 **Materialization and managed-set ordering is normative.** Emit the fixed
 profile entries first (`AGENTS.md`, then the runtime body-file link when one is

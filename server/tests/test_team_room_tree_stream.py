@@ -14,7 +14,14 @@ from awid.dns_verify import DomainAuthority
 from awid.id_certificates import status_request
 from awid_service.deps import get_domain_verifier
 from aweb.api import _build_awid_registry_client
-from test_team_room import privacy_app, TEAM, headers, metadata, post
+from test_team_room import (
+    privacy_app as privacy_app,
+    TEAM,
+    admit_room_member,
+    headers,
+    metadata,
+    post,
+)
 from test_messages_http import _make_certificate, _encode_certificate
 from test_identity_grants import _grant_headers
 from test_cli_never_grants import registry_listener
@@ -24,6 +31,8 @@ from test_id_chain_request_auth import (
     _fixture_signer,
     _signed_fixture_certificate,
 )
+
+__all__ = ["privacy_app"]
 
 
 @pytest.fixture(scope="module")
@@ -72,7 +81,10 @@ async def test_room_stream_rechecks_global_tree_after_opening(
         async def aclose(self):
             await self.upstream.aclose()
 
-    async with registry_listener(env, listener_socket=room_registry_listener.dup()) as (writer, origin):
+    async with registry_listener(env, listener_socket=room_registry_listener.dup()) as (
+        writer,
+        origin,
+    ):
         env.registry_app.state.awid_public_origins = (origin,)
 
         async def exact_dns(selected):
@@ -123,10 +135,10 @@ async def test_room_stream_rechecks_global_tree_after_opening(
         monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
         transport = StatusTransport()
         cached = _build_awid_registry_client(
-            env.app, redis=env.redis, transport=transport
+            env.app, redis=env.redis, transport=transport, domain_verifier=exact_dns
         )
-        object.__setattr__(cached, "_domain_verifier", exact_dns)
         env.app.state.awid_registry_client = cached
+        await admit_room_member(env, alias="bob")
         subject = {"id": stable, "did_key": actor.did}
         request = env.client.build_request(
             "GET",
@@ -180,7 +192,9 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                     expected_head=receipt["certificate_id"],
                 )
             if tree != "legacy":
-                assert transport.status_calls == 1  # opening admission warmed it
+                assert (
+                    transport.status_calls == 1
+                )  # native admission and stream opening share this evidence
                 transport.status_down = tree == "status_unavailable"
                 # Wall-clock movement does not age Redis's clock. First prove
                 # the still-fresh entry is used, then age that exact entry past
@@ -188,9 +202,10 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                 evidence = await cached.id_chain_evidence(None, subject, domain=domain)
                 assert evidence.age_seconds <= 60
                 assert transport.status_calls == 1
-                cache_key = await cached._generation_cache_key(cached._id_status_cache_key(
-                    status_request(None, subject, domain=domain)
-                ), cached._id_status_generation_key(domain))
+                cache_key = await cached._generation_cache_key(
+                    cached._id_status_cache_key(status_request(None, subject, domain=domain)),
+                    cached._id_status_generation_key(domain),
+                )
                 raw = await env.redis.get(cache_key)
                 assert raw is not None
                 entry = json.loads(raw)
@@ -199,13 +214,9 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                 await env.redis.set(cache_key, json.dumps(entry), ex=60)
 
         monkeypatch.setattr(events_routes, "datetime", StreamClock)
-        monkeypatch.setattr(
-            events_routes, "asyncio", SimpleNamespace(sleep=advance_poll)
-        )
+        monkeypatch.setattr(events_routes, "asyncio", SimpleNamespace(sleep=advance_poll))
         # The stream schedules its reconcile on the monotonic clock.
-        monkeypatch.setattr(
-            events_routes, "monotonic", lambda: (clock.now - start).total_seconds()
-        )
+        monkeypatch.setattr(events_routes, "monotonic", lambda: (clock.now - start).total_seconds())
         monkeypatch.setattr(identity_binding, "monotonic", lambda: clock.evidence)
         try:
             response = await env.client.send(request)
@@ -217,9 +228,7 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                 if line.startswith("data: ")
                 and json.loads(line[6:]).get("type") == "actionable_room_post"
             ]
-            assert len(notices) == (
-                1 if tree in ("valid", "legacy") else 0
-            ), response.text
+            assert len(notices) == (1 if tree in ("valid", "legacy") else 0), response.text
             assert transport.status_calls == (0 if tree == "legacy" else 2)
             row = await env.db.fetch_one(
                 "SELECT status,team_id,did_key,deleted_at FROM {{tables.agents}} WHERE agent_id=$1",

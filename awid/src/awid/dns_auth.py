@@ -3,17 +3,32 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import Enum, auto
 
 from fastapi import HTTPException, Request
 
 from awid.did import validate_did
 from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.utc_timestamps import parse_zoned_timestamp
 
 
-def parse_didkey_auth(authorization: str | None) -> tuple[str, str]:
+class DIDKeyHeaderProfile(Enum):
+    SINGLE_SPACE = auto()
+    WHITESPACE_SEPARATED = auto()
+
+
+def parse_didkey_auth(
+    authorization: str | None,
+    *,
+    profile: DIDKeyHeaderProfile = DIDKeyHeaderProfile.SINGLE_SPACE,
+) -> tuple[str, str]:
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
-    parts = authorization.split(" ")
+    parts = (
+        authorization.strip().split()
+        if profile is DIDKeyHeaderProfile.WHITESPACE_SEPARATED
+        else authorization.split(" ")
+    )
     if len(parts) != 3 or parts[0] != "DIDKey":
         raise HTTPException(
             status_code=401,
@@ -22,7 +37,9 @@ def parse_didkey_auth(authorization: str | None) -> tuple[str, str]:
     return parts[1], parts[2]
 
 
-def require_timestamp(request: Request, *, header_name: str = "X-AWEB-Timestamp") -> str:
+def require_timestamp(
+    request: Request, *, header_name: str = "X-AWEB-Timestamp"
+) -> str:
     value = request.headers.get(header_name)
     if not value:
         raise HTTPException(status_code=401, detail=f"Missing {header_name} header")
@@ -35,20 +52,19 @@ def _utc_now() -> datetime:
 
 def enforce_timestamp_skew(ts: str, *, max_delta_seconds: int = 300) -> None:
     try:
-        normalized = ts.strip()
-        if normalized.endswith("Z"):
-            normalized = normalized[:-1] + "+00:00"
-        dt = datetime.fromisoformat(normalized)
-        if dt.tzinfo is None:
-            raise HTTPException(status_code=401, detail="Timestamp must include timezone")
-        dt = dt.astimezone(timezone.utc)
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Malformed timestamp")
+        dt = parse_zoned_timestamp(ts)
+    except ValueError as exc:
+        detail = (
+            "Timestamp must include timezone"
+            if "timezone" in str(exc)
+            else "Malformed timestamp"
+        )
+        raise HTTPException(status_code=401, detail=detail) from exc
     delta = abs((_utc_now() - dt).total_seconds())
     if delta > max_delta_seconds:
-        raise HTTPException(status_code=401, detail="Timestamp outside allowed skew window")
+        raise HTTPException(
+            status_code=401, detail="Timestamp outside allowed skew window"
+        )
 
 
 def verify_signed_json_request(

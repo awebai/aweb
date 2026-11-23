@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"filippo.io/edwards25519"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/mr-tron/base58"
 )
 
@@ -36,8 +36,12 @@ var (
 // IDCertificateError carries a stable refusal code, independent of prose.
 type IDCertificateError struct{ Code string }
 
-func (e *IDCertificateError) Error() string  { return e.Code }
-func idCertificateRefusal(code string) error { return &IDCertificateError{Code: code} }
+// Error returns the stable refusal code without including the rejected artifact.
+func (e *IDCertificateError) Error() string     { return e.Code }
+func idCertificateRefusal(code IDRefusal) error { return &IDCertificateError{Code: string(code)} }
+
+// IDCertificateErrorCode preserves the released string-code accessor through
+// wrapped errors. New typed comparisons can use IDRefusalCode.
 func IDCertificateErrorCode(err error) string {
 	var e *IDCertificateError
 	if errors.As(err, &e) {
@@ -51,11 +55,11 @@ func idCertificateJSONValue(value any) error {
 		return nil
 	case json.Number:
 		if !idCertificateInteger.MatchString(v.String()) {
-			return idCertificateRefusal("invalid_shape")
+			return idCertificateRefusal(IDRefusalInvalidShape)
 		}
 	case string:
 		if !utf8.ValidString(v) {
-			return idCertificateRefusal("invalid_json")
+			return idCertificateRefusal(IDRefusalInvalidJson)
 		}
 	case []any:
 		for _, item := range v {
@@ -66,14 +70,14 @@ func idCertificateJSONValue(value any) error {
 	case map[string]any:
 		for k, item := range v {
 			if !utf8.ValidString(k) {
-				return idCertificateRefusal("invalid_json")
+				return idCertificateRefusal(IDRefusalInvalidJson)
 			}
 			if err := idCertificateJSONValue(item); err != nil {
 				return err
 			}
 		}
 	default:
-		return idCertificateRefusal("invalid_shape")
+		return idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	return nil
 }
@@ -83,7 +87,7 @@ func idCertificateCanonical(value any) ([]byte, error) {
 	}
 	raw, err := CanonicalJSONValue(value)
 	if err != nil {
-		return nil, idCertificateRefusal("invalid_json")
+		return nil, idCertificateRefusal(IDRefusalInvalidJson)
 	}
 	return []byte(raw), nil
 }
@@ -97,6 +101,9 @@ func IDCertificateSigningBytes(c map[string]any) ([]byte, error) {
 	}
 	return append([]byte(IDCertificatePrefix), raw...), nil
 }
+
+// IDCertificateID hashes the domain-separated signing bytes. A digest is not
+// evidence of a valid signature, current registration or authorized ancestry.
 func IDCertificateID(c map[string]any) (string, error) {
 	raw, err := IDCertificateSigningBytes(c)
 	if err != nil {
@@ -120,17 +127,7 @@ func idCertificateDomain(value any) bool {
 // A nonidentity canonical point is in the prime subgroup iff undoing its
 // cofactor multiplication with 8^-1 mod L recovers the same point. The library
 // performs the point arithmetic; no new curve implementation is introduced.
-func idCertificatePrimePoint(raw []byte) bool {
-	p, err := new(edwards25519.Point).SetBytes(raw)
-	if err != nil || !bytes.Equal(p.Bytes(), raw) || p.Equal(edwards25519.NewIdentityPoint()) == 1 {
-		return false
-	}
-	eight := [32]byte{8}
-	s, _ := new(edwards25519.Scalar).SetCanonicalBytes(eight[:])
-	inv := new(edwards25519.Scalar).Invert(s)
-	q := new(edwards25519.Point).MultByCofactor(p)
-	return q.ScalarMult(inv, q).Equal(p) == 1
-}
+func idCertificatePrimePoint(raw []byte) bool { return signaturewire.PrimePoint(raw) }
 
 // IDTreeEnrollmentResult is a parsed location claim, not verified authority.
 // State is enrolled, not_enrolled, unknown (absent), or malformed (present).
@@ -198,7 +195,7 @@ func idCertificateExactFields(value map[string]any, names ...string) bool {
 	return true
 }
 func idCertificateShape(signed map[string]any) (map[string]any, error) {
-	invalid := idCertificateRefusal("invalid_shape")
+	invalid := idCertificateRefusal(IDRefusalInvalidShape)
 	if !idCertificateExactFields(signed, "certificate", "signature") {
 		return nil, invalid
 	}
@@ -228,9 +225,9 @@ func idCertificateShape(signed map[string]any) (map[string]any, error) {
 // idCertificateBinding checks the id/domain/parent/kind fields that a
 // certificate and a child request share.
 func idCertificateBinding(c map[string]any) error {
-	invalid := idCertificateRefusal("invalid_shape")
+	invalid := idCertificateRefusal(IDRefusalInvalidShape)
 	if c["kind"] != "human" && c["kind"] != "agent" {
-		return idCertificateRefusal("invalid_kind")
+		return idCertificateRefusal(IDRefusalInvalidKind)
 	}
 	if !idCertificateIDValid(c["id"], false) {
 		return invalid
@@ -239,7 +236,7 @@ func idCertificateBinding(c map[string]any) error {
 		return invalid
 	}
 	if !idCertificateDomain(c["domain"]) {
-		return idCertificateRefusal("invalid_domain")
+		return idCertificateRefusal(IDRefusalInvalidDomain)
 	}
 	p, ok := c["parent"].(map[string]any)
 	if !ok || !idCertificateExactFields(p, "kind", "id") {
@@ -248,10 +245,10 @@ func idCertificateBinding(c map[string]any) error {
 	switch p["kind"] {
 	case "namespace":
 		if !idCertificateDomain(p["id"]) {
-			return idCertificateRefusal("invalid_domain")
+			return idCertificateRefusal(IDRefusalInvalidDomain)
 		}
 		if p["id"] != c["domain"] {
-			return idCertificateRefusal("domain_mismatch")
+			return idCertificateRefusal(IDRefusalDomainMismatch)
 		}
 	case "identity":
 		if !idCertificateIDValid(p["id"], false) {
@@ -264,10 +261,10 @@ func idCertificateBinding(c map[string]any) error {
 }
 func idCertificateDecodeB64(value string) ([]byte, error) {
 	if !idCertificateB64URL.MatchString(value) {
-		return nil, idCertificateRefusal("invalid_encoding")
+		return nil, idCertificateRefusal(IDRefusalInvalidEncoding)
 	}
-	b, e := base64.RawURLEncoding.Strict().DecodeString(value)
-	if e != nil || base64.RawURLEncoding.EncodeToString(b) != value {
+	b, e := signaturewire.DecodeCanonicalURL(value)
+	if e != nil {
 		return nil, idCertificateRefusal("invalid_encoding")
 	}
 	return b, nil
@@ -285,7 +282,7 @@ func VerifyIDCertificate(signed map[string]any, issuer string) error {
 		return e
 	}
 	if c["issuer_key"] != issuer {
-		return idCertificateRefusal("invalid_signature")
+		return idCertificateRefusal(IDRefusalInvalidSignature)
 	}
 	return idStrictVerify(issuer, b, func() ([]byte, error) { return IDCertificateSigningBytes(c) })
 }
@@ -294,14 +291,14 @@ func VerifyIDCertificate(signed map[string]any, issuer string) error {
 func idSignatureBytes(signature any) ([]byte, error) {
 	sig, ok := signature.(string)
 	if !ok {
-		return nil, idCertificateRefusal("invalid_encoding")
+		return nil, idCertificateRefusal(IDRefusalInvalidEncoding)
 	}
 	b, e := idCertificateDecodeB64(sig)
 	if e != nil {
 		return nil, e
 	}
 	if len(b) != ed25519.SignatureSize {
-		return nil, idCertificateRefusal("invalid_encoding")
+		return nil, idCertificateRefusal(IDRefusalInvalidEncoding)
 	}
 	return b, nil
 }
@@ -310,41 +307,37 @@ func idSignatureBytes(signature any) ([]byte, error) {
 // own point the caller has already checked at shape time. A signature of the
 // wrong length is refused here, whatever the caller checked.
 func idStrictVerify(key string, b []byte, payload func() ([]byte, error)) error {
-	if len(b) != ed25519.SignatureSize || !idCertificatePrimePoint(b[:32]) {
-		return idCertificateRefusal("invalid_signature")
-	}
-	// Redundant with crypto/ed25519; kept to pin the profile.
-	if _, err := new(edwards25519.Scalar).SetCanonicalBytes(b[32:]); err != nil {
+	if !signaturewire.ValidIDSignatureShape(b) {
 		return idCertificateRefusal("invalid_signature")
 	}
 	k, e := ExtractPublicKey(key)
 	if e != nil {
-		return idCertificateRefusal("invalid_signature")
+		return idCertificateRefusal(IDRefusalInvalidSignature)
 	}
 	message, e := payload()
 	if e != nil {
 		return e
 	}
-	if !ed25519.Verify(k, message, b) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: k, Payload: message, Signature: b}) {
 		return idCertificateRefusal("invalid_signature")
 	}
 	return nil
 }
 func idCertificateBundleShape(bundle map[string]any) error {
 	if !idCertificateExactFields(bundle, "v", "type", "certificates") || !attestationVersionIsOne(bundle["v"]) || bundle["type"] != "aweb.id-chain" {
-		return idCertificateRefusal("invalid_shape")
+		return idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	certs, ok := bundle["certificates"].([]any)
 	if !ok || len(certs) == 0 {
-		return idCertificateRefusal("invalid_shape")
+		return idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	if len(certs) > IDChainMaxDepth {
-		return idCertificateRefusal("depth_exceeded")
+		return idCertificateRefusal(IDRefusalDepthExceeded)
 	}
 	for _, v := range certs {
 		signed, ok := v.(map[string]any)
 		if !ok {
-			return idCertificateRefusal("invalid_shape")
+			return idCertificateRefusal(IDRefusalInvalidShape)
 		}
 		c, e := idCertificateShape(signed)
 		if e != nil {
@@ -356,6 +349,7 @@ func idCertificateBundleShape(bundle map[string]any) error {
 	}
 	return nil
 }
+
 func EncodeIDChainHeader(bundle map[string]any) (string, error) {
 	b, e := idCertificateCanonical(bundle)
 	if e != nil {
@@ -374,7 +368,7 @@ func EncodeIDChainHeader(bundle map[string]any) (string, error) {
 func idCertificateJSON(d *json.Decoder) (any, error) {
 	token, e := d.Token()
 	if e != nil {
-		return nil, idCertificateRefusal("invalid_json")
+		return nil, idCertificateRefusal(IDRefusalInvalidJson)
 	}
 	switch v := token.(type) {
 	case json.Delim:
@@ -384,14 +378,14 @@ func idCertificateJSON(d *json.Decoder) (any, error) {
 			for d.More() {
 				kt, e := d.Token()
 				if e != nil {
-					return nil, idCertificateRefusal("invalid_json")
+					return nil, idCertificateRefusal(IDRefusalInvalidJson)
 				}
 				k, ok := kt.(string)
 				if !ok {
-					return nil, idCertificateRefusal("invalid_json")
+					return nil, idCertificateRefusal(IDRefusalInvalidJson)
 				}
 				if _, exists := out[k]; exists {
-					return nil, idCertificateRefusal("invalid_json")
+					return nil, idCertificateRefusal(IDRefusalInvalidJson)
 				}
 				item, e := idCertificateJSON(d)
 				if e != nil {
@@ -401,7 +395,7 @@ func idCertificateJSON(d *json.Decoder) (any, error) {
 			}
 			end, e := d.Token()
 			if e != nil || end != json.Delim('}') {
-				return nil, idCertificateRefusal("invalid_json")
+				return nil, idCertificateRefusal(IDRefusalInvalidJson)
 			}
 			return out, nil
 		case '[':
@@ -415,11 +409,11 @@ func idCertificateJSON(d *json.Decoder) (any, error) {
 			}
 			end, e := d.Token()
 			if e != nil || end != json.Delim(']') {
-				return nil, idCertificateRefusal("invalid_json")
+				return nil, idCertificateRefusal(IDRefusalInvalidJson)
 			}
 			return out, nil
 		default:
-			return nil, idCertificateRefusal("invalid_json")
+			return nil, idCertificateRefusal(IDRefusalInvalidJson)
 		}
 	default:
 		if e := idCertificateJSONValue(token); e != nil {
@@ -428,16 +422,20 @@ func idCertificateJSON(d *json.Decoder) (any, error) {
 		return token, nil
 	}
 }
+
+// DecodeIDChainHeader checks the encoded size, canonical JSON and bundle shape.
+// Call VerifyIDChain with independently selected current evidence before using
+// the decoded ancestry as authority.
 func DecodeIDChainHeader(value string) (map[string]any, error) {
 	if len(value) > IDChainHeaderMaxBytes {
-		return nil, idCertificateRefusal("bundle_too_large")
+		return nil, idCertificateRefusal(IDRefusalBundleTooLarge)
 	}
 	b, e := idCertificateDecodeB64(value)
 	if e != nil {
 		return nil, e
 	}
 	if len(b) > IDChainMaxBytes {
-		return nil, idCertificateRefusal("bundle_too_large")
+		return nil, idCertificateRefusal(IDRefusalBundleTooLarge)
 	}
 	bundle, e := idCertificateDecodeCanonical(b)
 	if e != nil {
@@ -452,7 +450,7 @@ func DecodeIDChainHeader(value string) (map[string]any, error) {
 // idCertificateDecodeCanonical strictly decodes one canonical JSON object.
 func idCertificateDecodeCanonical(b []byte) (map[string]any, error) {
 	if !utf8.Valid(b) {
-		return nil, idCertificateRefusal("invalid_json")
+		return nil, idCertificateRefusal(IDRefusalInvalidJson)
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.UseNumber()
@@ -461,18 +459,18 @@ func idCertificateDecodeCanonical(b []byte) (map[string]any, error) {
 		return nil, e
 	}
 	if _, e = d.Token(); e != io.EOF {
-		return nil, idCertificateRefusal("invalid_json")
+		return nil, idCertificateRefusal(IDRefusalInvalidJson)
 	}
 	canonical, e := idCertificateCanonical(valueJSON)
 	if e != nil {
 		return nil, e
 	}
 	if !bytes.Equal(canonical, b) {
-		return nil, idCertificateRefusal("noncanonical_json")
+		return nil, idCertificateRefusal(IDRefusalNoncanonicalJson)
 	}
 	object, ok := valueJSON.(map[string]any)
 	if !ok {
-		return nil, idCertificateRefusal("invalid_shape")
+		return nil, idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	return object, nil
 }

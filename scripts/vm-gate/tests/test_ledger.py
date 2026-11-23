@@ -79,6 +79,15 @@ class LedgerTests(unittest.TestCase):
             lease.import_rows(before, before + row())
         self.assertEqual(self.path.read_bytes(), before + row(OTHER) + row())
 
+    def test_skip_is_a_target_result_only(self):
+        with LedgerLease(self.path, TREE) as lease:
+            before = lease.snapshot(self.root / "snapshot.tsv")
+            skipped = row(stage="integration/e2e-naapp", status="skipped")
+            self.assertEqual(lease.import_rows(before, before + skipped), 1)
+            with self.assertRaisesRegex(Infrastructure, "invalid verdict"):
+                lease.import_rows(before, before + row(stage="integration", status="skipped"))
+        self.assertEqual(self.path.read_bytes(), before + skipped)
+
 
 if __name__ == "__main__":
     unittest.main()

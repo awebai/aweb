@@ -12,14 +12,31 @@ import tempfile
 import time
 import uuid
 from user_paths_result import qualification
+from user_paths_kernel_result import add_kernel_wake_result
+from user_paths_rc import (
+    ROLES,
+    compatibility,
+    production_baseline,
+    published_server,
+    server_inputs,
+    verify_server_image,
+)
 from container_fixture_modes import make_public_tree_readable
 
 REPO = Path(__file__).resolve().parents[2]
 BASELINE_WHEEL = os.environ.get("USER_PATHS_BASELINE_WHEEL")
 CANDIDATE_BIN = os.environ.get("USER_PATHS_CANDIDATE_BIN")
+RC_MANIFEST = os.environ.get("USER_PATHS_RC_MANIFEST")
+PRODUCTION_READBACK = os.environ.get("USER_PATHS_PRODUCTION_READBACK")
 if os.environ.get("CANDIDATE_SOURCE_SHA") and (BASELINE_WHEEL or CANDIDATE_BIN):
     raise RuntimeError(
         "author diagnostic modes cannot replace the standing candidate stage"
+    )
+if RC_MANIFEST and (
+    os.environ.get("CANDIDATE_SOURCE_SHA") or BASELINE_WHEEL or CANDIDATE_BIN
+):
+    raise RuntimeError(
+        "Run RC artifact qualification through standalone e2e-user-paths."
     )
 CLIENT_USER = f"{os.getuid()}:{os.getgid()}"
 PROJECT = "aweb-user-paths-" + uuid.uuid4().hex[:12]
@@ -46,6 +63,7 @@ LOCAL_IMAGES = {}
 HEAD_BINARY = "/opt/user-paths/aw"
 SERVER_PYTHON = "/opt/candidate-browser/server/.venv/bin/python"
 BASELINE_READY = False
+EMPTY_ZONE = "$ORIGIN test.\n$TTL 1\n@ IN SOA ns.test. hostmaster.test. (1 1 1 1 1)\n@ IN NS ns.test.\nns IN A 127.0.0.1\n"
 
 
 @contextmanager
@@ -75,7 +93,7 @@ def compose(*args, **kwargs):
     return run("docker", "compose", "-p", PROJECT, "-f", str(COMPOSE), *args, **kwargs)
 
 
-def configuration(dns=None):
+def configuration(dns=None, server_image=None, *, production=False):
     token = "disposable-user-path-service-token-32-bytes"
     awid = dict(
         AWID_DATABASE_URL="postgresql://aweb:disposable@postgres:5432/aweb",
@@ -176,6 +194,21 @@ def configuration(dns=None):
         services["server"]["volumes"] = [
             f"{WORK}/baseline-package:/work/baseline-package:ro"
         ]
+    if server_image:
+        for name in ("server", "peer"):
+            services[name]["image"] = server_image
+            del services[name]["entrypoint"]  # Start the image's own shipped command.
+        # The published server includes the AWID service at its own locked
+        # version. Pairing an older server with source-head AWID can give a
+        # false compatibility result for either runtime.
+        services["awid"]["image"] = server_image
+        services["awid"]["entrypoint"][0] = "awid"
+    if production:
+        for name in ("server", "peer", "awid"):
+            services[name]["environment"]["PYTHONPATH"] = "/work/production-package"
+            services[name]["volumes"] = [
+                f"{WORK}/production-package:/work/production-package:ro"
+            ]
     for service in services.values():
         service.update(cpus=1, mem_limit="1g", pids_limit=256)
     for name in ("awid", "server", "peer", "cli"):
@@ -211,15 +244,265 @@ for origin in ['http://awid:8010','http://server:8000','http://peer:8000']:
     )
 
 
+def start_stack(server_image=None, *, production=False):
+    (WORK / "dns/test.zone").write_text(EMPTY_ZONE)
+    COMPOSE.write_text(
+        json.dumps(configuration(server_image=server_image, production=production))
+    )
+    compose("up", "--pull", "never", "-d", "dns", "postgres", "redis")
+    dns = run(
+        "docker",
+        "inspect",
+        "-f",
+        "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+        compose("ps", "-q", "dns", capture=True).stdout.strip(),
+        capture=True,
+    ).stdout.strip()
+    COMPOSE.write_text(
+        json.dumps(configuration(dns, server_image=server_image, production=production))
+    )
+    compose("up", "--pull", "never", "-d", "--wait", "postgres")
+    compose("up", "--pull", "never", "-d", "awid", "server", "peer", "cli")
+    # The public CLI owns each identity. Only the empty parent needs chown.
+    compose(
+        "run",
+        "--rm",
+        "--no-deps",
+        "--pull",
+        "never",
+        "--user",
+        "0:0",
+        "--entrypoint",
+        "chown",
+        "cli",
+        CLIENT_USER,
+        "/identities",
+    )
+    wait_ready()
+
+
+def runtime_import(service, python, distribution, module):
+    return (
+        compose(
+            "exec",
+            "-T",
+            service,
+            python,
+            "-c",
+            "import sys; from importlib import import_module; from importlib.metadata import version; "
+            "print(version(sys.argv[1])); print(import_module(sys.argv[2]).__file__)",
+            distribution,
+            module,
+            capture=True,
+        )
+        .stdout.strip()
+        .splitlines()
+    )
+
+
+def qualify_released_clients(released_aw, runtimes, observations, production):
+    """Use the same lanes, image checks, networks and provisioning for the RC."""
+    with phase("fetch-released-clients-and-production-wheels"):
+        shutil.copyfile(
+            EVIDENCE / "production-readback.json", WORK / "production-readback.json"
+        )
+        run(
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--name",
+            PROJECT + "-fetch",
+            "--network",
+            "bridge",
+            "--user",
+            CLIENT_USER,
+            "--cpus",
+            "1",
+            "--memory",
+            "512m",
+            "--pids-limit",
+            "64",
+            "--entrypoint",
+            "python3",
+            "-v",
+            f"{WORK}:/work",
+            LOCAL_IMAGES["runtime"],
+            "/work/user_paths_rc.py",
+            "/work/artifacts",
+            "--production-readback",
+            "/work/production-readback.json",
+        )
+        for client in ("channel", "oats"):
+            shutil.copy2(
+                WORK / "artifacts" / client / "provenance.json",
+                EVIDENCE / ("released-" + client + ".json"),
+            )
+    with phase("install-production-wheels"):
+        run(
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--name",
+            PROJECT + "-fetch",
+            "--network",
+            "none",
+            "--user",
+            CLIENT_USER,
+            "--entrypoint",
+            "python3",
+            "-v",
+            f"{WORK}:/work",
+            LOCAL_IMAGES["runtime"],
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-deps",
+            "--target=/work/production-package",
+            *[
+                "/work/artifacts/production-wheels/" + path.name
+                for path in sorted((WORK / "artifacts/production-wheels").iterdir())
+            ],
+        )
+        make_public_tree_readable(root=WORK / "production-package")
+    for role, artifact in runtimes.items():
+        with phase(role + "-released-clients"):
+            result_dir = EVIDENCE / role
+            result_dir.mkdir()
+            try:
+                baseline = role == "baseline"
+                start_stack(artifact.get("local_image_id"), production=baseline)
+                python = SERVER_PYTHON if baseline else "python"
+                actual = {}
+                installed = {}
+                naapp_versions = {}
+                for service in ("server", "peer"):
+                    actual[service], installed[service] = runtime_import(
+                        service, python, "aweb", "aweb"
+                    )
+                    if baseline:
+                        naapp_versions[service], installed[f"{service}:naapp"] = (
+                            runtime_import(service, python, "aweb-naapp", "aweb_naapp")
+                        )
+                registry_version, installed["awid"] = runtime_import(
+                    "awid", python, "awid-service", "awid_service"
+                )
+                if baseline and (
+                    registry_version
+                    != production["packages"]["awid-service"]["version"]
+                    or set(naapp_versions.values())
+                    != {production["packages"]["aweb-naapp"]["version"]}
+                    or not all(
+                        path.startswith("/work/production-package/")
+                        for path in installed.values()
+                    )
+                ):
+                    raise ValueError(
+                        "Baseline did not import the deployed server and its paired release wheels."
+                    )
+                (result_dir / "runtime.json").write_text(
+                    json.dumps(
+                        {
+                            **artifact,
+                            "running": actual,
+                            "awid_version": registry_version,
+                            "naapp_versions": naapp_versions,
+                            "imported": installed,
+                        },
+                        indent=2,
+                    )
+                    + "\n"
+                )
+                if set(actual.values()) != {artifact["version"]}:
+                    raise ValueError(
+                        f"{role} running server version differs from its artifact."
+                    )
+                compose(
+                    "exec",
+                    "-T",
+                    "-e",
+                    "AW_BIN=" + released_aw["binary"],
+                    "cli",
+                    "python3",
+                    "/work/user_paths_rc_client.py",
+                    "--channel",
+                    "/work/artifacts/channel/dist/index.js",
+                    "--oats",
+                    "/work/artifacts/oats",
+                    "--aw-source",
+                    released_aw["sourceCommit"],
+                )
+            except (
+                ValueError,
+                OSError,
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+            ) as error:
+                # Record an infrastructure/runner error independently of the
+                # user observations that completed before it.
+                observations[role]["runner"] = {
+                    "status": "FAILED",
+                    "visible": {"error": type(error).__name__},
+                }
+                (result_dir / "runtime-error.txt").write_text(str(error) + "\n")
+            finally:
+                if (WORK / "released").exists():
+                    (WORK / "released").rename(WORK / ("rc-" + role))
+                    shutil.copytree(WORK / ("rc-" + role), result_dir / "client")
+                    receipt = result_dir / "client/compatibility.json"
+                    if receipt.is_file():
+                        observations[role].update(json.loads(receipt.read_text()))
+                try:
+                    (result_dir / "services.log").write_text(
+                        compose("logs", "--no-color", capture=True, timeout=15).stdout,
+                    )
+                finally:
+                    # Separate databases, Redis and identity volumes are part
+                    # of the comparison. Never start RC against baseline state.
+                    compose("down", "-v", "--remove-orphans", timeout=45)
+
+
+def run_released_kernel_wake_probe(*, lane, binary, lane_failures):
+    """Enforce docs/wake-runner-integrity.md:30-33 with the real kernel seam."""
+    with phase("released-kernel-wake"):
+        try:
+            compose(
+                "exec",
+                "-T",
+                "cli",
+                "node",
+                "/work/user_paths_oats.mjs",
+                "--aw",
+                binary,
+                "--root",
+                "/identities/kernel-wake",
+                "--seat",
+                f"/identities/{lane}/g1",
+                "--fixture-home",
+                f"/identities/{lane}/home",
+                "--sender",
+                f"/identities/{lane}/t1",
+                "--team",
+                f"members:{lane}-g1.test",
+                "--source-commit",
+                os.environ.get("USER_PATHS_CANDIDATE_SHA")
+                or run("git", "rev-parse", "HEAD", capture=True).stdout.strip(),
+                "--output",
+                "/work/released-kernel-wake.json",
+            )
+        except subprocess.CalledProcessError:
+            lane_failures.append("released-kernel-wake")
+
+
 def prepare_container_inputs() -> None:
     (WORK / "dns").mkdir()
     (WORK / "dns").chmod(0o755)
     (WORK / "dns/Corefile").write_text(
         "test:53 {\n file /zones/test.zone { reload 1s }\n}\n.:53 {\n forward . 127.0.0.11\n}\n"
     )
-    (WORK / "dns/test.zone").write_text(
-        "$ORIGIN test.\n$TTL 1\n@ IN SOA ns.test. hostmaster.test. (1 1 1 1 1)\n@ IN NS ns.test.\nns IN A 127.0.0.1\n"
-    )
+    (WORK / "dns/test.zone").write_text(EMPTY_ZONE)
     (WORK / "init.sql").write_text(
         "CREATE EXTENSION pgcrypto WITH SCHEMA public;\nCREATE DATABASE peer;\n\\connect peer\nCREATE EXTENSION pgcrypto WITH SCHEMA public;\n"
     )
@@ -230,7 +513,11 @@ def prepare_container_inputs() -> None:
         "scripts/fetch_released_aw.py",
         "scripts/e2e/user_paths.py",
         "scripts/e2e/user_paths_receive.mjs",
+        "scripts/e2e/user_paths_oats.mjs",
+        "scripts/e2e/user_paths_kernel_setup.mjs",
         "scripts/e2e/user_paths_result.py",
+        "scripts/e2e/user_paths_rc.py",
+        "scripts/e2e/user_paths_rc_client.py",
     ):
         shutil.copy2(REPO / source, WORK / Path(source).name)
         (WORK / Path(source).name).chmod(0o644)
@@ -240,8 +527,17 @@ def prepare_container_inputs() -> None:
 
 def main():
     global BASELINE_READY
+    kernel_wake_required = True
+    observations = {role: {} for role in ROLES}
+    runtimes = {}
+    deployment_readback = {}
+    published_refs = {}
     # Every invocation exposes the human gap, even if infrastructure fails
     # before provisioning. Runnable agent cases alone control admission.
+    if RC_MANIFEST:
+        (EVIDENCE / "rc-compatibility.json").write_text(
+            json.dumps(compatibility({}, {}), indent=2) + "\n"
+        )
     initial = qualification({}, time.monotonic() - START, [])
     (EVIDENCE / "qualification.json").write_text(json.dumps(initial, indent=2) + "\n")
     (EVIDENCE / "coverage-summary.txt").write_text(initial["coverage_summary"] + "\n")
@@ -284,6 +580,36 @@ def main():
             (EVIDENCE / "local-images.json").write_text(
                 json.dumps(LOCAL_IMAGES, indent=2)
             )
+            if RC_MANIFEST:
+                selected = server_inputs(json.loads(Path(RC_MANIFEST).read_text()))
+                if not PRODUCTION_READBACK:
+                    raise ValueError(
+                        "USER_PATHS_PRODUCTION_READBACK must name a current deployment readback."
+                    )
+                deployment_readback = production_baseline(
+                    selected["baseline"],
+                    json.loads(Path(PRODUCTION_READBACK).read_text()),
+                )
+                published_refs = {
+                    role: published_server(selected[role], role) for role in ROLES
+                }
+                runtimes["baseline"] = selected["baseline"]
+                artifact = selected["rc"]
+                inspection = run(
+                    "docker", "image", "inspect", artifact["image"], capture=True
+                )
+                runtimes["rc"] = verify_server_image(
+                    artifact, json.loads(inspection.stdout)[0]
+                )
+                (EVIDENCE / "server-artifacts.json").write_text(
+                    json.dumps(runtimes, indent=2) + "\n"
+                )
+                (EVIDENCE / "production-readback.json").write_text(
+                    json.dumps(deployment_readback, indent=2) + "\n"
+                )
+                (EVIDENCE / "server-release-tags.json").write_text(
+                    json.dumps(published_refs, indent=2) + "\n"
+                )
     except Exception as error:
         shutil.rmtree(WORK)
         (EVIDENCE / "infrastructure.json").write_text(
@@ -453,96 +779,85 @@ def main():
                     WORK / "comparison/provenance.json",
                     EVIDENCE / "comparison-provenance.json",
                 )
-        with phase("setup"):
-            compose("up", "--pull", "never", "-d", "dns", "postgres", "redis")
-            dns = run(
-                "docker",
-                "inspect",
-                "-f",
-                "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
-                compose("ps", "-q", "dns", capture=True).stdout.strip(),
-                capture=True,
-            ).stdout.strip()
-            COMPOSE.write_text(json.dumps(configuration(dns)))
-            compose("up", "--pull", "never", "-d", "--wait", "postgres")
-            compose("up", "--pull", "never", "-d", "awid", "server", "peer", "cli")
-            # Initialize only the empty volume's parent. Each identity itself
-            # is subsequently created by the ordinary CLI as CLIENT_USER.
-            compose(
-                "run",
-                "--rm",
-                "--no-deps",
-                "--pull",
-                "never",
-                "--user",
-                "0:0",
-                "--entrypoint",
-                "chown",
-                "cli",
-                CLIENT_USER,
-                "/identities",
+        if RC_MANIFEST:
+            qualify_released_clients(
+                provenance, runtimes, observations, deployment_readback
             )
-            wait_ready()
-            (EVIDENCE / "head-version.txt").write_text(
-                compose(
-                    "exec", "-T", "cli", HEAD_BINARY, "version", capture=True
-                ).stdout
+            status = int(
+                compatibility(observations["baseline"], observations["rc"])["status"]
+                != "PASSED"
             )
-            if BASELINE_READY:
-                actual = compose(
-                    "exec",
-                    "-T",
-                    "server",
-                    SERVER_PYTHON,
-                    "-c",
-                    'import aweb,importlib.metadata; print(aweb.__file__); print(importlib.metadata.version("aweb")); assert aweb.__file__.startswith("/work/baseline-package/")',
-                    capture=True,
-                ).stdout
-                (EVIDENCE / "baseline-runtime.txt").write_text(actual)
-            if CANDIDATE_BIN:
-                version = compose(
-                    "exec", "-T", "cli", "/work/candidate-aw", "version", capture=True
-                ).stdout
-                assert os.environ["USER_PATHS_CANDIDATE_SHA"] in version, version
-                (EVIDENCE / "candidate-version.txt").write_text(version)
-        lane_failures = []
-        selected_lanes = (
-            [("head", HEAD_BINARY)]
-            if BASELINE_READY
-            else [("head", HEAD_BINARY), ("released", provenance["binary"])]
-        )
-        if CANDIDATE_BIN:
-            selected_lanes = [
-                ("forward", "/work/candidate-aw"),
-                ("reverse", "/work/candidate-aw"),
-            ]
-        for lane, binary in selected_lanes:
-            with phase(lane):
-                comparison_args = (
-                    ["-e", "USER_PATHS_COMPARISON_BIN=/work/comparison/aw"]
-                    if (WORK / "comparison/aw").exists()
-                    else []
-                )
-                try:
-                    baseline_args = ["--baseline-chat-only"] if BASELINE_READY else []
-                    if CANDIDATE_BIN:
-                        baseline_args = ["--local-chat-direction", lane]
+            kernel_wake_required = False
+        else:
+            with phase("setup"):
+                start_stack()
+                (EVIDENCE / "head-version.txt").write_text(
                     compose(
+                        "exec", "-T", "cli", HEAD_BINARY, "version", capture=True
+                    ).stdout
+                )
+                if BASELINE_READY:
+                    actual = compose(
                         "exec",
                         "-T",
-                        "-e",
-                        f"AW_BIN={binary}",
-                        *comparison_args,
-                        "cli",
-                        "python3",
-                        "/work/user_paths.py",
-                        "--lane",
-                        lane,
-                        *baseline_args,
+                        "server",
+                        SERVER_PYTHON,
+                        "-c",
+                        'import aweb,importlib.metadata; print(aweb.__file__); print(importlib.metadata.version("aweb")); assert aweb.__file__.startswith("/work/baseline-package/")',
+                        capture=True,
+                    ).stdout
+                    (EVIDENCE / "baseline-runtime.txt").write_text(actual)
+                if CANDIDATE_BIN:
+                    version = compose(
+                        "exec", "-T", "cli", "/work/candidate-aw", "version", capture=True
+                    ).stdout
+                    assert os.environ["USER_PATHS_CANDIDATE_SHA"] in version, version
+                    (EVIDENCE / "candidate-version.txt").write_text(version)
+            lane_failures = []
+            selected_lanes = (
+                [("head", HEAD_BINARY)]
+                if BASELINE_READY
+                else [("head", HEAD_BINARY), ("released", provenance["binary"])]
+            )
+            if CANDIDATE_BIN:
+                selected_lanes = [
+                    ("forward", "/work/candidate-aw"),
+                    ("reverse", "/work/candidate-aw"),
+                ]
+            for lane, binary in selected_lanes:
+                with phase(lane):
+                    comparison_args = (
+                        ["-e", "USER_PATHS_COMPARISON_BIN=/work/comparison/aw"]
+                        if (WORK / "comparison/aw").exists()
+                        else []
                     )
-                except subprocess.CalledProcessError:
-                    lane_failures.append(lane)
-        status = 1 if lane_failures else 0
+                    try:
+                        baseline_args = ["--baseline-chat-only"] if BASELINE_READY else []
+                        if CANDIDATE_BIN:
+                            baseline_args = ["--local-chat-direction", lane]
+                        compose(
+                            "exec",
+                            "-T",
+                            "-e",
+                            f"AW_BIN={binary}",
+                            *comparison_args,
+                            "cli",
+                            "python3",
+                            "/work/user_paths.py",
+                            "--lane",
+                            lane,
+                            *baseline_args,
+                        )
+                    except subprocess.CalledProcessError:
+                        lane_failures.append(lane)
+            # Historical and directional component diagnostics keep their existing scope.
+            kernel_wake_required = not BASELINE_READY and not CANDIDATE_BIN
+            if kernel_wake_required:
+                probe_lane, probe_binary = selected_lanes[0]
+                run_released_kernel_wake_probe(
+                    lane=probe_lane, binary=probe_binary, lane_failures=lane_failures
+                )
+            status = 1 if lane_failures else 0
     finally:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -565,6 +880,14 @@ def main():
                     timeout=15,
                 ),
             )
+            if (WORK / "released-kernel-wake.json").exists():
+                cleanup_action(
+                    "released kernel wake evidence",
+                    lambda: shutil.copy2(
+                        WORK / "released-kernel-wake.json",
+                        EVIDENCE / "released-kernel-wake.json",
+                    ),
+                )
             # Retain actual source, artifact identity, named case output and timings.
             for lane in ["head", "released", "forward", "reverse"]:
                 if (WORK / lane).exists():
@@ -619,6 +942,42 @@ def main():
             if (EVIDENCE / lane / "results.json").exists()
         }
         result = qualification(lanes, TIMINGS["total"], cleanup_errors)
+        if kernel_wake_required:
+            kernel_path = EVIDENCE / "released-kernel-wake.json"
+            result = add_kernel_wake_result(
+                qualification=result,
+                kernel_receipt=json.loads(kernel_path.read_text())
+                if kernel_path.exists()
+                else None,
+            )
+        if RC_MANIFEST:
+            rc_result = compatibility(observations["baseline"], observations["rc"])
+            rc_result.update(
+                seconds=TIMINGS["total"],
+                cleanup_errors=cleanup_errors,
+                server_artifacts=runtimes,
+                release_tags=published_refs,
+                production_readback=deployment_readback,
+            )
+            rc_result["clients"] = {
+                name: json.loads((EVIDENCE / file).read_text())
+                for name, file in (
+                    ("aw", "released-provenance.json"),
+                    ("channel", "released-channel.json"),
+                    ("oats", "released-oats.json"),
+                )
+                if (EVIDENCE / file).exists()
+            }
+            if cleanup_errors or TIMINGS["total"] >= 600 or status:
+                rc_result["status"] = "FAILED"
+            (EVIDENCE / "rc-compatibility.json").write_text(
+                json.dumps(rc_result, indent=2) + "\n"
+            )
+            result = {
+                **result,
+                "status": rc_result["status"],
+                "rc_compatibility": rc_result,
+            }
         (EVIDENCE / "qualification.json").write_text(
             json.dumps(result, indent=2) + "\n"
         )
@@ -628,6 +987,12 @@ def main():
         )
         if cleanup_errors:
             raise RuntimeError("; ".join(cleanup_errors))
+    if RC_MANIFEST:
+        if result["status"] != "PASSED":
+            raise RuntimeError(
+                f"Released-client RC qualification failed. Inspect {EVIDENCE / 'rc-compatibility.json'}."
+            )
+        return
     assert status == 0 and TIMINGS["total"] < 600, TIMINGS
     if CANDIDATE_BIN:
         return  # Named component proof only; the standing matrix is not qualified.

@@ -21,10 +21,11 @@ from typing import Any
 
 from awid.did import did_from_public_key, public_key_from_did
 from awid.log import require_canonical_server_origin
+from awid.signature_wire import Base64Profile, decode_base64, sign_bytes, verify_bytes
 from awid.signing import canonical_json_bytes
 from awid.team_ids import parse_team_id
 from nacl.exceptions import BadSignatureError
-from nacl.signing import SigningKey, VerifyKey
+from nacl.signing import SigningKey
 
 from aweb_naapp.runtime.app_credentials import APP_REQUEST, sign_app_credential
 
@@ -321,7 +322,7 @@ def task_authorization_signing_bytes(payload: Mapping[str, Any]) -> bytes:
 def sign_task_authorization(payload: Mapping[str, Any], signing_key: SigningKey) -> str:
     """The member's signature: base64url without padding over the signing bytes."""
     _check_payload(payload)
-    signature = signing_key.sign(task_authorization_signing_bytes(payload)).signature
+    signature = sign_bytes(key=signing_key, payload=task_authorization_signing_bytes(payload))
     return base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
 
 
@@ -382,12 +383,13 @@ def _check_bindings(
 
 
 def _signature_bytes(signature: object) -> bytes:
-    if not isinstance(signature, str) or not re.fullmatch(r"[A-Za-z0-9_-]{86}", signature):
-        raise _refuse("signature_invalid", "signature encoding")
-    raw = base64.urlsafe_b64decode(signature + "==")
-    if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != signature:
-        raise _refuse("signature_invalid", "signature encoding")
-    return raw
+    try:
+        raw = decode_base64(signature, profile=Base64Profile.CANONICAL_URL)
+        if len(raw) != 64:
+            raise ValueError("signature size")
+        return raw
+    except (ValueError, TypeError) as exc:
+        raise _refuse("signature_invalid", "signature encoding") from exc
 
 
 def verify_task_authorization(
@@ -408,9 +410,9 @@ def verify_task_authorization(
     """
     issued, expires = _check_payload(payload)
     raw = _signature_bytes(signature)
-    key = VerifyKey(public_key_from_did(payload["actor_did_key"]))
+    key = public_key_from_did(payload["actor_did_key"])
     try:
-        key.verify(task_authorization_signing_bytes(payload), raw)
+        verify_bytes(key=key, payload=task_authorization_signing_bytes(payload), signature=raw)
     except BadSignatureError as exc:
         raise _refuse("signature_invalid", "signature does not verify") from exc
     _check_bindings(payload, expected, TASK_AUTHORIZATION_BINDINGS)
@@ -599,7 +601,7 @@ def _check_stage_payload(payload: object) -> tuple[datetime, datetime]:
 def sign_stage_receipt(payload: Mapping[str, Any], signing_key: SigningKey) -> str:
     """The app's signature over a stage receipt, base64url without padding."""
     _check_stage_payload(payload)
-    signature = signing_key.sign(stage_receipt_signing_bytes(payload)).signature
+    signature = sign_bytes(key=signing_key, payload=stage_receipt_signing_bytes(payload))
     return base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
 
 
@@ -622,8 +624,10 @@ def verify_stage_receipt(
     issued, expires = _check_stage_payload(payload)
     raw = _signature_bytes(signature)
     try:
-        VerifyKey(public_key_from_did(payload["did_key"])).verify(
-            stage_receipt_signing_bytes(payload), raw
+        verify_bytes(
+            key=public_key_from_did(payload["did_key"]),
+            payload=stage_receipt_signing_bytes(payload),
+            signature=raw,
         )
     except BadSignatureError as exc:
         raise _refuse("signature_invalid", "signature does not verify") from exc

@@ -1,19 +1,18 @@
+import { decodeRawURLBase64 } from "./base64.js";
+import { SignatureProfile, verifyBytes } from "./signature_wire.js";
 // Identity certificates v1 (docs/id-certificates.md): parent-signed human and
 // agent certificates and the bounded id chain that presents them. Everything
 // here is pure: no DNS, HTTP or cache access.
-import * as ed from "@noble/ed25519";
-import { sha256, sha512 } from "@noble/hashes/sha2.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import bs58 from "bs58";
 import { canonicalJSONValue } from "./canonical.js";
 import { computeDIDKey, extractPublicKey, primeSubgroupPoint } from "./did.js";
 import { parseStrictJSON, StrictJSONError } from "./strict_json.js";
 
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
-
-export const ID_CERTIFICATE_PREFIX = "aweb.id-certificate/1\n";
+const ID_CERTIFICATE_PREFIX = "aweb.id-certificate/1\n";
 export const ID_CHAIN_MAX_CERTIFICATES = 8;
-export const ID_CHAIN_MAX_DECODED_BYTES = 6144;
-export const ID_CHAIN_MAX_HEADER_BYTES = 8192;
+const ID_CHAIN_MAX_DECODED_BYTES = 6144;
+const ID_CHAIN_MAX_HEADER_BYTES = 8192;
 
 export type IdKind = "human" | "agent";
 
@@ -171,47 +170,20 @@ function signatureRefusal(signed: SignedIdCertificate): IdDecodeRefusal | undefi
   return result.accepted ? undefined : "invalid_signature";
 }
 
-const GROUP_ORDER = ed.CURVE.n;
-
 export interface IdEd25519Result {
   accepted: boolean;
   reason: "invalid_shape" | "invalid_signature" | null;
 }
 
-/**
- * The ID-certificate Ed25519 acceptance rule: A and R canonical, nonidentity
- * and in the prime-order subgroup, 0 <= S < L, and exactly [S]B = R + [k]A.
- * A bad public key is a shape refusal; anything else is a bad signature.
- * noble's own verify clears the cofactor, so it is not used here.
- */
+/** The ID family retains its frozen prime-subgroup R profile. */
 export function idEd25519Verify(publicKey: Uint8Array, message: Uint8Array, signature: Uint8Array): IdEd25519Result {
-  const A = primeSubgroupPoint(publicKey);
-  if (!A) return { accepted: false, reason: "invalid_shape" };
-  if (signature.length !== 64) return { accepted: false, reason: "invalid_signature" };
-  const encodedR = signature.subarray(0, 32);
-  const R = primeSubgroupPoint(encodedR);
-  const S = littleEndian(signature.subarray(32));
-  if (!R || S >= GROUP_ORDER) return { accepted: false, reason: "invalid_signature" };
-  const k = littleEndian(sha512(ed.etc.concatBytes(encodedR, publicKey, message))) % GROUP_ORDER;
-  const SB = S === 0n ? ed.ExtendedPoint.ZERO : ed.ExtendedPoint.BASE.multiply(S);
-  const kA = k === 0n ? ed.ExtendedPoint.ZERO : A.multiply(k);
-  return SB.equals(R.add(kA)) ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
+  if (!primeSubgroupPoint(publicKey)) return { accepted: false, reason: "invalid_shape" };
+  return verifyBytes({signature: signature, message: message, publicKey: publicKey, profile: SignatureProfile.IdentityCertificate})
+    ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
 }
 
-function littleEndian(bytes: Uint8Array): bigint {
-  let value = 0n;
-  for (let i = bytes.length - 1; i >= 0; i -= 1) value = (value << 8n) | BigInt(bytes[i]);
-  return value;
-}
-
-const BASE64URL = /^[A-Za-z0-9_-]*$/;
-
-/** Strict unpadded base64url: no padding, no other alphabet, no nonzero unused bits. */
 function decodeBase64URL(value: string): Uint8Array | undefined {
-  if (!BASE64URL.test(value) || value.length % 4 === 1) return undefined;
-  const bytes = Buffer.from(value, "base64url");
-  if (bytes.toString("base64url") !== value) return undefined;
-  return new Uint8Array(bytes);
+  try { return decodeRawURLBase64(value); } catch { return undefined; }
 }
 
 const DOMAIN_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;

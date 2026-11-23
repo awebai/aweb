@@ -67,18 +67,18 @@ func (c *RegistryClient) RegisterIDCertificate(ctx context.Context, bundle map[s
 
 // RegisterIDCertificateAt registers at an explicit registry origin.
 func (c *RegistryClient) RegisterIDCertificateAt(ctx context.Context, registryURL string, bundle map[string]any, signer IDCertificateSigner, expectedHead, invitationID *string) (map[string]any, error) {
-	domain, err := idBundleLeafDomain(bundle)
+	chain, err := IDChainFromBundle(bundle)
 	if err != nil {
 		return nil, err
 	}
-	header, err := EncodeIDChainHeader(bundle)
+	header, err := chain.Header()
 	if err != nil {
 		return nil, err
 	}
-	certificates := bundle["certificates"].([]any)
-	body := map[string]any{"certificate": certificates[len(certificates)-1], "expected_head": optionalText(expectedHead), "invitation_id": optionalText(invitationID)}
+	leaf := chain.Leaf()
+	body := map[string]any{"certificate": leaf.Signed(), "expected_head": optionalText(expectedHead), "invitation_id": optionalText(invitationID)}
 	var answer map[string]any
-	err = c.controllerWrite(ctx, http.MethodPost, registryURL, "/v1/id-certificates/register", domain, "register_id_certificate", nil, body, signer, map[string]string{"X-AWID-ID-Chain": header}, &answer)
+	err = c.controllerWrite(ctx, http.MethodPost, registryURL, "/v1/id-certificates/register", leaf.Domain(), "register_id_certificate", nil, body, signer, map[string]string{HeaderIDChain: header}, &answer)
 	return answer, err
 }
 
@@ -113,7 +113,7 @@ func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryUR
 	if strings.TrimSpace(registryURL) == "" {
 		registryURL = c.defaultRegistryURL()
 	}
-	aud, err := canonicalServerOrigin(registryURL)
+	aud, err := CanonicalRegistryServerOrigin(registryURL)
 	if err != nil {
 		return err
 	}
@@ -145,9 +145,9 @@ func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryUR
 		return fmt.Errorf("signer answer refused: %w", err)
 	}
 	signed := map[string]string{
-		"X-AWEB-Timestamp":      timestamp,
-		"X-AWEB-Signed-Payload": base64.RawURLEncoding.EncodeToString(payload),
-		"Authorization":         "DIDKey " + didKey + " " + base64.RawStdEncoding.EncodeToString(signature),
+		HeaderRequestTimestamp: timestamp,
+		HeaderSignedPayload:    base64.RawURLEncoding.EncodeToString(payload),
+		"Authorization":        "DIDKey " + didKey + " " + base64.RawStdEncoding.EncodeToString(signature),
 	}
 	for k, v := range headers {
 		signed[k] = v
@@ -196,12 +196,11 @@ var controllerWriteStates = map[string]controllerWriteState{
 }
 
 func idBundleLeafDomain(bundle map[string]any) (string, error) {
-	if err := idCertificateBundleShape(bundle); err != nil {
+	chain, err := IDChainFromBundle(bundle)
+	if err != nil {
 		return "", err
 	}
-	certificates := bundle["certificates"].([]any)
-	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-	return leaf["domain"].(string), nil
+	return chain.Leaf().Domain(), nil
 }
 
 func optionalText(value *string) any {

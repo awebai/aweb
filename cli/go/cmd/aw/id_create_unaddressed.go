@@ -98,7 +98,7 @@ func createUnaddressedIdentity(ctx context.Context, c unaddressedCreate) (map[st
 		identity.RegistryURL, identity.RegistryStatus = c.RegistryURL, "registered"
 		result["did_aw"], result["registry_url"] = stableID, c.RegistryURL
 	}
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(c.Root, "identity.yaml"), identity); err != nil {
+	if err := saveWorktreeIdentityWithRegistryOrigin(filepath.Join(c.Root, "identity.yaml"), identity); err != nil {
 		return nil, err
 	}
 	if err := os.Remove(statePath); err != nil {
@@ -166,7 +166,7 @@ func unaddressedHomeRefusal(c unaddressedCreate, statePath string) (bool, error)
 	if _, err := os.Lstat(filepath.Join(c.Root, "identity.yaml")); err == nil {
 		return false, identityExists("%s already holds an identity; it is used as it is", c.Root)
 	}
-	raw, err := os.ReadFile(statePath)
+	raw, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(statePath)}, Name: filepath.Base(statePath)}).Read()
 	resumed := err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
@@ -214,7 +214,7 @@ func unaddressedKey(c unaddressedCreate, statePath string) (ed25519.PrivateKey, 
 		if err != nil {
 			return nil, false, err
 		}
-		if err := awid.AtomicWriteFile(statePath, data); err != nil {
+		if err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(statePath)}, Name: filepath.Base(statePath)}).Write(data); err != nil {
 			return nil, false, err
 		}
 	}

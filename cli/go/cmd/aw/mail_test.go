@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -693,6 +692,9 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 					ParticipantAddresses: []string{"test.local/alice", "otherco.com/bob"},
 				},
 			}})
+		case "/v1/messages/conversations/" + conversationID:
+			// The conversation's stored rows: plaintext, nothing to inherit.
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
 		case "/v1/messages":
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatalf("decode body: %v", err)
@@ -1611,22 +1613,9 @@ func TestAwMailSendStartsAThreadDespiteInvalidRosterKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	var listed *awid.ListAgentsResponse
-	warning := func() string {
-		readEnd, writeEnd, pipeErr := os.Pipe()
-		if pipeErr != nil {
-			t.Fatal(pipeErr)
-		}
-		original := os.Stderr
-		os.Stderr = writeEnd
-		defer func() { os.Stderr = original; _ = writeEnd.Close(); _ = readEnd.Close() }()
+	warning := captureStderr(t, func() {
 		listed, err = client.ListAgents(ctx)
-		_ = writeEnd.Close()
-		output, readErr := io.ReadAll(readEnd)
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		return string(output)
-	}()
+	})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

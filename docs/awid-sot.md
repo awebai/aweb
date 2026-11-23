@@ -670,6 +670,11 @@ GET    /v1/namespaces/{domain}/teams
        Auth: none returns public teams only. A signed team read by a team
              key or unrevoked member key, or the trusted same-operator service
              credential, also returns private teams visible to that authority.
+       Cursor values are validated before SQL: created_at is a timezone-aware
+       timestamp and team_uuid is a UUID. Invalid decoded values return 422
+       with instructions to restart without a cursor. Malformed cursor
+       encoding remains 400. Valid UUID spellings and timestamp offsets are
+       accepted and bound as typed values.
        Response: { "teams": [{ "name": "backend",
                    "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
@@ -688,7 +693,8 @@ GET    /v1/namespaces/{domain}/teams/{name}
                    "created_at": "..." }
 
 DELETE /v1/namespaces/{domain}/teams/{name}
-       Delete team.
+       Delete team. Refused with 409 while any certificate is unrevoked.
+       The team's revoked certificates are kept; see revocations.
        Auth: namespace controller DIDKey signature.
 
 POST   /v1/namespaces/{domain}/teams/{name}/rotate
@@ -828,7 +834,11 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status
        another team: identical 404 { "detail": "Certificate not found" }.
        No member identity, alias, addresses, enumeration, or history.
        The key is the CURRENT team key (did:key itself identifies the key).
-       Active means revoked_at is null, not that authentication succeeded.
+       Active means no team ever created under this domain and name revoked
+       this certificate id, the same history the revocations list reads, not
+       that authentication succeeded. An id registered again after the team
+       was deleted and created again keeps its earlier revocation, and its
+       revoked_at is the first one.
        Rotation can leave old-key records active; verifiers must reject their
        signatures against the current key. No previous key is returned.
        Cache per (team_id, certificate_id) for at most 60 seconds and fail closed
@@ -858,7 +868,10 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates/revoke
        Sets revoked_at on the certificate row.
 
 GET    /v1/namespaces/{domain}/teams/{name}/revocations
-       List revoked certificates only.
+       List revoked certificates only. The list covers every team ever
+       created under this domain and name: deleting the team or its
+       namespace and creating the team again, with any key, keeps earlier
+       revocations. A revocation is one-way.
        Auth: none for a public team; private-team read authority as above.
              Services cache this.
        Query params: since (timestamp, optional — for incremental sync)
@@ -1393,6 +1406,35 @@ which raises.
   Existing read authority, freshness, outage policy and endpoint shapes remain
   unchanged.
 
+Every team metadata, controller-key, revocation, certificate-list and identity
+status cache entry belongs to the canonical registry origin that answered.
+A refresh selects that origin once and uses it for every page and the cache
+write. A failed TXT lookup may select the configured read fallback, but its
+answer never replaces another origin's evidence. Reader credential partitions,
+generation fences, freshness and outage bounds remain independent. Previously
+ambiguous cache key versions are not reused.
+
+A fresh identity-status hit reuses its recorded answering origin for the
+existing 60-second window without DNS or HTTP work. A non-authoritative,
+request-specific locator names that origin and the original observation time;
+it contains no status or namespace authority. The pointed-to origin-specific
+entry must independently pass the existing Redis-clock age and generation
+checks. A locator miss, corruption or expiry requires a new bounded acquisition.
+
+A successful revocation response must be a JSON object containing an explicit
+list of rows with nonempty string certificate IDs. An explicit empty list remains valid, including
+released legacy responses without pagination fields. If pagination fields are
+present, `has_more` is boolean. A nonterminal page has a nonempty string
+cursor; a terminal page omits its cursor or sets it to null. A cursor without
+`has_more` is incomplete pagination, including a null orphan cursor. Only a
+response with neither pagination field uses the released legacy paging path.
+Missing or malformed lists and incomplete pagination raise a retryable
+502 instead of becoming cached empty evidence or resetting its age. The exact
+released first-page missing-team response keeps its separate compatibility rule.
+Redis cache invalidation failure cannot prevent a correctly prepared controller
+revocation from being sent; invalidation is attempted before and after the
+single mutation, and a cache failure does not replace the registry's result.
+
 ### Registry client outbound bounds
 
 When `RegistryClient` follows a domain-selected registry override without an
@@ -1451,9 +1493,14 @@ operation names; `register_body`, `revoke_body`, `rotate_claims` and
 `rotate_body`; and `covering_payload(*, aud, path, domain, operation, body,
 timestamp, claims=None)`. A host that holds a signing key rebuilds the request
 it intends from these and compares the whole payload it is asked to sign, so a
-body digest is never checked alone. `RegistryClient.registry_audience(domain)`
-is the `aud` a write for that domain signs: the canonical origin of the
-registry it is routed to, resolved exactly as the write resolves it.
+body digest is never checked alone. Administrative writes sign the canonical
+configured `registry_url` as `aud`, and never consult domain discovery, including
+when that pin is the public default. Their prerequisite reads and cache
+invalidation use that same pin. `RegistryClient.registry_audience(domain)`
+remains the domain-selected **read** origin; it does not select an
+administrative write destination. This follows
+[`identity-messaging-contract.md`:249-256](identity-messaging-contract.md)
+and coordinator ruling 126dd058-8f9f-4a83-b9a9-2b1e7e936a1a.
 
 ### Child request exchange
 
