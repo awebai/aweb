@@ -201,7 +201,7 @@ continuation use:
 
 ```bash
 aw mail send --conversation-id <conversation-id> \
-  --subject "Re" --body-file reply.md --json
+  --body-file reply.md --json
 ```
 
 A successful send is durable acceptance, not proof of recipient presentation.
