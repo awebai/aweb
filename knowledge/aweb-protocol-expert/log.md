@@ -1,5 +1,11 @@
 # Knowledge log
 
+## 2026-11-21
+* **Harvest**: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-chat-verify with seven backing notes; claims checked against branch `agents/aweb-protocol-expert-chat-verify-adje3` at 5e758c7bb5 (not yet on main). Two claims were dropped as pending in other harvest PRs, and one fact as derivable from the repository's gate scripts.
+* **Creation**: lesson [a legacy status names a format, not a trust result](/aweb-protocol-expert/lessons/a-legacy-status-names-a-format-not-a-trust-result.md) and decision [a message read from a conversation is bound to the conversation asked for](/aweb-protocol-expert/decisions/a-read-message-is-bound-to-the-requested-conversation.md), which link each other.
+* **Creation**: decision [after a team-create conflict, a failed read is "could not confirm"](/aweb-protocol-expert/decisions/a-failed-read-after-a-team-name-conflict-is-unconfirmed.md) and lesson [a read that cannot tell is not the permissive answer](/aweb-protocol-expert/lessons/a-read-that-cannot-tell-is-not-the-permissive-answer.md), kept separate (a concrete key-custody decision and its general rule) and linked; the lesson links [humans use mail](/aweb-protocol-expert/decisions/humans-use-mail.md), whose "inference from absence" it generalizes.
+* **Creation**: lesson [a merge resolution keeps both sides' additions](/aweb-protocol-expert/lessons/a-merge-resolution-keeps-both-sides-additions.md).
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
