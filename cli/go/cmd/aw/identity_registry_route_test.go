@@ -125,23 +125,26 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 		name, stored, env, flag, txt string
 		private, public              bool
 		global, foreign, unmarked    bool
+		broken, txtConflict, absent  bool
 		conflicts                    []string
 	}{
 		{name: "recorded", stored: private.URL, private: true},
 		{name: "recorded with same env", stored: private.URL, env: private.URL, private: true},
 		{name: "recorded with same flag", stored: private.URL, flag: private.URL, private: true},
 		{name: "recorded with same TXT", stored: namedPrivateURL, txt: namedPrivateURL, private: true},
-		{name: "recorded with different private TXT", stored: private.URL, txt: namedPrivateURL, conflicts: []string{private.URL, namedPrivateURL}},
+		{name: "recorded with different private TXT", stored: private.URL, txt: namedPrivateURL, txtConflict: true, conflicts: []string{private.URL, namedPrivateURL}},
 		{name: "global key and status", stored: private.URL, private: true, global: true},
 		{name: "global conflict before key read", stored: private.URL, txt: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}, global: true},
-		{name: "conflicting env", stored: private.URL, env: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
+		{name: "recorded wins over env", stored: private.URL, env: awid.DefaultAWIDRegistryURL, private: true},
 		{name: "conflicting flag", stored: private.URL, flag: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
-		{name: "conflicting TXT", stored: private.URL, txt: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
+		{name: "conflicting TXT", stored: private.URL, txt: awid.DefaultAWIDRegistryURL, txtConflict: true, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
 		{name: "missing TXT", stored: private.URL, txt: "-"},
 		{name: "hosted", stored: awid.DefaultAWIDRegistryURL, public: true},
 		{name: "no record", public: true},
+		{name: "no selected home", public: true, absent: true},
 		{name: "foreign namespace", stored: private.URL, foreign: true, public: true},
 		{name: "unmarked origin", stored: private.URL, unmarked: true},
+		{name: "unreadable installed chain", stored: private.URL, broken: true},
 		{name: "hosted with unrelated env", stored: awid.DefaultAWIDRegistryURL, env: private.URL, public: true},
 		{name: "hosted with explicit TXT", stored: awid.DefaultAWIDRegistryURL, txt: awid.DefaultAWIDRegistryURL, public: true},
 		{name: "explicit flag", flag: private.URL, private: true},
@@ -149,6 +152,17 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, verb := range []string{"who", "verify", "status", "invite", "join", "accept-invite"} {
 				t.Run(verb, func(t *testing.T) {
+					issuance := verb == "invite" || verb == "join" || verb == "accept-invite"
+					private, conflicts := tc.private, tc.conflicts
+					if tc.txtConflict && issuance {
+						private, conflicts = true, nil
+					}
+					if tc.absent && verb != "verify" {
+						t.Skip("verify can run without a selected home")
+					}
+					if tc.broken && verb != "who" && verb != "verify" {
+						t.Skip("unreadable home must refuse online evidence reads")
+					}
 					if tc.global && verb != "who" && verb != "status" {
 						t.Skip("global key preflight is exercised by who")
 					}
@@ -176,6 +190,18 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 					}
 					if err := awconfig.SaveWorktreeIdentityTo(path, identity); err != nil {
 						t.Fatal(err)
+					}
+					if tc.broken {
+						chainPath := filepath.Join(dir, ".aw", "id-chain.json")
+						if err := os.Remove(chainPath); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Mkdir(chainPath, 0700); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if tc.absent {
+						dir = t.TempDir()
 					}
 					record := ""
 					if tc.txt != "-" {
@@ -206,10 +232,10 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 					beforePrivate, beforePublic := privateReads.Load(), publicReads.Load()
 					output, err := cmd.CombinedOutput()
 					gotPrivate, gotPublic := privateReads.Load()-beforePrivate, publicReads.Load()-beforePublic
-					if tc.global && tc.private && verb == "who" && gotPrivate != 2 {
+					if tc.global && private && verb == "who" && gotPrivate != 2 {
 						t.Errorf("expected the key and status at the recorded registry, got %d reads: %s (%v)", gotPrivate, output, err)
 					}
-					if (gotPrivate > 0) != (tc.private && verb != "status") || (gotPublic > 0) != (tc.public && verb != "status") ||
+					if (gotPrivate > 0) != (private && verb != "status") || (gotPublic > 0) != (tc.public && verb != "status") ||
 						(!tc.global && (verb == "who" || verb == "verify") && (gotPrivate > 1 || gotPublic > 1)) {
 						t.Errorf("private/public requests = %d/%d: %s (%v)", gotPrivate, gotPublic, output, err)
 					}
@@ -219,13 +245,17 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 						}
 						return
 					}
-					if len(tc.conflicts) > 0 {
-						for _, origin := range tc.conflicts {
+					if len(conflicts) > 0 {
+						for _, origin := range conflicts {
 							if err == nil || !strings.Contains(string(output), origin) {
 								t.Errorf("refusal must name %q: %s (%v)", origin, output, err)
 							}
 						}
-					} else if tc.private || tc.public {
+					} else if tc.broken {
+						if err == nil && !strings.Contains(string(output), "evidence_unavailable") {
+							t.Errorf("unreadable home must refuse: %s", output)
+						}
+					} else if private || tc.public {
 						if err != nil || ((verb == "who" || verb == "verify") && !strings.Contains(string(output), `"reason": "verified"`)) {
 							t.Errorf("expected verified status: %s (%v)", output, err)
 						}
