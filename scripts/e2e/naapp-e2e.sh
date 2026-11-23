@@ -44,6 +44,9 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
+# AWID accepts the requests the tests sign for its scoped name.
+AWID_PUBLIC_ORIGINS="http://awid:8010,http://$(python3 "$REPO_ROOT/scripts/candidate-network.py" hostname "$project" awid):8010"
+export AWID_PUBLIC_ORIGINS
 # The gate's own override: every service's scoped name, and no host ports.
 "${compose[@]}" config --format json | python3 "$REPO_ROOT/scripts/candidate-network.py" override > "$override"
 compose+=(-f "$override")
@@ -53,14 +56,19 @@ compose+=(-f "$override")
 image="aweb-journey-runner:local"
 docker build -q -t "$image" -f "$REPO_ROOT/scripts/e2e/journey-runner.Dockerfile" "$REPO_ROOT/scripts/e2e" >/dev/null
 runner="$(python3 "$REPO_ROOT/scripts/candidate-network.py" hostname "$project" runner)"
+# The checkout is mounted read-only. The package and the coordination server it
+# starts each keep their own environment, in a volume over their .venv.
+mkdir -p .venv "$REPO_ROOT/server/.venv"
 docker run --rm \
   --network "${project}_default" --network-alias "$runner" \
   -v "$REPO_ROOT:/src:ro" \
+  -v "/src/$package_dir/.venv" \
+  -v /src/server/.venv \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e "$enable=1" \
   -e NAAPP_E2E_PROJECT="$project" \
   -e NAAPP_E2E_CONTAINER_NETWORK=1 \
-  -e UV_PROJECT_ENVIRONMENT=/tmp/venv \
+  -e UV_PYTHON=3.12 \
   -e GOCACHE=/tmp/go-build \
   -e GOMODCACHE=/tmp/go-mod \
   -w "/src/$package_dir" \
@@ -72,5 +80,7 @@ docker run --rm \
     (cd /src/cli/go && go build -o /tmp/aw/aw ./cmd/aw)
     export PATH="/tmp/aw:$PATH"
     uv sync --frozen
+    # The fixtures start this separate project with offline, frozen uv.
+    uv sync --frozen --project /src/server
     uv run --frozen pytest -q -m e2e -p aweb_naapp_testing.deployment_logs -p no:cacheprovider --basetemp=/tmp/pytest
   '

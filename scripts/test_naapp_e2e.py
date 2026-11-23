@@ -2,6 +2,7 @@
 """Exercise the real make dispatch and environment contract with small e2e packages."""
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -9,6 +10,16 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# The real docker, recorded: each call with the registry origins compose would
+# interpolate, then its arguments, as one JSON line.
+DOCKER_STUB = r"""#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["CALLS"], "a") as calls:
+    calls.write(json.dumps([os.environ.get("AWID_PUBLIC_ORIGINS", ""), sys.argv[1:]]) + "\n")
+if "config" in sys.argv:
+    print(json.dumps({"name": "proof", "services": {"awid": {"image": "awid"}}, "networks": {"default": {}}}))
+"""
 
 
 class NaappE2ETest(unittest.TestCase):
@@ -72,6 +83,40 @@ class NaappE2ETest(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Error 7", result.stdout + result.stderr)
+
+    def run_outside_the_gate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            stub = Path(temporary) / "docker"
+            stub.write_text(DOCKER_STUB, encoding="utf-8")
+            stub.chmod(0o755)
+            calls = Path(temporary) / "calls"
+            env = {k: v for k, v in os.environ.items()
+                   if not k.startswith(("NAAPP_E2E_", "CANDIDATE_", "AWID_"))}
+            env.update(PATH=f"{temporary}:{env['PATH']}", CALLS=str(calls),
+                       NAAPP_E2E_PROJECT="proof")
+            result = subprocess.run(
+                ["bash", "scripts/e2e/naapp-e2e.sh", "naapp/library", "LIBRARY_E2E"],
+                cwd=ROOT, env=env, capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return [json.loads(line) for line in calls.read_text().splitlines()]
+
+    def test_outside_the_gate_awid_accepts_the_name_the_tests_call_it_by(self):
+        name = subprocess.run(
+            ["python3", "scripts/candidate-network.py", "hostname", "proof", "awid"],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        ups = [origins for origins, args in self.run_outside_the_gate() if "up" in args]
+        self.assertEqual(len(ups), 1)
+        self.assertIn(f"http://{name}:8010", ups[0].split(","))
+
+    def test_outside_the_gate_the_package_and_the_server_have_separate_environments(self):
+        runs = [args for _, args in self.run_outside_the_gate() if args[0] == "run"]
+        self.assertEqual(len(runs), 1)
+        mounted = [value for flag, value in zip(runs[0], runs[0][1:]) if flag == "-v"]
+        self.assertIn("/src/naapp/library/.venv", mounted)
+        self.assertIn("/src/server/.venv", mounted)
+        self.assertFalse([arg for arg in runs[0] if arg.startswith("UV_PROJECT_ENVIRONMENT=")])
 
 
 if __name__ == "__main__":
