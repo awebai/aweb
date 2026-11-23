@@ -273,7 +273,7 @@ Or continue a known conversation directly:
 
 ```bash
 aw mail send --conversation-id <conversation-id> \
-  --subject "Re" --body-file reply.md
+  --body-file reply.md
 ```
 
 Do not combine `--conversation-id` with recipient flags. A continuation uses the
