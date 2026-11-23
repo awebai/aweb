@@ -121,56 +121,49 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 		t.Fatal(err)
 	}
 
+	const all = "who verify status invite join accept-invite"
+	const readers = "who verify status"
 	for _, tc := range []struct {
-		name, stored, env, flag, txt string
-		private, public              bool
-		global, foreign, unmarked    bool
-		broken, txtConflict, absent  bool
-		conflicts                    []string
+		name, verbs, stored, env, flag, txt string
+		private, public                     bool
+		global, foreign, unmarked           bool
+		broken, txtConflict, absent         bool
+		certOnly                            bool
+		conflicts                           []string
 	}{
-		{name: "recorded", stored: private.URL, private: true},
-		{name: "recorded with same env", stored: private.URL, env: private.URL, private: true},
-		{name: "recorded with same flag", stored: private.URL, flag: private.URL, private: true},
-		{name: "recorded with same TXT", stored: namedPrivateURL, txt: namedPrivateURL, private: true},
-		{name: "recorded with different private TXT", stored: private.URL, txt: namedPrivateURL, txtConflict: true, conflicts: []string{private.URL, namedPrivateURL}},
-		{name: "global key and status", stored: private.URL, private: true, global: true},
-		{name: "global conflict before key read", stored: private.URL, txt: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}, global: true},
-		{name: "recorded wins over env", stored: private.URL, env: awid.DefaultAWIDRegistryURL, private: true},
-		{name: "conflicting flag", stored: private.URL, flag: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
-		{name: "conflicting TXT", stored: private.URL, txt: awid.DefaultAWIDRegistryURL, txtConflict: true, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
-		{name: "missing TXT", stored: private.URL, txt: "-"},
-		{name: "hosted", stored: awid.DefaultAWIDRegistryURL, public: true},
-		{name: "no record", public: true},
-		{name: "no selected home", public: true, absent: true},
-		{name: "foreign namespace", stored: private.URL, foreign: true, public: true},
-		{name: "unmarked origin", stored: private.URL, unmarked: true},
-		{name: "unreadable installed chain", stored: private.URL, broken: true},
-		{name: "hosted with unrelated env", stored: awid.DefaultAWIDRegistryURL, env: private.URL, public: true},
-		{name: "hosted with explicit TXT", stored: awid.DefaultAWIDRegistryURL, txt: awid.DefaultAWIDRegistryURL, public: true},
-		{name: "explicit flag", flag: private.URL, private: true},
+		{name: "recorded", verbs: all + " refresh", stored: private.URL, private: true},
+		{name: "recorded with same env", verbs: all, stored: private.URL, env: private.URL, private: true},
+		{name: "recorded with same flag", verbs: readers, stored: private.URL, flag: private.URL, private: true},
+		{name: "recorded with same TXT", verbs: all, stored: namedPrivateURL, txt: namedPrivateURL, private: true},
+		{name: "recorded with different private TXT", verbs: all, stored: private.URL, txt: namedPrivateURL, txtConflict: true, conflicts: []string{private.URL, namedPrivateURL}},
+		{name: "global key and status", verbs: "who status", stored: private.URL, private: true, global: true},
+		{name: "hosted owner and finish use private", verbs: "hosted-owner hosted-finish", stored: private.URL, private: true, global: true},
+		{name: "global conflict before key read", verbs: "who status", stored: private.URL, txt: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}, global: true},
+		{name: "recorded wins over env", verbs: all, stored: private.URL, env: awid.DefaultAWIDRegistryURL, private: true},
+		{name: "conflicting flag", verbs: readers, stored: private.URL, flag: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
+		{name: "conflicting TXT", verbs: all, stored: private.URL, txt: awid.DefaultAWIDRegistryURL, txtConflict: true, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
+		{name: "missing TXT", verbs: all, stored: private.URL, txt: "-"},
+		{name: "hosted", verbs: all, stored: awid.DefaultAWIDRegistryURL, public: true},
+		{name: "no record", verbs: all, public: true},
+		{name: "no selected home", verbs: "verify", public: true, absent: true},
+		{name: "empty identity home", verbs: "verify", public: true, absent: true, certOnly: true},
+		{name: "certificate only public", verbs: "who verify", stored: awid.DefaultAWIDRegistryURL, public: true, certOnly: true},
+		{name: "certificate only private", verbs: "who verify", stored: private.URL, private: true, certOnly: true},
+		{name: "foreign namespace", verbs: "verify", stored: private.URL, foreign: true, public: true},
+		{name: "unmarked origin", verbs: readers, stored: private.URL, unmarked: true},
+		{name: "unreadable installed chain", verbs: "who verify invite", stored: private.URL, broken: true},
+		{name: "hosted with unreadable installed chain", verbs: "verify", stored: awid.DefaultAWIDRegistryURL, broken: true, public: true},
+		{name: "hosted with unrelated env", verbs: all, stored: awid.DefaultAWIDRegistryURL, env: private.URL, public: true},
+		{name: "hosted with explicit TXT", verbs: all, stored: awid.DefaultAWIDRegistryURL, txt: awid.DefaultAWIDRegistryURL, public: true},
+		{name: "explicit flag", verbs: readers, flag: private.URL, private: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, verb := range []string{"who", "verify", "status", "invite", "join", "accept-invite"} {
+			for _, verb := range strings.Fields(tc.verbs) {
 				t.Run(verb, func(t *testing.T) {
 					issuance := verb == "invite" || verb == "join" || verb == "accept-invite"
 					private, conflicts := tc.private, tc.conflicts
 					if tc.txtConflict && issuance {
 						private, conflicts = true, nil
-					}
-					if tc.absent && verb != "verify" {
-						t.Skip("verify can run without a selected home")
-					}
-					if tc.broken && verb != "who" && verb != "verify" {
-						t.Skip("unreadable home must refuse online evidence reads")
-					}
-					if tc.global && verb != "who" && verb != "status" {
-						t.Skip("global key preflight is exercised by who")
-					}
-					if tc.foreign && verb != "verify" {
-						t.Skip("verify checks a foreign export without selecting an acting identity")
-					}
-					if tc.unmarked && (verb == "invite" || verb == "join" || verb == "accept-invite") {
-						t.Skip("the pinned transport is exercised by who and verify")
 					}
 					dir := whoIdentity(t, v, !tc.global && !tc.foreign, tc.global || tc.foreign)
 					if tc.global {
@@ -202,6 +195,13 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 					}
 					if tc.absent {
 						dir = t.TempDir()
+						if tc.certOnly {
+							if err := os.Mkdir(filepath.Join(dir, ".aw"), 0700); err != nil {
+								t.Fatal(err)
+							}
+						}
+					} else if tc.certOnly {
+						makeCertificateOnlyRegistryHome(t, dir, tc.stored, identity.DID, v.Keys["seat"].SeedHex)
 					}
 					record := ""
 					if tc.txt != "-" {
@@ -214,13 +214,13 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 						"AW_REGISTRY_ROUTE_TXT="+record, "AW_REGISTRY_ROUTE_CA="+rootFile,
 						"GODEBUG=x509usefallbackroots=1", "HTTPS_PROXY="+proxy, "NO_PROXY=registry.test", "APP_ENV=production",
 						"AW_REGISTRY_ROUTE_ENV="+tc.env, "AW_REGISTRY_ROUTE_TEAM_SEED="+v.Keys["seat"].SeedHex)
-					if tc.flag != "" && (verb == "invite" || verb == "join" || verb == "accept-invite") {
-						t.Skip("team --parent and team invite have no identity registry flag")
-					}
+
 					args := []string{verb, "--json"}
 					var input []byte
 					if verb == "status" {
 						args = append([]string{"id"}, args...)
+					} else if verb == "refresh" {
+						args = append([]string{"id", "parent"}, args...)
 					} else if tc.flag != "" {
 						args = append(args, "--registry", tc.flag)
 					}
@@ -233,7 +233,7 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 					output, err := cmd.CombinedOutput()
 					gotPrivate, gotPublic := privateReads.Load()-beforePrivate, publicReads.Load()-beforePublic
 					if tc.global && private && verb == "who" && gotPrivate != 2 {
-						t.Errorf("expected the key and status at the recorded registry, got %d reads: %s (%v)", gotPrivate, output, err)
+						t.Errorf("private evidence calls = %d, want key and status: %s (%v)", gotPrivate, output, err)
 					}
 					if (gotPrivate > 0) != (private && verb != "status") || (gotPublic > 0) != (tc.public && verb != "status") ||
 						(!tc.global && (verb == "who" || verb == "verify") && (gotPrivate > 1 || gotPublic > 1)) {
@@ -251,9 +251,9 @@ func testIdentityRegistryRouting(t *testing.T, live bool) {
 								t.Errorf("refusal must name %q: %s (%v)", origin, output, err)
 							}
 						}
-					} else if tc.broken {
+					} else if tc.broken && !tc.public {
 						if err == nil && !strings.Contains(string(output), "evidence_unavailable") {
-							t.Errorf("unreadable home must refuse: %s", output)
+							t.Errorf("unreadable home must refuse: %s (%v)", output, err)
 						}
 					} else if private || tc.public {
 						if err != nil || ((verb == "who" || verb == "verify") && !strings.Contains(string(output), `"reason": "verified"`)) {
@@ -285,6 +285,9 @@ func TestIdentityRegistryRouteChild(t *testing.T) {
 		if arg == "--" {
 			args := os.Args[i+1:]
 			switch args[0] {
+			case "hosted-owner", "hosted-finish":
+				testHostedRegistryRoute(t, args[0])
+				return
 			case "invite", "join", "accept-invite":
 				args = identityRegistryTestTeamCommand(t, args[0])
 			}
@@ -294,6 +297,55 @@ func TestIdentityRegistryRouteChild(t *testing.T) {
 		}
 	}
 	t.Fatal("missing command arguments")
+}
+
+func testHostedRegistryRoute(t *testing.T, command string) {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := resolveIdentityForDir(wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Dir(identity.SigningKeyPath)
+	key, err := awid.LoadSigningKey(identity.SigningKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := &awid.NetTXTResolver{}
+	registry := newAWIDRegistryClient(nil, resolver)
+	if command == "hosted-owner" {
+		issuer, err := hostedOwnerIssuer(t.Context(), wd, &hostedOwnerAuthority{home: home, did: identity.DID, stableID: identity.StableID, registryURL: identity.RegistryURL}, registry, resolver)
+		if err != nil || issuer == nil {
+			t.Fatalf("hosted owner route: %v", err)
+		}
+		defer issuer.close()
+		return
+	}
+	bundle, err := awconfig.LoadInstalledIDChain(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := bundle.Leaf()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := leaf.Signed()["certificate"].(map[string]any)["parent"].(map[string]any)
+	tree, err := newHostedIDTreeRecovery(hostedIdentityContext{
+		Domain: leaf.Domain(), ParentKind: parent["kind"].(string), ParentID: parent["id"].(string), RegistryURL: identity.RegistryURL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := finishHostedIDTree(t.Context(), tree,
+		awid.IDTreeCreationResponse{IDChain: awid.ReceivedIDChain(bundle.Bundle)},
+		workspaceTeamIdentityMaterial{SigningKey: key, DIDKey: identity.DID, StableID: identity.StableID, IdentityScope: awid.IdentityModeGlobal},
+		t.TempDir(), registry, resolver)
+	if err != nil || result == nil || result.Reason != "verified" {
+		t.Fatalf("hosted completion route: %+v %v", result, err)
+	}
 }
 
 // Both accept commands run the complete parent exchange. Their team
@@ -336,6 +388,32 @@ func identityRegistryTestTeamCommand(t *testing.T, command string) []string {
 		args = []string{"team", "join", "--no-connect"}
 	}
 	return append(args, token, "--parent", parent, "--name", "child-"+id[:8], "--json")
+}
+
+func makeCertificateOnlyRegistryHome(t *testing.T, dir, origin, did, seedHex string) {
+	t.Helper()
+	const team = "backend:example.com"
+	seed, err := hex.DecodeString(seedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(ed25519.NewKeyFromSeed(seed), awid.TeamCertificateFields{
+		Team: team, Alias: "coordinator", MemberDIDKey: did, IdentityScope: awid.IdentityModeLocal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeam(dir, team, cert); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamState(dir, &awconfig.TeamState{ActiveTeam: team, Memberships: []awconfig.TeamMembership{
+		{TeamID: team, Alias: "coordinator", CertPath: awconfig.TeamCertificateRelativePath(team), RegistryURL: origin, RegistryOperatorOrigin: origin},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(awconfig.WorktreeIdentityPath(dir)); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func identityRegistryTestGlobalHome(t *testing.T, dir string, v whoVectors) {
