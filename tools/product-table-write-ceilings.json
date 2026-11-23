@@ -29,7 +29,6 @@
     "key-holder/tests/test_keys.py": 2,
     "key-holder/tests/test_native_holder.py": 2,
     "key-holder/tests/test_operator_review.py": 1,
-    "key-holder/tests/test_optional_approval.py": 1,
     "naapp-lib/testing/src/aweb_naapp_testing/packaged_probe.py": 4,
     "naapp-lib/tests/console/support.py": 1,
     "naapp-lib/tests/console/test_console_installation_refusals.py": 2,

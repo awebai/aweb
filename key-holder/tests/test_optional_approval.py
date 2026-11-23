@@ -12,6 +12,7 @@ from aweb_key_holder.http import create_app
 from aweb_key_holder.keys import KeyStore, Refused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.id_certificates import verify_id_certificate
+from older_store import older_store
 from policy_inputs import policy_file
 
 
@@ -111,17 +112,8 @@ def test_old_private_setting_is_not_an_accepted_alias(tmp_path):
 
 
 def test_existing_store_migrates_with_keys_and_audit_unchanged(tmp_path):
-    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    store = older_store(tmp_path / "private", version=2)
     descriptor = store.descriptor()
-    with store._connection() as db, db:
-        # Restore the actual v2 schema before running both ordered migrations.
-        db.execute("ALTER TABLE enrollments DROP COLUMN retired_at")
-        db.execute("DROP TABLE person_revisions")
-        db.execute(
-            "CREATE TABLE revision (singleton INTEGER PRIMARY KEY CHECK(singleton=1), value INTEGER NOT NULL)"
-        )
-        db.execute("INSERT INTO revision VALUES (1,0)")
-        db.execute("PRAGMA user_version=2")
     with pytest.raises(Refused, match="schema_unavailable"):
         KeyStore.open(store.directory)
     store.migrate()
