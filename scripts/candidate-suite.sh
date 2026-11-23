@@ -48,6 +48,7 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   : > "$summary"
   run test-server
   run test-awid
+  run test-key-holder
   run test-naapp
   run test-cli
   run test-cli-auth-v2

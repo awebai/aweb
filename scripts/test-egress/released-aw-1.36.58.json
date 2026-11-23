@@ -1,0 +1,23 @@
+{
+  "dist": {
+    "fileCount": 5,
+    "integrity": "sha512-XXI+KavALNzjD/iFPbLKr8O4ChtbnG3V9eYL/uf4gBd/nkrf7VhV8P9xRmAd/x7bM7Lix6AI7XFvuIQBk3cUvA==",
+    "shasum": "2fc807c88760461b8c9af4d72a81bb346b5c9fbc",
+    "signatures": [
+      {
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "sig": "MEQCIBW61PLCM6aQOWoBXq0aGyKL8rLV+s0FQHk+Sy4Klxd9AiBv+UuNXde7P4yggh6PxnXXMtzlKaT+EhTIKez4Uqz++g=="
+      },
+      {
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "sig": "MEQCIBQtmHwMglTR2mUluvxCdfCZA15DwuwrDxKDlYMwVvD6AiA/5F/uI1SCQcqujE0zZsKHd4gk03IXHe+ern0FKyJxsg=="
+      }
+    ],
+    "tarball": "https://registry.npmjs.org/@awebai/aw/-/aw-1.36.58.tgz",
+    "unpackedSize": 10746
+  },
+  "gitHead": "a3223c1d32b8144abfd34d63b521b38d2b227ad5",
+  "name": "@awebai/aw",
+  "source": "gitHead",
+  "version": "1.36.58"
+}
