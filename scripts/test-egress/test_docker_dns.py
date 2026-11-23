@@ -19,8 +19,15 @@ ROOT = Path(__file__).resolve().parents[2]
 class DockerDNS(unittest.TestCase):
     def run_guard(self, child, *, collect_summary=False):
         evidence = EVIDENCE / self._testMethodName
-        with tempfile.TemporaryDirectory(prefix='aw-dns-default-') as temp:
+        bind_root = os.environ.get('AWEB_DOCKER_BIND_ROOT')
+        with tempfile.TemporaryDirectory(prefix='aw-dns-default-', dir=bind_root) as temp:
             adapter = Path(temp) / 'docker'
+            source = ROOT / 'scripts/test-egress'
+            if bind_root:
+                # The sibling Docker daemon cannot bind the candidate's checkout volume.
+                staged_source = Path(temp) / 'test-egress'
+                shutil.copytree(source, staged_source, ignore=shutil.ignore_patterns('__pycache__'))
+                source = staged_source
             adapter.write_text('''#!/usr/bin/env python3
 import os
 import sys
@@ -36,7 +43,7 @@ os.execv(os.environ['TEST_REAL_DOCKER'], [os.environ['TEST_REAL_DOCKER'], *args]
 ''')
             adapter.chmod(0o755)
             env = dict(os.environ, TEST_REAL_DOCKER=shutil.which('docker'),
-                       TEST_DNS_SOURCE=str(ROOT / 'scripts/test-egress'),
+                       TEST_DNS_SOURCE=str(source),
                        PATH=temp + os.pathsep + os.environ['PATH'])
             summary_args = ['--collect-summary'] if collect_summary else []
             result = subprocess.run(

@@ -44,10 +44,11 @@ suite's PG/Redis when supplied, otherwise disposable local Docker services, and
 runs the repository AWID service. No identity, registry-selection or release
 code carries any of these mechanisms.
 
-The Docker resolver qualification reproduces a CI host's inherited search domain
-using the real Docker CLI, DNS sink and child `getaddrinfo`. Run it under the host
-test policy with an existing Python image; no dependency image build is needed.
-The DNS sidecar reads the repository DNS sink from a read-only bind mount:
+Candidate checks run the proxy and DNS unit controls and the Docker resolver
+qualification as separate targets. The qualification reproduces a CI host's
+inherited search domain using the real Docker CLI, DNS sink and child
+`getaddrinfo`. For a standalone run under the host test policy, use an existing
+Python image. The DNS sidecar reads the repository sink from a read-only bind:
 
 ```sh
 python3 scripts/test-egress/test_docker_dns.py --image python:3.12-slim --evidence /tmp/dns-proof

@@ -859,6 +859,11 @@ test-egress-controls:
 	python3 scripts/test-egress/test_dns.py -v
 	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v
 
+.PHONY: _candidate-test-docker-dns
+_candidate-test-docker-dns:
+	python3 scripts/test-egress/test_docker_dns.py --image "$${CANDIDATE_GATE_IMAGE:?candidate image is required}" \
+		--evidence "$${CANDIDATE_LOG_DIR:?candidate log directory is required}/docker-dns" -v
+
 # The shared page renderer is packaged in the Python wheel. Rebuild from its
 # exact npm lock and compare without rewriting committed bytes.
 .PHONY: check-page-renderer-bundle

@@ -82,6 +82,8 @@ checks() {
   run test-generated-copies
   run check-private-boundary
   run _candidate-gate-docker-boundaries
+  run test-egress-controls
+  run _candidate-test-docker-dns
   run _candidate-gate-compose-adoption
   run test-shipping
   run test-page-renderer
