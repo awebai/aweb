@@ -541,9 +541,22 @@ func doctorStatusRank(status doctorStatus) int {
 func formatDoctorOutput(v any) string {
 	out := v.(doctorOutput)
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Doctor: %s\n", out.Status))
+	var workspaceSetup string
+	if out.Status == doctorStatusOK {
+		for _, check := range out.Checks {
+			if check.ID == doctorCheckWorkspaceExists && check.Detail["state"] == "missing" {
+				workspaceSetup = check.NextStep
+				break
+			}
+		}
+	}
+	if workspaceSetup != "" {
+		fmt.Fprintf(&sb, "Doctor: no workspace here.\nNext:   %s\n", workspaceSetup)
+	} else {
+		fmt.Fprintf(&sb, "Doctor: %s\n", out.Status)
+	}
 	sb.WriteString(fmt.Sprintf("Mode:   %s\n", out.Mode))
-	if out.SkippedChecks > 0 {
+	if out.SkippedChecks > 0 && workspaceSetup == "" {
 		if out.Mode == doctorModeOnline {
 			sb.WriteString(fmt.Sprintf("Note:   %d check(s) have no safe probe and were skipped; they do not affect the verdict.\n", out.SkippedChecks))
 		} else {
@@ -594,7 +607,7 @@ func formatDoctorOutput(v any) string {
 				}
 			}
 		}
-		if doctorVerbose && check.NextStep != "" {
+		if doctorVerbose && check.NextStep != "" && !(check.ID == doctorCheckWorkspaceExists && workspaceSetup != "") {
 			sb.WriteString(fmt.Sprintf("        next: %s\n", check.NextStep))
 		}
 	}

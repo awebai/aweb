@@ -278,17 +278,18 @@ func TestAwDoctorJSONWorksWithoutWorkspaceConfig(t *testing.T) {
 	}
 }
 
-func TestAwDoctorHumanOutput(t *testing.T) {
+func TestAwCheckHumanOutputWithoutWorkspace(t *testing.T) {
 	t.Parallel()
 
 	bin, tmp := buildDoctorBinary(t)
-	out, err := runDoctorCLI(t, bin, tmp, "doctor")
+	out, err := runDoctorCLI(t, bin, tmp, "check")
 	if err != nil {
-		t.Fatalf("doctor failed: %v\n%s", err, string(out))
+		t.Fatalf("check failed: %v\n%s", err, string(out))
 	}
 	text := string(out)
 	for _, want := range []string{
-		"Doctor: ok",
+		"Doctor: no workspace here.",
+		"Next:   Run `aw init`",
 		"Mode:   auto",
 		"doctor.contract.v1",
 		doctorCheckWorkspaceExists,
@@ -296,6 +297,9 @@ func TestAwDoctorHumanOutput(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("human output missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "Doctor: ok") {
+		t.Fatalf("empty folder was described as a healthy workspace:\n%s", text)
 	}
 }
 
@@ -970,6 +974,10 @@ func TestAwDoctorLocalChecksCorruptWorkspaceYAML(t *testing.T) {
 	}
 	requireDoctorCheckStatus(t, got, doctorCheckWorkspaceParse, doctorStatusFail)
 	requireDoctorCheckStatus(t, got, doctorCheckCertificateParse, doctorStatusBlocked)
+	text, err := runDoctorCLI(t, bin, tmp, "check")
+	if err != nil || !strings.Contains(string(text), "Doctor: fail") || strings.Contains(string(text), "no workspace here") {
+		t.Fatalf("check should report a failed diagnosis for a corrupt workspace: %v\n%s", err, text)
+	}
 }
 
 func TestAwDoctorLocalChecksWorkspaceSemanticFailures(t *testing.T) {
