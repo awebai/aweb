@@ -80,6 +80,9 @@ async def test_warm_signed_auth_reads_no_full_crl_and_no_registry(privacy_app, m
 
         await env.registry_db.execute("UPDATE {{tables.team_certificates}} SET revoked_at=now() WHERE certificate_id='privacy-alice'")
         await cached._invalidate_keys(crl_key)
+        assert requests == [
+            ("POST", f"/v1/namespaces/example.test/teams/{TEAM_NAME}/certificates/revoke")
+        ]
         if history == 100000:
             # One more revocation crosses the documented ceiling. A partial
             # list/index must never be installed, even with a service token.
