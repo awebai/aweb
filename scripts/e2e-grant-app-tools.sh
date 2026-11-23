@@ -12,16 +12,13 @@ COMPOSE=(docker compose -p "$PROJECT" --project-directory "$REPO_ROOT" -f "$REPO
 EVIDENCE="${GRANT_APP_E2E_EVIDENCE_DIR:-$(mktemp -d /tmp/aweb-grant-app-evidence.XXXXXX)}"
 mkdir -p "$EVIDENCE"
 exec > >(tee -a "$EVIDENCE/run.log") 2>&1
-# The TLS seed container, named under the project so a run that was killed
-# before its own cleanup leaves a seed the next run removes by that prefix.
+# The TLS seed container. A run killed before its own cleanup leaves one with
+# the project label, and the next run refuses the project because of it.
 SEED="$PROJECT-seed-$$"
-remove_seeds() {
-  local seeds
-  seeds="$(docker ps -aq --filter "name=^${PROJECT}-seed-")"
-  if [[ -n "$seeds" ]]; then
-    # shellcheck disable=SC2086 # one container id per word
-    docker rm -f $seeds >/dev/null
-  fi
+remove_seed() {
+  local seed
+  seed="$(docker ps -aq --filter "name=^${SEED}\$")" || return
+  [[ -z "$seed" ]] || docker rm -f "$seed" >/dev/null
 }
 cleanup() {
   status=$?
@@ -29,8 +26,9 @@ cleanup() {
   "${COMPOSE[@]}" ps >"$EVIDENCE/compose-ps.txt" 2>&1 || true
   docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" \
     | xargs -r docker inspect -f '{{.Name}} cpus_nano={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}} pids={{.HostConfig.PidsLimit}}' >"$EVIDENCE/container-limits.txt" 2>&1 || true
+  # The seed mounts the fixture volume, which Compose removes next.
+  remove_seed || { echo "FATAL: could not remove the seed container $SEED" >&2; status=1; }
   "${COMPOSE[@]}" down -v --rmi local --remove-orphans || status=1
-  remove_seeds || { echo "FATAL: could not remove the seed containers of $PROJECT" >&2; status=1; }
   for kind in container network volume image; do
     case "$kind" in
       container) residue="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")" ;;
@@ -51,8 +49,7 @@ trap cleanup EXIT
 docker buildx inspect "$BUILDER" >"$EVIDENCE/builder.txt" 2>&1
 "${COMPOSE[@]}" build --builder "$BUILDER" >"$EVIDENCE/build.log" 2>&1
 "${COMPOSE[@]}" create --no-build aweb library
-remove_seeds
-# The project label also makes a leftover seed visible to the residue check.
+# The project label makes a leftover seed visible to the guard and the residue check.
 docker create --name "$SEED" --label "com.docker.compose.project=$PROJECT" \
   --user 0 --entrypoint /app/.venv/bin/python \
   -v "$PROJECT-fixture:/fixture" -e PYTHONPATH=/fixture/test-support \

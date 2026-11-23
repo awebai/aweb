@@ -853,6 +853,57 @@ class ComposeConfigTests(unittest.TestCase):
                 )
 
 
+GRANT_APP_STUB = r"""#!/usr/bin/env bash
+# Records every docker call. The project has one leftover seed; the builder
+# inspection fails, so the run ends in the script's own cleanup.
+printf '%s\n' "$*" >> "$CALLS"
+case "$*" in
+  "ps -aq --filter name=^proof-seed-"*[0-9]"$") echo leftoverseed ;;
+  "ps -aq --filter label=com.docker.compose.project=proof") printf '%s' "${PROJECT_CONTAINERS:-}" ;;
+  "buildx inspect"*) exit 1 ;;
+esac
+"""
+
+
+class GrantAppSeedTests(unittest.TestCase):
+    def run_script(self, **extra):
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "docker"
+            stub.write_text(GRANT_APP_STUB)
+            stub.chmod(0o755)
+            calls = Path(tmp) / "calls"
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts/e2e-grant-app-tools.sh")],
+                env={
+                    **os.environ,
+                    "PATH": f"{tmp}:{os.environ['PATH']}",
+                    "CALLS": str(calls),
+                    "GRANT_APP_E2E_PROJECT": "proof",
+                    "GRANT_APP_E2E_EVIDENCE_DIR": str(Path(tmp) / "evidence"),
+                    **extra,
+                },
+                text=True,
+                capture_output=True,
+                timeout=60,
+            )
+            return result, calls.read_text().splitlines()
+
+    def test_cleanup_removes_a_seed_before_the_volumes_it_mounts(self):
+        result, calls = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        down = [i for i, call in enumerate(calls) if " down -v " in f"{call} "]
+        self.assertEqual(len(down), 1, calls)
+        self.assertIn("rm -f leftoverseed", calls)
+        self.assertLess(calls.index("rm -f leftoverseed"), down[0], calls)
+
+    def test_a_run_refuses_an_existing_project_and_removes_nothing(self):
+        # The leftover may be a live run's.
+        result, calls = self.run_script(PROJECT_CONTAINERS="leftoverseed")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to reuse", result.stdout + result.stderr)
+        self.assertFalse([c for c in calls if c.startswith("rm ") or " down " in c])
+
+
 LINK_STUB = r"""#!/usr/bin/env bash
 # The real docker, recorded: run-owned resources carry aweb.candidate-gate=run.
 echo "$*" >> "$CALLS"
