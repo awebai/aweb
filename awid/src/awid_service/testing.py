@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from inspect import isawaitable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 from fastapi import FastAPI
@@ -57,6 +57,9 @@ from awid.team_server_record import record_signing_bytes
 from .db import AwidDatabaseInfra
 from .deps import get_domain_verifier
 from .main import mount_registry
+
+if TYPE_CHECKING:
+    import pytest
 
 REGISTRY_URL = "https://registry.example"
 
@@ -111,12 +114,25 @@ socket.socket.connect_ex = _refuse
 """
 
 
-def run_without_a_named_server(
-    test: str, *, cwd: Path, scratch: Path
-) -> subprocess.CompletedProcess[str]:
-    """Run one test (a pytest node id with an absolute path) from ``cwd`` in a
-    child pytest that names no Postgres server and can reach none. The child
-    loads the test's own suite, so it shows what that suite does."""
+# Set in the child run of check_suite_refuses_an_unnamed_server.
+_UNNAMED_SERVER_CHILD = "AWID_TEST_UNNAMED_SERVER_CHILD"
+
+
+def check_suite_refuses_an_unnamed_server(request: pytest.FixtureRequest, scratch: Path) -> None:
+    """The whole body of a suite's one test that its database fixtures refuse a
+    run that names no Postgres server.
+
+    The test runs itself again in a child pytest, which loads the suite's own
+    conftest, names no server and can reach none. Only the child requests the
+    factory, and it must be refused.
+    """
+    if _UNNAMED_SERVER_CHILD in os.environ:
+        try:
+            request.getfixturevalue("test_db_factory")
+        except PostgresNotSelected:
+            return
+        raise AssertionError("the suite's test_db_factory admitted an unnamed server")
+
     (scratch / "no_network.py").write_text(NO_NETWORK)
     # The parent's worker and options are not the child's.
     environ = {
@@ -124,17 +140,20 @@ def run_without_a_named_server(
         for name, value in os.environ.items()
         if name not in _SELECTION and not name.startswith("PYTEST_")
     }
+    environ[_UNNAMED_SERVER_CHILD] = "1"
     environ["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(scratch), os.environ.get("PYTHONPATH")))
     )
-    return subprocess.run(
+    child = subprocess.run(
         [sys.executable, "-P", "-m", "pytest", "-q", "-p", "no_network", "-p", "no:cacheprovider"]
-        + [f"--basetemp={scratch / 'child'}", test],
-        cwd=cwd,
+        + [f"--basetemp={scratch / 'child'}", f"{request.path}::{request.node.name}"],
+        cwd=request.config.invocation_params.dir,
         env=environ,
         capture_output=True,
         text=True,
     )
+    output = child.stdout + child.stderr
+    assert child.returncode == 0 and "1 passed" in child.stdout, output
 
 
 SERVICE_TOKEN = "awid-testing-service-token-32-bytes"
