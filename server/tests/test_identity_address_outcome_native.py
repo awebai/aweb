@@ -21,7 +21,7 @@ from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.mcp.tools.federation import mcp_messaging_auth
 from awid.registry import RegistryClient, RegistryError
 from identity_binding_support import register_global_identity
-from tests.test_dashboard_privacy import privacy_app as privacy_app  # noqa: PLC0414
+from tests.test_dashboard_privacy import TEAM, privacy_app as privacy_app  # noqa: PLC0414
 from tests.test_messages_http import _signed_identity_headers
 
 __all__ = ["privacy_app"]
@@ -68,7 +68,19 @@ async def prepare_actor(env, name, *, address):
             did_aw=stable_id,
             address=address,
         )
+    await assert_registered_identity_membership(env, actor, team_id=TEAM)
     return actor
+
+
+async def assert_registered_identity_membership(env, actor, *, team_id):
+    name, domain = team_id.split(":", 1)
+    registry = env.app.state.awid_registry_client
+    certificates = await registry.list_team_certificates(domain, name, active_only=True)
+    assert [
+        (certificate.member_did_aw, certificate.member_address or "")
+        for certificate in certificates
+        if certificate.member_did_key == actor.did
+    ] == [(actor.stable_id, actor.address)]
 
 
 @asynccontextmanager
