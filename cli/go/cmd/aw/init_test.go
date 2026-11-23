@@ -409,6 +409,47 @@ func TestInitMissingOutcomeRefusalDoesNotListDiscoveryInRealCLI(t *testing.T) {
 	}
 }
 
+func TestRequireInitOutcomeTTYExplainsAvailableChoices(t *testing.T) {
+	for _, tc := range []struct {
+		choice, action, unavailable string
+	}{
+		{"new-account", "create a new hosted account", "new-team"},
+		{"new-team", "create a new self-hosted team", "new-account"},
+		{"new-team", "create a new BYOD team", "new-account"},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			oldStdin, oldNewAccount, oldNewTeam := os.Stdin, initNewAccount, initNewTeam
+			initNewAccount, initNewTeam = false, false
+			t.Cleanup(func() { os.Stdin, initNewAccount, initNewTeam = oldStdin, oldNewAccount, oldNewTeam })
+			in, err := os.CreateTemp(t.TempDir(), "answer")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer in.Close()
+			if _, err := in.WriteString(tc.choice + "\n"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := in.Seek(0, 0); err != nil {
+				t.Fatal(err)
+			}
+			os.Stdin = in
+			prompt := captureStderr(t, func() { err = requireOrPromptInitOutcome(true, tc.action, "--"+tc.choice) })
+			if err != nil || initNewAccount != (tc.choice == "new-account") || initNewTeam != (tc.choice == "new-team") {
+				t.Fatalf("choice %q did not select its creation path: %v\n%s", tc.choice, err, prompt)
+			}
+			for _, want := range []string{tc.choice + ": " + tc.action, "join a team you already belong to", "hosted team ID from your administrator", "default team for a workspace", "aw team join --token-file"} {
+				if !strings.Contains(prompt, want) {
+					t.Errorf("missing %q in menu:\n%s", want, prompt)
+				}
+			}
+			if strings.Contains(prompt, tc.unavailable) {
+				t.Errorf("unavailable choice %q in menu:\n%s", tc.unavailable, prompt)
+			}
+		})
+	}
+}
+
 func TestRequireInitOutcomeTTYCanSelectDiscoveryEntry(t *testing.T) {
 	// Uses HOME/globals/stdin; do not mark parallel.
 	oldJoinFrom, oldJoinTeam := initJoinFrom, initJoinTeam
@@ -447,7 +488,7 @@ func TestRequireInitOutcomeTTYCanSelectDiscoveryEntry(t *testing.T) {
 	if initJoinFrom != discovered || initJoinTeam != "backend:acme.com" {
 		t.Fatalf("selected join source=%q team=%q", initJoinFrom, initJoinTeam)
 	}
-	if !strings.Contains(promptBytes, "Confirmed: this will join team backend:acme.com") {
+	if !strings.Contains(promptBytes, "Enter 1 to join this team") || !strings.Contains(promptBytes, "Confirmed: this will join team backend:acme.com") {
 		t.Fatalf("missing join confirmation: %s", promptBytes)
 	}
 }

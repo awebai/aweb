@@ -227,8 +227,13 @@ func requireOrPromptInitOutcome(canPrompt bool, action, flag string) error {
 		return missingInitOutcomeError(action, flag)
 	}
 	printInitWorkspaceDiscoveryChoices(os.Stderr)
+	fmt.Fprintf(os.Stderr, "\nChoose how to set up this folder:\n  %s: %s.\n", strings.TrimPrefix(flag, "--"), action)
+	fmt.Fprintln(os.Stderr, "  join-from: join a team you already belong to from another workspace or identity home.")
+	fmt.Fprintln(os.Stderr, "  admission-team-id: use a hosted team ID from your administrator to request access.")
+	fmt.Fprintln(os.Stderr, "  workspace-team: set up the default team for a workspace managed by a tool such as OATS.")
+	fmt.Fprintln(os.Stderr, "If you have an invite, exit and run `aw team join --token-file <file> --name <name>`.")
 	promptIn := bufferedPromptReader(os.Stdin)
-	choice, err := promptRequiredStringWithIO("Choose aw init outcome (number, join-from, admission-team-id, workspace-team, new-account, new-team)", "", promptIn, os.Stderr)
+	choice, err := promptRequiredStringWithIO("Enter your choice", "", promptIn, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -242,14 +247,14 @@ func requireOrPromptInitOutcome(canPrompt bool, action, flag string) error {
 	switch strings.TrimSpace(choice) {
 	case "new-account", "--new-account":
 		if flag != "--new-account" {
-			return usageError("chosen outcome --new-account does not match this init path; rerun with --new-account or choose %s", flag)
+			return usageError("this setup cannot create a hosted account; choose one of the options above")
 		}
 		fmt.Fprintln(os.Stderr, "Confirmed: this will create a NEW ACCOUNT with its own team.")
 		initNewAccount = true
 		return nil
 	case "new-team", "--new-team":
 		if flag != "--new-team" {
-			return usageError("chosen outcome --new-team does not match this init path; rerun with --new-team or choose %s", flag)
+			return usageError("this setup cannot create a separate team; choose one of the options above")
 		}
 		fmt.Fprintln(os.Stderr, "Confirmed: this will create a new team for this workspace.")
 		initNewTeam = true
@@ -298,7 +303,7 @@ func requireOrPromptInitOutcome(canPrompt bool, action, flag string) error {
 		fmt.Fprintf(os.Stderr, "Confirmed: this will ensure a workspace's default team in explicit identity home %s.\n", identityHomeRoot)
 		return nil
 	default:
-		return usageError("unknown init outcome %q; choose join-from, admission-team-id, workspace-team, new-account, or new-team", choice)
+		return usageError("unknown init outcome %q; choose one of the options above", choice)
 	}
 }
 
@@ -352,7 +357,7 @@ func initWorkspaceDiscoveryGuidance() string {
 		}
 		fmt.Fprintf(&b, "  %d) %s team=%s alias=%s server=%s [%s%s]\n", i+1, entry.Path, entry.TeamID, entry.Alias, entry.ServerURL, availability, detail)
 		if entry.Availability == awconfig.MachineWorkspaceAvailable {
-			fmt.Fprintf(&b, "     join with: aw init --join-from %q --join-team %q\n", entry.Path, entry.TeamID)
+			fmt.Fprintf(&b, "     Enter %d to join this team, or run: aw init --join-from %q --join-team %q\n", i+1, entry.Path, entry.TeamID)
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
