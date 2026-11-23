@@ -44,13 +44,13 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 		"claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
 		"Channel delivery works in any permission mode, including auto and plan.",
 		"pi install npm:@awebai/pi@latest",
-		"https://aweb.ai/docs/cli-tutorial.md",
+		"https://aweb.ai/docs/agent-guide.md",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)
 		}
 	}
-	for _, unwanted := range []string{"--dangerously-skip-permissions", "aw run codex", "aw run claude", "docs/agent-guide.md", "https://aweb.ai/agent-guide.md"} {
+	for _, unwanted := range []string{"--dangerously-skip-permissions", "aw run codex", "aw run claude", "docs/cli-tutorial.md", "https://aweb.ai/agent-guide.md"} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("unexpected %q in next steps:\n%s", unwanted, text)
 		}
@@ -74,10 +74,10 @@ func TestInitNextStepLinesLocalDirAllDoneStillShowsChannelLaunch(t *testing.T) {
 	if !strings.Contains(text, "pi install npm:@awebai/pi@latest") {
 		t.Fatalf("missing the Pi wake-up path:\n%s", text)
 	}
-	if !strings.Contains(text, "https://aweb.ai/docs/cli-tutorial.md") {
-		t.Fatalf("missing CLI tutorial URL:\n%s", text)
+	if !strings.Contains(text, "https://aweb.ai/docs/agent-guide.md") {
+		t.Fatalf("missing agent guide URL:\n%s", text)
 	}
-	for _, unwanted := range []string{"--dangerously-skip-permissions", "aw init --inject-docs", "aw init --setup-channel", "aw claim-human", "docs/agent-guide.md", "https://aweb.ai/agent-guide.md"} {
+	for _, unwanted := range []string{"--dangerously-skip-permissions", "aw init --inject-docs", "aw init --setup-channel", "aw claim-human", "docs/cli-tutorial.md", "https://aweb.ai/agent-guide.md"} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("unexpected %q in next steps:\n%s", unwanted, text)
 		}
@@ -99,7 +99,7 @@ func TestInitNextStepLinesAPIKeyAuthSuppressesClaimHuman(t *testing.T) {
 	for _, want := range []string{
 		"aw init --setup-channel",
 		"aw init --inject-docs",
-		"https://aweb.ai/docs/cli-tutorial.md",
+		"https://aweb.ai/docs/agent-guide.md",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)

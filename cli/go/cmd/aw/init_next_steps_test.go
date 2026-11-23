@@ -113,7 +113,7 @@ func TestInitNextStepsOmitWhatInitAlreadyDid(t *testing.T) {
 
 // --json carries the steps and the guide, additively.
 func TestInitJSONCarriesNextStepsAndTheGuide(t *testing.T) {
-	out := connectOutput{Status: "connected", TeamID: "default:local", Alias: "alice", NextSteps: []initNextStep{{Command: "aw team invite", Why: "Add another agent"}}, Guide: initGuideURL}
+	out := connectOutput{Status: "connected", TeamID: "default:local", Alias: "alice", NextSteps: []initNextStep{{Command: "aw team invite", Why: "Add another agent"}}, Guide: connectedAgentGuideURL}
 	raw, err := json.Marshal(out)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestInitJSONCarriesNextStepsAndTheGuide(t *testing.T) {
 	}
 	steps, _ := decoded["next_steps"].([]any)
 	first, _ := steps[0].(map[string]any)
-	if len(steps) != 1 || first["command"] != "aw team invite" || first["why"] != "Add another agent" || decoded["guide"] != "https://aweb.ai/docs/cli-tutorial.md" {
+	if len(steps) != 1 || first["command"] != "aw team invite" || first["why"] != "Add another agent" || decoded["guide"] != "https://aweb.ai/docs/agent-guide.md" {
 		t.Fatalf("json %s", raw)
 	}
 	if bare, _ := json.Marshal(connectOutput{Status: "connected"}); strings.Contains(string(bare), "next_steps") || strings.Contains(string(bare), "guide") {
@@ -170,7 +170,7 @@ func TestInitJSONOnTheSelfHostedPathPrintsItsNextSteps(t *testing.T) {
 		t.Fatalf("not one JSON document: %v\n%s", err, raw)
 	}
 	commands := initNextStepCommands(out.NextSteps)
-	if !strings.Contains(commands, "aw init --join-from") || !strings.Contains(commands, "--name <name>") || out.Guide != initGuideURL {
+	if !strings.Contains(commands, "aw init --join-from") || !strings.Contains(commands, "--name <name>") || out.Guide != "https://aweb.ai/docs/agent-guide.md" {
 		t.Fatalf("next steps %+v guide %q", out.NextSteps, out.Guide)
 	}
 }
@@ -280,7 +280,7 @@ func TestInitTextPrintsSideEffectsBeforeNextSteps(t *testing.T) {
 	if created < 0 || steps < 0 || created > steps {
 		t.Fatalf("side effects are not printed before the next steps:\n%s", text)
 	}
-	if !strings.HasSuffix(strings.TrimSpace(text), "Tell your agent: please read "+initGuideURL) {
+	if !strings.HasSuffix(strings.TrimSpace(text), "Tell your agent: please read https://aweb.ai/docs/agent-guide.md") {
 		t.Fatalf("the guide line is not the last line:\n%s", text)
 	}
 }

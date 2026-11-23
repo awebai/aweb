@@ -1260,6 +1260,10 @@ func testHeadlessControllerWorktree(t *testing.T, teamReadStatus int) {
 	if !strings.Contains(text, "New agent worktree created at") {
 		t.Fatalf("unexpected output:\n%s", text)
 	}
+	if !strings.Contains(text, "Tell your agent: please read https://aweb.ai/docs/agent-guide.md") ||
+		strings.Contains(text, "https://aweb.ai/docs/cli-tutorial.md") {
+		t.Fatalf("connected worktree should point to the agent guide:\n%s", text)
+	}
 	if registeredCert["alias"] != "charlie" {
 		t.Fatalf("registered alias=%v", registeredCert["alias"])
 	}

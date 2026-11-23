@@ -227,6 +227,9 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 				if err := json.Unmarshal(output, &result); err != nil {
 					t.Fatalf("init output=%s: %v", output, err)
 				}
+				if result.Guide != "https://aweb.ai/docs/agent-guide.md" {
+					t.Fatalf("guide for connected agent = %q", result.Guide)
+				}
 			} else {
 				result, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
 					WorkingDir:  tmp,

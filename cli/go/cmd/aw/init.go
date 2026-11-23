@@ -1314,7 +1314,7 @@ type initNextStep struct {
 	Why     string `json:"why"`
 }
 
-const initGuideURL = "https://aweb.ai/docs/cli-tutorial.md"
+const connectedAgentGuideURL = "https://aweb.ai/docs/agent-guide.md"
 
 // initSetupDone is what init's setup after connecting actually did.
 type initSetupDone struct {
@@ -1352,7 +1352,7 @@ func printInitOutcome(out connectOutput, result *initResult, workingDir string, 
 			return err
 		}
 		out.NextSteps = initNextStepsAfter(result, workingDir, done)
-		out.Guide = initGuideURL
+		out.Guide = connectedAgentGuideURL
 		return outputFailure(printOutput(out, formatConnect))
 	}
 	outputErr := printOutput(out, formatConnect)
@@ -1466,7 +1466,7 @@ func initStepLines(steps []initNextStep, withChannelGuidance bool) []string {
 		}
 		lines = append(lines, "")
 	}
-	lines = append(lines, "  Tell your agent: please read "+initGuideURL)
+	lines = append(lines, "  Tell your agent: please read "+connectedAgentGuideURL)
 	return lines
 }
 

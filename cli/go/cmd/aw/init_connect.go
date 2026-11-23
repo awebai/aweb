@@ -31,8 +31,8 @@ type connectOutput struct {
 	StableID       string                `json:"stable_id,omitempty"`
 	Address        string                `json:"address,omitempty"`
 	IdentityScope  string                `json:"identity_scope,omitempty"`
-	// NextSteps are aw init's next steps for the path it took; Guide is the
-	// page that walks through them.
+	// NextSteps are aw init's next steps for the path it took. Guide is the
+	// agent-facing reference for the connected workspace.
 	NextSteps []initNextStep `json:"next_steps,omitempty"`
 	Guide     string         `json:"guide,omitempty"`
 }

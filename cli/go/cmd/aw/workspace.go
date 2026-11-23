@@ -833,7 +833,7 @@ func formatWorkspaceAddWorktree(v any) string {
 	sb.WriteString("State:      .aw/ in that worktree stores the local identity and workspace binding\n")
 	sb.WriteString("\nTo use:\n")
 	sb.WriteString(fmt.Sprintf("  cd %s\n", abbreviateUserHome(out.WorktreePath)))
-	sb.WriteString("  Tell your agent: please read https://aweb.ai/docs/cli-tutorial.md\n")
+	sb.WriteString("  Tell your agent: please read " + connectedAgentGuideURL + "\n")
 	return termtext.Body(sb.String())
 }
 
