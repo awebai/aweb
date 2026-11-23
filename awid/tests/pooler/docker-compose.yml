@@ -8,6 +8,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
+    # The direct-Postgres cases' own server (TEST_DB_HOST/TEST_DB_PORT, aweb-admf),
+    # separate from the pooler endpoint below.
+    ports:
+      - "127.0.0.1:${AWID_TEST_POSTGRES_PORT:-56432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 2s

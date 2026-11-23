@@ -9,7 +9,7 @@ import pytest
 from aweb_naapp_testing.databases import SchemaDatabases
 from manifest_config import TEST_EMIT_SEED_HEX
 
-pytest_plugins = ["pgdbm.fixtures.conftest"]
+pytest_plugins = ["awid_service.testing_postgres"]
 
 
 @pytest.fixture

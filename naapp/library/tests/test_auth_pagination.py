@@ -24,7 +24,6 @@ from pgdbm import AsyncMigrationManager
 from library import auth
 from library.config import Settings
 
-pytest_plugins = ("pgdbm.fixtures.conftest",)
 TEAM_ID = "backend:example.com"
 ORIGIN = "https://app.example.com"
 

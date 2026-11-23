@@ -24,7 +24,7 @@ from awid_service.db import AwidDatabaseInfra
 from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app
 
-pytest_plugins = ("pgdbm.fixtures.conftest",)
+pytest_plugins = ("awid_service.testing_postgres",)
 
 os.environ.setdefault("APP_ENV", "testing")
 os.environ.setdefault("ENVIRONMENT", "testing")

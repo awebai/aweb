@@ -15,10 +15,11 @@ from conftest import aw_cli_binary, shared_test_pool  # noqa: F401
 from conftest import shared_test_database as shared_test_database
 from awid.did import stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
+from awid_service.testing import check_suite_refuses_an_unnamed_server
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_messages_http import _signed_identity_headers
 
-pytest_plugins = ("pgdbm.fixtures.conftest",)
+pytest_plugins = ("awid_service.testing_postgres",)
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -125,3 +126,7 @@ async def test_production_cli_connect_and_event_stream_use_v2(privacy_app, aw_cl
     finally:
         rows = await env.db.fetch_all("SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1", actor.id)
         await clear_workspace_presence(env.redis, [str(row["workspace_id"]) for row in rows])
+
+
+def test_an_unnamed_database_server_is_refused(request, tmp_path):
+    check_suite_refuses_an_unnamed_server(request, tmp_path)
