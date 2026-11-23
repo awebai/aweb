@@ -131,6 +131,7 @@ func registerHumanChain(ctx context.Context, human *humanParticipation, chain ma
 	}
 	registry := newAWIDRegistryClient(nil, resolver)
 	registry.DefaultRegistryURL = registryURL
+	trustRecordedRegistryOrigin(registry.Resolver, registryURL, record.RegistryOperatorOrigin)
 	// Authenticate the issuer before asking the person to sign or making any
 	// registration write. A pending global leaf is allowed at this boundary;
 	// full committed-chain verification still follows registration below.
@@ -185,5 +186,6 @@ func registerHumanDID(ctx context.Context, human *humanParticipation, registry *
 		return err
 	}
 	record.State, record.RegistryURL = awconfig.HumanDIDRegistered, registryURL
+	record.RegistryOperatorOrigin = operatorRegistryOrigin(registryURL, record.RegistryOperatorOrigin)
 	return awconfig.SaveHumanRecord(record)
 }

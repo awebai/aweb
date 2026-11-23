@@ -17,13 +17,18 @@ import (
 
 // Only the operator's explicit, live choices are reached with the caller's own
 // HTTP client: the built-in default registry, AWID_REGISTRY_URL, and an origin
-// the operator named on the current command line or in the running program's
+// the operator named on the command line or recorded in the running program's
 // own configuration (TrustRegistryOrigin). Every other registry
-// origin, whether stored in identity, team or controller files, carried by an
+// origin, whether unmarked in local files, carried by an
 // invite, returned by service discovery or learned from an _awid TXT record,
 // is reached only through the pinned client below, whatever client the caller
 // injected. A private self-hosted registry is therefore named by
 // AWID_REGISTRY_URL.
+
+// RegistryTrustCommand is the CLI repair for a stored registry origin.
+const RegistryTrustCommand = "aw id registry-trust"
+
+const privateRegistryAdvice = "for a private self-hosted registry, set AWID_REGISTRY_URL for this command or run " + RegistryTrustCommand + " <origin>"
 
 // registryHostLookup resolves a registry host name.
 type registryHostLookup func(ctx context.Context, host string) ([]netip.Addr, error)
@@ -56,7 +61,7 @@ func newPinnedRegistryHTTPClient(lookup registryHostLookup, allowNonPublicTest b
 		var values []string
 		if _, err := netip.ParseAddr(host); err == nil {
 			if !isolated {
-				return nil, fmt.Errorf("a registry not named by AWID_REGISTRY_URL or the command line must be named by host, not address %s", host)
+				return nil, fmt.Errorf("an untrusted registry must be named by host, not address %s; %s", host, privateRegistryAdvice)
 			}
 			values = []string{host}
 		} else {
@@ -71,7 +76,7 @@ func newPinnedRegistryHTTPClient(lookup registryHostLookup, allowNonPublicTest b
 		}
 		approved, err := validateFederationResolvedIPs(values, allowNonPublicTest || isolated)
 		if err != nil {
-			return nil, fmt.Errorf("registry host %s resolves to an address that is not public (%w); for a private self-hosted registry, name it with AWID_REGISTRY_URL", host, err)
+			return nil, fmt.Errorf("registry host %s resolves to an address that is not public (%w); %s", host, err, privateRegistryAdvice)
 		}
 		dialer := &net.Dialer{Timeout: 10 * time.Second}
 		var lastErr error
@@ -91,7 +96,7 @@ type httpsOnlyRoundTripper struct{ next http.RoundTripper }
 
 func (h httpsOnlyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL == nil || (req.URL.Scheme != "https" && !isolatedRegistryDevelopment(req.URL.Hostname())) {
-		return nil, errors.New("a registry not named by AWID_REGISTRY_URL or the command line must use https")
+		return nil, errors.New("an untrusted registry must use https; " + privateRegistryAdvice)
 	}
 	return h.next.RoundTrip(req)
 }
@@ -179,11 +184,22 @@ func (t *registryTrust) trusted(raw string) bool {
 // current command line or in the program's own configuration (the gateway's
 // registry_url), as reachable with the resolver's own HTTP client.
 // The built-in default and AWID_REGISTRY_URL are trusted without it. Never
-// pass an origin that is stored or supplied by someone else (identity.yaml,
-// teams.yaml, an invite, controller metadata, service discovery or DNS):
+// pass an origin supplied by an invite, unmarked metadata, service discovery
+// or DNS:
 // those stay pinned to public addresses.
 func (r *RegistryResolver) TrustRegistryOrigin(raw string) error {
 	return r.trust.trust(raw)
+}
+
+// SameRegistryOrigin compares origins with the same normalization as the trust set.
+func SameRegistryOrigin(a, b string) bool {
+	key := registryOriginKey(a)
+	return key != "" && key == registryOriginKey(b)
+}
+
+// RegistryOriginTrusted reports which transport will be used for raw.
+func (r *RegistryResolver) RegistryOriginTrusted(raw string) bool {
+	return r.originTrusted(raw)
 }
 
 func (r *RegistryResolver) originTrusted(raw string) bool {

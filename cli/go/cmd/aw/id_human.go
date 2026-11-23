@@ -336,12 +336,13 @@ func prepareHuman(domain, registryURL, path string, opts idHumanInitOptions) (*a
 	}
 	defer wipeBytes(key)
 	rec := &awconfig.HumanRecord{
-		StableID:    awid.ComputeStableID(public),
-		DIDKey:      awid.ComputeDIDKey(public),
-		Domain:      domain,
-		RegistryURL: registryURL,
-		State:       awconfig.HumanPrepared,
-		Path:        path,
+		StableID:               awid.ComputeStableID(public),
+		DIDKey:                 awid.ComputeDIDKey(public),
+		Domain:                 domain,
+		RegistryURL:            registryURL,
+		RegistryOperatorOrigin: operatorRegistryOrigin(registryURL, ""),
+		State:                  awconfig.HumanPrepared,
+		Path:                   path,
 	}
 	passphrase, err := opts.Prompt(fmt.Sprintf("Choose a passphrase for your human key %s (at least %d characters): ", rec.StableID, awid.HumanKeyMinPassphrase))
 	defer wipeBytes(passphrase)
