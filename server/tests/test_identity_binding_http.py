@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import base64
 import hashlib
+import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -25,6 +26,34 @@ from test_messages_http import (
 )
 
 __all__ = ["privacy_app"]
+
+
+def named_database_address():
+    """The test server's address, which the environment must name.
+
+    Without one, pgdbm's default is localhost:5432: on a developer's machine, a
+    Postgres that is not the tests'."""
+    unnamed = [name for name in ("TEST_DB_HOST", "TEST_DB_PORT") if not os.environ.get(name)]
+    if unnamed:
+        raise RuntimeError(f"no test database server named: set {' and '.join(unnamed)}")
+    return os.environ["TEST_DB_HOST"], os.environ["TEST_DB_PORT"]
+
+
+@pytest.fixture(autouse=True)
+def named_database_server():
+    # Autouse, so it refuses before privacy_app's factory connects.
+    named_database_address()
+
+
+@pytest.mark.parametrize("missing", ["TEST_DB_HOST", "TEST_DB_PORT"])
+def test_an_unnamed_database_server_is_refused(monkeypatch, missing):
+    monkeypatch.setenv("TEST_DB_HOST", "db.test")
+    monkeypatch.setenv("TEST_DB_PORT", "15432")
+    assert named_database_address() == ("db.test", "15432")
+
+    monkeypatch.delenv(missing)
+    with pytest.raises(RuntimeError, match=missing):
+        named_database_address()
 
 
 async def request(env, actor, method, path, payload=None, *, certificate=None, did_aw=None):
@@ -498,7 +527,6 @@ async def test_cached_prior_key_cannot_change_routing_markers(privacy_app):
 @pytest.mark.asyncio
 async def test_operator_verification_restores_only_bound_projections(privacy_app):
     import asyncio
-    import os
     import sys
     from urllib.parse import quote
     from aweb.messaging.messages import resolve_agent_by_did
@@ -530,8 +558,7 @@ async def test_operator_verification_restores_only_bound_projections(privacy_app
         child_env = dict(os.environ)
         user = quote(os.environ.get("TEST_DB_USER", "postgres"), safe="")
         password = quote(os.environ.get("TEST_DB_PASSWORD", "postgres"), safe="")
-        host = os.environ.get("TEST_DB_HOST", "localhost")
-        port = os.environ.get("TEST_DB_PORT", "5432")
+        host, port = named_database_address()
         child_env.update(
             AWEB_DATABASE_URL=f"postgresql://{user}:{password}@{host}:{port}/{db_name}",
             AWID_REGISTRY_URL=origin,
