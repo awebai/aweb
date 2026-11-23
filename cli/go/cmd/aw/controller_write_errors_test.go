@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -12,43 +12,6 @@ import (
 
 	"github.com/awebai/aw/awid"
 )
-
-// seedAWIDNamespace stores a verified namespace in the fixture's database:
-// a registry without AWID_PUBLIC_ORIGINS refuses aw's own registration of it.
-func seedAWIDNamespace(t *testing.T, storage realAWIDStorage, domain, controllerDID string) {
-	t.Helper()
-	project, err := filepath.Abs("../../../../awid")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cache := exec.Command("uv", "cache", "dir")
-	cache.Env = awTestBinary.env
-	cache.Dir = awTestBinary.sourceDir
-	cacheDir, err := cache.Output()
-	if err != nil {
-		t.Fatalf("resolve parent uv cache: %v", err)
-	}
-	insert := `import asyncio, os, sys, asyncpg
-async def main():
-    connection = await asyncpg.connect(os.environ["AWID_DATABASE_URL"])
-    try:
-        await connection.execute(
-            'INSERT INTO "' + os.environ["AWID_DB_SCHEMA"] + '".dns_namespaces '
-            "(domain, controller_did, verification_status) VALUES ($1, $2, 'verified')",
-            sys.argv[1], sys.argv[2])
-    finally:
-        await connection.close()
-asyncio.run(main())`
-	cmd := exec.Command("uv", "run", "--offline", "--frozen", "--project", project, "python", "-c", insert, domain, controllerDID)
-	cmd.Env = append(os.Environ(),
-		"UV_CACHE_DIR="+strings.TrimSpace(string(cacheDir)),
-		"AWID_DATABASE_URL="+storage.DatabaseURL,
-		"AWID_DB_SCHEMA="+storage.Schema,
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("seed AWID namespace: %v\n%s", err, out)
-	}
-}
 
 // A registry without AWID_PUBLIC_ORIGINS refuses every covering controller
 // write with 503; aw shows the registry's message, which names the setting,
@@ -59,21 +22,31 @@ func TestRegistryWithoutPublicOriginsNamesTheSettingToTheUser(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
-	registryURL, storage := startAWIDFixture(t, "AWID_FIXTURE_PUBLIC_ORIGINS=none")
+	configuredURL, storage := realAWIDFixtureWithStorage(t)
+	stored, err := json.Marshal(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryURL, _ := startAWIDFixture(t, "AWID_FIXTURE_PUBLIC_ORIGINS=none", "AWID_FIXTURE_STORAGE="+string(stored))
 	domain := "origins.test"
 	_, controllerKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeControllerKeyForTest(t, tmp, domain, controllerKey)
-	seedAWIDNamespace(t, storage, domain, didOf(controllerKey))
 	memberPub, memberKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
 	setup := awid.NewAWIDRegistryClient(&http.Client{Timeout: 20 * time.Second}, nil)
-	if err := setup.TrustRegistryOrigin(registryURL); err != nil {
-		t.Fatal(err)
+	for _, origin := range []string{configuredURL, registryURL} {
+		if err := setup.TrustRegistryOrigin(origin); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The namespace was registered while AWID_PUBLIC_ORIGINS was set.
+	if _, err := setup.RegisterNamespaceAt(ctx, configuredURL, domain, didOf(controllerKey), controllerKey); err != nil {
+		t.Fatalf("register namespace: %v", err)
 	}
 	memberDIDAW := awid.ComputeStableID(memberPub)
 	if _, err := setup.RegisterIdentity(ctx, registryURL, didOf(memberKey), memberDIDAW, memberKey); err != nil {

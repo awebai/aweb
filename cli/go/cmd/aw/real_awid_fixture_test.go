@@ -11,11 +11,12 @@ import (
 	"testing"
 )
 
-// realAWIDStorage names the fixture's database, for seeding state the CLI cannot
-// publish itself.
+// realAWIDStorage names the fixture's storage, for seeding state the CLI cannot
+// publish itself and for a second registry on the same state.
 type realAWIDStorage struct {
 	DatabaseURL string `json:"database_url"`
 	Schema      string `json:"schema"`
+	RedisURL    string `json:"redis_url"`
 }
 
 // realAWIDFixture runs the repository's real service with disposable storage.

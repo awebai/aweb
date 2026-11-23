@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Real AWID fixture. Prints its loopback URL, lives until stdin closes.
 
-A second stdout line is JSON naming the fixture's storage (database URL and
-schema), for test helpers that seed state the CLI cannot publish itself.
+A second stdout line is JSON naming the fixture's storage (database URL, schema
+and Redis URL), for test helpers that seed state the CLI cannot publish itself.
+AWID_FIXTURE_STORAGE, set to another running fixture's line, serves that
+fixture's storage, which stays the other fixture's to remove.
 Rate limits are off unless AWID_FIXTURE_RATE_LIMITS=production, which runs the
 production bucket values on the in-memory limiter, private to this fixture.
 The limiter clock stays in one window for the life of that fixture.
@@ -70,9 +72,10 @@ def main():
     process = None
     listener = None
     env = dict(os.environ)
-    schema = 'test_cli_' + uuid.uuid4().hex
+    shared = json.loads(os.environ.get('AWID_FIXTURE_STORAGE') or 'null')
+    schema = shared['schema'] if shared else 'test_cli_' + uuid.uuid4().hex
     try:
-        if not env.get('PGHOST'):
+        if not shared and not env.get('PGHOST'):
             for image, port, extra in [
                 ('postgres:17', 5432, ['-e', 'POSTGRES_PASSWORD=postgres']),
                 ('redis:7', 6379, []),
@@ -93,11 +96,15 @@ def main():
         listener.bind(('127.0.0.1', 0))
         listener.listen()
         port = listener.getsockname()[1]
-        from urllib.parse import quote
-        database = (f"postgresql://{quote(env.get('PGUSER', 'postgres'), safe='')}:"
-                    f"{quote(env.get('PGPASSWORD', 'postgres'), safe='')}@{env['PGHOST']}:"
-                    f"{env.get('PGPORT', '5432')}/{env.get('PGDATABASE', 'postgres')}")
-        env.update(AWID_DATABASE_URL=database, AWID_REDIS_URL=env.get('REDIS_URL', 'redis://127.0.0.1:6379/0'),
+        if shared:
+            database, redis_url = shared['database_url'], shared['redis_url']
+        else:
+            from urllib.parse import quote
+            database = (f"postgresql://{quote(env.get('PGUSER', 'postgres'), safe='')}:"
+                        f"{quote(env.get('PGPASSWORD', 'postgres'), safe='')}@{env['PGHOST']}:"
+                        f"{env.get('PGPORT', '5432')}/{env.get('PGDATABASE', 'postgres')}")
+            redis_url = env.get('REDIS_URL', 'redis://127.0.0.1:6379/0')
+        env.update(AWID_DATABASE_URL=database, AWID_REDIS_URL=redis_url,
                    AWID_DB_SCHEMA=schema, AWID_RATE_LIMIT_DISABLED='true', APP_ENV='test')
         if os.environ.get('AWID_FIXTURE_RATE_LIMITS') == 'production':
             env.pop('AWID_RATE_LIMIT_DISABLED')
@@ -144,7 +151,7 @@ def main():
         else:
             raise RuntimeError('real AWID did not become ready')
         print(url, flush=True)
-        print(json.dumps({'database_url': database, 'schema': schema}), flush=True)
+        print(json.dumps({'database_url': database, 'schema': schema, 'redis_url': redis_url}), flush=True)
         sys.stdin.read()
     finally:
         if listener is not None:
@@ -156,7 +163,7 @@ def main():
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-            if not owned:
+            if not owned and not shared:
                 cleanup = """import asyncio, asyncpg, os
 async def clean():
     conn = await asyncpg.connect(os.environ['AWID_DATABASE_URL'])
