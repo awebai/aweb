@@ -12,7 +12,7 @@ The isolated image verifies that this is the only primary key before creating
 the keyring scoped to the PGDG apt repository. It does not fetch a signing key
 during the build. Updating the trusted key requires a deliberate source change.
 
-The build also runs `test_pgdg_key.py`: the actual Dockerfile key setup must work
+The build also runs `test_pgdg_key.py`: the actual installer key setup must work
 with curl returning 18, and another valid key, an appended key and invalid key
 material must be refused. The focused check needs Bash and GnuPG, which the
 candidate tools image already installs:
