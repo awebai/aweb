@@ -141,7 +141,7 @@ wheels = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.5.2rc4"
+version = "0.5.2"
 source = { editable = "../../naapp-lib" }
 
 [package.metadata]
@@ -195,7 +195,7 @@ dev = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.40rc4"
+version = "0.5.40"
 source = { editable = "../../awid" }
 dependencies = [
     { name = "asyncpg" },
