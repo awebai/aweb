@@ -171,7 +171,7 @@ class ClosingRelay:
 
     def hold_closes(self) -> list[int]:
         """Hold the close of every connection open now; returns their local
-        ports toward the server, which PostgreSQL reports as ``client_port``."""
+        ports toward the server, one per held connection."""
         for held in self._open.values():
             held.set()
         return list(self._open)
@@ -297,19 +297,27 @@ async def test_the_lifespan_ends_after_the_database_drops_its_connections_and_a_
         running = AsyncExitStack()
         await running.enter_async_context(app.router.lifespan_context(app))
         try:
-            # The app's own backends: the ones connected through the relay.
+            # The app's own backends: the ones connected through the relay. The
+            # server knows them by the name the app's pool sends; a published
+            # port or NAT between the relay and the server rewrites the relay's
+            # source ports, so those cannot name them.
             held = relay.hold_closes()
             assert held
+            pool_config = runtime.db().config
+            assert pool_config is not None
+            app_name = pool_config.get_server_settings()["application_name"]
             admin = await asyncpg.connect(database_url)
             try:
                 terminated = await admin.fetch(
                     "SELECT pg_terminate_backend(pid) AS terminated FROM pg_stat_activity"
-                    " WHERE datname = current_database() AND client_port = ANY($1::int[])",
-                    held,
+                    " WHERE datname = current_database() AND application_name = $1",
+                    app_name,
                 )
             finally:
                 await admin.close()
-            assert [row["terminated"] for row in terminated] == [True] * len(held)
+            assert [row["terminated"] for row in terminated] == [True] * len(held), (
+                f"backends named {app_name!r}: expected the {len(held)} the relay holds"
+            )
             async with asyncio.timeout(SHUTDOWN_BOUND_SECONDS):
                 await relay.wait_for_held_closes(len(held))
             # The relay holding the close decides the outcome; this wait only
