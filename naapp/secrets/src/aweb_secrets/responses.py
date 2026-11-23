@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import unquote
 
+from aweb_secrets_values.credential_shapes import CredentialScan, CredentialScanUnavailable
+
 from aweb_secrets.credential_shapes import (
     has_credential_shape,
     has_credential_value,
@@ -35,6 +37,9 @@ _PASSED_HEADERS = frozenset(
 )
 _PASSED_HEADER = re.compile(r"^(?:x-ratelimit-[a-z0-9-]+|(?:[a-z0-9]+-)*request-id)$")
 _MISSING = object()
+_WithheldReason = Literal[
+    "credential_shaped", "content_encoded", "content_type_not_allowed", "response_scan_unavailable"
+]
 
 
 @dataclass(frozen=True)
@@ -46,7 +51,7 @@ class BrokeredResult:
     headers: list[tuple[str, str]]
     body: bytes | None
     disposition: Literal["returned", "withheld"]
-    withheld_reason: Literal["credential_shaped", "content_encoded", "content_type_not_allowed"] | None
+    withheld_reason: _WithheldReason | None
     undeclared_credential: bool
     redaction_count: int
     truncated: bool
@@ -124,10 +129,9 @@ def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> tuple
                 value = _resolve(document, tokens)
                 if value is not _MISSING:
                     projected[pointer] = value
-                    names_credential |= (
-                        any(is_credential_field(token) for token in tokens)
-                        and has_credential_value(value)
-                    )
+                    names_credential |= any(
+                        is_credential_field(token) for token in tokens
+                    ) and has_credential_value(value)
     encoded = json.dumps(projected, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return encoded, names_credential
 
@@ -143,6 +147,7 @@ def handle_response(
     known: KnownValues,
     token_issuing: bool,
     content_types: Sequence[str] | None = None,
+    scan: CredentialScan | None = None,
 ) -> BrokeredResult:
     """Handle one upstream response.
 
@@ -156,21 +161,9 @@ def handle_response(
     upstream_bytes = len(body)
     redaction_count = 0
     passed: list[tuple[str, str]] = []
-    for name, value in headers:
-        if _passes(name):
-            value, count = known.redact_text(value)
-            redaction_count += count
-            # Issued credentials are not yet known values. Inspect headers
-            # independently of body projection/withholding; URL-decode names
-            # such as access%5Ftoken as well as the raw header value.
-            if has_credential_shape(value.encode()) or has_credential_shape(unquote(value).encode()):
-                continue
-            passed.append((name, value))
+    scan = scan or CredentialScan()
 
-    def withheld(
-        reason: Literal["credential_shaped", "content_encoded", "content_type_not_allowed"],
-        undeclared: bool,
-    ) -> BrokeredResult:
+    def withheld(reason: _WithheldReason, undeclared: bool = False) -> BrokeredResult:
         return BrokeredResult(
             status=status,
             headers=passed,
@@ -183,34 +176,54 @@ def handle_response(
             upstream_bytes=upstream_bytes,
         )
 
-    if _is_encoded(headers):
-        return withheld("content_encoded", False)
-    if content_types is not None and _media_type(headers) not in content_types:
-        return withheld("content_type_not_allowed", False)
-
-    body, count = known.redact(body)
-    redaction_count += count
-    if not truncated:
-        body, count = known.redact_json(body)
-        redaction_count += count
-    if len(body) > max_bytes:
-        body = body[:max_bytes]
-        truncated = True
-    if truncated:
-        body, count = known.redact_tail(body)
-        redaction_count += count
-
-    # Projected values are keyed by pointer, so a credential field they name is
-    # found by its pointer, not by the detector's field-name rule.
-    names_credential = False
-    if projection is not None:
-        body, names_credential = _project(body, projection, complete=not truncated)
-        for redact in (known.redact, known.redact_json):
-            body, count = redact(body)
+    try:
+        scan.check()
+        for name, value in headers:
+            if not _passes(name):
+                continue
+            value, count = known.redact_text(value)
             redaction_count += count
+            # Issued credentials are not yet known values. Inspect raw and
+            # URL-decoded headers independently of any body projection.
+            if has_credential_shape(value.encode(), scan=scan) or has_credential_shape(
+                unquote(value).encode(), scan=scan
+            ):
+                continue
+            passed.append((name, value))
 
-    if names_credential or has_credential_shape(body):
-        return withheld("credential_shaped", not token_issuing)
+        if _is_encoded(headers):
+            return withheld("content_encoded")
+        if content_types is not None and _media_type(headers) not in content_types:
+            return withheld("content_type_not_allowed")
+
+        body, count = known.redact(body)
+        redaction_count += count
+        scan.check()
+        if not truncated:
+            body, count = known.redact_json(body)
+            redaction_count += count
+        if len(body) > max_bytes:
+            body = body[:max_bytes]
+            truncated = True
+        if truncated:
+            body, count = known.redact_tail(body)
+            redaction_count += count
+        scan.check()
+
+        # Projected values are keyed by pointer. See also the field-name check
+        # on the original path in _project.
+        names_credential = False
+        if projection is not None:
+            body, names_credential = _project(body, projection, complete=not truncated)
+            for redact in (known.redact, known.redact_json):
+                scan.check()
+                body, count = redact(body)
+                redaction_count += count
+
+        if names_credential or has_credential_shape(body, scan=scan):
+            return withheld("credential_shaped", not token_issuing)
+    except (CredentialScanUnavailable, RecursionError):
+        return withheld("response_scan_unavailable")
     return BrokeredResult(
         status=status,
         headers=passed,

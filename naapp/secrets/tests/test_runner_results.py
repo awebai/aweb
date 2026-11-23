@@ -5,6 +5,7 @@ import json
 import secrets
 
 import pytest
+from aweb_secrets_values.credential_shapes import CredentialScan
 
 from aweb_secrets.jobs import JobDefinition
 from aweb_secrets.redaction import KnownValues
@@ -65,6 +66,18 @@ def test_credential_shape_in_a_stream_is_detected_before_json_framing():
     )
     assert result.result_withheld and result.body is None
     assert result.withheld_reason == "credential_shaped"
+
+
+def test_expired_server_scan_withholds_both_streams_but_preserves_exit_status():
+    result = process_runner_result(
+        report(exit_code=23, stdout="ordinary output", stderr="ordinary diagnostics"),
+        job=job(),
+        known=KnownValues(),
+        scan=CredentialScan(deadline=float("-inf")),
+    )
+    assert result.result_withheld and result.body is None
+    assert result.withheld_reason == "response_scan_unavailable"
+    assert result.exit_code == 23
 
 
 def test_local_withholding_and_counts_are_preserved_as_metadata():

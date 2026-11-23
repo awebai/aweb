@@ -8,9 +8,13 @@ credential, real or realistic, is written in the repository.
 from __future__ import annotations
 
 import json
+import re
 import secrets
+from itertools import product
+from re import _parser as regex
 
 import pytest
+from aweb_secrets_values import credential_shapes
 
 from aweb_secrets.credential_shapes import has_credential_shape, is_credential_shaped_value
 
@@ -158,3 +162,71 @@ def test_json_checks_decoded_nested_fields_without_treating_unrelated_strings_as
     assert not has_credential_shape(
         b'{"details":[{"api\\u005fkey":{"values":[null,""]}},{"values":["fixture"]}]}'
     )
+
+
+def test_jwt_detection_matches_the_segment_rules_at_boundaries() -> None:
+    beginnings = (("", True), ("word_", False), ("é", False), ("word-", True))
+    for (prefix, boundary), first, middle, last in product(
+        beginnings, (7, 8, 9), (7, 8, 9), (15, 16, 17)
+    ):
+        token = f"{prefix}eyJ{_filler(first)}.eyJ{_filler(middle)}.{_filler(last)}"
+        expected = boundary and first >= 8 and middle >= 8 and last >= 16
+        assert is_credential_shaped_value(token) == expected
+        assert has_credential_shape(token.encode()) == expected
+
+
+def _unbounded_repeats(tree):
+    for op, value in tree:
+        if op in (regex.MAX_REPEAT, regex.MIN_REPEAT, regex.POSSESSIVE_REPEAT):
+            _, maximum, body = value
+            if maximum == regex.MAXREPEAT:
+                yield op, body
+            yield from _unbounded_repeats(body)
+        elif op in (regex.ASSERT, regex.ASSERT_NOT):
+            yield from _unbounded_repeats(value[1])
+        elif op is regex.SUBPATTERN:
+            yield from _unbounded_repeats(value[3])
+        elif op is regex.BRANCH:
+            for branch in value[1]:
+                yield from _unbounded_repeats(branch)
+        elif op is regex.ATOMIC_GROUP:
+            yield from _unbounded_repeats(value)
+
+
+def _excludes(tree, char):
+    [(op, value)] = tree
+    assert op is regex.IN
+    for kind, argument in value:
+        if kind is regex.LITERAL:
+            assert argument != char
+        elif kind is regex.RANGE:
+            assert not argument[0] <= char <= argument[1]
+        else:
+            assert kind is regex.CATEGORY and argument is regex.CATEGORY_SPACE
+            assert not chr(char).isspace()
+
+
+def _check_regex_work_bound(pattern):
+    tree = regex.parse(pattern.pattern, pattern.flags)
+    for op, body in _unbounded_repeats(tree):
+        # A long run may only follow a literal anchor it cannot contain.
+        # The repeated PEM words can backtrack only over complete,
+        # space-delimited words, never over individual letters.
+        anchor, char = tree[0]
+        assert anchor is regex.LITERAL
+        if op is regex.POSSESSIVE_REPEAT:
+            _excludes(body, char)
+        else:
+            assert op is regex.MAX_REPEAT
+            [(word, (_, bound, letters)), (separator, space)] = body
+            assert word is regex.POSSESSIVE_REPEAT and bound == regex.MAXREPEAT
+            assert separator is regex.LITERAL and space != char
+            _excludes(letters, char)
+            _excludes(letters, space)
+
+
+def test_shape_regexes_only_scan_unbounded_runs_after_disjoint_anchors() -> None:
+    for value in vars(credential_shapes).values():
+        for pattern in value if isinstance(value, (tuple, list)) else (value,):
+            if isinstance(pattern, re.Pattern):
+                _check_regex_work_bound(pattern)

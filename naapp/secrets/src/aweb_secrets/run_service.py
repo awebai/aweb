@@ -44,6 +44,7 @@ from aweb_naapp.runtime.installation import (
     InstallationRefused,
 )
 from aweb_naapp.runtime.passkeys import Passkeys
+from aweb_secrets_values.credential_shapes import CredentialScan
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
@@ -1399,7 +1400,13 @@ class RunDispatch:
         digest: bytes,
     ) -> None:
         try:
-            handled = process_runner_result(submission.body, job=_job(original), known=known)
+            handled = await asyncio.to_thread(
+                process_runner_result,
+                submission.body,
+                job=_job(original),
+                known=known,
+                scan=CredentialScan(),
+            )
         except RunnerResultInvalid:
             raise RunnerRefused("runner_result_invalid") from None
         projected = {

@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
-from aweb_secrets_values import encode_value
+from aweb_secrets_values import credential_shapes, encode_value
 from runner_helpers import credential as sealed_credential
 
 from aweb_secrets_runner.errors import Refused
@@ -106,6 +106,21 @@ print(base64.b64encode(value.encode()).decode(),file=sys.stderr)
     assert credential not in repr(report)
     assert "[REDACTED:db]" in report["stdout"] and "[REDACTED:db]" in report["stderr"]
     assert report["redaction_count"] >= 2 and not report["result_withheld"]
+
+
+def test_expired_local_scan_withholds_both_streams_but_preserves_exit_status(tmp_path, monkeypatch):
+    path, body = configuration(
+        tmp_path,
+        'import sys\nprint("ordinary output")\n'
+        'print("ordinary diagnostics", file=sys.stderr)\nsys.exit(23)',
+    )
+    clock = iter((0.0, 100.0))
+    monkeypatch.setattr(credential_shapes, "monotonic", lambda: next(clock, 100.0))
+
+    report = run_job(path, body)
+    assert report["result_withheld"]
+    assert report["stdout"] == report["stderr"] == ""
+    assert report["exit_code"] == 23
 
 
 def test_unknown_credential_shape_withholds_both_streams(tmp_path):

@@ -15,6 +15,7 @@ from aweb_naapp.hooks.producer import HookProducer
 from aweb_naapp.outbox import apply_outbox_migrations
 from aweb_naapp.runtime.authorization import Authorization, DeclaredTool
 from aweb_naapp_testing.network import make_certificates
+from aweb_secrets_values import credential_shapes
 from fastapi import Request, Response
 
 from aweb_secrets import records
@@ -313,6 +314,38 @@ async def test_missing_audit_target_is_unavailable_without_retaining_an_admissio
             assert await db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
         assert upstream.paths == []
         assert [e["payload"]["action"] for e in await envelopes(db)] == ["refused"]
+
+
+async def test_expired_inspection_withholds_a_completed_use_and_replay(
+    db, fence, tmp_path, monkeypatch
+):
+    async with running_upstream(tmp_path) as upstream:
+        service = await setup(db, fence, tmp_path, upstream)
+        original = submission(upstream)
+        clock = iter((0.0, 100.0))
+        monkeypatch.setattr(credential_shapes, "monotonic", lambda: next(clock, 100.0))
+
+        first = await service.submit(secret=SECRET["ref"], submission=original)
+        assert first.status == 200
+        assert first.body["state"] == "result_withheld"
+        assert first.body["code"] == "response_scan_unavailable"
+        assert first.body["result"]["status"] == 200
+        assert first.body["result"]["headers"] == []
+        assert first.body["result"]["body"] is None
+
+        replay = await service.submit(secret=SECRET["ref"], submission=original)
+        assert replay.body["request_ref"] == first.body["request_ref"]
+        assert replay.body["state"] == first.body["state"]
+        assert replay.body["code"] == first.body["code"]
+        assert replay.body["result"]["body"] is None
+        assert upstream.paths == ["/bearer/echo"]
+        assert await db.fetch_value("SELECT count(*) FROM {{tables.dispatches}}") == 1
+        assert await db.fetch_value("SELECT state FROM {{tables.dispatches}}") == "completed"
+        assert [e["payload"]["action"] for e in await envelopes(db)] == [
+            "admitted",
+            "dispatching",
+            "completed",
+        ]
 
 
 @pytest.mark.parametrize("next_call", ["same-pair", "different-url", "different-principal"])

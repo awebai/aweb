@@ -912,6 +912,8 @@ of operations is (`aweb_secrets.responses`):
    token patterns: AWS `AKIA`/`ASIA` key IDs paired with secret keys, PEM private
    key blocks, JWTs, and well-known vendor token prefixes. If either is present,
    the default disposition is **`withheld`** (`credential_shaped`).
+   An unfinished inspection also withholds the result
+   (`response_scan_unavailable`). Only inspected headers can pass.
 7. **Record.** secrets records the disposition, the response hash and the counts,
    never the body or the headers. The live response, after steps 1 to 6, goes
    only to the request that made the dispatch; nothing stores it for later.
@@ -921,7 +923,7 @@ A withheld result reaches the agent as
 `{"state": "result_withheld", "request_id", "request_ref", "code": <reason>,
 "result": {"status", "headers", "body": null, "truncated", "upstream_bytes",
 "redaction_count"}}`, where the reason is `credential_shaped`,
-`content_encoded` or `content_type_not_allowed` (`aweb_secrets.tool_results`,
+`content_encoded`, `content_type_not_allowed` or `response_scan_unavailable` (`aweb_secrets.tool_results`,
 `aweb_secrets.member_types.broker_result_reply`). The state is independent of
 the HTTP status.
 

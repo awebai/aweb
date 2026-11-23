@@ -9,6 +9,7 @@ streams, and grants no dispatch authority.
 from dataclasses import dataclass
 
 from aweb_naapp.runtime.approvals.request import RequestNotCanonical, parse_request_json
+from aweb_secrets_values.credential_shapes import CredentialScan, CredentialScanUnavailable
 
 from aweb_secrets.credential_shapes import has_credential_shape
 from aweb_secrets.jobs import JobDefinition
@@ -48,7 +49,7 @@ class RunnerOutput:
 
 
 def process_runner_result(
-    raw: bytes, *, job: JobDefinition, known: KnownValues | None
+    raw: bytes, *, job: JobDefinition, known: KnownValues | None, scan: CredentialScan | None = None
 ) -> RunnerOutput:
     """Process the bounded six-field report; never return its original streams.
 
@@ -57,6 +58,7 @@ def process_runner_result(
     Malformed reports have a constant value-free error. The HTTP adapter owns
     the corresponding protocol refusal and authenticated effect transaction.
     """
+    scan = scan or CredentialScan()
     output = job.after["output"]
     limit = output["max_bytes"]
     frame_limit = 6 * limit + 1024
@@ -102,17 +104,20 @@ def process_runner_result(
         return withheld("release_context_unavailable")
     redactions = 0
     clean = []
-    for stream in streams:
-        stream, count = known.redact(stream)
-        redactions += count
-        if report["truncated"]:
-            stream, count = known.redact_tail(stream)
+    try:
+        for stream in streams:
+            scan.check()
+            stream, count = known.redact(stream)
             redactions += count
-        # Detect each decoded stream before wrapping it in JSON, where escaped
-        # credential-named fields would otherwise hide their original shape.
-        if has_credential_shape(stream):
-            return withheld("credential_shaped", redactions)
-        clean.append(stream.decode("utf-8"))
+            if report["truncated"]:
+                stream, count = known.redact_tail(stream)
+                redactions += count
+            # Inspect each stream before JSON wrapping can hide its field names.
+            if has_credential_shape(stream, scan=scan):
+                return withheld("credential_shaped", redactions)
+            clean.append(stream.decode("utf-8"))
+    except CredentialScanUnavailable:
+        return withheld("response_scan_unavailable", redactions)
     handled = handle_response(
         status=200,
         headers=[],
@@ -124,6 +129,7 @@ def process_runner_result(
         projection=output["projection"],
         known=known,
         token_issuing=False,
+        scan=scan,
     )
     redactions += handled.redaction_count
     if report["result_withheld"]:

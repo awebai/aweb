@@ -9,7 +9,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from aweb_secrets_values.credential_shapes import has_credential_shape
+from aweb_secrets_values.credential_shapes import (
+    CredentialScan,
+    CredentialScanUnavailable,
+    has_credential_shape,
+)
 
 from .errors import Refused
 from .jobs import CredentialInput, PreparedJob, RunnerConfig
@@ -79,12 +83,15 @@ def _scalar_prefix(raw: bytes, bound: int) -> bytes:
     return raw[:bound].decode("utf-8", errors="ignore").encode("utf-8")
 
 
-def _report(job: PreparedJob, capture: _Capture, exit_code: int) -> dict[str, Any]:
+def _report(
+    job: PreparedJob, capture: _Capture, exit_code: int, scan: CredentialScan
+) -> dict[str, Any]:
     count = 0
     streams = []
     withheld = capture.invalid
     try:
         for index, buffer in enumerate(capture.buffers):
+            scan.check()
             body = _scalar_prefix(bytes(buffer), len(buffer))
             body, found = job.known.redact(body)
             count += found
@@ -93,9 +100,9 @@ def _report(job: PreparedJob, capture: _Capture, exit_code: int) -> dict[str, An
             else:
                 body, found = job.known.redact_json(body)
             count += found
-            withheld |= has_credential_shape(body)
+            withheld |= has_credential_shape(body, scan=scan)
             streams.append(body)
-    except (ValueError, UnicodeError, RecursionError):
+    except (CredentialScanUnavailable, ValueError, UnicodeError, RecursionError):
         withheld = True
     truncated = capture.truncated
     if withheld:
@@ -249,4 +256,6 @@ async def _execute_prepared(
                 await asyncio.gather(observer, return_exceptions=True)
     exit_code = process.get_returncode()
     assert exit_code is not None
-    return _report(job, capture, -signal.SIGKILL if timed_out else exit_code)
+    return await asyncio.to_thread(
+        _report, job, capture, -signal.SIGKILL if timed_out else exit_code, CredentialScan()
+    )

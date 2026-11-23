@@ -821,7 +821,7 @@ class BrokerRequests:
         audit = None
         sending = False
         try:
-            async with asyncio.timeout_at(send_until):
+            async with asyncio.timeout_at(send_until) as send_timeout:
                 plaintext = await self._opener.open(_context(call))
                 value = decode_value(call.stored.record.kind, plaintext.reveal())
                 sending = True
@@ -836,6 +836,7 @@ class BrokerRequests:
                     token_destination=call.token_destination,
                     tokens=self._tokens,
                     secret=call.secret,
+                    send_timeout=send_timeout,
                 )
             reply = broker_result_reply(
                 outcome.result, request_id=request_id, request_ref=request_ref
