@@ -251,7 +251,12 @@ func TestLocalTeamInviteKeepsTheInvitersRegistry(t *testing.T) {
 			if scenario == "contradictory authority" {
 				operationRegistry = trap.URL
 			}
-			serveRosterTXT(t, idCreateDNSRecordValue(v.Keys["root"].DIDKey, dnsRegistry))
+			record := idCreateDNSRecordValue(v.Keys["root"].DIDKey, dnsRegistry)
+			if scenario == "own pin wins" {
+				// The selected chainless identity only reads its own enrollment.
+				record = "awid=invalid"
+			}
+			serveRosterTXT(t, record)
 			_, teamKey, err := awid.GenerateKeypair()
 			if err != nil {
 				t.Fatal(err)

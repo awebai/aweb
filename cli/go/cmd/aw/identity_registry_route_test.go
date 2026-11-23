@@ -1,0 +1,404 @@
+package main
+
+import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
+	"io"
+	"math/big"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
+)
+
+func TestIdentityRegistryRouting(t *testing.T) {
+	testIdentityRegistryRouting(t, false)
+}
+
+func TestIdentityRegistryRoutingWithLiveAWID(t *testing.T) {
+	if os.Getenv("AW_REGISTRY_ROUTE_LIVE_AWID") != "1" {
+		t.Skip("enable under the isolated CLI suite runner")
+	}
+	testIdentityRegistryRouting(t, true)
+}
+
+func testIdentityRegistryRouting(t *testing.T, live bool) {
+	t.Helper()
+	v := loadWhoVectors(t)
+	var privateReads, publicReads atomic.Int32
+	serveStatus := func(reads *atomic.Int32) http.HandlerFunc {
+		var backend *httputil.ReverseProxy
+		if live {
+			fixture, _ := startAWIDFixture(t, "AWID_FIXTURE_ID_TREE_VECTOR=1")
+			origin, err := url.Parse(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			backend = httputil.NewSingleHostReverseProxy(origin)
+		}
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/example.com/teams/backend/certificates" {
+				if backend != nil {
+					backend.ServeHTTP(w, r)
+				} else {
+					_ = json.NewEncoder(w).Encode(map[string]string{"status": "registered"})
+				}
+				return
+			}
+			reads.Add(1)
+			if r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+v.Keys["global_agent"].DIDAW+"/key" {
+				if backend != nil {
+					backend.ServeHTTP(w, r)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"did_aw": v.Keys["global_agent"].DIDAW, "current_did_key": v.Keys["global_agent"].DIDKey,
+					"id_tree": map[string]any{"enrolled": true, "domain": "example.com"},
+				})
+				return
+			}
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+				http.Error(w, "unable to read request", http.StatusBadRequest)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(raw))
+			var payload struct {
+				Domain string   `json:"domain"`
+				IDs    []string `json:"ids"`
+			}
+			if r.Method != "POST" || r.URL.Path != "/v1/id-certificates/status" ||
+				json.Unmarshal(raw, &payload) != nil || payload.Domain != "example.com" ||
+				!slices.Contains(payload.IDs, v.Keys["alice"].DIDAW) {
+				t.Errorf("unexpected status request: %s %s %+v", r.Method, r.URL.Path, payload)
+				http.Error(w, "unexpected status request", http.StatusBadRequest)
+				return
+			}
+			if backend != nil {
+				backend.ServeHTTP(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(v.Statuses["normal"])
+		}
+	}
+	privateHandler := serveStatus(&privateReads)
+	private := httptest.NewServer(privateHandler)
+	t.Cleanup(private.Close)
+	public := httptest.NewUnstartedServer(serveStatus(&publicReads))
+	cert, root := identityRegistryTestCertificate(t)
+	public.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	public.StartTLS()
+	t.Cleanup(public.Close)
+	namedPrivate := httptest.NewUnstartedServer(privateHandler)
+	namedPrivate.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	namedPrivate.StartTLS()
+	t.Cleanup(namedPrivate.Close)
+	namedPrivateURL := strings.Replace(namedPrivate.URL, "127.0.0.1", "registry.test", 1)
+	proxy := identityRegistryTestProxy(t, public.Listener.Addr().String())
+	rootFile := filepath.Join(t.TempDir(), "registry-root.pem")
+	if err := os.WriteFile(rootFile, root, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, stored, env, flag, txt string
+		private, public              bool
+		global, foreign, unmarked    bool
+		conflicts                    []string
+	}{
+		{name: "recorded", stored: private.URL, private: true},
+		{name: "recorded with same env", stored: private.URL, env: private.URL, private: true},
+		{name: "recorded with same flag", stored: private.URL, flag: private.URL, private: true},
+		{name: "recorded with same TXT", stored: namedPrivateURL, txt: namedPrivateURL, private: true},
+		{name: "recorded with different private TXT", stored: private.URL, txt: namedPrivateURL, conflicts: []string{private.URL, namedPrivateURL}},
+		{name: "global key and status", stored: private.URL, private: true, global: true},
+		{name: "global conflict before key read", stored: private.URL, txt: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}, global: true},
+		{name: "conflicting env", stored: private.URL, env: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
+		{name: "conflicting flag", stored: private.URL, flag: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
+		{name: "conflicting TXT", stored: private.URL, txt: awid.DefaultAWIDRegistryURL, conflicts: []string{private.URL, awid.DefaultAWIDRegistryURL}},
+		{name: "missing TXT", stored: private.URL, txt: "-"},
+		{name: "hosted", stored: awid.DefaultAWIDRegistryURL, public: true},
+		{name: "no record", public: true},
+		{name: "foreign namespace", stored: private.URL, foreign: true, public: true},
+		{name: "unmarked origin", stored: private.URL, unmarked: true},
+		{name: "hosted with unrelated env", stored: awid.DefaultAWIDRegistryURL, env: private.URL, public: true},
+		{name: "hosted with explicit TXT", stored: awid.DefaultAWIDRegistryURL, txt: awid.DefaultAWIDRegistryURL, public: true},
+		{name: "explicit flag", flag: private.URL, private: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, verb := range []string{"who", "verify", "status", "invite", "join", "accept-invite"} {
+				t.Run(verb, func(t *testing.T) {
+					if tc.global && verb != "who" && verb != "status" {
+						t.Skip("global key preflight is exercised by who")
+					}
+					if tc.foreign && verb != "verify" {
+						t.Skip("verify checks a foreign export without selecting an acting identity")
+					}
+					if tc.unmarked && (verb == "invite" || verb == "join" || verb == "accept-invite") {
+						t.Skip("the pinned transport is exercised by who and verify")
+					}
+					dir := whoIdentity(t, v, !tc.global && !tc.foreign, tc.global || tc.foreign)
+					if tc.global {
+						identityRegistryTestGlobalHome(t, dir, v)
+					}
+					path := filepath.Join(dir, ".aw", "identity.yaml")
+					identity, err := awconfig.LoadWorktreeIdentityFrom(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					identity.RegistryURL, identity.RegistryOperatorOrigin = tc.stored, tc.stored
+					if tc.foreign {
+						identity.Address = "external.example.net/coordinator"
+					}
+					if tc.unmarked {
+						identity.RegistryOperatorOrigin = ""
+					}
+					if err := awconfig.SaveWorktreeIdentityTo(path, identity); err != nil {
+						t.Fatal(err)
+					}
+					record := ""
+					if tc.txt != "-" {
+						record = idCreateDNSRecordValue(v.Keys["root"].DIDKey, "")
+						if tc.txt != "" {
+							record += "; registry=" + tc.txt
+						}
+					}
+					env := append(withoutEnvForTest(testCommandEnv(t.TempDir()), "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy"), "AW_REGISTRY_ROUTE_CHILD=1",
+						"AW_REGISTRY_ROUTE_TXT="+record, "AW_REGISTRY_ROUTE_CA="+rootFile,
+						"GODEBUG=x509usefallbackroots=1", "HTTPS_PROXY="+proxy, "NO_PROXY=registry.test", "APP_ENV=production",
+						"AW_REGISTRY_ROUTE_ENV="+tc.env, "AW_REGISTRY_ROUTE_TEAM_SEED="+v.Keys["seat"].SeedHex)
+					if tc.flag != "" && (verb == "invite" || verb == "join" || verb == "accept-invite") {
+						t.Skip("team --parent and team invite have no identity registry flag")
+					}
+					args := []string{verb, "--json"}
+					var input []byte
+					if verb == "status" {
+						args = append([]string{"id"}, args...)
+					} else if tc.flag != "" {
+						args = append(args, "--registry", tc.flag)
+					}
+					if verb == "verify" {
+						input = identityRegistryTestExport(t, v)
+					}
+					cmd := exec.CommandContext(t.Context(), os.Args[0], append([]string{"-test.run=^TestIdentityRegistryRouteChild$", "--"}, args...)...)
+					cmd.Dir, cmd.Env, cmd.Stdin = dir, env, bytes.NewReader(input)
+					beforePrivate, beforePublic := privateReads.Load(), publicReads.Load()
+					output, err := cmd.CombinedOutput()
+					gotPrivate, gotPublic := privateReads.Load()-beforePrivate, publicReads.Load()-beforePublic
+					if tc.global && tc.private && verb == "who" && gotPrivate != 2 {
+						t.Errorf("expected the key and status at the recorded registry, got %d reads: %s (%v)", gotPrivate, output, err)
+					}
+					if (gotPrivate > 0) != (tc.private && verb != "status") || (gotPublic > 0) != (tc.public && verb != "status") ||
+						(!tc.global && (verb == "who" || verb == "verify") && (gotPrivate > 1 || gotPublic > 1)) {
+						t.Errorf("private/public requests = %d/%d: %s (%v)", gotPrivate, gotPublic, output, err)
+					}
+					if verb == "status" {
+						if err != nil {
+							t.Fatalf("offline status: %s (%v)", output, err)
+						}
+						return
+					}
+					if len(tc.conflicts) > 0 {
+						for _, origin := range tc.conflicts {
+							if err == nil || !strings.Contains(string(output), origin) {
+								t.Errorf("refusal must name %q: %s (%v)", origin, output, err)
+							}
+						}
+					} else if tc.private || tc.public {
+						if err != nil || ((verb == "who" || verb == "verify") && !strings.Contains(string(output), `"reason": "verified"`)) {
+							t.Errorf("expected verified status: %s (%v)", output, err)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestIdentityRegistryRouteChild(t *testing.T) {
+	if os.Getenv("AW_REGISTRY_ROUTE_CHILD") != "1" {
+		return
+	}
+	t.Setenv("AWID_REGISTRY_URL", os.Getenv("AW_REGISTRY_ROUTE_ENV"))
+	root, err := os.ReadFile(os.Getenv("AW_REGISTRY_ROUTE_CA"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(root) {
+		t.Fatal("load fixture trust root")
+	}
+	x509.SetFallbackRoots(pool)
+	serveRosterTXT(t, os.Getenv("AW_REGISTRY_ROUTE_TXT"))
+	for i, arg := range os.Args {
+		if arg == "--" {
+			args := os.Args[i+1:]
+			switch args[0] {
+			case "invite", "join", "accept-invite":
+				args = identityRegistryTestTeamCommand(t, args[0])
+			}
+			os.Args = append([]string{"aw"}, args...)
+			main()
+			return
+		}
+	}
+	t.Fatal("missing command arguments")
+}
+
+// Both accept commands run the complete parent exchange. Their team
+// membership goes to the fixture's team authority independently of ancestry.
+func identityRegistryTestTeamCommand(t *testing.T, command string) []string {
+	t.Helper()
+	seed, err := hex.DecodeString(os.Getenv("AW_REGISTRY_ROUTE_TEAM_SEED"))
+	if err != nil || len(seed) != ed25519.SeedSize {
+		t.Fatalf("read fixture team seed: %v", err)
+	}
+	if err := awconfig.SaveTeamKey("example.com", "backend", ed25519.NewKeyFromSeed(seed)); err != nil {
+		t.Fatal(err)
+	}
+	if command == "invite" {
+		return []string{"id", "team", "invite", "--namespace", "example.com", "--team", "backend", "--json"}
+	}
+	parent, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := awid.GenerateUUID4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	invite := &awconfig.TeamInvite{
+		InviteID: id, Domain: "example.com", TeamName: "backend", Secret: id,
+		IdentityScope: awid.IdentityModeLocal,
+		RegistryURL:   awid.DefaultAWIDRegistryURL, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := awconfig.SaveTeamInvite(invite); err != nil {
+		t.Fatal(err)
+	}
+	token, err := awconfig.EncodeInviteToken(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	args := []string{"id", "team", "accept-invite"}
+	if command == "join" {
+		args = []string{"team", "join", "--no-connect"}
+	}
+	return append(args, token, "--parent", parent, "--name", "child-"+id[:8], "--json")
+}
+
+func identityRegistryTestGlobalHome(t *testing.T, dir string, v whoVectors) {
+	t.Helper()
+	key := v.Keys["global_agent"]
+	seed, err := hex.DecodeString(key.SeedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(dir, ".aw")
+	identity := &awconfig.WorktreeIdentity{
+		DID: key.DIDKey, StableID: key.DIDAW, Address: "address-alias.example.com/agent",
+		Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal,
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(home, "identity.yaml"), identity); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(home, "signing.key"), ed25519.NewKeyFromSeed(seed)); err != nil {
+		t.Fatal(err)
+	}
+	chain := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["alice"].Signed, v.Certificates["global-agent"].Signed}}
+	if err := awconfig.SaveInstalledIDChain(home, chain); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func identityRegistryTestExport(t *testing.T, v whoVectors) []byte {
+	t.Helper()
+	seed, err := hex.DecodeString(v.Keys["coordinator"].SeedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := &awid.MessageEnvelope{From: "example.com/coordinator", FromDID: v.Keys["coordinator"].DIDKey, To: "recipient", Type: "mail", Body: "fixture", Timestamp: time.Now().UTC().Format(time.RFC3339)}
+	signature, err := awid.SignMessage(ed25519.NewKeyFromSeed(seed), message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return marshalMessageExport(t, messageExport{
+		V: 1, Type: "aweb.message-envelope", SignedPayload: awid.CanonicalJSON(message), Signature: signature, SigningKeyID: message.FromDID,
+		IDChain: awid.ReceivedIDChain{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["alice"].Signed, v.Certificates["coordinator"].Signed}},
+	})
+}
+
+func identityRegistryTestCertificate(t *testing.T) (tls.Certificate, []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(1), DNSNames: []string{"api.awid.ai", "registry.test"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
+	der, err := x509.CreateCertificate(rand.Reader, leaf, leaf, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+// Only the fixture's public default is reachable through this proxy.
+func identityRegistryTestProxy(t *testing.T, publicAddr string) string {
+	t.Helper()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "CONNECT" || r.Host != "api.awid.ai:443" {
+			t.Errorf("unexpected proxy request %s %s", r.Method, r.Host)
+			http.Error(w, "blocked by fixture", http.StatusForbidden)
+			return
+		}
+		upstream, err := net.Dial("tcp", publicAddr)
+		if err != nil {
+			http.Error(w, "fixture unavailable", http.StatusBadGateway)
+			return
+		}
+		defer upstream.Close()
+		client, rw, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer client.Close()
+		if _, err := rw.WriteString("HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := rw.Flush(); err != nil {
+			t.Error(err)
+			return
+		}
+		go func() {
+			_, _ = io.Copy(upstream, rw)
+			_ = upstream.Close()
+		}()
+		_, _ = io.Copy(client, upstream)
+	}))
+	t.Cleanup(proxy.Close)
+	return proxy.URL
+}
