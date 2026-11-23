@@ -84,16 +84,20 @@ class NaappE2ETest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Error 7", result.stdout + result.stderr)
 
-    def run_outside_the_gate(self):
+    def run_package(self, **extra):
         with tempfile.TemporaryDirectory() as temporary:
             stub = Path(temporary) / "docker"
             stub.write_text(DOCKER_STUB, encoding="utf-8")
             stub.chmod(0o755)
+            # In the gate pytest runs directly; elsewhere, in the stubbed container.
+            uv = Path(temporary) / "uv"
+            uv.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            uv.chmod(0o755)
             calls = Path(temporary) / "calls"
             env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("NAAPP_E2E_", "CANDIDATE_", "AWID_"))}
             env.update(PATH=f"{temporary}:{env['PATH']}", CALLS=str(calls),
-                       NAAPP_E2E_PROJECT="proof")
+                       NAAPP_E2E_PROJECT="proof", **extra)
             result = subprocess.run(
                 ["bash", "scripts/e2e/naapp-e2e.sh", "naapp/library", "LIBRARY_E2E"],
                 cwd=ROOT, env=env, capture_output=True, text=True, timeout=60,
@@ -101,17 +105,19 @@ class NaappE2ETest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             return [json.loads(line) for line in calls.read_text().splitlines()]
 
-    def test_outside_the_gate_awid_accepts_the_name_the_tests_call_it_by(self):
+    def test_awid_accepts_the_name_the_tests_call_it_by(self):
         name = subprocess.run(
             ["python3", "scripts/candidate-network.py", "hostname", "proof", "awid"],
             cwd=ROOT, check=True, capture_output=True, text=True,
         ).stdout.strip()
-        ups = [origins for origins, args in self.run_outside_the_gate() if "up" in args]
-        self.assertEqual(len(ups), 1)
-        self.assertIn(f"http://{name}:8010", ups[0].split(","))
+        for place, extra in (("gate", {"CANDIDATE_RUNNER_NAME": "runner"}), ("elsewhere", {})):
+            with self.subTest(place=place):
+                ups = [origins for origins, args in self.run_package(**extra) if "up" in args]
+                self.assertEqual(len(ups), 1)
+                self.assertIn(f"http://{name}:8010", ups[0].split(","))
 
     def test_outside_the_gate_the_package_and_the_server_have_separate_environments(self):
-        runs = [args for _, args in self.run_outside_the_gate() if args[0] == "run"]
+        runs = [args for _, args in self.run_package() if args[0] == "run"]
         self.assertEqual(len(runs), 1)
         mounted = [value for flag, value in zip(runs[0], runs[0][1:]) if flag == "-v"]
         self.assertIn("/src/naapp/library/.venv", mounted)

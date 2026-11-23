@@ -21,6 +21,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 project="${NAAPP_E2E_PROJECT:?NAAPP_E2E_PROJECT names the compose project of the stack}"
 cd "$REPO_ROOT/$package_dir"
 compose=(docker compose -p "$project" -f docker-compose.e2e.yml)
+# AWID accepts the requests the tests sign for its scoped name.
+AWID_PUBLIC_ORIGINS="http://awid:8010,http://$(python3 "$REPO_ROOT/scripts/candidate-network.py" hostname "$project" awid):8010"
+export AWID_PUBLIC_ORIGINS
 
 if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
   # The gate's runner: its wrapper places the stack and joins the network.
@@ -44,9 +47,6 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
-# AWID accepts the requests the tests sign for its scoped name.
-AWID_PUBLIC_ORIGINS="http://awid:8010,http://$(python3 "$REPO_ROOT/scripts/candidate-network.py" hostname "$project" awid):8010"
-export AWID_PUBLIC_ORIGINS
 # The gate's own override: every service's scoped name, and no host ports.
 "${compose[@]}" config --format json | python3 "$REPO_ROOT/scripts/candidate-network.py" override > "$override"
 compose+=(-f "$override")

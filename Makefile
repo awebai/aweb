@@ -126,11 +126,6 @@ e2e-naapp:
 			allocation=$$(printf '%s\n' "$$NAAPP_E2E_ALLOCATIONS" | awk -v package="$$package" '$$1 == package { print $$2, $$3, $$4 }'); \
 			[ -n "$$allocation" ] || { echo "missing allocation for $$package" >&2; exit 1; }; \
 			set -- $$allocation; \
-			registry_origin="http://$${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}:$$2"; \
-			if [ "$${NAAPP_E2E_CONTAINER_NETWORK:-}" = 1 ]; then \
-				registry_origin="http://$$(python3 scripts/candidate-network.py hostname "$$1" awid):8010"; \
-			fi; \
-			AWID_PUBLIC_ORIGINS="http://awid:8010,$$registry_origin" \
 			NAAPP_E2E_PROJECT="$$1" NAAPP_E2E_AWID_PORT="$$2" NAAPP_E2E_POSTGRES_PORT="$$3" \
 			NAAPP_E2E_HOST="$${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}" \
 			$(MAKE) -C "$$package" e2e; \
