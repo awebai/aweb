@@ -17,6 +17,7 @@ from aweb.federation.activation import build_federation_authority_activation
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
+from awid.team_certificate import decode_team_certificate
 from test_dashboard_privacy import privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers, _make_certificate, _encode_certificate
 
@@ -111,6 +112,32 @@ async def local_mail(privacy_app, monkeypatch):
     finally:
         env.app.middleware_stack = stack
         await activation.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_address_actors_have_native_memberships(local_mail):
+    env = local_mail.env
+    registry = env.app.state.awid_registry_client
+    for actor, team, certificate in local_mail.actors.values():
+        fields = decode_team_certificate(certificate)
+        assert "member_did_aw" not in fields
+        assert "member_address" not in fields
+        row = await env.db.fetch_one(
+            """SELECT a.certificate_id, a.accepted_team_did_key
+               FROM {{tables.agents}} a JOIN {{tables.workspaces}} w USING (agent_id)
+               WHERE a.team_id = $1 AND w.team_id = $1
+                 AND a.agent_id = $2 AND w.workspace_id = $3""",
+            team, actor.id, actor.workspace,
+        )
+        assert row is not None
+        assert row["certificate_id"] == fields["certificate_id"]
+        assert row["accepted_team_did_key"] == env.team_did
+        name, domain = team.split(":", 1)
+        certificates = await registry.list_team_certificates(domain, name, active_only=True)
+        assert any(
+            item.certificate_id == row["certificate_id"] and item.member_did_key == actor.did
+            for item in certificates
+        )
 
 
 @pytest.mark.asyncio
