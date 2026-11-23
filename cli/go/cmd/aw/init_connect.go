@@ -70,6 +70,8 @@ type certificateConnectOptions struct {
 	APIKey                string
 	IdentityHome          string
 	BindingWorkspacePath  string
+
+	RegistryOperatorOrigin string
 }
 
 // initCertificateConnectWithOptions implements the certificate-based init flow.
@@ -170,10 +172,11 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 				Alias:    resp.Alias,
 				CertPath: filepath.ToSlash(certPath),
 			},
-			Certificate: cert,
-			RegistryURL: opts.TeamRegistryURL,
-			AwebURL:     "",
-			Activation:  membershipMakeActive,
+			Certificate:            cert,
+			RegistryURL:            opts.TeamRegistryURL,
+			RegistryOperatorOrigin: opts.RegistryOperatorOrigin,
+			AwebURL:                "",
+			Activation:             membershipMakeActive,
 		}); err != nil {
 			return err
 		}

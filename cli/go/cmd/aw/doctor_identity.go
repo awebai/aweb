@@ -483,34 +483,24 @@ func (r *doctorRunner) addRegistryURLSourceCheck(state *doctorIdentityState) {
 	r.addRegistryPinningCheck(state)
 }
 
-// addRegistryPinningCheck reports how aw reaches the configured registry.
-// Only the built-in default, AWID_REGISTRY_URL and a registry flag on the
-// command line are reached with the CLI's own client; a registry known only
-// from stored files is reached at public addresses. No network is used: a
-// plainly private host (an address literal that is not public, localhost, a
-// single-label, .local or .internal name) is the case to warn about.
+// addRegistryPinningCheck uses the same transport policy as registry reads.
 func (r *doctorRunner) addRegistryPinningCheck(state *doctorIdentityState) {
 	registryURL := strings.TrimSpace(state.registryURL)
 	details := map[string]any{"source": state.registryURLSource, "registry_url": registryURL}
-	if state.registryURLSource == "AWID_REGISTRY_URL" || sameRegistryOrigin(registryURL, awid.DefaultAWIDRegistryURL) {
+	resolver := newAWIDRegistryResolver(nil, nil)
+	trustStoredRegistryOrigins(resolver, state.workingDir, state.identityHome)
+	if resolver.RegistryOriginTrusted(registryURL) {
 		r.add(localCheck(doctorCheckIdentityLocalRegistryPinned, doctorStatusOK, nil, "The awid registry is reached with aw's own client.", "", details))
 		return
 	}
-	if registryHostPlainlyPrivate(registryURL) {
+	remedy := "If you operate or trust this registry, run `" + awid.RegistryTrustCommand + " " + registryURL + "` in the selected identity home. AWID_REGISTRY_URL applies to the current command."
+	if registryHostPlainlyPrivate(registryURL) || strings.HasPrefix(registryURL, "http://") {
 		r.add(localCheck(doctorCheckIdentityLocalRegistryPinned, doctorStatusWarn, nil,
-			"The awid registry from "+state.registryURLSource+" is on a private host, and aw reaches a registry not named by AWID_REGISTRY_URL only at public addresses, so requests to it are refused.",
-			"For a private self-hosted registry, set AWID_REGISTRY_URL="+registryURL+".", details))
+			"The awid registry from "+state.registryURLSource+" is private or uses HTTP. An untrusted origin needs public HTTPS.", remedy, details))
 		return
 	}
 	r.add(localCheck(doctorCheckIdentityLocalRegistryPinned, doctorStatusInfo, nil,
-		"The awid registry from "+state.registryURLSource+" is reached only at public addresses.",
-		"If it is a private self-hosted registry, set AWID_REGISTRY_URL to it.", details))
-}
-
-func sameRegistryOrigin(a, b string) bool {
-	pa, errA := url.Parse(strings.TrimSpace(a))
-	pb, errB := url.Parse(strings.TrimSpace(b))
-	return errA == nil && errB == nil && strings.EqualFold(pa.Scheme, pb.Scheme) && strings.EqualFold(pa.Host, pb.Host)
+		"The awid registry from "+state.registryURLSource+" is reached only at public addresses.", remedy, details))
 }
 
 func registryHostPlainlyPrivate(raw string) bool {
@@ -571,8 +561,9 @@ func (r *doctorRunner) addRegistryChecks(state *doctorIdentityState) {
 		return
 	}
 
-	client := awidDoctorRegistryClient{client: newAWIDRegistryClient(nil, nil)}
-	r.runOnlineRegistryChecks(state, client)
+	registry := newAWIDRegistryClient(nil, nil)
+	trustStoredRegistryOrigins(registry.Resolver, state.workingDir, state.identityHome)
+	r.runOnlineRegistryChecks(state, awidDoctorRegistryClient{client: registry})
 }
 
 func (r *doctorRunner) runOnlineRegistryChecks(state *doctorIdentityState, client doctorRegistryClient) {

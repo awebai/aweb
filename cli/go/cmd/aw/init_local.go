@@ -126,10 +126,12 @@ func recordLocalControllerRegistry(registryURL string) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(meta.RegistryURL) == strings.TrimSpace(registryURL) {
+	origin := operatorRegistryOrigin(registryURL, meta.RegistryOperatorOrigin)
+	if meta.RegistryURL == registryURL && meta.RegistryOperatorOrigin == origin {
 		return nil
 	}
 	meta.RegistryURL = strings.TrimSpace(registryURL)
+	meta.RegistryOperatorOrigin = origin
 	return awconfig.SaveControllerMeta(implicitLocalDomain, meta)
 }
 
@@ -220,7 +222,9 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 	}
 
 	return initCertificateConnectWithOptions(req.WorkingDir, req.AwebURL, certificateConnectOptions{
-		ContextFile: req.ContextFile, Role: strings.TrimSpace(req.Role),
+		TeamRegistryURL:        prepared.Plan.RegistryURL,
+		RegistryOperatorOrigin: operatorRegistryOrigin(prepared.Plan.RegistryURL, ""),
+		ContextFile:            req.ContextFile, Role: strings.TrimSpace(req.Role),
 		HumanName: strings.TrimSpace(req.HumanName),
 		AgentType: strings.TrimSpace(req.AgentType),
 	})

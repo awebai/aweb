@@ -825,12 +825,15 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	if err != nil {
 		return err
 	}
+	trustStoredRegistryOrigins(registry, sel.WorkingDir, sel.IdentityHome)
 	registry.TeamReadSigningKey = c.SigningKey()
 	// Received addressless identities are verified at the selected TEAM's
 	// registry. Do not inherit a global identity's unrelated home registry.
 	teamRegistry := newAWIDRegistryResolver(c.Client.HTTPClient(), nil)
+	trustStoredRegistryOrigins(teamRegistry, sel.WorkingDir, sel.IdentityHome)
 	teamRegistryURL, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{
 		Kind: registryDeliveryTeamRoute, TeamID: sel.TeamID, IdentityHome: sel.IdentityHome,
+		WorkingDir: sel.WorkingDir, DeliveryResolver: teamRegistry,
 	})
 	if err != nil {
 		return err

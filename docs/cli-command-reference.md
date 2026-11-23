@@ -433,6 +433,7 @@ Subcommands:
 - `parent` Request and import your own certificate from a parent
 - `proof` Export a message signed by your human key with its saved evidence
 - `register` Register the current global identity at the configured registry
+- `registry-trust` Trust an operator-selected registry recorded in this identity home
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
 - `revoke` Revoke a registered identity's ID-tree authority
@@ -1181,6 +1182,15 @@ Register the current global identity at the configured registry
 
 Flags:
 - `-h, --help help for register`
+
+## `id registry-trust`
+
+### `id registry-trust`
+
+Allow aw to reach an existing stored registry origin over private networks or HTTP. Only run this for an origin you operate or trust. The command does not change the selected registry.
+
+Flags:
+- `-h, --help help for registry-trust`
 
 ## `id request`
 

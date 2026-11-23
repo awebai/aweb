@@ -29,6 +29,8 @@ type ResolvedIdentity struct {
 	RegistryURL          string
 	RegistryStatus       string
 	CreatedAt            string
+
+	RegistryOperatorOrigin string
 }
 
 type WorktreeIdentity struct {
@@ -41,6 +43,8 @@ type WorktreeIdentity struct {
 	RegistryURL    string `yaml:"registry_url,omitempty"`
 	RegistryStatus string `yaml:"registry_status,omitempty"`
 	CreatedAt      string `yaml:"created_at"`
+
+	RegistryOperatorOrigin string `yaml:"registry_operator_origin"`
 }
 
 // worktreeIdentityWire is the pre-v2 identity.yaml decode boundary. Lifetime
@@ -57,6 +61,8 @@ type worktreeIdentityWire struct {
 	RegistryURL    string `yaml:"registry_url,omitempty"`
 	RegistryStatus string `yaml:"registry_status,omitempty"`
 	CreatedAt      string `yaml:"created_at"`
+
+	RegistryOperatorOrigin *string `yaml:"registry_operator_origin,omitempty"`
 }
 
 func DefaultWorktreeIdentityRelativePath() string {
@@ -105,6 +111,14 @@ func LoadWorktreeIdentityFrom(path string) (*WorktreeIdentity, error) {
 		RegistryStatus: wire.RegistryStatus,
 		CreatedAt:      wire.CreatedAt,
 	}
+	// Released homes did not record provenance. Their own identity registry
+	// is the compatibility case. A new untrusted URL is saved with an
+	// explicit empty marker. Team and controller records have no fallback.
+	if wire.RegistryOperatorOrigin == nil {
+		state.RegistryOperatorOrigin = state.RegistryURL
+	} else {
+		state.RegistryOperatorOrigin = *wire.RegistryOperatorOrigin
+	}
 	if err := normalizeWorktreeIdentityScope(&state, wire.Lifetime); err != nil {
 		return nil, err
 	}
@@ -136,6 +150,9 @@ func SaveWorktreeIdentityTo(path string, state *WorktreeIdentity) error {
 	}
 	if strings.TrimSpace(out.IdentityScope) == "" {
 		return errors.New("identity_scope is required")
+	}
+	if !awid.SameRegistryOrigin(out.RegistryURL, out.RegistryOperatorOrigin) {
+		out.RegistryOperatorOrigin = ""
 	}
 	out.SchemaVersion = WorktreeIdentitySchemaVersion
 	data, err := yaml.Marshal(&out)
@@ -246,6 +263,7 @@ func resolvedIdentityFromState(workingDir, identityHome, identityPath, signingKe
 		RegistryStatus: strings.TrimSpace(identity.RegistryStatus),
 		CreatedAt:      strings.TrimSpace(identity.CreatedAt),
 	}
+	resolved.RegistryOperatorOrigin = identity.RegistryOperatorOrigin
 	if domain, handle, ok := CutIdentityAddress(resolved.Address); ok {
 		resolved.Domain = domain
 		resolved.Handle = handle

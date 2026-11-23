@@ -16,6 +16,29 @@ type ControllerMeta struct {
 	ControllerDID string `yaml:"controller_did"`
 	RegistryURL   string `yaml:"registry_url"`
 	CreatedAt     string `yaml:"created_at"`
+
+	RegistryOperatorOrigin string `yaml:"registry_operator_origin"`
+	LegacyRegistryOrigin   bool   `yaml:"-"`
+}
+
+func (m *ControllerMeta) UnmarshalYAML(value *yaml.Node) error {
+	var wire struct {
+		Domain                 string  `yaml:"domain"`
+		ControllerDID          string  `yaml:"controller_did"`
+		RegistryURL            string  `yaml:"registry_url"`
+		CreatedAt              string  `yaml:"created_at"`
+		RegistryOperatorOrigin *string `yaml:"registry_operator_origin"`
+	}
+	if err := value.Decode(&wire); err != nil {
+		return err
+	}
+	*m = ControllerMeta{Domain: wire.Domain, ControllerDID: wire.ControllerDID,
+		RegistryURL: wire.RegistryURL, CreatedAt: wire.CreatedAt,
+		LegacyRegistryOrigin: wire.RegistryOperatorOrigin == nil}
+	if wire.RegistryOperatorOrigin != nil {
+		m.RegistryOperatorOrigin = *wire.RegistryOperatorOrigin
+	}
+	return nil
 }
 
 func ControllerKeyPath(domain string) (string, error) {

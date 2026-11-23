@@ -506,7 +506,7 @@ func persistGuidedBYODIdentity(provisioned *guidedBYODProvision) error {
 	if awid.NormalizeIdentityScope(provisioned.Certificate.IdentityScope) == awid.IdentityModeLocal {
 		return nil
 	}
-	return awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
+	return saveWorktreeIdentityWithRegistryOrigin(plan.IdentityPath, &awconfig.WorktreeIdentity{
 		DID:            plan.DIDKey,
 		StableID:       plan.DIDAW,
 		Address:        plan.Address,
