@@ -1,6 +1,7 @@
 {
   "version": 1,
   "description": "An app's own grant, GET /v1/apps/self/grant (docs/app-registry.md, 'An app reads its own grant'): the answers the server gives for a scenario, and what an app's grant source makes of them. The server consumer (server/tests/test_app_self_read_vectors.py) seeds the scenario through the real install path and compares each server answer; the app consumer (naapp-lib/tests/runtime/test_app_self_read_vectors.py) serves every answer's status and body to the public TeamGrantSource and checks the outcome. Each refused answer is one JSON-pointer change to the base answer, so it carries exactly one fault: reverting it gives the base, which is accepted.",
+  "seeding": "Each answer's state is reached through the product: install is the verified install path, install_then_uninstall adds the real uninstall (which moves the generation and keeps the pin and its keys), legacy_pending_installation is an install from before origin verification, and no_installation registers nothing, so the app's key is not registered.",
   "scenario": {
     "team_id": "backend:acme.com",
     "app_id": "folio",
@@ -52,8 +53,7 @@
     {
       "name": "active",
       "seed": {
-        "state": "active",
-        "origin_verified": true,
+        "path": "install",
         "granted_scopes": [
           "folio:read",
           "folio:write"
@@ -128,8 +128,7 @@
     {
       "name": "active_without_scopes",
       "seed": {
-        "state": "active",
-        "origin_verified": true,
+        "path": "install",
         "granted_scopes": []
       },
       "status": 200,
@@ -163,8 +162,7 @@
     {
       "name": "pending_origin_verification",
       "seed": {
-        "state": "pending_origin_verification",
-        "origin_verified": false,
+        "path": "legacy_pending_installation",
         "granted_scopes": [
           "folio:read",
           "folio:write"
@@ -200,15 +198,14 @@
     {
       "name": "uninstalled",
       "seed": {
-        "state": "uninstalled",
-        "origin_verified": false,
+        "path": "install_then_uninstall",
         "granted_scopes": [
           "folio:read",
           "folio:write"
         ]
       },
       "status": 200,
-      "body": "{\"team_id\":\"backend:acme.com\",\"app_id\":\"folio\",\"state\":\"uninstalled\",\"origin\":\"https://folio.aweb.ai\",\"app_version\":\"1.4.0\",\"manifest_version\":1,\"digest\":\"sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c\",\"granted_scopes\":[\"folio:read\",\"folio:write\"],\"installation_id\":\"inst_01JB7Q\",\"generation\":1,\"origin_verified\":false,\"installed_at\":\"2026-10-20T11:59:30.123456Z\",\"as_of\":\"2026-10-20T12:00:00Z\",\"max_age_seconds\":60}",
+      "body": "{\"team_id\":\"backend:acme.com\",\"app_id\":\"folio\",\"state\":\"uninstalled\",\"origin\":\"https://folio.aweb.ai\",\"app_version\":\"1.4.0\",\"manifest_version\":1,\"digest\":\"sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c\",\"granted_scopes\":[\"folio:read\",\"folio:write\"],\"installation_id\":\"inst_01JB7Q\",\"generation\":2,\"origin_verified\":true,\"installed_at\":\"2026-10-20T11:59:30.123456Z\",\"as_of\":\"2026-10-20T12:00:00Z\",\"max_age_seconds\":60}",
       "outcomes": {
         "pinned": {
           "status": {
@@ -224,8 +221,8 @@
               "folio:write"
             ],
             "installation_id": "inst_01JB7Q",
-            "generation": 1,
-            "origin_verified": false,
+            "generation": 2,
+            "origin_verified": true,
             "installed_at": "2026-10-20T11:59:30.123456Z",
             "as_of": "2026-10-20T12:00:00Z",
             "max_age_seconds": 60

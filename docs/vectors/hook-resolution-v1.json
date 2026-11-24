@@ -1,13 +1,15 @@
 {
   "version": 1,
   "description": "An app's hook resolution reads (docs/app-registry.md, 'An app resolves its hooks' and 'The core hook producer's keys'): the answers the server gives for one scenario, and what an app's HookResolver makes of them. The server consumer (server/tests/test_app_self_read_vectors.py) seeds the scenario and compares each server answer; the app consumer (naapp-lib/tests/runtime/test_app_self_read_vectors.py) serves each answer's status and body to the public HookResolver and checks the outcome. Each refused answer is one JSON-pointer change to an accepted answer, so it carries exactly one fault: reverting it gives an answer the app reads. The app folds every malformed answer into the one code answer_malformed, so the revert check is what shows each refusal is the intended one.",
+  "seeding": "Each app is installed from its manifest through the real install path, which writes its keys and pending bindings. The team owner then activates and revokes bindings with real aweb.owner-act/1 acts. The pre-identity pending binding is a state only databases from before migration 035 hold; its answer is checked by a migration test that writes that row directly.",
   "scenario": {
     "team_id": "backend:acme.com",
     "max_age_seconds": 60,
     "apps": {
       "logs": {
         "origin": "https://logs.example",
-        "description": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "manifest": "{\"manifest_version\":2,\"app\":{\"id\":\"logs\",\"version\":\"1.0.0\",\"origin\":\"https://logs.example\"},\"tools\":[{\"name\":\"ingest\",\"description\":\"Receive one hook event at /hooks/ingest.\",\"method\":\"POST\",\"path\":\"/hooks/ingest\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"hook_event\":{\"type\":\"string\"},\"signature\":{\"type\":\"string\"}},\"required\":[\"hook_event\",\"signature\"],\"additionalProperties\":false},\"params\":[{\"name\":\"hook_event\",\"in\":\"body\"},{\"name\":\"signature\",\"in\":\"body\"}],\"scopes\":[\"logs:ingest\"],\"mutation\":true,\"body\":{\"mode\":\"json\"},\"invocation_contexts\":[\"hook\"]},{\"name\":\"governance\",\"description\":\"Receive one hook event at /hooks/governance.\",\"method\":\"POST\",\"path\":\"/hooks/governance\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"hook_event\":{\"type\":\"string\"},\"signature\":{\"type\":\"string\"}},\"required\":[\"hook_event\",\"signature\"],\"additionalProperties\":false},\"params\":[{\"name\":\"hook_event\",\"in\":\"body\"},{\"name\":\"signature\",\"in\":\"body\"}],\"scopes\":[\"logs:ingest\"],\"mutation\":true,\"body\":{\"mode\":\"json\"},\"invocation_contexts\":[\"hook\"]},{\"name\":\"mutation\",\"description\":\"Receive one hook event at /hooks/mutation.\",\"method\":\"POST\",\"path\":\"/hooks/mutation\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"hook_event\":{\"type\":\"string\"},\"signature\":{\"type\":\"string\"}},\"required\":[\"hook_event\",\"signature\"],\"additionalProperties\":false},\"params\":[{\"name\":\"hook_event\",\"in\":\"body\"},{\"name\":\"signature\",\"in\":\"body\"}],\"scopes\":[\"logs:ingest\"],\"mutation\":true,\"body\":{\"mode\":\"json\"},\"invocation_contexts\":[\"hook\"]}],\"app_keys\":[{\"kid\":\"resolve-logs\",\"did_key\":\"did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2\",\"purposes\":[\"hook-resolve\"]}],\"hooks\":{\"registration_version\":1,\"registrations\":[{\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"tool\":\"ingest\",\"scopes\":[\"logs:ingest\"]},{\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-governance-hook\",\"tool\":\"governance\",\"scopes\":[\"logs:ingest\"]},{\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-mutation-hook\",\"tool\":\"mutation\",\"scopes\":[\"logs:ingest\"]}],\"productions\":[]}}",
+        "digest": "sha256:37e9a3b5064209e9750855f2427fb0b1fac3487c9774b7e6bcc2a999ab56b3cf",
         "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
         "generation": 1,
         "resolve_key": {
@@ -15,12 +17,12 @@
           "seed_hex": "2121212121212121212121212121212121212121212121212121212121212121",
           "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2"
         },
-        "hook_keys": [],
-        "digest": "sha256:87e5928c337cffc7dd5866cc7449baaaeb8442a9be6efec163dbf009cea526b9"
+        "hook_keys": []
       },
       "secrets": {
         "origin": "https://secrets.example",
-        "description": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "manifest": "{\"manifest_version\":2,\"app\":{\"id\":\"secrets\",\"version\":\"1.0.0\",\"origin\":\"https://secrets.example\"},\"tools\":[{\"name\":\"status\",\"description\":\"Read the app's status.\",\"method\":\"GET\",\"path\":\"/status\",\"scopes\":[]}],\"app_keys\":[{\"kid\":\"hook-delivery-1\",\"did_key\":\"did:key:z6MkkR2HMq9xJ6NiexPumkFnkabGMwvk3vpokjE1VZsNwj79\",\"purposes\":[\"hook-delivery\"]},{\"kid\":\"hook-event-1\",\"did_key\":\"did:key:z6MknKrzUBQ488kw5dAksw6Xknx4V3KJY6JmQr1wVNzF7p72\",\"purposes\":[\"hook-event\"]},{\"kid\":\"resolve-secrets\",\"did_key\":\"did:key:z6MkqGC3nWZhYieEVTVDKW5v588CiGfsDSmRVG9ZwwWTvLSK\",\"purposes\":[\"hook-resolve\"]}],\"hooks\":{\"registration_version\":1,\"registrations\":[],\"productions\":[{\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"reads\":[]}]}}",
+        "digest": "sha256:1b3fde91d4f03de3874fac60764a53c5ce83d217fecf16ab035afb694dd5959e",
         "installation_id": "6f1c2d3e-4b5a-4978-8c6d-5e4f3a2b1c0d",
         "generation": 1,
         "resolve_key": {
@@ -31,22 +33,19 @@
         "hook_keys": [
           {
             "kid": "hook-delivery-1",
-            "seed_hex": "2424242424242424242424242424242424242424242424242424242424242424",
+            "did_key": "did:key:z6MkkR2HMq9xJ6NiexPumkFnkabGMwvk3vpokjE1VZsNwj79",
             "purposes": [
               "hook-delivery"
-            ],
-            "did_key": "did:key:z6MkkR2HMq9xJ6NiexPumkFnkabGMwvk3vpokjE1VZsNwj79"
+            ]
           },
           {
             "kid": "hook-event-1",
-            "seed_hex": "2323232323232323232323232323232323232323232323232323232323232323",
+            "did_key": "did:key:z6MknKrzUBQ488kw5dAksw6Xknx4V3KJY6JmQr1wVNzF7p72",
             "purposes": [
               "hook-event"
-            ],
-            "did_key": "did:key:z6MknKrzUBQ488kw5dAksw6Xknx4V3KJY6JmQr1wVNzF7p72"
+            ]
           }
-        ],
-        "digest": "sha256:370cbe4aba811d15764f1ea6e0dbad78960928b49147f8c92379d2ec671152b5"
+        ]
       }
     },
     "bindings": [
@@ -69,8 +68,8 @@
         "state": "active",
         "ended_by": null,
         "identity": true,
-        "activated_at": "2026-10-20T11:59:00.123456Z",
-        "active_from": "2026-10-20T12:00:00.123456Z",
+        "activated_at": "2026-10-20T11:59:00.123Z",
+        "active_from": "2026-10-20T12:00:00.123Z",
         "revoked_at": null
       },
       {
@@ -90,8 +89,8 @@
         "state": "active",
         "ended_by": null,
         "identity": true,
-        "activated_at": "2026-10-20T11:59:00.123456Z",
-        "active_from": "2026-10-20T12:00:00.123456Z",
+        "activated_at": "2026-10-20T11:59:00.123Z",
+        "active_from": "2026-10-20T12:00:00.123Z",
         "revoked_at": null
       },
       {
@@ -113,9 +112,9 @@
         "state": "revoked",
         "ended_by": "owner_act",
         "identity": true,
-        "activated_at": "2026-10-19T10:00:00.000500Z",
-        "active_from": "2026-10-19T10:01:00.000500Z",
-        "revoked_at": "2026-10-20T09:00:00.500000Z"
+        "activated_at": "2026-10-19T10:00:00.000Z",
+        "active_from": "2026-10-19T10:01:00.000Z",
+        "revoked_at": "2026-10-20T09:00:00.500Z"
       },
       {
         "label": "logs_mutation_legacy_pending",
@@ -157,10 +156,12 @@
     ]
   },
   "server_generated": {
+    "installation_id": "Substituted per app: the install path generates it. Before substituting, the consumer asserts a non-empty string; every binding of an app carries its installation id.",
+    "binding_times": "Substituted: activated_at, active_from and revoked_at are the times of the owner acts. Before substituting, the consumer asserts the millisecond spelling YYYY-MM-DDTHH:MM:SS.mmmZ, and that active_from is activated_at plus 60 seconds where both are listed.",
     "binding_id": "Substituted by label: the server generates binding ids. Before substituting, the consumer asserts the canonical lowercase UUID spelling the app requires.",
     "as_of": "Never compared: the server's clock. The consumer asserts YYYY-MM-DDTHH:MM:SSZ."
   },
-  "times": "Binding times are seeded with microseconds and answered to the millisecond: activated_at and revoked_at truncate, active_from rounds up, so a binding never reads as active earlier than it is.",
+  "times": "Binding times are answered in UTC to the millisecond; active_from is activated_at plus 60 seconds.",
   "nullability": "Resolution lists hold active bindings only, which always carry installation_id and generation. Own bindings list every state; a pending binding written before installations carried an identity has both null (migration 032), and deployed databases may still hold one.",
   "answers": [
     {
@@ -176,7 +177,7 @@
       },
       "path": "/v1/apps/self/hooks/aweb.hooks/1/post-secret-use-hook/registrations",
       "status": 200,
-      "body": "{\"team_id\":\"backend:acme.com\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"bindings\":[{\"binding_id\":\"6f9619ff-8b86-4011-b42d-00c04fc964ff\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"generation\":1,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/ingest\",\"digest\":\"sha256:87e5928c337cffc7dd5866cc7449baaaeb8442a9be6efec163dbf009cea526b9\",\"active_from\":\"2026-10-20T12:00:00.124Z\"}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "body": "{\"team_id\":\"backend:acme.com\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"bindings\":[{\"binding_id\":\"6f9619ff-8b86-4011-b42d-00c04fc964ff\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"generation\":1,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/ingest\",\"digest\":\"sha256:37e9a3b5064209e9750855f2427fb0b1fac3487c9774b7e6bcc2a999ab56b3cf\",\"active_from\":\"2026-10-20T12:00:00.123Z\"}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
       "labels": [
         "logs_ingest"
       ],
@@ -195,7 +196,7 @@
       },
       "path": "/v1/apps/self/hooks/aweb.hooks/1/post-secret-use-hook/productions",
       "status": 200,
-      "body": "{\"team_id\":\"backend:acme.com\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"bindings\":[{\"binding_id\":\"0e0f4b2a-7f53-4c47-9a4e-2d8c3b1a5f60\",\"kind\":\"production\",\"app_id\":\"secrets\",\"installation_id\":\"6f1c2d3e-4b5a-4978-8c6d-5e4f3a2b1c0d\",\"generation\":1,\"origin\":\"https://secrets.example\",\"method\":null,\"path\":null,\"digest\":\"sha256:370cbe4aba811d15764f1ea6e0dbad78960928b49147f8c92379d2ec671152b5\",\"active_from\":\"2026-10-20T12:00:00.124Z\",\"keys\":[{\"kid\":\"hook-delivery-1\",\"did_key\":\"did:key:z6MkkR2HMq9xJ6NiexPumkFnkabGMwvk3vpokjE1VZsNwj79\",\"purposes\":[\"hook-delivery\"]},{\"kid\":\"hook-event-1\",\"did_key\":\"did:key:z6MknKrzUBQ488kw5dAksw6Xknx4V3KJY6JmQr1wVNzF7p72\",\"purposes\":[\"hook-event\"]}]}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "body": "{\"team_id\":\"backend:acme.com\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"bindings\":[{\"binding_id\":\"0e0f4b2a-7f53-4c47-9a4e-2d8c3b1a5f60\",\"kind\":\"production\",\"app_id\":\"secrets\",\"installation_id\":\"6f1c2d3e-4b5a-4978-8c6d-5e4f3a2b1c0d\",\"generation\":1,\"origin\":\"https://secrets.example\",\"method\":null,\"path\":null,\"digest\":\"sha256:1b3fde91d4f03de3874fac60764a53c5ce83d217fecf16ab035afb694dd5959e\",\"active_from\":\"2026-10-20T12:00:00.123Z\",\"keys\":[{\"kid\":\"hook-delivery-1\",\"did_key\":\"did:key:z6MkkR2HMq9xJ6NiexPumkFnkabGMwvk3vpokjE1VZsNwj79\",\"purposes\":[\"hook-delivery\"]},{\"kid\":\"hook-event-1\",\"did_key\":\"did:key:z6MknKrzUBQ488kw5dAksw6Xknx4V3KJY6JmQr1wVNzF7p72\",\"purposes\":[\"hook-event\"]}]}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
       "labels": [
         "secrets_use"
       ],
@@ -244,7 +245,7 @@
       },
       "path": "/v1/apps/self/hooks/bindings?binding_id={logs_ingest}",
       "status": 200,
-      "body": "{\"team_id\":\"backend:acme.com\",\"bindings\":[{\"binding_id\":\"6f9619ff-8b86-4011-b42d-00c04fc964ff\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"generation\":1,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/ingest\",\"digest\":\"sha256:87e5928c337cffc7dd5866cc7449baaaeb8442a9be6efec163dbf009cea526b9\",\"active_from\":\"2026-10-20T12:00:00.124Z\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"state\":\"active\",\"ended_by\":null,\"activated_at\":\"2026-10-20T11:59:00.123Z\",\"revoked_at\":null}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "body": "{\"team_id\":\"backend:acme.com\",\"bindings\":[{\"binding_id\":\"6f9619ff-8b86-4011-b42d-00c04fc964ff\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"generation\":1,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/ingest\",\"digest\":\"sha256:37e9a3b5064209e9750855f2427fb0b1fac3487c9774b7e6bcc2a999ab56b3cf\",\"active_from\":\"2026-10-20T12:00:00.123Z\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"state\":\"active\",\"ended_by\":null,\"activated_at\":\"2026-10-20T11:59:00.123Z\",\"revoked_at\":null}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
       "labels": [
         "logs_ingest"
       ],
@@ -263,7 +264,7 @@
       },
       "path": "/v1/apps/self/hooks/bindings?hook=aweb.hooks%2F1%2Fpost-governance-hook",
       "status": 200,
-      "body": "{\"team_id\":\"backend:acme.com\",\"bindings\":[{\"binding_id\":\"3c7d1e9a-2b4f-4e6a-8d5c-9f0a1b2c3d4e\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"generation\":1,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/governance\",\"digest\":\"sha256:87e5928c337cffc7dd5866cc7449baaaeb8442a9be6efec163dbf009cea526b9\",\"active_from\":\"2026-10-19T10:01:00.001Z\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-governance-hook\",\"state\":\"revoked\",\"ended_by\":\"owner_act\",\"activated_at\":\"2026-10-19T10:00:00.000Z\",\"revoked_at\":\"2026-10-20T09:00:00.500Z\"}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "body": "{\"team_id\":\"backend:acme.com\",\"bindings\":[{\"binding_id\":\"3c7d1e9a-2b4f-4e6a-8d5c-9f0a1b2c3d4e\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"generation\":1,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/governance\",\"digest\":\"sha256:37e9a3b5064209e9750855f2427fb0b1fac3487c9774b7e6bcc2a999ab56b3cf\",\"active_from\":\"2026-10-19T10:01:00.000Z\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-governance-hook\",\"state\":\"revoked\",\"ended_by\":\"owner_act\",\"activated_at\":\"2026-10-19T10:00:00.000Z\",\"revoked_at\":\"2026-10-20T09:00:00.500Z\"}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
       "labels": [
         "logs_governance_revoked"
       ],
@@ -282,7 +283,7 @@
       },
       "path": "/v1/apps/self/hooks/bindings?hook=aweb.hooks%2F1%2Fpost-mutation-hook",
       "status": 200,
-      "body": "{\"team_id\":\"backend:acme.com\",\"bindings\":[{\"binding_id\":\"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":null,\"generation\":null,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/mutation\",\"digest\":\"sha256:87e5928c337cffc7dd5866cc7449baaaeb8442a9be6efec163dbf009cea526b9\",\"active_from\":null,\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-mutation-hook\",\"state\":\"pending\",\"ended_by\":null,\"activated_at\":null,\"revoked_at\":null}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "body": "{\"team_id\":\"backend:acme.com\",\"bindings\":[{\"binding_id\":\"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":null,\"generation\":null,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/mutation\",\"digest\":\"sha256:37e9a3b5064209e9750855f2427fb0b1fac3487c9774b7e6bcc2a999ab56b3cf\",\"active_from\":null,\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-mutation-hook\",\"state\":\"pending\",\"ended_by\":null,\"activated_at\":null,\"revoked_at\":null}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
       "labels": [
         "logs_mutation_legacy_pending"
       ],

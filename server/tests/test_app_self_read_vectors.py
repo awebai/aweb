@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from uuid import UUID
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -21,14 +21,19 @@ from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from aweb.app_credentials import APP_GRANT_READ, HOOK_RESOLVE
-from aweb.hook_bindings import HookBindingDeclaration, write_pending_bindings
+from aweb.hook_bindings import ACTIVATE, REVOKE, activate_binding, list_app_bindings, revoke_binding
+from aweb.installations import uninstall_installation_on
 from aweb.routes.app_hooks import router as app_hooks_router
 from aweb.routes.apps import router as apps_router
 from awid.did import did_from_public_key
 from tests.app_credential_signing import app_credential_headers
-from tests.installation_fixtures import install_fixture_app, seed_hook_installation
+from tests.installation_fixtures import install_fixture_app, seed_pending_installation
 from tests.test_app_credentials import _register_app_key
 from tests.test_app_events_http import AGENT_ID, _build_events_app, _seed_team_and_agent
+from tests.test_hook_binding_activation import env  # noqa: F401
+
+# The owner-act environment: a registry holding the team key, its verifier and owner.
+__all__ = ["env"]
 
 ROOT = Path(__file__).resolve().parents[2]
 GRANT = json.loads((ROOT / "docs" / "vectors" / "app-grant-status-v1.json").read_text())
@@ -37,6 +42,8 @@ GRANT_PATH = "/v1/apps/self/grant"
 # The spellings an app's grant source accepts (aweb_naapp.runtime.team_grants).
 APP_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|\+00:00)")
 AS_OF = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+# The binding time spelling an app's hook resolver accepts.
+BINDING_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z")
 # The one spelling an app's hook resolver accepts for a binding id.
 CANONICAL_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
@@ -50,21 +57,27 @@ async def grant_db(aweb_cloud_db, monkeypatch):
 
 
 async def _seed_grant(db, seed: dict | None) -> None:
+    """Reach the answer's state through the product; with no seed nothing is registered."""
+    if seed is None:
+        return
     scenario = GRANT["scenario"]
     manifest = scenario["manifest"].encode()
     document = json.loads(manifest)
-    install = await install_fixture_app(
-        db,
+    common = dict(
         team_id=scenario["team_id"],
         app_id=scenario["app_id"],
         origin=scenario["origin"],
         app_version=document["app"]["version"],
         manifest_version=document["manifest_version"],
-        granted_scopes=(seed or {"granted_scopes": []})["granted_scopes"],
-        manifest=manifest,
-        installed_by_agent_id=str(AGENT_ID),
+        granted_scopes=seed["granted_scopes"],
     )
-    assert install.digest == scenario["digest"]
+    if seed["path"] == "legacy_pending_installation":
+        await seed_pending_installation(db, digest=scenario["digest"], **common)
+    else:
+        install = await install_fixture_app(
+            db, manifest=manifest, installed_by_agent_id=str(AGENT_ID), **common
+        )
+        assert install.digest == scenario["digest"]
     signing_key = SigningKey(bytes.fromhex(scenario["grant_read_key"]["seed_hex"]))
     await _register_app_key(
         db,
@@ -73,18 +86,14 @@ async def _seed_grant(db, seed: dict | None) -> None:
         purposes=[APP_GRANT_READ],
         team_id=scenario["team_id"],
     )
-    if seed is None:
-        await db.execute(
-            "DELETE FROM {{tables.team_app_installs}} WHERE team_id = $1 AND app_id = $2",
-            scenario["team_id"],
-            scenario["app_id"],
-        )
-    elif seed["state"] != "active":
-        await db.execute(
-            "UPDATE {{tables.team_app_installs}} SET state = $1, origin_verified = $2",
-            seed["state"],
-            seed["origin_verified"],
-        )
+    if seed["path"] == "install_then_uninstall":
+        async with db.transaction() as tx:
+            await uninstall_installation_on(
+                tx,
+                team_id=scenario["team_id"],
+                app_id=scenario["app_id"],
+                expected_generation=install.generation,
+            )
 
 
 async def _read_grant(db):
@@ -129,86 +138,47 @@ async def test_the_server_gives_each_grant_answer(grant_db, answer):
 # --- hook resolution ---
 
 
-def _moment(value: str | None) -> datetime | None:
-    return None if value is None else datetime.fromisoformat(value)
-
-
 @pytest_asyncio.fixture
-async def hook_db(aweb_cloud_db, monkeypatch):
-    """The vector's scenario; returns each binding label's server-generated id."""
+async def hook_db(env, monkeypatch):
+    """The vector's scenario through the install path and real owner acts.
+
+    Returns the database and each binding label's and each app's server-generated ids."""
     scenario = HOOKS["scenario"]
     monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", str(scenario["max_age_seconds"]))
     monkeypatch.setenv("AWEB_HOOK_PRODUCER_KEYS", json.dumps(scenario["producer_keys"]))
-    db = aweb_cloud_db.aweb_db
     team_id = scenario["team_id"]
-    await _seed_team_and_agent(db, team_id=team_id)
+    installations: dict[str, str] = {}
+    bindings = {}
     for app_id, app in scenario["apps"].items():
-        pin = {"app_id": app_id, "origin": app["origin"], "digest": app["description"]}
-        await seed_hook_installation(db, pin, team_id=team_id, installation_id=app["installation_id"])
-        assert pin["digest"] == app["digest"]
-        for key in [{**app["resolve_key"], "purposes": [HOOK_RESOLVE]}, *app["hook_keys"]]:
-            signing_key = SigningKey(bytes.fromhex(key["seed_hex"]))
-            await db.execute(
-                """
-                INSERT INTO {{tables.team_app_keys}} (team_id, app_id, origin, digest, key_id, did_key, purposes)
-                VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[])
-                """,
-                team_id, app_id, app["origin"], app["digest"], key["kid"],
-                did_from_public_key(bytes(signing_key.verify_key)), key["purposes"],
-            )
-    ids: dict[str, UUID] = {}
-    # The install path writes each app's live generation; a later write would supersede it.
-    for binding in scenario["bindings"]:
-        if binding["state"] != "active":
-            continue
-        app = scenario["apps"][binding["app"]]
-        async with db.transaction() as tx:
-            (written,) = await write_pending_bindings(
-                tx, team_id=team_id, app_id=binding["app"], origin=app["origin"], digest=app["digest"],
-                installation_id=app["installation_id"], generation=app["generation"],
-                declarations=[HookBindingDeclaration(
-                    kind=binding["kind"], catalog_id=binding["hook"][0], catalog_version=binding["hook"][1],
-                    hook=binding["hook"][2], tool=binding["tool"], method=binding["method"],
-                    path=binding["path"], scopes=tuple(binding["scopes"]),
-                )],
-            )
-        await db.execute(
-            """
-            UPDATE {{tables.app_hook_bindings}}
-            SET state = 'active', activated_at = $2, active_from = $3, activation_act_sha256 = $4
-            WHERE binding_id = $1
-            """,
-            written.binding_id, _moment(binding["activated_at"]), _moment(binding["active_from"]), "ab" * 32,
+        manifest = app["manifest"].encode()
+        install = await install_fixture_app(
+            env.db,
+            team_id=team_id,
+            app_id=app_id,
+            origin=app["origin"],
+            app_version=json.loads(manifest)["app"]["version"],
+            manifest_version=json.loads(manifest)["manifest_version"],
+            manifest=manifest,
+            installed_by_agent_id=str(AGENT_ID),
         )
-        ids[binding["label"]] = written.binding_id
-    # Ended and identity-less bindings are history the install path no longer writes.
+        assert (install.digest, install.generation) == (app["digest"], app["generation"])
+        installations[app_id] = install.installation_id
+        written = {binding.hook: binding for binding in await list_app_bindings(env.db, team_id=team_id, app_id=app_id)}
+        for binding in scenario["bindings"]:
+            if binding["app"] == app_id:
+                bindings[binding["label"]] = written[binding["hook"][2]]
     for binding in scenario["bindings"]:
-        if binding["state"] == "active":
-            continue
-        app = scenario["apps"][binding["app"]]
-        identity = binding["identity"]
-        await db.execute(
-            """
-            INSERT INTO {{tables.app_hook_bindings}} (
-                binding_id, kind, team_id, installation_id, generation, app_id, origin, digest,
-                catalog_id, catalog_version, hook, tool, method, path, scopes, state, ended_by,
-                activated_at, active_from, revoked_at, activation_act_sha256, revocation_act_sha256
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::TEXT[], $16, $17,
-                $18, $19, $20, $21, $22
-            )
-            """,
-            UUID(binding["binding_id"]), binding["kind"], team_id,
-            app["installation_id"] if identity else None, app["generation"] if identity else None,
-            binding["app"], app["origin"], app["digest"], *binding["hook"],
-            binding["tool"], binding["method"], binding["path"], binding["scopes"],
-            binding["state"], binding["ended_by"],
-            _moment(binding["activated_at"]), _moment(binding["active_from"]), _moment(binding["revoked_at"]),
-            "ab" * 32 if binding["activated_at"] else None,
-            "cd" * 32 if binding["ended_by"] == "owner_act" else None,
-        )
-        ids[binding["label"]] = UUID(binding["binding_id"])
-    return db, ids
+        written = bindings[binding["label"]]
+        for act, apply, wanted in ((ACTIVATE, activate_binding, binding["activated_at"]), (REVOKE, revoke_binding, binding["revoked_at"])):
+            if wanted is None:
+                continue
+            signing, signature = env.owner.sign(act, written)
+            await apply(env.db, env.verifier, team_id=team_id, binding_id=written.binding_id, signing=signing, signature=signature)
+    return env.db, {label: binding.binding_id for label, binding in bindings.items()}, installations
+
+
+def _moment(value: str) -> datetime:
+    return datetime.fromisoformat(value)
 
 
 async def _resolve(db, answer: dict, ids: dict[str, UUID]):
@@ -235,13 +205,18 @@ async def _resolve(db, answer: dict, ids: dict[str, UUID]):
         return await client.get(path, headers=headers)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("answer", HOOKS["answers"], ids=lambda answer: answer["name"])
-async def test_the_server_gives_each_hook_resolution_answer(hook_db, answer):
-    db, ids = hook_db
+# Answers about bindings from before installations carried an identity; the
+# migration test writes those rows (test_hook_resolution_identity_migration.py).
+PRE_IDENTITY = {binding["label"] for binding in HOOKS["scenario"]["bindings"] if not binding["identity"]}
+
+
+async def check_hook_answer(hook_db, answer: dict) -> None:
+    db, ids, installations = hook_db
+    apps = HOOKS["scenario"]["apps"]
     vector_ids = {
         str(ids[binding["label"]]): binding["binding_id"] for binding in HOOKS["scenario"]["bindings"]
     }
+    vector_installations = {installations[app_id]: app["installation_id"] for app_id, app in apps.items()}
 
     response = await _resolve(db, answer, ids)
 
@@ -251,7 +226,28 @@ async def test_the_server_gives_each_hook_resolution_answer(hook_db, answer):
     if response.status_code == 200:
         assert AS_OF.fullmatch(body["as_of"]), body["as_of"]
         body["as_of"] = expected["as_of"]
-        for binding in body.get("bindings", []):
+        for binding, wanted in zip(body.get("bindings", []), expected.get("bindings", []), strict=True):
             assert CANONICAL_UUID.fullmatch(binding["binding_id"]), binding["binding_id"]
             binding["binding_id"] = vector_ids[binding["binding_id"]]
+            for field in ("activated_at", "active_from", "revoked_at"):
+                if binding.get(field) is not None:
+                    assert BINDING_TIME.fullmatch(binding[field]), binding[field]
+            if binding.get("activated_at") is not None:
+                assert _moment(binding["active_from"]) - _moment(binding["activated_at"]) == timedelta(seconds=60)
+            for field in ("activated_at", "active_from", "revoked_at"):
+                if field in binding:
+                    binding[field] = wanted[field]
+            if binding["installation_id"] is not None:
+                assert isinstance(binding["installation_id"], str) and binding["installation_id"]
+                binding["installation_id"] = vector_installations[binding["installation_id"]]
     assert body == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [answer for answer in HOOKS["answers"] if not PRE_IDENTITY & set(answer["labels"])],
+    ids=lambda answer: answer["name"],
+)
+async def test_the_server_gives_each_hook_resolution_answer(hook_db, answer):
+    await check_hook_answer(hook_db, answer)
