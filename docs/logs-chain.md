@@ -25,7 +25,7 @@ self-hosting) and, later, external anchoring.
 ## Encoding rules
 
 Every hashed or signed object below is encoded as **strict canonical JSON**,
-the hook event rules (`aweb_naapp.hooks.strictjson`, `cli/go/strictjson`):
+the hook event rules (`aweb_naapp_contracts.hooks.strictjson`, `cli/go/strictjson`):
 sorted keys, no insignificant whitespace, printable ASCII strings with only `"`
 and `\` escaped, safe-range integers, no floats and no `null`. An optional
 field is absent, never `null`.

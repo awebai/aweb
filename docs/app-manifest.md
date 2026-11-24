@@ -47,7 +47,7 @@ AWID publication are governed by [`a2a.md`](a2a.md) and
 interprets** (distinct from `app.version`, the app's own release). A consumer
 MUST reject a manifest whose `manifest_version` it does not support rather than
 best-effort parse it. v1 consumers support `manifest_version: 1`. The aw CLI
-and `aweb_naapp.manifest` support versions 1 and 2; see
+and `aweb_naapp_contracts.manifest` support versions 1 and 2; see
 [Manifest version 2](#manifest-version-2).
 
 The v1 manifest also accepts optional `events` declaration metadata. When
@@ -383,7 +383,7 @@ until a catalog-aware CLI is released.** Design: D1 §5
 (docs/design/agent-pages.md in the naapp repository). Authority: the shared vectors
 `test-vectors/app-manifests/app-manifest-v2-v1.json`, which both the Go
 interpreter (`cli/go/internal/appmanifest`) and the Python reader
-(`aweb_naapp.manifest.load_manifest`) pass. Consumers compare error **codes**
+(`aweb_naapp_contracts.manifest.load_manifest`) pass. Consumers compare error **codes**
 from those vectors, never wording.
 
 Version 2 keeps every v1 tool field and the whole verb → HTTP mapping
@@ -665,7 +665,7 @@ clients. That v1 variant must be an agent-safe subset of v2. Its app and
 events must equal v2's. Every v1 tool must be a v2 agent tool with an
 identical mapping, since a v1 tool has no contexts and is always
 agent-visible. Every v1 event emitter must be a v2 `app-event` key.
-Publishers check this with `aweb_naapp.manifest.check_v1_variant`
+Publishers check this with `aweb_naapp_contracts.manifest.check_v1_variant`
 (`v1_variant_incompatible`).
 
 The shared naapp runtime (`aweb_naapp`) serves a v1 manifest at the legacy
@@ -679,7 +679,7 @@ template: it declares the kids and the purposes each signs, local event types
 and the hosted `app.id` default, and commits no `did_key`. The runtime fills in
 the deployment's `app.id`, its origin and each declared kid's `did_key`, derived
 from the deployment's configured key, and serves the canonical bytes
-(`aweb_naapp.manifest.fill_manifest`). One configuration therefore serves
+(`aweb_naapp_contracts.manifest.fill_manifest`). One configuration therefore serves
 byte-identical bytes on every replica. Event types, and the surface event
 bindings that reference them, are named locally in the template, without an
 `app.id/` prefix, because they resolve against the deployment's `app.id`; a

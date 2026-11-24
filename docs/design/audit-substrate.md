@@ -845,7 +845,7 @@ The two are deliberately separate:
 
 Frozen only after review, positive and negative. Go and Python tests consume
 each, except `hook-binding-cases-v1.json`, which only the Python kit replays
-(`naapp-lib/tests/hooks/test_binding_cases.py`):
+(`naapp-contracts/tests/hooks/test_binding_cases.py`):
 
 | Vector | Covers |
 | --- | --- |

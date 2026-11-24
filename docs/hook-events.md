@@ -17,11 +17,11 @@ five vectors:
 - `docs/vectors/passkey-evidence-v1.json`: the passkey evidence commitment
   bytes of [the decision 84 proof contract](#passkey-evidence-commitments-and-console-actors).
 
-The strict catalog reader is `aweb_naapp.hooks.catalog`
-(`naapp-lib/src/aweb_naapp/hooks/catalog.py`). The envelope and credential
+The strict catalog reader is `aweb_naapp_contracts.hooks.catalog`
+(`naapp-contracts/src/aweb_naapp_contracts/hooks/catalog.py`). The envelope and credential
 authority is the Go package `cli/go/hookevent`, which regenerates both of
-their vectors byte for byte. The Python reading is `aweb_naapp.hooks.envelope`
-and `aweb_naapp.hooks.delivery`, behind the dependency-light `hooks` extra, and
+their vectors byte for byte. The Python reading is `aweb_naapp_contracts.hooks.envelope`
+and `aweb_naapp_contracts.hooks.delivery`, behind the dependency-light `hooks` extra, and
 passes the same vectors with the same refusal codes. The design and its rationale are
 in [the audit substrate design](design/audit-substrate.md).
 
@@ -92,7 +92,7 @@ Every hook's payload is a **flat allowlist**:
 The `host` bound was added to v1 in place, under decision 93's
 pre-deployment exception (coordinator ruling for aweb-acgh.16.47): no secrets
 or logs installation is deployed, and the secrets broker already refuses a
-host name over 253 characters (`naapp-lib/src/aweb_naapp/egress/urls.py`), so
+host name over 253 characters (`naapp-contracts/src/aweb_naapp_contracts/egress/urls.py`), so
 the bound refuses nothing a producer emits.
 
 Values are references, identifiers, enums, digests and bounded integers. A

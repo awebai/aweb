@@ -636,7 +636,7 @@ Each item is filed after review, and each is one reviewed change.
   - a repeated confirm does not apply it again.
 
   And a team-auth-drafted change set stays confirmable on the console.
-- **Manifest readers** (Go `cli/go/internal/appmanifest`, `aweb_naapp.manifest`):
+- **Manifest readers** (Go `cli/go/internal/appmanifest`, `aweb_naapp_contracts.manifest`):
   `owner_acts.session_actions`, against the `manifest` cases of
   `naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json`.
 - **`aw`:** opening the browser, the loopback listener and the handoff, and

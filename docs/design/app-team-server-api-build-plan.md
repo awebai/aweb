@@ -165,7 +165,7 @@ clients that sent no bytes (decision 44).
 
 **Built** (72a3fc5c7, with the shared identity repair ec0977f04).
 `team_app_keys` rows come from v2 `app_keys` read by the one manifest reader,
-`aweb_naapp.manifest.load_manifest` (decision 56), in
+`aweb_naapp_contracts.manifest.load_manifest` (decision 56), in
 `server/src/aweb/app_registry.py`. A key id keeps its first `did_key`, a
 conflict gets `409`, revocation is one-way across digests and manifest
 versions, and unknown purpose labels are stored and grant nothing.
@@ -228,7 +228,7 @@ digest.
 
 **Built** (14338a55b, 2e0fa96c2). `aweb_naapp.signing_key` behind the
 `signing-key` extra (`pynacl` only), with the file checks in
-`aweb_naapp.key_file.read_key_file` (regular file, not group- or
+`aweb_naapp_contracts.key_file.read_key_file` (regular file, not group- or
 world-writable), and `load_app_key` in `runtime/app_keys.py`, which takes
 the purposes a kid may sign from the manifest. One 64-hex format; key
 material never logged; the released `*_APP_EMIT_KEY_SEED_HEX` value accepted
@@ -278,7 +278,7 @@ productions list hook-purpose keys only; own bindings by `binding_id` or by
   client-class hooks only; this is how `aw` finds `post-command-hook`
   targets. The credential type decides which rule applies: a member envelope
   never reaches productions, own bindings or a server-class hook. The hook's
-  class comes from the one catalog reader, `aweb_naapp.hooks.catalog`.
+  class comes from the one catalog reader, `aweb_naapp_contracts.hooks.catalog`.
 - **On main:** every resolution route refuses a member envelope with the same
   `401` as any credential that is not `hook-resolve`, never an empty `200`.
 - **Acceptance:**

@@ -346,7 +346,7 @@ numbers (`seq`, `from_seq`, `issuer_key_seq`, `current_key_seq`) and sizes
 (`ciphertext_size`, attachment `size`), each an integer in every
 implementation. Timestamps are strings. Hook event envelopes, owner acts and
 logs-chain entries go through `strictjson` (Go) and
-`aweb_naapp.hooks.strictjson` (Python), which refuse floats and integers
+`aweb_naapp_contracts.hooks.strictjson` (Python), which refuse floats and integers
 beyond 2^53-1 when reading and when writing. Three commands sign JSON a
 caller supplies, and read it with `UseNumber`, so a number in it is signed as
 the text the caller typed: `aw id sign` (the payload), `aw id request
@@ -533,7 +533,7 @@ The member-signed `aweb.app-task-authorization/1` (aweb-acgg.8): task body
 digests, domain-prefixed signing bytes and base64url signatures under fixed
 test keys, verification cases at a pinned clock with the bindings each is
 checked against and its expected refusal code, strict-JSON refusals, and task
-body bounds. The reference consumers are `aweb_naapp.runtime.task_requests` in
+body bounds. The reference consumers are `aweb_naapp_contracts.task_requests` in
 `naapp-lib/tests/runtime/` and `aw`'s signer in `cli/go/awid/`. See [app task requests](../app-task-requests.md).
 
 ### `app-request-credential-v1.json`
@@ -549,7 +549,7 @@ is `aweb_naapp.runtime.app_credentials`. See
 Conditional task answers (aweb-acgg.8): answer text digests, the app's stage
 receipt with its refusals, and ordered steps for a decision task (eligible
 answerers, stage-gate refusals, replay, reopen and conflicts) and a plain
-task, with the expected result of each. The answer digests are checked by `aweb_naapp.runtime.task_requests`; the
+task, with the expected result of each. The answer digests are checked by `aweb_naapp_contracts.task_requests`; the
 sequence is for the task service. See
 [app task requests](../app-task-requests.md) §4.
 
@@ -559,7 +559,7 @@ Intent preparation (aweb-acgg.8): prepare responses with their task digests and
 authorization bindings, the member's completed and signed payload, the
 signer's pre-signing checks with their refusals, and ordered prepare, submit,
 replay and renewal steps with the expected result of each. The responses and
-checks are checked by `aweb_naapp.runtime.task_requests`; the sequence is for a
+checks are checked by `aweb_naapp_contracts.task_requests`; the sequence is for a
 pages naapp. See [page actions](../page-actions.md) §3.
 
 ### `link-request-v1.json`
@@ -699,7 +699,7 @@ or field, a missing field, a bad value, a float, a nested object, free text in a
 reference, a rule violation, a direction that differs from the catalog's, and an
 effect outside its command class. A payload that this file may not hold, such
 as a float, is given as JSON text in `payload_json`. The strict reader in
-`aweb_naapp.hooks.catalog` refuses the whole file on any unknown key, duplicate
+`aweb_naapp_contracts.hooks.catalog` refuses the whole file on any unknown key, duplicate
 key, float or unresolved reference. Once a deployed hook producer or consumer
 exists, a payload change, including an addition, requires a new catalog version
 and explicit consumer updates. Until that first deployment, pre-release shapes
@@ -743,7 +743,7 @@ registry consumes the same cases.
 
 ### `egress-address-v1.json`
 
-The egress guard's address rules (`aweb_naapp.egress`, secrets lane S1). Every
+The egress guard's address rules (`aweb_naapp_contracts.egress`, secrets lane S1). Every
 address a name resolves to is checked. A floor (loopback, link-local and cloud
 metadata, unspecified, multicast) is refused for every destination, internal
 ones included. A public destination's IPv6 address must be global unicast or
@@ -753,7 +753,7 @@ switch and an exact CIDR of bounded width that overlaps no floor range.
 
 ### `egress-url-v2.json`
 
-The egress guard's URL contract (`aweb_naapp.egress`, secrets lane S1), used by
+The egress guard's URL contract (`aweb_naapp_contracts.egress`, secrets lane S1), used by
 every naapp that calls an external service with its own credential. It pins URL
 canonicalization (https only, IDNA2008 A-labels, the refused path and query
 encodings, the ambiguous IPv4 host forms), destination definition (single-label
@@ -890,7 +890,7 @@ Specified, not shipped. It has five case families:
   the registry can be read;
 - role tokens at the bound, each checked against the owner-act/1 signer.
 
-The generator in `naapp-lib/tests/hooks/owner_act_delivery_vector.py` builds
+The generator in `naapp-contracts/tests/hooks/owner_act_delivery_vector.py` builds
 every signed case with `owner_act_signing_bytes` and a synthetic team key, and
 regenerates the file byte for byte. Its test verifies each signed case with
 the Python owner-act verifier. No implementation consumes the manifest,

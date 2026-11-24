@@ -309,7 +309,7 @@ of its own. Every registration is a row of the installing team
   `aw` clients (decision 44), so no install path accepts bytes or keys from
   the client.
 - **The server reads the bytes** with the one manifest reader,
-  `aweb_naapp.manifest.load_manifest` (decision 56): the bytes must parse
+  `aweb_naapp_contracts.manifest.load_manifest` (decision 56): the bytes must parse
   strictly, and their `app.id` must equal the request's
   (`422 manifest_app_mismatch` otherwise). It reads
   `app_keys: [{kid, did_key, purposes}]` (v2, frozen by C3), or a v1
@@ -534,7 +534,7 @@ and one `HookResolver` and shares them (`NaappRuntime.team_server_directory`,
     `signing-key` extra (`pynacl` only), so that core can load its own
     hook-producer key with it too, runs once at startup and fails startup on
     a missing, unreadable or malformed key. No naapp parses key bytes itself.
-  - **File checks** (`aweb_naapp.key_file.read_key_file`): a regular file, not
+  - **File checks** (`aweb_naapp_contracts.key_file.read_key_file`): a regular file, not
     group- or world-writable. Read bits are left to the platform, because
     standard mounted secrets (Kubernetes 0644, Docker 0444, platform secret
     files) are world-readable inside a single-user container.

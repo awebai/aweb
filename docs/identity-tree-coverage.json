@@ -239,88 +239,10 @@
         "reason": "Builds the deterministic fixture key for the request-auth conformance driver."
       },
       {
-        "file": "naapp-lib/renderer/link-client.mjs",
-        "symbol": "createLinkClient.connect",
-        "callee": "crypto.subtle.generateKey",
-        "reason": "Generates the nonexportable browser key for the released link client."
-      },
-      {
-        "file": "naapp-lib/renderer/link-client.mjs",
-        "symbol": "sessionDidKey",
-        "callee": "crypto.subtle.exportKey",
-        "reason": "Exports the browser session public key for its did:key projection."
-      },
-      {
-        "file": "naapp-lib/renderer/link-client.mjs",
-        "symbol": "signLinkRequest",
-        "callee": "crypto.subtle.sign",
-        "reason": "Signs the released link request through browser custody of the private key."
-      },
-      {
-        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
-        "symbol": "createLinkClient.connect",
-        "callee": "crypto.subtle.generateKey",
-        "reason": "Generates the nonexportable browser key for the released link client."
-      },
-      {
-        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
-        "symbol": "sessionDidKey",
-        "callee": "crypto.subtle.exportKey",
-        "reason": "Exports the browser session public key for its did:key projection."
-      },
-      {
-        "file": "naapp-lib/src/aweb_naapp/pages/assets/page-link-client.js",
-        "symbol": "signLinkRequest",
-        "callee": "crypto.subtle.sign",
-        "reason": "Signs the released link request through browser custody of the private key."
-      },
-      {
-        "file": "naapp-lib/src/aweb_naapp/signing_key.py",
-        "symbol": "parse_signing_key_hex",
-        "callee": "nacl.signing.SigningKey",
-        "reason": "Released signing-key reader returns a typed seed holder without importing the AWID runtime."
-      },
-      {
-        "file": "naapp-lib/testing/src/aweb_naapp_testing/__init__.py",
+        "file": "naapp-contracts/testing/src/aweb_naapp_contracts_testing/__init__.py",
         "symbol": "_fixture_signing_key",
         "callee": "nacl.signing.SigningKey.generate",
         "reason": "Reusable real-service fixture mints disposable typed signing keys."
-      },
-      {
-        "file": "naapp-lib/testing/src/aweb_naapp_testing/owner_acts.py",
-        "symbol": "team_owner",
-        "callee": "nacl.signing.SigningKey.generate",
-        "reason": "Reusable owner-act fixture mints a disposable typed signing key."
-      },
-      {
-        "file": "naapp/secrets/runner/src/aweb_secrets_runner/protocol.py",
-        "symbol": "public_key",
-        "callee": "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PublicKey.from_public_bytes",
-        "reason": "Standalone Secrets runner DID codec creates a key object for the runner's bounded verifier."
-      },
-      {
-        "file": "naapp/secrets/runner/src/aweb_secrets_runner/registration.py",
-        "symbol": "register",
-        "callee": "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PrivateKey.generate",
-        "reason": "Standalone Secrets runner creates its own local key using its existing cryptography dependency."
-      },
-      {
-        "file": "naapp/secrets/runner/src/aweb_secrets_runner/signature_wire.py",
-        "symbol": "sign_bytes",
-        "callee": "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PrivateKey.sign",
-        "reason": "Standalone Secrets runner signature owner uses its existing cryptography dependency."
-      },
-      {
-        "file": "naapp/secrets/runner/src/aweb_secrets_runner/signature_wire.py",
-        "symbol": "verify_bytes",
-        "callee": "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PublicKey.verify",
-        "reason": "Standalone Secrets runner signature owner checks the shared point and scalar policy before native verification."
-      },
-      {
-        "file": "naapp/secrets/runner/src/aweb_secrets_runner/state.py",
-        "symbol": "IdentityStore.load",
-        "callee": "cryptography.hazmat.primitives.asymmetric.ed25519.Ed25519PrivateKey.from_private_bytes",
-        "reason": "Standalone Secrets runner reloads its existing local key without the AWID service dependency."
       }
     ]
   }

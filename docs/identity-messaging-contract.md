@@ -273,7 +273,7 @@ retain independent budgets even without a trusted client-address header.
 The HTTP source budget uses the socket peer by default and
 ignores forwarded client-address headers. A deployment behind a trusted proxy
 can set `AWEB_CLIENT_ADDRESS_HEADER` to the header carrying the client address.
-The shared `aweb_naapp.client_identity.ClientIdentity` resolver uses its final
+The shared `aweb_naapp_contracts.client_identity.ClientIdentity` resolver uses its final
 comma-separated entry; an absent or blank final entry falls back to the peer.
 The proxy must strip or overwrite client-supplied values, and direct untrusted
 access to the server must be blocked. The final entry represents the client

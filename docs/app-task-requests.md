@@ -469,7 +469,7 @@ answer commits:
 - A verifier compares the full binding set: `team_id`, `app_id`,
   `installation_id`, `installation_generation`, `task_id`, `question_rev`,
   `answer_key`, `answer_sha256`, `choice`, `proposal_rev`, `proposal_sha256`
-  and `answerer_did`. `aweb_naapp.runtime.task_requests.verify_stage_receipt`
+  and `answerer_did`. `aweb_naapp_contracts.task_requests.verify_stage_receipt`
   refuses to run with any of them missing, rather than skipping a check.
 
 ### Receipt

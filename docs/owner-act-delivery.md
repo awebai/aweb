@@ -330,7 +330,7 @@ Each item is one reviewed change.
 
 - **Go manifest interpreter** (`cli/go/internal/appmanifest`): version 3 and
   `owner_acts`, against the version 3 vectors.
-- **`aweb_naapp`**: version 3 in `aweb_naapp.manifest`; a generic owner-act
+- **`aweb_naapp`**: version 3 in `aweb_naapp_contracts.manifest`; a generic owner-act
   delivery router mounted on the human origin, which runs the three stages in
   order, checks the principal's membership and kind with the public verifier
   `observe_identity_kind` and the naapp's current team-certificate check, and

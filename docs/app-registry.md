@@ -13,7 +13,7 @@ coordination do not require an app installation.
 See [Installation management HTTP API](app-installation-api.md) for preview,
 confirmation, member requests, admin approvals and re-verification. The server
 fetches exact bytes from the declared HTTPS origin through shared egress and
-interprets them through `aweb_naapp.manifest`. A failed origin fetch refuses the
+interprets them through `aweb_naapp_contracts.manifest`. A failed origin fetch refuses the
 installation. Installer-uploaded bytes and separately supplied keys, versions
 or event declarations are not installation authority.
 

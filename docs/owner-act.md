@@ -6,7 +6,7 @@ signed artifact by which a team's owner authorizes a governance act that no
 admin, member or agent can perform. Its vector is
 `naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-v1.json`, and its Go authority is `cli/go/awid/owneract.go`,
 which regenerates the vector byte for byte. In Python, a verifier uses
-`aweb_naapp.hooks.owner_act_nonces.OwnerActVerifier` in two steps. `prepare`
+`aweb_naapp_contracts.hooks.owner_act_nonces.OwnerActVerifier` in two steps. `prepare`
 runs outside any transaction: it reads the team's current key and checks the
 act up to its signature, returning a `PreparedOwnerAct`, which is not authority.
 `consume_in` runs inside the transaction that applies the act's effect: it
@@ -18,7 +18,7 @@ from the verifier's registry cache, at most 60 seconds old, so after a team
 key rotation an act signed with the old key can still be consumed for at most
 the cache lifetime plus 60 seconds, about two minutes, and never later. A
 signer builds the bytes with `OwnerActSigningBytes` in Go or
-`aweb_naapp.hooks.owner_act.owner_act_signing_bytes` in Python. Both refuse an
+`aweb_naapp_contracts.hooks.owner_act.owner_act_signing_bytes` in Python. Both refuse an
 act whose fields, subject or lifetime a verifier would refuse, with the
 verifier's code. Python's `hook_binding_subject` builds a `hook-binding.*`
 subject with `scopes` and `reads` in the order this contract fixes. The design

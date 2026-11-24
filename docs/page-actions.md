@@ -200,7 +200,7 @@ Response 200:
 ```
 
 `bindings` holds exactly the twelve `TASK_AUTHORIZATION_BINDINGS`
-(`aweb_naapp.runtime.task_requests`).
+(`aweb_naapp_contracts.task_requests`).
 
 **After acceptance**, a prepare with the same key and identity is recognized
 before the revision check, as a replay is, and re-checks the caller's read
