@@ -227,26 +227,37 @@ async def get_agent_presence(
 async def list_agent_presences_by_workspace_ids(
     redis: Redis,
     workspace_ids: List[str],
+    *,
+    fields: tuple[str, ...] | None = None,
 ) -> List[Dict[str, str]]:
     """
     Fetch presence records for specific workspace IDs.
 
     This avoids scanning global indexes when callers already know which
-    workspaces they need to enrich with presence.
+    workspaces they need to enrich with presence. A projection avoids reading
+    the full hashes when a caller only consumes named fields.
     """
     if not workspace_ids:
         return []
 
     pipe = redis.pipeline()
+    if fields is None:
+        for ws_id in workspace_ids:
+            pipe.hgetall(_presence_key(ws_id))
+        return [data for data in await pipe.execute() if data]
+
+    hash_fields = list(fields)
     for ws_id in workspace_ids:
-        pipe.hgetall(_presence_key(ws_id))
-    presence_data = await pipe.execute()
-
-    results: List[Dict[str, str]] = []
-    for data in presence_data:
-        if data:
-            results.append(data)
-
+        pipe.hmget(_presence_key(ws_id), hash_fields)
+    results = []
+    for values in await pipe.execute():
+        projected = {
+            field: value
+            for field, value in zip(hash_fields, values, strict=True)
+            if value is not None
+        }
+        if projected:
+            results.append(projected)
     return results
 
 

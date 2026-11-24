@@ -110,6 +110,7 @@ async def workspace_activity_by_id(
     failure_policy: GrantLivenessFailurePolicy,
     request: Request | None = None,
     workspace_rows: Sequence[Mapping[str, Any]] | None = None,
+    presence_display_fields: tuple[str, ...] | None = None,
 ) -> dict[str, WorkspaceActivity]:
     """Combine the timestamps written by root, MCP and valid grant heartbeats.
 
@@ -119,6 +120,7 @@ async def workspace_activity_by_id(
     Missing Redis is supported for SQL-only embedding callers. A failed or
     malformed Redis read raises, so lifecycle cleanup cannot mistake it for
     proof of inactivity.
+    A projected display still reads workspace, team and timestamp evidence.
     """
     if not workspace_ids:
         return {}
@@ -150,8 +152,12 @@ async def workspace_activity_by_id(
         )
         rows = list({str(row["workspace_id"]): row for row in workspace_rows}.values())
     workspace_ids = list(dict.fromkeys(workspace_ids))
+    fields = (
+        ("workspace_id", "team_id", "last_seen", *presence_display_fields)
+        if presence_display_fields is not None else None
+    )
     presences = (
-        await list_agent_presences_by_workspace_ids(redis, workspace_ids)
+        await list_agent_presences_by_workspace_ids(redis, workspace_ids, fields=fields)
         if redis is not None
         else []
     )

@@ -2,17 +2,20 @@
 
 import base64
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from pgdbm import AsyncDatabaseManager
+from redis.asyncio.client import Pipeline
 
 from aweb import connection_scope
 from aweb.embedding import OutboxRecoveryOwnership
 from aweb.grant_liveness import GrantLivenessFailurePolicy, valid_grant_liveness_by_workspace
+from aweb.lifecycle_agent import AgentDisposition, apply_agent_disposition_on
 from aweb.presence import clear_workspace_presence, update_agent_presence
+from awid.identity_observation import IdentityKind
 from awid.registry import RegistryError
 from fastapi import HTTPException
 from messaging_actor_support import admit_messaging_actor, register_messaging_team
@@ -29,9 +32,10 @@ from test_workspace_liveness_http import (
 
 
 @pytest_asyncio.fixture
-async def roster_stack(shared_test_pool, monkeypatch):
+async def roster_stack(shared_test_pool, monkeypatch, request):
     async with privacy_stack(
-        shared_test_pool, monkeypatch, outbox_recovery=OutboxRecoveryOwnership.HOST
+        shared_test_pool, monkeypatch, outbox_recovery=OutboxRecoveryOwnership.HOST,
+        workspace_counts=getattr(request, "param", None),
     ) as env:
         yield env
 
@@ -82,6 +86,58 @@ async def test_warm_roster_uses_three_statements_and_one_pool_checkout(
     print(f"ROSTER_COST statements={len(statements)} checkouts={len(checkouts)}")
     assert len(statements) == 3, {"count": len(statements), "statements": statements}
     assert len(checkouts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("roster_stack", [{"alice": 2}], indirect=True)
+async def test_roster_projects_presence_for_listed_agent_workspaces(roster_stack, monkeypatch):
+    env = roster_stack
+    await admit_room_member(env, alias="alice")
+    await admit_room_member(env, alias="carol")
+    async with env.db.transaction() as tx:
+        assert await apply_agent_disposition_on(
+            tx, agent_ids=[env.actors["carol"].id], team_id=TEAM,
+            disposition=AgentDisposition.DELETED, deleted_at=datetime.now(UTC),
+        ) == 1
+    alice_workspace, alternate_workspace = map(str, env.actors["alice"].workspace_ids)
+    hidden = await admit_messaging_actor(
+        env, team_id=TEAM, alias="roster-human", kind=IdentityKind.HUMAN,
+    )
+    await update_agent_presence(
+        env.redis, workspace_id=hidden.workspace_id, alias="roster-human",
+        team_id=TEAM, status="active",
+    )
+    seen = await update_agent_presence(
+        env.redis, workspace_id=alternate_workspace, alias="alice", team_id=TEAM,
+        status="listening", role="alternate-role",
+    )
+    await env.redis.hset(f"presence:{alternate_workspace}", "unshown_blob", "x" * 4096)
+    presence_reads = []
+    execute = Pipeline.execute
+
+    async def observe_execute(pipeline, *args, **kwargs):
+        presence_reads.extend(
+            command for command, _ in pipeline.command_stack
+            if command[0] in ("HMGET", "HGETALL") and command[1].startswith("presence:")
+        )
+        return await execute(pipeline, *args, **kwargs)
+
+    monkeypatch.setattr(Pipeline, "execute", observe_execute)
+    agents = await roster(env)
+    assert all(agent["alias"] not in {"roster-human", "carol"} for agent in agents)
+    alice = next(agent for agent in agents if agent["alias"] == "alice")
+    assert alice["last_seen"] == seen
+    assert alice["status"] == "listening"
+    assert alice["role"] == "alternate-role"
+    keys = {command[1] for command in presence_reads}
+    assert f"presence:{hidden.workspace_id}" not in keys
+    assert f"presence:{env.actors['carol'].workspace}" not in keys
+    assert {f"presence:{alice_workspace}", f"presence:{alternate_workspace}"} <= keys
+    assert all(
+        command[0] == "HMGET"
+        and set(command[2:]) == {"workspace_id", "team_id", "last_seen", "status", "role"}
+        for command in presence_reads
+    )
 
 
 @pytest.mark.asyncio
