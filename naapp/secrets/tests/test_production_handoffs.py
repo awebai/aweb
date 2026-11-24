@@ -62,10 +62,11 @@ async def test_a_certificate_published_after_a_sign_in_is_seen_after_the_refresh
     root, registry, monkeypatch
 ):
     _, client, settings, _, _, _, _, _ = root
-    await signed_in_owner(root)
-    # The window is measured on this clock, held still and then moved past it.
+    # The window is measured on this clock, held still across the sign-in, whose
+    # early refresh of the team's history starts it, and then moved past it.
     signed_in_at = time.monotonic_ns()
     monkeypatch.setattr(time, "monotonic_ns", lambda: signed_in_at)
+    await signed_in_owner(root)
     member, principal = await certified_member(root, registry)
 
     async def start():
@@ -74,7 +75,8 @@ async def test_a_certificate_published_after_a_sign_in_is_seen_after_the_refresh
             settings.public_origin + "/handoffs", content=body, headers=headers
         )
 
-    assert (await start()).status_code == 401
+    unseen = await start()
+    assert (unseen.status_code, unseen.json()["detail"]) == (401, "unregistered")
     window = seconds_to_ns(UNKNOWN_CERTIFICATE_REFRESH_SECONDS + 1)
     monkeypatch.setattr(time, "monotonic_ns", lambda: signed_in_at + window)
     admitted = await start()
