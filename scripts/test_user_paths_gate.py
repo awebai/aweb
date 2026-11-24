@@ -292,6 +292,7 @@ class FrozenGateInput(unittest.TestCase):
                     "candidate-record.sh",
                     "candidate-network.py",
                     "fetch_released_aw.py",
+                    "product_table_writes.py",
                 ]:
                     shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
                 # Docker itself is fake in this input/ledger test. Keep the
@@ -481,7 +482,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 self.assertEqual(receipt["declared"], digest)
                 tree = git("rev-parse", "HEAD^{tree}")
                 main = git("rev-parse", "refs/remotes/origin/main")
-                external = f"CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nSYNCHRONIZED_MAIN_SHA={main}\nRELEASED_AW={digest}\n"
+                external = f"CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nREVIEWED_PRODUCT_TABLE_CEILINGS=absent\nRELEASED_AW={digest}\n"
                 self.assertEqual(
                     ledger[0].split("\t")[0],
                     tree + "-" + hashlib.sha256(external.encode()).hexdigest(),
@@ -491,12 +492,38 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 self.assertEqual(reused.count("NOT COVERED: pending aweb-actu"), 12)
                 self.assertIn("incomplete: human paths not covered", reused)
                 self.assertEqual(len(ledger_rows()), 5)
-                # A new reviewed main baseline also invalidates cached checks,
-                # even when the candidate source tree and artifact are unchanged.
-                next_main = git(
-                    "commit-tree", tree, "-p", main, "-m", "next reviewed main"
-                )
+                # A new main with the same reviewed ceilings keeps the cached
+                # checks. New reviewed ceilings on main invalidate them, even when
+                # the candidate source tree and artifact are unchanged.
+                next_main = git("commit-tree", tree, "-p", main, "-m", "next main")
                 git("update-ref", "refs/remotes/origin/main", next_main)
+                self.assertIn("no stages run", invoke("checks"))
+                self.assertEqual(len(ledger_rows()), 5)
+                ceilings = run_fixture(
+                    ["git", "-C", str(repo), "hash-object", "-w", "--stdin"],
+                    input='{"schema_version":1,"nonliteral_files":{},"files":{}}\n',
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                tools = run_fixture(
+                    ["git", "-C", str(repo), "mktree"],
+                    input=f"100644 blob {ceilings}\tproduct-table-write-ceilings.json\n",
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                reviewed_tree = run_fixture(
+                    ["git", "-C", str(repo), "mktree"],
+                    input=git("ls-tree", tree) + f"\n040000 tree {tools}\ttools\n",
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                reviewed_main = git(
+                    "commit-tree", reviewed_tree, "-p", next_main, "-m", "reviewed ceilings"
+                )
+                git("update-ref", "refs/remotes/origin/main", reviewed_main)
                 invoke("checks")
                 rebound = ledger_rows()
                 self.assertEqual(len(rebound), 6)
@@ -511,7 +538,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 self.assertNotEqual(
                     changed[-1].split("\t")[0], ledger[0].split("\t")[0]
                 )
-                self.assertEqual(server.requests, ["/@awebai%2faw/latest"] * 5)
+                self.assertEqual(server.requests, ["/@awebai%2faw/latest"] * 6)
                 owned_runs = list(run_logs.iterdir())
                 self.assertEqual(len(owned_runs), 4)
                 for run in owned_runs:

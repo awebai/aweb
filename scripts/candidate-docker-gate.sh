@@ -115,7 +115,11 @@ USER_PATHS_LATEST_METADATA="$(python3 "$ROOT/scripts/fetch_released_aw.py" --fre
 USER_PATHS_RESOLVE_SECONDS=$((SECONDS - resolve_started))
 released_identity="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")"
 USER_PATHS_LATEST_SHA256="$released_identity"
-external_inputs+="SYNCHRONIZED_MAIN_SHA=$SYNCHRONIZED_MAIN_SHA"$'\n'
+# Main's commit is not itself a gate input: the product-table check reads only
+# main's reviewed ceilings, so an unchanged tree reuses its pass until they change.
+REVIEWED_PRODUCT_TABLE_CEILINGS="$(python3 "$ROOT/scripts/product_table_writes.py" --root "$ROOT" --reviewed-identity)" \
+  || refuse "cannot read synchronized main's product-table ceilings. Synchronize main and start a new gate invocation."
+external_inputs+="REVIEWED_PRODUCT_TABLE_CEILINGS=$REVIEWED_PRODUCT_TABLE_CEILINGS"$'\n'
 external_inputs+="RELEASED_AW=$released_identity"$'\n'
 input_identity() {
   local name="$1" path="$2" default="$3" repo sha relative

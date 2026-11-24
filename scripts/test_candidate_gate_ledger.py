@@ -247,8 +247,9 @@ def verify_same_tree_commit_cache(
     ledger: Path,
     run_fixed_baseline_gate: Callable[[], str],
     run_full_gate: Callable[[], str],
+    run_reviewed_change_gate: Callable[[], str],
 ) -> list[str]:
-    """Same-tree reuse also requires the same reviewed main."""
+    """Same-tree reuse follows main's reviewed ceilings, not main's commit."""
     previous_rows = ledger.read_text().splitlines()
     previous_main = checked(repo, "git", "rev-parse", "refs/remotes/origin/main")
     previous_tree = checked(repo, "git", "rev-parse", "HEAD^{tree}")
@@ -262,11 +263,30 @@ def verify_same_tree_commit_cache(
     )
     assert ledger.read_text().splitlines() == previous_rows
 
-    # The full entry synchronizes the fixture's advanced main before key lookup.
-    assert "no stages run" not in run_full_gate()
+    # The full entry synchronizes the fixture's advanced main. The reviewed
+    # ceilings did not change, so the unchanged tree reuses its pass.
+    assert "no stages run" in run_full_gate()
     current_main = checked(repo, "git", "rev-parse", "refs/remotes/origin/main")
     assert current_main != previous_main
     assert current_main == checked(repo, "git", "rev-parse", "HEAD")
+    assert ledger.read_text().splitlines() == previous_rows
+
+    # Main changes its reviewed ceilings while the candidate tree stays the
+    # same: the product-table check has a different input, so every stage runs.
+    candidate = checked(repo, "git", "rev-parse", "HEAD")
+    checked(repo, "git", "checkout", "-q", "--detach")
+    ceilings = repo / "tools/product-table-write-ceilings.json"
+    ceilings.parent.mkdir(exist_ok=True)
+    ceilings.write_text('{"schema_version":1,"nonliteral_files":{},"files":{}}\n')
+    checked(repo, "git", "add", str(ceilings.relative_to(repo)))
+    checked(repo, "git", "commit", "-qm", "reviewed ceilings on main")
+    checked(
+        repo, "git", "update-ref", "refs/remotes/origin/main",
+        checked(repo, "git", "rev-parse", "HEAD"),
+    )
+    checked(repo, "git", "checkout", "-q", "--detach", candidate)
+    assert checked(repo, "git", "rev-parse", "HEAD^{tree}") == previous_tree
+    assert "no stages run" not in run_reviewed_change_gate()
     rows = ledger.read_text().splitlines()
     assert rows[: len(previous_rows)] == previous_rows
     fresh = stage_rows(rows[len(previous_rows) :])
@@ -276,6 +296,9 @@ def verify_same_tree_commit_cache(
     fresh_keys = {row[0] for row in fresh}
     assert len(fresh_keys) == 1
     assert fresh_keys.isdisjoint(row.split("\t")[0] for row in previous_rows)
+    # Later callers synchronize main from the fixture's unchanged main branch.
+    checked(repo, "git", "checkout", "-q", "main")
+    assert checked(repo, "git", "rev-parse", "HEAD") == candidate
     return rows
 
 
@@ -297,6 +320,7 @@ def main() -> None:
             "candidate-network.py",
             "fetch_released_aw.py",
             "next_tag_version.py",
+            "product_table_writes.py",
             "release_candidate.py",
             "release_versions.py",
         ):
@@ -441,6 +465,9 @@ candidate-gate:
                 "same-tree-fixed-baseline", *gate, stages=STAGES
             ),
             run_full_gate=lambda: invoke("same-tree-commit", "make", "candidate-gate"),
+            run_reviewed_change_gate=lambda: invoke(
+                "reviewed-ceilings-change", *gate, stages=STAGES
+            ),
         )
         # A release must require all stages despite an inherited focused selector.
         output = invoke(
@@ -529,7 +556,7 @@ candidate-gate:
             for name in (
                 "first-checks",
                 "missing-only",
-                "same-tree-commit",
+                "reviewed-ceilings-change",
                 "version-input",
                 "changed-tree",
                 "failed-tree",
