@@ -36,6 +36,7 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 		{refusal: "shell-slow-cycle", slowRefusalCycle: true},
 	} {
 		t.Run(tc.refusal, func(t *testing.T) {
+			t.Parallel()
 			refusal := strings.TrimSuffix(strings.TrimSuffix(tc.refusal, "-delayed"), "-slow-cycle")
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			store, err := NewStore(filepath.Join(root, "state"))
