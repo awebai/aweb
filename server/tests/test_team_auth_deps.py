@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -272,7 +273,32 @@ class TestResolveTeamIdentity:
             await resolve_team_identity(db, cert_info)
 
     @pytest.mark.asyncio
-    async def test_rechecks_the_exact_native_snapshot_under_acceptance_locks(self, privacy_app):
+    @pytest.mark.parametrize("locked_row", ["member", "team"])
+    async def test_warm_certificate_reads_complete_while_update_lock_is_held(self, privacy_app, locked_row):
+        from test_dashboard_privacy import TEAM
+        from test_messages_http import _signed_team_headers
+
+        env = privacy_app
+        member, _ = await _admitted_cert_info(env, alias="bob")
+        headers = _signed_team_headers(member.sk, member.did, TEAM, member.certificate, b"")
+        async with env.db.transaction() as writer:
+            # PostgreSQL takes this row lock for an UPDATE of non-key columns.
+            if locked_row == "member":
+                assert await writer.fetch_value(
+                    "SELECT agent_id FROM {{tables.agents}} WHERE agent_id = $1 FOR NO KEY UPDATE",
+                    member.id,
+                ) == member.id
+            else:
+                assert await writer.fetch_value(
+                    "SELECT team_id FROM {{tables.teams}} WHERE team_id = $1 FOR NO KEY UPDATE", TEAM,
+                ) == TEAM
+            async with asyncio.timeout(3):
+                for path in ("/v1/agents", "/v1/messages/inbox"):
+                    response = await env.client.get(path, headers=headers)
+                    assert response.status_code == 200, response.text
+
+    @pytest.mark.asyncio
+    async def test_reads_the_exact_native_snapshot_in_an_existing_transaction(self, privacy_app):
         from aweb.member_team_key import read_member_projection
         from aweb.team_auth_deps import resolve_team_identity
 
@@ -293,10 +319,10 @@ class TestResolveTeamIdentity:
             query for query in queries if "agents" in query.lower() and "select" in query.lower()
         ]
         assert len(member_reads) == 1, member_reads
-        assert "FOR SHARE OF t, a" in member_reads[0]
+        assert "FOR SHARE" not in member_reads[0] and "FOR UPDATE" not in member_reads[0]
 
     @pytest.mark.asyncio
-    async def test_warm_acceptance_takes_one_statement_on_the_request_connection(self, privacy_app):
+    async def test_warm_admission_takes_one_statement_on_the_request_connection(self, privacy_app):
         from aweb.connection_scope import connection_scope
         from aweb.member_team_key import read_member_projection
         from aweb.team_auth_deps import resolve_team_identity
@@ -316,10 +342,10 @@ class TestResolveTeamIdentity:
         assert identity.agent_id == str(member.id)
         admission = [query for query in queries if query != "SELECT 1"]
         assert len(admission) == 1, admission
-        assert "FOR SHARE OF t, a" in admission[0]
+        assert "FOR SHARE" not in admission[0] and "FOR UPDATE" not in admission[0]
 
     @pytest.mark.asyncio
-    async def test_mounted_snapshot_carries_the_locked_row_and_overlay_once(self, privacy_app):
+    async def test_mounted_snapshot_reads_member_and_overlay_together(self, privacy_app):
         from dataclasses import replace
 
         from aweb.connection_scope import connection_scope
@@ -382,7 +408,7 @@ class TestResolveTeamIdentity:
         }
         admission = [query for query in queries if query != "SELECT 1"]
         assert len(admission) == 1, admission
-        assert "FOR SHARE OF t, a" in admission[0]
+        assert "FOR SHARE" not in admission[0] and "FOR UPDATE" not in admission[0]
         assert admitted_member_projection(request, admitted.identity) is None
         with pytest.raises(ValueError, match="different request or certificate"):
             await resolve_team_membership(env.db, cert_info, request=request, snapshot=snapshot)
@@ -521,7 +547,7 @@ class TestResolveTeamIdentity:
             query for query in queries if "agents" in query.lower() and "select" in query.lower()
         ]
         assert len(member_reads) == 2, member_reads
-        assert "FOR SHARE OF t, a" in member_reads[-1]
+        assert "FOR SHARE" not in member_reads[-1] and "FOR UPDATE" not in member_reads[-1]
 
 
 @pytest.mark.asyncio

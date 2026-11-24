@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Server 1.27.53 is the first published release with the workspace-contact
+  change below. Warm team certificate admission reads the member and team key
+  in one PostgreSQL snapshot without locking either row. Embedders that relied
+  on `read_team_member_snapshot` to wait for a concurrent writer should enforce
+  their write-time policy on the locked reread via `before_write`.
+
 - Self-hosted CLI and wake processes retain access to private or HTTP AWID
   registries chosen by the operator. `aw` records a saved `--registry`,
   `--awid-registry` or `AWID_REGISTRY_URL` choice, and treats the identity’s

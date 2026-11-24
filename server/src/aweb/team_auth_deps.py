@@ -83,7 +83,7 @@ class _MemberCredential(NamedTuple):
 
 @dataclass(frozen=True)
 class TeamMemberSnapshot:
-    """The native locked read and optional host facts for one verified request."""
+    """The native member and optional host facts read together for one verified request."""
 
     member: MemberProjection | None
     host_row: Mapping[str, Any] | None
@@ -147,14 +147,14 @@ async def read_team_member_snapshot(
 ) -> TeamMemberSnapshot:
     """Read once after certificate verification, before host route policy.
 
-    Pass a database manager outside any transaction. SHARE locks on the team
-    and member live through the statement. This read performs no acceptance
-    writes and also returns host facts when the native member is absent.
+    Pass a database manager outside any transaction. This read uses one MVCC
+    snapshot without row locks and returns host facts even if the native member
+    is absent. Acceptance writes take their own locks and recheck the snapshot.
     """
     if isinstance(db, TransactionManager):
         raise ValueError("A request member snapshot requires a database manager outside a transaction")
     return await _read_team_member_snapshot(
-        db, _snapshot_credential(cert_info), request, overlay_sql, MemberReadLock.SHARE
+        db, _snapshot_credential(cert_info), request, overlay_sql, MemberReadLock.NONE
     )
 
 
@@ -195,32 +195,6 @@ def _changes_certificate(row: MemberProjection, certificate_id: str, team_key: s
     )
 
 
-class _ReleaseShareBeforeUpdating(Exception):
-    """Roll back the savepoint that acquired SHARE when called inside a transaction."""
-
-
-async def _read_admission_share(
-    db: AsyncDatabaseManager | TransactionManager,
-    credential: _MemberCredential,
-    request: Request | None,
-) -> TeamMemberSnapshot:
-    if not isinstance(db, TransactionManager):
-        return await _read_team_member_snapshot(db, credential, request, None, MemberReadLock.SHARE)
-    # Compatibility for preexisting native callers that pass a transaction.
-    # A released savepoint retains its locks. Roll back this read's savepoint
-    # on a certificate change before taking the write lock.
-    try:
-        async with db.transaction() as tx:
-            snapshot = await _read_team_member_snapshot(tx, credential, request, None, MemberReadLock.SHARE)
-            if snapshot.member is not None and _changes_certificate(
-                snapshot.member, credential.certificate_id, credential.team_key,
-            ):
-                raise _ReleaseShareBeforeUpdating()
-    except _ReleaseShareBeforeUpdating:
-        pass
-    return snapshot
-
-
 async def resolve_team_identity(
     db: AsyncDatabaseManager,
     cert_info: dict,
@@ -247,7 +221,7 @@ async def resolve_team_membership(
     Args:
         db: The aweb database manager.
         cert_info: Verified certificate fields and native standing evidence.
-        snapshot: Native SHARE read of this credential in the same ASGI request.
+        snapshot: Native member snapshot for this credential in the same ASGI request.
             When supplied, pass a database manager outside any transaction.
         before_write: Host policy check on the UPDATE reread, without I/O.
 
@@ -271,7 +245,7 @@ async def resolve_team_membership(
         raise ValueError("Member snapshot belongs to a different request or certificate")
 
     binding = cert_info.get("identity_binding")
-    read_native_share = False
+    read_native_snapshot = False
     # A host that already read this member's agent row while verifying the
     # same request passes it as cert_info["agent_row"]; it is used only for the
     # exact (team_id, did_key) this certificate verified.
@@ -302,11 +276,12 @@ async def resolve_team_membership(
                 and not binding.fresh_observation
                 and not isinstance(db, TransactionManager)
             ):
-                # The verifier already supplied the binding. Read the native
-                # member under SHARE once, without an unlocked preflight.
-                snapshot = await _read_admission_share(db, credential, request)
+                # Cached binding evidence lets the request use one native read.
+                snapshot = await _read_team_member_snapshot(
+                    db, credential, request, None, MemberReadLock.NONE
+                )
                 row = snapshot.member
-                read_native_share = True
+                read_native_snapshot = True
             else:
                 row = await read_member_projection(db, team_id=team_id, did_key=did_key)
 
@@ -342,25 +317,22 @@ async def resolve_team_membership(
             did_aw=row.get("did_aw") or "",
             address=row.get("address") or "",
         )
-        if read_native_share:
+        if read_native_snapshot:
             # When a stored claim needs independent evidence, recheck the
             # member after that observation, just like the preflight path.
             snapshot = None
     # identity.md:807-811: later grants must retain the exact certificate that
     # this verified request makes current for its subject.
-    # A worker may still hold a verified old key in its memo, or a host may
-    # have read its snapshot before rotation. Recheck under the same locks
-    # that protect acceptance and binding writes; no registry read occurs here.
-    # A reader with cached/local binding evidence and the same credential
-    # does not write acceptance. Share its membership lock with delivery's
-    # policy locks, while retaining the transactional current-key check.
-    # If the credential changed, release SHARE before taking UPDATE so two
-    # readers never deadlock while upgrading their locks. Reread and validate
-    # again in that transaction; the earlier row grants no authority.
+    # Unchanged admission uses the committed member and team key visible in
+    # one statement. A concurrent rotation or removal may commit afterward.
+    # Acceptance and binding writes reread under their locks, including when
+    # a host supplied a snapshot or the verified key came from the request memo.
     changed = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
     if not binding.fresh_observation and not changed:
         if snapshot is None:
-            snapshot = await _read_admission_share(db, credential, request)
+            snapshot = await _read_team_member_snapshot(
+                db, credential, request, None, MemberReadLock.NONE
+            )
         row = snapshot._require_current_member()
         changed = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
 
