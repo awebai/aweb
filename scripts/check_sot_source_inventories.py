@@ -176,7 +176,7 @@ def check_repository(root: Path) -> list[str]:
         (
             "aweb-kit-tables",
             root / "docs/aweb-sot.md",
-            extract_sql_tables(root / "naapp-lib/src/aweb_naapp/hooks/migrations"),
+            extract_sql_tables(root / "naapp-contracts/src/aweb_naapp_contracts/hooks/migrations"),
         ),
         (
             "aweb-routers",
@@ -216,7 +216,7 @@ def main() -> int:
             print(f"FAIL: {error}", file=sys.stderr)
         return 1
     aweb_tables = extract_sql_tables(root / "server/src/aweb/migrations/aweb")
-    kit_tables = extract_sql_tables(root / "naapp-lib/src/aweb_naapp/hooks/migrations")
+    kit_tables = extract_sql_tables(root / "naapp-contracts/src/aweb_naapp_contracts/hooks/migrations")
     routers = extract_fastapi_routers(root / "server/src/aweb/api.py")
     awid_tables = extract_sql_tables(root / "awid/src/awid_service/migrations")
     print(

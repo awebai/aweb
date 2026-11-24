@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 ARCHIVE = Path(__file__).parent / "fixtures" / "retired_lock_migrations"
 MODULES = {
     "awid": (ROOT / "awid/src/awid_service/migrations", "awid-service", 15),
-    "hooks": (ROOT / "naapp-lib/src/aweb_naapp/hooks/migrations", "aweb_naapp_hooks", 2),
+    "hooks": (ROOT / "naapp-contracts/src/aweb_naapp_contracts/hooks/migrations", "aweb_naapp_hooks", 2),
 
 }
 

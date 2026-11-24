@@ -21,7 +21,7 @@ GETTERS = {
 }
 ROOT = Path(__file__).resolve().parents[2]
 DOMAIN_VERIFIER = "awid_service.deps.get_domain_verifier"
-FIXTURE_CONSUMERS = ("naapp-lib/testing/", "server/tests/")
+FIXTURE_CONSUMERS = ("naapp-contracts/testing/", "server/tests/")
 
 
 @dataclass(frozen=True)

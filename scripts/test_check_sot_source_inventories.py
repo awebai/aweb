@@ -142,7 +142,7 @@ class SourceInventoryTests(unittest.TestCase):
     def test_negative_control_rejects_kit_table_addition_without_doc_update(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self._fixture_root(Path(tmp))
-            migration = root / "naapp-lib/src/aweb_naapp/hooks/migrations/002_extra.sql"
+            migration = root / "naapp-contracts/src/aweb_naapp_contracts/hooks/migrations/002_extra.sql"
             migration.write_text("CREATE TABLE {{tables.kappa}} ();\n")
             errors = inventories.check_repository(root)
             self.assertTrue(any("aweb-kit-tables" in error and "kappa" in error for error in errors), errors)
@@ -181,7 +181,7 @@ class SourceInventoryTests(unittest.TestCase):
             "server/src/aweb",
             "awid/src/awid_service/migrations",
             "awid/src/awid",
-            "naapp-lib/src/aweb_naapp/hooks/migrations",
+            "naapp-contracts/src/aweb_naapp_contracts/hooks/migrations",
             "docs",
         ]
         for path in paths:
@@ -193,7 +193,7 @@ class SourceInventoryTests(unittest.TestCase):
         (root / "awid/src/awid_service/migrations/001.sql").write_text(
             "CREATE TABLE IF NOT EXISTS {{tables.omega}} ();\n"
         )
-        (root / "naapp-lib/src/aweb_naapp/hooks/migrations/001.sql").write_text(
+        (root / "naapp-contracts/src/aweb_naapp_contracts/hooks/migrations/001.sql").write_text(
             "CREATE TABLE IF NOT EXISTS {{tables.iota}} ();\n"
         )
         (root / "awid/src/awid/registry.py").write_text(
