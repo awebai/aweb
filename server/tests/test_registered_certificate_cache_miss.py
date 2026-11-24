@@ -14,6 +14,7 @@ import pytest
 import pytest_asyncio
 from aweb.team_auth_deps import verify_request_certificate
 from awid.registry import CachedRegistryClient
+from certificate_read_support import scheduled_certificate_readers
 from team_facts_fixtures import LegacyTeamFacts
 from awid.signing import canonical_json_bytes, sign_message
 from fastapi import HTTPException
@@ -125,17 +126,17 @@ async def _refused(env, certificate_id, **kwargs):
     return caught.value
 
 
-def _observation_readers_arrived(world, monkeypatch, count):
+def _observation_readers_arrived(registry, monkeypatch, count):
     arrived = asyncio.Event()
-    read_observation = world.registry._read_team_certificate_observation
+    read_observation = registry._read_team_certificate_observation
 
     async def observe(key):
-        state = world.registry._team_certificate_miss_states.get(key)
+        state = registry._team_certificate_miss_states.get(key)
         if state is not None and state.readers == count:
             arrived.set()
         return await read_observation(key)
 
-    monkeypatch.setattr(world.registry, "_read_team_certificate_observation", observe)
+    monkeypatch.setattr(registry, "_read_team_certificate_observation", observe)
     return arrived
 
 
@@ -208,8 +209,8 @@ async def test_redis_admission_failure_never_fetches_authority(world, monkeypatc
 async def test_concurrent_misses_share_inflight_refresh_past_admission_window(world, monkeypatch):
     world.release = asyncio.Event()
     world.registered.append("cert-new")
-    all_arrived = _observation_readers_arrived(world, monkeypatch, 24)
-    async with asyncio.TaskGroup() as callers:
+    all_arrived = _observation_readers_arrived(world.registry, monkeypatch, 24)
+    async with scheduled_certificate_readers() as callers:
         calls = [callers.create_task(_verify(world, "cert-new")) for _ in range(12)]
         try:
             await world.entered.wait()
@@ -250,16 +251,20 @@ async def test_key_rotation_and_list_miss_cannot_bypass_current_revocation(world
 async def test_caller_cancellation_does_not_extend_deadline_or_cancel_other_waiter(world, monkeypatch):
     world.registered.append("cert-new")
     world.release = asyncio.Event()
-    both_arrived = _observation_readers_arrived(world, monkeypatch, 2)
-    async with asyncio.TaskGroup() as callers:
-        first = callers.create_task(_verify(world, "cert-new"))
+    client = world.client(timeout_seconds=60)
+    both_arrived = _observation_readers_arrived(client, monkeypatch, 2)
+    async with scheduled_certificate_readers() as callers:
+        first = callers.create_task(_verify(world, "cert-new", registry=client))
         try:
             await world.entered.wait()
-            second = callers.create_task(_verify(world, "cert-new"))
+            second = callers.create_task(_verify(world, "cert-new", registry=client))
             await both_arrived.wait()
-            first.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await first
+                async with asyncio.timeout(10):
+                    first.cancel()
+                    await first
+            assert not world.release.is_set()
+            assert not second.done()
         finally:
             world.release.set()
     assert second.result()["certificate_id"] == "cert-new"

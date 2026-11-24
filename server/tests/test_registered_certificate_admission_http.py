@@ -24,6 +24,7 @@ from awid.registry import RegistryClient
 from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app as create_registry_app
 from awid_service.testing import TXTAnswers
+from certificate_read_support import scheduled_certificate_readers
 from dashboard_test_support import _JWT_SECRET, _make_jwt
 from redis.asyncio import Redis
 from test_cli_never_grants import registry_listener
@@ -246,41 +247,38 @@ async def test_unregistered_certificate_reuses_exact_refusal(privacy_app, monkey
 @pytest.mark.asyncio
 async def test_point_budget_overflow_shares_the_next_list(privacy_app, monkeypatch):  # noqa: F811
     async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport, point_window):
-        overflow_waits: list[int] | None = None
-        admissions_ready = asyncio.Event()
+        completed = 0
+        waiting = 0
+        readers_changed = asyncio.Event()
         release_overflow = asyncio.Event()
 
         async def hold_overflow(admission):
-            if overflow_waits is None:
-                return
-            overflow_waits.append(admission)
-            if len(overflow_waits) == 2:
-                admissions_ready.set()
-            await release_overflow.wait()
+            nonlocal waiting
+            if admission > 0:
+                waiting += 1
+                readers_changed.set()
+                await release_overflow.wait()
 
-        async def connect_overflow(credential):
-            try:
-                await connect(credential)
-            finally:
-                # Finishing before admission is a failure, not an event wait.
-                admissions_ready.set()
+        async def connect_reader(credential):
+            nonlocal completed
+            await connect(credential)
+            completed += 1
+            readers_changed.set()
 
         await connect(await member("first-member"))
         assert (transport.reads, transport.point_reads) == (1, 0)
         async with point_window(after_admission=hold_overflow) as window_key:
             admitted = await asyncio.gather(*(member(f"member-{i}") for i in range(18)))
-            await asyncio.gather(*(connect(credential) for credential in admitted[:16]))
-            assert (transport.reads, transport.point_reads) == (1, 16)
-
-            overflow_waits = []
-            async with asyncio.TaskGroup() as overflow:
-                for credential in admitted[16:]:
-                    overflow.create_task(connect_overflow(credential))
+            async with scheduled_certificate_readers() as readers:
+                for credential in admitted:
+                    readers.create_task(connect_reader(credential))
                 try:
-                    await admissions_ready.wait()
-                    assert len(overflow_waits) == 2
-                    assert all(wait_ms > 0 for wait_ms in overflow_waits), overflow_waits
-                    # Both readers saw exhaustion; let them share the next list.
+                    while completed + waiting < len(admitted):
+                        readers_changed.clear()
+                        await readers_changed.wait()
+                    assert (completed, waiting) == (16, 2), "point reads and overflow waiters"
+                    assert (transport.reads, transport.point_reads) == (1, 16)
+                    # Both overflow readers can now share the next list.
                     assert await privacy_app.redis.delete(window_key) == 1
                 finally:
                     release_overflow.set()
