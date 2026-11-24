@@ -39,7 +39,6 @@ committed or sent to reviewers.
 | `pull_seconds` | Optional evidence-transfer bound, default 600 |
 | `cleanup_seconds` | Optional cleanup allowance, default 300 |
 | `margin_seconds` | Optional completion margin, default 300 |
-| `lint_timeout_seconds` | Optional total local lint bound, default 600 |
 
 `state_root`, `ledger`, `token_file` and `snapshot_manifest` must be absolute
 and outside the selected source repository. Protect config and credential files
@@ -79,12 +78,7 @@ and release tags. Focused commands run as supplied, with no inherited sizing
 or stage environment overrides.
 
 Before reading credentials, admission checks config, clean checkout, exact
-commit, source pins versus base manifest, bundle refs and shell syntax. It then
-runs the selected source's checks-list lint/format targets on a temporary exact
-checkout. Containers are disabled there; a failing check prints its output and
-refuses allocation. A formatter that changes bytes also refuses. The VM still
-runs the requested checks stage unchanged. Local logs and pass lines are in
-`local-checks.json` and summary.json, including on refusal.
+commit, source pins versus base manifest, bundle refs and shell syntax.
 
 Each admitted run reaps expired dispatcher resources before creating anything.
 A capacity refusal names the server type and provider code, with no retry or
