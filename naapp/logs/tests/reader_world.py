@@ -307,9 +307,11 @@ async def _owner_act(world: World, act: str, subject: dict, apply) -> object:
     return result
 
 
-async def held_reader(world: World, principal: str = READER) -> tuple[str, str]:
+async def held_reader(
+    world: World, principal: str = READER, *, certificate: bytes = CERTIFICATE
+) -> tuple[str, str]:
     """A reader the owner designated by a human-role act, with its credential
-    bound and in effect: its scope and holder."""
+    bound and in effect and ``certificate`` retained: its scope and holder."""
     device, credential = _credential(world)
 
     async def designate(tx, act):
@@ -317,7 +319,7 @@ async def held_reader(world: World, principal: str = READER) -> tuple[str, str]:
             tx,
             act=act,
             credential=HumanCredential.parse(credential),
-            certificate=CERTIFICATE,
+            certificate=certificate,
             notice_contact=None,
         )
 

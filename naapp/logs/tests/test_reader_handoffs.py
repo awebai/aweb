@@ -188,7 +188,11 @@ async def aw(world: World) -> AsyncIterator[Aw]:
             )
             for alias in ("reader", "outsider")
         ]
-        scope, _ = await held_reader(world, reader.principal)
+        scope, _ = await held_reader(
+            world,
+            reader.principal,
+            certificate=canonical_json_bytes(reader.member.certificate()),
+        )
         cache = AWIDTeamCache(
             registry_url=REGISTRY_URL,
             ttl_seconds=60,
