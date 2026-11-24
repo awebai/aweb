@@ -257,7 +257,7 @@ class Catalog:
 @cache
 def packaged_catalog() -> Catalog:
     """The aweb.hooks v1 catalog shipped in this package."""
-    return load_catalog(files("aweb_naapp_contracts.hooks").joinpath("catalog-v1.json").read_bytes())
+    return load_catalog(files("aweb_naapp_contracts").joinpath("vectors", "hook-catalog-v1.json").read_bytes())
 
 
 def load_catalog(data: bytes) -> Catalog:

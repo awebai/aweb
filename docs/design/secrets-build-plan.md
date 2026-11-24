@@ -110,7 +110,7 @@ These are owned elsewhere. secrets tasks list them by ID.
 
 | ID | What secrets needs | Task | Status |
 | --- | --- | --- | --- |
-| X1 | **Hook contract.** Catalog v1 vector with the `post-secret-use-hook` action enum, payload allowlist and `refusal_code` enum, and the `post-governance-hook` act and direction table; envelope `aweb.hook-event/1` and its vectors; `aweb.owner-act/1` and its vector; binding cases with the `active_from` pad. | aweb-acgh.16.1 (H1), aweb-acgh.16.27, aweb-acgh.16.33 | Built: `docs/vectors/hook-catalog-v1.json` (the same catalog as `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json`), `hook-event-envelope-v1.json`, `owner-act-v1.json`, `hook-binding-cases-v1.json`. The optional `use_ref` on `post-secret-use-hook` is in catalog v1, re-frozen in place under Juan's ruling on the `use_ref` in-place v1 re-freeze. Catalog versioning applies from the first deployment (decision 93). |
+| X1 | **Hook contract.** Catalog v1 vector with the `post-secret-use-hook` action enum, payload allowlist and `refusal_code` enum, and the `post-governance-hook` act and direction table; envelope `aweb.hook-event/1` and its vectors; `aweb.owner-act/1` and its vector; binding cases with the `active_from` pad. | aweb-acgh.16.1 (H1), aweb-acgh.16.27, aweb-acgh.16.33 | Built: `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-catalog-v1.json` (the same catalog as `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json`), `hook-event-envelope-v1.json`, `owner-act-v1.json`, `hook-binding-cases-v1.json`. The optional `use_ref` on `post-secret-use-hook` is in catalog v1, re-frozen in place under Juan's ruling on the `use_ref` in-place v1 re-freeze. Catalog versioning applies from the first deployment (decision 93). |
 | X2 | **Hook kit in `aweb_naapp`** behind its own extra: envelope signing, producer outbox with enqueue inside the effecting transaction and `event_id` minted once, drain and delivery client, hook-delivery credential. | aweb-acgh.16.4, .16.6, .16.7, .16.8 (K1, K3a, K3b, K4) | Built: `naapp-lib/src/aweb_naapp/hooks/` (`envelope.py`, `producer.py`, `delivery.py`, `resolver.py`, `transport.py`), `hooks` extra. |
 | X3 | **Owner-act verifier** in `aweb_naapp`, and `Passkeys.designate()` accepting only the verifier's type. | aweb-acgh.16.5 (K2); aweb-acgh.10 | Built: `naapp-lib/src/aweb_naapp/hooks/owner_act.py`, `owner_act_nonces.py`. |
 | X4 | **B1 verifier** with scope enforcement, the policy hook and `Principal.did_aw`. | aweb-acgh.3 | Built: `naapp-lib/src/aweb_naapp/runtime/team_auth.py`. |
@@ -174,7 +174,7 @@ Paths below abbreviate `naapp-lib/src/aweb_naapp/` as `aweb_naapp/` and
 - **Scope:** §7.2–§7.4 and the bounds in §7.3, generic, with the
   `internal_destinations` deploy setting.
 - **Where:** `aweb_naapp/egress/` behind the `egress` extra; the generic
-  vectors `docs/vectors/egress-url-v2.json` and `egress-address-v1.json`.
+  vectors `naapp-contracts/src/aweb_naapp_contracts/vectors/egress-url-v2.json` and `egress-address-v1.json`.
 
 ### S2. Idempotency store in `aweb_naapp`
 

@@ -22,7 +22,7 @@ from aweb_naapp_contracts.task_requests import (
 )
 
 AWEB_ROOT = Path(__file__).resolve().parents[2]
-PREPARE = json.loads((AWEB_ROOT / "docs" / "vectors" / "page-action-prepare-v1.json").read_text())
+PREPARE = json.loads((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "page-action-prepare-v1.json").read_text())
 
 CALLS = {"prepare", "submit", "deliver", "reconcile"}
 OUTCOMES = {

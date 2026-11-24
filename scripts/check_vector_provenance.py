@@ -13,10 +13,16 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+# The public vector authorities: aweb's protocol vectors, and the naapp
+# contract vectors, which ship inside the aweb-naapp-contracts package. One
+# index, docs/vectors/README.md, lists both.
 PUBLIC_ROOT = PurePosixPath("docs/vectors")
+CONTRACTS_PUBLIC_ROOT = PurePosixPath("naapp-contracts/src/aweb_naapp_contracts/vectors")
+PUBLIC_ROOTS = frozenset({PUBLIC_ROOT, CONTRACTS_PUBLIC_ROOT})
 EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("cli/go/internal/conformance/vectors"),
     PUBLIC_ROOT,
+    CONTRACTS_PUBLIC_ROOT,
     PurePosixPath("naapp-lib/tests/vectors"),
     PurePosixPath("naapp/library/tests/vectors"),
     PurePosixPath("naapp/library/test-vectors"),
@@ -26,9 +32,6 @@ EXPECTED_VECTOR_ROOTS = {
 MANAGED_PUBLIC_COPIES = {
     PurePosixPath("cli/go/internal/conformance/vectors/team-auth-envelope-v2.json"): (
         PUBLIC_ROOT / "team-auth-envelope-v2.json"
-    ),
-    PurePosixPath("naapp-lib/src/aweb_naapp/hooks/catalog-v1.json"): (
-        PUBLIC_ROOT / "hook-catalog-v1.json"
     ),
 }
 
@@ -48,6 +51,11 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    # Installed apps load the hook catalog from the package, without a checkout.
+    PurePosixPath("naapp-contracts/src/aweb_naapp_contracts/hooks/catalog.py"): _consumer(
+        "hook-catalog-v1.json",
+        'files("aweb_naapp_contracts").joinpath("vectors", "hook-catalog-v1.json")',
+    ),
     PurePosixPath("awid/tests/test_unowned_team_claim.py"): _consumer(
         "team-control-requests-v1.json",
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
@@ -216,7 +224,7 @@ ROOT_CONSUMERS = {
             "app-request-credential-v1.json",
             "task-answer-v1.json",
         ),
-        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+        'Path(__file__).resolve().parents[2] / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_app_credential_signer.py"): _consumer(
         "app-request-credential-v1.json",
@@ -224,12 +232,12 @@ ROOT_CONSUMERS = {
     ),
     PurePosixPath("server/tests/test_app_credential_signing.py"): _consumer(
         "app-request-credential-v1.json",
-        'ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
+        'ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "app-request-credential-v1.json"',
     ),
     PurePosixPath("server/tests/test_app_self_read_vectors.py"): _consumer(
         ("app-grant-status-v1.json", "hook-resolution-v1.json"),
-        'ROOT / "docs" / "vectors" / "app-grant-status-v1.json"',
-        'ROOT / "docs" / "vectors" / "hook-resolution-v1.json"',
+        'ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "app-grant-status-v1.json"',
+        'ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-resolution-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_app_self_read_vectors.py"): _consumer(
         ("app-grant-status-v1.json", "hook-resolution-v1.json"),
@@ -281,7 +289,7 @@ ROOT_CONSUMERS = {
     ),
     PurePosixPath("cli/go/awid/app_task_authorization_test.go"): _consumer(
         "app-task-authorization-v1.json",
-        '"../../../docs/vectors/app-task-authorization-v1.json"',
+        '"../../../naapp-contracts/src/aweb_naapp_contracts/vectors/app-task-authorization-v1.json"',
     ),
     PurePosixPath("cli/go/awid/page_proposal_test.go"): _consumer(
         "page-proposal-v1.json",
@@ -383,7 +391,7 @@ ROOT_CONSUMERS = {
         "team-certificate-verification-v1.json",
         '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_team_certificate_vectors.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_team_certificate_vectors.py"): _consumer(
         "team-certificate-verification-v1.json",
         '(Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json")',
     ),
@@ -599,17 +607,17 @@ ROOT_CONSUMERS = {
         "page-proposal-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "page-proposal-v1.json"',
     ),
-    PurePosixPath("naapp-lib/tests/runtime/test_task_request_vectors.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/test_task_request_vectors.py"): _consumer(
         (
             "app-task-authorization-v1.json",
             "task-answer-v1.json",
         ),
-        'AWEB_ROOT / "docs" / "vectors" / "app-task-authorization-v1.json"',
-        'AWEB_ROOT / "docs" / "vectors" / "task-answer-v1.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "app-task-authorization-v1.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "task-answer-v1.json"',
     ),
-    PurePosixPath("naapp-lib/tests/runtime/test_prepare_vectors.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/test_prepare_vectors.py"): _consumer(
         "page-action-prepare-v1.json",
-        'AWEB_ROOT / "docs" / "vectors" / "page-action-prepare-v1.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "page-action-prepare-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_usage_vectors.py"): _consumer(
         ("usage-report-v1.json", "app-usage-credential-v1.json"),
@@ -620,39 +628,39 @@ ROOT_CONSUMERS = {
         "team-auth-envelope-v2.json",
         'AWEB_ROOT / "docs" / "vectors" / "team-auth-envelope-v2.json"',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_catalog.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_catalog.py"): _consumer(
         "hook-catalog-v1.json",
-        'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-catalog-v1.json"',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_binding_cases.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_binding_cases.py"): _consumer(
         "hook-binding-cases-v1.json",
-        'AWEB_ROOT / "docs" / "vectors" / "hook-binding-cases-v1.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-binding-cases-v1.json"',
     ),
-    PurePosixPath("naapp-lib/tests/egress/test_url_vectors.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/egress/test_url_vectors.py"): _consumer(
         "egress-url-v2.json",
-        'AWEB_ROOT / "docs" / "vectors" / "egress-url-v2.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "egress-url-v2.json"',
     ),
-    PurePosixPath("naapp-lib/tests/egress/test_addresses.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/egress/test_addresses.py"): _consumer(
         "egress-address-v1.json",
-        'AWEB_ROOT / "docs" / "vectors" / "egress-address-v1.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "egress-address-v1.json"',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_envelope_vector_payloads.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_envelope_vector_payloads.py"): _consumer(
         {"hook-catalog-v1.json", "hook-event-envelope-v1.json"},
-        '(AWEB_ROOT / "docs" / "vectors" / "hook-event-envelope-v1.json")',
-        '(AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json")',
+        '(AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-event-envelope-v1.json")',
+        '(AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-catalog-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_envelope.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_envelope.py"): _consumer(
         {"hook-catalog-v1.json", "hook-event-envelope-v1.json"},
-        '(AWEB_ROOT / "docs" / "vectors" / "hook-event-envelope-v1.json")',
-        '(AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json")',
+        '(AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-event-envelope-v1.json")',
+        '(AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-catalog-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_delivery.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_delivery.py"): _consumer(
         "hook-delivery-credential-v2.json",
-        '(AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v2.json")',
+        '(AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-delivery-credential-v2.json")',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_envelope_bound.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_envelope_bound.py"): _consumer(
         "hook-catalog-v1.json",
-        'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-catalog-v1.json"',
     ),
     PurePosixPath("naapp/logs/tests/test_manifest.py"): _consumer(
         "hook-catalog-v1.json",
@@ -678,51 +686,51 @@ ROOT_CONSUMERS = {
         "logs-export-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "logs-export-v1.json"',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_owner_act_vector.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_owner_act_vector.py"): _consumer(
         "owner-act-v1.json",
-        '(AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json")',
+        '(AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "owner-act-v1.json")',
     ),
     PurePosixPath("naapp-lib/tests/hooks/test_producer.py"): _consumer(
         "hook-catalog-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_packaged_catalog.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_packaged_catalog.py"): _consumer(
         "hook-catalog-v1.json",
-        'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-catalog-v1.json"',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_owner_act_signing.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_owner_act_signing.py"): _consumer(
         "owner-act-v1.json",
-        '(AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json")',
+        '(AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "owner-act-v1.json")',
     ),
-    PurePosixPath("naapp-lib/tests/hooks/test_owner_act_delivery_vector.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/hooks/test_owner_act_delivery_vector.py"): _consumer(
         "owner-act-delivery-v1.json",
-        'AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "owner-act-delivery-v1.json"',
     ),
-    PurePosixPath("naapp-lib/tests/test_manifest_v3.py"): _consumer(
+    PurePosixPath("naapp-contracts/tests/test_manifest_v3.py"): _consumer(
         "owner-act-delivery-v1.json",
-        'AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"',
+        'AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "owner-act-delivery-v1.json"',
     ),
     PurePosixPath(
         "cli/go/internal/appmanifest/owner_act_manifest_vectors_test.go"
     ): _consumer(
         "owner-act-delivery-v1.json",
-        '"docs", "vectors", "owner-act-delivery-v1.json"',
+        '"naapp-contracts", "src", "aweb_naapp_contracts", "vectors", "owner-act-delivery-v1.json"',
     ),
     PurePosixPath("cli/go/awid/owneract_test.go"): _consumer(
         "owner-act-v1.json",
-        '"../../../docs/vectors/owner-act-v1.json"',
+        '"../../../naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-v1.json"',
     ),
     PurePosixPath("cli/go/awid/human_credential_test.go"): _consumer(
         "owner-act-delivery-v1.json",
-        '"../../../docs/vectors/owner-act-delivery-v1.json"',
+        '"../../../naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json"',
     ),
     PurePosixPath("cli/go/cmd/aw/app_holder_test.go"): _consumer(
         "owner-act-delivery-v1.json",
-        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+        '"../../../../naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json"',
     ),
     PurePosixPath("cli/go/cmd/aw/app_human_test.go"): _consumer(
         "owner-act-delivery-v1.json",
-        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+        '"../../../../naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json"',
     ),
     PurePosixPath("naapp/secrets/tests/test_team_journey_injectors.py"): _consumer(
         "owner-act-delivery-v1.json",
@@ -734,7 +742,7 @@ ROOT_CONSUMERS = {
     ),
     PurePosixPath("cli/go/cmd/aw/app_role_test.go"): _consumer(
         "owner-act-delivery-v1.json",
-        '"../../../../docs/vectors/owner-act-delivery-v1.json"',
+        '"../../../../naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json"',
     ),
     PurePosixPath(
         "naapp-lib/tests/console/test_human_role_holding_identity.py"
@@ -748,9 +756,9 @@ ROOT_CONSUMERS = {
             "hook-delivery-credential-v2.json",
             "hook-event-envelope-v1.json",
         },
-        '"../../../docs/vectors/hook-event-envelope-v1.json"',
-        '"../../../docs/vectors/hook-delivery-credential-v2.json"',
-        '"../../../docs/vectors/hook-catalog-v1.json"',
+        '"../../../naapp-contracts/src/aweb_naapp_contracts/vectors/hook-event-envelope-v1.json"',
+        '"../../../naapp-contracts/src/aweb_naapp_contracts/vectors/hook-delivery-credential-v2.json"',
+        '"../../../naapp-contracts/src/aweb_naapp_contracts/vectors/hook-catalog-v1.json"',
     ),
     PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
         {"a2a-v1.json", "canonical-json-v1.json"},
@@ -987,7 +995,7 @@ NON_CONSUMING_CODE_REFERENCES = {
         "federation-origin-ip-v1.json",
     ),
     PurePosixPath("scripts/generate_owner_act_delivery_vector.py"): (
-        "docs/vectors/owner-act-delivery-v1.json",
+        "naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json",
     ),
     PurePosixPath("scripts/freeze_human_channels_presence.py"): (
         "docs/vectors/human-channels-presence-v1.json",
@@ -1143,7 +1151,7 @@ def check(
     public_vectors = {
         path.name: path
         for path in tracked_files
-        if path.parent == PUBLIC_ROOT and path.suffix == ".json"
+        if path.parent in PUBLIC_ROOTS and path.suffix == ".json"
     }
     if not public_vectors:
         failures.append("docs/vectors has no tracked JSON authority")
@@ -1157,7 +1165,7 @@ def check(
 
     for path in tracked_files:
         if (
-            path.parent == PUBLIC_ROOT
+            path.parent in PUBLIC_ROOTS
             or path.suffix != ".json"
             or path in MANAGED_PUBLIC_COPIES
         ):

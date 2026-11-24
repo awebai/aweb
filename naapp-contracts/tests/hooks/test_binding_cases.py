@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
-VECTOR = json.loads((AWEB_ROOT / "docs" / "vectors" / "hook-binding-cases-v1.json").read_bytes())
+VECTOR = json.loads((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-binding-cases-v1.json").read_bytes())
 SCHEME = VECTOR["scheme"]
 MUTATION_HOOK = "post-mutation-hook"
 

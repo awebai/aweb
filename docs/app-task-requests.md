@@ -567,11 +567,11 @@ signatures or certificates.
 
 ## Conformance vectors
 
-- `docs/vectors/app-task-authorization-v1.json`: payloads, signing bytes,
+- `naapp-contracts/src/aweb_naapp_contracts/vectors/app-task-authorization-v1.json`: payloads, signing bytes,
   signatures under a fixed test key, the task body digest, and refusal cases.
-- `docs/vectors/app-request-credential-v1.json`: the transport payload and
+- `naapp-contracts/src/aweb_naapp_contracts/vectors/app-request-credential-v1.json`: the transport payload and
   signature, and cross-purpose refusals.
-- `docs/vectors/task-answer-v1.json`: answer digests, the stage receipt's
+- `naapp-contracts/src/aweb_naapp_contracts/vectors/task-answer-v1.json`: answer digests, the stage receipt's
   signing bytes, signature and verification refusals, and one decision task's
   answer, replay, reopen, eligible-colleague and conflict steps with the
   expected result of each.

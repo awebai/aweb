@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	envelopeVectorPath = "../../../docs/vectors/hook-event-envelope-v1.json"
-	deliveryVectorPath = "../../../docs/vectors/hook-delivery-credential-v2.json"
-	catalogVectorPath  = "../../../docs/vectors/hook-catalog-v1.json"
+	envelopeVectorPath = "../../../naapp-contracts/src/aweb_naapp_contracts/vectors/hook-event-envelope-v1.json"
+	deliveryVectorPath = "../../../naapp-contracts/src/aweb_naapp_contracts/vectors/hook-delivery-credential-v2.json"
+	catalogVectorPath  = "../../../naapp-contracts/src/aweb_naapp_contracts/vectors/hook-catalog-v1.json"
 )
 
 // HOOKEVENT_WRITE_VECTORS=1 rewrites the two vectors from the definitions in

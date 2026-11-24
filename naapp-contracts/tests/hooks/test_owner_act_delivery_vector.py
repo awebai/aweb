@@ -30,7 +30,7 @@ from aweb_naapp_contracts.hooks.owner_act import _verify_owner_act as verify_own
 from tests.hooks.owner_act_delivery_vector import build_vector, render
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
-VECTOR_PATH = AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"
+VECTOR_PATH = AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "owner-act-delivery-v1.json"
 VECTOR = json.loads(VECTOR_PATH.read_bytes())
 SIGNED = [
     c

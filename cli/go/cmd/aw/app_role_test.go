@@ -34,7 +34,7 @@ type humanRoleDeliveryCase struct {
 // route accepts: the requests a correct client sends.
 func acceptedHumanRoleCases(t *testing.T) []humanRoleDeliveryCase {
 	t.Helper()
-	data, err := os.ReadFile("../../../../docs/vectors/owner-act-delivery-v1.json")
+	data, err := os.ReadFile("../../../../naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}

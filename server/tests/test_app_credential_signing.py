@@ -8,7 +8,7 @@ import pytest
 from tests.app_credential_signing import app_credential_headers
 
 ROOT = Path(__file__).resolve().parents[2]
-REQUEST = json.loads((ROOT / "docs" / "vectors" / "app-request-credential-v1.json").read_text())
+REQUEST = json.loads((ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "app-request-credential-v1.json").read_text())
 READ = json.loads((ROOT / "test-vectors" / "app-read-credential-v1.json").read_text())
 
 

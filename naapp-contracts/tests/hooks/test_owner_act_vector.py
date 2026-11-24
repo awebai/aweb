@@ -13,7 +13,7 @@ from aweb_naapp_contracts.hooks.owner_act import Refused
 from aweb_naapp_contracts.hooks.owner_act import _verify_owner_act as verify_owner_act
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
-VECTOR = json.loads((AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json").read_bytes())
+VECTOR = json.loads((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "owner-act-v1.json").read_bytes())
 
 
 def _b64url(text: str) -> bytes:

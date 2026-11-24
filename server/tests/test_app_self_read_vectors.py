@@ -36,8 +36,8 @@ from tests.test_hook_binding_activation import env  # noqa: F401
 __all__ = ["env"]
 
 ROOT = Path(__file__).resolve().parents[2]
-GRANT = json.loads((ROOT / "docs" / "vectors" / "app-grant-status-v1.json").read_text())
-HOOKS = json.loads((ROOT / "docs" / "vectors" / "hook-resolution-v1.json").read_text())
+GRANT = json.loads((ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "app-grant-status-v1.json").read_text())
+HOOKS = json.loads((ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-resolution-v1.json").read_text())
 GRANT_PATH = "/v1/apps/self/grant"
 # The spellings an app's grant source accepts (aweb_naapp.runtime.team_grants).
 APP_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|\+00:00)")

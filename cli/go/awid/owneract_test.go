@@ -15,7 +15,7 @@ import (
 	"github.com/awebai/aw/strictjson"
 )
 
-const ownerActVectorPath = "../../../docs/vectors/owner-act-v1.json"
+const ownerActVectorPath = "../../../naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-v1.json"
 
 func ownerSeed(start byte) []byte {
 	seed := make([]byte, ed25519.SeedSize)

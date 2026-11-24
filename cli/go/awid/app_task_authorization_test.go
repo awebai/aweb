@@ -28,7 +28,7 @@ type appTaskAuthorizationVectors struct {
 
 func loadAppTaskAuthorizationVectors(t *testing.T) appTaskAuthorizationVectors {
 	t.Helper()
-	raw, err := os.ReadFile("../../../docs/vectors/app-task-authorization-v1.json")
+	raw, err := os.ReadFile("../../../naapp-contracts/src/aweb_naapp_contracts/vectors/app-task-authorization-v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}

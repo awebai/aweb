@@ -13,7 +13,7 @@ from aweb_naapp_contracts.hooks.catalog import load_catalog, packaged_catalog
 
 PACKAGE = Path(__file__).resolve().parents[2]
 AWEB_ROOT = PACKAGE.parent
-VECTOR = AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"
+VECTOR = AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-catalog-v1.json"
 
 
 def test_the_packaged_catalog_is_the_public_vector() -> None:

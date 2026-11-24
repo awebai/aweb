@@ -2108,7 +2108,7 @@ envelope and target registration.
 **Schema.** The hooks design owns the `post-secret-use-hook` schema: one action
 enum, one flat allowlisted payload and the `refusal_code` enum. The source of
 truth is [`post-secret-use-hook`](../hook-events.md#post-secret-use-hook) in
-`docs/hook-events.md`, with `docs/vectors/hook-catalog-v1.json`; "§A2" below
+`docs/hook-events.md`, with `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-catalog-v1.json`; "§A2" below
 means that schema. This design cites that schema and does not define its own.
 The actor comes from
 the common envelope. secrets' part is deciding which transition emits which
@@ -2129,7 +2129,7 @@ action:
 
 `naapp/secrets/vectors/hook-actions-v1.json` freezes the transition and governance
 mapping as data, including the decision-92 observation row and example. Both
-shared catalog copies (`docs/vectors/hook-catalog-v1.json` and
+shared catalog copies (`naapp-contracts/src/aweb_naapp_contracts/vectors/hook-catalog-v1.json` and
 `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json`) include its exclusive
 authority and refusal cases.
 

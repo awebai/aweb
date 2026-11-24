@@ -17,7 +17,7 @@ import (
 // whose owner_acts is the delivery vector's first valid manifest case.
 func installHolderTestApp(t *testing.T, name string, withOwnerActs bool) (origin, ownerOrigin string) {
 	t.Helper()
-	data, err := os.ReadFile("../../../../docs/vectors/owner-act-delivery-v1.json")
+	data, err := os.ReadFile("../../../../naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestAHumanOnlyMachineInstallsTheAppHostOnlyForItsHolder(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	data, err := os.ReadFile("../../../../docs/vectors/owner-act-delivery-v1.json")
+	data, err := os.ReadFile("../../../../naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}

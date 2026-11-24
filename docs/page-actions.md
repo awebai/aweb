@@ -583,7 +583,7 @@ The codes of [app-task-requests.md](app-task-requests.md) "Errors" apply, plus:
 
 ## Conformance vectors
 
-- `docs/vectors/page-action-prepare-v1.json`: a preparation's task, digest
+- `naapp-contracts/src/aweb_naapp_contracts/vectors/page-action-prepare-v1.json`: a preparation's task, digest
   and bindings; the signer's completion and pre-signing checks; and the
   prepare, submit, replay and renewal sequence with its refusals.
 - `docs/vectors/page-proposal-v1.json`: `proposal_sha256` over single records

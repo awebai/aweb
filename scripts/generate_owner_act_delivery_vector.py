@@ -15,7 +15,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=ROOT / "docs/vectors/owner-act-delivery-v1.json",
+        default=ROOT / "naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json",
         help="output path (default: the checked-in public vector)",
     )
     args = parser.parse_args()

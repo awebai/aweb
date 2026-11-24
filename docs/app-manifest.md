@@ -370,7 +370,7 @@ Deferred consistently; capture so they aren't lost. None block v1.
 
 `manifest_version: 1` is frozen for the fields and mapping rules above.
 Version 2 is defined by its section below and its vectors; version 3, specified
-but not shipped, by its section below and `docs/vectors/owner-act-delivery-v1.json`. Additive
+but not shipped, by its section below and `naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json`. Additive
 application releases use `app.version`; a breaking interpretation change needs
 a new `manifest_version` and new conformance fixtures. Streaming responses,
 multipart bodies, float canonicalization, and output selectors remain outside

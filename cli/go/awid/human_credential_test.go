@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const ownerActDeliveryVectorPath = "../../../docs/vectors/owner-act-delivery-v1.json"
+const ownerActDeliveryVectorPath = "../../../naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json"
 
 func TestHumanCredentialHashAndFingerprintMatchTheVectors(t *testing.T) {
 	data, err := os.ReadFile(ownerActDeliveryVectorPath)

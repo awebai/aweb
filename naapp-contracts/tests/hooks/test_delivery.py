@@ -19,7 +19,7 @@ from aweb_naapp_contracts.hooks.envelope import Refused
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTOR = json.loads(
-    (AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v2.json").read_bytes()
+    (AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-delivery-credential-v2.json").read_bytes()
 )
 
 

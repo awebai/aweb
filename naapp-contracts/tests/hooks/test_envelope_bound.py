@@ -21,7 +21,7 @@ from aweb_naapp_contracts.hooks.envelope import MAX_ENVELOPE_BYTES, PREFIX
 from aweb_naapp_contracts.hooks.strictjson import MAX_SAFE_INTEGER
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
-CATALOG_PATH = AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"
+CATALOG_PATH = AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-catalog-v1.json"
 CATALOG_JSON = json.loads(CATALOG_PATH.read_bytes())
 # A JSON string of printable ASCII escapes at most `"` and `\`, so a value
 # of n characters encodes in at most 2n + 2 bytes.

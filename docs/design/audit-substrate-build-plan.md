@@ -19,9 +19,9 @@ graph).
 | Id | Board task | Task | Status | On main |
 | --- | --- | --- | --- | --- |
 | — | aweb-acgh.1 | Design | Built | `docs/design/audit-substrate.md` (e78d12ac3) |
-| H1 | aweb-acgh.16.1 | Catalog, binding and delivery contract | Built; activation refusal of unknown catalogs Open (aweb-acgh.16.35) | `docs/hook-events.md`, `docs/vectors/hook-catalog-v1.json`, `docs/vectors/hook-binding-cases-v1.json`, pointer in `docs/aw-hooks-sot.md` (f064438b4) |
-| H2 | aweb-acgh.16.2 | Envelope and delivery credential, Go authority | Built | `cli/go/hookevent/envelope.go`, `delivery.go`; `docs/vectors/hook-event-envelope-v1.json`, `hook-delivery-credential-v2.json`; case `oss_task_create_with_trace_id` in `team-auth-envelope-v2.json` (3c3195e74) |
-| H3 | aweb-acgh.16.3 | Owner act `aweb.owner-act/1` | Built | `docs/owner-act.md`, `cli/go/awid/owneract.go`, `docs/vectors/owner-act-v1.json` (7426a016e; subject canonicalization d76a7d253) |
+| H1 | aweb-acgh.16.1 | Catalog, binding and delivery contract | Built; activation refusal of unknown catalogs Open (aweb-acgh.16.35) | `docs/hook-events.md`, `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-catalog-v1.json`, `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-binding-cases-v1.json`, pointer in `docs/aw-hooks-sot.md` (f064438b4) |
+| H2 | aweb-acgh.16.2 | Envelope and delivery credential, Go authority | Built | `cli/go/hookevent/envelope.go`, `delivery.go`; `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-event-envelope-v1.json`, `hook-delivery-credential-v2.json`; case `oss_task_create_with_trace_id` in `team-auth-envelope-v2.json` (3c3195e74) |
+| H3 | aweb-acgh.16.3 | Owner act `aweb.owner-act/1` | Built | `docs/owner-act.md`, `cli/go/awid/owneract.go`, `naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-v1.json` (7426a016e; subject canonicalization d76a7d253) |
 | — | aweb-acgh.16.34 | Owner act `logs.verify.delegate` | Open | — |
 | K0 | aweb-acgh.6 | Core-importable signing-key loader | Built | `naapp-lib/src/aweb_naapp/signing_key.py`, `signing-key` extra (fd806b7db) |
 | K1 | aweb-acgh.16.4 | Catalog loader, envelope, delivery credential (Python) | Built | `naapp-lib/src/aweb_naapp/hooks/catalog.py`, `envelope.py`, `delivery.py`, packaged `catalog-v1.json` (f064438b4) |
@@ -40,7 +40,7 @@ graph).
 | — | aweb-acgh.16.30 | Shared outbox nonblocking end fence and attempt CAS | After the first release | — |
 | — | aweb-acgh.16.32 | Terminal helpers (capsule, credential, seal) and vectors | After the first release | — |
 | — | aweb-acgh.16.27 | `dispatch_in_flight` and `generation_superseded` refusal codes | Built | both in the catalog's `refusal_code` enum (decisions 29, 35) |
-| — | aweb-acgh.16.33 | Catalog v1 `use_ref` | Built | `use_ref` in `docs/vectors/hook-catalog-v1.json` and `docs/hook-events.md` (22f3cc779) |
+| — | aweb-acgh.16.33 | Catalog v1 `use_ref` | Built | `use_ref` in `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-catalog-v1.json` and `docs/hook-events.md` (22f3cc779) |
 | S3a | aweb-acgh.16.12 | Sites vector, checker and task mutations | Open | — |
 | S3b | aweb-acgh.16.13 | Messaging mutations | Open | — |
 | S3c | aweb-acgh.16.14 | Identity, app, key and membership mutations | Open | — |

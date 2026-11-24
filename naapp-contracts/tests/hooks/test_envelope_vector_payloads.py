@@ -16,8 +16,8 @@ import pytest
 from aweb_naapp_contracts.hooks.catalog import PayloadRefused, load_catalog
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
-VECTOR = json.loads((AWEB_ROOT / "docs" / "vectors" / "hook-event-envelope-v1.json").read_bytes())
-CATALOG = load_catalog((AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes())
+VECTOR = json.loads((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-event-envelope-v1.json").read_bytes())
+CATALOG = load_catalog((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-catalog-v1.json").read_bytes())
 PREFIX = b"aweb.hook-event/1\n"
 
 

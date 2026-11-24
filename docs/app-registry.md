@@ -189,7 +189,7 @@ Response:
   which is also the answer once the app has no installation.
 
 Conformance: `test-vectors/app-read-credential-v1.json` for the credential;
-`docs/vectors/app-grant-status-v1.json` for the answers.
+`naapp-contracts/src/aweb_naapp_contracts/vectors/app-grant-status-v1.json` for the answers.
 
 ### App-side grant source
 
@@ -294,7 +294,7 @@ event spelling; `active_from` is rounded up, so a binding never reads as active
 earlier than it is. `as_of` and `max_age_seconds` are as for the grant read.
 
 Conformance: the `hook-resolve` cases of `test-vectors/app-read-credential-v1.json`
-for the credential; `docs/vectors/hook-resolution-v1.json` for the answers.
+for the credential; `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-resolution-v1.json` for the answers.
 
 ## The core hook producer's keys
 
@@ -330,7 +330,7 @@ event names.
   spelling or an impossible date, or a key that ends before it starts.
 - `as_of` and `max_age_seconds` are as for the grant read.
 
-Conformance: the `core_producer_keys` answer of `docs/vectors/hook-resolution-v1.json`.
+Conformance: the `core_producer_keys` answer of `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-resolution-v1.json`.
 
 ## Operator reseed from manifest bytes
 

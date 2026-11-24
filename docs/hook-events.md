@@ -7,12 +7,12 @@ release status and task id. This document is the source of truth for the
 a producer signs and delivers hook events. Its machine-readable authority is
 five vectors:
 
-- `docs/vectors/hook-catalog-v1.json`: the hooks, their payload allowlists and
+- `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-catalog-v1.json`: the hooks, their payload allowlists and
   rules, with positive and negative cases;
-- `docs/vectors/hook-binding-cases-v1.json`: binding states, activation, the
+- `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-binding-cases-v1.json`: binding states, activation, the
   `active_from` pad and revocation, as replayable cases;
-- `docs/vectors/hook-event-envelope-v1.json`: the signed event envelope;
-- `docs/vectors/hook-delivery-credential-v2.json`: the request credential that
+- `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-event-envelope-v1.json`: the signed event envelope;
+- `naapp-contracts/src/aweb_naapp_contracts/vectors/hook-delivery-credential-v2.json`: the request credential that
   carries an event to a target.
 - `docs/vectors/passkey-evidence-v1.json`: the passkey evidence commitment
   bytes of [the decision 84 proof contract](#passkey-evidence-commitments-and-console-actors).

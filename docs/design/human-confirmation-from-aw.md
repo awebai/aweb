@@ -638,7 +638,7 @@ Each item is filed after review, and each is one reviewed change.
   And a team-auth-drafted change set stays confirmable on the console.
 - **Manifest readers** (Go `cli/go/internal/appmanifest`, `aweb_naapp.manifest`):
   `owner_acts.session_actions`, against the `manifest` cases of
-  `docs/vectors/owner-act-delivery-v1.json`.
+  `naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json`.
 - **`aw`:** opening the browser, the loopback listener and the handoff, and
   `--no-browser`; `aw app human` driving the declared
   [session actions](#session-actions-what-aw-drives), with N4's terminal

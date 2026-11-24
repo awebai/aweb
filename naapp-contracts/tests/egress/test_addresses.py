@@ -23,7 +23,7 @@ from aweb_naapp_contracts.egress.addresses import (
 )
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
-VECTORS = json.loads((AWEB_ROOT / "docs" / "vectors" / "egress-address-v1.json").read_text())
+VECTORS = json.loads((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "egress-address-v1.json").read_text())
 
 
 def test_the_ranges_are_the_vectors() -> None:

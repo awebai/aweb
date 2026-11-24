@@ -16,7 +16,7 @@ from aweb_naapp_contracts.manifest import (
 from tests.test_manifest_v2_vectors import RESERVED, V2, _manifest_bytes, _read
 
 AWEB_ROOT = Path(__file__).resolve().parents[2]
-VECTOR_PATH = AWEB_ROOT / "docs" / "vectors" / "owner-act-delivery-v1.json"
+VECTOR_PATH = AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "owner-act-delivery-v1.json"
 CASES = json.loads(VECTOR_PATH.read_bytes())["manifest_cases"]
 
 

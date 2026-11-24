@@ -18,7 +18,7 @@ type ownerActManifestCase struct {
 
 func ownerActManifestCases(t *testing.T) []ownerActManifestCase {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(repoRootForTest(t), "docs", "vectors", "owner-act-delivery-v1.json"))
+	data, err := os.ReadFile(filepath.Join(repoRootForTest(t), "naapp-contracts", "src", "aweb_naapp_contracts", "vectors", "owner-act-delivery-v1.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

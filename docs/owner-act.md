@@ -4,7 +4,7 @@ Status: **specified experimental public contract, not yet shipped**. Owner: the
 aweb OSS hooks lane (aweb-acgh.16). This document is the source of truth for the
 signed artifact by which a team's owner authorizes a governance act that no
 admin, member or agent can perform. Its vector is
-`docs/vectors/owner-act-v1.json`, and its Go authority is `cli/go/awid/owneract.go`,
+`naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-v1.json`, and its Go authority is `cli/go/awid/owneract.go`,
 which regenerates the vector byte for byte. In Python, a verifier uses
 `aweb_naapp.hooks.owner_act_nonces.OwnerActVerifier` in two steps. `prepare`
 runs outside any transaction: it reads the team's current key and checks the

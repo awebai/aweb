@@ -21,7 +21,7 @@ from aweb_naapp_contracts.egress import (
 )
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
-VECTORS = json.loads((AWEB_ROOT / "docs" / "vectors" / "egress-url-v2.json").read_text())
+VECTORS = json.loads((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "egress-url-v2.json").read_text())
 
 
 def _named(cases: list[dict]) -> list:

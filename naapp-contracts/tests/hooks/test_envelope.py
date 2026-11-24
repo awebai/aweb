@@ -18,7 +18,7 @@ from aweb_naapp_contracts.hooks.envelope import (
 )
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
-VECTOR = json.loads((AWEB_ROOT / "docs" / "vectors" / "hook-event-envelope-v1.json").read_bytes())
+VECTOR = json.loads((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-event-envelope-v1.json").read_bytes())
 
 
 def _b64url(text: str) -> bytes:
@@ -93,7 +93,7 @@ def test_hook_table_matches_the_catalog_vector() -> None:
     from aweb_naapp_contracts.hooks.catalog import load_catalog
     from aweb_naapp_contracts.hooks.envelope import HOOKS
 
-    catalog = load_catalog((AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json").read_bytes())
+    catalog = load_catalog((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "hook-catalog-v1.json").read_bytes())
     assert HOOKS == {
         name: (hook.hook_class, hook.producer_kinds) for name, hook in catalog.hooks.items()
     }

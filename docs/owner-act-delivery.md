@@ -8,7 +8,7 @@ delivers an app's human-role owner act (`human-role.designate`,
 `human-credential.cap-set`, defined in
 [the owner-act contract](owner-act.md)) to the naapp that verifies it, with no
 per-app code in the client. Its vector is
-`docs/vectors/owner-act-delivery-v1.json`.
+`naapp-contracts/src/aweb_naapp_contracts/vectors/owner-act-delivery-v1.json`.
 
 The owner-act contract fixes the signed artifact and its verification. This
 contract adds what that one leaves to the transport:

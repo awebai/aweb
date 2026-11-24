@@ -25,8 +25,8 @@ from aweb_naapp_contracts.task_requests import (
 )
 
 AWEB_ROOT = Path(__file__).resolve().parents[2]
-AUTH = json.loads((AWEB_ROOT / "docs" / "vectors" / "app-task-authorization-v1.json").read_text())
-ANSWERS = json.loads((AWEB_ROOT / "docs" / "vectors" / "task-answer-v1.json").read_text())
+AUTH = json.loads((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "app-task-authorization-v1.json").read_text())
+ANSWERS = json.loads((AWEB_ROOT / "naapp-contracts" / "src" / "aweb_naapp_contracts" / "vectors" / "task-answer-v1.json").read_text())
 
 
 def at(timestamp: str) -> datetime:
