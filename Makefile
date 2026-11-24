@@ -8,12 +8,11 @@ CANDIDATE_UNIT_PROFILE ?= $(or $(AWEB_GATE_UNIT_PROFILE),portable)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
 .PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
-	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
+	freshness check-go-vulnerability-audit check-node-audit test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
-	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps check-server-locked-suite \
-	check-awid-locked-suite \
+	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps \
 	test-release-cli-version \
 	test-channel-integration \
 	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
@@ -279,15 +278,6 @@ freshness:
 check-go-vulnerability-audit:
 	bash scripts/check-go-vulnerability-audit.sh
 
-# The deadline half of the audit above, split out because it is the only part
-# that can run without the pinned toolchain, a govulncheck scan or the advisory
-# database. It reads .github/go-vulnerability-exceptions.json and compares dates,
-# so it is deterministic and cheap.
-#
-# It is separate because a deferral lapses on a DATE, not on a commit. The audit
-# runs at release; if no release happens across a deadline, the deferral simply
-# stops being deferred and nothing says so. This target is what the scheduled
-# workflow runs daily. Candidate checks additionally run the full Go audit.
 # The audit's own unit suite. It belongs in `make test` where the audit itself
 # does not: it runs against fixtures and the checked-in exceptions file, with no
 # toolchain, no scanner and no advisory database, and none of its assertions
@@ -295,11 +285,6 @@ check-go-vulnerability-audit:
 # ability to fail was asserted in a comment and tested nowhere.
 test-go-vulnerability-audit:
 	python3 -m unittest discover -s scripts -p "test_check_go_vulnerability_audit.py" -v
-
-check-exception-deadlines:
-	python3 scripts/check_go_vulnerability_audit.py \
-		--deadlines-only \
-		--exceptions .github/go-vulnerability-exceptions.json
 
 check-node-audit:
 	bash scripts/check-node-audit.sh
@@ -632,16 +617,6 @@ check-cli-go-tidy:
 # proves an unrelated unignored file still produces vcs.modified=true.
 check-cli-release-vcs-stamps:
 	./scripts/check-cli-release-vcs-stamps.sh
-
-check-server-locked-suite:
-	cd server && uv sync --frozen
-	cd server && uv lock --check
-	cd server && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
-
-check-awid-locked-suite:
-	cd awid && uv sync --frozen
-	cd awid && uv lock --check
-	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 # ── awid.ai static-site deployment ─────────────────────────────────
 

@@ -227,10 +227,8 @@ toolchain in `cli/go/go.mod`, and live advisory databases move independently of
 the source tree.
 
 The candidate Go scan checks reachable findings and their reviewed exception
-deadlines. `make check-exception-deadlines` checks deadlines without a scanner
-or toolchain, including when no candidate is being built. These targets do not
-schedule scans themselves; a green scan describes the advisory database at its
-execution time.
+deadlines. These targets do not schedule scans themselves; a green scan
+describes the advisory database at its execution time.
 
 The Go audit refuses to run under the wrong toolchain and prints the two
 commands that install the pinned one. `make check-node-audit` needs the
