@@ -214,7 +214,7 @@ async def grant_native_agent_access(
     )
     principal = await registry.register_did(agent.member_key)
     agent.extra_cert_fields = {"member_did_aw": principal}
-    await registry.add_certificate(agent.certificate())
+    await registry.add_certificate(agent.certificate(), team_key=agent.team_key)
     policy = Policy.from_body({**POLICY_BODY, "approval": "none", "approvers": []})
     destination = {
         "v": 1,
@@ -252,7 +252,7 @@ async def grant_native_agent_access(
                         "kind": "policy",
                         "op": "create",
                         "ref": policy.digest,
-                        "after": policy.body,
+                        "after": {"v": 1, **policy.body},
                     },
                     {
                         "kind": "destination",
