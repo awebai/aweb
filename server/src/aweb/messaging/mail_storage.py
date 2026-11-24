@@ -22,6 +22,7 @@ from aweb.messaging.message_replay import (
     read_stored_message,
     replay_artifact,
 )
+from aweb.messaging.sender_address import sender_address_for_storage
 from aweb.service_errors import ServiceError, ValidationError
 
 
@@ -34,8 +35,7 @@ class MailSender:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "did", self.did.strip())
-        if self.address is not None:
-            object.__setattr__(self, "address", self.address.strip())
+        object.__setattr__(self, "address", sender_address_for_storage(self.address))
 
     @property
     def display_alias(self) -> str:

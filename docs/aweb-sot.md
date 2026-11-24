@@ -2268,8 +2268,11 @@ the replacement claim, including when the task stays `in_progress`.
 ### Staged certificate-registration observations
 
 While configured registration enforcement is off, standing records registration
-as `not_observed` after the revocation check. Explicit registration observations
-can still measure would-refuse facts using the SDK's active-certificate view.
+as `not_observed` after the revocation check. Before enabling REQUIRED, census
+admitted certificates using the hosted certificate reconciliation dry run or
+explicit-mode observations on a native server, and resolve or account for
+every missing registration.
+Explicit observations use the SDK's active-certificate view.
 An unavailable observation remains unknown and cannot turn an otherwise valid
 off-mode operation into a refusal. Enforcing mode retains its complete
 registration-list and signature-verified miss-refresh owners. AWID's

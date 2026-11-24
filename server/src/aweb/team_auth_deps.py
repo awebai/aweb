@@ -20,6 +20,7 @@ from awid.signing import verify_did_key_signature
 from awid.team_certificate import TeamCertificateError, decode_team_certificate, verify_team_certificate_claims
 from fastapi import Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager, TransactionManager
+from prometheus_client import Counter
 
 from aweb.application_state import application_registry_client
 from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
@@ -67,7 +68,12 @@ from aweb.team_registry import (
 
 logger = logging.getLogger(__name__)
 _ADMITTED_MEMBER = "aweb.admitted_member"
-_OPTIONAL_IDENTITY_EVIDENCE_SECONDS = 1.0
+_OPTIONAL_IDENTITY_EVIDENCE_SECONDS = 2.0
+_IDENTITY_EVIDENCE_FALLBACKS = Counter(
+    "aweb_identity_evidence_fallbacks_total",
+    "Admitted certificate requests that used the optional identity evidence fallback.",
+    ("reason",),
+)
 
 
 class IdentityEvidencePolicy(StrEnum):
@@ -78,15 +84,36 @@ class IdentityEvidencePolicy(StrEnum):
     PREFER_LIVE = "prefer_live"
 
 
+class _IdentityEvidenceFallback(StrEnum):
+    ADDRESS_MISSING = "address_missing"
+    UNAVAILABLE = "unavailable"
+    TIMED_OUT = "timed_out"
+    CHAIN_UNAVAILABLE = "chain_unavailable"
+
+
 def _clear_live_identity_evidence(request: Request) -> None:
     request.state.identity_kind = None
     request.state.id_chain = None
     request.state.id_chain_result = None
 
 
+def _require_compatible_chain_claim(request: Request, *, did_key: str, did_aw: str) -> None:
+    """Reject a malformed or mismatched claim when live ancestry is unavailable."""
+    try:
+        chain = read_id_chain_header(request)
+    except IDCertificateError as exc:
+        raise HTTPException(status_code=403, detail=exc.code) from exc
+    if chain is not None:
+        check = verify_id_chain(
+            chain, subject={"id": did_aw or did_key, "did_key": did_key}, evidence=None,
+        )
+        if check["outcome"] != "unavailable":
+            raise HTTPException(status_code=403, detail=check["reason"])
+
+
 async def _prefer_live_identity_evidence(
     request: Request, *, did_key: str, did_aw: str | None, address: str | None, deadline: float,
-) -> tuple[IdentityBinding, IdentityBindingError | None]:
+) -> tuple[IdentityBinding, IdentityBindingError | None, _IdentityEvidenceFallback | None]:
     if (did_aw is not None and not isinstance(did_aw, str)) or (
         address is not None and not isinstance(address, str)
     ):
@@ -103,30 +130,36 @@ async def _prefer_live_identity_evidence(
         if not exc.address_missing and exc.code is not IdentityBindingCode.UNAVAILABLE:
             raise
         refusal = exc
+        fallback = (
+            _IdentityEvidenceFallback.ADDRESS_MISSING
+            if exc.address_missing
+            else _IdentityEvidenceFallback.UNAVAILABLE
+        )
     except TimeoutError:
         refusal = IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
+        fallback = _IdentityEvidenceFallback.TIMED_OUT
     else:
         try:
             async with asyncio.timeout_at(deadline):
-                await authenticate_id_chain(request, binding)
-        except TimeoutError as exc:
-            raise HTTPException(status_code=503, detail="evidence_unavailable") from exc
-        return binding, None
+                chain_result = await authenticate_id_chain(request, binding, allow_unavailable=True)
+        except TimeoutError:
+            _require_compatible_chain_claim(request, did_key=did_key, did_aw=binding.did_aw)
+            _clear_live_identity_evidence(request)
+            return (
+                replace(binding, fresh_observation=False), None, _IdentityEvidenceFallback.TIMED_OUT,
+            )
+        if chain_result["reason"] == "stale_issuer_key":
+            raise HTTPException(status_code=403, detail="stale_issuer_key")
+        if chain_result["outcome"] == "unavailable":
+            _require_compatible_chain_claim(request, did_key=did_key, did_aw=binding.did_aw)
+            return (
+                replace(binding, fresh_observation=False), None, _IdentityEvidenceFallback.CHAIN_UNAVAILABLE,
+            )
+        return binding, None, None
 
-    # The no-evidence verifier can reject a malformed or mismatched presented
-    # chain before falling back. It cannot establish anyone's ancestry.
-    try:
-        chain = read_id_chain_header(request)
-    except IDCertificateError as exc:
-        raise HTTPException(status_code=403, detail=exc.code) from exc
-    if chain is not None:
-        check = verify_id_chain(
-            chain, subject={"id": did_aw or did_key, "did_key": did_key}, evidence=None,
-        )
-        if check["outcome"] != "unavailable":
-            raise HTTPException(status_code=403, detail=check["reason"])
+    _require_compatible_chain_claim(request, did_key=did_key, did_aw=did_aw)
     _clear_live_identity_evidence(request)
-    return IdentityBinding(did_key=did_key), refusal
+    return IdentityBinding(did_key=did_key), refusal, fallback
 
 
 def _superseded_team_key() -> HTTPException:
@@ -350,6 +383,7 @@ async def resolve_team_membership(
 
     binding = cert_info.get("identity_binding")
     binding_refusal = cert_info.get("_identity_binding_refusal")
+    fallback = cert_info.get("_identity_evidence_fallback")
     binding_did_aw = cert_info.get("member_did_aw") or ""
     read_native_snapshot = False
     # A host that already read this member's agent row while verifying the
@@ -426,7 +460,7 @@ async def resolve_team_membership(
         # metadata without independently proving that row's exact binding.
         binding_did_aw = row["did_aw"] or ""
         if identity_evidence is IdentityEvidencePolicy.PREFER_LIVE:
-            binding, binding_refusal = await _prefer_live_identity_evidence(
+            binding, binding_refusal, fallback = await _prefer_live_identity_evidence(
                 request, did_key=did_key, did_aw=binding_did_aw, address=row["address"] or "",
                 deadline=cert_info["_identity_evidence_deadline"],
             )
@@ -487,9 +521,12 @@ async def resolve_team_membership(
         if not stored["did_aw"] or stored["did_aw"] != binding_did_aw.strip():
             raise binding_refusal
         did_aw = stored["did_aw"]
-        address_resolution = AddressResolution(
-            AddressResolutionState.WITHHELD, stored_address=stored["address"] or None,
-        )
+        if binding_refusal.address_missing:
+            address_resolution = AddressResolution(
+                AddressResolutionState.WITHHELD, stored_address=stored["address"] or None,
+            )
+        else:
+            address = stored["address"] or ""
     identity = TeamIdentity(
         team_id=team_id,
         alias=cert_info["alias"],
@@ -504,6 +541,12 @@ async def resolve_team_membership(
         address_resolution=address_resolution,
     )
     assert snapshot is not None
+    if request is not None and fallback is not None and not getattr(
+        request.state, "identity_evidence_fallback_reported", False
+    ):
+        request.state.identity_evidence_fallback_reported = True
+        logger.info("Optional identity evidence fallback: team=%s reason=%s", team_id, fallback.value)
+        _IDENTITY_EVIDENCE_FALLBACKS.labels(reason=fallback.value).inc()
     memo = request_memo()
     if request is not None and memo is not None:
         # After reacceptance, row is the persisted projection from the UPDATE
@@ -616,11 +659,12 @@ async def verify_request_certificate(
         _clear_live_identity_evidence(request)
     elif identity_evidence is IdentityEvidencePolicy.PREFER_LIVE:
         deadline = asyncio.get_running_loop().time() + _OPTIONAL_IDENTITY_EVIDENCE_SECONDS
-        binding, refusal = await _prefer_live_identity_evidence(
+        binding, refusal, fallback = await _prefer_live_identity_evidence(
             request, did_key=did_key, did_aw=cert_info["member_did_aw"],
             address=cert_info["member_address"], deadline=deadline,
         )
         cert_info["_identity_binding_refusal"] = refusal
+        cert_info["_identity_evidence_fallback"] = fallback
         cert_info["_identity_evidence_deadline"] = deadline
     else:
         binding = await verify_identity_binding(

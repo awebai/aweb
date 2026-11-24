@@ -32,7 +32,8 @@ def read_id_chain_header(request: Request) -> dict[str, Any] | None:
 
 
 async def authenticate_id_chain(
-    request: Request, binding: IdentityBinding, *, registry_client=None
+    request: Request, binding: IdentityBinding, *, registry_client=None,
+    allow_unavailable: bool = False,
 ) -> dict[str, Any]:
     """Use only the already-verified subject and its fresh enrollment carrier.
 
@@ -55,6 +56,10 @@ async def authenticate_id_chain(
     except IDCertificateError as exc:
         result = unverified_kind(exc.code)
     request.state.id_chain_result = result
+    if allow_unavailable and result["outcome"] == "unavailable":
+        request.state.identity_kind = None
+        request.state.id_chain = None
+        return result
     if request_disposition(result, subject=subject, original_auth_passed=True) == "refuse":
         logger.warning("ID-tree request refused: %s", result["reason"])
         raise HTTPException(

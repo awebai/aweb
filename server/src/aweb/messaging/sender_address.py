@@ -1,8 +1,21 @@
 """Sender address policy shared by HTTP and MCP messaging adapters."""
+
+from enum import StrEnum
 from typing import Any
 
 from aweb.identity_address import AddressResolutionState, require_address_evidence
 from aweb.messaging.alias_targets import derive_team_address
+
+
+class _SenderAddressStorage(StrEnum):
+    WITHHELD = ""
+
+
+def sender_address_for_storage(value: str | None) -> str | None:
+    """Reserve non-null empty addresses for an explicit withholding decision."""
+    if value is _SenderAddressStorage.WITHHELD:
+        return ""
+    return (value or "").strip() or None
 
 
 def stored_sender_address(value: str | None, fallback: str | None) -> str | None:
@@ -24,7 +37,7 @@ def sender_address(auth: Any) -> str | None:
     if outcome is not None and outcome.state is AddressResolutionState.WITHHELD:
         # Persist explicit absence so recipient projections cannot restore a
         # public address from an older member row.
-        return ""
+        return _SenderAddressStorage.WITHHELD
     if outcome is not None and outcome.state == "unknown":
         return outcome.stored_address
     address = (auth.address or "").strip()

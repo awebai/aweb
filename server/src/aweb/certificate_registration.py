@@ -174,9 +174,9 @@ async def observe_certificate_registrations(
 ) -> CertificateRegistrationObservation:
     """Acquire the registration snapshot shared by one standing check or batch.
 
-    docs/aweb-sot.md, Staged certificate-registration observations requires useful off-mode counts
-    without making measurement unavailability a new refusal. SDK cache/read
-    freshness remains with registered_certificates; this adds no other cache.
+    The configured off-mode request path skips this acquisition. Explicit
+    observation still supports census without making its unavailability a
+    refusal. SDK cache and freshness remain with registered_certificates.
     Invalid authority scope is rejected before acquisition, never counted as
     an unavailable observation. Adapters retain their existing wire outcomes.
     """
