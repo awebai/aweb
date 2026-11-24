@@ -659,13 +659,14 @@ class RegistryClient:
         subject: dict[str, Any],
         *,
         domain: str,
+        refresh: bool = True,
     ) -> IDChainEvidence:
         """Acquire current namespace authority and routed status without a cache.
 
         Age starts before acquisition and rounds upward, under the same bounded
         attempt as the cached client. Failures return unavailable evidence;
-        cancellation propagates. Every invocation performs the required live
-        reads; callers choose explicitly between this and CachedRegistryClient.
+        cancellation propagates. With refresh disabled this uncached client
+        reports unavailable evidence.
         Capability-detecting callers now discover this method and perform live
         DNS authority and status reads instead of treating evidence as unavailable.
         """
@@ -673,7 +674,7 @@ class RegistryClient:
             request = status_request(bundle, subject, domain=domain)
         except IDCertificateError:
             request = None
-        if request is None:
+        if request is None or not refresh:
             return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
         started_ns = _monotonic_ns()
         try:
@@ -2403,15 +2404,16 @@ class CachedRegistryClient(RegistryClient):
         subject: dict[str, Any],
         *,
         domain: str,
+        refresh: bool = True,
     ) -> IDChainEvidence:
         """Trusted identity-tree evidence for verifying ``subject``'s chain in ``domain``.
 
         A stored entry is aged on the Redis server's clock, the one clock
         every process sharing it reads. Evidence aged 60 seconds or less is
         served with no DNS or HTTP work. Older evidence waits for one refresh
-        shared by every caller of the same request. A failed read returns
-        unavailable evidence without an age. A malformed successful response
-        raises MalformedIDStatusError.
+        shared by every caller of the same request, unless refresh is disabled.
+        A failed read returns unavailable evidence without an age. A malformed
+        successful response raises MalformedIDStatusError.
         """
         try:
             request = status_request(bundle, subject, domain=domain)
@@ -2449,9 +2451,10 @@ class CachedRegistryClient(RegistryClient):
                     )
                     if age <= _ID_STATUS_FRESH_SECONDS:
                         return _id_status_evidence(cached, age=age)
-        refresh = await self._coalesced_id_status_refresh(route_key, request)
-        if refresh.entry is not None:
-            return _id_status_evidence(refresh.entry, age=refresh.age)
+        if refresh:
+            acquired = await self._coalesced_id_status_refresh(route_key, request)
+            if acquired.entry is not None:
+                return _id_status_evidence(acquired.entry, age=acquired.age)
         return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
 
     async def _coalesced_id_status_refresh(

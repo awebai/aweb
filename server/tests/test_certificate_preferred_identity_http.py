@@ -244,7 +244,7 @@ async def serve_messages(env, sender, receiver, chain_header, *, timeout_phase=N
         started = monotonic()
         async with asyncio.timeout(5):
             response = await env.client.post(path, content=body, headers=headers)
-        if timeout_phase == "binding" and kind == "chat":
+        if timeout_phase is not None and kind == "chat":
             assert monotonic() - started < 1.5
         elif timeout_phase is not None:
             assert 1.9 <= monotonic() - started < 3
@@ -426,10 +426,13 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
             "chain-unavailable": "chain_unavailable",
             "chain-hung": "timed_out",
         }.get(scenario)
-        expected_logs = (
-            [(logging.INFO, f"{log_prefix} team={TEAM} reason={expected_reason}")] * 2
-            if expected_reason else []
-        )
+        expected_reasons = [expected_reason] * 2 if expected_reason else []
+        if scenario == "chain-hung":
+            expected_reasons[1] = "chain_unavailable"
+        expected_logs = [
+            (logging.INFO, f"{log_prefix} team={TEAM} reason={reason}")
+            for reason in expected_reasons
+        ]
         assert [
             (record.levelno, record.getMessage())
             for record in caplog.records
@@ -437,13 +440,13 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
         ] == expected_logs
         for reason in reasons:
             current = REGISTRY.get_sample_value(metric, {"reason": reason}) or 0
-            assert current - counters[reason] == (2 if reason == expected_reason else 0)
+            assert current - counters[reason] == expected_reasons.count(reason)
         if scenario in ("outage", "hung"):
             aborted = env.registry.transport.calls[calls:]
             assert any(sender.stable_id in call.url.path for call in aborted)
         if scenario == "chain-unavailable":
             paths = [call.url.path for call in env.registry.transport.calls[calls:]]
-            assert any("id-certificates" in path for path in paths)
+            assert sum("id-certificates" in path for path in paths) == 1
             assert f"/v1/did/{sender.stable_id}/key" not in paths
         refusal = {
             "rotated": (403, "identity_binding_mismatch"),

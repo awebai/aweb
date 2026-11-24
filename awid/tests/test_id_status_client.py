@@ -256,6 +256,22 @@ async def test_evidence_is_reused_through_60_seconds_without_dns_or_http(env):
 
 
 @pytest.mark.asyncio
+async def test_cache_only_status_uses_fresh_evidence_and_does_not_refresh(env):
+    async def cache_only():
+        return await env.client.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN, refresh=False)
+
+    unavailable = IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
+    assert await cache_only() == unavailable
+    assert env.requests == env.dns_lookups == env.routings == []
+    assert await _evidence(env) == await cache_only()
+    env.clock[0] += 61
+    assert await cache_only() == unavailable
+    assert len(env.requests) == len(env.dns_lookups) == len(env.routings) == 1
+    assert (await _evidence(env)).age_seconds == 0
+    assert len(env.requests) == len(env.dns_lookups) == len(env.routings) == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "configured_origin,initial_miss",
     [(REGISTRY, False), ("http://other-registry.test", False), (REGISTRY, True)],
