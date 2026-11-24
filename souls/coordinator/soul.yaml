@@ -7,4 +7,4 @@ description: Cross-repository coordinator of the aweb OSS team; routes work and 
 work: workspace
 # oats.core, oats.okf and oats.aweb come from the workspace defaults. What this
 # soul owns and reads in the aweb knowledge base is okf.json beside this file.
-launch: { harness: codex }   # Codex's own default model, as the seat runs today; yolo is a host launch setting
+launch: { harness: claude, model: claude-opus-5-5 }   # yolo is a host launch setting

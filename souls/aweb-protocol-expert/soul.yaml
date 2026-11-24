@@ -4,8 +4,5 @@ description: The open aweb protocol contracts (identity, teams, federation, mess
 work: worktree
 # oats.core, oats.okf and oats.aweb come from the workspace defaults. What this
 # soul owns and reads in the aweb knowledge base is okf.json beside this file.
-# The launch preserves the current execution's harness and model override
-# (codex, no model override: the harness resolves the model). The record of
-# the predecessor executions is in the workspace host's hand-over record.
 # Yolo is a host launch setting.
-launch: { harness: codex }
+launch: { harness: claude, model: claude-opus-5-5 }
