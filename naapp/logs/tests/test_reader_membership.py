@@ -204,3 +204,48 @@ async def test_a_page_that_cannot_check_membership_retries_itself(
     retried = await aw.client.get(path, follow_redirects=True)
     assert retried.status_code == 200
     assert not Html(retried.text).all("a", id="console-recovery-action")
+
+
+HELD_STATE = (
+    "SELECT * FROM {{tables.passkey_approvers}} ORDER BY scope, subject",
+    "SELECT * FROM {{tables.passkey_credentials}} ORDER BY credential_id",
+    "SELECT * FROM {{tables.role_assignments}} ORDER BY team_id, principal_did, role",
+    "SELECT b3_scope, installation_id, team_id, role, principal_did, ended_in"
+    " FROM {{tables.role_holdings}} ORDER BY b3_scope",
+    "SELECT * FROM {{tables.outbox_events}} ORDER BY position",
+)
+
+
+async def held_state(aw: Aw) -> list[list[dict]]:  # noqa: F811
+    """Every holder's credentials, holdings and governance events, but not the
+    certificates the holdings retain."""
+    return [[dict(row) for row in await aw.world.db.fetch_all(sql)] for sql in HELD_STATE]
+
+
+async def retained(aw: Aw) -> bytes:  # noqa: F811
+    return await aw.world.db.fetch_value(
+        "SELECT certificate FROM {{tables.role_holdings}} WHERE b3_scope = $1",
+        reader_scope(aw.principal),
+    )
+
+
+async def test_an_abandoned_credential_start_changes_only_the_certificate(aw: Aw):  # noqa: F811
+    reissued = replace(aw.member, certificate_id="cert-reissued")
+    await aw.world.registry.add_certificate(reissued.certificate(), team_key=reissued.team_key)
+    before, certificate = await held_state(aw), await retained(aw)
+    aw.member = reissued
+    started, _, _ = await aw.start(purpose="credential")
+    assert started.status_code == 201, started.text
+    assert await retained(aw) != certificate
+    assert await held_state(aw) == before
+    # The credential the holder already has still signs it in.
+    assert (await login(aw)).status_code == 200
+
+
+async def test_a_credential_start_gives_a_removed_member_nothing(aw: Aw):  # noqa: F811
+    await removed_from_team(aw)
+    before, certificate = await held_state(aw), await retained(aw)
+    started, _, _ = await aw.start(purpose="credential")
+    assert started.status_code in (401, 403), started.text
+    assert (await held_state(aw), await retained(aw)) == (before, certificate)
+    assert outcome(await login(aw)) == NOT_A_MEMBER
