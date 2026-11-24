@@ -97,6 +97,13 @@ HOSTED_ENDPOINT_BASELINE = {
     "/api/v1/network/directory",
     "/api/v1/network/directory/acme/researcher",
     "/api/v1/a2a/gateway/routes",
+    # Hosted team reads the CLI's hosted creation, roster exchange and admission
+    # code use. Until the naapps left this repository, a naapp file's "/v1/teams"
+    # literal prefix-matched these and hid them as OSS routes; they were never
+    # served by the server, awid or an app.
+    "/api/v1/teams/current",
+    "/api/v1/teams/shared",
+    "/api/v1/teams/t1/admission-invite",
 }
 
 # --- baseline: hosted account-model schemas ----------------------------------
@@ -198,6 +205,9 @@ def decodable_text(path: Path) -> str | None:
 # server's /v1/messages; comparing literally would call every mounted route
 # hosted-only.
 OSS_SERVICE_SOURCES = ("server/src", "awid/src", "naapp-contracts/src")
+# Routes the OSS naapps serve, now in the naapp repository, that this
+# repository's CLI vectors and docs name.
+OSS_NAAPP_ROUTES = frozenset({"/v1/documents"})
 
 
 def oss_served_endpoints(root: Path) -> set[str]:
@@ -250,7 +260,7 @@ def find_hosted_endpoints(root: Path, files: list[str]) -> dict[str, set[str]]:
     decodable file. An earlier version read CLI Go source alone and reported
     whole-corpus coverage it did not have.
     """
-    served = oss_served_endpoints(root)
+    served = oss_served_endpoints(root) | OSS_NAAPP_ROUTES
     found: dict[str, set[str]] = {}
     for rel in sorted(files):
         if rel.endswith(SKIP_SUFFIXES):
