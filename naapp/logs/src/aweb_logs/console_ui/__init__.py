@@ -35,6 +35,7 @@ SHELL = ConsoleShell(
             button="Sign in with a passkey",
             waiting="Waiting for your passkey…",
             failed="Sign-in could not be completed. Try your passkey again.",
+            not_member_remedy="Ask the team’s owner to check your membership and your reader role.",
             sign_out_failed="Sign-out could not be completed. Try again.",
             reauth_heading="Sign in to continue",
             reauth_text="Sign in again in this tab to read your team’s log.",

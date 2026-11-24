@@ -38,19 +38,19 @@ class MemberRefusal:
 
     status: int
     message: str
-    remedy: str
+    remedy: str | None
     action_href: str
     action_label: str
 
 
-# By the refusal's code. An empty link reloads the page that was refused; a
+# By the refusal's code; a non-member's remedy is the app's own
+# (SignInCopy.not_member_remedy). An empty link reloads the page that was refused; a
 # definite refusal has closed the session, so sign-in does not lead back to it.
 MEMBER_REFUSALS = {
     "principal_not_member": MemberRefusal(
         403,
         "Your current team membership does not open this console.",
-        "If you are a member of the team, start a sign-in from aw once, then sign in here. "
-        "Otherwise ask the team’s owner.",
+        None,
         "/login",
         "Go to sign-in",
     ),
@@ -88,6 +88,7 @@ class SignInCopy:
     button: str
     waiting: str
     failed: str
+    not_member_remedy: str
     sign_out_failed: str
     reauth_heading: str
     reauth_text: str
@@ -157,7 +158,10 @@ class ConsoleShell:
                 "data-copy-failed": copy.failed,
                 "data-copy-sign-out-failed": copy.sign_out_failed,
                 "data-copy-member-refusals": json.dumps(
-                    {code: f"{r.message} {r.remedy}" for code, r in MEMBER_REFUSALS.items()}
+                    {
+                        code: f"{refusal.message} {self._remedy(refusal)}"
+                        for code, refusal in MEMBER_REFUSALS.items()
+                    }
                 ),
             }
         )
@@ -198,6 +202,9 @@ class ConsoleShell:
             f"{escape(copy.reauth_link)}</a></section>",
         )
 
+    def _remedy(self, refusal: MemberRefusal) -> str:
+        return refusal.remedy or self.brand.sign_in.not_member_remedy
+
     def refused_page(self, error: HTTPException) -> Response:
         """A browser GET's refusal by the session: a member refusal as a page
         with its remedy, a 401 as login_redirect, any other raised again."""
@@ -207,7 +214,7 @@ class ConsoleShell:
         return self.recovery_page(
             error,
             message=refusal.message,
-            remedy=refusal.remedy,
+            remedy=self._remedy(refusal),
             action_href=refusal.action_href,
             action_label=refusal.action_label,
         )
