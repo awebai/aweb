@@ -318,7 +318,7 @@ stored: its receipt and state handle are new, without claiming a newly
 inserted body or a secret-value version. The actual admitted approval,
 system actor, widening gate and atomic transition/enqueue remain mandatory;
 the receipt grants no execution or historical-fallback authority. See the
-[job consumer mapping](design/secrets.md#115-operational-record-and-the-post-secret-use-hook-outbox).
+job consumer mapping (naapp repository: docs/design/secrets.md).
 
 **Logs' own acts.** Logs records the owner's retention, erasure and legal-hold
 acts (audit-substrate §B6) as `logs.*` acts, each with `authority`
@@ -415,7 +415,7 @@ enqueue without network under the locks. A prior successful designation or
 scheduling receipt cannot substitute for the completion's audit gate.
 
 The exhaustive B3 consumer stage mapping is in
-[secrets §11.5](design/secrets.md#115-operational-record-and-the-post-secret-use-hook-outbox).
+secrets §11.5 (naapp repository: docs/design/secrets.md).
 It uses the existing acts, directions and authority values; operational B3
 audit notifications are not automatically governance effects.
 

@@ -12,7 +12,7 @@ Inputs: Juan's private naapp specs, cited by section and never quoted.
 **hooks-spec** is the private aw-hooks spec, not the public
 `docs/aw-hooks-sot.md`. **logs-spec** is the audit-logs spec. **secrets-spec**
 is the secrets and `aw do` spec, including §14. Where this design relies on a
-private section, it states the content it uses. D1 (`docs/design/agent-pages.md`)
+private section, it states the content it uses. D1 (docs/design/agent-pages.md in the naapp repository)
 owns manifest v2 (C3),
 installation authority (F6), task integration (C2) and hosted MCP (L2). This
 design fills the C3 `hooks` slot that D1 reserves and does not fork D1. Where a
@@ -1195,7 +1195,7 @@ full runtime extra with its WebAuthn and settings dependencies.
 ## Dependencies on other lanes
 
 - **D1 C3:** the `hooks` slot with registrations and productions, `app_keys`
-  with purposes, and `invocation_contexts` (`docs/design/agent-pages.md` §5).
+  with purposes, and `invocation_contexts` (docs/design/agent-pages.md in the naapp repository §5).
   **F6:** `installation_id` and generation, the fence, exact digests. **C2:**
   `task.answered`.
 - **Custodial deployment** (stated generically, routed by the coordinator):

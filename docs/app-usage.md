@@ -3,7 +3,7 @@
 Status: **draft contract** (C5, aweb-acgg.11). It defines what an installed
 app counts, how it reports those counts to its team server, how the team
 server collects them without double counting or inventing history, and how a
-team sees them. The design is [agent-pages.md](design/agent-pages.md) §8.
+team sees them. The design is agent-pages.md (naapp repository: docs/design/agent-pages.md) §8.
 
 ## Model
 

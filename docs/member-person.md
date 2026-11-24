@@ -8,7 +8,7 @@ it, and `aweb_naapp.runtime.attestation.read_member_person` reads it. L1
 
 ## Why it exists
 
-A `member_session` approval (D1, [agent-pages.md](design/agent-pages.md) §4)
+A `member_session` approval (D1, agent-pages.md (naapp repository: docs/design/agent-pages.md) §4)
 is safe only if the member account belongs to one natural person, rather
 than being shared by several people or driven by an agent. Nothing in a
 team-auth request or in a [principal attestation](principal-attestation.md)

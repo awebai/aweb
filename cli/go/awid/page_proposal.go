@@ -6,7 +6,7 @@ import (
 )
 
 // PageProposalPrefix domain-separates a page proposal digest
-// (docs/page-format.md §5). It ends in one literal newline byte.
+// (the naapp repository's docs/page-format.md §5). It ends in one literal newline byte.
 const PageProposalPrefix = "aweb.page-proposal/1\n"
 
 // ProposalSHA256 is the digest a decision binds for one proposal record:

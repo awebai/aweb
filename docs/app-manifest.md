@@ -380,7 +380,7 @@ v1 until source, vectors, and this contract change together.
 
 Status: **interpreter, vectors and CLI discovery shipped; no app publishes v2
 until a catalog-aware CLI is released.** Design: D1 §5
-(`docs/design/agent-pages.md`). Authority: the shared vectors
+(docs/design/agent-pages.md in the naapp repository). Authority: the shared vectors
 `test-vectors/app-manifests/app-manifest-v2-v1.json`, which both the Go
 interpreter (`cli/go/internal/appmanifest`) and the Python reader
 (`aweb_naapp.manifest.load_manifest`) pass. Consumers compare error **codes**

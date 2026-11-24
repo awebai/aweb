@@ -13,7 +13,7 @@ team's aweb coordination server. Three consumers share it:
 - the B1 `GrantSource` (aweb-acgh.3), for which this is the remote source;
 - aw-hooks target resolution (aweb-acgh.1, `docs/design/audit-substrate.md`
   §A4);
-- pages / D1 (aweb-acgg), whose `docs/design/agent-pages.md` "Installation
+- pages / D1 (aweb-acgg), whose docs/design/agent-pages.md in the naapp repository "Installation
   authority and scope" lists its requirements.
 
 It is generic: no app names, no catalog semantics and no naapp-specific core

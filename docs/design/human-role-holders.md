@@ -44,7 +44,7 @@ the same verified human identity serves every naapp.
   (`naapp/secrets/src/aweb_secrets/owners.py:43`). Every login and approval is
   still a user-verified WebAuthn assertion, retained as
   `aweb.passkey-evidence/1`. Holding the principal's team-auth key is still not
-  enough to approve anything (`docs/design/secrets.md:585`). The recovery
+  enough to approve anything (docs/design/secrets.md:585 in the naapp repository). The recovery
   cooling-off and last-owner protection stay (secrets §10.2).
 
 ## What changes
@@ -191,7 +191,7 @@ Each emits `post-governance-hook` with `authority: owner_act`.
 
 **What the credential audit retains.** Each act is one B3 audit event and one
 receipt, recorded under the consumed owner act, as for the contact acts
-([secrets design, B3 stages](secrets.md)):
+(secrets design, B3 stages (naapp repository: docs/design/secrets.md)):
 
 - **Pairing.** `APPROVER_DESIGNATED` pairs only with `human-role.designate`,
   `APPROVER_REDESIGNATED` only with `human-credential.replace`, and an

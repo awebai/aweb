@@ -2,10 +2,10 @@
 
 Status: **draft contract** (C2, aweb-acgg.8). It defines what a pages naapp
 does with the actions an `aweb.page/1` page declares
-([page-format.md](page-format.md)), how a person's decision on a proposal
+(page-format.md (naapp repository: docs/page-format.md)), how a person's decision on a proposal
 becomes an approval, and which approval adapters accept it. Task creation and
 task answers are [app-task-requests.md](app-task-requests.md). The design is
-[agent-pages.md](design/agent-pages.md) §4.
+agent-pages.md (naapp repository: docs/design/agent-pages.md) §4.
 
 Routes are the pages naapp's. A manifest maps tools to them, and other apps
 may use other paths. Every member request is team-auth v2
@@ -69,13 +69,13 @@ operation by an authorized member.
 ```
 
 - `input` validates against the stored `input_schema`, using the same bounded
-  checks as record values ([page-format.md](page-format.md)).
+  checks as record values (page-format.md (naapp repository: docs/page-format.md)).
 - `expected_page_rev` is required: missing is 428 `precondition_required`.
   `expected_record_revs` maps `<collection>/<record_id>` to revisions the
   action depends on.
 - `idempotency_key` (`^[A-Za-z0-9._-]{1,128}$`) is scoped to
   `(installation_id, team_id, principal_id, key)`, as for every mutation
-  ([agent-pages.md §3](design/agent-pages.md)). It is stored with the
+  (agent-pages.md §3 (naapp repository: docs/design/agent-pages.md)). It is stored with the
   canonical hash of the request's identity (below). The same key with the
   same identity returns the first result. With a different identity,
   including the same key on another page or action, it is 409
@@ -113,7 +113,7 @@ action gets (policy, input, revisions):
 
 **A replay** is the same key with the same identity after acceptance. The
 naapp recognizes it before any other check, so a revision that the request
-itself moved does not refuse it ([agent-pages.md §3](design/agent-pages.md)).
+itself moved does not refuse it (agent-pages.md §3 (naapp repository: docs/design/agent-pages.md)).
 It re-checks the caller's current read permission, then returns the stored
 receipt and admits nothing new. When it carries an authorization not yet
 stored and the request's `delivery` is still `pending`, the naapp verifies it
@@ -269,7 +269,7 @@ committed.
 ## 4. Proposals and their digest
 
 A proposal is a record that a person decides on. Its digest binds the
-record's identity and exact value, as [page-format.md](page-format.md) §5
+record's identity and exact value, as page-format.md (naapp repository: docs/page-format.md) §5
 defines it:
 
 ```text
@@ -285,7 +285,7 @@ content at a new revision has the same digest, while any change to the
 content, to the record it lives in or to its collection has a different one.
 Re-editing a proposal therefore needs a fresh answer.
 
-A bundle's digest is the C1 rule ([page-format.md](page-format.md) §5): the
+A bundle's digest is the C1 rule (page-format.md (naapp repository: docs/page-format.md) §5): the
 digest of its ordered `{record_id, record_rev, proposal_sha256}` items, each
 item's `proposal_sha256` computed as above over its record in
 `items_collection`.
@@ -355,7 +355,7 @@ and format, and nothing else from the record. It also refuses when a bound
 field is missing from the record at the verified revision, or when a
 `money_minor` field's record has no ISO 4217 `currency` (three uppercase
 letters): a person approving an amount sees its currency. Elsewhere on a page
-the two-decimal fallback of [page-format.md](page-format.md) §3 applies. For a
+the two-decimal fallback of page-format.md (naapp repository: docs/page-format.md) §3 applies. For a
 bundle, `fields` describes every item record. The host checks the chosen value
 against the task's `choices`, never the page. `decision-display-v1.json`
 pins these cases.

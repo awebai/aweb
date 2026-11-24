@@ -90,7 +90,6 @@ authority.
   statement of custody and channel for a team-auth request (proposal).
 - [Member person declaration](member-person.md) — team controller's statement
   that a certificate's member is one natural person (proposal).
-- [secrets runner protocol](secrets-runner-protocol.md) — signed runner requests
   and assignments, and HPKE credential sealing, between secrets and its runners.
 - [AWID A2A publication contract](a2a-awid-publication-contract.md) — publication
   and bridge-delegation assertions.
@@ -113,7 +112,6 @@ authority.
   it or changing identity or membership state.
 - [Hosted global bootstrap and recovery](hosted-global-bootstrap.md) — creating
   a new global identity in an existing hosted team, or reusing a retained resident.
-- [Build a naapp](build-a-naapp.md) — an outside author's path from an HTTP
   service to signed requests, optional events and agent installation.
 - [CLI naapp access](naapp-access.md) — resident approval and finite grant
   snapshots for declarative HTTP apps.
@@ -198,7 +196,6 @@ presented as shipped.
   byte-identical CLI interpretation contract.
 - [App registry and team grants](app-registry.md) — current experimental install,
   digest-pin, and grants read surface.
-- [Page format](page-format.md) — the frozen `aweb.page/1` page snapshot
   format, its validator and conformance vectors.
 - [Page actions, decisions and approvals](page-actions.md) — specified
   experimental contract for page actions, proposal digests and approval

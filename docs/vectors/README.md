@@ -254,7 +254,7 @@ codec, the `aweb_naapp` verifier and aw's Go record codec
 ### `secrets-runner-protocol-v1.json`
 
 The secrets runner protocol of
-[secrets-runner-protocol.md](../secrets-runner-protocol.md): signed
+secrets-runner-protocol.md (naapp repository: docs/secrets-runner-protocol.md): signed
 `aweb.secrets.runner-request/1` headers and `aweb.secrets.runner-assignment/1`
 bodies with their exact signing bytes, credentials sealed with HPKE
 (X25519, HKDF-SHA256, ChaCha20-Poly1305, `dispatch_id` as `info`), and a
@@ -265,7 +265,7 @@ consumes every case.
 
 ### `secrets-runner-http-v1.json`
 
-[Runner protocol §4](../secrets-runner-protocol.md#4-http-bodies-reports-and-credential-fields)
+Runner protocol §4 (naapp repository: docs/secrets-runner-protocol.md)
 body bytes and their private request-binding hashes, six-field result refusals,
 combined UTF-8 bounds, declared env-field families and report-state expectations.
 No credential material is present. The contract reference reader in
@@ -525,7 +525,7 @@ cases that are structurally valid carry a `render` expectation for the shared
 renderer, which this file names but does not test. `bundle_hash` pins the
 bundle decision-card digest across languages. The reference consumer is
 `aweb_naapp.pages` in `naapp-lib/tests/pages/`. See
-[the page format](../page-format.md).
+the page format (naapp repository: docs/page-format.md).
 
 ### `app-task-authorization-v1.json`
 
@@ -568,7 +568,7 @@ Capability-link requests (aweb-acgg.10): secret verifiers, and
 `aweb.link-request/1` payloads, signing bytes and Ed25519 signatures by a
 session key, with verification cases that give the request each payload must
 bind and the clock. The reference consumer is `aweb_naapp.runtime.link_requests`
-in `naapp-lib/tests/runtime/`. See [page links](../page-links.md) §2–§3.
+in `naapp-lib/tests/runtime/`. See page links (naapp repository: docs/page-links.md) §2–§3.
 
 ### `link-capability-v1.json`
 
@@ -580,7 +580,7 @@ receipt retries after use, revocation and expiry, asset grants for native
 media, revocation and one-use races under the link's row lock, and exchange
 rate limiting that a stranger cannot turn against a holder. The delegation and
 lockout cases are checked by `aweb_naapp.runtime.capability_links`. See
-[page links](../page-links.md) §1 and §4–§6.
+page links (naapp repository: docs/page-links.md) §1 and §4–§6.
 
 ### `page-proposal-v1.json`
 
@@ -588,7 +588,7 @@ lockout cases are checked by `aweb_naapp.runtime.capability_links`. See
 digests over a record's collection, id and value, a bundle built from item
 digests, and value refusals. The reference consumers are `aweb_naapp.pages` in
 `naapp-lib/tests/pages/` and `cli/go/awid/`. See
-[the page format](../page-format.md) §5.
+the page format (naapp repository: docs/page-format.md) §5.
 
 ### `decision-display-v1.json`
 

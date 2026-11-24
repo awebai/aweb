@@ -11,7 +11,7 @@ The plan builds the accepted design, [`audit-substrate.md`](audit-substrate.md),
 under the decision record, whose decisions it cites by number. It reuses three
 sibling lanes rather than re-specifying them: aweb-acgh.7
 ([app-team-server-api.md](app-team-server-api.md)), the secrets design
-([secrets.md](secrets.md)), and D1 ([agent-pages.md](agent-pages.md), §11 task
+(secrets.md (naapp repository: docs/design/secrets.md)), and D1 (agent-pages.md (naapp repository: docs/design/agent-pages.md), §11 task
 graph).
 
 ## Status by task

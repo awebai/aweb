@@ -2,8 +2,8 @@
 
 Status: **draft contract** (C2, aweb-acgg.8). The task service side is built
 against it in aweb-acgg.32. The page side is [page-actions.md](page-actions.md).
-The design is [agent-pages.md](design/agent-pages.md) §4 and its
-[wire sketches](design/agent-pages/contracts.md).
+The design is agent-pages.md (naapp repository: docs/design/agent-pages.md) §4 and its
+wire sketches (naapp repository: docs/design/agent-pages/contracts.md).
 
 This contract lets an installed app create an aweb task on behalf of a team
 member, and lets the person a task is assigned to answer it, in a way that
@@ -44,7 +44,7 @@ Two digest spellings are used, each in fixed places:
 | Spelling | Where |
 | --- | --- |
 | Bare lowercase hex, 64 characters | Values bound inside signatures and transport: `task_body_sha256`, `body_sha256`, `answer_sha256`, the approval `request_sha256`. |
-| `sha256:` followed by 64 lowercase hex | Digests that appear in page data and task metadata: `proposal_sha256` and bundle digests ([page-format.md](page-format.md)). |
+| `sha256:` followed by 64 lowercase hex | Digests that appear in page data and task metadata: `proposal_sha256` and bundle digests (page-format.md (naapp repository: docs/page-format.md)). |
 
 A field never accepts the other spelling.
 
@@ -191,7 +191,7 @@ current generation.
 | `proposal_rev`, `proposal_sha256` | Equal the authorization's. |
 | `eligible_dids` | Required on a **decision request** (one whose `proposal_rev` and `proposal_sha256` are set) and `null` otherwise: 1–16 distinct principal DIDs, sorted, of individually designated people, including `assignee_did`. Frozen at create: they are who may answer. |
 | `role` | On a decision request, the role name (`aweb_naapp.roles` grammar: dot-separated lowercase segments, at most 128 bytes) the eligible set was resolved from, or `null` when the target named the principals directly. `null` on any other request. The app is the installation's own; hosts show the pair (app, role). |
-| `choices` | `null`, or 1–10 objects `{value, label}` that an answer may choose from, in display order: `value` matches `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`, `label` is 1–4,096 runes with no control or bidi character, and both are distinct across the list. They are a decision card's options ([page-format.md](page-format.md) §5), copied unchanged. Signed through `task_body_sha256`, they are what the person is shown, so a page cannot relabel an option. |
+| `choices` | `null`, or 1–10 objects `{value, label}` that an answer may choose from, in display order: `value` matches `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`, `label` is 1–4,096 runes with no control or bidi character, and both are distinct across the list. They are a decision card's options (page-format.md (naapp repository: docs/page-format.md) §5), copied unchanged. Signed through `task_body_sha256`, they are what the person is shown, so a page cannot relabel an option. |
 | `fields` | On a decision request, 1–32 objects `{field, label, format}` in display order, and `null` otherwise: `field` is the record property shown (1–128 characters, the same literal name as a page binding), `label` what the person reads (1–200 runes, the `title` character rule), `format` one of `text`, `date`, `number`, `money_minor`. `field` and `label` are each distinct. Signed through `task_body_sha256`, they bind what the person reads next to each value ([page-actions.md](page-actions.md) §5). |
 
 Unknown fields are refused at every level, and so is a task with no canonical
