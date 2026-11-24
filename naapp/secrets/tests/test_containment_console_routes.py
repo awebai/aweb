@@ -6,19 +6,21 @@ from contextlib import asynccontextmanager
 
 import httpx
 import pytest
-from aweb_naapp.console import apply_console_migrations
+from aweb_naapp.console import COOKIE_NAME, apply_console_migrations
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.passkeys import PasskeyInstallationContext
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
+from aweb_naapp_testing.webauthn import b64url
 from fastapi import FastAPI
 
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.containment_routes import containment_console_router
-from aweb_secrets.owners import owner_scope
+from aweb_secrets.owners import approver_scope, owner_scope
 from tests.human_owner import fixture_member_admission
 from tests.test_change_sets import ALICE, ORIGIN, TEAM, world  # noqa: F401
 from tests.test_console import API, login
+from tests.test_containment_console import login_session, sibling_session
 from tests.test_containment_service import service
 from tests.test_use_approval_lineage import seed
 from tests.test_use_approvals import SECRET_ID
@@ -162,6 +164,61 @@ async def test_console_narrowing_routes_share_the_real_containment_actions(uses,
             "SELECT disabled_at IS NOT NULL FROM {{tables.containment_installations}}"
         )
     assert await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == before + 1
+
+
+@pytest.mark.parametrize("keep_second_passkey", [False, True])
+async def test_contact_retirement_refuses_an_existing_session_and_a_pending_login(
+    uses, keep_second_passkey
+):
+    await seed(uses)
+    w = uses.world
+    scope = approver_scope(INSTALLATION_ID, TEAM, "finance")
+    device = w.devices["finance@acme.com"]
+    credential_id = next(iter(device.credentials))
+    if keep_second_passkey:
+        await sibling_session(w, await login_session(w, scope, device))
+
+    async with clients(uses) as (human, _, _):
+        owner = await login(w, human, owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did))
+        owner_cookies = httpx.Cookies(human.cookies)
+        owner_headers = {"X-CSRF-Token": owner.json()["csrf_token"]}
+        human.cookies.clear()
+        options = await human.post("/login/options", json={"scope": scope})
+        assert options.status_code == 200
+        contact = await human.post(
+            "/login", json={"scope": scope, "assertion": device.get(options.json())}
+        )
+        assert contact.status_code == 200
+        assert (await human.get("/session")).json()["scope"] == scope
+        refused = await human.get("/v1/session")
+        assert (refused.status_code, refused.json()) == (403, {"detail": "owner_required"})
+        contact_cookies = httpx.Cookies(human.cookies)
+        options = await human.post("/login/options", json={"scope": scope})
+        assert options.status_code == 200
+        pending_login = device.get(options.json())
+
+        human.cookies = owner_cookies
+        revoke = {"request_id": "retire-contact", "action": "revoke-approver", "target": "finance"}
+        if keep_second_passkey:
+            revoke["credential_id"] = b64url(credential_id)
+        assert (await human.post(PATH, json=revoke, headers=owner_headers)).status_code == 200
+
+        human.cookies = contact_cookies
+        refused = await human.get("/session")
+        assert refused.status_code == 401
+        assert "Max-Age=0" in refused.headers["set-cookie"]
+        refused = await human.post("/login", json={"scope": scope, "assertion": pending_login})
+        assert refused.status_code == 401
+        assert COOKIE_NAME not in human.cookies
+        options = await human.post("/login/options", json={"scope": scope})
+        assert options.status_code == (200 if keep_second_passkey else 401)
+
+    assert (
+        await w.db.fetch_value(
+            "SELECT EXISTS(SELECT 1 FROM {{tables.approvers}} WHERE scope=$1)", scope
+        )
+        == keep_second_passkey
+    )
 
 
 async def test_console_containment_requires_session_csrf_and_exact_request_shape(uses):
