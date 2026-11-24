@@ -3,7 +3,7 @@ type: Decision
 title: Released clients are a permanent constraint
 description: Once a client that sends a shape is published, the server accepts that shape until it is measured that nothing sends it; contract changes are additive by default, narrowing names every consumer and proves each deploys atomically, and removal is a separate change.
 tags: [decision, compatibility, release, clients, contracts]
-timestamp: 2026-11-04
+timestamp: 2026-11-22
 ---
 
 Decided on 2026-07-27 after a chat mark-read change made a new field required
@@ -60,6 +60,34 @@ Rulings and review misses from October 2026 mark the edges of the rule.
   new duty stated in a docstring. See
   [removing an implicit side effect is a contract change](/aweb-protocol-expert/lessons/removing-an-implicit-side-effect-is-a-contract-change.md)
   (2026-11-04).
+- **Consumed CLI refusal output is a released shape** (2026-11-22). A refusal's
+  code, HTTP status and message become a contract when a released external
+  automation branches on them, even if the message was written for people.
+  Before changing a diagnostic, read the published consumer's matcher, in
+  every executable or package it ships, and run the built CLI with that
+  consumer's invocation. Keep each field it matches and put a new
+  classification in a separate field; keep the service's own refusal reason
+  available beside it. Without a released consumer that matches it, prose
+  carries no such requirement. New consumers still follow
+  `docs/cli-integration-contract.md`: branch on exit status and structured
+  fields, and display the message. Example: the released OATS provider matches
+  the generic code and the exact message for a missing team-server record and
+  for a foreign team-key pin, and uses the original HTTP 409 when the follow-up
+  read cannot establish the pin. Source that replaced the code with a specific
+  one and appended recovery guidance to the message could have stopped healthy
+  team setup. b62965797d restored the released refusals and added
+  `error.classification`; 3f224205cf restored the released malformed
+  positional invite refusal, with no classification. Both are on main and in
+  aw-v1.36.59. The guards are `TestOATSReleasedTeamRefusalEnvelopes` and
+  `TestOATSReleasedMalformedPositionalInviteRefusal`, which run the built
+  binary. The harvester checked the commits, the tests and the aw-v1.36.58
+  messages; the external provider's matcher and the red and green runs are
+  source-reported. Both commits report the operator's approval, relayed by the
+  coordinator: source-reported (relay at
+  [b62965797d](https://github.com/awebai/aweb/commit/b62965797d67fa510ed5e8cc9ef6bdb06ed535b3)).
+  It covers those changes, not this general wording. Evidence: OKF proposal
+  from aweb-protocol-expert/aweb-protocol-expert-signer-membership, 2026-11-22;
+  notes/released-cli-refusal-prose-can-be-a-contract.md.
 - **A dated exception, by the operator.** On 2026-10-20, relayed by the naapps
   and secrets coordinators, the operator waived the additive default for the
   naapp install surfaces, released aw clients included, on the premise that no
