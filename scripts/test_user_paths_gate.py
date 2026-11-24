@@ -468,7 +468,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 )
                 invoke(None)
                 ledger = ledger_rows()
-                self.assertEqual(len(ledger), 5, ledger)
+                self.assertEqual(len(ledger), 6, ledger)
                 self.assertEqual(len({row.split("\t")[0] for row in ledger}), 1)
                 receipt = json.loads((root / "snapshot.json").read_text())
                 # The frozen input names its source: a registry gitHead here.
@@ -491,14 +491,14 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 self.assertIn("no stages run", reused)
                 self.assertEqual(reused.count("NOT COVERED: pending aweb-actu"), 12)
                 self.assertIn("incomplete: human paths not covered", reused)
-                self.assertEqual(len(ledger_rows()), 5)
+                self.assertEqual(len(ledger_rows()), 6)
                 # A new main with the same reviewed ceilings keeps the cached
                 # checks. New reviewed ceilings on main invalidate them, even when
                 # the candidate source tree and artifact are unchanged.
                 next_main = git("commit-tree", tree, "-p", main, "-m", "next main")
                 git("update-ref", "refs/remotes/origin/main", next_main)
                 self.assertIn("no stages run", invoke("checks"))
-                self.assertEqual(len(ledger_rows()), 5)
+                self.assertEqual(len(ledger_rows()), 6)
                 ceilings = run_fixture(
                     ["git", "-C", str(repo), "hash-object", "-w", "--stdin"],
                     input='{"schema_version":1,"nonliteral_files":{},"files":{}}\n',
@@ -526,7 +526,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 git("update-ref", "refs/remotes/origin/main", reviewed_main)
                 invoke("checks")
                 rebound = ledger_rows()
-                self.assertEqual(len(rebound), 6)
+                self.assertEqual(len(rebound), 7)
                 self.assertNotEqual(
                     rebound[-1].split("\t")[0], ledger[0].split("\t")[0]
                 )
@@ -534,7 +534,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 metadata["version"] = "1.36.55"
                 invoke("checks")
                 changed = ledger_rows()
-                self.assertEqual(len(changed), 7)
+                self.assertEqual(len(changed), 8)
                 self.assertNotEqual(
                     changed[-1].split("\t")[0], ledger[0].split("\t")[0]
                 )

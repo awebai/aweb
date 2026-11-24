@@ -1,10 +1,12 @@
-# The candidate gate covers each naapp package through `make lint` and
-# `make test` (the root Makefile's NAAPP_PACKAGES).
+# Pull-request CI type-checks each naapp package through `make typecheck`, and
+# the candidate gate runs `make test` (the root Makefile's NAAPP_PACKAGES).
 
-.PHONY: lint test
+.PHONY: lint typecheck test
 
-lint:
+lint: typecheck
 	uv run ruff check .
+
+typecheck:
 	uv run mypy src
 
 test:

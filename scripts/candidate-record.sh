@@ -60,7 +60,10 @@ finalize_candidate() {
   for stage in $pending; do
     stage_log="$LEDGER_LOGS/${KEY:0:12}-$stage-$run_id.log"
     if [[ ! -f "$LOG_DIR/$stage.log" ]]; then
-      if [[ "$interrupted" == 0 ]]; then
+      if grep -q "^$stage"$'\tNOT-RUN\t' "$retained/summary.tsv" 2>/dev/null; then
+        # The suite stopped after a failed static stage; that failure is recorded.
+        printf 'gate: %s not run after static FAILED\n' "$stage" >> "$run_log"
+      elif [[ "$interrupted" == 0 ]]; then
         incomplete=1
         printf 'gate: missing completed proof for %s\n' "$stage" >> "$run_log"
       fi
@@ -80,7 +83,7 @@ finalize_candidate() {
   fi
   if [[ -f "$retained/summary.tsv" ]]; then
     while IFS=$'\t' read -r entry verdict relative elapsed note; do
-      [[ "$entry" =~ ^(checks|user-paths|unit|artifacts|integration)/[A-Za-z0-9_.-]+$ ]] || continue
+      [[ "$entry" =~ ^[a-z-]+/[A-Za-z0-9_.-]+$ ]] || continue
       stage="${entry%%/*}"
       [[ " $pending " == *" $stage "* ]] || continue
       case "$relative" in

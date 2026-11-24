@@ -254,7 +254,8 @@ async def f(db, schema):
                     result.returncode, expected, result.stdout + result.stderr
                 )
                 calls = (self.root / "calls").read_text().splitlines()
-                self.assertEqual(calls[0], "check-secrets-shards")
+                # The check ran its real recipe, and the later targets still ran.
+                self.assertNotIn("check-product-table-writes", calls)
                 self.assertIn("test-shipping", calls)
                 self.assertIn(
                     "checks/check-product-table-writes\t"

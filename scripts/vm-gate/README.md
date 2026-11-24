@@ -69,7 +69,8 @@ vm-gate snapshot --repo "$REPO" --sha "$SHA"
 
 No selector uses the source's ordinary `make candidate-gate` entry. Stage
 subsets use its existing selector. Train intent reproduces the coordinator's
-explicit five-stage command: checks, user-paths, unit, artifacts, integration.
+explicit six-stage command: static, checks, user-paths, unit, artifacts,
+integration.
 A train SHA must contain freshly refreshed real origin/main, and main must not
 move before or during the run. A branch qualification recreates a frozen local
 origin with its main at the selected SHA; the real main OID and both ancestry

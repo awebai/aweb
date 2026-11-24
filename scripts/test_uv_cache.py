@@ -83,7 +83,7 @@ class UvCacheTests(unittest.TestCase):
                 ["uv", "cache", "dir"], env=env, text=True
             ).strip()
             recipe = subprocess.check_output(
-                ["make", "-n", "lint-naapp"], cwd=ROOT, env=env, text=True
+                ["make", "-n", "typecheck-naapp"], cwd=ROOT, env=env, text=True
             )
             self.assertNotIn("UV_CACHE_DIR=", recipe)
             self.assertFalse(violations(Path("Makefile"), recipe))

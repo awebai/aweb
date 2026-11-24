@@ -2,7 +2,7 @@ import unittest
 from vm_gate.aweb import command
 from vm_gate.errors import Refused
 
-ALL = "checks user-paths unit artifacts integration"
+ALL = "static checks user-paths unit artifacts integration"
 
 
 class AwebAdapterTests(unittest.TestCase):

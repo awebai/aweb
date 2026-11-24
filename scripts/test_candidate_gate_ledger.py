@@ -35,7 +35,7 @@ def held_library_default():
 
 
 ROOT = Path(__file__).resolve().parents[1]
-STAGES = "checks user-paths unit artifacts integration"
+STAGES = "static checks user-paths unit artifacts integration"
 # The targets the fixture gives real recipes: the stage assertions below
 # use real tools and services, never a replacement runner.
 REAL_RECIPES = frozenset(
@@ -100,10 +100,11 @@ class CompleteGateVerdictTests(unittest.TestCase):
     def test_every_stage_and_independent_target_reports_after_failures(self):
         result, rows = self.suite(
             STAGES, "check-product-table-writes", "e2e-user-paths",
-            "test-python-locks", "build", "_candidate-artifact-server",
+            "_candidate-node-deps", "build", "_candidate-artifact-server",
         )
         self.assertNotEqual(result.returncode, 0)
-        for stage in STAGES.split():
+        self.assertEqual(rows.get("static"), "PASSED", result.stdout)
+        for stage in STAGES.split()[1:]:
             self.assertEqual(rows.get(stage), "FAILED", result.stdout)
         self.assertEqual(rows["checks/check-product-table-writes"], "FAILED")
         self.assertEqual(rows["checks/test-release-cli-version"], "PASSED")
@@ -512,6 +513,7 @@ candidate-gate:
         failed_rows = [row.split("\t") for row in before.splitlines()[len(changed_rows) :]]
         verdicts = {row[1]: row[2] for row in failed_rows}
         for entry, verdict in {
+            "static": "passed",
             "checks": "failed",
             "checks/test-shipping": "failed",
             "checks/test-release-cli-version": "passed",
@@ -562,8 +564,37 @@ candidate-gate:
                 "failed-tree",
             )
         )
+        # A failed static stage stops the run: no later stage starts or is
+        # recorded, the static failure is, and the tree is refused until fixed.
+        checks_line = f"{' '.join(SOURCE_CHECKS)}:\n"
+        static_failure = recipes.replace(
+            checks_line,
+            f"{' '.join(t for t in SOURCE_CHECKS if t != 'check-private-boundary')}:\n",
+        ) + "check-private-boundary:\n\t@exit 23\n"
+        assert recipes.count(checks_line) == 1 and static_failure != recipes
+        (repo / "Makefile").write_text(static_failure)
+        checked(repo, "git", "commit", "-qam", "static failure")
+        before_static = ledger.read_text().splitlines()
+        output = invoke("static-failed-tree", *gate, stages=STAGES, success=False)
+        static_rows = [
+            row.split("\t") for row in ledger.read_text().splitlines()[len(before_static) :]
+        ]
+        recorded_stages = {row[1].split("/")[0] for row in static_rows}
+        if recorded_stages != {"static"}:
+            raise AssertionError(f"only static may be recorded: {static_rows}")
+        verdicts = {row[1]: row[2] for row in static_rows}
+        if verdicts.get("static") != "failed" or verdicts.get("static/check-private-boundary") != "failed":
+            raise AssertionError(f"static failure not recorded: {static_rows}")
+        for stage in STAGES.split()[1:]:
+            if f"candidate: {stage} NOT-RUN" not in output:
+                raise AssertionError(f"{stage} not reported as not run: {output}")
+        if "candidate gate cleanup PASSED" not in output:
+            raise AssertionError(f"static failure skipped gate cleanup: {output}")
+        refused = invoke("static-refused-tree", *gate, success=False)
+        if "already FAILED static" not in refused:
+            raise AssertionError(f"failed static tree was not refused: {refused}")
     print(
-        "PASS: real Docker stages, missing-only execution, make/direct/RC reuse, changed main/tree/version, failed-tree refusal"
+        "PASS: real Docker stages, missing-only execution, make/direct/RC reuse, changed main/tree/version, failed-tree refusal, static stop"
     )
 
 

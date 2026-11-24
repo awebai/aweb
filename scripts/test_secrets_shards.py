@@ -14,8 +14,8 @@ import unittest
 from secrets_shards import load_shards, run_shards, service_environments, validate_collections
 
 
-class ChecksStage(unittest.TestCase):
-    def test_checks_reports_deleted_and_unassigned_secrets_modules(self):
+class StaticStage(unittest.TestCase):
+    def test_static_reports_deleted_and_unassigned_secrets_modules(self):
         scripts = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -54,14 +54,14 @@ class ChecksStage(unittest.TestCase):
                     else:
                         (tests / 'test_added.py').rename(tests / 'test_removed.py')
                     result = subprocess.run(
-                        ['bash', str(scripts / 'candidate-suite.sh'), 'checks'],
+                        ['bash', str(scripts / 'candidate-suite.sh'), 'static'],
                         cwd=root, env=env, capture_output=True, text=True, timeout=30,
                     )
                     outcome = 'FAILED' if stale else 'PASSED'
                     self.assertEqual(result.returncode == 0, not stale, result.stdout + result.stderr)
                     summary = (log / 'summary.tsv').read_text()
-                    self.assertIn(f'checks/check-secrets-shards\t{outcome}\t', summary)
-                    self.assertIn(f'checks\t{outcome}\t', summary)
+                    self.assertIn(f'static/check-secrets-shards\t{outcome}\t', summary)
+                    self.assertIn(f'static\t{outcome}\t', summary)
                     if stale:
                         self.assertIn('module tests/test_removed.py in secrets-shards.json was not collected', result.stdout)
                         self.assertIn('collected module tests/test_added.py is missing from secrets-shards.json', result.stdout)

@@ -155,8 +155,14 @@ ceilings, the only part of main a stage reads. Commit metadata, main's commit,
 stage selection and log paths do not create another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
 retained logs; all callers must share them.
 
+The static stage runs first: the identity and source-of-truth inventories,
+vector provenance, the private boundary and the Secrets shard manifest. When it
+fails, no later stage starts; they are reported as NOT-RUN and nothing is
+recorded for them. The gate checks neither types nor style: pull-request CI
+type-checks the naapp packages (`make typecheck-naapp`).
+
 For focused pre-landing checks, use `AWEB_CANDIDATE_STAGES='checks unit' make
-candidate-gate`. Release candidates always require all five stages, even if that
+candidate-gate`. Release candidates always require all six stages, even if that
 environment variable is set. Passes are reused across callers with equal inputs.
 A recorded failure blocks every stage for those inputs: fix the code and gate
 the changed tree. For infrastructure failures only, the coordinator removes the
@@ -168,7 +174,7 @@ verdict is recorded as a cleanup failure.
 
 On the ccx33 unit profile, the Secrets package uses two whole-module shards
 on separate Postgres and Redis pairs already owned by the isolated runner. The
-measured partition is in `candidate-gate/secrets-shards.json`. The checks stage
+measured partition is in `candidate-gate/secrets-shards.json`. The static stage
 qualifies it by collecting tests without starting services. It reports modules
 missing from collection and collected modules missing from the manifest. The
 runner compares the ordered shard collections to the unsharded collection under the
