@@ -24,7 +24,8 @@ def test_shared_point_encoding_components(case):
 def test_prime_point_reuses_verdict_for_repeated_bytes():
     from nacl.signing import SigningKey
 
-    from awid.signature_wire import prime_point, prime_point_verdicts
+    from awid.signature_wire import _prime_point_verdicts as prime_point_verdicts
+    from awid.signature_wire import prime_point
 
     key = bytes(SigningKey.generate().verify_key)
     first = prime_point(key)
@@ -34,4 +35,8 @@ def test_prime_point_reuses_verdict_for_repeated_bytes():
     with pytest.raises(TypeError):
         prime_point(bytearray(key))
     assert prime_point(bytes(32)) is False
+    before = prime_point_verdicts.cache_info()
     assert prime_point(key[:31]) is False
+    assert prime_point(key + b"x" * 1000) is False
+    after = prime_point_verdicts.cache_info()
+    assert (after.misses, after.currsize) == (before.misses, before.currsize)

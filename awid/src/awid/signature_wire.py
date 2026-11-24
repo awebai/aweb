@@ -103,13 +103,13 @@ def decode_legacy_signature(value: str) -> bytes:
 
 def prime_point(encoded: bytes) -> bool:
     """Canonical, nonidentity Ed25519 point in the prime subgroup."""
-    if type(encoded) is bytes:
-        return prime_point_verdicts(encoded)
+    if type(encoded) is bytes and len(encoded) == 32:
+        return _prime_point_verdicts(encoded)
     return _prime_point(encoded)
 
 
 @lru_cache(maxsize=4096)
-def prime_point_verdicts(encoded: bytes) -> bool:
+def _prime_point_verdicts(encoded: bytes) -> bool:
     """The subgroup check depends only on the bytes, and requests repeat the same keys."""
     return _prime_point(encoded)
 
