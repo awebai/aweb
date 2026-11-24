@@ -581,6 +581,37 @@ async def test_a_chat_event_uses_the_aliases_and_preview_its_sender_supplied(awe
     assert chat_reads == []
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_workspace", [False, True])
+async def test_mail_event_batches_presence_without_shifting_missing_hashes(mutation_server, monkeypatch, same_workspace):
+    from aweb.presence import clear_workspace_presence, update_agent_presence
+    from redis.asyncio.client import Pipeline
+
+    redis = mutation_server.redis
+    recipient = str(uuid4())
+    sender = recipient if same_workspace else str(uuid4())
+    await update_agent_presence(redis, workspace_id=recipient, alias="recipient", team_id=MUTATION_TEAM)
+    batches = []
+    original = Pipeline.execute
+
+    async def observe(pipeline, *args, **kwargs):
+        keys = [commands[1] for commands, _ in pipeline.command_stack if commands[0] == "HGETALL"]
+        if keys:
+            batches.append(keys)
+        return await original(pipeline, *args, **kwargs)
+
+    monkeypatch.setattr(Pipeline, "execute", observe)
+    event = MessageDeliveredEvent(workspace_id=recipient, from_workspace=sender)
+    try:
+        await mutation_hooks._enrich(event, redis, _DbShim(mutation_server.db), {})
+        expected_keys = list(dict.fromkeys((f"presence:{sender}", f"presence:{recipient}")))
+        assert batches == [expected_keys]
+        assert event.from_alias == ("recipient" if same_workspace else "")
+        assert event.to_alias == "recipient"
+    finally:
+        await clear_workspace_presence(redis, [recipient])
+
+
 async def _send_supplied_chat_event(handler):
     await handler(
         "chat.message_sent",

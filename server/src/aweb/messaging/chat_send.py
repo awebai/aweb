@@ -118,6 +118,7 @@ from aweb.messaging.recipients import (
 )
 from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.sender_address import sender_address as _sender_address
+from aweb.messaging.sender_address import sender_signature_address
 from aweb.messaging.signatures import (
     MessageSignatureShapeError,
     validate_ed25519_message_signature,
@@ -380,7 +381,7 @@ async def deliver_federated_chat(
             type="chat",
             sender_did_aw=sender_routing_did,
             sender_current_did_key=sender_current_did,
-            sender_address=sender_address,
+            sender_address=sender_address or None,
             sender_delivery_origin=runtime.public_origin,
             target_address=route["address"],
             target_did_aw=route["did_aw"],
@@ -807,7 +808,7 @@ async def _stored_exact_chat_send(
             recipient_rows=recipient_rows,
             requested_to_aliases=getattr(payload, "to_aliases", None),
             from_alias=auth.alias,
-            from_address=_sender_address(auth),
+            from_address=sender_signature_address(auth, _sender_address(auth)),
             from_stable_id=auth.did_aw,
             body=_chat_payload_body(payload),
             from_did=payload.from_did,
@@ -1892,7 +1893,7 @@ async def _send_to_remote_named_chat(
             recipient_rows=target_rows,
             requested_to_aliases=payload.to_aliases,
             from_alias=auth.alias,
-            from_address=sender_address,
+            from_address=sender_signature_address(auth, sender_address),
             from_stable_id=auth.did_aw,
             body=payload.message,
             from_did=from_did,
@@ -2133,7 +2134,7 @@ async def _send_to_local_named_chat(
             recipient_rows=target_rows,
             requested_to_aliases=payload.to_aliases,
             from_alias=auth.alias,
-            from_address=sender_address,
+            from_address=sender_signature_address(auth, sender_address),
             from_stable_id=auth.did_aw,
             body=payload.message,
             from_did=from_did,
@@ -2272,7 +2273,7 @@ async def _validate_continued_chat_attestation(
             signed_payload=payload.signed_payload,
             recipient_rows=recipient_rows,
             from_alias=auth.alias,
-            from_address=sender_address,
+            from_address=sender_signature_address(auth, sender_address),
             from_stable_id=auth.did_aw,
             body=payload.body,
             from_did=from_did,

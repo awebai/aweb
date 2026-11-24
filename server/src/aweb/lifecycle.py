@@ -374,6 +374,7 @@ async def _load_target_workspaces(db, request: LifecycleCascadeRequest) -> list[
             w.alias,
             w.deleted_at,
             w.last_seen_at,
+            w.created_at,
             a.identity_scope AS agent_identity_scope
         FROM {{tables.workspaces}} w
         LEFT JOIN {{tables.agents}} a
@@ -652,8 +653,12 @@ async def _load_lifecycle_targets(
                 request=request_context,
                 failure_policy=GrantLivenessFailurePolicy.REQUIRE_KNOWN,
             )
-            for workspace_id, observation in activity.items():
-                if observation.is_newer_than(cutoff=request.stale_before):
+            for row in workspaces:
+                workspace_id = str(row["workspace_id"])
+                observation = activity.get(workspace_id)
+                if observation is not None and observation.is_newer_than(
+                    cutoff=request.stale_before, reserved_at=row["created_at"],
+                ):
                     errors.append(
                         LifecycleError(
                             code=WorkspaceActivityRefusal.STILL_ACTIVE,

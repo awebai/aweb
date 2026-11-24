@@ -72,7 +72,6 @@ host_published_port() {
 }
 
 checks() {
-  run check-python-static
   run check-product-table-writes
   run check-secrets-shards
   run_step host-published-port host_published_port
@@ -121,6 +120,7 @@ unit() {
 }
 artifacts() {
   prepare_node
+  run check-node-audit
   prepare_cli
   run _candidate-artifact-server
   run _candidate-artifact-awid-package

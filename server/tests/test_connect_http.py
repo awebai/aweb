@@ -5,12 +5,13 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
 
 from aweb.presence import clear_workspace_presence
+from aweb.routes.connect import PlannedIdentityIds, WorkspaceContact, connect_agent
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
@@ -134,6 +135,74 @@ async def test_connect_http_first_time(connect_app):
     assert data["agent_id"]
     assert data["workspace_id"]
     assert data["role"] == "developer"
+    assert await connect_app.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
+        UUID(data["workspace_id"]),
+    ) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "contact",
+    [WorkspaceContact.NONE, WorkspaceContact.PERSON_SESSION, WorkspaceContact.OBSERVED_REFRESH],
+    ids=["reserve", "refresh-existing", "refresh-observed"],
+)
+async def test_reservation_stays_unseen_until_signed_connect_and_preserves_contact(connect_app, contact):
+    team_id = "backend:acme.com"
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+    cert = _make_certificate(team_sk, team_did_key, agent_did_key, identity_scope="local")
+    await _register_controller(connect_app, team_did_key)
+
+    planned = PlannedIdentityIds(agent_id=uuid4(), workspace_id=uuid4())
+    profile = {
+        "hostname": "reserved-host",
+        "workspace_path": "/reserved-work",
+        "repo_origin": "",
+        "role": "",
+        "human_name": "",
+        "agent_type": "agent",
+    }
+
+    async def reserve():
+        result = await connect_agent(
+            db=connect_app.db,
+            cert_info={**cert, "did_key": agent_did_key},
+            team_did_key=team_did_key,
+            planned_ids=planned,
+            contact=contact,
+            **profile,
+        )
+        assert result["agent_id"] == str(planned.agent_id)
+        assert result["workspace_id"] == str(planned.workspace_id)
+
+    async def last_seen():
+        return await connect_app.db.fetch_value(
+            "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
+            planned.workspace_id,
+        )
+
+    await reserve()
+    assert await last_seen() is None
+    await reserve()
+    assert (await last_seen() is not None) == (contact == WorkspaceContact.PERSON_SESSION)
+
+    body = json.dumps({**profile, "hostname": "terminal", "workspace_path": "/work"}).encode()
+    headers = _signed_request(agent_sk, agent_did_key, team_id, body)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
+    headers["Content-Type"] = "application/json"
+    response = await connect_app.client.post("/v1/connect", content=body, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["workspace_id"] == str(planned.workspace_id)
+    assert response.json()["agent_id"] == str(planned.agent_id)
+    seen = await last_seen()
+    assert seen is not None
+
+    await reserve()
+    if contact == WorkspaceContact.NONE:
+        assert await last_seen() == seen
+    else:
+        assert await last_seen() > seen
 
 
 @pytest.mark.asyncio

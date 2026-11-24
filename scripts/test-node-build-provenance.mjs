@@ -70,15 +70,14 @@ test("bundle builds and the Node audit invoke the provenance gate", () => {
 
 test("artifact-producing install paths use the committed lockfiles", () => {
   const artifactProducers = [
-    ".github/workflows/channel-release.yml",
-    ".github/workflows/pi-release.yml",
+    "scripts/publish_release.py",
     "Makefile",
     "scripts/e2e-oss-user-journey.sh",
   ];
   for (const filename of artifactProducers) {
     const source = readFileSync(path.join(repoRoot, filename), "utf8");
-    assert.match(source, /npm ci/, `${filename} does not install from the lockfile`);
-    assert.doesNotMatch(source, /npm install(?:\s|$)/, `${filename} can resolve outside the lockfile`);
+    assert.match(source, /npm ci|"npm", "ci"/, `${filename} does not install from the lockfile`);
+    assert.doesNotMatch(source, /npm install(?:\s|$)|"npm", "install"/, `${filename} can resolve outside the lockfile`);
   }
 });
 

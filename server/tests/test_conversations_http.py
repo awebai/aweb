@@ -824,11 +824,6 @@ async def test_conversations_listing_reads_page_sized_rows_not_whole_history(awe
     assert len(conversations) == limit
     assert resp.json()["next_cursor"] is not None
 
-    # A page of five needs at most six conversation rows (the lookahead that
-    # decides next_cursor) and those conversations' participant rows. The
-    # ceiling is a multiple of the page, and critically not a function of the
-    # 120 messages stored: before the listing was bounded in SQL, the mail
-    # query alone returned every one of them.
-    total_messages = conversation_count * messages_per_conversation
-    assert max(counting_db.row_counts) <= 3 * (limit + 1)
-    assert max(counting_db.row_counts) < total_messages
+    # The lookahead decides next_cursor without returning the extra item's
+    # history or the two participant rows it would otherwise request.
+    assert counting_db.row_counts == [limit, 2 * limit]
