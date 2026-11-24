@@ -16,7 +16,11 @@ from awid.id_certificates import (
 )
 from fastapi import HTTPException, Request
 
-from aweb.application_state import application_registry_client, native_application_state
+from aweb.application_state import (
+    RegistryClientUnavailable,
+    application_registry_client,
+    native_application_state,
+)
 from aweb.identity_binding import IdentityBinding
 from aweb.human_kind import observe_identity_kind, unverified_kind
 
@@ -40,6 +44,9 @@ async def _observe_optional_chain(
     request: Request, client, binding: IdentityBinding, bundle: dict[str, Any] | None,
     deadline: float | None,
 ):
+    registry_url = getattr(client, "registry_url", None)
+    if not isinstance(registry_url, str) or not registry_url.strip():
+        raise RegistryClientUnavailable()
     read_evidence = getattr(client, "id_chain_evidence", None)
     state = native_application_state(request.app.state)
     backoff = getattr(state, "id_chain_status_backoff", None)
@@ -50,7 +57,7 @@ async def _observe_optional_chain(
 
     async def read_status(bundle, subject, *, domain):
         nonlocal attempted
-        key = (client.registry_url, domain)
+        key = (registry_url, domain)
         if backoff.get(key, 0) > monotonic():
             return await read_evidence(bundle, subject, domain=domain, refresh=False)
         attempted = key
