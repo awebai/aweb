@@ -28,6 +28,7 @@ def logs_shell(app_id: str) -> ConsoleShell:
     return ConsoleShell(
         ConsoleBrand(
             product="Logs",
+            app_id=app_id,
             csrf_key="aweb.logs.console.csrf",
             stylesheet=(Path(__file__).parent / "style.css").read_text(),
             sign_in=SignInCopy(
@@ -38,8 +39,6 @@ def logs_shell(app_id: str) -> ConsoleShell:
                 button="Sign in with a passkey",
                 waiting="Waiting for your passkey…",
                 failed="Sign-in could not be completed. Try your passkey again.",
-                not_member_remedy="If you are a member, sign in once from aw with "
-                f"“aw app human {app_id} session”, then sign in here. Otherwise ask the team’s owner.",
                 sign_out_failed="Sign-out could not be completed. Try again.",
                 reauth_heading="Sign in to continue",
                 reauth_text="Sign in again in this tab to read your team’s log.",

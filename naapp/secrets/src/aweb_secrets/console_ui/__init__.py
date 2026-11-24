@@ -20,6 +20,7 @@ def secrets_shell(app_id: str) -> ConsoleShell:
     return ConsoleShell(
         ConsoleBrand(
             product="Secrets",
+            app_id=app_id,
             csrf_key="aweb.secrets.console.csrf",
             stylesheet=(Path(__file__).parent / "style.css").read_text(),
             sign_in=SignInCopy(
@@ -30,10 +31,6 @@ def secrets_shell(app_id: str) -> ConsoleShell:
                 button="Sign in with a passkey",
                 waiting="Waiting for your passkey…",
                 failed="Sign-in could not be completed. Try your passkey again.",
-                not_member_remedy=(
-                    "Ask your team administrator to check your membership and help you "
-                    f"sign in to {app_id} from aw."
-                ),
                 sign_out_failed="Sign-out could not be completed. Try again.",
                 reauth_heading="Sign in to make changes",
                 reauth_text="Sign in again in this tab to make changes.",

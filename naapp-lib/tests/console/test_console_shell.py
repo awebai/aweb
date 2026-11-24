@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 
 from aweb_naapp.console import CONSOLE_HEADERS, COOKIE_NAME, ConsoleRoute, ConsoleSession
-from aweb_naapp.console.browser import ConsoleBrand, ConsoleShell, login_redirect
+from aweb_naapp.console.browser import ConsoleBrand, ConsoleShell
 from aweb_naapp.css import CSS_SHA256, aweb_css
 from tests.console.shell_support import BRAND, CEREMONIES, CSRF_KEY, SIGN_IN, STYLESHEET, shell_app
 from tests.runtime.credential_audit.support import (
@@ -256,15 +256,15 @@ async def test_a_session_the_home_finds_closed_is_sent_to_login_with_its_refusal
     assert (refused.status_code, refused.json()["detail"]) == (403, "not_yours")
 
 
-def test_login_redirect_keeps_the_clearing_cookie_and_reraises_other_refusals():
-    cleared = login_redirect(
+def test_a_refused_page_keeps_the_clearing_cookie_and_reraises_other_refusals():
+    cleared = ConsoleShell(BRAND).refused_page(
         HTTPException(status_code=401, headers={"Set-Cookie": "__Host-session=; Max-Age=0"})
     )
     assert (cleared.status_code, cleared.headers["location"]) == (303, "/login")
     assert cleared.headers["set-cookie"] == "__Host-session=; Max-Age=0"
     forbidden = HTTPException(status_code=403)
     try:
-        login_redirect(forbidden)
+        ConsoleShell(BRAND).refused_page(forbidden)
     except HTTPException as raised:
         assert raised is forbidden
     else:
@@ -275,6 +275,7 @@ def test_the_brand_escapes_what_it_inserts():
     shell = ConsoleShell(
         ConsoleBrand(
             product='<b>"Example"</b>',
+            app_id="example-app",
             csrf_key='key"><x',
             stylesheet=STYLESHEET,
             sign_in=SIGN_IN,

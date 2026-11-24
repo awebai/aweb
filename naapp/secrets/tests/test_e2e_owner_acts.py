@@ -298,6 +298,16 @@ class Holder(SharedHolder):
         assert result.returncode == 0, result.stdout + result.stderr
         return first_json(result.stdout)
 
+    def refused_login(self, console: str, scope: str) -> None:
+        """Wait until ``console`` refuses the holder as no member. The app may
+        hold evidence of a replaced certificate for at most 60 seconds, and
+        each login is two of the twelve the console admits a minute."""
+        deadline = time.monotonic() + 120
+        while (answer := self.login(console, scope))["status"] == 200:
+            assert time.monotonic() < deadline, "the replaced certificate still signs in"
+            time.sleep(15)
+        assert answer == {"status": 403, "detail": "principal_not_member"}
+
     def run(self, principal: str, *args: str) -> str:
         """aw as the holder, to its end."""
         child = self.act(principal, *args)
@@ -563,14 +573,14 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     listed = holder.answer_passphrases(child)
     assert "confirm" in listed and "draft-change" in listed, listed
 
-    logs_reader_signs_in_again_after_a_reissue(lane, controller, holder, human, hooks)
+    signs_in_again_after_a_reissue(lane, controller, holder, human, hooks)
 
 
-def logs_reader_signs_in_again_after_a_reissue(
+def signs_in_again_after_a_reissue(
     lane: Lane, controller: str, holder: Holder, human: dict, hooks: dict
 ) -> None:
-    """A Logs reader whose member certificate was reissued is refused by its
-    passkey login until the reader's own aw signs it in once."""
+    """A Logs reader and Secrets owner whose member certificate was reissued is
+    refused by each app's passkey login until its own aw signs it in once there."""
     principal = human["id"]
     aw(holder.container, "plugin", "install", LOGS_API)
     holder.run_in_browser(principal, LOGS_CONSOLE, "credential", "app", "credential", "register", LOGS_APP_ID,
@@ -587,13 +597,7 @@ def logs_reader_signs_in_again_after_a_reissue(
     reissued = aw(controller, "id", "team", "reissue-cert", "holder", "--team", TEAM, "--namespace", DOMAIN,
                   "--did", human["did_key"], "--did-aw", principal, "--global", "--registry", REGISTRY)
     assert reissued["old_certificate_id"] != reissued["new_certificate_id"]
-    # Logs may still hold evidence of the old certificate, for at most 60 seconds.
-    deadline = time.monotonic() + 120
-    while (answer := holder.login(LOGS_CONSOLE, scope))["status"] == 200:
-        assert time.monotonic() < deadline, "the revoked certificate still signs in"
-        # Each login is two of the twelve the console admits a minute.
-        time.sleep(15)
-    assert answer == {"status": 403, "detail": "principal_not_member"}
+    holder.refused_login(LOGS_CONSOLE, scope)
 
     # With the replaced certificate still installed, aw's session is refused and
     # opens no page. What aw says is kept with the run.
@@ -610,3 +614,10 @@ def logs_reader_signs_in_again_after_a_reissue(
     shown = holder.run_in_browser(principal, LOGS_CONSOLE, "session", "app", "human", LOGS_APP_ID, "session")
     assert scope in shown, shown
     assert holder.login(LOGS_CONSOLE, scope)["status"] == 200
+
+    owner_scope = holding_scope(hooks["active"]["secrets/production/post-governance-hook"]["installation_id"],
+                                TEAM_ID, ROLE, principal)
+    holder.refused_login(CONSOLE, owner_scope)
+    shown = holder.run_in_browser(principal, CONSOLE, "session", "app", "human", APP_ID, "session")
+    assert owner_scope in shown, shown
+    assert holder.login(CONSOLE, owner_scope)["status"] == 200

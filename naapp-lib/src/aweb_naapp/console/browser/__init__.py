@@ -34,23 +34,24 @@ _ASSETS = files(__package__)
 
 @dataclass(frozen=True)
 class MemberRefusal:
-    """What a person reads, and can do, when a member check refuses them."""
+    """What a person reads, and can do, when a member check refuses them. The
+    remedy names the deployment's app id as ``{app_id}``."""
 
     status: int
     message: str
-    remedy: str | None
+    remedy: str
     action_href: str
     action_label: str
 
 
-# By the refusal's code; a non-member's remedy is the app's own
-# (SignInCopy.not_member_remedy). An empty link reloads the page that was refused; a
+# By the refusal's code. An empty link reloads the page that was refused; a
 # definite refusal has closed the session, so sign-in does not lead back to it.
 MEMBER_REFUSALS = {
     "principal_not_member": MemberRefusal(
         403,
         "Your current team membership does not open this console.",
-        None,
+        "If you are a member, sign in once from aw with “aw app human {app_id} session”, then "
+        "sign in here. Otherwise ask the team’s owner.",
         "/login",
         "Go to sign-in",
     ),
@@ -88,7 +89,6 @@ class SignInCopy:
     button: str
     waiting: str
     failed: str
-    not_member_remedy: str
     sign_out_failed: str
     reauth_heading: str
     reauth_text: str
@@ -119,16 +119,17 @@ class CeremonyCopy:
 
 @dataclass(frozen=True)
 class ConsoleBrand:
-    """An app's console: its name, its tab CSRF storage key, its stylesheet
-    and its sign-in copy, all trusted app inputs."""
+    """An app's console: its name, the deployment's id of the app, its tab CSRF
+    storage key, its stylesheet and its sign-in copy, all trusted app inputs."""
 
     product: str
+    app_id: str
     csrf_key: str
     stylesheet: str
     sign_in: SignInCopy
 
 
-def login_redirect(error: HTTPException) -> RedirectResponse:
+def _login_redirect(error: HTTPException) -> RedirectResponse:
     """A 401 from S4 as a redirect to ``/login`` that keeps S4's clearing
     cookie; any other refusal is raised again."""
     if error.status_code != 401:
@@ -203,14 +204,14 @@ class ConsoleShell:
         )
 
     def _remedy(self, refusal: MemberRefusal) -> str:
-        return refusal.remedy or self.brand.sign_in.not_member_remedy
+        return refusal.remedy.replace("{app_id}", self.brand.app_id)
 
     def refused_page(self, error: HTTPException) -> Response:
         """A browser GET's refusal by the session: a member refusal as a page
-        with its remedy, a 401 as login_redirect, any other raised again."""
+        with its remedy, a 401 as a redirect to sign-in, any other raised again."""
         refusal = member_refusal(error)
         if refusal is None:
-            return login_redirect(error)
+            return _login_redirect(error)
         action_href = refusal.action_href
         if isinstance(error, SessionEnded):
             # The ended session's own scope, so the page it opens has the form.
@@ -237,7 +238,7 @@ class ConsoleShell:
         message, remedy, action_href and action_label are fixed by the caller, never request values.
         The page sits outside console_page's per-tab guard, so it shows without a CSRF token,
         and it shows nothing the refused read would have shown. Serve through ConsoleRoute.
-        A 401 goes to login_redirect instead.
+        A 401 goes to refused_page instead.
         """
         response = self.page(
             message,

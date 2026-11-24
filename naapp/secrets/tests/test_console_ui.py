@@ -164,10 +164,10 @@ async def test_console_loads_shared_toolkit_styles_and_only_the_toolkit_font(wor
             assert "BerkeleyMono" not in response.text
 
 
-def test_recovery_page_is_exported_in_the_secrets_brand():
-    from aweb_secrets.console_ui import recovery_page
+def test_the_recovery_page_is_in_the_secrets_brand():
+    from aweb_secrets.console_ui import secrets_shell
 
-    response = recovery_page(
+    response = secrets_shell("sandbox-secrets").recovery_page(
         HTTPException(status_code=404, headers={"X-Refusal": "kept"}),
         message="That record is not available",
         action_href="/activity",
@@ -187,4 +187,4 @@ def test_membership_help_names_the_deployment():
 
     page = secrets_shell("sandbox-secrets").refused_page(HTTPException(403, "principal_not_member"))
     assert page.status_code == 403
-    assert b"sign in to sandbox-secrets from aw." in page.body
+    assert b"aw app human sandbox-secrets session" in page.body

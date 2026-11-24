@@ -43,7 +43,6 @@ SIGN_IN = SignInCopy(
     button="Sign in to Example",
     waiting="Example is waiting for your passkey.",
     failed="Example could not sign you in.",
-    not_member_remedy="Ask the Example team's owner.",
     sign_out_failed="Example could not sign you out.",
     reauth_heading="Sign in to Example again",
     reauth_text="This tab needs its own Example sign-in.",
@@ -69,7 +68,13 @@ CEREMONIES = CeremonyCopy(
     continue_link="Continue to Example sign-in",
 )
 
-BRAND = ConsoleBrand(product="Example", csrf_key=CSRF_KEY, stylesheet=STYLESHEET, sign_in=SIGN_IN)
+BRAND = ConsoleBrand(
+    product="Example",
+    app_id="example-app",
+    csrf_key=CSRF_KEY,
+    stylesheet=STYLESHEET,
+    sign_in=SIGN_IN,
+)
 
 HOME = (
     '<h1 id="home">Example console</h1>'
