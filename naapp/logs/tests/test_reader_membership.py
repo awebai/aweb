@@ -141,14 +141,19 @@ async def test_logout_needs_no_membership(aw: Aw, clock: Clock, ended: str):  # 
     assert await open_sessions(aw) == 0
 
 
-async def test_a_session_handoff_refreshes_the_certificate_sign_in_checks(aw: Aw):  # noqa: F811
+@pytest.mark.parametrize("purpose", ["session", "credential"])
+async def test_a_handoff_refreshes_the_certificate_sign_in_checks(aw: Aw, purpose: str):  # noqa: F811
     reissued = replace(aw.member, certificate_id="cert-reissued")
     registry = aw.world.registry
     await registry.add_certificate(reissued.certificate(), team_key=reissued.team_key)
     await registry.revoke(aw.member.certificate_id, team_id=TEAM_ID)
     assert outcome(await login(aw)) == NOT_A_MEMBER
     aw.member = reissued
-    await aw.open()
+    if purpose == "session":
+        await aw.open()
+    else:
+        started, _, _ = await aw.start(purpose="credential")
+        assert started.status_code == 201, started.text
     assert (await login(aw)).status_code == 200
 
 

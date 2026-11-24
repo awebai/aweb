@@ -103,13 +103,15 @@ class Aw:
     # Both origins, for another browser on the same machine.
     transport: httpx.ASGITransport
 
-    async def start(self, principal: str | None = None) -> tuple[httpx.Response, SigningKey, str]:
+    async def start(
+        self, principal: str | None = None, *, purpose: str = "session"
+    ) -> tuple[httpx.Response, SigningKey, str]:
         key = SigningKey.generate()
         verifier = secrets.token_urlsafe(32)
         raw = json.dumps(
             {
                 "v": 1,
-                "purpose": "session",
+                "purpose": purpose,
                 "client_key": did_key(key),
                 "return": "loopback",
                 "redirect_uri": "http://127.0.0.1:54321/callback",
