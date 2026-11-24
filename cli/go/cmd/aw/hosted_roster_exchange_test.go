@@ -889,6 +889,11 @@ func assertHostedPendingChildKey(t *testing.T, home string) {
 // parses the DNS record and verifies the full chain/status evidence.
 func serveRosterTXT(t *testing.T, record string) {
 	t.Helper()
+	serveRosterTXTRecords(t, map[string]string{"_awid.example.com": record})
+}
+
+func serveRosterTXTRecords(t *testing.T, records map[string]string) {
+	t.Helper()
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -932,7 +937,8 @@ func serveRosterTXT(t *testing.T, record string) {
 			binary.BigEndian.PutUint16(answer[8:10], 0)
 			binary.BigEndian.PutUint16(answer[10:12], 0)
 
-			if typ == 16 && strings.Join(labels, ".") == "_awid.example.com" {
+			record, hasRecord := records[strings.Join(labels, ".")]
+			if typ == 16 && hasRecord {
 				binary.BigEndian.PutUint16(answer[6:8], 1)
 				data := append([]byte{byte(len(record))}, []byte(record)...)
 				answer = append(answer, 0xc0, 0x0c, 0, 16, 0, 1, 0, 0, 0, 60, byte(len(data)>>8), byte(len(data)))
