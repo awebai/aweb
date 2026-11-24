@@ -167,7 +167,8 @@ asserts that session key/chat id exist. The subsequent release runs pass.
 This was a test-command contract difference, not an adapter delivery defect.
 The updated fixture also passed clarify (4.910s) and approve/deny (6.477s)
 on the original investigation pin, exercising its keyword-context path.
-The earlier defect reds remain in the [build evidence](hermes-plugin-build-2026-10-18.md);
+The earlier defect reds remain in git history, in the
+[build evidence at `105de64af`](https://github.com/awebai/aweb/blob/105de64af3002507b5f94ae74aad6cb9bc387b35/docs/evidence/hermes-plugin-build-2026-10-18.md);
 new release greens are not claimed as fresh failing-baseline proofs for each bug.
 
 ## Real model and receipt evidence
@@ -258,8 +259,8 @@ are not exactly-once.
 ## Reproduction and retained artifacts
 
 The README gives the public installation route. For the disposable server
-fixtures and opt-in checks, use the [build evidence](hermes-plugin-build-2026-10-18.md)
-and README compatibility commands with the v0.22.2 interpreter/source. Run one
+fixtures and opt-in checks, use the README's
+[compatibility checks](../../packages/hermes-aweb-platform/README.md#compatibility-checks) with the v0.22.2 interpreter/source. Run one
 receiver at a time. The small model harness requests a nonce-bearing mail
 acknowledgement and a nonce-bearing chat clarify/answer continuation, and
 asserts committed routes/read ordering plus actual provider/model usage.

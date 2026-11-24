@@ -8,9 +8,9 @@ Hermes requirement: **v0.22.2 or newer (checked on v0.23.1)**. The checked
 upstream commits are `d923a5eb487a17c0a68801bba9ef0f56c81040a8` (v0.22.2)
 and `3b421578588243f920886e6fe79a6faa87ea026e` (v0.23.1). The earlier
 investigation used `38d55b90dab7b37d7f26f0450b61851463fb1329` on upstream main.
-See [build evidence](https://github.com/awebai/aweb/blob/main/docs/evidence/hermes-plugin-build-2026-10-18.md) and
+See the
 [model/install evidence](https://github.com/awebai/aweb/blob/main/docs/evidence/hermes-model-acceptance-2026-10-19.md)
-for the separate transport, release and model checks. Telegram is untested.
+for the release and model checks. Telegram is untested.
 Install from the standalone release channel; development remains in the aweb
 monorepo package.
 
@@ -260,6 +260,7 @@ python -m unittest discover -s packages/hermes-aweb-platform/tests \
 python -m unittest discover -s packages/hermes-aweb-platform/tests \
   -p test_content_boundary.py -v
 
+# The live checks need the disposable fixtures described below.
 export HERMES_LIVE_RECEIVER_HOME=/path/to/local-hermes-workspace
 export HERMES_LIVE_SENDER_HOME=/path/to/local-alice-workspace
 export HERMES_LIVE_POSTGRES_CONTAINER=hermes-acft1-postgres-1
@@ -269,6 +270,24 @@ python -m unittest discover -s packages/hermes-aweb-platform/tests \
 python -m unittest discover -s packages/hermes-aweb-platform/tests \
   -p test_live_delivery.py -v
 ```
+
+Fixtures for the live checks are a disposable stack on unused ports:
+
+```bash
+export LIBRARY_E2E_AWEB_PORT=28180
+export LIBRARY_E2E_AWID_PORT=28110
+export LIBRARY_E2E_POSTGRES_PORT=55483
+export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN=http://127.0.0.1:28180
+export LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL=http://127.0.0.1:28110
+COMPOSE_PARALLEL_LIMIT=1 docker compose -p hermes-acft1 -f docker-compose.e2e.yml \
+  -f packages/hermes-aweb-platform/tests/fixture-local-registry.compose.yml build awid aweb
+COMPOSE_PARALLEL_LIMIT=1 docker compose -p hermes-acft1 -f docker-compose.e2e.yml \
+  -f packages/hermes-aweb-platform/tests/fixture-local-registry.compose.yml up -d --wait aweb
+```
+
+Provision real `hermes` and `alice` identities in one team on these services with
+the normal aw commands, and a separate `mallory` identity for unauthorized
+traffic. Never point the checks at an operator or team identity.
 
 The opt-in tests require disposable loopback aweb/AWID/PostgreSQL fixtures,
 receiver alias `hermes`, sender alias `alice`, address `hermes-acft1.test/alice`,

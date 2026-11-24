@@ -471,13 +471,16 @@ The general registry outage-grace cache cannot serve this path. See the
 The `aw` CLI and the A2A gateway reach a registry with their own HTTP client
 only when the operator chose it explicitly: the built-in default
 (`https://api.awid.ai`), `AWID_REGISTRY_URL`, a registry flag on the
-current command line (`--registry`, `--registry-url`, `--awid-registry`), an
-origin recorded as the operator's choice when one of these stored it, an origin
-marked with `aw id registry-trust <origin>`, or, for the gateway, the
-`registry_url` in its own configuration file (or `AWEB_A2A_GW_REGISTRY_URL`
-when it starts without one).
+current command line (`--registry`, `--registry-url`, `--awid-registry`), or,
+for the gateway, the `registry_url` in its own configuration file (or
+`AWEB_A2A_GW_REGISTRY_URL` when it starts without one).
+The CLI also uses its own client for an origin recorded as the operator's choice
+when one of these stored it, one marked with `aw id registry-trust <origin>`,
+and two records from releases that stored no such mark: the `registry_url` in
+`identity.yaml`, and the registry of an implicit `local` namespace whose
+controller key you hold. The gateway does not use these marks.
 Every other registry origin is reached only at public addresses, over
-`https`, without proxies: an unmarked `registry_url` stored in `identity.yaml`,
+`https`, without proxies: any other `registry_url` stored in `identity.yaml`,
 `teams.yaml`, controller metadata or a human record, a registry carried by an
 invite or returned by service discovery, and any registry an `_awid` TXT
 record names. The CLI resolves such a host once per connection and refuses it
