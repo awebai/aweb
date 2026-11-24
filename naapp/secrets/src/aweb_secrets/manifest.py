@@ -274,6 +274,15 @@ OWNER_ACTS: dict[str, Any] = {
     ],
     "session_actions": [
         {
+            "name": "session",
+            "description": "Sign in as a Secrets owner from aw.",
+            "kind": "read",
+            "role": "secrets.owner",
+            "method": "GET",
+            "path": "/v1/session",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+        {
             "name": "draft-change",
             "kind": "draft",
             "role": "secrets.owner",

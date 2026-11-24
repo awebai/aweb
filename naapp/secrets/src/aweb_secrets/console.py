@@ -207,6 +207,13 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
         credential_router(passkeys=services.passkeys, recorder=services.credential_audit)
     )
 
+    async def require_owner(
+        current: Annotated[ConsoleSession, Depends(services.sessions.current)],
+    ) -> None:
+        if await services.directory.owner_of(services.db, current.scope) is None:
+            raise HTTPException(403, "owner_required")
+
+    @router.get("/v1/session", dependencies=[Depends(require_owner)])
     @router.get("/session")
     async def session(
         current: Annotated[ConsoleSession, Depends(services.sessions.current)],
