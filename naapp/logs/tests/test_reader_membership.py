@@ -11,8 +11,10 @@ import httpx
 import pytest
 from aweb_naapp.runtime import human_member
 from aweb_naapp_testing.owner_acts import TEAM_ID
+from fastapi import HTTPException
 from nacl.signing import SigningKey
 
+from aweb_logs.console_ui import logs_shell
 from aweb_logs.reader_acts import OWNER_ACTS
 from aweb_logs.readers import READER_ROLE
 
@@ -272,3 +274,10 @@ async def test_an_abandoned_session_handoff_changes_nothing_held(aw: Aw):  # noq
     started, _, _ = await aw.start()
     assert started.status_code == 201, started.text
     assert (await held_state(aw), await retained(aw)) == (before, certificate)
+
+
+def test_the_page_names_the_deployments_own_app_id():
+    (action,) = OWNER_ACTS["session_actions"]
+    page = logs_shell("team-logs").refused_page(HTTPException(403, "principal_not_member"))
+    command = f"aw app human team-logs {action['name']}"
+    assert command in bytes(page.body).decode()

@@ -22,28 +22,32 @@ from fastapi import APIRouter
 from aweb_logs.console_ui.viewer import viewer_router
 from aweb_logs.read_routes import ReaderReads
 
-SHELL = ConsoleShell(
-    ConsoleBrand(
-        product="Logs",
-        csrf_key="aweb.logs.console.csrf",
-        stylesheet=(Path(__file__).parent / "style.css").read_text(),
-        sign_in=SignInCopy(
-            title="Sign in",
-            heading="Sign in to Logs",
-            scoped_hint="Use your passkey to continue.",
-            unscoped_hint="Open your Logs sign-in link to continue.",
-            button="Sign in with a passkey",
-            waiting="Waiting for your passkey…",
-            failed="Sign-in could not be completed. Try your passkey again.",
-            not_member_remedy="If you are a member, sign in once from aw with “aw app human logs "
-            "session”, then sign in here. Otherwise ask the team’s owner.",
-            sign_out_failed="Sign-out could not be completed. Try again.",
-            reauth_heading="Sign in to continue",
-            reauth_text="Sign in again in this tab to read your team’s log.",
-            reauth_link="Sign in with your passkey",
-        ),
+
+def logs_shell(app_id: str) -> ConsoleShell:
+    """The shell in logs' brand, naming this deployment's app id."""
+    return ConsoleShell(
+        ConsoleBrand(
+            product="Logs",
+            csrf_key="aweb.logs.console.csrf",
+            stylesheet=(Path(__file__).parent / "style.css").read_text(),
+            sign_in=SignInCopy(
+                title="Sign in",
+                heading="Sign in to Logs",
+                scoped_hint="Use your passkey to continue.",
+                unscoped_hint="Open your Logs sign-in link to continue.",
+                button="Sign in with a passkey",
+                waiting="Waiting for your passkey…",
+                failed="Sign-in could not be completed. Try your passkey again.",
+                not_member_remedy="If you are a member, sign in once from aw with "
+                f"“aw app human {app_id} session”, then sign in here. Otherwise ask the team’s owner.",
+                sign_out_failed="Sign-out could not be completed. Try again.",
+                reauth_heading="Sign in to continue",
+                reauth_text="Sign in again in this tab to read your team’s log.",
+                reauth_link="Sign in with your passkey",
+            ),
+        )
     )
-)
+
 
 CEREMONIES = CeremonyCopy(
     enrolment=Ceremony(
@@ -86,9 +90,10 @@ async def home(session: ConsoleSession) -> str:
 def console_pages_router(reads: ReaderReads) -> APIRouter:
     """The console origin's pages and assets: home, sign-in, the link
     ceremonies, the viewer, the shell's scripts and the toolkit stylesheet."""
+    shell = logs_shell(reads.directory.app_id)
     router = APIRouter()
-    router.include_router(SHELL.router(sessions=reads.sessions, home_title="Logs", home=home))
-    router.include_router(SHELL.bootstrap_router(CEREMONIES))
-    router.include_router(viewer_router(SHELL, reads))
+    router.include_router(shell.router(sessions=reads.sessions, home_title="Logs", home=home))
+    router.include_router(shell.bootstrap_router(CEREMONIES))
+    router.include_router(viewer_router(shell, reads))
     router.include_router(console_assets_router())
     return router
