@@ -2,17 +2,16 @@
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 import test_installation_http as http_fixture
-from aweb_naapp.runtime.app_credentials import AppCredentialSigner
-from aweb_naapp.runtime.app_keys import AppKey
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 from test_app_manifest_fetch import digest
 from test_installation_http import admin, confirmation, post
 from test_verified_installations import current
+from tests.app_credential_signing import app_credential_headers
 
 client = http_fixture.client
 db = http_fixture.db
@@ -143,9 +142,9 @@ async def test_caller_rollback_restores_installation_hooks_and_generation_counte
 async def lifecycle_app(client, db, origin):
     await admin(db)
     key = SigningKey.generate()
-    signer_key = AppKey(kid="lifecycle-read", did_key=did_from_public_key(bytes(key.verify_key)), signing_key=key)
+    kid, did_key = "lifecycle-read", did_from_public_key(bytes(key.verify_key))
     manifest = json.loads(origin.manifest())
-    manifest["app_keys"].append({"kid": signer_key.kid, "did_key": signer_key.did_key,
+    manifest["app_keys"].append({"kid": kid, "did_key": did_key,
                                  "purposes": ["app-grant-read", "hook-resolve"]})
     raw = json.dumps(manifest).encode()
     origin.publish(raw)
@@ -154,8 +153,12 @@ async def lifecycle_app(client, db, origin):
     assert first.status_code == 200, first.text
 
     async def read(purpose, path):
-        signer = AppCredentialSigner(app_id="fixture", key=signer_key, purpose=purpose)
-        return await client.get(path, headers=signer.sign(method="GET", target="http://test" + path, team_id=http_fixture.TEAM).headers)
+        headers = app_credential_headers(
+            purpose=purpose, seed=bytes(key), method="GET", aud="http://test", path=path,
+            team_id=http_fixture.TEAM, app_id="fixture", kid=kid, body=b"",
+            timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+        return await client.get(path, headers=headers)
 
     return pin, first, read
 
