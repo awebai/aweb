@@ -134,7 +134,7 @@ The suite has fixed named pub/sub channels as well as key caches. Separate
 Redis servers isolate both; the real TCP fault proxy follows each worker URL.
 
 Worker 0 keeps the original serial services' 2-GiB/1-CPU PostgreSQL and
-1-GiB/1-CPU/PID512 Redis limits for AWID/naapp/CLI after the server workers
+1-GiB/1-CPU/PID512 Redis limits for AWID/CLI after the server workers
 exit. The other six pairs use PostgreSQL 1280 MiB/1 CPU/PID512 and Redis
 128 MiB/0.25 CPU/PID128. The runner is 16 GiB/7 CPU/PID2048 and DNS 128 MiB.
 Their memory caps total 27.375 GiB, leaving 4.625 GiB of a nominal 32-GiB host

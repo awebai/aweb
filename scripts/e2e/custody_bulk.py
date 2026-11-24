@@ -47,7 +47,7 @@ def prepare_container_inputs(
     (work / "control.json").write_text('{"case":"startup"}')
     # Public source crosses to service UID1001; never chmod the caller's repo.
     published_source = work / "source"
-    for package in ("server", "awid", "naapp-lib"):
+    for package in ("server", "awid", "naapp-contracts"):
         shutil.copytree(REPO / package / "src", published_source / package / "src")
     make_public_tree_readable(root=published_source)
 
@@ -139,7 +139,7 @@ def main():
         source = [f"{work / 'source'}:/source:ro"]
         service_environment = dict(
             APP_ENV="development",
-            PYTHONPATH="/source/server/src:/source/awid/src:/source/naapp-lib/src",
+            PYTHONPATH="/source/server/src:/source/awid/src:/source/naapp-contracts/src",
             AWID_REGISTRY_URL="http://awid:8010",
             AWID_SERVICE_TOKEN="disposable-custody-bulk-service-token",
         )

@@ -20,7 +20,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    sys.path.insert(0, str(ROOT / "naapp-lib"))
+    sys.path.insert(0, str(ROOT / "naapp-contracts"))
     from tests.hooks.owner_act_delivery_vector import build_vector, render
 
     args.output.write_bytes(render(build_vector()))

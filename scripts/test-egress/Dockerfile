@@ -16,15 +16,7 @@ RUN bash /src/scripts/test-egress/install-postgres-client.sh \
     && rm -rf /var/lib/apt/lists/* \
     && pg_dump --version | grep -q ' 17\.' \
     && python3 scripts/test-egress/test_pgdg_key.py -v
-RUN make naapp-sync
-# Headless Chromium for naapp-lib's browser tests, installed by the Playwright
-# version naapp-lib locks, with its system libraries. The tests run headless,
-# so only the headless shell is installed. Tests never download a browser.
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
-RUN uv run --frozen --no-sync --project naapp-lib \
-        playwright install --with-deps --only-shell chromium \
-    && rm -rf /var/lib/apt/lists/* \
-    && chmod -R a+rX /opt/ms-playwright
+RUN uv sync --frozen --project naapp-contracts
 RUN uv build --project server --out-dir /tmp/server-test-build && rm -rf /tmp/server-test-build
 RUN cd channel-core && npm ci --no-audit --no-fund \
     && cd ../channel && npm ci --no-audit --no-fund \
