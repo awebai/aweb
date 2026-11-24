@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from aweb_secrets.change_policy import require_four_eyes
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
-from tests.human_owner import fixture_principal
+from tests.human_owner import fixture_member_admission, fixture_principal
 from tests.test_change_sets import ALICE, BOB, ORIGIN, TEAM, World, enrol_owner
 from tests.test_change_sets import world as _world
 
@@ -61,6 +61,7 @@ async def clients(
 
     services = OwnerConsole(
         db=world.db,
+        member=fixture_member_admission(world),
         passkeys=world.passkeys,
         credential_audit=world.credential_audit,
         directory=world.directory,

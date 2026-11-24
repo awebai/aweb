@@ -6,14 +6,16 @@ signed acts to the same shared writers the delivery adapter will consume.
 
 import base64
 import hashlib
+import json
 import os
 from contextlib import aclosing, asynccontextmanager
 from datetime import UTC, datetime
+from functools import partial
 
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS, HumanCredential
 from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.strictjson import canonical
-from aweb_naapp.roles import PrincipalKey
+from aweb_naapp.roles import PrincipalKey, read_holding_of_scope
 from aweb_naapp.runtime.human_member import check_human_member
 from aweb_naapp.runtime.passkeys import RelyingParty, contact_sha256, prepare_retirement
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
@@ -25,6 +27,7 @@ from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import RegistryClient
 from awid_service.deps import get_domain_verifier
 from cryptography.hazmat.primitives.asymmetric import ec
+from fastapi import HTTPException
 from nacl.signing import SigningKey
 
 from aweb_secrets.owners import OWNER_ROLE
@@ -123,6 +126,38 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
             world.human_members[principal] = member
             world.human_identities[principal] = signed
         yield member, registry
+
+
+def fixture_member_admission(world):
+    """Compose the Secrets admission rule with the fixture's real registry."""
+    cache = AWIDTeamCache(
+        registry_url=REGISTRY_URL,
+        ttl_seconds=60,
+        transport=world.registry.transport,
+        service_token=SERVICE_TOKEN,
+    )
+
+    async def owner_member(scope):
+        holding = await read_holding_of_scope(world.db, scope)
+        if holding is None or holding.certificate is None:
+            raise HTTPException(403, "principal_not_member")
+        async with aclosing(
+            RegistryClient(
+                REGISTRY_URL,
+                transport=world.registry.transport,
+                service_token=SERVICE_TOKEN,
+                domain_verifier=world.registry.namespace_authority,
+            )
+        ) as registry:
+            return await check_human_member(
+                cache,
+                registry,
+                team_id=holding.team_id,
+                principal=holding.principal,
+                certificate=json.loads(holding.certificate),
+            )
+
+    return partial(world.directory.console_member, check_holding_member=owner_member)
 
 
 async def apply_holder(world, act, principal, contact, *, member=None, client=None):

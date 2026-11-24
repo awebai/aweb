@@ -13,6 +13,7 @@ from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.change_sets import ChangeSets
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
+from tests.human_owner import fixture_member_admission
 from tests.test_change_sets import (
     ALICE,
     ORIGIN,
@@ -38,6 +39,7 @@ async def client(w, audit, *, registrations=None):
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         directory=w.directory,
         fence=w.fence,

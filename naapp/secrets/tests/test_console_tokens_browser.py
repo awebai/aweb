@@ -28,6 +28,7 @@ from aweb_secrets.runners import apply_runner_migrations
 from aweb_secrets.use_context import apply_use_context_migrations
 from tests.console_home import no_banner
 from tests.console_network import passkey_origin as passkey_origin
+from tests.human_owner import fixture_member_admission
 from tests.test_change_sets import world as _world
 from tests.test_console_activity import recorded
 from tests.test_console_changes import Registrations
@@ -55,6 +56,7 @@ async def token_service(world, console_tls, console_listener):
 
     world.console = OwnerConsole(
         db=world.db,
+        member=fixture_member_admission(world),
         passkeys=world.passkeys,
         credential_audit=world.credential_audit,
         directory=world.directory,
@@ -74,7 +76,11 @@ async def token_service(world, console_tls, console_listener):
     await apply_runner_migrations(world.db)
     human = FastAPI()
     human.include_router(owner_console_router(world.console))
-    human.include_router(console_ui_router(sessions=world.console.sessions, banner=no_banner))
+    human.include_router(
+        console_ui_router(
+            app_id="sandbox-secrets", sessions=world.console.sessions, banner=no_banner
+        )
+    )
     human.include_router(console_changes_router(changes))
     human.include_router(console_forms_router(changes=changes))
     human.include_router(

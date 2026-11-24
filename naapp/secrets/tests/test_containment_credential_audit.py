@@ -17,7 +17,7 @@ from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.containment import ContainmentRefused
 from aweb_secrets.containment_routes import containment_console_router
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
-from tests.human_owner import canonical_actor
+from tests.human_owner import canonical_actor, fixture_member_admission
 from tests.test_change_sets import ALICE, ORIGIN, TEAM
 from tests.test_containment_console import login_session, sibling_session
 from tests.test_credential_audit import audit_for, events
@@ -118,6 +118,7 @@ async def human_client(world, service, audit):
 
     console = OwnerConsole(
         db=world.db,
+        member=fixture_member_admission(world),
         passkeys=world.passkeys,
         directory=world.directory,
         fence=world.fence,

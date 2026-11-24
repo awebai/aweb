@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.containment_routes import containment_console_router
 from aweb_secrets.owners import owner_scope
+from tests.human_owner import fixture_member_admission
 from tests.test_change_sets import ALICE, ORIGIN, TEAM, world  # noqa: F401
 from tests.test_console import API, login
 from tests.test_containment_service import service
@@ -41,6 +42,7 @@ async def clients(context, *, lookup=None):
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         directory=w.directory,
         fence=w.fence,

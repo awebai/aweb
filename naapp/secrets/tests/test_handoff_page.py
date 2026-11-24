@@ -122,6 +122,7 @@ async def test_page_refuses_invalid_or_ended_handoffs_without_reflecting_inputs(
 def limited_factory(original):
     return ConsoleHandoffs(
         db=original.db,
+        fence=original.fence,
         passkeys=original.passkeys,
         authority=original.authority,
         principal=original.principal,

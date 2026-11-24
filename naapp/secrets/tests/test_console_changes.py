@@ -11,13 +11,14 @@ from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.runtime.approvals import ApprovalState
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 
 from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 from aweb_secrets.console_values import ConsoleValues, console_values_router
 from aweb_secrets.use_context import apply_use_context_migrations
+from tests.human_owner import fixture_member_admission
 from tests.test_change_set_onepassword import view
 from tests.test_change_sets import ALICE, BOB, ORIGIN, TEAM, enrol_owner
 from tests.test_change_sets import world as _world
@@ -55,6 +56,7 @@ async def application(
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         credential_audit=w.credential_audit,
         directory=w.directory,
@@ -68,7 +70,9 @@ async def application(
     from aweb_secrets.console_ui import console_ui_router
     from tests.console_home import no_banner
 
-    human_app.include_router(console_ui_router(sessions=console.sessions, banner=no_banner))
+    human_app.include_router(
+        console_ui_router(app_id="sandbox-secrets", sessions=console.sessions, banner=no_banner)
+    )
     human_app.include_router(
         console_values_router(ConsoleValues(console=console, custody=w.custody))
     )
@@ -575,13 +579,20 @@ async def test_personal_locator_resolves_only_the_current_candidates_frozen_chan
         assert approved.json()["can_confirm"] is True
 
 
-async def test_lost_session_after_commit_returns_only_an_applied_receipt_and_reauth(world):
+@pytest.mark.parametrize("reason", ["ended", "membership_unavailable"])
+async def test_lost_session_after_commit_returns_only_an_applied_receipt_and_reauth(world, reason):
     w = world
     scope = await enrol_owner(w, ALICE, "alice@acme.com")
     holder = await w.passkeys.designated_approver(scope)
 
+    async def unavailable(scope):
+        raise HTTPException(503, "principal_status_unavailable")
+
     async def cleanup(*args):
-        await retire_owner(w, scope, holder.subject)
+        if reason == "ended":
+            await retire_owner(w, scope, holder.subject)
+        else:
+            w.console.sessions.member = unavailable
 
     async with clients(w, cleanup=cleanup) as (human, _):
         headers = await sign_in(w, human, scope)
@@ -595,7 +606,11 @@ async def test_lost_session_after_commit_returns_only_an_applied_receipt_and_rea
             "state": "applied",
             "reauth_required": True,
         }
-        assert "Max-Age=0" in result.headers["set-cookie"]
+        if reason == "ended":
+            assert "Max-Age=0" in result.headers["set-cookie"]
+        else:
+            assert "set-cookie" not in result.headers
+            assert (await human.get("/session")).status_code == 503
         assert (
             await w.db.fetch_value("SELECT active_version FROM {{tables.onepassword_credentials}}")
             == 1

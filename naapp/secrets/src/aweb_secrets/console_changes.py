@@ -54,6 +54,7 @@ from aweb_secrets.change_sets import (
     change_policy_ref,
 )
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
+from aweb_secrets.console_approval_authority import ConsoleApprovalAuthority
 from aweb_secrets.console_results import confirmation_receipt, owner_confirmation_result
 from aweb_secrets.custody import SealContext
 from aweb_secrets.owners import hold_owner as hold_owner_holding
@@ -177,10 +178,8 @@ class ConsoleChanges:
         await self.handoffs.prepare(tx, current, approver_pairs=[(current.scope, current.subject)])
 
     @staticmethod
-    async def _bound_current(tx: TransactionManager, current: ConsoleSession) -> None:
-        if isinstance(current, KeyBoundConsoleSession) and not await session_is_current(
-            tx, current, hold=False
-        ):
+    async def _effect_session_current(tx: TransactionManager, current: ConsoleSession) -> None:
+        if not await session_is_current(tx, current, hold=False):
             raise HTTPException(401, "console_session_required")
 
     async def draft(
@@ -240,7 +239,7 @@ class ConsoleChanges:
                 confirm_in_aw=isinstance(current, KeyBoundConsoleSession),
             )
             await self.console.fence.check(tx, admitted)
-            await self._bound_current(tx, current)
+            await self._effect_session_current(tx, current)
             self._unexpired(current)
         await self.approvals.deliver(pending)
         return {
@@ -377,7 +376,7 @@ class ConsoleChanges:
 
     async def _candidate(
         self, current: ConsoleSession, installation_id: str, change_id: str, token: str
-    ) -> str:
+    ) -> tuple[str, AdmittedInstallation]:
         admitted = await self._installation(current, installation_id)
         async with self.console.db.transaction() as tx:
             await self._owner(tx, current, admitted)
@@ -390,12 +389,12 @@ class ConsoleChanges:
             or candidate.scope != current.scope
         ):
             raise HTTPException(403, "owner_required")
-        return row["approval_id"]
+        return row["approval_id"], admitted
 
     async def options(
         self, current: ConsoleSession, installation_id: str, change_id: str, token: str
     ) -> Mapping[str, Any]:
-        approval_id = await self._candidate(current, installation_id, change_id, token)
+        approval_id, _ = await self._candidate(current, installation_id, change_id, token)
         return await self.approvals.challenge(
             approval_id,
             Decision.APPROVE,
@@ -408,18 +407,18 @@ class ConsoleChanges:
     ) -> dict[str, str]:
         if not isinstance(body["assertion"], dict):
             raise HTTPException(400, "request_invalid")
-        approval_id = await self._candidate(
+        approval_id, admitted = await self._candidate(
             current, installation_id, change_id, _text(body, "token")
         )
-        # B3 verifies in its own transaction. Holding the login credential here
-        # would block verification's update of that same credential. This only
-        # records a decision; confirm rechecks current role/F6 and consumes it.
+        # B2 verifies the assertion before the effect fence takes local holds.
+        authority = ConsoleApprovalAuthority(console=self.console, current=current, scope=admitted)
         approved = await self.approvals.decide(
             approval_id,
             Decision.APPROVE,
             Assurance.PASSKEY,
             body["assertion"],
             link_token=body["token"],
+            fence=authority.for_decision(),
         )
         if approved.decided_by is None or (
             approved.decided_by.scope,
@@ -461,7 +460,7 @@ class ConsoleChanges:
                 ),
             )
             await self.console.fence.check(tx, admitted)
-            await self._bound_current(tx, current)
+            await self._effect_session_current(tx, current)
             self._unexpired(current)
         await self.changes.deliver(confirmation)
         try:
@@ -487,7 +486,7 @@ class ConsoleChanges:
             result = await owner_confirmation_result(
                 tx, self.console.directory, confirmation, current
             )
-            await self._bound_current(tx, current)
+            await self.console.check_key_bound(tx, current)
             return result
 
 
@@ -587,40 +586,28 @@ def console_changes_router(services: ConsoleChanges, *, prefix: str = "") -> API
                 "state": "applied",
                 "reauth_required": True,
             }
-            if isinstance(current, KeyBoundConsoleSession):
-                try:
-                    return await services.confirmation_result(confirmation, current)
-                except InstallationRefused:
-                    return JSONResponse(applied_receipt)
-                except HTTPException as refused:
-                    if refused.status_code not in {401, 403} and not (
-                        refused.status_code == 503
-                        and refused.detail == "principal_status_unavailable"
-                    ):
-                        raise
-                    return JSONResponse(applied_receipt, headers=refused.headers)
-                except ChangeRefused as refused:
-                    if refused.code != "owner_required":
-                        raise
-                    return JSONResponse(applied_receipt)
-            # Recheck S4 after commit before releasing one-time runner codes.
             try:
-                current = await services.console.sessions.current(request)
-            except HTTPException as refused:
-                if refused.status_code not in {401, 403}:
-                    raise
-                # The mutation committed. No protected material leaves, and the
-                # client must not mistake loss of its result session for rollback.
-                return JSONResponse(applied_receipt, headers=refused.headers)
-            try:
+                # A signed request cannot be admitted twice. Its existing binding
+                # is rechecked by confirmation_result before releasing material.
+                if not isinstance(current, KeyBoundConsoleSession):
+                    current = await services.console.sessions.current(request)
                 return await services.confirmation_result(confirmation, current)
+            except InstallationRefused:
+                return JSONResponse(applied_receipt)
+            except HTTPException as refused:
+                if refused.status_code not in {401, 403} and not (
+                    refused.status_code == 503 and refused.detail == "principal_status_unavailable"
+                ):
+                    raise
+                return JSONResponse(applied_receipt, headers=refused.headers)
             except ChangeRefused as refused:
                 if refused.code != "owner_required":
                     raise
-                # The role can also disappear between S4 and result projection.
-                await services.console.sessions.close(current)
                 response = JSONResponse(applied_receipt)
-                services.console.sessions.clear_cookie(response)
+                if not isinstance(current, KeyBoundConsoleSession):
+                    # The role can disappear between S4 and result projection.
+                    await services.console.sessions.close(current)
+                    services.console.sessions.clear_cookie(response)
                 return response
 
     return router

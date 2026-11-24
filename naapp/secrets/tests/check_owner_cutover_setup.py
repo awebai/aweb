@@ -572,8 +572,13 @@ def main():
         max_backlog_age=timedelta(minutes=5),
         migration_module=CREDENTIAL_AUDIT_MIGRATIONS,
     )
+
+    async def reject_sign_in(scope):
+        raise AssertionError("constructor check does not sign in")
+
     console = OwnerConsole(
         db=db,
+        member=reject_sign_in,
         passkeys=passkeys,
         directory=OwnerDirectory(passkeys, db),
         fence=fence,

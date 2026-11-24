@@ -23,6 +23,7 @@ from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_bootstrap import console_bootstrap_router
 from aweb_secrets.passkey_email import PasskeyEmailDelivery
 from tests.console_network import passkey_origin as passkey_origin
+from tests.human_owner import fixture_member_admission
 from tests.test_approval_email import Links, mailer
 from tests.test_change_sets import ALICE, ORIGIN, TEAM, World
 from tests.test_change_sets import world as _world
@@ -41,6 +42,7 @@ async def application(world: World, *, human_origin: str, agent_origin: str):
 
     console = OwnerConsole(
         db=world.db,
+        member=fixture_member_admission(world),
         passkeys=world.passkeys,
         credential_audit=world.credential_audit,
         directory=world.directory,
