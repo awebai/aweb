@@ -28,6 +28,12 @@ class RunnerResources(unittest.TestCase):
         self.assertEqual(portable[portable.index("--dns-search") + 1], ".")
         self.assertFalse(any("docker.sock" in value for value in portable))
 
+    def test_the_runner_names_its_own_postgres_for_naapp_test_databases(self):
+        # naapp tests refuse to create a database on an unnamed server (aweb-admf).
+        args = runner_args("owned-network", "172.20.0.2", "owned-image")
+        environment = {args[i + 1] for i, value in enumerate(args) if value == "-e"}
+        self.assertLessEqual({"TEST_DB_HOST=127.0.0.1", "TEST_DB_PORT=5432"}, environment)
+
 
 if __name__ == "__main__":
     unittest.main()

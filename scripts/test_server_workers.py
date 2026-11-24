@@ -46,7 +46,19 @@ class ServerWorkerTests(unittest.TestCase):
             timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("4 tests collected", result.stdout)
+        collected = [
+            line.partition("::")[2] for line in result.stdout.splitlines() if "::" in line
+        ]
+        self.assertEqual(
+            collected,
+            [
+                "test_sdk_json_and_streaming_v2_against_real_stack[certificate]",
+                "test_sdk_json_and_streaming_v2_against_real_stack[identity-local]",
+                "test_sdk_json_and_streaming_v2_against_real_stack[identity-global]",
+                "test_production_cli_connect_and_event_stream_use_v2",
+                "test_an_unnamed_database_server_is_refused",
+            ],
+        )
 
     def test_actual_launch_vectors_match_all_seven_worker_environments(self):
         pg_ports, redis_ports = set(), set()

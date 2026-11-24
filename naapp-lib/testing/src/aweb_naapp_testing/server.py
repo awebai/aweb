@@ -8,7 +8,7 @@ transport.
 
 Load it as a pytest plugin next to pgdbm's fixtures::
 
-    pytest_plugins = ("pgdbm.fixtures.conftest", "aweb_naapp_testing.server")
+    pytest_plugins = ("awid_service.testing_postgres", "aweb_naapp_testing.server")
 
 The ``coordination`` fixture sets the server's environment with
 ``monkeypatch``, as the server reads its configuration from there. AWID and

@@ -496,11 +496,12 @@ async def test_cached_prior_key_cannot_change_routing_markers(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_operator_verification_restores_only_bound_projections(privacy_app):
+async def test_operator_verification_restores_only_bound_projections(
+    privacy_app, shared_test_database
+):
     import asyncio
     import os
     import sys
-    from urllib.parse import quote
     from aweb.messaging.messages import resolve_agent_by_did
 
     env = privacy_app
@@ -526,14 +527,9 @@ async def test_operator_verification_restores_only_bound_projections(privacy_app
             TEAM,
             claimless_key,
         )
-        db_name = await env.db.fetch_value("SELECT current_database()")
         child_env = dict(os.environ)
-        user = quote(os.environ.get("TEST_DB_USER", "postgres"), safe="")
-        password = quote(os.environ.get("TEST_DB_PASSWORD", "postgres"), safe="")
-        host = os.environ.get("TEST_DB_HOST", "localhost")
-        port = os.environ.get("TEST_DB_PORT", "5432")
         child_env.update(
-            AWEB_DATABASE_URL=f"postgresql://{user}:{password}@{host}:{port}/{db_name}",
+            AWEB_DATABASE_URL=shared_test_database.dsn,
             AWID_REGISTRY_URL=origin,
         )
 

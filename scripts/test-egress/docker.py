@@ -39,6 +39,9 @@ def runner_args(token, dns_ip, image, profile='portable', server_workers=0):
             '--pids-limit', '2048',
             '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres',
             '-e', 'PGPASSWORD=postgres', '-e', 'REDIS_URL=redis://127.0.0.1:6379/0',
+            # naapp tests create databases only on a Postgres the run names (aweb-admf):
+            # the runner's own, the same 127.0.0.1:5432 pgdbm's default resolved to here.
+            '-e', 'TEST_DB_HOST=127.0.0.1', '-e', 'TEST_DB_PORT=5432',
             *worker_env, image, 'sleep', 'infinity']
 
 

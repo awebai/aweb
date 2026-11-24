@@ -9,24 +9,33 @@ hold each response, so the code under test, the routes and the database all
 stay real.
 
 No rate limit applies. Nothing here is used by the registry service itself.
+
+:func:`require_selected_test_database` is the one rule for which Postgres a test
+database may be created on; ``awid_service.testing_postgres`` applies it to
+pgdbm's fixtures in every suite that loads that plugin.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from inspect import isawaitable
-from typing import Any, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 from fastapi import FastAPI
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
+from pgdbm.testing import DatabaseTestConfig
 from redis.asyncio import Redis
 
 from awid.attestation_records import (
@@ -49,7 +58,104 @@ from .db import AwidDatabaseInfra
 from .deps import get_domain_verifier
 from .main import mount_registry
 
+if TYPE_CHECKING:
+    import pytest
+
 REGISTRY_URL = "https://registry.example"
+
+# The Postgres server a run names for its test databases (pgdbm's own names).
+_SELECTION = ("TEST_DB_HOST", "TEST_DB_PORT")
+
+
+class PostgresNotSelected(RuntimeError):
+    """A test database was requested on a Postgres server the run did not name."""
+
+
+def selected_test_database_config() -> DatabaseTestConfig:
+    """pgdbm's test database settings for the Postgres server the run names.
+
+    Without TEST_DB_HOST and TEST_DB_PORT, pgdbm falls back to localhost:5432,
+    which on a workstation is the host's own shared Postgres; a test database is
+    never created there by default (aweb-admf).
+    """
+    missing = [name for name in _SELECTION if not os.environ.get(name)]
+    if missing:
+        raise PostgresNotSelected(
+            f"{' and '.join(missing)} unset: test databases are created only on a "
+            "Postgres server the run names, never by default on the host's "
+            "localhost:5432. Run the database tests on a gate-vms lease, or point "
+            "TEST_DB_HOST and TEST_DB_PORT at a disposable Postgres you started for "
+            "this run. Setting TEST_DB_PORT=5432 by hand on a workstation is a "
+            "knowing choice of the host's own Postgres."
+        )
+    return DatabaseTestConfig.from_env()
+
+
+def require_selected_test_database(config: DatabaseTestConfig) -> None:
+    """Refuses ``config`` unless it is the Postgres server the run names."""
+    selected = selected_test_database_config()
+    if (config.host, config.port) != (selected.host, selected.port):
+        raise PostgresNotSelected(
+            f"pgdbm's test databases target {config.host}:{config.port}, but the run "
+            f"names {selected.host}:{selected.port}. Set TEST_DB_HOST and TEST_DB_PORT "
+            "before the test run starts, so pgdbm reads them when it loads."
+        )
+
+
+# Code that keeps a child test run off every server, whatever its plugins do.
+NO_NETWORK = """
+import socket
+
+def _refuse(*args, **kwargs):
+    raise OSError("this test run may not open network connections")
+
+socket.socket.connect = _refuse
+socket.socket.connect_ex = _refuse
+"""
+
+
+# Set in the child run of check_suite_refuses_an_unnamed_server.
+_UNNAMED_SERVER_CHILD = "AWID_TEST_UNNAMED_SERVER_CHILD"
+
+
+def check_suite_refuses_an_unnamed_server(request: pytest.FixtureRequest, scratch: Path) -> None:
+    """The whole body of a suite's one test that its database fixtures refuse a
+    run that names no Postgres server.
+
+    The test runs itself again in a child pytest, which loads the suite's own
+    conftest, names no server and can reach none. Only the child requests the
+    factory, and it must be refused.
+    """
+    if _UNNAMED_SERVER_CHILD in os.environ:
+        try:
+            request.getfixturevalue("test_db_factory")
+        except PostgresNotSelected:
+            return
+        raise AssertionError("the suite's test_db_factory admitted an unnamed server")
+
+    (scratch / "no_network.py").write_text(NO_NETWORK)
+    # The parent's worker and options are not the child's.
+    environ = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in _SELECTION and not name.startswith("PYTEST_")
+    }
+    environ[_UNNAMED_SERVER_CHILD] = "1"
+    environ["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (str(scratch), os.environ.get("PYTHONPATH")))
+    )
+    child = subprocess.run(
+        [sys.executable, "-P", "-m", "pytest", "-q", "-p", "no_network", "-p", "no:cacheprovider"]
+        + [f"--basetemp={scratch / 'child'}", f"{request.path}::{request.node.name}"],
+        cwd=request.config.invocation_params.dir,
+        env=environ,
+        capture_output=True,
+        text=True,
+    )
+    output = child.stdout + child.stderr
+    assert child.returncode == 0 and "1 passed" in child.stdout, output
+
+
 SERVICE_TOKEN = "awid-testing-service-token-32-bytes"
 
 # Changes the real response in place, or returns a response to send instead.

@@ -408,7 +408,8 @@ check-secrets-shards:
 	uv sync --frozen --project naapp/secrets
 	$(MAKE) -C naapp/secrets check-shards
 
-# awid's database session tests through a real transaction-mode PgBouncer.
+# awid's database session tests through a real transaction-mode PgBouncer; its
+# direct-Postgres cases use the same stack's own Postgres (TEST_DB_*).
 test-awid-pooler:
 	set -e; \
 	trap 'docker compose -p awid-pooler -f $(CURDIR)/awid/tests/pooler/docker-compose.yml down -v --remove-orphans' EXIT; \
@@ -416,6 +417,7 @@ test-awid-pooler:
 	cd awid; \
 	uv sync --frozen; \
 	AWID_TEST_POOLER_URL=postgresql://postgres:postgres@localhost:$${AWID_TEST_POOLER_PORT:-56433}/postgres \
+		TEST_DB_HOST=127.0.0.1 TEST_DB_PORT=$${AWID_TEST_POSTGRES_PORT:-56432} \
 		PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_database_session_settings.py
 
 test-cli: production-awid-sync

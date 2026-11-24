@@ -10,10 +10,11 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from aweb_naapp_testing.databases import TEST_SCHEMA, SchemaDatabases
+from awid_service.testing import selected_test_database_config
 from fastapi.testclient import TestClient
 from manifest_config import TEST_GRANT_SEED_HEX
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
-from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
+from pgdbm.testing import AsyncTestDatabase
 from test_e2e_smoke import (  # noqa: F401
     aw_workspace,
     library,
@@ -22,15 +23,11 @@ from test_e2e_smoke import (  # noqa: F401
     workspaces,
 )
 
+pytest_plugins = ("awid_service.testing_postgres",)
+
 _MIGRATIONS = Path(__file__).resolve().parent.parent / "src" / "library" / "migrations"
 
 
-_TEST_DB_CONFIG = DatabaseTestConfig(
-    host=os.environ.get("TEST_DB_HOST", "localhost"),
-    port=int(os.environ.get("TEST_DB_PORT", "5432")),
-    user=os.environ.get("TEST_DB_USER", "postgres"),
-    password=os.environ.get("TEST_DB_PASSWORD", "postgres"),
-)
 
 
 @pytest_asyncio.fixture
@@ -38,7 +35,7 @@ async def migrated_db() -> AsyncIterator[AsyncDatabaseManager]:
     """A real Postgres database with library's migrations applied. Skips cleanly when
     no Postgres is reachable, so it runs in CI / the reviewer's real-DB pass and is a
     no-op in environments without a database."""
-    test_database = AsyncTestDatabase(_TEST_DB_CONFIG)
+    test_database = AsyncTestDatabase(selected_test_database_config())
     try:
         await test_database.create_test_database()
     except Exception as exc:  # pragma: no cover - environment without Postgres
@@ -60,7 +57,7 @@ async def migrated_db() -> AsyncIterator[AsyncDatabaseManager]:
 @pytest_asyncio.fixture
 async def database_url() -> AsyncIterator[str]:
     """A fresh, empty real Postgres database."""
-    test_database = AsyncTestDatabase(_TEST_DB_CONFIG)
+    test_database = AsyncTestDatabase(selected_test_database_config())
     try:
         await test_database.create_test_database()
     except Exception as exc:  # pragma: no cover - environment without Postgres
