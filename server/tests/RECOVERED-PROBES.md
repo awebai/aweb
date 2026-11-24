@@ -5,7 +5,7 @@ guard, not a naming convention.** Renaming any of them back puts it into a relea
 gate on the next run.
 
 All five are here, and end in `.py.recovered` rather than `.py`; renaming
-them puts them into `check-server-locked-suite`.
+them puts them into `make test-server`, which the candidate gate runs.
 
 They were written by subagents of an audit workflow, executed against this suite,
 deleted, and recovered from their authoring transcripts. They are preserved as

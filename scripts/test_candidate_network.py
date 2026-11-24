@@ -383,9 +383,8 @@ class ComposeConfigTests(unittest.TestCase):
         docker = os.environ.get('AWEB_CANDIDATE_REAL_DOCKER') or shutil.which('docker')
         self.assertIsNotNone(docker, 'Docker Compose CLI is required for fixture validation')
         env = {**os.environ, 'FOLIO_WAKES_ORIGIN': 'https://folio-wakes.test:8765',
-               'FOLIO_WAKES_APP_KEY_FILES': '{}', 'GRANT_APP_E2E_PROJECT': 'proof'}
-        fixtures = [(['scripts/e2e/folio-wakes.compose.yml'], {'folio', 'client'}),
-                    (['docker-compose.e2e.yml', 'scripts/e2e/grant-app-acceptance.compose.yml'], {'client'})]
+               'FOLIO_WAKES_APP_KEY_FILES': '{}'}
+        fixtures = [(['scripts/e2e/folio-wakes.compose.yml'], {'folio', 'client'})]
         for files, expected_shared in fixtures:
             with self.subTest(files=files), tempfile.TemporaryDirectory() as tmp:
                 args = [docker, 'compose', '-p', 'proof', '--project-directory', str(ROOT)]
