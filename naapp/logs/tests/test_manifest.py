@@ -78,6 +78,10 @@ def test_owners_designate_log_readers_on_the_console_origin(tmp_path: Path) -> N
     assert [
         (role["name"], role["acts"], role["notice_contact"]) for role in owner_acts["roles"]
     ] == [("logs.reader", sorted(HUMAN_ROLE_ACTS), False)]
+    assert [
+        (action["role"], action["kind"], action["method"], action["path"])
+        for action in owner_acts["session_actions"]
+    ] == [("logs.reader", "read", "GET", "/v1/session")]
 
 
 def test_ingest_is_registered_on_every_hook_of_the_catalog(tmp_path: Path) -> None:
