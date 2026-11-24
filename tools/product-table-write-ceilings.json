@@ -204,7 +204,7 @@
     "server/tests/test_participant_identity_migration.py": 3,
     "server/tests/test_participant_succession.py": 1,
     "server/tests/test_pending_chat_query.py": 4,
-    "server/tests/test_retired_signer_upgrade.py": 2,
+    "server/tests/test_retired_signer_upgrade.py": 1,
     "server/tests/test_rotated_address_locality.py": 1,
     "server/tests/test_same_origin_delivery.py": 16,
     "server/tests/test_session_leases.py": 2,
