@@ -11,9 +11,9 @@ import os
 import socket
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from time import monotonic
 from uuid import UUID, uuid4
 
+import awid.registry as registry_module
 import dns.asyncresolver
 import httpx
 import pytest
@@ -24,6 +24,7 @@ from awid.registry import RegistryClient
 from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app as create_registry_app
 from awid_service.testing import TXTAnswers
+from certificate_read_support import scheduled_certificate_readers
 from dashboard_test_support import _JWT_SECRET, _make_jwt
 from redis.asyncio import Redis
 from test_cli_never_grants import registry_listener
@@ -118,6 +119,36 @@ async def _local_admissions(env, monkeypatch):
         cached = _build_awid_registry_client(env.app, redis=env.redis, transport=transport)
         object.__setattr__(cached, "_domain_verifier", exact_dns)
         env.app.state.awid_registry_client = cached
+        client_type = type(cached)
+        admit_read = client_type._admit_team_certificate_read
+        window_key: str | None = None
+        point_admitted = None
+
+        async def observe_admission(client, key, *, allow_point):
+            nonlocal window_key
+            admission = await admit_read(client, key, allow_point=allow_point)
+            if client is cached and allow_point:
+                window_key = key
+                if point_admitted is not None:
+                    await point_admitted(admission)
+            return admission
+
+        @asynccontextmanager
+        async def point_window(*, after_admission=None):
+            nonlocal point_admitted
+            key = window_key
+            assert key is not None
+            # The setup list has already run. Control the next lease transition
+            # explicitly while the real Redis script owns every slot decision.
+            assert await env.redis.set(key, 0, ex=timedelta(days=1))
+            point_admitted = after_admission
+            try:
+                yield key
+            finally:
+                point_admitted = None
+                await env.redis.delete(key)
+
+        monkeypatch.setattr(client_type, "_admit_team_certificate_read", observe_admission)
         try:
             await cached.list_team_certificates(domain, TEAM_NAME, active_only=False)
             transport.reads = 0
@@ -178,66 +209,100 @@ async def _local_admissions(env, monkeypatch):
                     txt_resolver=TXTAnswers({"_awid.example.test": env.namespace_did}),
                 ) == next_key
 
-            yield member, connect, revoke, rotate, transport
+            yield member, connect, revoke, rotate, transport, point_window
         finally:
             await cached.aclose()
 
 
 @pytest.mark.asyncio
 async def test_first_connect_for_members_registered_between_list_reads(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport):
-        admitted = monotonic()
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport, point_window):
         await connect(await member("first-member"))
         assert transport.reads == 1
-        second, third = await asyncio.gather(member("second-member"), member("third-member"))
-        assert monotonic() - admitted < 1
-        await connect(second)
-        await connect(third)
-        await connect(second)
-        assert monotonic() - admitted < 5
+        async with point_window():
+            second, third = await asyncio.gather(member("second-member"), member("third-member"))
+            await connect(second)
+            await connect(third)
+            await connect(second)
         assert (transport.reads, transport.point_reads) == (1, 2)
 
 
 @pytest.mark.asyncio
 async def test_unregistered_certificate_reuses_exact_refusal(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, revoke, _, transport):
+    # This case checks reuse of the refusal while it is fresh.
+    monkeypatch.setattr(registry_module, "_TEAM_CERTIFICATES_NEGATIVE_TTL_SECONDS", 24 * 60 * 60)
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, revoke, _, transport, point_window):
         await connect(await member("first-member"))
-        absent = await member("not-registered", register=False)
-        for _ in range(2):
-            assert (await connect(absent, status=401))["detail"] == "unregistered"
-        assert (transport.reads, transport.point_reads) == (1, 1)
-        revoked = await member("revoked")
-        await revoke(revoked)
-        assert (await connect(revoked, status=401))["detail"]["code"] == "certificate_revoked"
-        assert (transport.reads, transport.point_reads) == (1, 2)
+        async with point_window():
+            absent = await member("not-registered", register=False)
+            for _ in range(2):
+                assert (await connect(absent, status=401))["detail"] == "unregistered"
+            assert (transport.reads, transport.point_reads) == (1, 1)
+            revoked = await member("revoked")
+            await revoke(revoked)
+            assert (await connect(revoked, status=401))["detail"]["code"] == "certificate_revoked"
+            assert (transport.reads, transport.point_reads) == (1, 2)
 
 
 @pytest.mark.asyncio
 async def test_point_budget_overflow_shares_the_next_list(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport):
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport, point_window):
+        completed = 0
+        waiting = 0
+        readers_changed = asyncio.Event()
+        release_overflow = asyncio.Event()
+
+        async def hold_overflow(admission):
+            nonlocal waiting
+            if admission > 0:
+                waiting += 1
+                readers_changed.set()
+                await release_overflow.wait()
+
+        async def connect_reader(credential):
+            nonlocal completed
+            await connect(credential)
+            completed += 1
+            readers_changed.set()
+
         await connect(await member("first-member"))
-        admitted = await asyncio.gather(*(member(f"member-{i}") for i in range(18)))
-        await asyncio.gather(*(connect(credential) for credential in admitted))
+        assert (transport.reads, transport.point_reads) == (1, 0)
+        async with point_window(after_admission=hold_overflow) as window_key:
+            admitted = await asyncio.gather(*(member(f"member-{i}") for i in range(18)))
+            async with scheduled_certificate_readers() as readers:
+                for credential in admitted:
+                    readers.create_task(connect_reader(credential))
+                try:
+                    while completed + waiting < len(admitted):
+                        readers_changed.clear()
+                        await readers_changed.wait()
+                    assert (completed, waiting) == (16, 2), "point reads and overflow waiters"
+                    assert (transport.reads, transport.point_reads) == (1, 16)
+                    # Both overflow readers can now share the next list.
+                    assert await privacy_app.redis.delete(window_key) == 1
+                finally:
+                    release_overflow.set()
         assert (transport.reads, transport.point_reads) == (2, 16)
 
 
 @pytest.mark.asyncio
 async def test_point_read_outage_is_unavailable(privacy_app, monkeypatch):  # noqa: F811
-    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport):
+    async with _local_admissions(privacy_app, monkeypatch) as (member, connect, _, _, transport, point_window):
         await connect(await member("first-member"))
-        second = await member("second-member")
-        transport.point_unavailable = True
-        error = await connect(second, status=503)
-        assert "AWID certificate existence check" in error["detail"]
-        assert (transport.reads, transport.point_reads) == (1, 1)
-        transport.point_unavailable = False
-        transport.point_throttled = True
-        error = await connect(second, status=503)
-        assert "upstream rate limited" in error["detail"]
-        assert (transport.reads, transport.point_reads) == (1, 2)
-        transport.point_throttled = False
-        await connect(second)
-        assert (transport.reads, transport.point_reads) == (1, 3)
+        async with point_window():
+            second = await member("second-member")
+            transport.point_unavailable = True
+            error = await connect(second, status=503)
+            assert "AWID certificate existence check" in error["detail"]
+            assert (transport.reads, transport.point_reads) == (1, 1)
+            transport.point_unavailable = False
+            transport.point_throttled = True
+            error = await connect(second, status=503)
+            assert "upstream rate limited" in error["detail"]
+            assert (transport.reads, transport.point_reads) == (1, 2)
+            transport.point_throttled = False
+            await connect(second)
+            assert (transport.reads, transport.point_reads) == (1, 3)
 
 
 @pytest.mark.asyncio
@@ -246,9 +311,13 @@ async def test_point_read_outage_is_unavailable(privacy_app, monkeypatch):  # no
 async def test_key_rotation_during_certificate_miss_refuses_both_slots(privacy_app, monkeypatch, path, slot):  # noqa: F811
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
     env = privacy_app
-    async with _local_admissions(env, monkeypatch) as (member, connect, _, rotate, transport):
+    async with (
+        _local_admissions(env, monkeypatch) as (member, connect, _, rotate, transport, point_window),
+        AsyncExitStack() as stack,
+    ):
         if slot == "point":
             await connect(await member("initial"))
+            await stack.enter_async_context(point_window())
         previous = await member("rotation-pending")
         before = transport.reads, transport.point_reads
         # Move the pin through the signed controller act while the request
