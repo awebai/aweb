@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from typing import Any, NamedTuple
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
@@ -64,6 +65,13 @@ logger = logging.getLogger(__name__)
 _ADMITTED_MEMBER = "aweb.admitted_member"
 
 
+class IdentityEvidencePolicy(StrEnum):
+    """Whether certificate authentication also verifies stable identity and ID ancestry."""
+
+    ENFORCE = "enforce"
+    SKIP = "skip"
+
+
 def _superseded_team_key() -> HTTPException:
     return HTTPException(
         status_code=401,
@@ -91,6 +99,7 @@ class TeamMemberSnapshot:
     _request_state: dict[str, Any] | None = field(repr=False, compare=False)
     _memo: dict[str, Any] | None = field(repr=False, compare=False)
     _overlay_sql: str | None = field(repr=False)
+    _identity_evidence: IdentityEvidencePolicy = field(repr=False)
 
     def _require_current_member(self) -> MemberProjection:
         row = self.member
@@ -138,6 +147,17 @@ def _snapshot_credential(cert_info: dict) -> _MemberCredential:
     )
 
 
+def _member_attribution(
+    member: MemberProjection | None, policy: IdentityEvidencePolicy,
+) -> MemberProjection | None:
+    if member is None or policy is not IdentityEvidencePolicy.SKIP:
+        return member
+    return MemberProjection.from_row({
+        **member, "did_aw": None, "address": None,
+        "did_aw_verified_key": None, "human_verified_key": None,
+    })
+
+
 async def read_team_member_snapshot(
     db: AsyncDatabaseManager,
     cert_info: dict,
@@ -154,7 +174,8 @@ async def read_team_member_snapshot(
     if isinstance(db, TransactionManager):
         raise ValueError("A request member snapshot requires a database manager outside a transaction")
     return await _read_team_member_snapshot(
-        db, _snapshot_credential(cert_info), request, overlay_sql, MemberReadLock.NONE
+        db, _snapshot_credential(cert_info), request, overlay_sql, MemberReadLock.NONE,
+        identity_evidence=cert_info.get("_identity_evidence", IdentityEvidencePolicy.ENFORCE),
     )
 
 
@@ -164,6 +185,8 @@ async def _read_team_member_snapshot(
     request: Request | None,
     overlay_sql: str | None,
     read_lock: MemberReadLock,
+    *,
+    identity_evidence: IdentityEvidencePolicy,
 ) -> TeamMemberSnapshot:
     team_id, did_key, certificate_id, _ = credential
     host_row = None
@@ -179,12 +202,13 @@ async def _read_team_member_snapshot(
             overlay_sql=overlay_sql,
         )
     return TeamMemberSnapshot(
-        member=member,
+        member=_member_attribution(member, identity_evidence),
         host_row=host_row,
         _credential=credential,
         _request_state=request.scope.setdefault("state", {}) if request is not None else None,
         _memo=request_memo(),
         _overlay_sql=overlay_sql,
+        _identity_evidence=identity_evidence,
     )
 
 
@@ -233,6 +257,7 @@ async def resolve_team_membership(
             inactive, or the certificate's verified team key is no longer current.
     """
     credential = _snapshot_credential(cert_info)
+    identity_evidence = cert_info.get("_identity_evidence", IdentityEvidencePolicy.ENFORCE)
     team_id, did_key, presented_certificate_id, verified_team_did_key = credential
     if snapshot is not None and isinstance(db, TransactionManager):
         raise ValueError("A request member snapshot requires a database manager outside a transaction")
@@ -240,6 +265,7 @@ async def resolve_team_membership(
         request is None
         or snapshot._request_state is not request.scope.setdefault("state", {})
         or snapshot._credential != credential
+        or snapshot._identity_evidence is not identity_evidence
         or (snapshot._memo is not None and snapshot._memo is not request_memo())
     ):
         raise ValueError("Member snapshot belongs to a different request or certificate")
@@ -278,7 +304,8 @@ async def resolve_team_membership(
             ):
                 # Cached binding evidence lets the request use one native read.
                 snapshot = await _read_team_member_snapshot(
-                    db, credential, request, None, MemberReadLock.NONE
+                    db, credential, request, None, MemberReadLock.NONE,
+                    identity_evidence=identity_evidence,
                 )
                 row = snapshot.member
                 read_native_snapshot = True
@@ -299,7 +326,10 @@ async def resolve_team_membership(
     if not verified_team_did_key:
         raise CurrentMembershipRequired()
 
-    if not isinstance(binding, IdentityBinding):
+    if identity_evidence is IdentityEvidencePolicy.SKIP:
+        # A stored projection cannot supply claims that this request skipped.
+        binding = IdentityBinding(did_key=did_key)
+    elif not isinstance(binding, IdentityBinding):
         binding = IdentityBinding()
         if request is not None:
             binding = await verify_identity_binding(
@@ -308,7 +338,10 @@ async def resolve_team_membership(
                 did_aw=cert_info.get("member_did_aw") or "",
                 address=cert_info.get("member_address") or "",
             )
-    if request is not None and not binding.did_aw and (row.get("did_aw") or row.get("address")):
+    if (
+        identity_evidence is not IdentityEvidencePolicy.SKIP
+        and request is not None and not binding.did_aw and (row.get("did_aw") or row.get("address"))
+    ):
         # A claimless certificate cannot inherit stored global identity
         # metadata without independently proving that row's exact binding.
         binding = await verify_identity_binding(
@@ -331,7 +364,8 @@ async def resolve_team_membership(
     if not binding.fresh_observation and not changed:
         if snapshot is None:
             snapshot = await _read_team_member_snapshot(
-                db, credential, request, None, MemberReadLock.NONE
+                db, credential, request, None, MemberReadLock.NONE,
+                identity_evidence=identity_evidence,
             )
         row = snapshot._require_current_member()
         changed = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
@@ -340,7 +374,8 @@ async def resolve_team_membership(
         overlay_sql = snapshot._overlay_sql if snapshot is not None else None
         async with db.transaction() as tx:
             snapshot = await _read_team_member_snapshot(
-                tx, credential, request, overlay_sql, MemberReadLock.UPDATE
+                tx, credential, request, overlay_sql, MemberReadLock.UPDATE,
+                identity_evidence=identity_evidence,
             )
             row = snapshot._require_current_member()
             update_certificate = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
@@ -353,7 +388,10 @@ async def resolve_team_membership(
                     row["agent_id"], presented_certificate_id, verified_team_did_key,
                 )
             if binding.fresh_observation or update_certificate:
-                row = await read_member_projection(tx, team_id=team_id, did_key=did_key)
+                row = _member_attribution(
+                    await read_member_projection(tx, team_id=team_id, did_key=did_key),
+                    identity_evidence,
+                )
                 assert row is not None  # The UPDATE lock still holds the row.
                 snapshot = replace(snapshot, member=row)
 
@@ -383,7 +421,10 @@ async def resolve_team_membership(
 # ---------------------------------------------------------------------------
 
 
-async def verify_request_certificate(request: Request, db, *, fresh: bool = False) -> dict:
+async def verify_request_certificate(
+    request: Request, db, *, fresh: bool = False,
+    identity_evidence: IdentityEvidencePolicy = IdentityEvidencePolicy.ENFORCE,
+) -> dict:
     """Verify a request's DIDKey signature and team certificate.
 
     Steps 1-5 of the auth pipeline:
@@ -398,6 +439,10 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
     empty strings for local certificates. Does NOT look up the agent
     in the local DB — suitable for /v1/connect where the agent may not
     exist yet.
+
+    An embedding route that needs only the team member can explicitly skip
+    stable identity and ID ancestry evidence. Such a request gets key-only
+    attribution. Certificate authority and standing are still verified.
 
     Raises HTTPException on any failure.
     """
@@ -461,15 +506,21 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         did_key=did_key,
     )
 
-    # Team authority does not establish the member's stable identity/address.
-    binding = await verify_identity_binding(
-        request,
-        did_key=did_key,
-        did_aw=cert_info.get("member_did_aw", ""),
-        address=cert_info.get("member_address", ""),
-        fresh=fresh,
-    )
-    await authenticate_id_chain(request, binding)
+    if identity_evidence is IdentityEvidencePolicy.SKIP:
+        binding = IdentityBinding(did_key=did_key)
+        request.state.identity_kind = None
+        request.state.id_chain = None
+        request.state.id_chain_result = None
+    else:
+        binding = await verify_identity_binding(
+            request,
+            did_key=did_key,
+            did_aw=cert_info.get("member_did_aw", ""),
+            address=cert_info.get("member_address", ""),
+            fresh=fresh,
+        )
+        await authenticate_id_chain(request, binding)
+    cert_info["_identity_evidence"] = identity_evidence
     cert_info["identity_kind"] = getattr(request.state, "identity_kind", None)
     cert_info["identity_binding"] = binding
     cert_info["identity_binding_fresh"] = binding.fresh_observation

@@ -551,6 +551,102 @@ class TestResolveTeamIdentity:
 
 
 @pytest.mark.asyncio
+async def test_mounted_certificate_without_identity_evidence_keeps_only_team_authority(privacy_app):
+    from aweb import team_auth_deps
+    from aweb.application_state import application_registry_client
+    from test_dashboard_privacy import TEAM, TEAM_NAME
+    from test_messages_http import _make_certificate as make_certificate
+    from test_messages_http import _signed_team_headers
+
+    env = privacy_app
+    member = env.actors["bob"]
+    registry = application_registry_client(env.app.state)
+    stable = (await registry.register_did(member.did, member.sk)).did_aw
+    resolution = await registry.resolve_key_fresh(stable)
+    assert resolution.current_did_key == member.did
+    assert resolution.id_tree is not None and not resolution.id_tree.enrolled
+
+    def certificate_for(certificate_id, address=""):
+        return _encode_certificate(make_certificate(
+            env.team_sk, env.team_did, member.did,
+            team_id=TEAM, alias="bob", certificate_id=certificate_id,
+            member_did_aw=stable, member_address=address, identity_scope="global",
+        ))
+
+    def headers(certificate, body=b""):
+        return {**_signed_team_headers(member.sk, member.did, TEAM, certificate, body),
+                "Content-Type": "application/json"}
+
+    first_id, addressed_id = str(uuid.uuid4()), str(uuid.uuid4())
+    first = certificate_for(first_id)
+    await _register_fixture_certificate(env, first)
+    connected = await env.client.post("/v1/connect", headers=headers(first, b"{}"), content=b"{}")
+    assert connected.status_code == 200, connected.text
+    control = await env.client.get("/v1/agents", headers=headers(first))
+    assert control.status_code == 200, control.text
+
+    domain, name = "identity-address.test", "withdrawn"
+    # AWID guards active certificates in the address namespace's own teams.
+    # A controller can withdraw an address used by one of its other teams.
+    await env.registry.ensure_namespace(domain=domain, controller=env.namespace_sk)
+    await registry.register_address(domain, name, stable, env.namespace_sk, member.did)
+    await registry.revoke_team_certificate(
+        "example.test", TEAM_NAME, team_controller_signing_key=env.team_sk, certificate_id=first_id,
+    )
+    addressed = certificate_for(addressed_id, f"{domain}/{name}")
+    await _register_fixture_certificate(env, addressed)
+    await registry.delete_address(domain, name, env.namespace_sk)
+    assert await registry.resolve_address_fresh(domain, name) is None
+    refused = await env.client.post("/v1/connect", headers=headers(addressed, b"{}"), content=b"{}")
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"] == "identity_binding_mismatch"
+
+    @env.app.get("/_test/mounted-certificate")
+    async def mounted_certificate(request: Request):
+        checked = await team_auth_deps.verify_request_certificate(
+            request, env.infra, identity_evidence=team_auth_deps.IdentityEvidencePolicy.SKIP,
+        )
+        snapshot = await team_auth_deps.read_team_member_snapshot(env.db, checked, request=request)
+        resolved = await team_auth_deps.resolve_team_membership(
+            env.db, checked, request=request, snapshot=snapshot,
+        )
+        assert resolved.snapshot.member is not None
+        attribution = resolved.snapshot.member.verified_identity()
+        return {
+            "key": resolved.identity.did_key,
+            "did_aw": resolved.identity.did_aw,
+            "address": resolved.identity.address,
+            "verified_did_aw": checked["verified_member_did_aw"],
+            "verified_address": checked["verified_member_address"],
+            "verified_key": checked["did_aw_verified_key"],
+            "kind": checked["identity_kind"],
+            "id_chain": getattr(request.state, "id_chain", None),
+            "stored_attribution": [attribution["did_aw"], attribution["address"], attribution["human_verified_key"]],
+        }
+
+    started = len(env.registry.transport.calls)
+    served = await env.client.get("/_test/mounted-certificate", headers=headers(addressed))
+    assert served.status_code == 200, served.text
+    assert served.json() == {
+        "key": member.did, "did_aw": "", "address": "", "verified_did_aw": "",
+        "verified_address": "", "verified_key": "", "kind": None, "id_chain": None,
+        "stored_attribution": [None, None, None],
+    }
+    assert all("/v1/did/" not in request.url.path and "/addresses/" not in request.url.path
+               for request in env.registry.transport.calls[started:])
+    assert await env.db.fetch_value(
+        "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id = $1", member.id,
+    ) == member.did
+
+    await registry.revoke_team_certificate(
+        "example.test", TEAM_NAME, team_controller_signing_key=env.team_sk, certificate_id=addressed_id,
+    )
+    revoked = await env.client.get("/_test/mounted-certificate", headers=headers(addressed))
+    assert revoked.status_code == 401, revoked.text
+    assert revoked.json()["detail"]["code"] == "certificate_revoked"
+
+
+@pytest.mark.asyncio
 async def test_team_and_messaging_dependencies_use_registered_identity(privacy_app):
     """R11c's six raw-manager projections use a real signed member dependency."""
     from aweb.team_auth_deps import get_team_identity
