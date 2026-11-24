@@ -32,6 +32,7 @@ from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 from tests.installation_fixtures import seed_hook_installation
 from tests.real_stack import AWEB_URL
+from tests.naapp_discovery import team_server_directory
 
 TEAM = "backend:resolve.example"
 HOOK = ("aweb.hooks", 1, "post-secret-use-hook")
@@ -109,7 +110,7 @@ async def team(real_stack):
     ) -> HookResolver:
         key = await _key(db, app, kid=f"resolve-{app['app_id']}", purposes=[HOOK_RESOLVE])
         return HookResolver(
-            directory=real_stack.directory(clock=clock, ttl_seconds=directory_ttl),
+            directory=team_server_directory(real_stack, clock=clock, ttl_seconds=directory_ttl),
             signer=AppCredentialSigner(app_id=app["app_id"], key=key, purpose=HOOK_RESOLVE),
             app_origin=app["origin"],
             transport=real_stack.aweb,

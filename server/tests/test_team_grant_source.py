@@ -27,6 +27,7 @@ from awid.did import did_from_public_key
 from fastapi import FastAPI, HTTPException, Request
 from installation_fixtures import install_fixture_app
 from nacl.signing import SigningKey
+from tests.naapp_discovery import team_server_directory
 
 TEAM = "backend:grants.example"
 # Public deterministic test material; the identity names the actual pinned bytes.
@@ -75,7 +76,7 @@ async def installed(real_stack, team_controller):
     source = TeamGrantSource(
         identity=IDENTITY,
         signer=signer,
-        discovery=real_stack.directory(clock=clock),
+        discovery=team_server_directory(real_stack, clock=clock),
         transport=real_stack.aweb,
         monotonic=clock,
     )
@@ -266,7 +267,7 @@ async def test_bounded_timeout_covers_discovery_and_read(installed):
     source = TeamGrantSource(
         identity=IDENTITY,
         signer=signer,
-        discovery=stack.directory(clock=clock),
+        discovery=team_server_directory(stack, clock=clock),
         transport=stack.aweb,
         monotonic=clock,
         timeout=0.02,
@@ -390,7 +391,7 @@ async def test_another_purpose_is_refused_at_construction(installed, purpose):
     stack, _, _, signer = installed
     other = AppCredentialSigner(app_id=IDENTITY.app_id, key=signer._key, purpose=purpose)
     with pytest.raises(ValueError):
-        TeamGrantSource(identity=IDENTITY, signer=other, discovery=stack.directory())
+        TeamGrantSource(identity=IDENTITY, signer=other, discovery=team_server_directory(stack))
     assert not stack.aweb.calls
 
 
@@ -418,7 +419,7 @@ async def test_server_move_discards_cached_grant_and_signs_the_mount_prefix(inst
     source = TeamGrantSource(
         identity=IDENTITY,
         signer=signer,
-        discovery=stack.directory(clock=clock, ttl_seconds=0),
+        discovery=team_server_directory(stack, clock=clock, ttl_seconds=0),
         transport=stack.aweb,
         monotonic=clock,
     )

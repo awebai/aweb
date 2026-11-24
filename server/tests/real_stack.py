@@ -1,10 +1,10 @@
 """Real AWID and the real aweb app in one process, joined by a published team-server record.
 
-The naapp clients of this server's app API (aweb_naapp.runtime) are driven
-against it here. AWID's real routes run on their own real database; the aweb
-app runs this server's real routes, verifier and writers on the test database.
-A client reaches aweb only through team-server discovery: the team's
-``aweb.team-server/1`` record, signed by its team key and stored in AWID.
+AWID's real routes run on their own real database; the aweb app runs this
+server's real routes, verifier and writers on the test database. A client
+reaches aweb only through team-server discovery: the team's
+``aweb.team-server/1`` record, signed by its team key and stored in AWID
+(``tests.naapp_discovery`` gives the naapp runtime's discovery client).
 
 Each service is reached through an in-process ASGI transport that records the
 requests it carries. A test may set ``fault`` to change a response after the
@@ -35,8 +35,6 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from aweb.routes.app_hooks import router as app_hooks_router
 from aweb.routes.apps import router as apps_router
-from aweb_naapp.runtime.team_auth import AWIDTeamCache
-from aweb_naapp.runtime.team_server import TeamServerDirectory
 from tests.test_app_events_http import _build_events_app, _seed_team_and_agent
 
 REGISTRY_URL = "https://registry.example"
@@ -108,24 +106,6 @@ class RealStack:
         async with httpx.AsyncClient(transport=self.awid) as client:
             response = await client.put(f"{REGISTRY_URL}/v1/namespaces/{domain}/teams/{name}/server", json=body)
         response.raise_for_status()
-
-    def directory(
-        self, *, clock: Callable[[], float] | None = None, ttl_seconds: int | None = None
-    ) -> TeamServerDirectory:
-        """Team-server discovery against the stack's AWID."""
-
-        async def no_registry_override(domain: str) -> str | None:
-            return None
-
-        team_cache = AWIDTeamCache(
-            registry_url=REGISTRY_URL, ttl_seconds=60, service_token=self.service_token, transport=self.awid
-        )
-        options: dict = {} if clock is None else {"clock": clock}
-        if ttl_seconds is not None:
-            options["ttl_seconds"] = ttl_seconds
-        return TeamServerDirectory(
-            team_cache=team_cache, transport=self.awid, registry_override=no_registry_override, **options
-        )
 
 
 @pytest_asyncio.fixture

@@ -7,6 +7,7 @@ import pytest
 
 from aweb_naapp.runtime.team_server import TeamServerUnavailable
 from tests.real_stack import AWEB_URL
+from tests.naapp_discovery import team_server_directory
 
 TEAM = "ops:stack.example"
 
@@ -16,7 +17,7 @@ async def test_a_team_discovers_this_server_and_reaches_its_routes(real_stack):
     team_key = await real_stack.add_team(TEAM)
     await real_stack.publish_server(TEAM, team_key)
 
-    server = await real_stack.directory().resolve(TEAM)
+    server = await team_server_directory(real_stack).resolve(TEAM)
     assert (server.server_url, server.audience) == (AWEB_URL, AWEB_URL)
 
     async with httpx.AsyncClient(transport=real_stack.aweb) as client:
@@ -29,5 +30,5 @@ async def test_a_team_discovers_this_server_and_reaches_its_routes(real_stack):
 async def test_an_unpublished_team_has_no_server(real_stack):
     await real_stack.add_team(TEAM)
     with pytest.raises(TeamServerUnavailable) as caught:
-        await real_stack.directory().resolve(TEAM)
+        await team_server_directory(real_stack).resolve(TEAM)
     assert caught.value.code == "team_server_unpublished"
