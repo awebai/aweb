@@ -585,7 +585,7 @@
       "tool": "ruff",
       "file": "awid/tests/test_id_certificate_registration.py",
       "code": "F401",
-      "count": 3
+      "count": 4
     },
     {
       "tool": "ruff",
@@ -658,12 +658,6 @@
       "file": "server/src/aweb/cli.py",
       "code": "B904",
       "count": 6
-    },
-    {
-      "tool": "ruff",
-      "file": "server/src/aweb/config.py",
-      "code": "B904",
-      "count": 2
     },
     {
       "tool": "ruff",
