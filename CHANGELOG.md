@@ -7,6 +7,10 @@
   in one PostgreSQL snapshot without locking either row. Embedders that relied
   on `read_team_member_snapshot` to wait for a concurrent writer should enforce
   their write-time policy on the locked reread via `before_write`.
+- Migration 057 adds one partial index for mail without a conversation ID,
+  so the conversation list can skip scanning the full messages table for
+  legacy mail. Message writes wait while it builds (about 0.1 s in an
+  isolated test at 300,000 messages).
 
 - Self-hosted CLI and wake processes retain access to private or HTTP AWID
   registries chosen by the operator. `aw` records a saved `--registry`,

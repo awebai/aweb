@@ -648,6 +648,15 @@ run after taking that lock, so concurrent creators allocate distinct ordered
 versions rather than racing on `MAX(version) + 1`. The database's one-active
 indexes remain the final invariant for every writer.
 
+**Migration 057 (`057_legacy_mail_index.sql`).** The ordinary transactional
+build adds `idx_messages_legacy_created_id` on
+`messages (created_at DESC, message_id DESC)` for rows without a conversation
+ID. Message writes wait while the index builds. The migration limits lock
+acquisition to two seconds. If a writer holds the lock past that deadline,
+the transaction rolls back and the migration remains pending. Retry through
+the migration manager after the writer completes. The index changes query
+plans without rewriting messages or changing the conversation API.
+
 ### Current table inventory
 
 The following list is exhaustive for current **aweb application tables declared
