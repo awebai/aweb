@@ -56,12 +56,17 @@ async def running_server(
     awid_transport: httpx.AsyncBaseTransport,
     domain_verifier: DomainVerifier | None = None,
     public_origin: str = SERVER_URL,
+    database_pool_limit: int | None = None,
 ) -> AsyncIterator[Server]:
     """This server, with its migrations applied, on the empty database at ``database_url``.
     Its AWID client reaches AWID through ``awid_transport`` and looks up `_awid`
     namespace authority through ``domain_verifier`` (real DNS when None)."""
     pool = await AsyncDatabaseManager.create_shared_pool(
-        build_database_config(connection_string=database_url)
+        build_database_config(
+            connection_string=database_url,
+            min_connections=1 if database_pool_limit is not None else None,
+            max_connections=database_pool_limit,
+        )
     )
     infra = DatabaseInfra()
     try:

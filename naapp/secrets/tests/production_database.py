@@ -17,7 +17,9 @@ from aweb_secrets.erasure import initialize_erasure_store
 
 
 @asynccontextmanager
-async def _prepared_database(factory, *, suffix: str) -> AsyncIterator["PreparedDatabase"]:
+async def _prepared_database(
+    factory, *, suffix: str, runtime_pool_limit: int
+) -> AsyncIterator["PreparedDatabase"]:
     content_schema = "public"
     operator = await factory.create_db(suffix=suffix, schema=content_schema)
     role = "secrets_runtime_" + uuid4().hex
@@ -44,7 +46,7 @@ async def _prepared_database(factory, *, suffix: str) -> AsyncIterator["Prepared
                 update={
                     "connection_string": runtime_dsn,
                     "min_connections": 1,
-                    "max_connections": 2,
+                    "max_connections": runtime_pool_limit,
                     "server_settings": None,
                 }
             ),
@@ -78,11 +80,14 @@ def _database_name(db: AsyncDatabaseManager) -> str:
 class PreparedDatabaseFactory:
     factory: SchemaDatabases
     stack: AsyncExitStack
+    runtime_pool_limit: int = 2
     databases: dict[str, PreparedDatabase] = field(default_factory=dict)
 
     async def create_db(self, *, suffix: str) -> AsyncDatabaseManager:
         prepared = await self.stack.enter_async_context(
-            _prepared_database(self.factory, suffix=suffix)
+            _prepared_database(
+                self.factory, suffix=suffix, runtime_pool_limit=self.runtime_pool_limit
+            )
         )
         self.databases[_database_name(prepared.runtime)] = prepared
         return prepared.runtime

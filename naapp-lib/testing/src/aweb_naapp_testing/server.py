@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import httpx
@@ -122,19 +123,23 @@ def awid_dns(registry: Registry):
     return verify
 
 
-@pytest_asyncio.fixture
-async def coordination_registry(test_db_factory) -> AsyncIterator[Registry]:
+@asynccontextmanager
+async def running_coordination_registry(
+    test_db_factory, *, database_pool_limit: int | None = None
+) -> AsyncIterator[Registry]:
     awid_db = await test_db_factory.create_db(suffix="coordination_awid")
     async with Redis.from_url(
         os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
     ) as redis:
-        async with running_registry(awid_db.config.get_dsn(), redis=redis) as registry:
+        async with running_registry(
+            awid_db.config.get_dsn(), redis=redis, database_pool_limit=database_pool_limit
+        ) as registry:
             yield registry
 
 
-@pytest_asyncio.fixture
-async def coordination(
-    test_db_factory, monkeypatch, coordination_registry
+@asynccontextmanager
+async def running_coordination(
+    test_db_factory, monkeypatch, coordination_registry, *, database_pool_limit: int | None = None
 ) -> AsyncIterator[Coordination]:
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/aweb")
     monkeypatch.setenv("AWID_SERVICE_TOKEN", SERVICE_TOKEN)
@@ -148,5 +153,18 @@ async def coordination(
             redis,
             awid_transport=coordination_registry.transport,
             domain_verifier=awid_dns(coordination_registry),
+            database_pool_limit=database_pool_limit,
         ) as server:
             yield Coordination(registry=coordination_registry, server=server)
+
+
+@pytest_asyncio.fixture
+async def coordination_registry(test_db_factory) -> AsyncIterator[Registry]:
+    async with running_coordination_registry(test_db_factory) as registry:
+        yield registry
+
+
+@pytest_asyncio.fixture
+async def coordination(test_db_factory, monkeypatch, coordination_registry) -> AsyncIterator[Coordination]:
+    async with running_coordination(test_db_factory, monkeypatch, coordination_registry) as server:
+        yield server

@@ -16,7 +16,17 @@ from service_server import Listener, serving
 
 
 @asynccontextmanager
-async def logs_receiver(test_db_factory, registry, transport, directory, host, name, certificates):
+async def logs_receiver(
+    test_db_factory,
+    registry,
+    transport,
+    directory,
+    host,
+    name,
+    certificates,
+    *,
+    database_pool_limit: int = 5,
+):
     """One real app/lifespan; caller keeps DNS and authority alive until teardown.
 
     Logs mails reader enrolment links through a real TLS SMTP server that lives
@@ -43,6 +53,7 @@ async def logs_receiver(test_db_factory, registry, transport, directory, host, n
                 database_url=database.config.get_dsn(),
                 purge_ledger_database_url=purge_ledger.config.get_dsn(),
                 db_schema=database.schema,
+                db_pool_max_connections=database_pool_limit,
                 app_id="logs-hook-network",
                 public_origin=f"https://{name}:{ports[0]}",
                 console_origin=f"https://console.{name}:{ports[0]}",

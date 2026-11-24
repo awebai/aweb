@@ -54,7 +54,7 @@ async def delivery(root, registry, *, act="human-role.designate", alias="alice",
     device = None
     if act != "human-role.revoke":
         device, credential = holder_credential(settings.console_origin)
-        async with human(world, principal, kind=kind) as (holder, _):
+        async with human(world, principal, kind=kind, alias=alias) as (holder, _):
             body["certificate"] = base64.b64encode(
                 json.dumps(holder.certificate()).encode()
             ).decode()

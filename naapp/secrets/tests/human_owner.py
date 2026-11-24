@@ -57,18 +57,20 @@ def holder_credential(origin):
 
 
 @asynccontextmanager
-async def human(world, principal, *, member=None, client=None, kind="human"):
+async def human(world, principal, *, member=None, client=None, kind="human", alias=None):
     if member is not None:
         assert client is not None
         assert member.team_id == principal.team_id
         assert member.extra_cert_fields["member_did_aw"] == principal.principal_did
         yield member, client
         return
-    alias = next(
-        alias
-        for alias in ("alice", "bob", "carol", "other")
-        if fixture_principal(principal.team_id, alias) == principal
-    )
+    if alias is None:
+        alias = next(
+            candidate
+            for candidate in ("alice", "bob", "carol", "other")
+            if fixture_principal(principal.team_id, candidate) == principal
+        )
+    assert fixture_principal(principal.team_id, alias) == principal
     root = getattr(world, "human_root", None)
     if root is None:
         seed = await world.registry.ensure_namespace(domain="example.com")

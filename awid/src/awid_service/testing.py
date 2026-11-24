@@ -462,12 +462,16 @@ async def running_registry(
     *,
     service_token: str | None = SERVICE_TOKEN,
     redis: Redis | None = None,
+    database_pool_limit: int | None = None,
 ) -> AsyncIterator[Registry]:
     """AWID, with its migrations applied, on the empty database at ``database_url``.
     Its health reports the ``redis`` it is given, and fails without one."""
-    pool = await AsyncDatabaseManager.create_shared_pool(
-        DatabaseConfig(connection_string=database_url, schema=None)
-    )
+    config = DatabaseConfig(connection_string=database_url, schema=None)
+    if database_pool_limit is not None:
+        config = config.model_copy(
+            update={"min_connections": 1, "max_connections": database_pool_limit}
+        )
+    pool = await AsyncDatabaseManager.create_shared_pool(config)
     infra = AwidDatabaseInfra(schema="awid")
     registry = None
     try:

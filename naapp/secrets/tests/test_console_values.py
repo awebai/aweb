@@ -42,19 +42,21 @@ from tests.test_change_sets import SECRET_ID
 from tests.test_console_bootstrap import delivered_url
 from tests.test_owner_delivery import PATH as OWNER_ACT_PATH
 from tests.test_production_bootstrap import mounted_owner_verifier
-from tests.test_production_routed_owner import RoutedOwner
+from tests.test_production_routed_owner import ROUTED_GRANT_SECONDS, RoutedOwner
+from tests.test_production_routed_owner import (
+    enrolled_validation_owner as enrolled_validation_owner,
+)
 from tests.test_production_routed_owner import production_routed_owner as production_routed_owner
+from tests.test_production_routed_owner import (
+    production_routed_validation_owner as production_routed_validation_owner,
+)
+from tests.test_production_routed_owner import routed_anonymous_client as routed_anonymous_client
+from tests.test_production_routed_owner import routed_owner_batch as routed_owner_batch
 
-GRANT_SECONDS = 8
 EXPIRING_GRANT_SECONDS = 3
 GOVERNANCE_HOOK = "post-governance-hook"
 
-
-@pytest.fixture(autouse=True)
-def grant_lifetime(monkeypatch):
-    # Use the team server's supported freshness setting. All published grant
-    # responses, the hook activation window and F6 then share the real clock.
-    monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", str(GRANT_SECONDS))
+pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 
 def token_path(world: RoutedOwner) -> str:
@@ -158,17 +160,16 @@ async def test_owner_token_ingress_is_sealed_scoped_inert_and_never_echoed(produ
 
 
 async def test_ingress_requires_login_and_this_tabs_csrf_before_any_allocation(
-    production_routed_owner,
+    production_routed_validation_owner,
+    routed_anonymous_client,
 ):
-    world = production_routed_owner
+    world = production_routed_validation_owner
     production_client = world.client
     path = token_path(world)
     value = os.urandom(24).hex()
-    production_client.cookies.clear()
-    anonymous = await production_client.post(path, json={"value": value})
+    anonymous = await routed_anonymous_client.post(path, json={"value": value})
     assert anonymous.status_code == HTTPStatus.UNAUTHORIZED
     no_value(anonymous, value)
-    await login(production_client, world.holder.scope, world.holder.device)
     response = await production_client.post(path, json={"value": value})
     assert response.status_code == HTTPStatus.FORBIDDEN
     assert response.json() == {"detail": "csrf_token_required"}
@@ -186,11 +187,11 @@ async def test_ingress_requires_login_and_this_tabs_csrf_before_any_allocation(
     [{"value": ""}, {"value": {}}, {"value": 1}, {}, {"value": "x", "team_id": "another-team"}],
 )
 async def test_invalid_ingress_body_is_constant_and_allocates_nothing(
-    production_routed_owner, body
+    production_routed_validation_owner, body
 ):
-    world = production_routed_owner
+    world = production_routed_validation_owner
     production_client = world.client
-    csrf = await login(production_client, world.holder.scope, world.holder.device)
+    csrf = world.holder.csrf_token
     response = await production_client.post(
         token_path(world), json=body, headers={"X-CSRF-Token": csrf}
     )
@@ -205,12 +206,12 @@ async def test_invalid_ingress_body_is_constant_and_allocates_nothing(
 
 
 async def test_ingress_json_and_scope_fail_without_reflecting_submitted_bytes(
-    production_routed_owner,
+    production_routed_validation_owner,
 ):
-    world = production_routed_owner
+    world = production_routed_validation_owner
     production_client = world.client
     path = token_path(world)
-    csrf = await login(production_client, world.holder.scope, world.holder.device)
+    csrf = world.holder.csrf_token
     headers = {"X-CSRF-Token": csrf}
     value = os.urandom(24).hex()
     response = await production_client.post(
@@ -300,7 +301,7 @@ async def post_token(world: RoutedOwner, *, value: str | None = None) -> httpx.R
         token_path(world),
         json={"value": value if value is not None else os.urandom(24).hex()},
         headers={"X-CSRF-Token": world.holder.csrf_token},
-        timeout=GRANT_SECONDS + 15,
+        timeout=ROUTED_GRANT_SECONDS + 15,
     )
 
 
@@ -326,7 +327,7 @@ async def blocked_pid(db, blocker: int, request: asyncio.Task, *, relation: str)
 
 async def wait_for_grant_expiry(world: RoutedOwner, *, deadline: int = 0) -> None:
     db = world.service.runtime.db()
-    async with asyncio.timeout(GRANT_SECONDS + 5):
+    async with asyncio.timeout(ROUTED_GRANT_SECONDS + 5):
         while monotonic_ns() < deadline or await db.fetch_value(
             "SELECT fresh_until > clock_timestamp() FROM {{tables.installation_fences}} "
             "WHERE installation_id=$1",
@@ -622,8 +623,10 @@ async def pause_revocation_view(
 
     async def request(incoming: httpx.Request) -> httpx.Response:
         response = await forward(incoming)
-        if not observed.is_set() and incoming.url.path.endswith(
-            f"/{GOVERNANCE_HOOK}/registrations"
+        if (
+            not observed.is_set()
+            and incoming.headers.get("X-AWEB-Team-ID") == world.member.team_id
+            and incoming.url.path.endswith(f"/{GOVERNANCE_HOOK}/registrations")
         ):
             assert response.status_code == HTTPStatus.OK
             observed.set()
@@ -648,7 +651,7 @@ async def wait_for_idle_governance(world: RoutedOwner) -> None:
     """Let the prior designation drain before observing a new governance read."""
     runtime = world.service.runtime
     team_id = world.member.team_id
-    async with asyncio.timeout(GRANT_SECONDS + 10):
+    async with asyncio.timeout(ROUTED_GRANT_SECONDS + 10):
         while await runtime.db().fetch_value(
             "SELECT EXISTS(SELECT 1 FROM {{tables.outbox_events}} "
             "WHERE team_id=$1 AND kind=$2 AND drained_at IS NULL)",
