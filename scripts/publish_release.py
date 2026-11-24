@@ -41,18 +41,15 @@ MANIFESTS = {
     "logs-v": "naapp/logs/pyproject.toml",
     "aweb-secrets-runner-v": "naapp/secrets/runner/pyproject.toml",
 }
-# Each PyPI lane: whether it depends on the in-repo awid-service, which must be
-# public first, and the (package, directory) pairs it publishes, in order. A
-# lane's packages share the tag's version.
-PYPI_LANES = {
-    "server-v": (True, (("aweb", "server"),)),
-    "awid-service-v": (False, (("awid-service", "awid"),)),
-    "aweb-naapp-v": (True, (("aweb-naapp", "naapp-lib"), ("aweb-naapp-testing", "naapp-lib/testing"))),
-    "aweb-secrets-runner-v": (False, (
-        ("aweb-secrets-values", "naapp/secrets/values"),
-        ("aweb-secrets-runner", "naapp/secrets/runner"),
-    )),
+# The PyPI package each PyPI lane publishes. The aweb package depends on the
+# in-repo awid-service, which must be public first.
+PYPI_PACKAGES = {
+    "server-v": "aweb",
+    "awid-service-v": "awid-service",
 }
+# One gated release file in an annotated release tag's message, in sha256sum
+# format: the lowercase sha256, two spaces, the file's basename.
+LOCKED_FILE = re.compile(r"([0-9a-f]{64})  ([^\s/]+)")
 NPM_LANES = {
     "channel-v": ("channel", "@awebai/claude-channel", "channel"),
     "pi-v": ("pi-extension", "@awebai/pi", "pi"),
@@ -88,17 +85,6 @@ def run(
     return completed.stdout.strip() if capture else ""
 
 
-def manifest_version(root: Path, path: str) -> str:
-    if path.endswith(".toml"):
-        with (root / path).open("rb") as handle:
-            value = tomllib.load(handle)["project"]["version"]
-    else:
-        value = json.loads((root / path).read_text(encoding="utf-8"))["version"]
-    if not valid_version(path, value):
-        raise PublishRefusal(f"{path} has invalid version {value!r}")
-    return value
-
-
 def manifest_version_at(root: Path, source_sha: str, path: str) -> str:
     raw = run(root, "git", "show", f"{source_sha}:{path}", timeout=60)
     if path.endswith(".toml"):
@@ -116,9 +102,8 @@ def tag_identity(root: Path, tag: str) -> tuple[str, str, str]:
         source_sha = run(root, "git", "rev-parse", f"{tag}^{{commit}}", timeout=60)
     except PublishRefusal as error:
         raise PublishRefusal(f"local candidate tag {tag} is absent") from error
-    manifests = [MANIFESTS[prefix]] if prefix in MANIFESTS else []
-    manifests += [f"{directory}/pyproject.toml" for _, directory in PYPI_LANES.get(prefix, (False, ()))[1]]
-    for manifest in dict.fromkeys(manifests):
+    if prefix in MANIFESTS:
+        manifest = MANIFESTS[prefix]
         if manifest_version_at(root, source_sha, manifest) != version:
             raise PublishRefusal(
                 f"{tag} does not match {manifest} version {manifest_version_at(root, source_sha, manifest)}"
@@ -150,13 +135,53 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def publish_pypi(root: Path, prefix: str, version: str) -> None:
-    needs_awid, packages = PYPI_LANES[prefix]
-    token = os.environ.get("UV_PUBLISH_TOKEN", "").strip()
-    if not token:
-        raise PublishRefusal("UV_PUBLISH_TOKEN is required")
-    if needs_awid:
-        awid_version = manifest_version(root, "awid/pyproject.toml")
+def locked_files(root: Path, tag: str) -> dict[str, str]:
+    """The release files an annotated tag's message locks, as name -> sha256."""
+    ref = f"refs/tags/{tag}"
+    if run(root, "git", "cat-file", "-t", ref, timeout=60) != "tag":
+        raise PublishRefusal(f"{tag} is not an annotated tag; its message must list the release files")
+    locked: dict[str, str] = {}
+    for line in run(root, "git", "for-each-ref", "--format=%(contents)", ref, timeout=60).splitlines():
+        matched = LOCKED_FILE.fullmatch(line)
+        if not matched:
+            continue
+        digest, name = matched.groups()
+        if name in locked:
+            raise PublishRefusal(f"{tag} lists {name} more than once")
+        locked[name] = digest
+    if not locked:
+        raise PublishRefusal(f"{tag} lists no release files")
+    return locked
+
+
+def verify_release_assets(assets: Path, locked: dict[str, str]) -> None:
+    """Refuse unless the assets directory holds exactly the locked files, byte for byte."""
+    present = {path.name: path for path in assets.iterdir()}
+    missing = sorted(set(locked) - set(present))
+    if missing:
+        raise PublishRefusal(f"release assets are missing locked files: {', '.join(missing)}")
+    extra = sorted(set(present) - set(locked))
+    if extra:
+        raise PublishRefusal(f"release assets hold files not in the tag message: {', '.join(extra)}")
+    for name, digest in sorted(locked.items()):
+        path = present[name]
+        if not path.is_file() or path.is_symlink():
+            raise PublishRefusal(f"release asset {name} is not a regular file")
+        actual = sha256(path)
+        if actual != digest:
+            raise PublishRefusal(f"release asset {name} has sha256 {actual}, the tag locks {digest}")
+
+
+def publish_pypi(root: Path, tag: str, source_sha: str, assets: Path) -> None:
+    """Upload the gated release files the tag locks; never build."""
+    prefix, version = tag_parts(tag)
+    package = PYPI_PACKAGES[prefix]
+    verify_release_assets(assets, locked_files(root, tag))
+    exact = ("bash", str(Path(__file__).resolve().parent / "pypi-exact-publish.sh"))
+    lane = ("--dist", str(assets), "--package", package, "--version", version)
+    run(root, *exact, "inspect-staged", *lane)
+    if prefix == "server-v":
+        awid_version = manifest_version_at(root, source_sha, MANIFESTS["awid-service-v"])
         deadline = time.monotonic() + 180
         while True:
             status, _ = request_json(
@@ -169,57 +194,18 @@ def publish_pypi(root: Path, prefix: str, version: str) -> None:
                     f"awid-service {awid_version} is not publicly available before {prefix} publication"
                 )
             time.sleep(6)
-    for package, directory in packages:
-        with tempfile.TemporaryDirectory(prefix="aweb-pypi-") as temporary:
-            dist = Path(temporary)
-            run(root, "uv", "build", "--sdist", "--wheel", "--out-dir", str(dist), directory)
-            (dist / ".gitignore").unlink(missing_ok=True)
-            run(
-                root,
-                "bash",
-                "scripts/pypi-exact-publish.sh",
-                "inspect-staged",
-                "--dist",
-                str(dist),
-                "--package",
-                package,
-                "--version",
-                version,
-            )
-            status, observed = request_json(f"https://pypi.org/pypi/{package}/{version}/json")
-            observed_path = dist / "observed.json"
-            observed_path.write_text(json.dumps(observed), encoding="utf-8")
-            plan = run(
-                root,
-                "bash",
-                "scripts/pypi-exact-publish.sh",
-                "plan-publish",
-                "--dist",
-                str(dist),
-                "--package",
-                package,
-                "--version",
-                version,
-                "--observed-status",
-                str(status),
-                "--observed-json",
-                str(observed_path),
-            )
-            files = [dist / name for name in plan.splitlines() if name]
-            if files:
-                run(root, "uv", "publish", *(str(path) for path in files), capture=False)
-            run(
-                root,
-                "bash",
-                "scripts/pypi-exact-publish.sh",
-                "verify-published",
-                "--dist",
-                str(dist),
-                "--package",
-                package,
-                "--version",
-                version,
-            )
+    status, observed = request_json(f"https://pypi.org/pypi/{package}/{version}/json")
+    with tempfile.TemporaryDirectory(prefix="aweb-pypi-") as temporary:
+        observed_path = Path(temporary) / "observed.json"
+        observed_path.write_text(json.dumps(observed), encoding="utf-8")
+        plan = run(
+            root, *exact, "plan-publish", *lane,
+            "--observed-status", str(status), "--observed-json", str(observed_path),
+        )
+    files = [assets / name for name in plan.splitlines() if name]
+    if files:
+        run(root, "uv", "publish", "--trusted-publishing", "always", *(str(path) for path in files), capture=False)
+    run(root, *exact, "verify-published", *lane)
 
 
 def build_npm_lane(root: Path, prefix: str) -> tuple[str, str, str]:
@@ -627,13 +613,19 @@ def publish_staged_image(
 
 
 def publish(root: Path, tag: str, *, only: str | None = None, recovery: bool = False,
-            first_publication: tuple | list = ()) -> None:
+            first_publication: tuple | list = (), assets: Path | None = None) -> None:
     prefix, version, source_sha = tag_identity(root, tag)
+    publishes_from_source = prefix in OCI_REPOSITORIES or prefix in NPM_LANES or prefix == "aw-v"
+    if prefix not in PYPI_PACKAGES and not publishes_from_source:
+        raise PublishRefusal(f"{tag} publishes nothing from this repository")
     if only is not None and not (
-        (only == "pypi" and prefix in PYPI_LANES)
+        (only == "pypi" and prefix in PYPI_PACKAGES)
         or (only == "oci" and prefix in OCI_REPOSITORIES)
     ):
         raise PublishRefusal(f"{tag} does not publish to {only}")
+    publishes_pypi = prefix in PYPI_PACKAGES and only != "oci"
+    if publishes_pypi and assets is None:
+        raise PublishRefusal(f"{tag} publishes to PyPI only its gated release files: pass --assets")
     # The annotated release tag carries the choice across the distribution
     # repository too; an ambient environment override would be lost there.
     staged_final = False
@@ -641,13 +633,15 @@ def publish(root: Path, tag: str, *, only: str | None = None, recovery: bool = F
         channel = run(root, "python3", "cli/go/npm/publication.py", "channel",
                       "--version", version, "--tag", tag, "--repository", str(root))
         staged_final = channel == "next" and "-rc." not in version
+    if publishes_pypi:
+        publish_pypi(root, tag, source_sha, assets)
+    if only == "pypi" or not publishes_from_source:
+        return
     with tempfile.TemporaryDirectory(prefix="aweb-publish-") as temporary:
         checkout = Path(temporary) / "source"
         run(root, "git", "worktree", "add", "--detach", str(checkout), source_sha, timeout=120)
         try:
-            if prefix in PYPI_LANES and only != "oci":
-                publish_pypi(checkout, prefix, version)
-            if prefix in OCI_REPOSITORIES and only != "pypi":
+            if prefix in OCI_REPOSITORIES:
                 publish_oci(checkout, prefix, version, source_sha, recovery=recovery,
                             first_publication=first_publication)
             elif prefix in NPM_LANES:
@@ -666,6 +660,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="publish an existing tag's images again; never moves latest")
     parser.add_argument("--first-publication", action="append", default=[], metavar="REPOSITORY",
                         help="an image repository this publication creates; repeat for each")
+    parser.add_argument("--assets", type=Path, metavar="DIRECTORY",
+                        help="the tag's downloaded release files, which PyPI receives exactly")
     parser.add_argument("tag")
     arguments = parser.parse_args(argv)
     try:
@@ -673,7 +669,7 @@ def main(argv: list[str] | None = None) -> int:
             tag_identity(Path.cwd().resolve(), arguments.tag)
         else:
             publish(Path.cwd().resolve(), arguments.tag, only=arguments.only, recovery=arguments.recovery,
-                    first_publication=arguments.first_publication)
+                    first_publication=arguments.first_publication, assets=arguments.assets)
     except (
         PublishRefusal,
         OSError,

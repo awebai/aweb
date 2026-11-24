@@ -256,7 +256,8 @@ git push origin refs/tags/awid-v0.5.19
 
 Each tag starts only its owning thin publisher. Publishers rebuild or stage the
 exact tagged source, publish or adopt exact bytes, verify registry readback,
-and stop. They do not run product suites, move a branch, infer changed
+and stop. The PyPI lane is the exception: it never builds (see
+[PyPI publication](#pypi-publication)). They do not run product suites, move a branch, infer changed
 artifacts, create another aweb tag, or contact AC.
 
 Npm readback allows **25 minutes** after publishing or adopting exact staged
@@ -292,11 +293,40 @@ the complete release action—there is no marketplace-pointer commit or follow-u
 command.
 
 GitHub omits tag-push events when more than three tags are pushed together, so
-never batch this step. When `awid-service` moves together with `aweb` or
-`aweb-naapp`, push each tag separately, `awid-service` first. The `aweb` and
-`aweb-naapp` publishers wait for the in-repo AWID version to become public
-before publishing their package, and `make check-naapp-lib-package` refuses an
-`aweb-naapp` whose `awid-service` floor is newer than the in-repo AWID.
+never batch this step. `make check-naapp-lib-package` refuses an `aweb-naapp`
+whose `awid-service` floor is newer than the in-repo AWID.
+
+## PyPI publication
+
+PyPI receives the gated files themselves, never a rebuild. For a
+`server-vX.Y.Z` or `awid-service-vX.Y.Z` release, the release command:
+
+1. creates the annotated tag at the gated aweb commit. Its message holds one
+   line per gated file in `sha256sum` format, the lowercase sha256, two
+   spaces and the file's basename: exactly the package's wheel and sdist, so
+   `git tag -l --format='%(contents)' <tag> | grep -E '^[0-9a-f]{64}  ' | sha256sum -c`
+   checks a local copy;
+2. pushes the tag and runs `gh release create <tag> --verify-tag` with exactly
+   those two files attached;
+3. waits until PyPI serves exactly those files.
+
+Publishing the release starts `.github/workflows/pypi-release.yml`; a tag push
+alone publishes nothing to PyPI. The workflow fetches the annotated tag object,
+downloads every release asset and runs
+`publish_release.py --only pypi --assets <dir> <tag>`. That refuses unless the
+tag is annotated, its message lists files, and the assets are exactly those
+files with those sha256 digests: a missing file, an extra file or a different
+digest refuses before anything is uploaded. It then requires one sdist and one
+wheel of the tag's package and version, uploads only the files PyPI does not
+yet serve with PyPI trusted publishing, so a rerun after a partial upload
+adopts what is there, and reads PyPI back. A file PyPI already serves with
+other bytes refuses permanently.
+
+The `aweb` upload first waits up to three minutes for the in-repo
+`awid-service` version to be public, so release `awid-service` first and wait
+for PyPI to serve it before releasing `aweb`. PyPI must list
+`.github/workflows/pypi-release.yml` of this repository as a trusted publisher
+for both `aweb` and `awid-service`; the workflow holds no PyPI token.
 
 ## Runnerless publication
 
@@ -304,19 +334,19 @@ Every registry-backed tag can publish from the operator machine using the same
 tag dispatcher:
 
 ```sh
-make release-publish TAG=server-v1.35.0
 make release-publish TAG=channel-v1.2.3
 make release-publish TAG=awid-v0.5.19
 ```
 
 Provide the credential required by the destination:
 
-- PyPI: `UV_PUBLISH_TOKEN`
 - npm: `NODE_AUTH_TOKEN` or `NPM_TOKEN`
 - GHCR: `GHCR_USERNAME` and `GHCR_TOKEN`
 
 The runnerless path builds from a detached worktree at the local tag and
-refuses a same-version byte conflict. `aw-v` can publish all npm platform
+refuses a same-version byte conflict. PyPI is not runnerless: only the release
+workflow uploads, through trusted publishing, so a runnerless `server-v` uses
+`python3 scripts/publish_release.py --only oci <tag>`. `aw-v` can publish all npm platform
 packages directly; hosted binary assets remain resumable when GitHub returns.
 Skills ZIPs are likewise resumable hosted assets after the npm package is safe.
 
@@ -418,8 +448,9 @@ and failure cleanup use the same record reader.
 
 A `server-v*` tag dispatches both the Python and image publishers. The PyPI
 workflow selects `--only pypi`; the service image workflow selects `--only oci`,
-so each needs only its own registry credentials. Runnerless publication without
-`--only` publishes both. Both selectors still validate the tagged manifest
+so each needs only its own registry credentials. The PyPI lane runs on the
+published release, not on the tag push, and needs the downloaded release
+files (`--assets`). Both selectors still validate the tagged manifest
 version before checking out that exact commit.
 
 A server tag publishes `ghcr.io/awebai/aweb-server`, the coordination server,

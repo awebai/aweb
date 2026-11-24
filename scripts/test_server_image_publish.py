@@ -36,15 +36,19 @@ class ServerDispatchTests(unittest.TestCase):
                 calls.append((kind, prefix, version, sha))
             return publish
 
-        with patch.object(PUBLISH, "publish_pypi", record("pypi")), patch.object(PUBLISH, "publish_oci", record("oci")):
-            PUBLISH.publish(self.root, "server-v1.2.3")
-        self.assertEqual(calls, [("pypi", "server-v", "1.2.3", ()), ("oci", "server-v", "1.2.3", (self.sha,))])
+        def publish_pypi(root, tag, sha, assets):
+            calls.append(("pypi", tag, sha, assets))
+
+        with patch.object(PUBLISH, "publish_pypi", publish_pypi), patch.object(PUBLISH, "publish_oci", record("oci")):
+            PUBLISH.publish(self.root, "server-v1.2.3", assets=Path("assets"))
+        self.assertEqual(calls, [("pypi", "server-v1.2.3", self.sha, Path("assets")),
+                                 ("oci", "server-v", "1.2.3", (self.sha,))])
         self.assertEqual(len(command(self.root, "git", "worktree", "list").splitlines()), 1)
 
     def test_workflow_selectors_only_run_their_credential_lane(self):
         for selected in ("pypi", "oci"):
             with self.subTest(selected=selected), patch.object(PUBLISH, "publish_pypi") as pypi, patch.object(PUBLISH, "publish_oci") as oci:
-                PUBLISH.publish(self.root, "server-v1.2.3", only=selected)
+                PUBLISH.publish(self.root, "server-v1.2.3", only=selected, assets=Path("assets"))
                 self.assertEqual(pypi.call_count, int(selected == "pypi"))
                 self.assertEqual(oci.call_count, int(selected == "oci"))
 
@@ -70,17 +74,20 @@ class ServerDispatchTests(unittest.TestCase):
     def test_other_python_lane_stays_python_only_and_rejects_oci(self):
         command(self.root, "git", "tag", "awid-service-v2.3.4")
         with patch.object(PUBLISH, "publish_pypi") as pypi, patch.object(PUBLISH, "publish_oci") as oci:
-            PUBLISH.publish(self.root, "awid-service-v2.3.4")
+            PUBLISH.publish(self.root, "awid-service-v2.3.4", assets=Path("assets"))
             pypi.assert_called_once()
             oci.assert_not_called()
             with self.assertRaisesRegex(PUBLISH.PublishRefusal, "oci"):
                 PUBLISH.publish(self.root, "awid-service-v2.3.4", only="oci")
 
     def test_tag_workflows_select_both_server_artifacts(self):
-        for workflow, invocation in (("pypi-release.yml", '--only pypi "${GITHUB_REF_NAME}"'),
-                                     ("service-image-release.yml", '--only oci "${recovery[@]}" "$RELEASE_TAG"')):
+        for workflow, selector, invocation in (
+            ("pypi-release.yml", "startsWith(github.event.release.tag_name, 'server-v')",
+             '--only pypi --assets "$ASSETS" "$TAG"'),
+            ("service-image-release.yml", '"server-v*"', '--only oci "${recovery[@]}" "$RELEASE_TAG"'),
+        ):
             source = (ROOT / ".github/workflows" / workflow).read_text()
-            self.assertIn('"server-v*"', source)
+            self.assertIn(selector, source)
             self.assertIn(f'python3 scripts/publish_release.py {invocation}', source)
         # On a tag push the image lane's tag is the pushed tag itself.
         self.assertIn("|| github.ref_name }}", (ROOT / ".github/workflows/service-image-release.yml").read_text())
