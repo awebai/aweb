@@ -205,6 +205,12 @@ async def test_a_page_that_cannot_check_membership_retries_itself(
     action = Html(refused.text).all("a", id="console-recovery-action")[0]
     assert action["href"] == ""
     aw.world.registry.transport.down = False
+    # For the few seconds the failed read answers, trying again shows the same
+    # page and the same way on, and the session is kept.
+    early = await aw.client.get(path)
+    assert early.status_code == 503
+    assert Html(early.text).all("a", id="console-recovery-action")[0]["href"] == ""
+    assert await open_sessions(aw) == 1
     clock.pass_failed_read()
     retried = await aw.client.get(path, follow_redirects=True)
     assert retried.status_code == 200

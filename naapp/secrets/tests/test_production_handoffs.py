@@ -4,12 +4,15 @@ import asyncio
 import hashlib
 import json
 import secrets
+import time
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.roles import PrincipalKey, has_role
+from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp.runtime.team_auth import UNKNOWN_CERTIFICATE_REFRESH_SECONDS
 from aweb_naapp_testing import Member, did_key
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from fastapi import FastAPI, HTTPException, Request
@@ -29,10 +32,8 @@ from tests.test_production_bootstrap import root as root
 from tests.test_production_bootstrap import signed_in_owner
 
 
-@pytest.fixture
-async def registered_member(root, registry):
-    # Reuse the actual installed production root and its owner bootstrap.
-    # Credential collection grants this second certified member no holding.
+async def certified_member(root, registry):
+    """A second certified member of the root's team, with no holding."""
     _, _, _, owner, _, _, _, _ = root
     member = Member(
         team_id=owner.team_id,
@@ -43,10 +44,42 @@ async def registered_member(root, registry):
     principal = await registry.register_did(member.member_key)
     member.extra_cert_fields = {"member_did_aw": principal}
     await registry.add_certificate(member.certificate(), team_key=member.team_key)
-    # Signing in reads the team's facts, which are then kept for a few seconds:
-    # a certificate published after that is not seen at once.
-    await signed_in_owner(root)
     return member, principal
+
+
+@pytest.fixture
+async def registered_member(root, registry):
+    # Reuse the actual installed production root and its owner bootstrap.
+    # Credential collection grants this second certified member no holding.
+    certified = await certified_member(root, registry)
+    # A sign-in reads the team's facts; a certificate published after it is not
+    # seen at once (the refresh-window test below).
+    await signed_in_owner(root)
+    return certified
+
+
+async def test_a_certificate_published_after_a_sign_in_is_seen_after_the_refresh_window(
+    root, registry, monkeypatch
+):
+    _, client, settings, _, _, _, _, _ = root
+    await signed_in_owner(root)
+    # The window is measured on this clock, held still and then moved past it.
+    signed_in_at = time.monotonic_ns()
+    monkeypatch.setattr(time, "monotonic_ns", lambda: signed_in_at)
+    member, principal = await certified_member(root, registry)
+
+    async def start():
+        _, _, body, headers = start_request(root, member, principal, purpose="session")
+        return await client.post(
+            settings.public_origin + "/handoffs", content=body, headers=headers
+        )
+
+    assert (await start()).status_code == 401
+    window = seconds_to_ns(UNKNOWN_CERTIFICATE_REFRESH_SECONDS + 1)
+    monkeypatch.setattr(time, "monotonic_ns", lambda: signed_in_at + window)
+    admitted = await start()
+    # Authenticated now; this member holds no role.
+    assert (admitted.status_code, admitted.json()["detail"]) == (403, "role_not_held")
 
 
 def start_request(root, member, principal, *, purpose="credential"):
