@@ -58,11 +58,11 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   exit "$stage_status"
 fi
 
-all_stages="checks user-paths unit artifacts integration"
+all_stages="static checks user-paths unit artifacts integration"
 requested="${1:-$all_stages}"
 selected=" "
 for stage in $requested; do
-  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
+  case "$stage" in static|checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
   selected+="$stage "
 done
 
@@ -71,13 +71,20 @@ host_published_port() {
   return "${CANDIDATE_HOST_PORT_STATUS:-0}"
 }
 
+# Source safeguards of what ships: minutes, no services. A failure here stops
+# the run before any later stage starts. Type checks run in pull-request CI.
+static() {
+  run test-identity-primitives
+  run test-sot-source-inventories
+  run test-vector-provenance
+  run check-private-boundary
+  run check-secrets-shards
+}
 checks() {
   run check-product-table-writes
-  run check-secrets-shards
   run_step host-published-port host_published_port
   run check-generated-copies
   run test-generated-copies
-  run check-private-boundary
   run _candidate-gate-docker-boundaries
   run _candidate-gate-compose-adoption
   run test-shipping
@@ -86,10 +93,6 @@ checks() {
   run check-cli-go-tidy
   run check-cli-release-vcs-stamps
   run test-python-locks
-  run lint-naapp
-  run test-sot-source-inventories
-  run test-identity-primitives
-  run test-vector-provenance
   run test-federation-error-reference
   run test-federation-authority-mutations
   run test-federation-harness
@@ -105,13 +108,6 @@ user-paths() {
   run e2e-user-paths
 }
 unit() {
-  # Keep source controls first, and keep collecting the independent results
-  # when one of them finds a defect.
-  run test-identity-primitives
-  run test-vector-provenance
-  run test-sot-source-inventories
-  run test-python-locks
-  run lint-naapp
   prepare_node
   run _candidate-unit-suites
   if [[ -f "$log_dir/test-egress/summary.tsv" ]]; then
@@ -174,9 +170,15 @@ prepare_cli() {
 }
 
 suite_status=0
+static_failed=0
 : > "$summary"
 for stage in $all_stages; do
   [[ "$selected" == *" $stage "* ]] || continue
+  if [[ "$static_failed" == 1 ]]; then
+    printf 'candidate: %s NOT-RUN (static FAILED)\n' "$stage"
+    printf '%s\tNOT-RUN\t-\t0s\tstatic FAILED\n' "$stage" >> "$summary"
+    continue
+  fi
   started=$SECONDS
   target_log="$stage.log"
   set +e
@@ -190,6 +192,7 @@ for stage in $all_stages; do
   else
     result=FAILED
     if [[ "$suite_status" == 0 ]]; then suite_status=$status; fi
+    if [[ "$stage" == static ]]; then static_failed=1; fi
   fi
   coverage=""
   if [[ "$stage" == user-paths && -f "$log_dir/user-paths/coverage-summary.txt" ]]; then

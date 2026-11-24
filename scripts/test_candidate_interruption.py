@@ -201,6 +201,7 @@ run_candidate() {
                         KEY="tree-inputs",
                         LEDGER=str(logs.parent / "ledger.tsv"),
                         REQUESTED="checks artifacts integration",
+                        CANDIDATE_STAGES="static checks user-paths unit artifacts integration",
                     ),
                     capture_output=True,
                     text=True,

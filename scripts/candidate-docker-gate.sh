@@ -86,8 +86,9 @@ LOG_DIR="${log_root%/}/aweb-candidate-gate-$SOURCE_SHA-$run_id"
   || refuse "source checkout HEAD differs from selected SHA"
 # Focused pre-landing proof uses the same stages and ledger. Release candidates
 # always request the complete list and retain the origin/main requirement.
+CANDIDATE_STAGES="static checks user-paths unit artifacts integration"
 STAGES="${AWEB_CANDIDATE_STAGES:-}"
-REQUESTED="${STAGES:-checks user-paths unit artifacts integration}"
+REQUESTED="${STAGES:-$CANDIDATE_STAGES}"
 if [[ -z "$STAGES" ]]; then
   git -C "$ROOT" fetch --quiet origin main
   git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
@@ -190,7 +191,7 @@ if [[ -n "$failed" ]]; then
 fi
 pending=""
 for stage in $REQUESTED; do
-  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
+  [[ " $CANDIDATE_STAGES " == *" $stage "* ]] || refuse "unknown stage '$stage'"
   if [[ "$(recorded "$stage" | cut -f3)" == passed ]]; then
     printf 'gate: tree %s already passed %s; original log %s\n' "$TREE" "$stage" "$(recorded "$stage" | cut -f6)"
     if [[ "$stage" == user-paths ]]; then
