@@ -9,7 +9,7 @@ from .grant_liveness_policy import (
 )
 from .auth_context import GrantContext
 from .member_team_key import grant_issuer_current_sql, member_key_columns_sql
-from .identity_grant_status import GrantValidityState, grant_validity
+from .identity_grant_status import GrantValidityState, grant_validities
 from .grant_expiry import never_expires
 from starlette.requests import Request
 
@@ -174,16 +174,17 @@ async def _valid_grant_liveness_candidates(
         raise TypeError("Grant liveness requires a named failure policy")
     result = {}
     now = datetime.now(timezone.utc)
-    for row in rows:
+    validities = await grant_validities(
+        rows=rows,
+        now=now,
+        registry_client=registry_client,
+        request=request,
+        reuse_admitted=failure_policy is GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+    )
+    for row, validity in zip(rows, validities, strict=True):
         workspace = str(row["workspace_id"])
         if workspace in result:
             continue
-        validity = await grant_validity(
-            row=row,
-            now=now,
-            registry_client=registry_client,
-            request=request,
-        )
         if failure_policy is GrantLivenessFailurePolicy.REQUIRE_KNOWN:
             # docs/aweb-sot.md:1199-1209: unknown authority is not proof of
             # inactivity for a stale-workspace deletion. Displays can omit an
