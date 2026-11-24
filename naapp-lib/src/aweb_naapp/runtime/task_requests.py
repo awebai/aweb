@@ -1,5 +1,5 @@
-"""App task requests: the member's task authorization, the app-request
-transport credential and task answer digests (docs/app-task-requests.md).
+"""App task requests: the member's task authorization, stage receipts and
+task answer digests (docs/app-task-requests.md).
 
 A member signs one ``aweb.app-task-authorization/1`` for one task; the app
 carries it with its own ``app-request`` credential; the task service verifies
@@ -26,8 +26,6 @@ from awid.signing import canonical_json_bytes
 from awid.team_ids import parse_team_id
 from nacl.exceptions import BadSignatureError
 from nacl.signing import SigningKey
-
-from aweb_naapp.runtime.app_credentials import APP_REQUEST, sign_app_credential
 
 AUTHORIZATION_PREFIX = b"aweb.app-task-authorization/1\n"
 AUTHORIZATION_TYPE = "aweb.app-task-authorization"
@@ -638,39 +636,6 @@ def verify_stage_receipt(
         issued - now.astimezone(UTC)
     ).total_seconds() > MAX_ISSUED_AT_SKEW_SECONDS or now >= expires:
         raise _refuse("authorization_expired", "outside the validity window")
-
-
-# ---------------------------------------------------------------- app-request credential
-
-
-def app_request_credential(
-    *,
-    signing_key: SigningKey,
-    aud: str,
-    method: str,
-    path: str,
-    team_id: str,
-    app_id: str,
-    kid: str,
-    installation_id: str,
-    installation_generation: int,
-    body: bytes,
-    timestamp: str,
-) -> dict[str, str]:
-    """Headers for one request under the app credential family's app-request purpose."""
-    return sign_app_credential(
-        purpose=APP_REQUEST,
-        private_key=bytes(signing_key),
-        method=method,
-        target=aud + path,
-        team_id=team_id,
-        app_id=app_id,
-        key_id=kid,
-        body=body,
-        timestamp=timestamp,
-        installation_id=installation_id,
-        installation_generation=installation_generation,
-    ).headers
 
 
 # ---------------------------------------------------------------- answers

@@ -11,10 +11,10 @@ from pathlib import Path
 import pytest
 from nacl.signing import SigningKey
 
+from aweb_naapp.runtime.app_credentials import app_request_credential
 from aweb_naapp.runtime.task_requests import (
     TaskRequestRefused,
     answer_sha256,
-    app_request_credential,
     parse_json,
     sign_stage_receipt,
     sign_task_authorization,

@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 
 from awid.did import did_key_from_signing_key
 from awid.signing import canonical_json_bytes, sign_message
+from nacl.signing import SigningKey
 
 from aweb_naapp.runtime.app_keys import AppKey
 
@@ -148,6 +149,36 @@ def sign_app_credential(
         body_sha256=body_sha256,
         headers=headers,
     )
+
+
+def app_request_credential(
+    *,
+    signing_key: SigningKey,
+    aud: str,
+    method: str,
+    path: str,
+    team_id: str,
+    app_id: str,
+    kid: str,
+    installation_id: str,
+    installation_generation: int,
+    body: bytes,
+    timestamp: str,
+) -> dict[str, str]:
+    """Headers for one request under the app credential family's app-request purpose."""
+    return sign_app_credential(
+        purpose=APP_REQUEST,
+        private_key=bytes(signing_key),
+        method=method,
+        target=aud + path,
+        team_id=team_id,
+        app_id=app_id,
+        key_id=kid,
+        body=body,
+        timestamp=timestamp,
+        installation_id=installation_id,
+        installation_generation=installation_generation,
+    ).headers
 
 
 def _utc_seconds_now() -> str:
