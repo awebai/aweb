@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-24
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-cleanup-oss, with backing notes unwired-guards-rot-silently.md, never-run-claims-need-sharded-manifests.md and apps-frozen-in-aweb.md. At da869f7143 the harvester reproduced the check-extension-docs failure and checked the gate wiring, the shard manifest and test-scripts discovery. The operator's decision is source-reported.
+* **Creation**: lesson [run a doubted guard, and trace test collection, before calling anything unused](/aweb-expert/lessons/run-a-doubted-guard-and-trace-test-collection.md), which applies [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md) to guards that only the docs say exist.
+* **Creation**: decision [the applications live in awebai/naapp; aweb's copies are frozen](/aweb-expert/decisions/apps-are-frozen-in-aweb.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
