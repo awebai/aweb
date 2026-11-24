@@ -412,7 +412,7 @@ provides-extras = ["server"]
 
 [[package]]
 name = "awid-service"
-version = "0.5.40"
+version = "0.5.41"
 source = { editable = "../../awid" }
 dependencies = [
     { name = "asyncpg" },
