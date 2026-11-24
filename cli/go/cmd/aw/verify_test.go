@@ -37,6 +37,7 @@ func TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting(t *testing.T) {
 	v := loadWhoVectors(t)
 	sender := v.Keys["global_agent"]
 	root := v.Keys["root"]
+	foreignRoot := v.Keys["root_rotated"]
 	fixtureKey := func(value string) ed25519.PrivateKey {
 		seed, err := hex.DecodeString(value)
 		if err != nil || len(seed) != ed25519.SeedSize {
@@ -80,22 +81,25 @@ func TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting(t *testing.T) {
 		t.Fatal(err)
 	}
 	leaf := map[string]any{"v": 1, "type": "aweb.id-certificate", "id": sender.DIDAW, "domain": foreign,
-		"parent": map[string]any{"kind": "namespace", "id": foreign}, "kind": "agent", "issuer_key": root.DIDKey, "issued_at": "2026-04-04T00:00:00Z"}
+		"parent": map[string]any{"kind": "namespace", "id": foreign}, "kind": "agent", "issuer_key": foreignRoot.DIDKey, "issued_at": "2026-04-04T00:00:00Z"}
 	payload, err := awid.IDCertificateSigningBytes(leaf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignLeaf := map[string]any{"certificate": leaf, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(fixtureKey(root.SeedHex), payload))}
+	foreignLeaf := map[string]any{"certificate": leaf, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(fixtureKey(foreignRoot.SeedHex), payload))}
 	senderChain := []any{v.Certificates["alice"].Signed, v.Certificates["global-agent"].Signed}
 	for _, tc := range []struct {
 		name, reason string
+		domain       string
 		certificates []any
 		exit         int
+		keyReads     int32
 		statusReads  int32
 		privateHome  bool
 	}{
-		{name: "sender domain", reason: "verified", certificates: senderChain, statusReads: 1},
-		{name: "foreign domain", reason: "domain_mismatch", certificates: []any{foreignLeaf}, exit: 1},
+		{name: "sender domain", reason: "verified", domain: "example.com", certificates: senderChain, keyReads: 1, statusReads: 1},
+		{name: "foreign domain", reason: "domain_mismatch", domain: "example.com", certificates: []any{foreignLeaf}, exit: 1, keyReads: 1},
+		{name: "mixed domains", reason: "domain_mismatch", certificates: []any{senderChain[0], foreignLeaf}, exit: 1},
 		{name: "private conflict", reason: "evidence_unavailable", certificates: senderChain, exit: 2, privateHome: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,7 +108,6 @@ func TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting(t *testing.T) {
 			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting$")
 			cmd.Dir = t.TempDir()
 			flag := senderOrigin
-			var wantKeyReads int32 = 1
 			if tc.privateHome {
 				cmd.Dir = whoIdentity(t, v, false, true)
 				identityRegistryTestGlobalHome(t, cmd.Dir, v)
@@ -115,13 +118,20 @@ func TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting(t *testing.T) {
 					t.Fatal(err)
 				}
 				flag = foreignOrigin
-				wantKeyReads = 0
+				alias := *message
+				alias.From = foreign + "/sender"
+				export.SignedPayload = awid.CanonicalJSON(&alias)
+				signature, err := awid.SignMessage(senderKey, &alias)
+				if err != nil {
+					t.Fatal(err)
+				}
+				export.Signature = signature
 			}
 			cmd.Stdin = strings.NewReader(string(marshalMessageExport(t, export)))
 			cmd.Env = append(testCommandEnv(t.TempDir()), "AWEB_IDENTITY_HOME=", "AWID_REGISTRY_URL=", "APP_ENV=development",
 				"AW_TEST_VERIFY_SENDER_REGISTRY="+flag, "NO_PROXY=registry.example,registry.test",
 				"AW_TEST_VERIFY_SENDER_TXT="+idCreateDNSRecordValue(root.DIDKey, senderOrigin),
-				"AW_TEST_VERIFY_FOREIGN_TXT="+idCreateDNSRecordValue(root.DIDKey, foreignOrigin))
+				"AW_TEST_VERIFY_FOREIGN_TXT="+idCreateDNSRecordValue(foreignRoot.DIDKey, foreignOrigin))
 			var stderr strings.Builder
 			cmd.Stderr = &stderr
 			keyReads.Store(0)
@@ -144,11 +154,11 @@ func TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting(t *testing.T) {
 				if !strings.Contains(stderr.String(), senderOrigin) || !strings.Contains(stderr.String(), foreignOrigin) || result.IdentityValid != nil {
 					t.Errorf("expected explicit private registry conflict: %s %s", output, &stderr)
 				}
-			} else if result.IdentityValid == nil || *result.IdentityValid != (tc.exit == 0) || result.Domain != "example.com" {
+			} else if result.IdentityValid == nil || *result.IdentityValid != (tc.exit == 0) || result.Domain != tc.domain {
 				t.Errorf("unexpected enrollment result: %s", output)
 			}
-			if k, l, s, f := keyReads.Load(), logReads.Load(), statusReads.Load(), foreignReads.Load(); k != wantKeyReads || l != wantKeyReads || s != tc.statusReads || f != 0 {
-				t.Errorf("registry reads key/log/status/foreign = %d/%d/%d/%d; want %d/%d/%d/0", k, l, s, f, wantKeyReads, wantKeyReads, tc.statusReads)
+			if k, l, s, f := keyReads.Load(), logReads.Load(), statusReads.Load(), foreignReads.Load(); k != tc.keyReads || l != tc.keyReads || s != tc.statusReads || f != 0 {
+				t.Errorf("registry reads key/log/status/foreign = %d/%d/%d/%d; want %d/%d/%d/0", k, l, s, f, tc.keyReads, tc.keyReads, tc.statusReads)
 			}
 		})
 	}

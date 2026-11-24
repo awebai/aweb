@@ -13,7 +13,6 @@ import (
 
 	proof "github.com/awebai/approval-service/verify"
 	"github.com/awebai/aw/approval"
-	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
@@ -185,11 +184,14 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 			return messageVerificationFailure(subject.ID, "malformed_envelope", true)
 		}
 		statusDomain, _ = plan["domain"].(string)
+	}
+	// Guard a private home before reading the sender's key, including when
+	// the signed address is an alias outside the presented chain's domain.
+	if scope.applies(statusDomain) {
 		route, err = resolveRoute(statusDomain)
 		if err != nil {
 			return routeFailure(err)
 		}
-		status = route.status(registry)
 	}
 	if strings.HasPrefix(subject.ID, "did:aw:") {
 		// An addressless proof supplies its domain through the certificate.
@@ -200,8 +202,8 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 			return messageVerificationFailure(subject.ID, "malformed_envelope", true)
 		}
 		if domain != "" {
-			if statusDomain != "" && (awconfig.NormalizeDomain(domain) == statusDomain || scope.applies(statusDomain)) {
-				if scope.applies(statusDomain) && route.authority.ControllerDID == "" {
+			if route.origin != "" {
+				if route.authority.ControllerDID == "" {
 					return routeFailure(nil)
 				}
 				registryURL = route.origin
@@ -211,6 +213,9 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 					return routeFailure(err)
 				}
 				registryURL = keyRoute.origin
+				if keyRoute.domain == statusDomain {
+					route = keyRoute
+				}
 			}
 		}
 		if registryURL == "" {
@@ -229,7 +234,27 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 			return messageVerificationFailure(subject.ID, "subject_mismatch", true)
 		}
 		enrollment := key.IDTreeEnrollmentOf(subject.ID, subject.DIDKey, time.Now())
+		if statusDomain != "" {
+			switch {
+			case enrollment.State != "enrolled" || enrollment.Domain == nil:
+				statusDomain = ""
+			case statusDomain != *enrollment.Domain:
+				// Check the presentation against the sender's enrollment before
+				// resolving a registry for the presented namespace.
+				checked := awid.VerifyIDChain(export.IDChain, subject, nil, *enrollment.Domain)
+				return whoOutput{ID: subject.ID, Domain: *enrollment.Domain, IDChainResult: checked}
+			}
+		}
 		opts.ReceivedEnrollment = func(context.Context, string, string) awid.IDTreeEnrollmentResult { return enrollment }
+	}
+	if statusDomain != "" {
+		if route.origin == "" {
+			route, err = resolveRoute(statusDomain)
+			if err != nil {
+				return routeFailure(err)
+			}
+		}
+		status = route.status(registry)
 	}
 	opts.Status = status
 	if opts.EvidenceTrust == nil {
