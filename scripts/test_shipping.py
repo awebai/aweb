@@ -286,103 +286,176 @@ class TagContractTest(unittest.TestCase):
             PUBLISH.require_pi_aw_floor(root, timeout_seconds=0)
 
 
+def release_assets(directory: Path, normalized: str, version: str) -> dict[str, str]:
+    """Write one sdist and one wheel shaped like uv's output; return name -> sha256."""
+    directory.mkdir(parents=True, exist_ok=True)
+    metadata = f"Metadata-Version: 2.1\nName: {normalized}\nVersion: {version}\n".encode()
+    sdist = directory / f"{normalized}-{version}.tar.gz"
+    with tarfile.open(sdist, "w:gz") as archive:
+        info = tarfile.TarInfo(f"{normalized}-{version}/PKG-INFO")
+        info.size = len(metadata)
+        archive.addfile(info, io.BytesIO(metadata))
+    wheel = directory / f"{normalized}-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(f"{normalized}-{version}.dist-info/METADATA", metadata)
+    return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (wheel, sdist)}
+
+
+def locked_message(tag: str, files: dict[str, str]) -> str:
+    return f"{tag}\n\n" + "".join(f"{digest}  {name}\n" for name, digest in files.items())
+
+
 class PypiLaneContractTest(unittest.TestCase):
     def test_each_pypi_lane_publishes_the_package_its_manifest_names(self):
         import tomllib
 
-        for prefix, (_needs_awid, packages) in PUBLISH.PYPI_LANES.items():
+        self.assertEqual(set(PUBLISH.PYPI_PACKAGES), {"server-v", "awid-service-v"})
+        for prefix, package in PUBLISH.PYPI_PACKAGES.items():
             manifest = PUBLISH.MANIFESTS[prefix]
-            primary = Path(manifest).parent.as_posix()
-            self.assertIn(primary, [directory for _, directory in packages], prefix)
             self.assertEqual(CANDIDATE.MANIFESTS[prefix], manifest, prefix)
-            lockstep = [f"{directory}/pyproject.toml" for _, directory in packages if directory != primary]
-            self.assertEqual(CANDIDATE.LOCKSTEP.get(prefix, []), lockstep, prefix)
-            if prefix == "aweb-secrets-runner-v":
-                names = [package for package, _ in packages]
-                self.assertLess(names.index("aweb-secrets-values"), names.index("aweb-secrets-runner"))
-            for package, directory in packages:
-                project = tomllib.loads((ROOT / directory / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-                self.assertEqual(project["name"], package, prefix)
+            self.assertNotIn(prefix, CANDIDATE.LOCKSTEP, prefix)
+            project = tomllib.loads((ROOT / manifest).read_text(encoding="utf-8"))["project"]
+            self.assertEqual(project["name"], package, prefix)
 
-    def test_the_aweb_naapp_lane_waits_for_awid_then_builds_naapp_lib(self):
-        temporary, root = TagContractTest.repository(self)
+    def setUp(self):
+        temporary, self.root = TagContractTest.repository(self)
         self.addCleanup(temporary.cleanup)
-        originals = (PUBLISH.run, PUBLISH.request_json, os.environ.get("UV_PUBLISH_TOKEN"))
+        self.source = command(self.root, "git", "rev-parse", "HEAD")
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.scratch = Path(scratch.name)
+        self.assets = self.scratch / "assets"
+        self.locked = release_assets(self.assets, "aweb", "1.2.3")
+        command(self.root, "git", "tag", "-a", "server-v1.2.3", "-m",
+                locked_message("server-v1.2.3", self.locked))
 
-        def restore():
-            PUBLISH.run, PUBLISH.request_json = originals[0], originals[1]
-            if originals[2] is None:
-                os.environ.pop("UV_PUBLISH_TOKEN", None)
-            else:
-                os.environ["UV_PUBLISH_TOKEN"] = originals[2]
+    def verify(self):
+        PUBLISH.verify_release_assets(self.assets, PUBLISH.locked_files(self.root, "server-v1.2.3"))
 
-        self.addCleanup(restore)
-        os.environ["UV_PUBLISH_TOKEN"] = "test-token-not-a-secret"
-        asked: list[str] = []
-        built: list[tuple[str, ...]] = []
+    def test_assets_equal_to_the_tag_message_are_accepted(self):
+        self.assertEqual(PUBLISH.locked_files(self.root, "server-v1.2.3"), self.locked)
+        self.verify()
 
-        class Built(Exception):
-            pass
+    def test_an_asset_with_another_sha256_refuses(self):
+        wheel = self.assets / "aweb-1.2.3-py3-none-any.whl"
+        wheel.write_bytes(wheel.read_bytes() + b"rebuilt")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "aweb-1.2.3-py3-none-any.whl.*sha256"):
+            self.verify()
+
+    def test_an_extra_asset_refuses(self):
+        (self.assets / "aweb-1.2.3-py3-none-manylinux_2_17_x86_64.whl").write_bytes(b"unlocked")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "not in the tag.*manylinux"):
+            self.verify()
+
+    def test_a_missing_asset_refuses(self):
+        (self.assets / "aweb-1.2.3.tar.gz").unlink()
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "missing.*aweb-1.2.3.tar.gz"):
+            self.verify()
+
+    def test_a_tag_without_locked_files_refuses(self):
+        command(self.root, "git", "tag", "-a", "awid-service-v2.3.4", "-m", "tested")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "lists no release files"):
+            PUBLISH.locked_files(self.root, "awid-service-v2.3.4")
+
+    def test_a_lightweight_tag_refuses(self):
+        command(self.root, "git", "tag", "awid-service-v2.3.4")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "not an annotated tag"):
+            PUBLISH.locked_files(self.root, "awid-service-v2.3.4")
+
+    def test_a_file_listed_twice_refuses(self):
+        name, digest = next(iter(self.locked.items()))
+        command(self.root, "git", "tag", "-a", "awid-service-v2.3.4", "-m",
+                locked_message("x", self.locked) + f"{'0' * 64}  {name}\n")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "more than once"):
+            PUBLISH.locked_files(self.root, "awid-service-v2.3.4")
+
+    def uploads(self, observed=(404, {})):
+        """Run the PyPI lane with only uv publish and the PyPI readback intercepted."""
+        real_run, uploaded, asked = PUBLISH.run, [], []
+
+        def run(root, *argv, **kwargs):
+            if argv[:2] == ("uv", "publish"):
+                uploaded.append(argv)
+                return ""
+            if "verify-published" in argv:
+                return ""
+            return real_run(root, *argv, **kwargs)
 
         def request_json(url):
             asked.append(url)
-            return 200, {}
+            return (200, {}) if "/awid-service/" in url else observed
 
-        def run(_root, *argv, **_kwargs):
-            built.append(argv)
-            raise Built
+        patcher = patch.multiple(PUBLISH, run=run, request_json=request_json)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return uploaded, asked
 
-        PUBLISH.request_json, PUBLISH.run = request_json, run
-        with self.assertRaises(Built):
-            PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0")
-        self.assertEqual(asked, ["https://pypi.org/pypi/awid-service/2.3.4/json"])
-        self.assertEqual(built[0][:2], ("uv", "build"))
-        self.assertEqual(built[0][-1], "naapp-lib")
+    def test_the_lane_uploads_exactly_the_locked_files_and_never_builds(self):
+        uploaded, asked = self.uploads()
+        PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
+        self.assertEqual(asked, ["https://pypi.org/pypi/awid-service/2.3.4/json",
+                                 "https://pypi.org/pypi/aweb/1.2.3/json"])
+        self.assertEqual(len(uploaded), 1)
+        self.assertEqual(uploaded[0][:4], ("uv", "publish", "--trusted-publishing", "always"))
+        self.assertEqual(sorted(Path(path).name for path in uploaded[0][4:]), sorted(self.locked))
 
+    def test_a_rerun_uploads_only_the_files_pypi_lacks(self):
+        wheel = "aweb-1.2.3-py3-none-any.whl"
+        uploaded, _asked = self.uploads(
+            (200, {"urls": [{"filename": wheel, "digests": {"sha256": self.locked[wheel]}}]})
+        )
+        PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
+        self.assertEqual([Path(path).name for path in uploaded[0][4:]], ["aweb-1.2.3.tar.gz"])
 
-    def _recording_publisher(self):
-        originals = (PUBLISH.run, PUBLISH.request_json, os.environ.get("UV_PUBLISH_TOKEN"))
+    def test_a_wrong_asset_uploads_nothing(self):
+        uploaded, _asked = self.uploads()
+        (self.assets / "aweb-1.2.3.tar.gz").write_bytes(b"rebuilt")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "sha256"):
+            PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
+        self.assertEqual(uploaded, [])
 
-        def restore():
-            PUBLISH.run, PUBLISH.request_json = originals[0], originals[1]
-            if originals[2] is None:
-                os.environ.pop("UV_PUBLISH_TOKEN", None)
-            else:
-                os.environ["UV_PUBLISH_TOKEN"] = originals[2]
+    def test_locked_files_of_another_package_refuse_before_upload(self):
+        uploaded, _asked = self.uploads()
+        other = self.scratch / "other"
+        locked = release_assets(other, "awid_service", "2.3.4")
+        command(self.root, "git", "tag", "-a", "-f", "server-v1.2.3", "-m",
+                locked_message("server-v1.2.3", locked))
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "exactly one sdist and one wheel"):
+            PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, other)
+        self.assertEqual(uploaded, [])
 
-        self.addCleanup(restore)
-        os.environ["UV_PUBLISH_TOKEN"] = "test-token-not-a-secret"
-        commands: list[tuple[str, ...]] = []
+    def test_the_pypi_lane_refuses_without_release_assets(self):
+        with patch.object(PUBLISH, "publish_pypi") as pypi, patch.object(PUBLISH, "publish_oci") as oci:
+            with self.assertRaisesRegex(PUBLISH.PublishRefusal, "--assets"):
+                PUBLISH.publish(self.root, "server-v1.2.3", only="pypi")
+            pypi.assert_not_called()
+            oci.assert_not_called()
 
-        def run(_root, *argv, **_kwargs):
-            commands.append(argv)
-            return ""
+    def test_app_tags_publish_nowhere_from_aweb(self):
+        command(self.root, "git", "tag", "-a", "aweb-naapp-v0.1.0", "-m", "tested")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "publishes nothing"):
+            PUBLISH.publish(self.root, "aweb-naapp-v0.1.0", assets=self.assets)
 
-        PUBLISH.run, PUBLISH.request_json = run, lambda _url: (200, {})
-        return commands
-
-    def test_the_aweb_naapp_lane_publishes_naapp_lib_then_its_testing_package(self):
-        temporary, root = TagContractTest.repository(self)
-        self.addCleanup(temporary.cleanup)
-        commands = self._recording_publisher()
-        PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0")
-        built = [argv[-1] for argv in commands if argv[:2] == ("uv", "build")]
-        inspected = [argv[argv.index("--package") + 1] for argv in commands if "inspect-staged" in argv]
-        self.assertEqual(built, ["naapp-lib", "naapp-lib/testing"])
-        self.assertEqual(inspected, ["aweb-naapp", "aweb-naapp-testing"])
-
-    def test_a_lane_package_at_another_version_refuses_the_tag(self):
-        temporary, root = TagContractTest.repository(self)
-        self.addCleanup(temporary.cleanup)
-        (root / "naapp-lib/testing/pyproject.toml").write_text(
+    def test_a_lockstep_package_at_another_version_refuses_the_candidate(self):
+        (self.root / "naapp-lib/testing/pyproject.toml").write_text(
             '[project]\nname = "aweb-naapp-testing"\nversion = "0.0.9"\n', encoding="utf-8"
         )
-        command(root, "git", "commit", "-qam", "drifted")
+        command(self.root, "git", "commit", "-qam", "drifted")
         with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "naapp-lib/testing"):
-            CANDIDATE.validate_tags(root, ["aweb-naapp-v0.1.0"])
-        command(root, "git", "tag", "-a", "aweb-naapp-v0.1.0", "-m", "tested")
-        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "naapp-lib/testing"):
-            PUBLISH.tag_identity(root, "aweb-naapp-v0.1.0")
+            CANDIDATE.validate_tags(self.root, ["aweb-naapp-v0.1.0"])
+
+    def test_workflow_publishes_release_assets_on_release_and_never_on_tag_push(self):
+        source = (ROOT / ".github/workflows/pypi-release.yml").read_text()
+        self.assertIn("release:\n    types: [published]", source)
+        self.assertNotIn("push:", source)
+        self.assertNotIn("PYPI_TOKEN", source)
+        self.assertNotIn("uv build", source)
+        self.assertIn("id-token: write", source)
+        self.assertIn('gh release download "$TAG" --dir "$ASSETS"', source)
+        self.assertIn('git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"', source)
+        self.assertIn('python3 scripts/publish_release.py --only pypi --assets "$ASSETS" "$TAG"', source)
+        for prefix in ("aweb-naapp-v", "aweb-secrets-runner-v"):
+            self.assertNotIn(prefix, source)
 
 
 class NaappPackageRcContractTest(unittest.TestCase):

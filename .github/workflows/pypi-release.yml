@@ -1,36 +1,52 @@
 name: Publish Python package
 
+# PyPI receives exactly the gated files attached to a published release of a
+# server-v or awid-service-v tag, after they match the sha256 lines in the
+# annotated tag's message. Nothing here builds a package.
 on:
-  push:
-    tags:
-      - "server-v*"
-      - "awid-service-v*"
-      - "aweb-naapp-v*"
-      - "aweb-secrets-runner-v*"
+  release:
+    types: [published]
 
 permissions:
   contents: read
 
 concurrency:
-  group: pypi-${{ github.ref }}
+  group: pypi-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
   publish:
+    if: startsWith(github.event.release.tag_name, 'server-v') || startsWith(github.event.release.tag_name, 'awid-service-v')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}
+      # actions/checkout can replace the annotated tag with its peeled commit,
+      # which loses the message that locks the release files.
+      - name: Fetch the annotated release tag
+        run: git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.11.32"
-      - name: Publish or adopt the tagged package
+      - name: Download the release files
         env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: python3 scripts/publish_release.py --only pypi "${GITHUB_REF_NAME}"
+          GH_TOKEN: ${{ github.token }}
+          ASSETS: ${{ runner.temp }}/release-assets
+        run: |
+          mkdir "$ASSETS"
+          gh release download "$TAG" --dir "$ASSETS"
+      - name: Publish or adopt the locked release files
+        env:
+          ASSETS: ${{ runner.temp }}/release-assets
+        run: python3 scripts/publish_release.py --only pypi --assets "$ASSETS" "$TAG"
