@@ -189,7 +189,9 @@ The current directory may contain:
 - `.aw/teams.yaml` — installed team memberships and active team;
 - `.aw/team-certs/` — team certificates;
 - `.aw/workspace.yaml` — aweb service and workspace projection;
-- `.aw/context/` — optional local context and interaction metadata.
+- `.aw/context` — small non-secret local coordination pointer (a file);
+- `.aw/interaction-log.jsonl` — local log of messages sent and read, including
+  their text; see [Configuration](configuration.md).
 
 Never commit `.aw/`. Back up private identity and archived encryption key
 material according to your custody policy. Losing an archived E2E key can make
@@ -217,7 +219,8 @@ see [Portable orchestrator integration](orchestrator-integration.md).
 
 Start by separating layers:
 
-1. `aw check` — local identity, membership, workspace, and service diagnostics.
+1. `aw check --online` — local identity, membership, workspace, and service
+   diagnostics. Plain `aw check` skips the online checks.
 2. `aw mail show --message-id <id> --json` for known IDs, or
    `aw mail inbox --show-all --json` with `--cursor` pagination — is the durable
    message present?
