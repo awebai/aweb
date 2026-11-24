@@ -8,27 +8,21 @@ commit.
 |---|---|
 | `server-vX.Y.Z` | PyPI `aweb`, and the `ghcr.io/awebai/aweb-server` image |
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
-| `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`, then its dev-only test support `aweb-naapp-testing` (`naapp-lib/testing/`) at the same version |
+| `aweb-naapp-contracts-vX.Y.Z` | PyPI `aweb-naapp-contracts`, the contracts between aweb and its naapps in `naapp-contracts/` with their vectors, then its dev-only test support `aweb-naapp-contracts-testing` (`naapp-contracts/testing/`) at the same version |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
 | `aw-vX.Y.Z` | `aw` CLI distributions and npm platform packages |
 | `channel-vX.Y.Z` | npm Claude channel; the unpinned marketplace resolves the public package |
 | `pi-vX.Y.Z` | npm Pi extension |
 | `skills-vX.Y.Z` | npm skills package, unpinned marketplace source, and resumable hosted ZIP assets |
 | `a2a-gw-vX.Y.Z` | `ghcr.io/awebai/a2a-gateway` image |
-| `secrets-vX.Y.Z` | `ghcr.io/awebai/secrets` image |
-| `logs-vX.Y.Z` | `ghcr.io/awebai/logs` image |
-| `aweb-secrets-runner-vX.Y.Z` | PyPI `aweb-secrets-values`, then `aweb-secrets-runner`, at the same version |
 
 Manifest-backed tags must equal the version in their package manifest. A tag
-that publishes two packages (`aweb-naapp-v`) requires both manifests at the tag
-version, and `aweb-naapp-testing` requires exactly that `aweb-naapp`. CLI and
-A2A gateway versions are explicit in their tags.
+that publishes two packages (`aweb-naapp-contracts-v`) requires both manifests at
+the tag version. CLI and A2A gateway versions are explicit in their tags.
 
-The [customer Secrets/Logs/runner procedure](../naapp/secrets/deploy/RELEASE.md)
-uses these same entry points and additionally requires the full Secrets gate.
-The runner and values manifests must have equal versions, and the runner must
-require exactly that values version. Neither image recipe nor these tag mappings
-alone qualifies a customer release or a target platform.
+The naapps, their runtime and their images and packages are released from the
+naapp repository, which pins published `aweb-naapp-contracts` and
+`awid-service` releases.
 
 ## Approval service SDK check
 
@@ -40,12 +34,12 @@ service startup. The key holder always builds against this checkout's `awid`.
 ## Release candidate spellings
 
 Python lanes also accept strict `X.Y.ZrcN` versions, with `N >= 1`:
-`server-v1.27.34rc1`, `awid-service-v0.5.32rc1`, and
-`aweb-naapp-v0.4.1rc1`, or `aweb-secrets-runner-v0.1.0rc1`, for example. The
+`server-v1.27.34rc1`, `awid-service-v0.5.32rc1`,
+or `aweb-naapp-contracts-v0.1.0rc1`, for example. The
 registry image lane, whose version is awid's manifest, uses the same spelling:
 `awid-v0.5.40rc2`.
-The manifest versions, including `aweb-naapp-testing` or the runner's lockstep
-values package, must equal the tag. The aw spelling is SemVer:
+The manifest versions, including `aweb-naapp-contracts-testing`, must equal the
+tag. The aw spelling is SemVer:
 `aw-v1.36.48-rc.1`. Other artifact lanes continue to accept final versions only.
 
 RCs are optional: a final needs no prior RC. One full gate qualifies the exact
@@ -293,10 +287,9 @@ command.
 
 GitHub omits tag-push events when more than three tags are pushed together, so
 never batch this step. When `awid-service` moves together with `aweb` or
-`aweb-naapp`, push each tag separately, `awid-service` first. The `aweb` and
-`aweb-naapp` publishers wait for the in-repo AWID version to become public
-before publishing their package, and `make check-naapp-lib-package` refuses an
-`aweb-naapp` whose `awid-service` floor is newer than the in-repo AWID.
+`aweb-naapp-contracts`, push each tag separately, `awid-service` first. The
+`aweb` and `aweb-naapp-contracts` publishers wait for the in-repo AWID version
+to become public before publishing their package.
 
 ## Runnerless publication
 

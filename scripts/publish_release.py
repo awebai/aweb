@@ -24,7 +24,6 @@ from release_versions import (
     SEMVER,
     VersionRefusal as PublishRefusal,
     final_version,
-    require_runner_values,
     tag_parts,
     valid_version,
 )
@@ -32,14 +31,11 @@ from release_versions import (
 MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
-    "aweb-naapp-v": "naapp-lib/pyproject.toml",
+    "aweb-naapp-contracts-v": "naapp-contracts/pyproject.toml",
     "awid-v": "awid/pyproject.toml",
     "channel-v": "channel/package.json",
     "pi-v": "pi-extension/package.json",
     "skills-v": "packages/claude-skills/package.json",
-    "secrets-v": "naapp/secrets/pyproject.toml",
-    "logs-v": "naapp/logs/pyproject.toml",
-    "aweb-secrets-runner-v": "naapp/secrets/runner/pyproject.toml",
 }
 # Each PyPI lane: whether it depends on the in-repo awid-service, which must be
 # public first, and the (package, directory) pairs it publishes, in order. A
@@ -47,10 +43,9 @@ MANIFESTS = {
 PYPI_LANES = {
     "server-v": (True, (("aweb", "server"),)),
     "awid-service-v": (False, (("awid-service", "awid"),)),
-    "aweb-naapp-v": (True, (("aweb-naapp", "naapp-lib"), ("aweb-naapp-testing", "naapp-lib/testing"))),
-    "aweb-secrets-runner-v": (False, (
-        ("aweb-secrets-values", "naapp/secrets/values"),
-        ("aweb-secrets-runner", "naapp/secrets/runner"),
+    "aweb-naapp-contracts-v": (True, (
+        ("aweb-naapp-contracts", "naapp-contracts"),
+        ("aweb-naapp-contracts-testing", "naapp-contracts/testing"),
     )),
 }
 NPM_LANES = {
@@ -123,8 +118,6 @@ def tag_identity(root: Path, tag: str) -> tuple[str, str, str]:
             raise PublishRefusal(
                 f"{tag} does not match {manifest} version {manifest_version_at(root, source_sha, manifest)}"
             )
-    if prefix == "aweb-secrets-runner-v":
-        require_runner_values(root, source_sha)
     return prefix, version, source_sha
 
 
@@ -445,8 +438,6 @@ OCI_REPOSITORIES = {
     "server-v": "ghcr.io/awebai/aweb-server",
     "awid-v": "ghcr.io/awebai/awid",
     "a2a-gw-v": "ghcr.io/awebai/a2a-gateway",
-    "secrets-v": "ghcr.io/awebai/secrets",
-    "logs-v": "ghcr.io/awebai/logs",
 }
 def oci_images(prefix: str) -> tuple[str, ...]:
     """The image repositories published by this tag."""
@@ -472,17 +463,6 @@ def build_oci_archive(
             "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
             "--label", "org.opencontainers.image.title=awid",
             "--label", "org.opencontainers.image.description=Thin awid.ai registry service wrapper around aweb",
-            "--label", f"org.opencontainers.image.version={version}",
-            "--label", f"org.opencontainers.image.revision={source_sha}",
-            "--output", f"type=oci,dest={archive}", ".",
-        ]
-    elif prefix in {"secrets-v", "logs-v"}:
-        service = "secrets" if prefix == "secrets-v" else "logs"
-        build = [
-            "docker", "buildx", "build", "--file", f"naapp/{service}/Dockerfile",
-            "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
-            "--build-arg", f"SOURCE_COMMIT={source_sha}",
-            "--label", f"org.opencontainers.image.title=aweb {service}",
             "--label", f"org.opencontainers.image.version={version}",
             "--label", f"org.opencontainers.image.revision={source_sha}",
             "--output", f"type=oci,dest={archive}", ".",
