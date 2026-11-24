@@ -721,6 +721,20 @@ Claimless local connects need no observation.
 Identity-only and grant authentication apply the same check to their identity
 or grant subject; a grant session key does not become the subject's root key.
 
+For ordinary certificate routes, an embedding host may select
+`IdentityEvidencePolicy.PREFER_LIVE`. The native verifier attempts live
+identity binding and ID ancestry with a one-second evidence deadline, after
+the request signature, team certificate and its standing have passed.
+An address-not-found response or unavailable identity evidence can use the
+admitted member's previously verified stable DID only when its marker matches
+the signing key and its DID matches the binding under examination. The
+fallback supplies no verified address, kind or ID chain and does not update
+the member projection. When live binding succeeds, the existing ID-chain
+decision applies. A missing stable DID record, conflicting key or address,
+or malformed claim remains a refusal. Connect, identity-only and grant
+authorization retain strict verification. After a superseded-chain Connect refusal, run
+`aw id parent refresh` in the identity home and reconnect.
+
 `agents.did_aw_verified_key` records the key against which a projection was
 verified. Historical rows start with a null marker. Stable-DID and global-address
 routing, identity expansion and membership checks use a row's global claims only

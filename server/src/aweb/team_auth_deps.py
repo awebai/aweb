@@ -7,6 +7,7 @@ a TeamIdentity from the request's certificate headers.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -14,6 +15,7 @@ from enum import StrEnum
 from typing import Any, NamedTuple
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
+from awid.id_certificates import IDCertificateError, verify_id_chain
 from awid.signing import verify_did_key_signature
 from awid.team_certificate import TeamCertificateError, decode_team_certificate, verify_team_certificate_claims
 from fastapi import Depends, HTTPException, Request
@@ -28,7 +30,8 @@ from aweb.auth_metrics import count_legacy_request_auth
 from aweb.certificate_evidence import EvidenceMode
 from aweb.connection_scope import request_memo
 from aweb.deps import get_db
-from aweb.id_chain_auth import authenticate_id_chain
+from aweb.id_chain_auth import authenticate_id_chain, read_id_chain_header
+from aweb.identity_address import AddressResolution, AddressResolutionState
 from aweb.identity_binding import (
     IdentityBinding,
     refresh_projection_binding,
@@ -48,7 +51,7 @@ from aweb.member_team_key import (
     read_member_with_overlay,
 )
 from aweb.request_body import request_body_sha256
-from aweb.service_errors import CurrentMembershipRefusal
+from aweb.service_errors import CurrentMembershipRefusal, IdentityBindingCode, IdentityBindingError
 from aweb.team_auth import certificate_refusal, project_verified_team_certificate
 from aweb.team_auth_envelope import team_auth_signature_payload
 from aweb.team_key_pins import AdmittedTeamKeys
@@ -64,6 +67,7 @@ from aweb.team_registry import (
 
 logger = logging.getLogger(__name__)
 _ADMITTED_MEMBER = "aweb.admitted_member"
+_OPTIONAL_IDENTITY_EVIDENCE_SECONDS = 1.0
 
 
 class IdentityEvidencePolicy(StrEnum):
@@ -71,6 +75,58 @@ class IdentityEvidencePolicy(StrEnum):
 
     ENFORCE = "enforce"
     SKIP = "skip"
+    PREFER_LIVE = "prefer_live"
+
+
+def _clear_live_identity_evidence(request: Request) -> None:
+    request.state.identity_kind = None
+    request.state.id_chain = None
+    request.state.id_chain_result = None
+
+
+async def _prefer_live_identity_evidence(
+    request: Request, *, did_key: str, did_aw: str | None, address: str | None, deadline: float,
+) -> tuple[IdentityBinding, IdentityBindingError | None]:
+    if (did_aw is not None and not isinstance(did_aw, str)) or (
+        address is not None and not isinstance(address, str)
+    ):
+        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+    did_aw, address = (did_aw or "").strip(), (address or "").strip()
+    refusal: IdentityBindingError
+    try:
+        async with asyncio.timeout_at(deadline):
+            binding = await verify_identity_binding(
+                request, did_key=did_key, did_aw=did_aw, address=address,
+                require_registered_did=True,
+            )
+    except IdentityBindingError as exc:
+        if not exc.address_missing and exc.code is not IdentityBindingCode.UNAVAILABLE:
+            raise
+        refusal = exc
+    except TimeoutError:
+        refusal = IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
+    else:
+        try:
+            async with asyncio.timeout_at(deadline):
+                await authenticate_id_chain(request, binding)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=503, detail="evidence_unavailable") from exc
+        return binding, None
+
+    # The no-evidence verifier can reject a malformed or mismatched presented
+    # chain before falling back. It cannot establish anyone's ancestry.
+    try:
+        chain = read_id_chain_header(request)
+    except IDCertificateError as exc:
+        raise HTTPException(status_code=403, detail=exc.code) from exc
+    if chain is not None:
+        check = verify_id_chain(
+            chain, subject={"id": did_aw or did_key, "did_key": did_key}, evidence=None,
+        )
+        if check["outcome"] != "unavailable":
+            raise HTTPException(status_code=403, detail=check["reason"])
+    _clear_live_identity_evidence(request)
+    return IdentityBinding(did_key=did_key), refusal
 
 
 def _superseded_team_key() -> HTTPException:
@@ -293,6 +349,8 @@ async def resolve_team_membership(
         raise ValueError("Member snapshot belongs to a different request or certificate")
 
     binding = cert_info.get("identity_binding")
+    binding_refusal = cert_info.get("_identity_binding_refusal")
+    binding_did_aw = cert_info.get("member_did_aw") or ""
     read_native_snapshot = False
     # A host that already read this member's agent row while verifying the
     # same request passes it as cert_info["agent_row"]; it is used only for the
@@ -361,17 +419,21 @@ async def resolve_team_membership(
                 address=cert_info.get("member_address") or "",
             )
     if (
-        identity_evidence is not IdentityEvidencePolicy.SKIP
+        identity_evidence is not IdentityEvidencePolicy.SKIP and binding_refusal is None
         and request is not None and not binding.did_aw and (row.get("did_aw") or row.get("address"))
     ):
         # A claimless certificate cannot inherit stored global identity
         # metadata without independently proving that row's exact binding.
-        binding = await verify_identity_binding(
-            request,
-            did_key=did_key,
-            did_aw=row.get("did_aw") or "",
-            address=row.get("address") or "",
-        )
+        binding_did_aw = row["did_aw"] or ""
+        if identity_evidence is IdentityEvidencePolicy.PREFER_LIVE:
+            binding, binding_refusal = await _prefer_live_identity_evidence(
+                request, did_key=did_key, did_aw=binding_did_aw, address=row["address"] or "",
+                deadline=cert_info["_identity_evidence_deadline"],
+            )
+        else:
+            binding = await verify_identity_binding(
+                request, did_key=did_key, did_aw=binding_did_aw, address=row["address"] or "",
+            )
         if read_native_snapshot:
             # When a stored claim needs independent evidence, recheck the
             # member after that observation, just like the preflight path.
@@ -383,7 +445,7 @@ async def resolve_team_membership(
     # Acceptance and binding writes reread under their locks, including when
     # a host supplied a snapshot or the verified key came from the request memo.
     changed = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
-    if not binding.fresh_observation and not changed:
+    if not binding.fresh_observation and (not changed or binding_refusal is not None):
         if snapshot is None:
             snapshot = await _read_team_member_snapshot(
                 db, credential, request, None, MemberReadLock.NONE,
@@ -392,7 +454,7 @@ async def resolve_team_membership(
         row = snapshot._require_current_member()
         changed = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
 
-    if binding.fresh_observation or changed:
+    if binding_refusal is None and (binding.fresh_observation or changed):
         overlay_sql = snapshot._overlay_sql if snapshot is not None else None
         async with db.transaction() as tx:
             snapshot = await _read_team_member_snapshot(
@@ -403,7 +465,7 @@ async def resolve_team_membership(
             update_certificate = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
             if before_write is not None and (binding.fresh_observation or update_certificate):
                 before_write(snapshot)
-            if identity_evidence is IdentityEvidencePolicy.ENFORCE:
+            if identity_evidence is not IdentityEvidencePolicy.SKIP:
                 await refresh_projection_binding(tx, agent_id=row["agent_id"], did_key=did_key, binding=binding)
             if update_certificate:
                 await tx.execute(
@@ -416,9 +478,18 @@ async def resolve_team_membership(
                 snapshot = replace(snapshot, member=row)
 
     did_aw, address = binding.did_aw, binding.address
+    address_resolution = AddressResolution()
     if identity_evidence is IdentityEvidencePolicy.SKIP:
         stored = row.verified_identity()
         did_aw, address = stored["did_aw"] or "", stored["address"] or ""
+    elif binding_refusal is not None:
+        stored = row.verified_identity()
+        if not stored["did_aw"] or stored["did_aw"] != binding_did_aw.strip():
+            raise binding_refusal
+        did_aw = stored["did_aw"]
+        address_resolution = AddressResolution(
+            AddressResolutionState.WITHHELD, stored_address=stored["address"] or None,
+        )
     identity = TeamIdentity(
         team_id=team_id,
         alias=cert_info["alias"],
@@ -430,6 +501,7 @@ async def resolve_team_membership(
         certificate_id=cert_info.get("certificate_id", ""),
         verified_team_did_key=verified_team_did_key,
         certificate_verified=True,
+        address_resolution=address_resolution,
     )
     assert snapshot is not None
     memo = request_memo()
@@ -467,17 +539,17 @@ async def verify_request_certificate(
     in the local DB — suitable for /v1/connect where the agent may not
     exist yet.
 
-    An ordinary embedding route can explicitly skip new identity-binding
-    and ID-ancestry checks. Certificate authority and standing are still
-    verified. The returned claims do not establish identity attribution in
-    SKIP mode. Resolve membership for the stored, current-key projection.
+    Ordinary embedding routes may SKIP live identity evidence or PREFER_LIVE
+    with a bounded, read-only fallback to the admitted member's stored stable
+    DID. Resolve membership for that projection. The certificate and its
+    standing must pass under every policy. Only ENFORCE can require fresh proof.
 
     Raises HTTPException on any failure.
     """
     if not isinstance(identity_evidence, IdentityEvidencePolicy):
         raise ValueError("Use a named identity evidence policy")
-    if fresh and identity_evidence is IdentityEvidencePolicy.SKIP:
-        raise ValueError("Skipped identity evidence cannot be fresh")
+    if fresh and identity_evidence is not IdentityEvidencePolicy.ENFORCE:
+        raise ValueError("Fresh identity evidence requires ENFORCE")
 
     # -- Step 1: Extract DIDKey auth header --
     auth_header = request.headers.get("Authorization")
@@ -541,9 +613,15 @@ async def verify_request_certificate(
 
     if identity_evidence is IdentityEvidencePolicy.SKIP:
         binding = IdentityBinding(did_key=did_key)
-        request.state.identity_kind = None
-        request.state.id_chain = None
-        request.state.id_chain_result = None
+        _clear_live_identity_evidence(request)
+    elif identity_evidence is IdentityEvidencePolicy.PREFER_LIVE:
+        deadline = asyncio.get_running_loop().time() + _OPTIONAL_IDENTITY_EVIDENCE_SECONDS
+        binding, refusal = await _prefer_live_identity_evidence(
+            request, did_key=did_key, did_aw=cert_info["member_did_aw"],
+            address=cert_info["member_address"], deadline=deadline,
+        )
+        cert_info["_identity_binding_refusal"] = refusal
+        cert_info["_identity_evidence_deadline"] = deadline
     else:
         binding = await verify_identity_binding(
             request,

@@ -106,7 +106,7 @@ async def store_chat(
         session_id,
         sender_agent_uuid,
         sender_did,
-        (sender_address or "").strip() or None,
+        sender_address.strip() if sender_address is not None else None,
         body,
         bool(leaving),
         bool(hang_on),
