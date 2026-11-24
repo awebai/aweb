@@ -20,7 +20,7 @@
     "package": "publicsuffixlist",
     "version": "1.1.0.20261018",
     "sections": "ICANN and private",
-    "update": "bump the pinned version in naapp-lib's egress extra, this field and aweb_naapp.egress.urls.PUBLIC_SUFFIX_LIST_VERSION together, then relock"
+    "update": "bump the pinned version in aweb-naapp-contracts' egress extra, this field and aweb_naapp_contracts.egress.urls.PUBLIC_SUFFIX_LIST_VERSION together, then relock"
   },
   "canonical": [
     {"name": "plain", "url": "https://api.example.com/v1/charges", "canonical": "https://api.example.com/v1/charges"},
