@@ -120,6 +120,7 @@ unit() {
 }
 artifacts() {
   prepare_node
+  run check-node-audit
   prepare_cli
   run _candidate-artifact-server
   run _candidate-artifact-awid-package

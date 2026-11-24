@@ -64,6 +64,16 @@
     {
       "source": "server/src/aweb/coordination/tasks_service.py",
       "function": "update_task",
+      "event": "task.status_changed"
+    },
+    {
+      "source": "server/src/aweb/coordination/tasks_service.py",
+      "function": "update_task",
+      "event": "task.updated"
+    },
+    {
+      "source": "server/src/aweb/coordination/tasks_service.py",
+      "function": "update_task",
       "event": "task.updated"
     },
     {
@@ -97,6 +107,11 @@
       "event": "room.message_sent"
     },
     {
+      "source": "server/src/aweb/reservation_release.py",
+      "function": "publish_reservation_releases",
+      "event": "reservation.released"
+    },
+    {
       "source": "server/src/aweb/routes/agent_status.py",
       "function": "publish_agent_status",
       "event": "agent.status"
@@ -105,11 +120,6 @@
       "source": "server/src/aweb/routes/reservations.py",
       "function": "acquire_reservation",
       "event": "reservation.acquired"
-    },
-    {
-      "source": "server/src/aweb/routes/reservations.py",
-      "function": "release_reservation",
-      "event": "reservation.released"
     },
     {
       "source": "server/src/aweb/routes/reservations.py",
