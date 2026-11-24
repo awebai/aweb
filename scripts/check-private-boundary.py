@@ -197,7 +197,7 @@ def decodable_text(path: Path) -> str | None:
 # public deployment mounts the aweb server under /api, so /api/v1/messages IS the
 # server's /v1/messages; comparing literally would call every mounted route
 # hosted-only.
-OSS_SERVICE_SOURCES = ("server/src", "awid/src", "naapp")
+OSS_SERVICE_SOURCES = ("server/src", "awid/src", "naapp-contracts/src")
 
 
 def oss_served_endpoints(root: Path) -> set[str]:

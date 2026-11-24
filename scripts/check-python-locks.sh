@@ -2,8 +2,7 @@
 # Check Python lock freshness without rewriting the worktree. The self-test uses
 # the real uv checker against an isolated copy, in both the clean and stale-AWID
 # directions (default-aajc.5). Every lock that takes the in-repo awid as a source
-# is checked: awid, server, naapp-lib, naapp/folio, naapp/library, naapp/secrets
-# and naapp/logs.
+# is checked: awid, server and naapp-contracts.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,7 +10,7 @@ export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/tmp/pycache}"
 
 # Every lock that takes the in-repo awid as a source, with the path its
 # awid-service entry records.
-LOCKS=(awid server naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs)
+LOCKS=(awid server naapp-contracts)
 
 # Each check returns on failure itself: the self-test calls this with errexit
 # off, where only the last command's status would otherwise be reported.
@@ -173,11 +172,11 @@ PY
     return 1
   fi
 
-  for lock in naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs; do
+  for lock in naapp-contracts; do
     stale_awid_self_test "$tmp" "$lock"
   done
 
-  echo "self-test passed: clean locks pass; stale AWID versions in server, naapp-lib, naapp/folio, naapp/library, naapp/secrets and naapp/logs and a missing dependent-lock dependency fail"
+  echo "self-test passed: clean locks pass; stale AWID versions in server and naapp-contracts and a missing dependent-lock dependency fail"
 )
 
 case "${1:-}" in
