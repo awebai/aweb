@@ -27,8 +27,8 @@ from aweb.api import RequestBodyCacheMiddleware
 from aweb.hook_bindings import list_app_bindings
 from aweb.routes.hook_bindings import router
 from aweb.routes import hook_bindings as hook_routes
-from aweb_naapp.hooks.owner_act import hook_binding_subject, owner_act_signing_bytes
-from aweb_naapp_testing.network import make_certificates
+from aweb_naapp_contracts.hooks.owner_act import hook_binding_subject, owner_act_signing_bytes
+from aweb_naapp_contracts_testing.network import make_certificates
 from test_hook_binding_activation import _bindings, _install
 from test_dashboard_privacy import TEAM, privacy_stack
 from test_team_room import headers

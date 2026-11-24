@@ -2,7 +2,7 @@
 
 from dataclasses import asdict
 
-from aweb_naapp.manifest import Manifest, ManifestError, load_manifest
+from aweb_naapp_contracts.manifest import Manifest, ManifestError, load_manifest
 
 from aweb.app_registry import get_installation_on, reserved_app_ids
 from aweb.hook_bindings import list_app_bindings

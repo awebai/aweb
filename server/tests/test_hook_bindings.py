@@ -402,7 +402,7 @@ async def test_end_times_are_stored_at_millisecond_precision(db):
 @pytest.mark.asyncio
 async def test_server_startup_applies_the_kit_owner_act_migrations(shared_test_pool):
     from aweb.db import DatabaseInfra
-    from aweb_naapp.hooks.owner_act_nonces import MIGRATIONS_MODULE
+    from aweb_naapp_contracts.hooks.owner_act_nonces import MIGRATIONS_MODULE
 
     infra = DatabaseInfra()
     await infra.initialize(shared_pool=shared_test_pool)

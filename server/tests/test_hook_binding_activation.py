@@ -31,8 +31,8 @@ from aweb.hook_bindings import (
     write_pending_bindings,
 )
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError
-from aweb_naapp.hooks.owner_act import PREFIX
-from aweb_naapp.hooks.strictjson import canonical
+from aweb_naapp_contracts.hooks.owner_act import PREFIX
+from aweb_naapp_contracts.hooks.strictjson import canonical
 from aweb.team_key_pins import TeamKeyUnverified
 from awid.did import did_from_public_key
 from awid.ratelimit import MemoryFixedWindowRateLimiter

@@ -276,7 +276,7 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
     from aweb.coordination.app_tasks import verify_authorization_certificate
     from aweb.hook_bindings import core_owner_act_verifier, OwnerActTeamKeyUnavailable
     from awid_service.testing import TXTAnswers
-    from aweb_naapp.hooks.owner_act import owner_act_signing_bytes, hook_binding_subject
+    from aweb_naapp_contracts.hooks.owner_act import owner_act_signing_bytes, hook_binding_subject
 
     team = private_team.team
     team_key, team_did, server_did = team.key, team.did, private_team.server_did

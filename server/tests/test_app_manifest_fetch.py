@@ -13,14 +13,14 @@ import pytest_asyncio
 from aweb.app_manifests import ManifestFetcher, ManifestFetchError
 from aweb.config import AppInternalOrigins
 from awid.did import did_from_public_key
-from aweb_naapp.egress import (
+from aweb_naapp_contracts.egress import (
     AddressPolicy,
     DnsResolver,
     Egress,
     InternalDestinations,
     parse_destination,
 )
-from aweb_naapp_testing.network import (
+from aweb_naapp_contracts_testing.network import (
     DnsServer,
     TlsServer,
     local_address,

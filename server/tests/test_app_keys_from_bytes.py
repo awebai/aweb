@@ -29,7 +29,7 @@ from aweb.app_registry import (
     reserved_app_ids,
 )
 from aweb.service_errors import ConflictError, ValidationError
-from aweb_naapp.manifest import (
+from aweb_naapp_contracts.manifest import (
     ManifestError,
     fill_manifest,
     load_manifest,

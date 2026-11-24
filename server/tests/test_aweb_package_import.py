@@ -27,7 +27,7 @@ def test_server_loads_no_naapp_runtime_module_beyond_task_requests():
         "import sys; import aweb.api; "
         "print(','.join(sorted(m for m in sys.modules "
         "if m.startswith('aweb_naapp.runtime.') "
-        "and m != 'aweb_naapp.runtime.task_requests')))"
+        "and m != 'aweb_naapp_contracts.task_requests')))"
     )
     result = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True

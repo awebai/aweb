@@ -6,7 +6,7 @@ from dataclasses import replace
 from uuid import UUID
 
 import pytest
-from aweb_naapp_testing import Member
+from aweb_naapp_contracts_testing import Member
 from awid.federation_errors import FederationAuthorityError
 from nacl.signing import SigningKey
 

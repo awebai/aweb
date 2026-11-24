@@ -246,7 +246,7 @@ async def _decision_question(db):
 
 
 def _decision_answer(service, task, actor, *, key="decision-answer"):
-    from aweb_naapp.runtime.task_requests import sign_stage_receipt
+    from aweb_naapp_contracts.task_requests import sign_stage_receipt
     from datetime import timedelta
     from uuid import uuid4
     answer = {**_answer(task, actor, key=key), "choice": "approve", "proposal_rev": 2,

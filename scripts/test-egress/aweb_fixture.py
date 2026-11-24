@@ -21,7 +21,7 @@ import asyncpg
 import dns.asyncresolver
 from aweb.config import enforce_team_key_pins, require_registered_certificates
 from aweb.testing import running_server
-from aweb_naapp_testing.network import DnsServer
+from aweb_naapp_contracts_testing.network import DnsServer
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, running_registry
 from redis.asyncio import Redis

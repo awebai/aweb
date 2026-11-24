@@ -4,8 +4,8 @@ from contextlib import aclosing
 import base64
 import json
 from nacl.signing import SigningKey
-from aweb_naapp_testing import Member
-from aweb_naapp_testing.human_members import HumanNamespace
+from aweb_naapp_contracts_testing import Member
+from aweb_naapp_contracts_testing.human_members import HumanNamespace
 from awid.registry import RegistryClient
 from test_dashboard_privacy import TEAM
 from test_messages_http import _encode_certificate

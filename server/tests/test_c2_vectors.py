@@ -4,7 +4,7 @@ import base64
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from awid.did import did_from_public_key
-from aweb_naapp.runtime.task_requests import sign_stage_receipt
+from aweb_naapp_contracts.task_requests import sign_stage_receipt
 import hashlib
 import json
 from pathlib import Path

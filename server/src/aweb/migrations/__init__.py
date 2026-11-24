@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
-from aweb_naapp.hooks.owner_act_nonces import MIGRATIONS_MODULE, MIGRATIONS_PATH
+from aweb_naapp_contracts.hooks.owner_act_nonces import MIGRATIONS_MODULE, MIGRATIONS_PATH
 
 logger = logging.getLogger(__name__)
 

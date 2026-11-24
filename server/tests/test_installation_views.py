@@ -6,7 +6,7 @@ import json
 import pytest
 import test_verified_installations as store_fixture
 from aweb.installation_views import installation_view_on, semantic_diff
-from aweb_naapp.manifest import load_manifest
+from aweb_naapp_contracts.manifest import load_manifest
 
 origin = store_fixture.origin
 db = store_fixture.db

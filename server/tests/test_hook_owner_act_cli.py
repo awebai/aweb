@@ -16,8 +16,8 @@ import pytest_asyncio
 import test_app_manifest_fetch as manifest_fixture
 import test_dashboard_privacy as services
 from aweb.app_manifests import ManifestFetcher
-from aweb_naapp.egress import InternalDestinations, parse_destination
-from aweb_naapp_testing.network import local_address
+from aweb_naapp_contracts.egress import InternalDestinations, parse_destination
+from aweb_naapp_contracts_testing.network import local_address
 from awid.signing import canonical_json_bytes, sign_message
 from test_agent_activity_emitter_e2e import _pem, _team_home
 

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from importlib.metadata import version
 from urllib.parse import urlsplit
 
-from aweb_naapp.egress import (
+from aweb_naapp_contracts.egress import (
     AddressPolicy,
     Bounds,
     Destination,
@@ -22,7 +22,7 @@ from aweb_naapp.egress import (
     HeaderRules,
     parse_destination,
 )
-from aweb_naapp.manifest import (
+from aweb_naapp_contracts.manifest import (
     MAX_MANIFEST_BYTES,
     SUPPORTED_MANIFEST_VERSIONS,
     Manifest,
@@ -30,7 +30,7 @@ from aweb_naapp.manifest import (
     load_manifest,
     select_variant,
 )
-from aweb_naapp.manifest_keys import check_manifest_keys
+from aweb_naapp_contracts.manifest_keys import check_manifest_keys
 
 from aweb.app_registry import canonical_app_origin, normalize_digest, normalize_origin, reserved_app_ids
 from aweb.config import AppInternalOrigins, get_app_internal_origins

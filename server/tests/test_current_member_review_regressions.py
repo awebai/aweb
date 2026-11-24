@@ -167,7 +167,7 @@ async def test_local_mail_reads_both_certificates_once_under_the_commit_lock(pin
 async def test_delivery_membership_batches_preserve_distinct_team_authority(pinning, monkeypatch, other_available):
     import httpx
     from aweb.member_team_key import MemberReadLock, current_member_team_ids_for_identities
-    from aweb_naapp_testing import Member
+    from aweb_naapp_contracts_testing import Member
 
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
     env = pinning

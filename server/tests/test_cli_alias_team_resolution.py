@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import uvicorn
-from aweb_naapp_testing.network import make_certificates
+from aweb_naapp_contracts_testing.network import make_certificates
 import yaml
 from awid.signing import canonical_json_bytes, load_signing_key_pem, sign_message
 

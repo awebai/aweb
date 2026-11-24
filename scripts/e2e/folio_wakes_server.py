@@ -5,7 +5,7 @@ import socket
 import uvicorn
 from aweb.api import create_app
 from aweb.app_manifests import ManifestFetcher
-from aweb_naapp.egress import (
+from aweb_naapp_contracts.egress import (
     AddressPolicy,
     DnsResolver,
     Egress,

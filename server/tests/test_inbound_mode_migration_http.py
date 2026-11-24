@@ -7,7 +7,7 @@ import asyncpg
 import pytest
 from pgdbm.errors import QueryError
 
-from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
+from aweb_naapp_contracts.hooks.owner_act_nonces import apply_owner_act_migrations
 from messaging_actor_support import register_messaging_actors, set_messaging_inbound_mode
 from test_dashboard_privacy import privacy_stack
 from test_messages_http import _signed_identity_headers

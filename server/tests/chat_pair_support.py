@@ -24,7 +24,7 @@ import uvicorn
 
 from aweb.e2ee_messages import encrypt_e2ee_message, generate_x25519_keypair
 from aweb.testing import running_server
-from aweb_naapp_testing.network import DnsServer
+from aweb_naapp_contracts_testing.network import DnsServer
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message

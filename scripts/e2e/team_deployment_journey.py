@@ -42,7 +42,7 @@ import time
 from pathlib import Path
 
 import yaml
-from aweb_naapp_testing.network import make_certificates
+from aweb_naapp_contracts_testing.network import make_certificates
 
 REPO = Path(__file__).resolve().parents[2]
 TEAM_DIR = REPO / "deploy" / "team"

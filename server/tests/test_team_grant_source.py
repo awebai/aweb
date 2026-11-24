@@ -13,7 +13,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from aweb_naapp.runtime.clock import seconds_to_ns
-from aweb_naapp.manifest import load_manifest
+from aweb_naapp_contracts.manifest import load_manifest
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKey
 from aweb_naapp.runtime.authorization import (

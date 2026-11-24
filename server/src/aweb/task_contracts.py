@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as ModelError
-from aweb_naapp.runtime.task_requests import TaskRequestRefused, parse_json, validate_task
+from aweb_naapp_contracts.task_requests import TaskRequestRefused, parse_json, validate_task
 
 from aweb.service_errors import ValidationError
 

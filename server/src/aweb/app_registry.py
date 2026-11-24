@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from aweb_naapp.egress import canonical_url
-from aweb_naapp.manifest import ManifestError, load_manifest
-from aweb_naapp.manifest_keys import check_manifest_keys
+from aweb_naapp_contracts.egress import canonical_url
+from aweb_naapp_contracts.manifest import ManifestError, load_manifest
+from aweb_naapp_contracts.manifest_keys import check_manifest_keys
 from awid.team_ids import parse_team_id
 
 from aweb.service_errors import BadRequestError, ConflictError, ValidationError
@@ -424,8 +424,8 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
     """Read an install's event declarations and keys from its pinned bytes.
 
     The bytes must hash to the pinned digest, be valid to the one manifest
-    reader (``aweb_naapp.manifest``) with every declared key an Ed25519 did:key
-    (``aweb_naapp.manifest_keys``), and name the installed app id and origin;
+    reader (``aweb_naapp_contracts.manifest``) with every declared key an Ed25519 did:key
+    (``aweb_naapp_contracts.manifest_keys``), and name the installed app id and origin;
     nothing is taken from anywhere else. Version 1 ``event_emitters`` are emit
     keys; version 2 ``app_keys`` are app keys with their declared purposes.
     """

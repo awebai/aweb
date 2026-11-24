@@ -12,7 +12,7 @@ import test_hook_binding_activation as owner_fixture
 import test_installation_http as http_fixture
 
 from aweb.hook_bindings import activate_binding, list_app_bindings
-from aweb_naapp.manifest import SUPPORTED_MANIFEST_VERSIONS
+from aweb_naapp_contracts.manifest import SUPPORTED_MANIFEST_VERSIONS
 from test_app_manifest_fetch import CATALOG, VARIANT, digest
 from test_installation_http import TEAM, admin, headers, post
 from test_verified_installations import current

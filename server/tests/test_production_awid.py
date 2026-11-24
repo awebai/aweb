@@ -1,7 +1,7 @@
 """The server against the AWID release production runs, as published.
 
 The release runs in its own process on real PostgreSQL and Redis
-(aweb_naapp_testing.production_registry); each registry read reaches it over
+(aweb_naapp_contracts_testing.production_registry); each registry read reaches it over
 HTTP.
 """
 
@@ -19,7 +19,7 @@ from redis.asyncio import Redis
 
 from aweb.api import create_app
 from aweb.db import DatabaseInfra
-from aweb_naapp_testing.production_registry import running_production_registry
+from aweb_naapp_contracts_testing.production_registry import running_production_registry
 from awid.registry import RegistryClient
 from awid_service.testing import REGISTRY_URL
 from test_messages_http import (

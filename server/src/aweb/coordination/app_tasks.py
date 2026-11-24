@@ -29,7 +29,7 @@ from .tasks_service import (
     format_task_ref,
 )
 
-from aweb_naapp.runtime.task_requests import (
+from aweb_naapp_contracts.task_requests import (
     TaskRequestRefused,
     task_body_sha256,
     verify_task_authorization as shared_verify_task_authorization,

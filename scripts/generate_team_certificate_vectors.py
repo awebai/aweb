@@ -364,7 +364,7 @@ def document() -> str:
             "naapp_runtime": "aweb_naapp.runtime.team_auth.authenticate_request, behind a correctly signed request",
             "library": "library.auth.authenticate_request, behind a correctly signed request",
             "hooks": (
-                "aweb_naapp.hooks.delivery: the client certificate of a delivery from the case's signer, "
+                "aweb_naapp_contracts.hooks.delivery: the client certificate of a delivery from the case's signer, "
                 "with the case's revoked and registered ids as the receiver's options"
             ),
         },

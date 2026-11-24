@@ -1,6 +1,6 @@
 """Compatibility imports for the shared explicit-legacy test registry facts."""
 
-from aweb_naapp_testing.team_facts import (
+from aweb_naapp_contracts_testing.team_facts import (
     LegacyTeamFacts,
     legacy_registry,
     legacy_team,

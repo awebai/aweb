@@ -31,7 +31,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from tests.js_runtime_tree import runtime_repo
-from aweb_naapp_testing.network import DnsServer
+from aweb_naapp_contracts_testing.network import DnsServer
 
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message

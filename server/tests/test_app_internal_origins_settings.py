@@ -7,7 +7,7 @@ from ipaddress import ip_network
 import pytest
 from aweb.app_manifests import ManifestFetcher
 from aweb.config import get_app_internal_origins, get_settings
-from aweb_naapp.egress import InternalDestinations
+from aweb_naapp_contracts.egress import InternalDestinations
 
 ORIGINS = "AWEB_APP_INTERNAL_ORIGINS"
 CIDR = "AWEB_APP_INTERNAL_CIDR"

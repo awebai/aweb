@@ -14,10 +14,10 @@ from awid.ratelimit import normalize_service_token
 from awid.utc_timestamps import parse_utc_seconds
 from awid.team_ids import build_team_id, parse_team_id
 from awid.signing import load_signing_key_pem
-from aweb_naapp.hooks.strictjson import parse_strict
-from aweb_naapp.key_file import read_key_file
-from aweb_naapp.egress import EgressRefused, InternalDestinations
-from aweb_naapp.egress.addresses import check_internal_cidr
+from aweb_naapp_contracts.hooks.strictjson import parse_strict
+from aweb_naapp_contracts.key_file import read_key_file
+from aweb_naapp_contracts.egress import EgressRefused, InternalDestinations
+from aweb_naapp_contracts.egress.addresses import check_internal_cidr
 
 from aweb.app_registry import canonical_app_origin
 from aweb.service_errors import ServiceError
@@ -238,7 +238,7 @@ def get_awid_member_signing_keys() -> dict[str, bytes]:
 
     The JSON manifest contains paths, never key material. Relative paths are
     relative to that manifest. Each key file is read with
-    :func:`aweb_naapp.key_file.read_key_file`, so it passes the same file checks
+    :func:`aweb_naapp_contracts.key_file.read_key_file`, so it passes the same file checks
     as every other mounted key. Only ordinary member keys belong here, not the
     customer's team controller key. Certificates are registered at AWID.
     """

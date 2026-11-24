@@ -21,9 +21,9 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from aweb_naapp.hooks.owner_act import CORE_ACTS, hook_binding_subject
-from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
-from aweb_naapp.hooks.strictjson import Refused
+from aweb_naapp_contracts.hooks.owner_act import CORE_ACTS, hook_binding_subject
+from aweb_naapp_contracts.hooks.owner_act_nonces import OwnerActVerifier
+from aweb_naapp_contracts.hooks.strictjson import Refused
 from awid.external_authority import TXTOutcomeResolver
 from awid.registry import RegistryClient
 from awid.team_key_acts import TeamKeyMemo

@@ -3,7 +3,7 @@
 import os
 
 from fastapi import Request
-from aweb_naapp.client_identity import ClientIdentity
+from aweb_naapp_contracts.client_identity import ClientIdentity
 
 
 def request_client_address(request: Request | None) -> str:

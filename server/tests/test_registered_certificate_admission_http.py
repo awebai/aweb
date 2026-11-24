@@ -18,7 +18,7 @@ import dns.asyncresolver
 import httpx
 import pytest
 import uvicorn
-from aweb_naapp_testing.network import DnsServer
+from aweb_naapp_contracts_testing.network import DnsServer
 from awid.dns_verify import DomainAuthority, awid_txt_value
 from awid.registry import RegistryClient
 from awid_service.deps import get_domain_verifier

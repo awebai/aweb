@@ -18,7 +18,7 @@ from aweb.app_registry import (
     reserved_app_ids,
 )
 from aweb.installations import install_verified_manifest_on
-from aweb_naapp.manifest import load_manifest
+from aweb_naapp_contracts.manifest import load_manifest
 
 
 async def install_fixture_app(

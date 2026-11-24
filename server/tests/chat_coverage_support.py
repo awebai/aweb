@@ -1,7 +1,7 @@
 """Staged product migrations for pre-055 chat history tests."""
 
 import pytest_asyncio
-from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
+from aweb_naapp_contracts.hooks.owner_act_nonces import apply_owner_act_migrations
 from tests.product_migration_support import stage_aweb_upgrade
 
 COVERAGE_MIGRATION = "055_chat_conversation_coverage.sql"

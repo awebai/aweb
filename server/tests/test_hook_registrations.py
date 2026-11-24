@@ -29,7 +29,7 @@ from aweb_naapp.hooks.producer import (
     hook_targets,
 )
 from aweb_naapp.hooks.resolver import TeamServerRegistrations
-from aweb_naapp.hooks.strictjson import Refused
+from aweb_naapp_contracts.hooks.strictjson import Refused
 from aweb_naapp.outbox import StoredEvent, apply_outbox_migrations
 from aweb_naapp.runtime.app_credentials import AppCredentialSigner
 from aweb_naapp.runtime.app_keys import AppKey

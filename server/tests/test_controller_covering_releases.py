@@ -20,7 +20,7 @@ import httpx
 import pytest
 from nacl.signing import SigningKey
 
-from aweb_naapp_testing.production_registry import running_production_registry
+from aweb_naapp_contracts_testing.production_registry import running_production_registry
 from awid.controller_signing import ControllerDescriptor, parse_controller_request
 from awid.did import did_key_from_signing_key
 from awid.dns_verify import DnsVerificationError, DomainAuthority
