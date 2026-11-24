@@ -15,6 +15,10 @@ cannot place (the bare ``aweb_naapp.hooks`` package, or a split import with a
 comment inside) is printed with its line and left as it is, and the exit status
 is 1, so a person decides it. The pgdbm migration module name
 ``aweb_naapp_hooks`` is a different name and is never touched.
+
+A renamed line can outgrow the line length or the import order; run the
+project's import sorter (``ruff check --select I --fix``) on the changed files
+afterwards.
 """
 
 from __future__ import annotations

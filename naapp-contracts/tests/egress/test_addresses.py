@@ -14,7 +14,13 @@ from aweb_naapp_contracts.egress import (
     InternalDestinations,
     check_internal_cidr,
 )
-from aweb_naapp_contracts.egress.addresses import DENIED_IPV4, DENIED_IPV6, FLOOR, NAT64, PUBLIC_IPV6
+from aweb_naapp_contracts.egress.addresses import (
+    DENIED_IPV4,
+    DENIED_IPV6,
+    FLOOR,
+    NAT64,
+    PUBLIC_IPV6,
+)
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTORS = json.loads((AWEB_ROOT / "docs" / "vectors" / "egress-address-v1.json").read_text())
