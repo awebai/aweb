@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from contextlib import aclosing
 from datetime import datetime, timedelta, timezone
 from time import monotonic
@@ -11,6 +12,7 @@ import httpx
 import pytest
 from fastapi import Request
 from nacl.signing import SigningKey
+from prometheus_client import REGISTRY
 
 from awid.did import did_key_from_signing_key
 from awid.id_certificates import (
@@ -23,7 +25,10 @@ from awid.signing import canonical_json_bytes, sign_message
 
 from aweb import identity_auth_deps
 from aweb.application_state import application_registry_client
-from aweb.identity_binding import identity_binding_cache
+from aweb.identity_binding import (
+    identity_binding_cache,
+    observe_current_identity_binding,
+)
 from aweb.team_auth_deps import (
     IdentityEvidencePolicy,
     read_team_member_snapshot,
@@ -31,9 +36,11 @@ from aweb.team_auth_deps import (
     verify_request_certificate,
 )
 from messaging_actor_support import (
+    add_messaging_contact,
     admit_messaging_actor,
     issue_global_certificate_to_local_member,
     messaging_actor_headers,
+    set_messaging_inbound_mode,
 )
 from test_dashboard_privacy import TEAM, privacy_app
 from test_id_chain_request_auth import ROOT, _signed_fixture_certificate
@@ -215,10 +222,10 @@ async def serve_messages(env, sender, receiver, chain_header, *, bounded):
         if chain_header is not None:
             headers["X-AWID-ID-Chain"] = chain_header
         started = monotonic()
-        async with asyncio.timeout(3):
+        async with asyncio.timeout(5):
             response = await env.client.post(path, content=body, headers=headers)
         if bounded:
-            assert 0.9 <= monotonic() - started < 3
+            assert 1.9 <= monotonic() - started < 3
         results.append(response)
     return results
 
@@ -232,6 +239,8 @@ async def serve_messages(env, sender, receiver, chain_header, *, bounded):
         "outage",
         "hung",
         "chain-unavailable",
+        "chain-hung",
+        "chain-hung-wrong-subject",
         "superseded-own",
         "superseded-parent",
         "did-missing",
@@ -243,6 +252,7 @@ async def serve_messages(env, sender, receiver, chain_header, *, bounded):
 async def test_preferred_live_certificate_sender_preserves_authority_and_delivery(
     privacy_app,
     monkeypatch,
+    caplog,
     scenario,
 ):
     env = privacy_app
@@ -254,16 +264,23 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
         env, alias="global-sender", team_id=TEAM, address=f"{domain}/sender"
     )
     receiver = await admit_messaging_actor(
-        env, alias="local-receiver", team_id=TEAM, local=True
+        env, alias="receiver", team_id=TEAM, local=scenario != "outage"
     )
+    if scenario == "outage":
+        await set_messaging_inbound_mode(env, receiver, "contacts_only")
+        await add_messaging_contact(env, receiver, address=sender.address)
     superseded = scenario in ("superseded-own", "superseded-parent")
+    issuer_domain = f"issuer-{uuid4().hex[:8]}.test"
     chain = await registered_chain(
         env,
         registry,
         sender,
-        domain=f"issuer-{uuid4().hex[:8]}.test",
+        domain=issuer_domain,
         reissue=scenario if superseded else None,
     )
+    if scenario == "chain-hung-wrong-subject":
+        other = await admit_messaging_actor(env, alias="other-sender", team_id=TEAM)
+        chain = await registered_chain(env, registry, other, domain=issuer_domain)
     controller = await env.registry.ensure_namespace(domain=domain)
     if scenario == "withdrawn":
         await registry.delete_address(domain, "sender", controller)
@@ -306,9 +323,17 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
         team_name, team_domain = TEAM.split(":", 1)
         assert await cached.get_team(team_domain, team_name) is not None
         await cached.get_team_revocations(team_domain, team_name)
-        identity_binding_cache(
-            env.app.state
-        ).clear()  # Expire positive proof from connect.
+        binding_cache = identity_binding_cache(env.app.state)
+        binding_cache.clear()  # Expire positive proof from connect.
+        if scenario in ("chain-unavailable", "chain-hung", "chain-hung-wrong-subject"):
+            # Warm exactly the current binding, without acquiring ID status.
+            await observe_current_identity_binding(
+                cached,
+                binding_cache,
+                did_aw=sender.stable_id,
+                did_key=sender.did_key,
+                address=sender.address,
+            )
         live_kinds = mount_policy(env, monkeypatch)
         before = await sender_projection(env, sender)
         if superseded:
@@ -322,7 +347,9 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
             assert "aw id parent refresh" in connect.json()["message"]
         calls = len(env.registry.transport.calls)
         env.registry.transport.down = scenario == "outage"
-        env.registry.transport.delay = 10 if scenario == "hung" else 0
+        env.registry.transport.delay = (
+            10 if scenario in ("hung", "chain-hung", "chain-hung-wrong-subject") else 0
+        )
         if scenario in ("chain-unavailable", "did-missing"):
 
             def registry_fault(request, response):
@@ -348,6 +375,14 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
                 return None
 
             env.registry.transport.fault = registry_fault
+        reasons = ("address_missing", "unavailable", "timed_out", "chain_unavailable")
+        metric = "aweb_identity_evidence_fallbacks_total"
+        counters = {
+            reason: REGISTRY.get_sample_value(metric, {"reason": reason}) or 0
+            for reason in reasons
+        }
+        log_prefix = "Optional identity evidence fallback:"
+        caplog.set_level(logging.INFO, logger="aweb.team_auth_deps")
         try:
             mail, chat = await serve_messages(
                 env,
@@ -356,15 +391,38 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
                 "invalid!"
                 if scenario == "malformed"
                 else encode_id_chain_header(chain),
-                bounded=scenario == "hung",
+                bounded=scenario in ("hung", "chain-hung"),
             )
         finally:
             env.registry.transport.down = False
             env.registry.transport.delay = 0
             env.registry.transport.fault = None
+        expected_reason = {
+            "withdrawn": "address_missing",
+            "outage": "unavailable",
+            "hung": "timed_out",
+            "chain-unavailable": "chain_unavailable",
+            "chain-hung": "timed_out",
+        }.get(scenario)
+        expected_logs = (
+            [(logging.INFO, f"{log_prefix} team={TEAM} reason={expected_reason}")] * 2
+            if expected_reason else []
+        )
+        assert [
+            (record.levelno, record.getMessage())
+            for record in caplog.records
+            if record.name == "aweb.team_auth_deps" and record.getMessage().startswith(log_prefix)
+        ] == expected_logs
+        for reason in reasons:
+            current = REGISTRY.get_sample_value(metric, {"reason": reason}) or 0
+            assert current - counters[reason] == (2 if reason == expected_reason else 0)
         if scenario in ("outage", "hung"):
             aborted = env.registry.transport.calls[calls:]
             assert any(sender.stable_id in call.url.path for call in aborted)
+        if scenario == "chain-unavailable":
+            paths = [call.url.path for call in env.registry.transport.calls[calls:]]
+            assert any("id-certificates" in path for path in paths)
+            assert f"/v1/did/{sender.stable_id}/key" not in paths
         refusal = {
             "rotated": (403, "identity_binding_mismatch"),
             "reassigned": (403, "identity_binding_mismatch"),
@@ -372,7 +430,7 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
             "did-missing": (403, "identity_binding_mismatch"),
             "superseded-own": (403, "superseded_certificate"),
             "superseded-parent": (403, "superseded_certificate"),
-            "chain-unavailable": (503, "evidence_unavailable"),
+            "chain-hung-wrong-subject": (403, "subject_mismatch"),
         }.get(scenario)
         if refusal is not None:
             status, detail = refusal
@@ -413,15 +471,27 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
             if item["session_id"] == chat.json()["session_id"]
         )
         assert thread["last_from_stable_id"] == sender.stable_id
-        assert (thread["last_from_address"] or None) == (
-            sender.address if scenario == "live" else None
-        )
+        expected_address = None if scenario == "withdrawn" else sender.address
+        assert (thread["last_from_address"] or None) == expected_address
         item = received_chat.json()["messages"][0]
         for received in (received_mail.json(), inbox_item, item):
             assert received["from_stable_id"] == sender.stable_id
             assert received["id_chain"] == (chain if scenario == "live" else None)
-            assert (received["from_address"] or None) == (
-                sender.address if scenario == "live" else None
+            assert (received["from_address"] or None) == expected_address
+        if scenario == "withdrawn":
+            assert (
+                await env.db.fetch_value(
+                    "SELECT from_address FROM {{tables.messages}} WHERE message_id=$1",
+                    UUID(mail.json()["message_id"]),
+                )
+                == ""
+            )
+            assert (
+                await env.db.fetch_value(
+                    "SELECT from_address FROM {{tables.chat_messages}} WHERE message_id=$1",
+                    UUID(chat.json()["message_id"]),
+                )
+                == ""
             )
         if scenario != "live":
             assert before["address"] == sender.address

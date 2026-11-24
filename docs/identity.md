@@ -723,17 +723,23 @@ or grant subject; a grant session key does not become the subject's root key.
 
 For ordinary certificate routes, an embedding host may select
 `IdentityEvidencePolicy.PREFER_LIVE`. The native verifier attempts live
-identity binding and ID ancestry with a one-second evidence deadline, after
+identity binding and ID ancestry with a shared two-second evidence deadline, after
 the request signature, team certificate and its standing have passed.
 An address-not-found response or unavailable identity evidence can use the
 admitted member's previously verified stable DID only when its marker matches
-the signing key and its DID matches the binding under examination. The
-fallback supplies no verified address, kind or ID chain and does not update
-the member projection. When live binding succeeds, the existing ID-chain
-decision applies. A missing stable DID record, conflicting key or address,
-or malformed claim remains a refusal. Connect, identity-only and grant
-authorization retain strict verification. After a superseded-chain Connect refusal, run
+the signing key and its DID matches the binding under examination. During
+binding unavailability it retains the stored, verified address. A definite
+address absence withholds the address. Neither fallback updates the member
+projection or supplies a kind or ID chain. With a successful live binding
+and unavailable ID ancestry, the request retains that binding without kind
+or a chain. A superseded, stale-issuer, revoked or malformed chain remains a
+refusal, as do a missing stable DID record, conflicting key or address, and
+malformed binding claims. Connect, identity-only and grant authorization
+retain strict verification. After a superseded-chain Connect refusal, run
 `aw id parent refresh` in the identity home and reconnect.
+An admitted fallback produces one INFO entry with the team and its reason.
+`aweb_identity_evidence_fallbacks_total` counts by reason only:
+`address_missing`, `unavailable`, `timed_out`, or `chain_unavailable`.
 
 `agents.did_aw_verified_key` records the key against which a projection was
 verified. Historical rows start with a null marker. Stable-DID and global-address
