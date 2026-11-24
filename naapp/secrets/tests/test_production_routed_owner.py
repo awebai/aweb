@@ -10,7 +10,7 @@ import ssl
 import subprocess
 import sys
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from ipaddress import ip_network
@@ -36,7 +36,7 @@ from aweb_naapp_testing.server import (
     running_coordination_registry,
 )
 from aweb_naapp_testing.smtp import SmtpServer
-from awid_service.testing import SERVICE_TOKEN
+from awid_service.testing import SERVICE_TOKEN, PostgresNotSelected, selected_test_database_config
 from nacl.signing import SigningKey
 from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
 from service_server import Listener, serving
@@ -256,7 +256,8 @@ class _RoutedDatabases:
         )
 
 
-async def _check_capacity(config: DatabaseTestConfig, worlds: int) -> None:
+async def _select_database(worlds: int) -> DatabaseTestConfig:
+    config = selected_test_database_config()
     # Each owned database retains one pgdbm admin connection (its create/drop
     # calls are serial) and one provisioning connection. Both Logs databases
     # have a runtime pool. Each Secrets database also has a prepared-role pool.
@@ -285,6 +286,7 @@ async def _check_capacity(config: DatabaseTestConfig, worlds: int) -> None:
     assert available >= required, (
         f"routed owner tests need {required} PostgreSQL connections; {available} available"
     )
+    return config
 
 
 @dataclass(frozen=True)
@@ -363,12 +365,12 @@ async def _start_app(
     return _RoutedApp(service, cast(ServiceSettings, service.runtime.settings), smtp)
 
 
-@pytest_asyncio.fixture(scope="module")
-async def routed_owner_batch(request, tmp_path_factory) -> AsyncIterator[_RoutedOwnerBatch]:
-    keys = _selected_worlds(request)
+@asynccontextmanager
+async def _routed_owner_batch(
+    keys: list[str], tmp_path_factory: pytest.TempPathFactory
+) -> AsyncIterator[_RoutedOwnerBatch]:
     assert keys, "the routed owner fixture has no selected cases"
-    db_config = DatabaseTestConfig.from_env()
-    await _check_capacity(db_config, len(keys))
+    db_config = await _select_database(len(keys))
     directory = tmp_path_factory.mktemp("routed-owner")
     host = local_address()
     network = ip_network(f"{host}/32")
@@ -482,6 +484,12 @@ async def routed_owner_batch(request, tmp_path_factory) -> AsyncIterator[_Routed
         dns.close()
 
 
+@pytest_asyncio.fixture(scope="module")
+async def routed_owner_batch(request, tmp_path_factory) -> AsyncIterator[_RoutedOwnerBatch]:
+    async with _routed_owner_batch(_selected_worlds(request), tmp_path_factory) as batch:
+        yield batch
+
+
 async def _enrolled_owner(batch: _RoutedOwnerBatch, key: str, client: httpx.AsyncClient):
     world = batch.installations[key]
     app = world.app
@@ -550,3 +558,21 @@ async def test_product_setup_yields_a_signed_in_owner_of_the_installed_generatio
     assert admitted.installation_id == world.installation["installation_id"]
     assert admitted.generation == world.installation["generation"]
     assert (await world.client.get("/", follow_redirects=False)).status_code == 200
+
+
+@pytest.mark.parametrize("missing", ["TEST_DB_HOST", "TEST_DB_PORT"])
+async def test_routed_owner_refuses_an_unnamed_database_before_connecting(
+    monkeypatch, tmp_path_factory, missing
+):
+    monkeypatch.setenv("TEST_DB_HOST", "127.0.0.1")
+    monkeypatch.setenv("TEST_DB_PORT", "5432")
+    monkeypatch.delenv(missing)
+
+    async def refuse_network(*args, **kwargs):
+        pytest.fail("routed owner capacity check attempted a PostgreSQL connection")
+
+    monkeypatch.setattr(asyncpg, "connect", refuse_network)
+    monkeypatch.setattr(asyncpg, "create_pool", refuse_network)
+    with pytest.raises(PostgresNotSelected, match=f"{missing} unset"):
+        async with _routed_owner_batch([_VALIDATION], tmp_path_factory):
+            pytest.fail("routed owner batch accepted an unnamed PostgreSQL server")
