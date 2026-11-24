@@ -24,15 +24,16 @@ type apiKeyMemberConnection struct {
 func connectAPIKeyInitializedMember(input apiKeyMemberConnection) (connectOutput, error) {
 	req := input.Request
 	out, err := initCertificateConnectWithOptions(req.WorkingDir, input.ServerURL, certificateConnectOptions{
-		TeamKeyObservation:    input.TeamKeyObservation,
-		TeamRegistryURL:       input.TeamRegistryURL,
-		ContextFile:           req.ContextFile,
-		EncryptionPublication: req.EncryptionPublication,
-		Role:                  strings.TrimSpace(req.Role),
-		HumanName:             strings.TrimSpace(req.HumanName),
-		AgentType:             strings.TrimSpace(req.AgentType),
-		APIKey:                strings.TrimSpace(input.WorkspaceAPIKey),
-		IdentityHome:          strings.TrimSpace(req.IdentityHome),
+		TeamKeyObservation:     input.TeamKeyObservation,
+		TeamRegistryURL:        input.TeamRegistryURL,
+		RegistryOperatorOrigin: operatorRegistryOrigin(input.TeamRegistryURL, ""),
+		ContextFile:            req.ContextFile,
+		EncryptionPublication:  req.EncryptionPublication,
+		Role:                   strings.TrimSpace(req.Role),
+		HumanName:              strings.TrimSpace(req.HumanName),
+		AgentType:              strings.TrimSpace(req.AgentType),
+		APIKey:                 strings.TrimSpace(input.WorkspaceAPIKey),
+		IdentityHome:           strings.TrimSpace(req.IdentityHome),
 	})
 	if err != nil {
 		var connected *connectedMemberSetupError

@@ -39,6 +39,8 @@ type receivedMessage struct {
 	contentMode             string
 	messageVersion          int
 	encrypted               *E2EEMessageEnvelope
+	// Only the authenticated managed mail reader can supply this projection.
+	providerDecryptable     *bool
 	signature               string
 	signingKeyID            string
 	signedPayload           string
@@ -67,10 +69,10 @@ func (r *receivedMessage) isEncrypted() bool {
 // verifyReceived sets a received message's verification status and its
 // authenticated sender and recipient fields. In order: a message read from a
 // conversation must belong to it; the displayed fields
-// must be the signed ones before signed metadata is projected over them; an
-// encrypted message is decrypted and its outer identifiers must be the inner
-// ones; the signature and its conversation claim are verified; the message is
-// bound to its signed recipient; and only then is the sender's trust looked
+// must be the signed ones before signed metadata is projected over them.
+// For encrypted mail and chat, the envelope and its identifiers must verify
+// before using locally decrypted content or a managed bridge's opened mail.
+// The message is bound to its signed recipient, and only then is the sender's trust looked
 // up, so a message signed for someone else never reaches the roster or the
 // pin store. An error means the message could not be read at all.
 func (c *Client) verifyReceived(ctx context.Context, r *receivedMessage) error {
@@ -128,11 +130,13 @@ func (c *Client) receivedDisplayMatches(r *receivedMessage) bool {
 	})
 }
 
-// decryptReceived decrypts an encrypted message and takes its content and
-// authenticated identifiers from the envelope. It reports false when the
-// outer identifiers disagree with the inner ones: the message is then failed
-// and keeps its outer projection.
+// decryptReceived obtains readable encrypted content and authenticated
+// identifiers. A failed evidence check leaves the message unverified.
 func (c *Client) decryptReceived(ctx context.Context, r *receivedMessage) (string, bool, error) {
+	if r.providerDecryptable != nil {
+		teamID, verified := c.verifyProviderOpenedMail(r)
+		return teamID, verified, nil
+	}
 	if r.encrypted == nil {
 		return "", false, fmt.Errorf("encrypted %s message is missing its encrypted envelope", r.kind)
 	}
@@ -149,22 +153,46 @@ func (c *Client) decryptReceived(ctx context.Context, r *receivedMessage) (strin
 	}
 	r.body = plain.Body
 	r.attachments, r.attachmentsAvailable = DecodeAttachmentContent(plain.Attachments)
-	r.applyE2EEPlaintextMetadata(plain)
+	r.applyEncryptedIdentityMetadata(plain.From, plain.Recipients)
 	r.status = Verified
 	return plain.From.TeamID, true, nil
 }
 
-func (r *receivedMessage) applyE2EEPlaintextMetadata(plain *E2EEInnerPayload) {
-	if did := strings.TrimSpace(plain.From.DID); did != "" {
+// The provider attests that it opened the displayed body under the hosted
+// recipient key. The envelope independently authenticates the original sender
+// and binds that encrypted message to the gateway and requested conversation.
+func (c *Client) verifyProviderOpenedMail(r *receivedMessage) (string, bool) {
+	r.status = Failed
+	r.attachmentsAvailable = false
+	envelope := r.encrypted
+	if !*r.providerDecryptable || r.contentMode != ContentModeEncryptedV2 ||
+		verifyE2EEMessageEnvelope(envelope) != nil || envelope.Kind != string(receivedMail) ||
+		envelope.MessageID == "" || envelope.MessageID != r.messageID ||
+		envelope.ConversationID != r.requestedConversationID || len(envelope.Recipients) != 1 {
+		return "", false
+	}
+	recipient := envelope.Recipients[0]
+	if c.stableID == "" || recipient.StableID != c.stableID || strings.TrimSpace(recipient.DID) == "" {
+		return "", false
+	}
+	r.applyEncryptedIdentityMetadata(envelope.From, []E2EEIdentityRef{{
+		DID: recipient.DID, StableID: recipient.StableID, Address: recipient.Address,
+	}})
+	r.status = Verified
+	return envelope.From.TeamID, true
+}
+
+func (r *receivedMessage) applyEncryptedIdentityMetadata(from E2EEIdentityRef, recipients []E2EEIdentityRef) {
+	if did := strings.TrimSpace(from.DID); did != "" {
 		r.fromDID = did
 	}
-	r.fromStableID = strings.TrimSpace(plain.From.StableID)
+	r.fromStableID = strings.TrimSpace(from.StableID)
 	// An authenticated empty address is meaningful; never retain a projected
 	// alias/address here. Server-attested membership remains separate.
-	r.fromAddress = strings.TrimSpace(plain.From.Address)
+	r.fromAddress = strings.TrimSpace(from.Address)
 	// A single authenticated recipient is the message's recipient binding.
-	if len(plain.Recipients) == 1 {
-		recipient := plain.Recipients[0]
+	if len(recipients) == 1 {
+		recipient := recipients[0]
 		r.toDID = strings.TrimSpace(recipient.DID)
 		r.toStableID = strings.TrimSpace(recipient.StableID)
 		if address := strings.TrimSpace(recipient.Address); address != "" {

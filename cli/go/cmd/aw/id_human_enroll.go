@@ -304,6 +304,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 	}
 	registry := newAWIDRegistryClient(nil, resolver)
 	registry.DefaultRegistryURL = registryURL
+	trustRecordedRegistryOrigin(registry.Resolver, registryURL, h.record.RegistryOperatorOrigin)
 	issuerKey, err := registry.IDNamespaceController(ctx, h.record.Domain, registryURL, authority)
 	if err != nil {
 		return err

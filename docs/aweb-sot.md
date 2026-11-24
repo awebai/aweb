@@ -1099,7 +1099,7 @@ transient `did:key`.
 |-------|-------|
 | `GET /v1/agents/{alias}/events` | SSE event stream |
 | `GET /v1/status` | Team status |
-| `GET /v1/status/stream` | Team coordination SSE. Message and chat events are restricted to the authenticated actor's own active workspaces. Native certificate streams check membership standing every 30 seconds and close on definite membership loss. A temporary AWID outage keeps the admitted connection open while its local membership and checked key still match. Native certificate and grant connections close within 300 seconds, or at the grant's earlier expiry. Embedded public readers receive no messaging events. |
+| `GET /v1/status/stream` | Team coordination SSE. Message and chat events are restricted to the authenticated actor's own active workspaces. Certificate-authenticated streams check membership standing every 30 seconds and close on definite membership loss. A temporary AWID outage keeps the admitted connection open while its local membership and checked key still match. Certificate and grant connections close within 300 seconds, or at the grant's earlier expiry. Embedded public readers receive no messaging events. |
 | `POST /v1/agents/heartbeat` | Keep-alive |
 | `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |
@@ -2212,8 +2212,9 @@ and start the application. Read-only sender-membership projections retain
 
 ### Current certificate acceptance and stream lifetime
 
-A verified certificate's checked team key is retained as
-`verified_team_did_key` in the native authenticated context. Acceptance checks
+A certificate verifier sets `certificate_verified` on the authenticated
+context after admission and retains its checked controller key as
+`verified_team_did_key`. Acceptance checks
 the current-member owner under the same team/member transaction locks as any
 acceptance or projection writes. A cached key or a host snapshot cannot
 substitute for that check, and a missing checked key cannot be filled from the
@@ -2229,9 +2230,13 @@ deadline and the checks for new stream admission still apply. Readmitting
 the member under a new certificate does not change
 the credential that opened the old stream. Independent identity-only thread
 participation remains governed by the Identity and Messaging Contract.
-The native stream recheck applies to a credential verified and accepted on
-the native certificate path. A proxy identity keeps its own admission when
-its transport supplies an opaque certificate identifier.
+The synchronous agent event stream opening check can use the exact admitted
+member from the same request and still checks registry standing. Each later
+check reads current membership again.
+Embedding hosts set `certificate_verified` and `verified_team_did_key` after
+certificate verification and admission. API-key and proxy credentials retain
+their own admission with `certificate_verified` false, including when their
+transport supplies an opaque certificate identifier.
 
 Revocation without a key rotation removes authentication and delivery standing.
 Roster, assignee, room fan-out and alias projections use the admitted member

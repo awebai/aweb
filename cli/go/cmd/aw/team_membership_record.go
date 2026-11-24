@@ -46,6 +46,8 @@ type acceptedTeamMembershipRequest struct {
 	AwebURL      string
 	Activation   membershipActivation
 	Binding      membershipWorkspaceBinding
+
+	RegistryOperatorOrigin string
 }
 
 type teamMembershipStateUpdate struct {
@@ -55,6 +57,8 @@ type teamMembershipStateUpdate struct {
 	RegistryURL string
 	AwebURL     string
 	Activation  membershipActivation
+
+	RegistryOperatorOrigin string
 }
 
 // recordAcceptedTeamMembership records the accepted certificate in the selected
@@ -70,12 +74,13 @@ func recordAcceptedTeamMembership(request acceptedTeamMembershipRequest) error {
 		return errors.New("membership workspace binding is unknown")
 	}
 	update := teamMembershipStateUpdate{
-		Location:    teamMembershipLocation{WorkingDir: request.WorkingDir, IdentityHome: identityHomeRoot},
-		Output:      request.Output,
-		Certificate: request.Certificate,
-		RegistryURL: request.RegistryURL,
-		AwebURL:     request.AwebURL,
-		Activation:  request.Activation,
+		Location:               teamMembershipLocation{WorkingDir: request.WorkingDir, IdentityHome: identityHomeRoot},
+		Output:                 request.Output,
+		Certificate:            request.Certificate,
+		RegistryURL:            request.RegistryURL,
+		RegistryOperatorOrigin: request.RegistryOperatorOrigin,
+		AwebURL:                request.AwebURL,
+		Activation:             request.Activation,
 	}
 	if err := update.validate(); err != nil {
 		return err
@@ -116,11 +121,15 @@ func upsertAcceptedTeamMembershipState(request teamMembershipStateUpdate) error 
 		teamState = &awconfig.TeamState{}
 	}
 	registryURL, awebURL := request.RegistryURL, request.AwebURL
+	origin := request.RegistryOperatorOrigin
 	keyEvidence := output.TeamKey
 	joinedAt := strings.TrimSpace(cert.IssuedAt)
 	if existing := teamState.Membership(strings.TrimSpace(output.TeamID)); existing != nil {
 		if strings.TrimSpace(registryURL) == "" {
 			registryURL = strings.TrimSpace(existing.RegistryURL)
+		}
+		if origin == "" {
+			origin = existing.RegistryOperatorOrigin
 		}
 		if strings.TrimSpace(awebURL) == "" {
 			awebURL = strings.TrimSpace(existing.AwebURL)
@@ -137,6 +146,7 @@ func upsertAcceptedTeamMembershipState(request teamMembershipStateUpdate) error 
 		TeamID:  strings.TrimSpace(output.TeamID), Alias: strings.TrimSpace(output.Alias),
 		CertPath: filepath.ToSlash(strings.TrimSpace(output.CertPath)), JoinedAt: joinedAt,
 		RegistryURL: strings.TrimSpace(registryURL), AwebURL: strings.TrimSpace(awebURL),
+		RegistryOperatorOrigin: matchingRegistryOrigin(registryURL, origin),
 	})
 	if request.Activation == membershipMakeActive || strings.TrimSpace(teamState.ActiveTeam) == "" {
 		teamState.ActiveTeam = strings.TrimSpace(output.TeamID)

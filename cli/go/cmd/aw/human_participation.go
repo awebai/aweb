@@ -365,6 +365,7 @@ func runHumanFetchCert(cmd *cobra.Command) error {
 		return err
 	}
 	registryURL := firstNonEmpty(teamFetchCertRegistry, h.record.RegistryURL)
+	trustRecordedRegistryOrigin(registry.Resolver, registryURL, h.record.RegistryOperatorOrigin)
 	if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
 		return err
 	}
@@ -393,6 +394,7 @@ func runHumanFetchCert(cmd *cobra.Command) error {
 	m.CertPath = filepath.ToSlash(rel)
 	m.JoinedAt = cert.IssuedAt
 	m.RegistryURL = registryURL
+	m.RegistryOperatorOrigin = operatorRegistryOrigin(registryURL, firstNonEmpty(m.RegistryOperatorOrigin, h.record.RegistryOperatorOrigin))
 	if state.ActiveTeam == "" {
 		state.ActiveTeam = teamID
 	}

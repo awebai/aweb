@@ -13,9 +13,8 @@ from aweb.auth_context import GrantContext as GrantContext
 from aweb.auth_context import (
     IdentityAuth,
     MessagingAuth,
-    NativeCertificateIdentity,
-    NativeCertificateMessagingAuth,
     TeamIdentity,
+    has_verified_team_certificate,
 )
 from aweb.auth_metrics import count_legacy_request_auth
 from aweb.deps import get_db
@@ -262,9 +261,8 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
 
     if request.headers.get("X-AWID-Team-Certificate"):
         team_identity: TeamIdentity = await get_team_identity(request, db)
-        native_certificate = isinstance(team_identity, NativeCertificateIdentity)
-        messaging_auth = NativeCertificateMessagingAuth if native_certificate else MessagingAuth
-        return messaging_auth(
+        certificate_verified = has_verified_team_certificate(team_identity)
+        return MessagingAuth(
             did_key=team_identity.did_key,
             did_aw=team_identity.did_aw or None,
             address=team_identity.address or None,
@@ -274,8 +272,9 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             identity_scope=team_identity.identity_scope,
             certificate_id=team_identity.certificate_id,
             verified_team_did_key=(
-                team_identity.verified_team_did_key if native_certificate else None
+                team_identity.verified_team_did_key if certificate_verified else None
             ),
+            certificate_verified=certificate_verified,
             verified_team_id=team_identity.team_id,
             id_chain=getattr(request.state, "id_chain", None),
             address_resolution=team_identity.address_resolution,

@@ -1088,8 +1088,6 @@ async def _resolve_named_recipients(
     recipient_binding: RecipientIdentityBinding | None = None,
 ) -> list[Mapping[str, Any]]:
     actor_dids = participant_dids(auth)
-    actor_did = actor_dids[0] if actor_dids else ""
-    sender_address = _sender_address(auth)
     resolved: dict[str, Mapping[str, Any]] = {}
     row: Mapping[str, Any] | None
 
@@ -1172,8 +1170,20 @@ async def _resolve_named_recipients(
             detail="Self-chat is not supported. Choose another recipient and retry.",
         )
 
-    await require_agent_chat(db, list(resolved.values()))
-    for row in resolved.values():
+    return list(resolved.values())
+
+
+async def _preflight_named_chat(
+    db,
+    *,
+    auth: MessagingAuth,
+    runtime: MessagingRuntime,
+    recipients: list[Mapping[str, Any]],
+) -> None:
+    await require_agent_chat(db, recipients)
+    actor_did = participant_dids(auth)[0]
+    sender_address = _sender_address(auth)
+    for row in recipients:
         if row.get("external"):
             continue
         try:
@@ -1189,8 +1199,6 @@ async def _resolve_named_recipients(
             raise
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
             raise DeliveryRefusal(status_code=exc.status_code, detail=exc.detail) from exc
-
-    return list(resolved.values())
 
 
 async def _resolve_session_recipient_rows(
@@ -1389,6 +1397,17 @@ async def resolve_chat_targets(
         signature=selector.signature,
         recipient_binding=recipient_binding,
     )
+    new_local_plaintext_send = (
+        session_selection is ChatSessionSelection.REQUEST_DEFAULT
+        and not selector.to_addresses
+        and not any(row.get("external") or _target_delivery_origin(row) for row in target_rows)
+        and selector.session_id is None
+        and selector.message_id is None
+        and selector.signature is None
+        and not _payload_is_encrypted(selector)
+    )
+    if not new_local_plaintext_send:
+        await _preflight_named_chat(db, auth=auth, runtime=runtime, recipients=target_rows)
     if session_selection is ChatSessionSelection.REQUEST_DEFAULT:
         return ChatTarget(recipients=target_rows, source=source)
     if len(target_rows) != 1:
@@ -1563,12 +1582,18 @@ async def _authorize_local_chat_commit(
         address=_sender_address(auth),
         verified_dids=tuple(auth_dids(auth)),
     )
-    for recipient in target.recipients:
-        policies = await policy_rows_for_participant(
+    policy_dids = [row.did or row.did_aw or row.did_key or "" for row in target.recipients]
+    locked_policy_rows = {}
+    for did in dict.fromkeys(policy_dids):
+        locked_policy_rows[did] = await policy_rows_for_participant(
             db,
-            {"did": recipient.did or recipient.did_aw or recipient.did_key},
+            {"did": did},
             read_lock=MemberReadLock.SHARE,
         )
+    if attempt is DeliveryAttempt.FIRST_CONTACT:
+        await require_agent_chat(db, target.recipients, locked_policy_rows=locked_policy_rows)
+    for recipient, did in zip(target.recipients, policy_dids, strict=True):
+        policies = locked_policy_rows[did]
         selected = policies if attempt is DeliveryAttempt.STORED_ROUTE else (recipient,)
         for policy in selected:
             await authorize_delivery(
@@ -1578,7 +1603,8 @@ async def _authorize_local_chat_commit(
                 attempt=attempt,
                 registry_client=runtime.registry_client,
             )
-    await require_agent_chat(db, target.recipients)
+    if attempt is DeliveryAttempt.STORED_ROUTE:
+        await require_agent_chat(db, target.recipients, locked_policy_rows=locked_policy_rows)
 
 
 async def _send_local_chat(
@@ -1661,7 +1687,9 @@ async def _send_to_named_recipients(
 ) -> SentChat:
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0]
-    actor_agent = await resolve_actor_agent(db, actor_dids, team_id=auth.team_id)
+    actor_agent = None
+    if not auth.agent_id or not ((auth.alias or "").strip() or (auth.address or "").strip()):
+        actor_agent = await resolve_actor_agent(db, actor_dids, team_id=auth.team_id)
     actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
     actor_alias = _actor_alias(auth, actor_agent)
     sender_address = _sender_address(auth)

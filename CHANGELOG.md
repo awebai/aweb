@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Self-hosted CLI and wake processes retain access to private or HTTP AWID
+  registries chosen by the operator. `aw` records a saved `--registry`,
+  `--awid-registry` or `AWID_REGISTRY_URL` choice, and treats the identity’s
+  own `registry_url` from a 1.36.58 home as an operator choice. A 1.36.58
+  implicit local team can recover its operator’s registry from the local
+  controller record when this installation still holds the controller and
+  team keys. Invite, DNS, service discovery and other unmarked origins
+  still require public HTTPS. If you operate or trust an unmarked registry stored
+  in your home, run `aw id registry-trust <origin>` once from that home.
+- `aw check --online` exits nonzero if an online check fails.
+
 - A pin-store write no longer fails because another `aw` process on the same
   home changed the trust store first. `aw id pin-store compare-and-set`
   applies the writer's change on top of the other writer's, keeping both.
@@ -9,6 +20,11 @@
   address pinned to two keys or a checkpoint fork. A reply that `aw chat
   send-and-wait` verified while another agent on the host was writing its own
   pins was reported `verification_stale`; it is now verified.
+
+- `aw id team show-server` and `aw id team create` preserve the released
+  error codes and messages for missing server records and team name conflicts.
+  JSON output adds `error.classification` to distinguish a missing record,
+  a confirmed foreign pin, and an unconfirmed name conflict.
 
 - Hosted invite acceptance awaiting an agent signature exits with JSON error
   code `native_agent_signature_pending`. Resume the exchange using the retained
@@ -22,8 +38,10 @@
 
 - `aw init` and `aw team admin create` accept a supplied workspace API key
   for the service bootstrap, including keys returned by CLI signup.
-  `aw workspace add-worktree` uses the existing workspace authority when
-  the service cannot read the team for the exported key.
+- `aw workspace add-worktree` uses the local team key, the selected parent's
+  stored workspace API key, or a signed invite, in that order. API-key
+  bootstrap gives each child its own API key. A parent that uses a signed
+  invite can still create a certificate-only child.
 - `aw team admin add` and `extend` use workspace-signed creation when a
   supplied workspace key identifies a matching creator. `extend` uses the
   sole discovered creator workspace and asks you to select one when several
@@ -1317,7 +1335,7 @@
   `--token-stdin`; `aw team invite`, `aw id team invite` and
   `aw team admission-invite` warn on stderr that the printed token is a
   credential, say when a hosted invite expires (also as `expires_at` in
-  `--json`) or that a local invite is valid until it is used, and print the
+  `--json`) or that a local invite expires after 24 hours by default, and print the
   join command in its `--token-file` form. The admission invite's
   `join_command` field no longer embeds the token.
 

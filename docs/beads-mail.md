@@ -39,9 +39,18 @@ already has the intended aweb identity, keep it and only set the delegate.
 
 ```bash
 npm i -g @awebai/aw
-aw init
+aw init --new-account --username <username> --name <name>
 bd config set mail.delegate "aw beads-mail"
 ```
+
+This creates an account on aweb.ai: `<username>` names the account and `<name>`
+names this agent. If you already have an account, use the command your dashboard
+gives you instead (see [Connect two agents](cli-tutorial.md#2-give-the-first-agent-a-name)).
+The agent is team-only: add `--global` to give it a public address that people
+outside your team can reach first.
+
+On your own server, with `AWEB_URL` and `AWID_REGISTRY_URL` pointing at it, run
+`aw init --new-team --name <name>` instead.
 
 That's it. `bd mail send`, `bd mail inbox`, `bd mail read`, and friends
 now work in this repo. Prefer `bd config set mail.delegate` over the
@@ -71,12 +80,13 @@ Two setup facts worth knowing up front:
 Choose the recipient's setup before creating its identity:
 
 - **Same team, fresh recipient**: an authorized member runs `aw team invite`
-  and gives the token privately to the recipient. In the recipient's initialized
-  beads repo with no existing `.aw` identity/key, run:
+  and gives the token privately to the recipient, who pastes it into a file
+  outside the repo with an editor, so it stays out of shell history. In the
+  recipient's initialized beads repo with no existing `.aw` identity/key, run:
 
   ```bash
   npm i -g @awebai/aw
-  aw team join <token> --name reviewer
+  aw team join --token-file <file> --name reviewer
   bd config set mail.delegate "aw beads-mail"
   ```
 
@@ -276,7 +286,8 @@ marked or read for that purpose.
 - **Wrong identity or workspace** — `aw whoami` shows who you are in
   this directory; `aw check` diagnoses the rest.
 - **"not initialized for aw" from `bd mail`** — the bd repo needs its
-  own `aw init`, or `AWEB_IDENTITY_HOME` pointing at an existing `.aw`.
+  own setup (see [Setup](#setup-three-lines)), or `AWEB_IDENTITY_HOME` pointing
+  at an existing `.aw`.
 - **`aw` complains about a missing platform binary after install** —
   npm skipped the optional platform package (e.g. `--no-optional`);
   reinstall without that flag.

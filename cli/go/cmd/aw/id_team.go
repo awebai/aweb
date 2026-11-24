@@ -1454,13 +1454,10 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	workspacePath, err := awconfig.IdentityHomePath(home, "workspace.yaml")
-	if err != nil {
-		return err
-	}
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read workspace binding: %w; repair the selected home's workspace.yaml before listing its bindings", err)
+	// The binding only supplies optional coordinates. Team state owns the list.
+	var workspace *awconfig.WorktreeWorkspace
+	if workspacePath, err := awconfig.IdentityHomePath(home, "workspace.yaml"); err == nil {
+		workspace, _ = awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
 	}
 
 	items := make([]teamListItem, 0, len(teamState.Memberships))
@@ -1715,7 +1712,7 @@ func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTe
 
 	decoded, err := awconfig.DecodeInviteToken(token)
 	if err != nil {
-		return nil, nativeInviteRenewalRefusal(err)
+		return nil, err
 	}
 
 	invite, err := awconfig.LoadTeamInvite(decoded.InviteID)
@@ -3731,15 +3728,16 @@ func ensureLocalTeamRegistered(
 
 	_, err = registry.CreateTeam(ctx, registryURL, domain, name, strings.TrimSpace(displayName), teamDIDKey, controllerKey)
 	if err != nil {
+		createErr := fmt.Errorf("create team at registry: %w", err)
 		if code, ok := registryStatusCode(err); !ok || code != http.StatusConflict {
-			return nil, fmt.Errorf("create team at registry: %w", err)
+			return nil, createErr
 		}
 		existingTeam, getErr := registry.GetTeam(ctx, registryURL, domain, name, teamPriv)
 		if awid.IsTeamPrivateError(getErr) {
 			// A private team refuses this read, signed with teamPriv, only
 			// when teamPriv is neither its key nor a member's: the registry
 			// pins another key.
-			taken := withErrorCode(codeTeamNameTaken, fmt.Errorf("create team at registry: %w\nRestore this team's controller key to reuse it, or choose another --name.", err))
+			taken := withErrorClassification(codeTeamNameTaken, createErr)
 			if created {
 				if removeErr := awconfig.RemoveTeamKey(domain, name, teamPub); removeErr != nil {
 					return nil, fmt.Errorf("%w. The unregistered team key this run saved was kept: %v", taken, removeErr)
@@ -3753,15 +3751,14 @@ func ensureLocalTeamRegistered(
 			// may be the registered one (another run here registered it
 			// first), so it is set aside, never destroyed, and never read as
 			// the team key until a read settles it.
-			aside := ""
+			unconfirmed := withErrorClassification(codeTeamNameUnconfirmed, createErr)
+			debugLog("read team %s/%s after create conflict: %v", domain, name, getErr)
 			if created {
-				path, asideErr := awconfig.SetAsideUnconfirmedTeamKey(domain, name, teamPub)
-				if asideErr != nil {
-					return nil, fmt.Errorf("%w. The team key this run saved could not be set aside: %v", unconfirmedTeamNameError(domain, name, "", getErr), asideErr)
+				if _, asideErr := awconfig.SetAsideUnconfirmedTeamKey(domain, name, teamPub); asideErr != nil {
+					return nil, fmt.Errorf("%w. The team key this run saved could not be set aside: %v", unconfirmed, asideErr)
 				}
-				aside = path
 			}
-			return nil, unconfirmedTeamNameError(domain, name, aside, getErr)
+			return nil, unconfirmed
 		}
 		if strings.TrimSpace(existingTeam.TeamDIDKey) != teamDIDKey {
 			pinned := teamPinnedElsewhereError(domain, name, existingTeam.TeamDIDKey)
@@ -3807,7 +3804,7 @@ func settleUnconfirmedTeamKey(ctx context.Context, registry *awid.RegistryClient
 	case awid.IsTeamPrivateError(err):
 		// A private team refuses a read signed with the set-aside key only
 		// when that key is neither its key nor a member's.
-		pinned = withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is private and refuses a read signed with the team key this machine set aside, so another key holds it: %w\nRestore this team's controller key to reuse it, or choose another --name.", domain, name, err))
+		pinned = withErrorClassification(codeTeamNameTaken, fmt.Errorf("team %s/%s is private and refuses a read signed with the team key this machine set aside, so another key holds it: %w\nRestore this team's controller key to reuse it, or choose another --name.", domain, name, err))
 	case err != nil:
 		return unconfirmedTeamNameError(domain, name, aside, err)
 	case strings.TrimSpace(team.TeamDIDKey) == awid.ComputeDIDKey(pub):
@@ -3829,13 +3826,13 @@ func unconfirmedTeamNameError(domain, name, aside string, readErr error) error {
 	if aside != "" {
 		held = fmt.Sprintf("\nThe team key this machine created is set aside at %s and is not used as the team key.", aside)
 	}
-	return withErrorCode(codeTeamNameUnconfirmed, fmt.Errorf("team %s/%s already exists at the registry, and reading it to confirm which key holds it failed: %w%s\nRun the same command again once the registry answers: aw restores a set-aside key the registry pins and removes one it does not.", domain, name, readErr, held))
+	return withErrorClassification(codeTeamNameUnconfirmed, fmt.Errorf("team %s/%s already exists at the registry, and reading it to confirm which key holds it failed: %w%s\nRun the same command again once the registry answers: aw restores a set-aside key the registry pins and removes one it does not.", domain, name, readErr, held))
 }
 
 // teamPinnedElsewhereError is the refusal when the registry pins a team's
 // name to another key.
 func teamPinnedElsewhereError(domain, name, pinnedDIDKey string) error {
-	return withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is already pinned to %s\nRestore its current controller key to reuse this team, or choose another --name.", domain, name, pinnedDIDKey))
+	return withErrorClassification(codeTeamNameTaken, fmt.Errorf("team %s/%s is already pinned to %s", domain, name, pinnedDIDKey))
 }
 
 // teamKeyForCreate returns the team key to register: the key already saved

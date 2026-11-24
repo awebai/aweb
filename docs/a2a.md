@@ -985,6 +985,12 @@ failed bridge task send is audited.
 
 Reply messages pass through aw mail's signature, display-binding, and sender
 verification code, including messages fetched through a managed provider.
+For encrypted mail the authenticated managed bridge may supply a readable
+projection after opening the original envelope for its hosted gateway identity.
+The gateway verifies the envelope signature, message and requested conversation
+IDs, and the signed recipient against its configured gateway identity before
+using the provider's opened content. The sender trust checks and task binding
+still apply, and the bridge keeps custody of the decryption key.
 Every task-changing verified reply must come from the identity recorded at
 creation and use one signed `a2a-reply` fence naming its `task_id` and required
 `context_id`. A question uses `state: input_required` and its question text in

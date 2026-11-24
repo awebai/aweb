@@ -279,9 +279,7 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 	}
 }
 
-func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesSignedInvitesWithStoredWorkspaceKey(t *testing.T) {
-	t.Parallel()
-
+func TestInitSelfCustodialGlobalCLIThenAddWorktreeUsesStoredKeyOrSignedInvite(t *testing.T) {
 	const (
 		teamID       = "default:hostedchain.aweb.ai"
 		parentAPIKey = "aw_sk_cli_signup_workspace"
@@ -427,8 +425,28 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesSignedInvitesWithStor
 			}
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
 			workspaceInits++
-			t.Error("stored workspace API key must not create a child through workspace init")
-			w.WriteHeader(http.StatusBadRequest)
+			if r.Header.Get("Authorization") != "Bearer "+parentAPIKey {
+				t.Error("bootstrap did not use the parent workspace key")
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			var request apiKeyBootstrapRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if request.IdentityScope != awid.IdentityModeLocal || request.DID == registeredDIDKey {
+				t.Errorf("bootstrap did not request a new local child: %+v", request)
+			}
+			encoded := signCert(awid.TeamCertificateFields{
+				Team: teamID, MemberDIDKey: request.DID, Alias: request.Alias, IdentityScope: awid.IdentityModeLocal,
+			})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"server_url": serverURL, "team_cert": encoded, "alias": request.Alias, "team_id": teamID,
+				"workspace_id": "ws-" + request.Alias, "did": request.DID, "identity_scope": awid.IdentityModeLocal,
+				"custody": awid.CustodySelf, "api_key": "aw_sk_child_" + request.Alias, "team_did_key": teamDIDKey,
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/roles/active":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_roles_id": "roles-1",
@@ -515,9 +533,23 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesSignedInvitesWithStor
 		t.Fatalf("parent missing team membership: %+v", parentWorkspace.Memberships)
 	}
 
-	for _, alias := range []string{"bob", "carol"} {
+	for _, alias := range []string{"bob", "carol", "dana", "evan"} {
+		wantKey := ""
+		switch alias {
+		case "bob", "carol":
+			wantKey = "aw_sk_child_" + alias
+		case "dana":
+			// Keep the same creator and identity when exercising the cert-only route.
+			parentWorkspace.APIKey = ""
+			if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), parentWorkspace); err != nil {
+				t.Fatal(err)
+			}
+		}
 		cmd := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--name", alias)
-		cmd.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+		cmd.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL, "AWEB_API_KEY=")
+		if alias == "bob" {
+			cmd.Env = append(cmd.Env, "AWEB_API_KEY="+parentAPIKey)
+		}
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("add-worktree %s failed: %v\n%s", alias, err, string(out))
@@ -527,8 +559,8 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesSignedInvitesWithStor
 		if err != nil {
 			t.Fatalf("load child %s workspace: %v", alias, err)
 		}
-		if childWorkspace.APIKey != "" {
-			t.Fatalf("child %s api_key=%q", alias, childWorkspace.APIKey)
+		if childWorkspace.APIKey != wantKey {
+			t.Fatalf("child %s did not store the expected API key (present=%t, want present=%t)", alias, childWorkspace.APIKey != "", wantKey != "")
 		}
 		membership := childWorkspace.Membership(teamID)
 		if membership == nil {
@@ -542,10 +574,10 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesSignedInvitesWithStor
 		}
 	}
 
-	if workspaceInits != 0 || invitesCreated != 2 || len(inviteAccepts) != 2 {
+	if workspaceInits != 2 || invitesCreated != 2 || len(inviteAccepts) != 2 {
 		t.Fatalf("workspace init=%d invites=%d accepts=%d", workspaceInits, invitesCreated, len(inviteAccepts))
 	}
-	for i, alias := range []string{"bob", "carol"} {
+	for i, alias := range []string{"dana", "evan"} {
 		if inviteAccepts[i].Alias != alias || inviteAccepts[i].Token != fmt.Sprintf("aw_inv_child_%d", i+1) {
 			t.Fatalf("child %d did not accept its own invitation: %+v", i, inviteAccepts[i])
 		}
@@ -556,8 +588,52 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesSignedInvitesWithStor
 			t.Fatalf("chainless creator fabricated child attribution: chain=%+v err=%v", chain, err)
 		}
 	}
-	if strings.Join(connectAliases, ",") != "laptop,bob,carol" {
+	if strings.Join(connectAliases, ",") != "laptop,bob,carol,dana,evan" {
 		t.Fatalf("connect aliases=%v", connectAliases)
+	}
+
+	// A local controller must still refuse when the global creator's identity
+	// file is missing, even with a stored key that could otherwise bootstrap.
+	t.Setenv("HOME", tmp)
+	if err := awconfig.SaveTeamKey("hostedchain.aweb.ai", "default", teamKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveControllerMeta("hostedchain.aweb.ai", &awconfig.ControllerMeta{RegistryURL: server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(repo, ".aw")
+	parentWorkspace.APIKey = parentAPIKey
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(home, "workspace.yaml"), parentWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	identityFile := filepath.Join(home, "identity.yaml")
+	if err := os.Rename(identityFile, identityFile+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Rename(identityFile+".saved", identityFile); err != nil {
+			t.Error(err)
+		}
+	})
+
+	cmd := exec.CommandContext(ctx, bin, "--identity-home", home, "workspace", "add-worktree", "developer", "--name", "missing-parent")
+	cmd.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	cmd.Dir = repo
+	out, err := cmd.CombinedOutput()
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != 2 || !strings.Contains(string(out), "current global identity is missing .aw/identity.yaml; restore it") {
+		t.Fatalf("expected exit 2 and restoration guidance, got %v:\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "repo-missing-parent")); !os.IsNotExist(err) {
+		t.Fatalf("missing parent left a child worktree: %v", err)
+	}
+	branch := exec.CommandContext(ctx, "git", "branch", "--list", "missing-parent")
+	branch.Dir = repo
+	if out, err := branch.CombinedOutput(); err != nil || len(out) != 0 {
+		t.Fatalf("missing parent left a branch or git could not read it: %v\n%s", err, out)
+	}
+	if workspaceInits != 2 || invitesCreated != 2 || len(inviteAccepts) != 2 {
+		t.Fatalf("missing parent attempted provisioning: workspace init=%d invites=%d accepts=%d", workspaceInits, invitesCreated, len(inviteAccepts))
 	}
 }
 

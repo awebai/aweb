@@ -355,10 +355,11 @@ func recordTeamCertificate(input certificateRecord) error {
 				Alias:    strings.TrimSpace(cert.Alias),
 				CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
 			},
-			Certificate: cert,
-			RegistryURL: registryURL,
-			AwebURL:     "",
-			Activation:  membershipPreserveActive,
+			Certificate:            cert,
+			RegistryURL:            registryURL,
+			RegistryOperatorOrigin: operatorRegistryOrigin(registryURL, ""),
+			AwebURL:                "",
+			Activation:             membershipPreserveActive,
 		}); err != nil {
 			return err
 		}
