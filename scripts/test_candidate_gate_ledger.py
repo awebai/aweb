@@ -442,24 +442,9 @@ candidate-gate:
             ),
             run_full_gate=lambda: invoke("same-tree-commit", "make", "candidate-gate"),
         )
-        refused_final = invoke(
-            "final-without-rc",
-            sys.executable,
-            "scripts/release_candidate.py",
-            "aw-v1.2.3",
-            stages="checks",
-            success=False,
-        )
-        assert "final requires a prior RC" in refused_final
-        assert (
-            run(repo, "git", "rev-parse", "--verify", "refs/tags/aw-v1.2.3").returncode
-            != 0
-        )
-        assert ledger.read_text().splitlines() == rows
-        checked(repo, "git", "tag", "aw-v1.2.3-rc.1")
-        # The real RC must require all stages despite an inherited focused selector.
+        # A release must require all stages despite an inherited focused selector.
         output = invoke(
-            "rc-reuse",
+            "final-reuse",
             sys.executable,
             "scripts/release_candidate.py",
             "aw-v1.2.3",

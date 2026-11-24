@@ -24,7 +24,6 @@ from release_versions import (
     SEMVER,
     VersionRefusal as PublishRefusal,
     final_version,
-    require_final_promotion,
     require_runner_values,
     tag_parts,
     valid_version,
@@ -126,7 +125,6 @@ def tag_identity(root: Path, tag: str) -> tuple[str, str, str]:
             )
     if prefix == "aweb-secrets-runner-v":
         require_runner_values(root, source_sha)
-    require_final_promotion(root, tag, source_sha)
     return prefix, version, source_sha
 
 
@@ -662,7 +660,7 @@ def publish(root: Path, tag: str, *, only: str | None = None, recovery: bool = F
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check-tag", action="store_true", help="validate tag/tree identity without publishing")
+    parser.add_argument("--check-tag", action="store_true", help="validate the tag against its manifest versions without publishing")
     parser.add_argument("--only", choices=("pypi", "oci"), help="publish only this artifact lane")
     parser.add_argument("--recovery", action="store_true",
                         help="publish an existing tag's images again; never moves latest")
