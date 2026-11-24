@@ -78,7 +78,7 @@ async def token_service(world, console_tls, console_listener):
     human.include_router(owner_console_router(world.console))
     human.include_router(
         console_ui_router(
-            app_id="sandbox-secrets", sessions=world.console.sessions, banner=no_banner
+            shell=world.console.shell, sessions=world.console.sessions, banner=no_banner
         )
     )
     human.include_router(console_changes_router(changes))
@@ -86,7 +86,7 @@ async def token_service(world, console_tls, console_listener):
     human.include_router(
         console_values_router(ConsoleValues(console=world.console, custody=world.custody))
     )
-    human.include_router(console_bootstrap_router())
+    human.include_router(console_bootstrap_router(world.console.shell))
     human.include_router(console_jobs_router(changes=changes))
     human.include_router(
         console_activity_router(

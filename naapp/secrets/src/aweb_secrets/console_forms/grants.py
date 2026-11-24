@@ -12,7 +12,6 @@ from fastapi.responses import Response
 from aweb_secrets import records
 from aweb_secrets.console import _body, _require_json, _text
 from aweb_secrets.console_changes import ConsoleChanges, _errors
-from aweb_secrets.console_ui import _login_redirect, console_page
 from aweb_secrets.destination import DestinationInvalid, DestinationRecord, mint_destination_id
 from aweb_secrets.grant import GrantRecord, is_secrets_role, mint_grant_id
 from aweb_secrets.operation import MAX_RESPONSE_BYTES, METHODS, SIDE_EFFECTS, OperationTemplate
@@ -253,6 +252,7 @@ def _form(installation_id: str) -> str:
 
 
 def grant_forms_router(*, changes: ConsoleChanges) -> APIRouter:
+    shell = changes.console.shell
     router = APIRouter(route_class=ConsoleRoute)
 
     @router.get("/grants/new")
@@ -260,7 +260,7 @@ def grant_forms_router(*, changes: ConsoleChanges) -> APIRouter:
         try:
             current = await changes.console.sessions.current(request)
         except HTTPException as refused:
-            return _login_redirect(refused)
+            return shell.refused_page(refused)
         async with _errors(changes.console, current):
             installation_id = await changes.installation_for_session(current)
             admitted = await changes._installation(current, installation_id)
@@ -268,7 +268,9 @@ def grant_forms_router(*, changes: ConsoleChanges) -> APIRouter:
                 await changes._owner(tx, current, admitted)
                 await changes.console.fence.check(tx, admitted)
                 changes._unexpired(current)
-        return console_page(title="Grant access", body_html=_form(installation_id), session=current)
+        return shell.console_page(
+            title="Grant access", body_html=_form(installation_id), session=current
+        )
 
     @router.post(
         "/installations/{installation_id}/grants/drafts",

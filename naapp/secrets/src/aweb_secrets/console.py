@@ -52,6 +52,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.change import ChangeRefused
+from aweb_secrets.console_ui import secrets_shell
 from aweb_secrets.owners import (
     OwnerDirectory,
     OwnerRequired,
@@ -114,6 +115,7 @@ class OwnerConsole:
         self.directory = directory
         self.fence = fence
         self.verifier = verifier
+        self.shell = secrets_shell(verifier.scope)
         self.installation = installation
         self.credential_audit = credential_audit
         self._prepare_key_bound = prepare_key_bound

@@ -4,10 +4,8 @@ Mount on the human origin alongside owner_console_router. These pages create
 no console session; completion authority remains in the service's ceremony.
 """
 
-from aweb_naapp.console.browser import Ceremony, CeremonyCopy
+from aweb_naapp.console.browser import Ceremony, CeremonyCopy, ConsoleShell
 from fastapi import APIRouter
-
-from aweb_secrets.console_ui import SHELL
 
 CEREMONIES = CeremonyCopy(
     enrolment=Ceremony(
@@ -29,5 +27,5 @@ CEREMONIES = CeremonyCopy(
 )
 
 
-def console_bootstrap_router() -> APIRouter:
-    return SHELL.bootstrap_router(CEREMONIES)
+def console_bootstrap_router(shell: ConsoleShell) -> APIRouter:
+    return shell.bootstrap_router(CEREMONIES)

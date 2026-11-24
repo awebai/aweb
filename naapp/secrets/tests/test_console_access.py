@@ -204,9 +204,7 @@ async def application(
     app = FastAPI()
     app.include_router(owner_console_router(console))
     app.include_router(
-        console_ui_router(
-            app_id="sandbox-secrets", sessions=console.sessions, banner=banner(console)
-        )
+        console_ui_router(shell=console.shell, sessions=console.sessions, banner=banner(console))
     )
     app.include_router(console_access_router(services=ConsoleAccess(console=console)))
     app.include_router(containment_console_router(await service(context), console=console))

@@ -96,7 +96,9 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
                     certificate_id="secrets-service",
                     alias="secrets-service",
                 )
-                await registry.add_certificate(service_member.certificate(), team_key=service_member.team_key)
+                await registry.add_certificate(
+                    service_member.certificate(), team_key=service_member.team_key
+                )
                 key_file = tmp_path / "service-member.key"
                 key_file.write_text(
                     "-----BEGIN ED25519 PRIVATE KEY-----\n"
@@ -587,3 +589,75 @@ async def test_production_email_dispatch_uses_migrated_and_mounted_providers(roo
         await db.fetch_all("SELECT payload,signature FROM outbox_events ORDER BY position")
         == before
     )
+
+
+CONSOLE_PAGES = (
+    "/",
+    "/login",
+    "/access",
+    "/access/secrets/unknown",
+    "/activity",
+    "/audit-delivery",
+    "/secrets/new",
+    "/onepassword/references/new",
+    "/installations/{installation_id}/onepassword/references/new",
+    "/backend-credentials/onepassword/new",
+    "/approvals",
+    "/installations/{installation_id}/change-sets/unknown/review",
+    "/grants/new",
+    "/jobs/new",
+    "/runners/new",
+    "/installations/{installation_id}/jobs/new",
+    "/installations/{installation_id}/runners/new",
+    "/reconciliations/unknown",
+    "/reconciliation-controls/unknown",
+    "/reconciliation-approvals",
+    "/use-approvals",
+    "/run-approvals",
+)
+
+
+@pytest.mark.parametrize("path", CONSOLE_PAGES)
+async def test_console_pages_offer_retry_and_scoped_sign_in(root, registry, monkeypatch, path):
+    import time
+
+    from aweb_naapp.runtime import human_member
+
+    # Move past the previous real observation's freshness window. The
+    # authority itself remains in AWID; the cache is not filled by the test.
+    real_monotonic_ns = time.monotonic_ns
+    offset = 0
+
+    def monotonic_ns():
+        return real_monotonic_ns() + offset
+
+    monkeypatch.setattr(time, "monotonic_ns", monotonic_ns)
+    monkeypatch.setattr(human_member, "monotonic_ns", monotonic_ns)
+    _, client, configured, team_member, installed, *_ = root
+    console = configured.console_origin
+    page = console + path.format(installation_id=installed["installation_id"])
+    owner = await enrolled_owner(root)
+    offset += 61_000_000_000
+    registry.transport.down = True
+    try:
+        unavailable = await client.get(page)
+        assert unavailable.status_code == 503, unavailable.text
+        assert unavailable.headers["content-type"].startswith("text/html")
+        assert 'id="console-recovery-action" href="">Try again</a>' in unavailable.text
+    finally:
+        registry.transport.down = False
+    offset += 61_000_000_000
+    assert (await client.get(console + "/session")).status_code == 200
+
+    holder = client.owner_fixture.human_members[fixture_principal(team_member.team_id, "alice")]
+    await registry.revoke(holder.certificate_id, team_id=holder.team_id)
+    offset += 61_000_000_000
+    denied = await client.get(page)
+    assert denied.status_code == 403, denied.text
+    assert denied.headers["content-type"].startswith("text/html")
+    scoped = "/login?scope=" + owner.scope
+    assert f'id="console-recovery-action" href="{scoped}"' in denied.text
+    assert "Max-Age=0" in denied.headers["set-cookie"]
+    sign_in = await client.get(console + scoped)
+    assert sign_in.status_code == 200
+    assert f'id="login" data-scope="{owner.scope}"' in sign_in.text

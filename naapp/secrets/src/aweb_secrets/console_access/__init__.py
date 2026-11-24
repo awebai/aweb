@@ -27,6 +27,7 @@ from aweb_naapp.console import (
     KeyBoundConsoleSession,
     session_is_current,
 )
+from aweb_naapp.console.browser import member_refusal
 from aweb_naapp.roles import PrincipalKey, members_of, roles_of
 from aweb_naapp.runtime.installation import AdmittedInstallation
 from fastapi import APIRouter, HTTPException, Request
@@ -37,7 +38,6 @@ from aweb_secrets import access_reads, records
 from aweb_secrets.admission import use_coverage_refusal
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.console_changes import _errors
-from aweb_secrets.console_ui import _login_redirect, console_page, recovery_page
 from aweb_secrets.grant import is_secrets_role
 from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.owners import owner_binding, owner_scope
@@ -526,35 +526,35 @@ _RECOVERIES = {
 }
 
 
-def _recovery(refused: HTTPException) -> Response:
-    if refused.status_code == 401:
-        return _login_redirect(refused)
-    if refused.detail not in _RECOVERIES:
-        raise refused
-    message, href, label = _RECOVERIES[refused.detail]
-    return recovery_page(refused, message=message, action_href=href, action_label=label)
-
-
 def console_access_router(*, services: ConsoleAccess) -> APIRouter:
     """Human app only; inject the same OwnerConsole the other owner pages use."""
+    shell = services.console.shell
     router = APIRouter(route_class=ConsoleRoute)
 
     async def page(request: Request, secret_ref: str | None) -> Response:
         try:
             current = await services.console.sessions.current(request)
         except HTTPException as refused:
-            return _login_redirect(refused)
+            return shell.refused_page(refused)
         try:
             async with _errors(services.console, current):
                 view = await services.view(current, secret_ref=secret_ref)
         except HTTPException as refused:
             return _recovery(refused)
         title = "Access" if secret_ref is None else f"Access to {secret_ref}"
-        return console_page(
+        return shell.console_page(
             title=title,
             body_html=_render(view, live_names=isinstance(current, KeyBoundConsoleSession)),
             session=current,
         )
+
+    def _recovery(refused: HTTPException) -> Response:
+        if refused.status_code == 401 or member_refusal(refused) is not None:
+            return shell.refused_page(refused)
+        if refused.detail not in _RECOVERIES:
+            raise refused
+        message, href, label = _RECOVERIES[refused.detail]
+        return shell.recovery_page(refused, message=message, action_href=href, action_label=label)
 
     @router.get("/access", response_class=HTMLResponse)
     async def agents(request: Request) -> Response:

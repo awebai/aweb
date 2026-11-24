@@ -52,7 +52,7 @@ async def application(world: World, *, human_origin: str, agent_origin: str):
     )
     human = FastAPI()
     human.include_router(owner_console_router(console))
-    human.include_router(console_bootstrap_router())
+    human.include_router(console_bootstrap_router(console.shell))
     return split_origins(FastAPI(), human, agent_origin=agent_origin, human_origin=human_origin)
 
 

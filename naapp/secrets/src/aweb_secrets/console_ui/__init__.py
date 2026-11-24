@@ -12,12 +12,11 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from aweb_naapp.console import ConsoleSession, ConsoleSessions
-from aweb_naapp.console.browser import ConsoleBrand, ConsoleShell, SignInCopy, login_redirect
+from aweb_naapp.console.browser import ConsoleBrand, ConsoleShell, SignInCopy
 from fastapi import APIRouter
 
 
-def secrets_shell(app_id: str | None = None) -> ConsoleShell:
-    deployment = app_id if app_id is not None else "this deployment"
+def secrets_shell(app_id: str) -> ConsoleShell:
     return ConsoleShell(
         ConsoleBrand(
             product="Secrets",
@@ -33,7 +32,7 @@ def secrets_shell(app_id: str | None = None) -> ConsoleShell:
                 failed="Sign-in could not be completed. Try your passkey again.",
                 not_member_remedy=(
                     "Ask your team administrator to check your membership and help you "
-                    f"sign in to {deployment} from aw."
+                    f"sign in to {app_id} from aw."
                 ),
                 sign_out_failed="Sign-out could not be completed. Try again.",
                 reauth_heading="Sign in to make changes",
@@ -43,13 +42,6 @@ def secrets_shell(app_id: str | None = None) -> ConsoleShell:
         )
     )
 
-
-SHELL = secrets_shell()
-
-_page = SHELL.page
-console_page = SHELL.console_page
-recovery_page = SHELL.recovery_page
-_login_redirect = login_redirect
 
 Banner = Callable[[ConsoleSession], Awaitable[str]]
 """What the home tells this session before its navigation; empty when nothing."""
@@ -69,7 +61,9 @@ _NAVIGATION = (
 )
 
 
-def console_ui_router(*, sessions: ConsoleSessions, banner: Banner, app_id: str) -> APIRouter:
+def console_ui_router(
+    *, sessions: ConsoleSessions, banner: Banner, shell: ConsoleShell
+) -> APIRouter:
     """GET shell/login and static assets; mount only on the human origin.
 
     The home shows ``banner``'s HTML for the session between its heading and
@@ -79,4 +73,4 @@ def console_ui_router(*, sessions: ConsoleSessions, banner: Banner, app_id: str)
     async def home(session: ConsoleSession) -> str:
         return _HEADING + await banner(session) + _NAVIGATION
 
-    return secrets_shell(app_id).router(sessions=sessions, home_title="Console", home=home)
+    return shell.router(sessions=sessions, home_title="Console", home=home)
