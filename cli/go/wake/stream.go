@@ -61,6 +61,7 @@ type streamRunner struct {
 	streamCancel    func()
 	snapshotTimer   *time.Timer
 	snapshotBackoff time.Duration
+	snapshotDelay   time.Duration
 
 	cancel    context.CancelFunc
 	done      chan struct{}
@@ -85,6 +86,8 @@ func newStreamRunner(key, identityHome, teamID string, open run.EventStreamOpene
 		now:          now,
 		phase:        StreamStarting,
 		done:         make(chan struct{}),
+
+		snapshotDelay: snapshotBackoffMin,
 	}
 }
 
@@ -223,7 +226,7 @@ func (s *streamRunner) resetSnapshotBackoff() {
 	}
 	s.mu.Unlock()
 	if pending {
-		s.requestSnapshot(snapshotBackoffMin)
+		s.requestSnapshot(s.snapshotDelay)
 	}
 }
 

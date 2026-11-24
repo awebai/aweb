@@ -722,7 +722,7 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 // old child generations before asking the currently admitted stream to reopen.
 func (r *instanceRunner) requestSnapshot(generation int, id string, immediate bool) {
 	r.withBindingStream(generation, id, func(stream *streamRunner) {
-		delay := snapshotBackoffMin
+		delay := r.broker.cfg.SnapshotBackoff
 		if immediate {
 			delay = 0
 		}

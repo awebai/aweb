@@ -48,7 +48,8 @@ func TestPersistentRefusalBacksOffAndResumeRecovers(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var opens []time.Time
-	broker, cancel := liveBroker(t, Config{Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+	const backoff = 2 * time.Second
+	broker, cancel := liveBroker(t, Config{SnapshotBackoff: backoff, Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
 		return func(context.Context, time.Time) (awid.EventSource, error) {
 			mu.Lock()
 			opens = append(opens, time.Now())
@@ -58,16 +59,25 @@ func TestPersistentRefusalBacksOffAndResumeRecovers(t *testing.T) {
 	}})
 	defer cancel()
 	waitForInstance(t, broker, home, func(st InstanceStatus) bool { return st.ChannelCore.TraceStage == "lane_job_failed" })
-	// Measure a full minute with one unread message and persistent refusal.
-	<-time.After(time.Minute)
-	mu.Lock()
-	observed := append([]time.Time(nil), opens...)
-	mu.Unlock()
+	// One unread message and persistent refusal: three recovery attempts, then
+	// no fourth within half the wait that precedes it. A delivery cycle adds
+	// about a second to each gap, so the backoff is long enough that an
+	// undoubled wait misses the minimum of the second and third gaps.
+	observe := func() []time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]time.Time(nil), opens...)
+	}
+	for deadline := time.Now().Add(time.Minute); len(observe()) < 4 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	<-time.After(4 * backoff)
+	observed := observe()
 	var offsets []time.Duration
 	for _, at := range observed {
 		offsets = append(offsets, at.Sub(observed[0]))
 	}
-	t.Logf("persistent shell60s: opens=%d offsets=%v", len(observed), offsets)
+	t.Logf("persistent shell: opens=%d offsets=%v", len(observed), offsets)
 	if acks.Load() != 0 {
 		t.Fatal("refused input was acknowledged")
 	}
@@ -77,12 +87,12 @@ func TestPersistentRefusalBacksOffAndResumeRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(observed) > 4 {
-		t.Fatalf("persistent refusal opened %d streams in60s, want at most4", len(observed))
+		t.Fatalf("persistent refusal opened %d streams, want at most4", len(observed))
 	}
 	if len(observed) < 4 {
 		t.Fatalf("backoff did not make three recovery attempts: %d opens", len(observed))
 	}
-	for i, minimum := range []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second} {
+	for i, minimum := range []time.Duration{backoff, 2 * backoff, 4 * backoff} {
 		if gap := observed[i+1].Sub(observed[i]); gap < minimum {
 			t.Fatalf("reopen gap%d=%s want >=%s", i, gap, minimum)
 		}
@@ -103,7 +113,7 @@ func TestPersistentRefusalBacksOffAndResumeRecovers(t *testing.T) {
 }
 
 func TestRefusalBackoffCapsCoalescesAndResets(t *testing.T) {
-	stream := &streamRunner{streamCancel: func() {}}
+	stream := &streamRunner{streamCancel: func() {}, snapshotDelay: snapshotBackoffMin}
 	defer func() { stream.mu.Lock(); stream.clearSnapshotLocked(); stream.mu.Unlock() }()
 	snapshot := func() (*time.Timer, time.Duration) {
 		stream.mu.Lock()

@@ -78,6 +78,9 @@ type Config struct {
 	IdleProbe     time.Duration // Deprecated: ignored.
 	PendingExpiry time.Duration // Deprecated: ignored.
 	Reconcile     time.Duration
+	// SnapshotBackoff is the delay before the first fresh snapshot after a
+	// refused delivery; it doubles up to snapshotBackoffMax.
+	SnapshotBackoff time.Duration
 	// StreamPolicy supplies the timer and random source of the streams'
 	// reconnect policy (docs/event-stream-client-policy.md); its clock
 	// defaults to Now.
@@ -110,6 +113,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Reconcile <= 0 {
 		c.Reconcile = DefaultReconcile
+	}
+	if c.SnapshotBackoff <= 0 {
+		c.SnapshotBackoff = snapshotBackoffMin
 	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
@@ -498,6 +504,7 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	runner := newStreamRunner(key, identityHome, teamID, opener, reload, func(ev awid.AgentEvent) {
 		b.dispatchStream(key, ev)
 	}, b.cfg.Log, b.cfg.Now, b.cfg.StreamPolicy)
+	runner.snapshotDelay = b.cfg.SnapshotBackoff
 
 	b.mu.Lock()
 	if existing, ok := b.streams[key]; ok {
