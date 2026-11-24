@@ -26,7 +26,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from aweb_naapp.console import ConsoleRoute, ConsoleSession, ConsoleSessions
+from aweb_naapp.console import ConsoleRoute, ConsoleSession, ConsoleSessions, SessionEnded
 from aweb_naapp.css import CSS_SHA256
 
 _ASSETS = files(__package__)
@@ -211,11 +211,15 @@ class ConsoleShell:
         refusal = member_refusal(error)
         if refusal is None:
             return login_redirect(error)
+        action_href = refusal.action_href
+        if isinstance(error, SessionEnded):
+            # The ended session's own scope, so the page it opens has the form.
+            action_href += "?scope=" + quote(error.scope, safe="")
         return self.recovery_page(
             error,
             message=refusal.message,
             remedy=self._remedy(refusal),
-            action_href=refusal.action_href,
+            action_href=action_href,
             action_label=refusal.action_label,
         )
 

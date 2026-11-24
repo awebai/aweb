@@ -176,6 +176,8 @@ async def test_a_page_refused_to_a_non_member_leads_on_to_sign_in(
     after = await aw.client.get(action["href"])
     assert after.status_code == 200
     assert not Html(after.text).all("a", id="console-recovery-action")
+    (form,) = Html(after.text).all("form", id="login")
+    assert form["data-scope"] == reader_scope(aw.principal)
 
 
 @pytest.mark.parametrize("path", PAGES)

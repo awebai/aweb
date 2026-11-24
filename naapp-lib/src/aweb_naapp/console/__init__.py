@@ -194,6 +194,14 @@ ScopeAdmission = Callable[[str], Awaitable[bool]]
 MemberAdmission = Callable[[str], Awaitable[ScopeMember]]
 
 
+class SessionEnded(HTTPException):
+    """A definite member refusal that closed the session of ``scope``."""
+
+    def __init__(self, refused: HTTPException, *, scope: str, headers: Any) -> None:
+        super().__init__(refused.status_code, refused.detail, headers=headers)
+        self.scope = scope
+
+
 def _ends_session(refused: HTTPException) -> bool:
     """Whether a membership refusal is definite, rather than unreadable."""
     return refused.status_code == 403
@@ -299,8 +307,8 @@ class ConsoleSessions:
             if not _ends_session(refused):
                 raise
             await self._close(bytes(row["token_sha256"]))
-            raise HTTPException(
-                refused.status_code, refused.detail, headers=self._required().headers
+            raise SessionEnded(
+                refused, scope=row["scope"], headers=self._required().headers
             ) from None
         return ConsoleSession(
             subject=row["subject"],
