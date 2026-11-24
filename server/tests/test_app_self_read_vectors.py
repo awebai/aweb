@@ -234,8 +234,11 @@ async def check_hook_answer(hook_db, answer: dict) -> None:
                     assert BINDING_TIME.fullmatch(binding[field]), binding[field]
             if binding.get("activated_at") is not None:
                 assert _moment(binding["active_from"]) - _moment(binding["activated_at"]) == timedelta(seconds=60)
+            # A time is substituted only where both the server and the vector have
+            # one; a null on either side alone is a disagreement.
             for field in ("activated_at", "active_from", "revoked_at"):
                 if field in binding:
+                    assert (binding[field] is None) == (wanted[field] is None), (field, binding[field])
                     binding[field] = wanted[field]
             if binding["installation_id"] is not None:
                 assert isinstance(binding["installation_id"], str) and binding["installation_id"]

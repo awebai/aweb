@@ -191,7 +191,13 @@ def _hook_answer(name: str) -> dict:
     return next(answer for answer in HOOKS["answers"] if answer["name"] == name)
 
 
-def _resolver(caller: str | None, status: int, body: bytes) -> HookResolver:
+def _hook_path(answer: dict) -> str:
+    """The answer's request target, with the binding ids the vector names."""
+    ids = {binding["label"]: binding["binding_id"] for binding in HOOKS["scenario"]["bindings"]}
+    return answer["path"].format(**ids)
+
+
+def _resolver(caller: str | None, status: int, body: bytes, path: str) -> HookResolver:
     app = HOOKS["scenario"]["apps"][caller or "logs"]
     signing_key = SigningKey(bytes.fromhex(app["resolve_key"]["seed_hex"]))
     key = AppKey(
@@ -201,6 +207,8 @@ def _resolver(caller: str | None, status: int, body: bytes) -> HookResolver:
     )
 
     def serve(request: httpx.Request) -> httpx.Response:
+        # The answer belongs to one request: the client must ask for exactly it.
+        assert request.url == httpx.URL(SERVER_URL + path), request.url
         return httpx.Response(status, content=body, headers={"content-type": "application/json"})
 
     return HookResolver(
@@ -212,7 +220,7 @@ def _resolver(caller: str | None, status: int, body: bytes) -> HookResolver:
 
 
 async def _read(answer: dict, status: int, body: bytes):
-    resolver = _resolver(answer["caller"], status, body)
+    resolver = _resolver(answer["caller"], status, body, _hook_path(answer))
     team_id = HOOKS["scenario"]["team_id"]
     request = answer["request"]
     if request["read"] in ("registrations", "productions"):
