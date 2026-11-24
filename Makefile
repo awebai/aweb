@@ -8,17 +8,15 @@ CANDIDATE_UNIT_PROFILE ?= $(or $(AWEB_GATE_UNIT_PROFILE),portable)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
 .PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
-	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
-	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
+	freshness check-go-vulnerability-audit check-node-audit test-go-vulnerability-audit \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
-	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps check-server-locked-suite \
-	check-awid-locked-suite \
+	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps \
 	test-release-cli-version \
 	test-channel-integration \
 	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
-	cli-e2e e2e-grant-app-tools _candidate-gate-docker-boundaries _candidate-gate-compose-adoption _candidate-channel-version _candidate-node-deps \
+	cli-e2e _candidate-gate-docker-boundaries _candidate-gate-compose-adoption _candidate-channel-version _candidate-node-deps \
 	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
 	_candidate-artifact-naapp-package check-naapp-lib-package \
@@ -89,8 +87,6 @@ help:
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
 	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
 	@echo "  check-extension-docs Verify extension docs, source events, vectors, and authority map"
-	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
-	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
 	@echo "  e2e-library-stack             Bring up awid+aweb+Library, seed aweb.team, verify, tear down (requires Docker + ../library + ../blueprints)"
 	@echo "  e2e-library-stack-up / -seed / -down  Drive the combined stack step by step"
 	@echo ""
@@ -164,17 +160,6 @@ test-scripts: prepare-released-kernel-test
 	PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts -p 'test_*.py' -v
 
 # Package configurations own rules; the root owner compares raw findings once.
-.PHONY: prepare-python-static check-python-static test-python-static
-prepare-python-static:
-	uv sync --frozen --project server
-	uv sync --frozen --project awid
-
-check-python-static: prepare-python-static
-	uv run --offline --frozen --no-sync --project server python scripts/python_static.py $(PYTHON_STATIC_ARGS)
-
-test-python-static:
-	uv run --offline --frozen --project server python -m unittest discover -s scripts -p test_python_static.py -v
-
 # AST-only test-state ceiling; no package preparation, services or network.
 .PHONY: check-product-table-writes
 check-product-table-writes:
@@ -290,15 +275,6 @@ freshness:
 check-go-vulnerability-audit:
 	bash scripts/check-go-vulnerability-audit.sh
 
-# The deadline half of the audit above, split out because it is the only part
-# that can run without the pinned toolchain, a govulncheck scan or the advisory
-# database. It reads .github/go-vulnerability-exceptions.json and compares dates,
-# so it is deterministic and cheap.
-#
-# It is separate because a deferral lapses on a DATE, not on a commit. The audit
-# runs at release; if no release happens across a deadline, the deferral simply
-# stops being deferred and nothing says so. This target is what the scheduled
-# workflow runs daily. Candidate checks additionally run the full Go audit.
 # The audit's own unit suite. It belongs in `make test` where the audit itself
 # does not: it runs against fixtures and the checked-in exceptions file, with no
 # toolchain, no scanner and no advisory database, and none of its assertions
@@ -307,12 +283,8 @@ check-go-vulnerability-audit:
 test-go-vulnerability-audit:
 	python3 -m unittest discover -s scripts -p "test_check_go_vulnerability_audit.py" -v
 
-check-exception-deadlines:
-	python3 scripts/check_go_vulnerability_audit.py \
-		--deadlines-only \
-		--exceptions .github/go-vulnerability-exceptions.json
-
 check-node-audit:
+	bash scripts/check-node-audit.sh --self-test
 	bash scripts/check-node-audit.sh
 
 # Runtime copies ship in Git for source-based plugin/capability installs. Edit
@@ -565,24 +537,6 @@ check-extension-docs:
 	python3 scripts/check-extension-docs.py
 	python3 scripts/check-extension-docs.py --self-test
 
-selfhost-up:
-	cd server && docker compose up --build -d
-
-selfhost-down:
-	cd server && docker compose down
-
-selfhost-logs:
-	cd server && docker compose logs -f aweb awid
-
-awid-up:
-	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose up --build -d
-
-awid-down:
-	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose down
-
-awid-logs:
-	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose logs -f awid
-
 # ---- combined e2e stack: awid + aweb + Library, seeded ----------------------
 # Requires Docker and sibling ../library + ../blueprints checkouts.
 # See docs/e2e-library-stack.md.
@@ -643,16 +597,6 @@ check-cli-go-tidy:
 # proves an unrelated unignored file still produces vcs.modified=true.
 check-cli-release-vcs-stamps:
 	./scripts/check-cli-release-vcs-stamps.sh
-
-check-server-locked-suite:
-	cd server && uv sync --frozen
-	cd server && uv lock --check
-	cd server && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
-
-check-awid-locked-suite:
-	cd awid && uv sync --frozen
-	cd awid && uv lock --check
-	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 # ── awid.ai static-site deployment ─────────────────────────────────
 
@@ -810,11 +754,6 @@ _candidate-artifact-a2a-image:
 # Real-stack CLI/Library journey retained in the fixed local release gate.
 cli-e2e:
 	COMPOSE_BAKE="$${LIBRARY_E2E_COMPOSE_BAKE:-}" $(MAKE) -C cli e2e
-	$(MAKE) e2e-grant-app-tools
-
-# A grant's named app tools against a real Library install, through custody.
-e2e-grant-app-tools:
-	bash scripts/e2e-grant-app-tools.sh
 
 clean:
 	@echo "Cleaning build artifacts..."

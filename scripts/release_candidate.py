@@ -14,7 +14,6 @@ from pathlib import Path
 
 from release_versions import (
     VersionRefusal as CandidateRefusal,
-    require_final_promotion,
     require_runner_values,
     tag_parts,
     valid_version,
@@ -97,7 +96,6 @@ def validate_tags(root: Path, tags: list[str]) -> tuple[str, dict[str, str]]:
             require_runner_values(root, source_sha)
         if run(root, "git", "tag", "--list", tag):
             raise CandidateRefusal(f"local tag {tag} already exists; tags are never moved")
-        require_final_promotion(root, tag, source_sha)
     return source_sha, versions
 
 

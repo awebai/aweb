@@ -18,10 +18,22 @@ from aweb.identity_binding import IdentityBinding
 from aweb.human_kind import observe_identity_kind, unverified_kind
 
 logger = logging.getLogger(__name__)
+SUPERSEDED_ID_CHAIN_RECOVERY = (
+    "Run aw id parent refresh from this identity's home to install the current "
+    "registered chain and its ancestors, then reconnect."
+)
+
+
+def read_id_chain_header(request: Request) -> dict[str, Any] | None:
+    headers = request.headers.getlist("X-AWID-ID-Chain")
+    if len(headers) > 1:
+        raise IDCertificateError("invalid_shape")
+    return decode_id_chain_header(headers[0]) if headers else None
 
 
 async def authenticate_id_chain(
-    request: Request, binding: IdentityBinding, *, registry_client=None
+    request: Request, binding: IdentityBinding, *, registry_client=None,
+    allow_unavailable: bool = False,
 ) -> dict[str, Any]:
     """Use only the already-verified subject and its fresh enrollment carrier.
 
@@ -32,10 +44,7 @@ async def authenticate_id_chain(
     """
     subject = {"id": binding.did_aw or binding.did_key, "did_key": binding.did_key}
     try:
-        headers = request.headers.getlist("X-AWID-ID-Chain")
-        if len(headers) > 1:
-            raise IDCertificateError("invalid_shape")
-        bundle = decode_id_chain_header(headers[0]) if headers else None
+        bundle = read_id_chain_header(request)
         client = (
             registry_client
             if registry_client is not None
@@ -47,6 +56,10 @@ async def authenticate_id_chain(
     except IDCertificateError as exc:
         result = unverified_kind(exc.code)
     request.state.id_chain_result = result
+    if allow_unavailable and result["outcome"] == "unavailable":
+        request.state.identity_kind = None
+        request.state.id_chain = None
+        return result
     if request_disposition(result, subject=subject, original_auth_passed=True) == "refuse":
         logger.warning("ID-tree request refused: %s", result["reason"])
         raise HTTPException(

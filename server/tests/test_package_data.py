@@ -78,6 +78,7 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
             "human_kind.py",
             "human_kind_revalidation.py",
             "migrations/aweb/047_verified_human_kind.sql",
+            "migrations/aweb/057_legacy_mail_index.sql",
         ):
             assert f"aweb/{attachment_path}" in names
         assert not any(
@@ -108,6 +109,7 @@ def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_pa
             "human_kind.py",
             "human_kind_revalidation.py",
             "migrations/aweb/047_verified_human_kind.sql",
+            "migrations/aweb/057_legacy_mail_index.sql",
         ):
             assert any(name.endswith(f"/src/aweb/{attachment_path}") for name in names)
         assert not any("/docs/vectors/" in name for name in names)
@@ -206,6 +208,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "053_drop_retired_signer.sql",
         "055_chat_conversation_coverage.sql",
         "056_inbound_mode_default.sql",
+        "057_legacy_mail_index.sql",
     ]
 
 

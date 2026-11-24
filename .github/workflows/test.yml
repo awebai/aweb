@@ -22,14 +22,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  python-static:
-    name: Python static analysis
+  product-table-writes:
+    name: Product table writes
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
-          # Compare diagnostic allowances with the reviewed main baseline.
+          # Compare product-table ceilings with the reviewed main baseline.
           fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
@@ -37,12 +37,24 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - name: Check Python diagnostic ceilings
-        run: make check-python-static check-product-table-writes
+      - name: Check product table writes
+        run: make check-product-table-writes
+
+  extension-docs:
+    name: Extension docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Check extension docs against source
+        run: make check-extension-docs
 
   test:
     name: Test suite
-    needs: python-static
+    needs: product-table-writes
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:

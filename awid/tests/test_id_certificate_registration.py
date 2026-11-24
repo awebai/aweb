@@ -33,6 +33,7 @@ from test_certificates import _signed_certificate_blob
 import test_id_namespace_epochs  # noqa: F401  (consumes namespace cases by name)
 import test_id_certificate_status  # noqa: F401  (consumes status cases by name)
 import test_id_namespace_rotation  # noqa: F401  (consumes rotation cases by name)
+import test_namespace_recovery_delegations  # noqa: F401  (consumes recovery delegation cases by name)
 from id_tree_support import (
     CONSUMED,
     DOMAIN,

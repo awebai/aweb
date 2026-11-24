@@ -242,10 +242,6 @@ ROOT_CONSUMERS = {
         "human-channels-presence-v1.json",
         '"../../../docs/vectors/human-channels-presence-v1.json"',
     ),
-    PurePosixPath("cli/go/awid/human_channels_e2ee_spike_test.go"): _consumer(
-        "human-channels-e2ee-spike.json",
-        '"../../../docs/vectors/human-channels-e2ee-spike.json"',
-    ),
     PurePosixPath("server/tests/test_human_channels_contract.py"): _consumer(
         {"human-channels-v1.json", "human-channels-profile-v1.json"},
         "ROOT / 'docs/vectors/human-channels-v1.json'",

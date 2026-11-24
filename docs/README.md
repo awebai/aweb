@@ -96,6 +96,8 @@ authority.
   and bridge-delegation assertions.
 - [Agent health](agent-health.md) — status-host designation and the signed
   agent status document a host publishes.
+- [Agent health clients](agent-health-clients.md) — the `aw` commands and
+  client versions that designate, publish and receive agent health.
 
 </details>
 
@@ -171,6 +173,8 @@ ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
   materialization workflow is its last section.
 - [Connect a Hermes agent](hermes.md) — run Hermes with the aweb platform
   plugin in its gateway.
+- [Native operations for embedding hosts](native-embedding-operations.md) —
+  in-process Python APIs an embedding host calls for native mutations.
 
 </details>
 
@@ -198,6 +202,8 @@ presented as shipped.
   byte-identical CLI interpretation contract.
 - [App registry and team grants](app-registry.md) — current experimental install,
   digest-pin, and grants read surface.
+- [Typed controller signing](controller-signing-sdk.md) — the
+  `awid.controller_signing` SDK an organisation's key holder signs through.
 - [Page format](page-format.md) — the frozen `aweb.page/1` page snapshot
   format, its validator and conformance vectors.
 - [Page actions, decisions and approvals](page-actions.md) — specified
@@ -228,6 +234,8 @@ notice where one exists.
   contract preserving authority discovery, ambiguity, rollback, and batch
   semantics; use the current growth guide and generated reference for everyday
   operation.
+- [App authorization transition notes](human-assurance-contract.md) — which
+  application approval paths remain until the application gates move to awsign.
 
 ## Generated, reference, and conformance
 
@@ -254,6 +262,10 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 
 - [Contributing guide](contributing.md) — repository structure, tests, and
   extension workflow.
+- [Test product state](test-product-state.md) — how tests build their worlds
+  through product owners, and when a direct table write is allowed.
+- [Identity creation coverage](identity-tree-coverage.md) — the identity
+  creation paths and primitive exemptions the identity inventory checks read.
 - [Open-source repository boundary](oss-boundary.md) — canonical framework versus
   application ownership and `.aw/` state policy.
 - [Release process](release.md) — the two-repository release specification:

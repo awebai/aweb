@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import tempfile
 from collections import Counter
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 PRIVATE_TRANSITION_PATHS = (
     "docs/restructuring/" + "ac-cross-boundary-" + "fk-inventory.md",
@@ -224,12 +224,23 @@ HOOK_SOURCES = (
     "server/src/aweb/messaging/room.py",
     "server/src/aweb/routes/federation.py",
     "server/src/aweb/routes/reservations.py",
+    "server/src/aweb/reservation_release.py",
+    "server/src/aweb/hook_contexts.py",
+    "server/src/aweb/events.py",
     "server/src/aweb/routes/agent_status.py",
     "server/src/aweb/coordination/routes/tasks.py",
     "server/src/aweb/coordination/routes/app_tasks.py",
     "server/src/aweb/coordination/tasks_service.py",
     "server/src/aweb/mcp/tools/mail.py",
 )
+
+# Modules whose classes own an event as a class-level literal: the hook
+# contexts' event_type and the transport events' type field. A call site may
+# pass that attribute instead of repeating the enum member.
+EVENT_CLASS_MODULES = {
+    "aweb.hook_contexts": "event_type",
+    "aweb.events": "type",
+}
 
 FORBIDDEN_PUBLIC_REFERENCES = (
     "../ac",
@@ -250,14 +261,14 @@ def _expression_path(node: ast.AST) -> tuple[str, ...]:
     return ()
 
 
-def _mutation_enum_members(root: Path) -> dict[str, str]:
-    """Read the canonical enum's literal assignments without executing source."""
+def _mutation_enum_members(root: Path, enum: str = "MutationEventType") -> dict[str, str]:
+    """Read an event enum's literal assignments without executing source."""
     source = root / "server/src/aweb/event_types.py"
     if not source.is_file():
         return {}
     tree = ast.parse(source.read_text(encoding="utf-8"))
     for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "MutationEventType":
+        if isinstance(node, ast.ClassDef) and node.name == enum:
             return {
                 target.id: statement.value.value
                 for statement in node.body
@@ -268,6 +279,134 @@ def _mutation_enum_members(root: Path) -> dict[str, str]:
                 if isinstance(target, ast.Name)
             }
     return {}
+
+
+def _event_class_events(root: Path) -> dict[tuple[str, str], tuple[str, str]]:
+    """Map (module, class) to (attribute, event) for classes owning a literal event.
+
+    The attribute's value must be an event enum member, directly or as a
+    dataclass field default; a class without its own assignment inherits one
+    from a base class in the same module.
+    """
+    enums = {
+        name: _mutation_enum_members(root, name)
+        for name in ("MutationEventType", "TransportEventType")
+    }
+
+    def enum_value(node: ast.AST | None) -> str | None:
+        if isinstance(node, ast.Call) and _expression_path(node.func) == ("field",):
+            node = next(
+                (k.value for k in node.keywords if k.arg == "default"), None
+            )
+        path = _expression_path(node) if node is not None else ()
+        if path and path[-1] == "value":
+            path = path[:-1]
+        if len(path) == 2 and path[0] in enums:
+            return enums[path[0]].get(path[1])
+        return None
+
+    events: dict[tuple[str, str], tuple[str, str]] = {}
+    for module, attribute in EVENT_CLASS_MODULES.items():
+        source = root / "server/src" / (module.replace(".", "/") + ".py")
+        if not source.is_file():
+            continue
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        own: dict[str, str] = {}
+        bases: dict[str, list[str]] = {}
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            bases[node.name] = [b.id for b in node.bases if isinstance(b, ast.Name)]
+            for statement in node.body:
+                if isinstance(statement, ast.AnnAssign):
+                    targets, value = [statement.target], statement.value
+                elif isinstance(statement, ast.Assign):
+                    targets, value = statement.targets, statement.value
+                else:
+                    continue
+                if any(
+                    isinstance(t, ast.Name) and t.id == attribute for t in targets
+                ):
+                    event = enum_value(value)
+                    if event is not None:
+                        own[node.name] = event
+        for name in bases:
+            seen, current = set(), name
+            while current not in own and current in bases and current not in seen:
+                seen.add(current)
+                current = next((b for b in bases[current] if b in bases), "")
+            if current in own:
+                events[(module, name)] = (attribute, own[current])
+    return events
+
+
+def _event_class_imports(
+    tree: ast.Module,
+    relative: str,
+    class_events: dict[tuple[str, str], tuple[str, str]],
+) -> dict[str, tuple[str, str]]:
+    """Resolve module-level imports of event-owning classes, refusing rebinding."""
+    package = PurePosixPath(relative).relative_to("server/src").parent.parts
+    imported: dict[str, tuple[str, str]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.level:
+            if node.level > len(package):
+                continue
+            base = package[: len(package) - node.level + 1]
+            module = ".".join((*base, node.module) if node.module else base)
+        else:
+            module = node.module or ""
+        for name in node.names:
+            if (module, name.name) in class_events:
+                imported[name.asname or name.name] = class_events[(module, name.name)]
+    bindings: dict[str, int] = {}
+    for node in ast.walk(tree):
+        bound: list[str] = []
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bound = [node.id]
+        elif isinstance(node, ast.arg):
+            bound = [node.arg]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound = [node.name]
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound = [n.asname or n.name.split(".")[0] for n in node.names]
+        for name in bound:
+            bindings[name] = bindings.get(name, 0) + 1
+    return {name: ref for name, ref in imported.items() if bindings.get(name) == 1}
+
+
+def _event_class_aliases(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    class_imports: dict[str, tuple[str, str]],
+) -> dict[str, set[tuple[str, str]]]:
+    """Locals bound exactly once, to an event-owning class or a choice of them."""
+
+    def classes(node: ast.AST) -> set[tuple[str, str]] | None:
+        if isinstance(node, ast.Name) and node.id in class_imports:
+            return {class_imports[node.id]}
+        if isinstance(node, ast.IfExp):
+            left, right = classes(node.body), classes(node.orelse)
+            return left | right if left and right else None
+        return None
+
+    stores: dict[str, int] = {}
+    candidates: dict[str, set[tuple[str, str]]] = {}
+    for node in ast.walk(function):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            stores[node.id] = stores.get(node.id, 0) + 1
+        elif isinstance(node, ast.arg):
+            stores[node.arg] = stores.get(node.arg, 0) + 1
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            chosen = classes(node.value)
+            if chosen:
+                candidates[node.targets[0].id] = chosen
+    return {name: refs for name, refs in candidates.items() if stores.get(name) == 1}
 
 
 def _mutation_enum_imports(tree: ast.Module) -> set[tuple[str, ...]]:
@@ -324,22 +463,36 @@ def _string_literals(
     *,
     enum_imports: set[tuple[str, ...]],
     enum_members: dict[str, str],
+    class_imports: dict[str, tuple[str, str]] | None = None,
+    class_aliases: dict[str, set[tuple[str, str]]] | None = None,
 ) -> set[str]:
+    class_imports = class_imports or {}
+    class_aliases = class_aliases or {}
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return {node.value}
     if isinstance(node, ast.IfExp):
-        left = _string_literals(
-            node.body, enum_imports=enum_imports, enum_members=enum_members
-        )
-        right = _string_literals(
-            node.orelse, enum_imports=enum_imports, enum_members=enum_members
-        )
-        return left | right if left and right else set()
+        branches = [
+            _string_literals(
+                branch,
+                enum_imports=enum_imports,
+                enum_members=enum_members,
+                class_imports=class_imports,
+                class_aliases=class_aliases,
+            )
+            for branch in (node.body, node.orelse)
+        ]
+        return branches[0] | branches[1] if all(branches) else set()
     path = _expression_path(node)
     if path and path[-1] == "value":
         path = path[:-1]
     if len(path) >= 2 and path[:-1] in enum_imports and path[-1] in enum_members:
         return {enum_members[path[-1]]}
+    if len(path) == 2:
+        owners = class_aliases.get(path[0]) or (
+            {class_imports[path[0]]} if path[0] in class_imports else set()
+        )
+        if owners and all(attribute == path[1] for attribute, _ in owners):
+            return {event for _, event in owners}
     return set()
 
 
@@ -351,6 +504,7 @@ class _HookCallVisitor(ast.NodeVisitor):
         *,
         tree: ast.Module,
         enum_members: dict[str, str],
+        class_events: dict[tuple[str, str], tuple[str, str]],
     ) -> None:
         self.relative = relative
         self.failures = failures
@@ -358,6 +512,8 @@ class _HookCallVisitor(ast.NodeVisitor):
         self.call_sites: list[dict[str, str]] = []
         self.enum_imports = _mutation_enum_imports(tree)
         self.enum_members = enum_members
+        self.class_imports = _event_class_imports(tree, relative, class_events)
+        self.alias_stack: list[dict[str, set[tuple[str, str]]]] = []
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_function(node)
@@ -367,7 +523,9 @@ class _HookCallVisitor(ast.NodeVisitor):
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         self.function_stack.append(node.name)
+        self.alias_stack.append(_event_class_aliases(node, self.class_imports))
         self.generic_visit(node)
+        self.alias_stack.pop()
         self.function_stack.pop()
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -401,6 +559,8 @@ class _HookCallVisitor(ast.NodeVisitor):
                     event_expression,
                     enum_imports=self.enum_imports,
                     enum_members=self.enum_members,
+                    class_imports=self.class_imports,
+                    class_aliases=self.alias_stack[-1] if self.alias_stack else {},
                 )
                 if event_expression is not None
                 else set()
@@ -429,11 +589,16 @@ def _source_hook_call_sites(root: Path, failures: list[str]) -> list[dict[str, s
         failures.append("missing hook source root: server/src/aweb")
         return call_sites
     enum_members = _mutation_enum_members(root)
+    class_events = _event_class_events(root)
     for path in sorted(source_root.rglob("*.py")):
         relative = str(path.relative_to(root))
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
         visitor = _HookCallVisitor(
-            relative, failures, tree=tree, enum_members=enum_members
+            relative,
+            failures,
+            tree=tree,
+            enum_members=enum_members,
+            class_events=class_events,
         )
         visitor.visit(tree)
         call_sites.extend(visitor.call_sites)
@@ -840,6 +1005,43 @@ def _room_dynamic_event_is_rejected(root: Path) -> bool:
         source.write_text(original, encoding="utf-8")
 
 
+def _unowned_event_class_routes_are_rejected(root: Path) -> list[str]:
+    """Rebinding a class alias, or naming an attribute the class does not own, is refused."""
+    mutations = {
+        "rebound event class alias": (
+            "server/src/aweb/coordination/tasks_service.py",
+            "context_type = TaskStatusChangedContext if status_changed else TaskClaimReplacedContext\n",
+            "context_type = TaskStatusChangedContext if status_changed else TaskClaimReplacedContext; "
+            "context_type = dynamic_context_type\n",
+        ),
+        "unowned event class attribute": (
+            "server/src/aweb/reservation_release.py",
+            "ReservationReleasedEvent.type,",
+            "ReservationReleasedEvent.payload,",
+        ),
+    }
+    undetected: list[str] = []
+    for label, (relative, before, after) in mutations.items():
+        source = root / relative
+        original = source.read_text(encoding="utf-8")
+        mutated = original.replace(before, after, 1)
+        if mutated == original:
+            undetected.append(f"{label} (anchor missing)")
+            continue
+        try:
+            source.write_text(mutated, encoding="utf-8")
+            failures: list[str] = []
+            _source_hook_call_sites(root, failures)
+            if not any(
+                relative in failure and "unsupported non-literal" in failure
+                for failure in failures
+            ):
+                undetected.append(label)
+        finally:
+            source.write_text(original, encoding="utf-8")
+    return undetected
+
+
 def self_test(root: Path) -> int:
     if failures := check(root):
         print("self-test setup is not green:")
@@ -876,6 +1078,9 @@ def self_test(root: Path) -> int:
 
         if not _room_dynamic_event_is_rejected(tmp):
             print("self-test failed: dynamic room event was not detected")
+            return 1
+        if undetected := _unowned_event_class_routes_are_rejected(tmp):
+            print(f"self-test failed: {undetected[0]} was not detected")
             return 1
 
         untracked_note = tmp / "docs/untracked-self-test-note.md"
@@ -1225,7 +1430,8 @@ def self_test(root: Path) -> int:
         "self-test passed: tracked corpus, public-strategy exclusion, removed-strategy paths, "
         "private-transition removal, managed-gateway neutrality, "
         "federation SOT/error-reference coverage, event/call-site multiplicity, "
-        "dynamic-expression, and real-workspace release-mount controls reject their mutations"
+        "dynamic-expression, event-class ownership, and real-workspace release-mount "
+        "controls reject their mutations"
     )
     return 0
 

@@ -131,7 +131,7 @@ def _quote_ident(name: str) -> str:
 
 # Sanitize dumps for restore:
 #   - pg_dump 17+ emits `SET transaction_timeout = 0;` which PG 16 servers
-#     (Neon prod, the awid-up local stack) reject as unknown parameter.
+#     (Neon prod, a local awid compose stack) reject as unknown parameter.
 #   - The drop-and-migrate step rebuilds `schema_migrations` from the new
 #     migration file. Restoring the dumped rows would either collide on the
 #     primary key or pin an old checksum that pgdbm would reject on next boot.

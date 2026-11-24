@@ -127,6 +127,7 @@ from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.delivery_policy import DeliverySender, DeliveryPolicyRefused
 from aweb.messaging.refusals import DeliveryRefusalCode
 from aweb.messaging.sender_address import sender_address as _sender_address
+from aweb.messaging.sender_address import sender_signature_address
 from aweb.messaging.signatures import (
     MessageSignatureShapeError,
     validate_ed25519_message_signature,
@@ -558,7 +559,7 @@ def _prepare_remote_mail_envelope(
             type="mail",
             sender_did_aw=sender_routing_did,
             sender_current_did_key=sender_current_did,
-            sender_address=sender_address,
+            sender_address=sender_address or None,
             sender_delivery_origin=runtime.public_origin,
             target_address=target_address,
             target_did_aw=target_stable_id,
@@ -1104,7 +1105,7 @@ async def send_mail_conversation_continuation(
             to_alias=recipient_participant.get("alias"),
             requested_to_alias=payload.to_alias,
             from_alias=auth.alias,
-            from_address=sender_address,
+            from_address=sender_signature_address(auth, sender_address),
             from_stable_id=auth.did_aw,
             priority=payload.priority,
             subject=payload.subject,
@@ -1968,7 +1969,7 @@ async def _send_mail_to_resolved_target(
             to_alias=to_alias,
             requested_to_alias=payload.to_alias,
             from_alias=auth.alias,
-            from_address=sender_address,
+            from_address=sender_signature_address(auth, sender_address),
             from_stable_id=auth.did_aw,
             priority=payload.priority,
             subject=payload.subject,

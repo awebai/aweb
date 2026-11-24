@@ -735,18 +735,8 @@ class ComposeConfigTests(unittest.TestCase):
             **os.environ,
             "FOLIO_WAKES_ORIGIN": "https://folio-wakes.test:8765",
             "FOLIO_WAKES_APP_KEY_FILES": "{}",
-            "GRANT_APP_E2E_PROJECT": "proof",
         }
-        fixtures = [
-            (["scripts/e2e/folio-wakes.compose.yml"], {"folio", "client"}),
-            (
-                [
-                    "docker-compose.e2e.yml",
-                    "scripts/e2e/grant-app-acceptance.compose.yml",
-                ],
-                {"library", "client"},
-            ),
-        ]
+        fixtures = [(["scripts/e2e/folio-wakes.compose.yml"], {"folio", "client"})]
         for files, expected_shared in fixtures:
             with self.subTest(files=files), tempfile.TemporaryDirectory() as tmp:
                 args = [
@@ -803,11 +793,7 @@ class ComposeConfigTests(unittest.TestCase):
             docker, "Docker Compose CLI is required for fixture validation"
         )
         overlay = "scripts/e2e/stack-subnet.compose.yml"
-        grant_app = "scripts/e2e/grant-app-acceptance.compose.yml"
-        for files in (
-            ["docker-compose.e2e.yml"],
-            ["docker-compose.e2e.yml", grant_app],
-        ):
+        for files in (["docker-compose.e2e.yml"],):
 
             def config(files, **extra):
                 env = {
@@ -827,7 +813,7 @@ class ComposeConfigTests(unittest.TestCase):
                     args += ["-f", str(ROOT / file)]
                 return subprocess.run(
                     [*args, "config", "--format", "json"],
-                    env={**env, "GRANT_APP_E2E_PROJECT": "proof", **extra},
+                    env={**env, **extra},
                     text=True,
                     capture_output=True,
                     timeout=30,
@@ -851,57 +837,6 @@ class ComposeConfigTests(unittest.TestCase):
                 self.assertEqual(
                     library["LIBRARY_HOOK_INTERNAL_DESTINATIONS"], "allowed"
                 )
-
-
-GRANT_APP_STUB = r"""#!/usr/bin/env bash
-# Records every docker call. The project has one leftover seed; the builder
-# inspection fails, so the run ends in the script's own cleanup.
-printf '%s\n' "$*" >> "$CALLS"
-case "$*" in
-  "ps -aq --filter name=^proof-seed-"*[0-9]"$") echo leftoverseed ;;
-  "ps -aq --filter label=com.docker.compose.project=proof") printf '%s' "${PROJECT_CONTAINERS:-}" ;;
-  "buildx inspect"*) exit 1 ;;
-esac
-"""
-
-
-class GrantAppSeedTests(unittest.TestCase):
-    def run_script(self, **extra):
-        with tempfile.TemporaryDirectory() as tmp:
-            stub = Path(tmp) / "docker"
-            stub.write_text(GRANT_APP_STUB)
-            stub.chmod(0o755)
-            calls = Path(tmp) / "calls"
-            result = subprocess.run(
-                ["bash", str(ROOT / "scripts/e2e-grant-app-tools.sh")],
-                env={
-                    **os.environ,
-                    "PATH": f"{tmp}:{os.environ['PATH']}",
-                    "CALLS": str(calls),
-                    "GRANT_APP_E2E_PROJECT": "proof",
-                    "GRANT_APP_E2E_EVIDENCE_DIR": str(Path(tmp) / "evidence"),
-                    **extra,
-                },
-                text=True,
-                capture_output=True,
-                timeout=60,
-            )
-            return result, calls.read_text().splitlines()
-
-    def test_cleanup_removes_a_seed_before_the_volumes_it_mounts(self):
-        result, calls = self.run_script()
-        self.assertNotEqual(result.returncode, 0)
-        down = [i for i, call in enumerate(calls) if " down -v " in f"{call} "]
-        self.assertEqual(len(down), 1, calls)
-        self.assertIn("rm -f leftoverseed", calls)
-        self.assertLess(calls.index("rm -f leftoverseed"), down[0], calls)
-
-    def test_a_run_refuses_an_existing_project_and_removes_nothing(self):
-        # The leftover may be a live run's.
-        result, calls = self.run_script(PROJECT_CONTAINERS="leftoverseed")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("refusing to reuse", result.stdout + result.stderr)
-        self.assertFalse([c for c in calls if c.startswith("rm ") or " down " in c])
 
 
 LINK_STUB = r"""#!/usr/bin/env bash

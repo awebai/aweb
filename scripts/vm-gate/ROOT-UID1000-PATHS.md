@@ -26,11 +26,3 @@ source permissions nor the SSH daemon's umask determine admission.
 Local keys, summaries, transferred archives and state remain in the private
 operator directory under umask077. No client SSH private key is uploaded. The separate per-run host private key is injected through provider user-data into sshd; local host/client keys are removed after proven cleanup, including expiry recovery.
 Snapshot restored-host preparation uses the same transfer/ownership path.
-
-`acceptance/linux_launch.py` runs the actual prepare → root refusal → UID1000
-host verification → launch → exit receipt → evidence collection using a Linux
-container transport. Inputs are explicitly chowned to root and chmodded0600 after Docker cp, then stat-checked before Executor normalizes them. It first loads the observed
-pre-fix Executor at ae79d4e92 and requires its source.json PermissionError, then
-runs the corrected path. Git, Python, runuser, file permissions and collection
-are real; Go/uv/Node version commands and the provider/SSH connection are fixture
-boundaries. It neither allocates a VM nor claims to test cloud networking.
