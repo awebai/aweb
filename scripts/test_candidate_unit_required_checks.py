@@ -12,7 +12,7 @@ REQUIRED = [
     "test-vector-provenance",
     "test-sot-source-inventories",
     "test-python-locks",
-    "lint-naapp",
+    "lint-naapp-contracts",
 ]
 
 
