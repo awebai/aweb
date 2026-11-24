@@ -20,14 +20,13 @@ def test_import_aweb_api_factory_succeeds():
     ], check=True)
 
 
-def test_server_loads_no_naapp_runtime_module_beyond_task_requests():
-    # The server shares the task-request contract with the naapps; the rest of
-    # the naapp runtime (app credentials, settings, team auth) is app-side.
+def test_server_loads_no_naapp_runtime_module():
+    # The server shares only the naapp contracts (aweb_naapp_contracts); the
+    # naapp runtime (aweb_naapp) is the apps' own.
     probe = (
         "import sys; import aweb.api; "
         "print(','.join(sorted(m for m in sys.modules "
-        "if m.startswith('aweb_naapp.runtime.') "
-        "and m != 'aweb_naapp_contracts.task_requests')))"
+        "if m == 'aweb_naapp' or m.startswith('aweb_naapp.'))))"
     )
     result = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True

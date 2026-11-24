@@ -4,7 +4,7 @@ Each scenario is seeded through the real install path and each request is
 signed as the app signs it; the route's status and body must be the vector's
 answer, with only the values the vector names as server-generated substituted,
 and those first checked for the spelling the app accepts. The app side of the
-same vectors is naapp-lib/tests/runtime/test_app_self_read_vectors.py.
+same vectors is the naapp runtime's tests/runtime/test_app_self_read_vectors.py.
 """
 
 from __future__ import annotations

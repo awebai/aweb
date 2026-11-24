@@ -20,12 +20,12 @@ WORKDIR /app
 
 COPY server/pyproject.toml server/uv.lock server/README.md ./
 COPY awid/pyproject.toml awid/README.md /awid/
-COPY naapp-lib/pyproject.toml naapp-lib/README.md /naapp-lib/
+COPY naapp-contracts/pyproject.toml naapp-contracts/README.md /naapp-contracts/
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY server/src ./src/
 COPY awid/src /awid/src
-COPY naapp-lib/src /naapp-lib/src
+COPY naapp-contracts/src /naapp-contracts/src
 RUN uv sync --frozen --no-dev
 
 
@@ -43,7 +43,7 @@ WORKDIR /app
 COPY --from=builder --chown=aweb:aweb /app/.venv /app/.venv
 COPY --from=builder --chown=aweb:aweb /app/src /app/src
 COPY --from=builder --chown=aweb:aweb /awid /awid
-COPY --from=builder --chown=aweb:aweb /naapp-lib /naapp-lib
+COPY --from=builder --chown=aweb:aweb /naapp-contracts /naapp-contracts
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
