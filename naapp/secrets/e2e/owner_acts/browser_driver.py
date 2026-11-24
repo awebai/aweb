@@ -64,10 +64,22 @@ def expect(response: httpx.Response, status: int = 200) -> httpx.Response:
     return response
 
 
+def sign_in(origin: str, ca: str, scope: str, path: Path, device: SoftAuthenticator) -> int:
+    """Sign in on the console with the passkey and print the login's answer:
+    its status and, when refused, its code."""
+    with httpx.Client(base_url=origin, verify=ca, follow_redirects=False, timeout=30) as browser:
+        options = expect(browser.post("/login/options", json={"scope": scope})).json()
+        answer = browser.post("/login", json={"scope": scope, "assertion": device.get(options)})
+        save_device(path, device)
+    print(json.dumps({"status": answer.status_code, "detail": answer.json().get("detail")}))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--page", required=True, help="the URL aw printed")
-    parser.add_argument("--purpose", required=True, choices=("credential", "session"))
+    parser.add_argument("--purpose", required=True, choices=("credential", "session", "login"))
+    parser.add_argument("--scope", help="the scope a login names")
     parser.add_argument("--device", required=True, type=Path)
     parser.add_argument("--ca", required=True)
     parser.add_argument("--no-page", action="store_true", help="skip the HTML check until the page lands")
@@ -77,6 +89,8 @@ def main() -> int:
     origin = f"{page.scheme}://{page.netloc}"
     handoff_id = page.path.rsplit("/", 1)[-1]
     device = load_device(args.device, origin)
+    if args.purpose == "login":
+        return sign_in(origin, args.ca, args.scope, args.device, device)
     with httpx.Client(base_url=origin, verify=args.ca, follow_redirects=False, timeout=30) as browser:
         if not args.no_page:
             shown = expect(browser.get(page.path))

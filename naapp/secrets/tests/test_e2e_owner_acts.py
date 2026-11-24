@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pexpect
 import pytest
+from aweb_naapp.roles import holding_scope
 from aweb_naapp_testing.network import make_certificates
 from nacl.signing import SigningKey
 from team_journey_support import (
@@ -71,6 +72,7 @@ CONSOLE = "https://console.secrets.svc.test"
 ROLE = "secrets.owner"
 # The lane's Logs, and the network both apps' hooks stay inside.
 LOGS_APP_ID = "lane-logs"
+READER_ROLE = "logs.reader"
 LOGS_API = "https://api.logs.svc.test"
 LOGS_CONSOLE = "https://console.logs.svc.test"
 LANE_SUBNET = "172.31.240.0/24"
@@ -282,6 +284,40 @@ class Holder(SharedHolder):
             args.append("--no-page")
         result = _docker(*args, timeout=180)
         assert result.returncode == 0, result.stdout + result.stderr
+
+    def login(self, console: str, scope: str) -> dict:
+        """The answer to the holder's own passkey login on ``console``."""
+        result = _docker(
+            "run", "--rm", f"--network=container:{self.container}",
+            "--user", f"{os.getuid()}:{os.getgid()}",
+            f"--volume={self.lane.runtime}:/runtime", f"{self.lane.project}-browser",
+            "--page", console + "/login", "--purpose", "login", "--scope", scope,
+            "--device", "/runtime/holder/authenticator.json", "--ca", "/runtime/tls/ca.pem",
+            timeout=180,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        return first_json(result.stdout)
+
+    def run(self, principal: str, *args: str) -> str:
+        """aw as the holder, to its end."""
+        child = self.act(principal, *args)
+        output = self.answer_passphrases(child)
+        child.close()
+        assert child.exitstatus == 0, output
+        return output
+
+    def run_in_browser(self, principal: str, console: str, purpose: str, *args: str) -> str:
+        """aw as the holder, completing the handoff page it opens on ``console``."""
+        child = self.act(principal, *args)
+        output = self.answer_passphrases(child, until=r"Open this page to continue: (\S+)")
+        page = re.search(r"Open this page to continue: (\S+)", output).group(1)
+        assert page.startswith(console + "/handoff/"), page
+        self.browser(page, purpose, page_check=False)
+        child.expect(pexpect.EOF)
+        rest = child.before
+        child.close()
+        assert child.exitstatus == 0, rest
+        return output + rest
 
 
 @pytest.fixture(scope="module")
@@ -526,3 +562,41 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
     child = holder.act(principal, "--json", "app", "human", APP_ID, "--help")
     listed = holder.answer_passphrases(child)
     assert "confirm" in listed and "draft-change" in listed, listed
+
+    logs_reader_signs_in_again_after_a_reissue(lane, controller, holder, human, hooks)
+
+
+def logs_reader_signs_in_again_after_a_reissue(
+    lane: Lane, controller: str, holder: Holder, human: dict, hooks: dict
+) -> None:
+    """A Logs reader whose member certificate was reissued is refused by its
+    passkey login until the reader's own aw signs it in once."""
+    principal = human["id"]
+    aw(holder.container, "plugin", "install", LOGS_API)
+    holder.run_in_browser(principal, LOGS_CONSOLE, "credential", "app", "credential", "register", LOGS_APP_ID,
+                          "--role", READER_ROLE, "--out", "/runtime/holder/logs-export.json")
+    shutil.copyfile(lane.runtime / "holder" / "logs-export.json", lane.runtime / "controller" / "logs-export.json")
+    designated = _docker("exec", controller, "aw", "app", "role", "designate", LOGS_APP_ID, "--role", READER_ROLE,
+                         "--principal", principal, "--credential", "/runtime/controller/logs-export.json", "--yes",
+                         timeout=300)
+    assert designated.returncode == 0, designated.stdout + designated.stderr
+    scope = holding_scope(hooks["active"]["logs/production/post-governance-hook"]["installation_id"], TEAM_ID,
+                          READER_ROLE, principal)
+    assert holder.login(LOGS_CONSOLE, scope)["status"] == 200
+
+    reissued = aw(controller, "id", "team", "reissue-cert", "holder", "--team", TEAM, "--namespace", DOMAIN,
+                  "--did", human["did_key"], "--did-aw", principal, "--global", "--registry", REGISTRY)
+    assert reissued["old_certificate_id"] != reissued["new_certificate_id"]
+    # Logs may still hold evidence of the old certificate, for at most 60 seconds.
+    deadline = time.monotonic() + 120
+    while (answer := holder.login(LOGS_CONSOLE, scope))["status"] == 200:
+        assert time.monotonic() < deadline, "the revoked certificate still signs in"
+        # Each login is two of the twelve the console admits a minute.
+        time.sleep(15)
+    assert answer == {"status": 403, "detail": "principal_not_member"}
+
+    holder.run(principal, "--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM,
+               "--cert-id", reissued["new_certificate_id"], "--registry", REGISTRY)
+    shown = holder.run_in_browser(principal, LOGS_CONSOLE, "session", "app", "human", LOGS_APP_ID, "session")
+    assert scope in shown, shown
+    assert holder.login(LOGS_CONSOLE, scope)["status"] == 200
