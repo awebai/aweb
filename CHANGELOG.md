@@ -30,6 +30,9 @@
   row only once contact was recorded. Hosts that call `connect_agent` directly
   must pass `WorkspaceContact.SIGNED_CONNECT` for an agent's own connect, or
   that agent is never shown as connected.
+- Peer cleanup and retirement planning measure an uncontacted workspace's
+  inactivity from reservation time. Contacted workspaces use their latest
+  observed activity. Self-delete remains immediate.
 
 - A pin-store write no longer fails because another `aw` process on the same
   home changed the trust store first. `aw id pin-store compare-and-set`

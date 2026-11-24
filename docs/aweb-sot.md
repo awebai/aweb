@@ -1247,8 +1247,11 @@ the workspace. It returns `409` if the bound agent is global
 workspace whose activity is within the presence TTL (30 minutes by default,
 configured by `AWEB_PRESENCE_TTL_SECONDS`). Activity is the newest workspace
 `last_seen_at`, Redis heartbeat timestamp, or currently valid grant-liveness
-timestamp. Embedded callers pass their selected registry client explicitly
-to the lifecycle planner and cascade. Before a remote membership revocation,
+timestamp. For lifecycle planning and cleanup only, a workspace with no
+observed contact uses its `created_at` as the cutoff timestamp. Reservation
+alone provides no last-seen time or online status. Embedded callers pass their
+selected registry client explicitly to the lifecycle planner and cascade.
+Before a remote membership revocation,
 the host checks the workspace with the shared planner and preserves its
 refusal. The lifecycle planner, cascade and agent list use the same activity
 owner, as do HTTP/MCP workspace status, online lists, dashboard snapshots and
