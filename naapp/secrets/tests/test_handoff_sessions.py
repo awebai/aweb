@@ -359,15 +359,17 @@ async def reissue_owner_membership(journey, *, rotate=False):
 
 async def held_state(journey):
     db = journey.world.db
-    statements = (
-        "SELECT * FROM {{tables.role_assignments}} ORDER BY team_id,role,principal_did",
-        "SELECT * FROM {{tables.role_holdings}} ORDER BY b3_scope",
-        "SELECT * FROM {{tables.passkey_approvers}} ORDER BY scope,subject",
-        "SELECT * FROM {{tables.passkey_credentials}} ORDER BY credential_id",
-        "SELECT * FROM {{tables.console_sessions}} ORDER BY token_sha256",
-        "SELECT * FROM {{tables.outbox_events}} ORDER BY position",
+    state = (
+        await db.fetch_all(
+            "SELECT * FROM {{tables.role_assignments}} ORDER BY team_id,role,principal_did"
+        ),
+        await db.fetch_all("SELECT * FROM {{tables.role_holdings}} ORDER BY b3_scope"),
+        await db.fetch_all("SELECT * FROM {{tables.passkey_approvers}} ORDER BY scope,subject"),
+        await db.fetch_all("SELECT * FROM {{tables.passkey_credentials}} ORDER BY credential_id"),
+        await db.fetch_all("SELECT * FROM {{tables.console_sessions}} ORDER BY token_sha256"),
+        await db.fetch_all("SELECT * FROM {{tables.outbox_events}} ORDER BY position"),
     )
-    return [[dict(row) for row in await db.fetch_all(statement)] for statement in statements]
+    return [[dict(row) for row in rows] for rows in state]
 
 
 @pytest.mark.parametrize("rotate_team_key", [False, True])
