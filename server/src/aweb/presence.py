@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone as timezone_mod
 from typing import Dict, List, Optional, cast
@@ -14,6 +15,15 @@ _PRESENCE_PROJECTION_FIELDS = frozenset({
     "program", "model", "human_name", "repo_id", "member_email", "status",
     "current_branch", "role", "canonical_origin", "timezone",
 })
+
+
+@dataclass(frozen=True)
+class HostedHeartbeatPresence:
+    """Already-loaded host fields for an exact workspace and canonical team."""
+
+    workspace_id: str
+    team_id: str
+    projection: Mapping[str, str | None]
 
 
 def _presence_key(workspace_id: str) -> str:

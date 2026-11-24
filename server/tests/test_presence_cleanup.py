@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from fastapi import Depends, Request
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError
 
@@ -334,7 +335,10 @@ async def test_presence_cleanup_racing_an_atomic_writer_leaves_only_the_winning_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("expired", [False, True])
-async def test_native_heartbeat_writes_presence_once(privacy_app, monkeypatch, expired):
+@pytest.mark.parametrize("hosted_scope", ["none", "exact", "wrong-team", "wrong-workspace"])
+async def test_native_heartbeat_writes_presence_once(privacy_app, monkeypatch, expired, hosted_scope):
+    from aweb.deps import get_db
+    from aweb.presence import HostedHeartbeatPresence
     from test_dashboard_privacy import TEAM
     from test_messages_http import _signed_team_headers
     from test_team_auth_deps import _admitted_cert_info
@@ -352,6 +356,27 @@ async def test_native_heartbeat_writes_presence_once(privacy_app, monkeypatch, e
     key = f"presence:{workspace}"
     if expired:
         await env.redis.pexpire(key, 0)
+    if hosted_scope != "none":
+        path = "/v1/agents/heartbeat"
+        route = next(item for item in env.app.routes if getattr(item, "path", None) == path)
+        authenticate = next(dep.call for dep in route.dependant.dependencies if dep.name == "identity")
+        projection = {
+            "canonical_origin": "example.test/repo", "current_branch": "feature/x",
+            "human_name": "Fixture", "member_email": "seat@example.test",
+            "repo_id": str(uuid4()), "role": "analyst",
+        }
+        hosted = HostedHeartbeatPresence(
+            str(uuid4()) if hosted_scope == "wrong-workspace" else workspace,
+            "other:example.test" if hosted_scope == "wrong-team" else TEAM,
+            projection,
+        )
+
+        async def embedded_identity(request: Request, db=Depends(get_db)):
+            identity = await authenticate(request, db)
+            request.state.hosted_heartbeat_presence = hosted
+            return identity
+
+        monkeypatch.setitem(env.app.dependency_overrides, authenticate, embedded_identity)
     calls = []
     execute = env.redis.execute_command
 
@@ -369,3 +394,8 @@ async def test_native_heartbeat_writes_presence_once(privacy_app, monkeypatch, e
     stored = await env.redis.hgetall(key)
     assert stored["last_seen"] == response.json()["last_seen_at"]
     assert (stored.get("program"), stored["status"]) == ((None, "active") if expired else ("rich", "busy"))
+    if hosted_scope != "none":
+        assert {key: stored.get(key) for key in projection} == (
+            projection if hosted_scope == "exact" else dict.fromkeys(projection)
+        )
+    await clear_workspace_presence(env.redis, [workspace])
