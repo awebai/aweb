@@ -41,9 +41,10 @@ class WorkspaceActivity:
     last_seen_at: datetime | None
     presence: Mapping[str, str] | None
 
-    def is_newer_than(self, *, cutoff: datetime) -> bool:
-        """Whether any valid heartbeat observed activity strictly after the cutoff."""
-        return self.last_seen_at is not None and self.last_seen_at > cutoff
+    def is_newer_than(self, *, cutoff: datetime, reserved_at: datetime | None = None) -> bool:
+        """Check observed activity, with a reservation fallback for lifecycle callers."""
+        timestamp = self.last_seen_at if self.last_seen_at is not None else reserved_at
+        return timestamp is not None and timestamp > cutoff
 
     def is_online(self, *, now: datetime) -> bool:
         """All displays use the configured activity window (docs/agent-health.md)."""

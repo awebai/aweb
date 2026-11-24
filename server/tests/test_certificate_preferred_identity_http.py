@@ -24,7 +24,7 @@ from awid.identity_observation import IdentityKindObservation, unverified_kind
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 
-from aweb import id_chain_auth, identity_auth_deps
+from aweb import id_chain_auth, identity_auth_deps, identity_binding
 from aweb.application_state import application_registry_client
 from aweb.identity_binding import (
     identity_binding_cache,
@@ -50,11 +50,11 @@ from test_id_chain_request_auth import ROOT, _signed_fixture_certificate
 __all__ = ["privacy_app"]
 
 
-def mount_policy(env, monkeypatch, *, chain_reasons=None):
+def mount_policy(env, monkeypatch, *, chain_reasons=None, include_reads=False):
     live_kinds = []
 
     async def mounted_identity(request: Request, db):
-        if request.method != "POST":
+        if request.method != "POST" and not include_reads:
             return await native_identity(request, db)
         checked = await verify_request_certificate(
             request,
@@ -72,6 +72,17 @@ def mount_policy(env, monkeypatch, *, chain_reasons=None):
 
     native_identity = identity_auth_deps.get_team_identity
     monkeypatch.setattr(identity_auth_deps, "get_team_identity", mounted_identity)
+    if include_reads:
+        route = next(item for item in env.app.routes if item.path == "/v1/tasks" and "GET" in item.methods)
+        task_auth = next(
+            dependency.call for dependency in route.dependant.dependencies
+            if getattr(dependency.call, "_aweb_grant_scope", None) == "coord.read"
+        )
+
+        async def mounted_task_identity(request: Request):
+            return await mounted_identity(request, env.infra)
+
+        monkeypatch.setitem(env.app.dependency_overrides, task_auth, mounted_task_identity)
     return live_kinds
 
 
@@ -223,7 +234,7 @@ async def sender_projection(env, actor):
     )
 
 
-async def serve_messages(env, sender, receiver, chain_header, *, bounded):
+async def serve_messages(env, sender, receiver, chain_header, *, timeout_phase=None):
     results = []
     for kind in ("mail", "chat"):
         path, body = signed_message(sender, receiver, kind=kind)
@@ -233,7 +244,9 @@ async def serve_messages(env, sender, receiver, chain_header, *, bounded):
         started = monotonic()
         async with asyncio.timeout(5):
             response = await env.client.post(path, content=body, headers=headers)
-        if bounded:
+        if timeout_phase == "binding" and kind == "chat":
+            assert monotonic() - started < 1.5
+        elif timeout_phase is not None:
             assert 1.9 <= monotonic() - started < 3
         results.append(response)
     return results
@@ -400,7 +413,7 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
                 "invalid!"
                 if scenario == "malformed"
                 else encode_id_chain_header(chain),
-                bounded=scenario in ("hung", "chain-hung"),
+                timeout_phase={"hung": "binding", "chain-hung": "chain"}.get(scenario),
             )
         finally:
             env.registry.transport.down = False
@@ -509,6 +522,148 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
 
 
 @pytest.mark.asyncio
+async def test_preferred_live_binding_timeout_backoff_and_recovery(privacy_app, monkeypatch):
+    env = privacy_app
+    writer = application_registry_client(env.app.state)
+    domain = f"binding-timeout-{uuid4().hex[:8]}.test"
+    actor = await admit_messaging_actor(env, alias="reader", team_id=TEAM, address=f"{domain}/reader")
+    clock = [100.0]
+    monkeypatch.setattr(identity_binding, "monotonic", lambda: clock[0])
+    mount_policy(env, monkeypatch, include_reads=True)
+    transport = env.registry.transport
+    key_path = f"/v1/did/{actor.stable_id}/key"
+
+    def key_reads():
+        return sum(call.url.path == key_path for call in transport.calls)
+
+    async with aclosing(CachedRegistryClient(
+        registry_url=writer.registry_url, redis_client=env.redis, transport=transport,
+        service_token=writer.service_token, domain_verifier=env.registry.namespace_authority,
+    )) as cached:
+        monkeypatch.setattr(env.app.state, "awid_registry_client", cached)
+        team_name, team_domain = TEAM.split(":", 1)
+        await cached.get_team(team_domain, team_name)
+        await cached.get_team_revocations(team_domain, team_name)
+        identity_binding_cache(env.app.state).clear()
+        before = key_reads()
+        transport.delay = 10
+        try:
+            response = await env.client.get("/v1/tasks", headers=messaging_actor_headers(actor))
+            assert response.status_code == 200, response.text
+            clock[0] += 4.99
+            async with asyncio.timeout(1.5):
+                response = await env.client.get("/v1/messages/inbox", headers=messaging_actor_headers(actor))
+            assert response.status_code == 200, response.text
+            assert key_reads() == before + 1
+
+            clock[0] = 105.0
+            transport.delay = 0
+            transport.down = True
+            response = await env.client.get("/v1/tasks", headers=messaging_actor_headers(actor))
+            assert response.status_code == 200, response.text
+            assert key_reads() == before + 2
+        finally:
+            transport.delay = 0
+            transport.down = False
+
+        rotated = bytes(SigningKey.generate())
+        await writer.rotate_key(
+            actor.stable_id, did_key_from_signing_key(rotated), actor.signing_key, rotated,
+        )
+        # An enforcing fresh request sees the rotation inside the second
+        # backoff window and invalidates the cached fallback for the old key.
+        strict = await env.client.post(
+            "/v1/connect", content=b"{}", headers=messaging_actor_headers(actor, body=b"{}"),
+        )
+        assert strict.status_code == 403, strict.text
+        before = key_reads()
+        response = await env.client.get("/v1/messages/inbox", headers=messaging_actor_headers(actor))
+        assert response.status_code == 403, response.text
+        assert response.json()["detail"] == "identity_binding_mismatch"
+        assert key_reads() == before + 1
+
+
+@pytest.mark.asyncio
+async def test_preferred_live_reuses_withdrawn_address_across_mounted_routes(privacy_app, monkeypatch):
+    env = privacy_app
+    registry = application_registry_client(env.app.state)
+    domain = f"binding-withdrawn-{uuid4().hex[:8]}.test"
+    actor = await admit_messaging_actor(env, alias="reader", team_id=TEAM, address=f"{domain}/reader")
+    controller = await env.registry.ensure_namespace(domain=domain)
+    await registry.delete_address(domain, "reader", controller)
+    identity_binding_cache(env.app.state).clear()
+    clock = [100.0]
+    monkeypatch.setattr(identity_binding, "monotonic", lambda: clock[0])
+    mount_policy(env, monkeypatch, include_reads=True)
+    calls = env.registry.transport.calls
+    paths = ("/v1/tasks", "/v1/messages/inbox")
+    expected = (f"/v1/did/{actor.stable_id}/key", f"/v1/namespaces/{domain}/addresses/reader")
+
+    def binding_paths_since(offset):
+        return [call.url.path for call in calls[offset:] if call.url.path in expected]
+
+    offset = len(calls)
+    for index in range(10):
+        clock[0] = 100.0 + index * 6.66
+        response = await env.client.get(paths[index % 2], headers=messaging_actor_headers(actor))
+        assert response.status_code == 200, response.text
+    assert binding_paths_since(offset) == list(expected)
+
+    clock[0] = 160.0
+    response = await env.client.get(paths[0], headers=messaging_actor_headers(actor))
+    assert response.status_code == 200, response.text
+    assert binding_paths_since(offset) == list(expected) * 2
+    offset = len(calls)
+    strict = await env.client.post(
+        "/v1/connect", content=b"{}", headers=messaging_actor_headers(actor, body=b"{}"),
+    )
+    assert strict.status_code == 403, strict.text
+    assert strict.json()["detail"] == "identity_binding_mismatch"
+    assert binding_paths_since(offset) == list(expected)
+
+
+@pytest.mark.asyncio
+async def test_preferred_live_inflight_outage_cannot_mask_an_observed_rotation(privacy_app, monkeypatch):
+    env = privacy_app
+    writer = application_registry_client(env.app.state)
+    actor = await admit_messaging_actor(env, alias="reader", team_id=TEAM)
+    identity_binding_cache(env.app.state).clear()
+    mount_policy(env, monkeypatch, include_reads=True)
+    transport = env.registry.transport
+    send = transport.handle_async_request
+    entered, release = asyncio.Event(), asyncio.Event()
+    key_path = f"/v1/did/{actor.stable_id}/key"
+
+    async def hold_first_key_read(request):
+        if request.url.path == key_path and not entered.is_set():
+            entered.set()
+            await release.wait()
+            raise httpx.ConnectError("old read lost", request=request)
+        return await send(request)
+
+    monkeypatch.setattr(transport, "handle_async_request", hold_first_key_read)
+    async with asyncio.TaskGroup() as tasks:
+        pending = tasks.create_task(
+            env.client.get("/v1/tasks", headers=messaging_actor_headers(actor))
+        )
+        try:
+            async with asyncio.timeout(3):
+                await entered.wait()
+                rotated = bytes(SigningKey.generate())
+                await writer.rotate_key(
+                    actor.stable_id, did_key_from_signing_key(rotated), actor.signing_key, rotated,
+                )
+                strict = await env.client.post(
+                    "/v1/connect", content=b"{}", headers=messaging_actor_headers(actor, body=b"{}"),
+                )
+                assert strict.status_code == 403, strict.text
+        finally:
+            release.set()
+    assert pending.result().status_code == 403, pending.result().text
+    assert pending.result().json()["detail"] == "identity_binding_mismatch"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("local", [True, False], ids=["did-key", "did-aw"])
 async def test_preferred_live_preserves_stale_issuer_disposition(privacy_app, monkeypatch, local):
     env = privacy_app
@@ -575,7 +730,7 @@ async def test_preferred_live_cannot_adopt_an_unverified_stable_did(
     assert before["did_aw_verified_key"] is None
     mount_policy(env, monkeypatch)
     for response in await serve_messages(
-        env, new_certificate, receiver, None, bounded=False
+        env, new_certificate, receiver, None
     ):
         assert response.status_code == 403, response.text
         assert response.json()["detail"] == "identity_binding_mismatch"
