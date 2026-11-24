@@ -51,6 +51,10 @@ _DOTTED = re.compile(
 _PACKAGED_HOOKS = re.compile(r"""files\((["'])aweb_naapp\.hooks\1\)""")
 # A ``from aweb_naapp.hooks import`` left after the split names runtime hooks only.
 _BARE_HOOKS = re.compile(r"\baweb_naapp\.hooks(?![.A-Za-z0-9_])(?! import )")
+_TEXT_IMPORT = re.compile(
+    r"from (aweb_naapp(?:\.hooks|\.runtime)?) import ([A-Za-z_][A-Za-z0-9_]*(?: as [A-Za-z_][A-Za-z0-9_]*)?"
+    r"(?:, *[A-Za-z_][A-Za-z0-9_]*(?: as [A-Za-z_][A-Za-z0-9_]*)?)*)"
+)
 _LINE_LENGTH = 100
 
 
@@ -115,6 +119,12 @@ def rename_source(source: str) -> tuple[str, list[tuple[int, str]]]:
     for number, line in enumerate(renamed.split("\n"), start=1):
         for match in _BARE_HOOKS.finditer(line):
             ambiguous.append((number, match.group(0)))
+        # Real import statements were split above; one still naming a contract
+        # module is inside a string, where only a person can rewrite it.
+        for match in _TEXT_IMPORT.finditer(line):
+            names = {name.split(" as ")[0].strip() for name in match.group(2).split(",")}
+            if names & _IMPORTED_MODULES[match.group(1)][1]:
+                ambiguous.append((number, match.group(0).strip()))
     return renamed, sorted(ambiguous)
 
 

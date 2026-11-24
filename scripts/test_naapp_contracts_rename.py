@@ -148,6 +148,16 @@ class AmbiguousReferences(unittest.TestCase):
         self.assertEqual(renamed, source)
         self.assertEqual(ambiguous, [(1, "aweb_naapp.hooks")])
 
+    def test_an_import_of_a_contract_module_inside_a_string_is_reported(self):
+        source = 'probe = "from aweb_naapp.hooks import catalog\\n"\n'
+        renamed, ambiguous = rename_source(source)
+        self.assertEqual(renamed, source)
+        self.assertEqual(ambiguous, [(1, "from aweb_naapp.hooks import catalog")])
+
+    def test_an_import_of_runtime_modules_inside_a_string_is_left_alone(self):
+        source = 'probe = "from aweb_naapp.hooks import producer"\n'
+        self.assertEqual(_rename(source), source)
+
     def test_an_import_with_a_comment_inside_is_reported_not_rewritten(self):
         source = "from aweb_naapp import (  # docs and contracts\n    llms,\n    manifest,\n)\n"
         renamed, ambiguous = rename_source(source)
