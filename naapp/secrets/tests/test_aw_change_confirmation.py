@@ -29,6 +29,7 @@ from aweb_secrets.runners import apply_runner_migrations, mint_runner_id
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import apply_use_approval_migrations
 from tests.governance import view as governance_view
+from tests.human_owner import fixture_member_admission
 from tests.test_change_set_runners import runner_item
 from tests.test_change_sets import Inbox, by_member, change_set
 from tests.test_handoff_sessions import API, journey, signed_request  # noqa: F401
@@ -191,6 +192,7 @@ async def confirmation_journey(journey, tmp_path):  # noqa: F811
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         directory=w.directory,
         fence=w.console.fence,

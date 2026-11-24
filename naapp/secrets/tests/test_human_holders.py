@@ -18,6 +18,7 @@ from aweb_secrets.console import OwnerConsole
 from aweb_secrets.installation_lookup import InstallationLookup
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from tests.human_owner import apply_holder as _apply
+from tests.human_owner import fixture_member_admission
 from tests.test_owner_bootstrap import ALICE, BOB, TEAM
 from tests.test_owner_bootstrap import world as world
 
@@ -36,6 +37,7 @@ def authority(w):
     return OwnerHoldingAuthority(
         console=OwnerConsole(
             db=w.db,
+            member=fixture_member_admission(w),
             passkeys=w.passkeys,
             directory=w.directory,
             fence=w.console.fence,

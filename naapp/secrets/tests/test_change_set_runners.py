@@ -27,6 +27,7 @@ from aweb_secrets.runners import (
     register_runner,
 )
 from tests.governance import view
+from tests.human_owner import fixture_member_admission
 from tests.test_change_sets import (
     ALICE,
     BOB,
@@ -68,6 +69,7 @@ async def session_for(world: World, scope: str, contact: str) -> ConsoleSession:
     verified = await world.passkeys.verify_login(scope, world.devices[contact].get(dict(options)))
     return ConsoleSession(
         subject=verified.subject,
+        member=await fixture_member_admission(world)(scope),
         scope=scope,
         evidence_ref=verified.evidence_ref,
         expires_at=datetime.now(UTC) + timedelta(minutes=15),

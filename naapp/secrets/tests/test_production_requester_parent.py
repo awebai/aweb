@@ -146,8 +146,10 @@ async def test_first_session_start_resolves_the_requester_from_runtime_evidence(
         designated = await client.post(settings.console_origin + PATH, json=body)
         assert designated.status_code == 200, designated.text
         db = service.runtime.db()
-        assert await db.fetch_value("SELECT count(*) FROM console_holding_certificates") == 0
-        assert await db.fetch_value("SELECT certificate IS NOT NULL FROM role_holdings")
+        assert (
+            json.loads(await db.fetch_value("SELECT certificate FROM role_holdings"))
+            == holder.certificate()
+        )
         chain = [world.human_identities[principal]]
         signer = holder
         if requester != "holder":

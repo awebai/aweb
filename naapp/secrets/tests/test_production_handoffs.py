@@ -162,6 +162,7 @@ async def test_owner_console_s4_uses_the_shared_verified_session_once(journey):
     original = journey.world.console
     console = OwnerConsole(
         db=original.db,
+        member=original.sessions.member,
         passkeys=original.passkeys,
         directory=original.directory,
         fence=original.fence,
@@ -194,6 +195,7 @@ def bound_console(journey, *, prepared=True):
     original = journey.world.console
     return OwnerConsole(
         db=original.db,
+        member=original.sessions.member,
         passkeys=original.passkeys,
         directory=original.directory,
         fence=original.fence,

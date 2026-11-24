@@ -35,6 +35,7 @@ from aweb_secrets.owners import owner_scope
 from tests.console_home import no_banner
 from tests.console_network import passkey_origin as passkey_origin
 from tests.console_use_world import audit_for, mint
+from tests.human_owner import fixture_member_admission
 from tests.test_approval_email import contents, mailer
 from tests.test_change_sets import ALICE, TEAM, Installations, enrol_owner
 from tests.test_change_sets import world as _world
@@ -82,6 +83,7 @@ async def entry_service(world, tmp_path, request, script_delivery, console_tls, 
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         credential_audit=w.credential_audit,
         directory=w.directory,
@@ -110,7 +112,9 @@ async def entry_service(world, tmp_path, request, script_delivery, console_tls, 
     )
     human = FastAPI()
     human.include_router(owner_console_router(console))
-    human.include_router(console_ui_router(sessions=console.sessions, banner=no_banner))
+    human.include_router(
+        console_ui_router(app_id="sandbox-secrets", sessions=console.sessions, banner=no_banner)
+    )
     human.include_router(console_changes_router(changes))
     human.include_router(console_forms_router(changes=changes))
     human.include_router(console_use_approvals_router(services=typed))

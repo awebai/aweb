@@ -49,6 +49,7 @@ class ConsoleValues:
             current.token_sha256,
         ):
             raise HTTPException(status_code=401, detail="console_session_required")
+        current.member.require_fresh()
 
     async def _authorize(
         self, tx: TransactionManager, current: ConsoleSession, admitted: AdmittedInstallation

@@ -55,7 +55,7 @@ from aweb_secrets.owners import (
 )
 from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.revisions import apply_revision_migrations
-from tests.human_owner import apply_holder, fixture_principal
+from tests.human_owner import apply_holder, fixture_member_admission, fixture_principal
 from tests.test_change_sets import Installations
 from tests.test_owner_directory import ORIGIN, Audit, Contacts
 
@@ -91,6 +91,7 @@ class World:
 
         self.console = OwnerConsole(
             db=db,
+            member=fixture_member_admission(self),
             passkeys=passkeys,
             credential_audit=credential_audit,
             directory=self.directory,

@@ -39,7 +39,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from nacl.signing import SigningKey
 
 from aweb_secrets.human_holding_identity import owner_holding_identity
-from aweb_secrets.owners import OWNER_ROLE
+from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from tests.human_owner import apply_holder
 from tests.test_human_holders import authority
 from tests.test_owner_bootstrap import TEAM
@@ -235,6 +235,7 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
         app = authority(world)
         factory = ConsoleHandoffs(
             db=world.db,
+            fence=world.console.fence,
             passkeys=world.passkeys,
             authority=HandoffAuthority(
                 app.credential_target,
@@ -293,9 +294,10 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
 
 async def test_two_fresh_bound_sessions_share_the_same_real_b3_pair(journey):
     first_key, first = await journey.open()
-    retained = await journey.factory.check_holding_member(
-        journey.scope, team_id=journey.member.team_id
+    scope = owner_scope(
+        journey.scope.installation_id, journey.member.team_id, journey.scope.principal
     )
+    retained = await journey.factory.check_holding_member(scope)
     assert retained.principal == journey.scope.principal
     retained.require_fresh()
     second_key, second = await journey.open()

@@ -13,6 +13,7 @@ from fastapi import HTTPException, Request
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.reconciliation_service import ReconciliationControls
+from tests.human_owner import fixture_member_admission
 from tests.test_reconciliation_control_audit import control_world
 
 
@@ -90,6 +91,7 @@ async def service_world(uses, *, approval_required=False):
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         directory=w.directory,
         fence=context.arguments["fence"],

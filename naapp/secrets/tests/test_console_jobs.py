@@ -19,6 +19,7 @@ from aweb_secrets.jobs import apply_job_migrations
 from aweb_secrets.runners import apply_runner_migrations
 from aweb_secrets.use_context import apply_use_context_migrations
 from tests.console_home import no_banner
+from tests.human_owner import fixture_member_admission
 from tests.test_change_sets import ALICE, ORIGIN, enrol_owner
 from tests.test_change_sets import world as _world
 from tests.test_console import API
@@ -42,6 +43,7 @@ async def application(w, *, origin=ORIGIN, agent_origin=API):
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         credential_audit=w.credential_audit,
         directory=w.directory,
@@ -59,7 +61,9 @@ async def application(w, *, origin=ORIGIN, agent_origin=API):
     )
     app = FastAPI()
     app.include_router(owner_console_router(console))
-    app.include_router(console_ui_router(sessions=console.sessions, banner=no_banner))
+    app.include_router(
+        console_ui_router(app_id="sandbox-secrets", sessions=console.sessions, banner=no_banner)
+    )
     app.include_router(console_changes_router(changes))
     app.include_router(console_forms_router(changes=changes))
     app.include_router(console_jobs_router(changes=changes))

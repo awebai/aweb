@@ -18,6 +18,7 @@ from aweb_secrets.console_values import ConsoleValues, console_values_router
 from aweb_secrets.custody import CustodyUnavailable, SealContext, decode_value
 from aweb_secrets.owners import OWNER_ROLE
 from tests.console_home import no_banner
+from tests.human_owner import fixture_member_admission
 from tests.test_change_sets import ALICE, ORIGIN, TEAM, enrol_owner
 from tests.test_change_sets import world as _world
 from tests.test_console import API, login
@@ -42,6 +43,7 @@ async def clients(w, *, lookup_ready=None, resume=None):
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         credential_audit=w.credential_audit,
         directory=w.directory,
@@ -52,7 +54,9 @@ async def clients(w, *, lookup_ready=None, resume=None):
     w.console = console
     human_app = FastAPI()
     human_app.include_router(owner_console_router(console))
-    human_app.include_router(console_ui_router(sessions=console.sessions, banner=no_banner))
+    human_app.include_router(
+        console_ui_router(app_id="sandbox-secrets", sessions=console.sessions, banner=no_banner)
+    )
     human_app.include_router(
         console_values_router(ConsoleValues(console=console, custody=w.custody))
     )

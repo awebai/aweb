@@ -12,6 +12,7 @@ from fastapi import HTTPException, Request
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.console_reconciliation.authority import ConsoleReconciliationFence
 from aweb_secrets.owners import OWNER_ROLE
+from tests.human_owner import fixture_member_admission
 from tests.test_change_sets import ALICE, enrol_owner
 from tests.test_change_sets import world as world
 
@@ -27,6 +28,7 @@ async def caller(w):
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         credential_audit=w.credential_audit,
         directory=w.directory,

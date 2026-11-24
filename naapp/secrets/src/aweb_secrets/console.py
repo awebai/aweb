@@ -23,6 +23,7 @@ from aweb_naapp.console import (
     ConsoleSessions,
     KeyBoundConsoleSession,
     LoginLimiter,
+    MemberAdmission,
     console_assets_router,
     console_login_router,
     credential_router,
@@ -102,6 +103,7 @@ class OwnerConsole:
         verifier: OwnerActVerifier,
         installation: InstallationLookup,
         credential_audit: "CredentialAudit",
+        member: MemberAdmission,
         client_address_header: str | None = None,
         limiter: LoginLimiter | None = None,
         key_bound: Callable[[Request], Awaitable[ConsoleSession]] | None = None,
@@ -116,7 +118,7 @@ class OwnerConsole:
         self.credential_audit = credential_audit
         self._prepare_key_bound = prepare_key_bound
         self.sessions = ConsoleSessions(
-            db, passkeys=passkeys, scopes=self.admits_scope, key_bound=key_bound
+            db, passkeys=passkeys, scopes=self.admits_scope, member=member, key_bound=key_bound
         )
         self.limiter = limiter or LoginLimiter(
             db,
@@ -161,12 +163,7 @@ class OwnerConsole:
         # S4 separately verifies B3's current holder and login credential.
         # A scope grants no installation-wide action authority: S14 rechecks
         # the record's live coverage under the action's installation fence.
-        return bool(
-            await self.db.fetch_value(
-                "SELECT EXISTS(SELECT 1 FROM {{tables.approvers}} WHERE scope=$1)",
-                scope,
-            )
-        )
+        return await self.directory.has_contact_approver(scope)
 
     async def session_installation(
         self, current: ConsoleSession, installation_id: str

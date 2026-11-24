@@ -43,6 +43,7 @@ from aweb_secrets.run_plan import RunPlanRefused
 from aweb_secrets.run_planner import RunPlanner
 from aweb_secrets.secret import SecretRecord
 from tests.console_home import no_banner
+from tests.human_owner import fixture_member_admission
 from tests.test_admission import POLICY_BODY, STATUS, _member
 from tests.test_change_set_records import grant_after, item
 from tests.test_change_sets import (
@@ -192,6 +193,7 @@ async def application(
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         credential_audit=w.credential_audit,
         directory=w.directory,
@@ -201,7 +203,11 @@ async def application(
     )
     app = FastAPI()
     app.include_router(owner_console_router(console))
-    app.include_router(console_ui_router(sessions=console.sessions, banner=banner(console)))
+    app.include_router(
+        console_ui_router(
+            app_id="sandbox-secrets", sessions=console.sessions, banner=banner(console)
+        )
+    )
     app.include_router(console_access_router(services=ConsoleAccess(console=console)))
     app.include_router(containment_console_router(await service(context), console=console))
     for router in pages(console):

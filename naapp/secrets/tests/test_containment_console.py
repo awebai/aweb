@@ -10,7 +10,7 @@ from aweb_naapp.console import ConsoleSession
 
 from aweb_secrets.containment import ContainmentRefused
 from aweb_secrets.owners import approver_scope, hold_owner
-from tests.human_owner import canonical_actor
+from tests.human_owner import canonical_actor, fixture_member_admission
 from tests.test_change_sets import ALICE, TEAM, world  # noqa: F401
 from tests.test_containment_service import service
 from tests.test_use_approval_lineage import child, seed
@@ -33,6 +33,7 @@ async def login_session(w, scope, device):
     )
     return ConsoleSession(
         subject=logged_in.subject,
+        member=await fixture_member_admission(w)(scope),
         scope=scope,
         evidence_ref=logged_in.evidence_ref,
         expires_at=datetime.now(UTC) + timedelta(minutes=15),

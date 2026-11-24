@@ -18,6 +18,7 @@ from aweb_naapp.console import (
     ClientIdentity,
     ConsoleSession,
     KeyBoundConsoleSession,
+    ScopeMember,
     apply_console_migrations,
 )
 from aweb_naapp.console.handoff_authority import HandoffAuthority, PreparedSessionTarget
@@ -277,7 +278,6 @@ async def _compose(
         audit=audit,
     )
 
-
     async def team_key(team_id):
         return (await runtime.team_cache().get(team_id)).team_did_key
 
@@ -323,6 +323,11 @@ async def _compose(
     async def key_bound(request: Request) -> ConsoleSession:
         return await handoffs.current(request)
 
+    async def member(scope: str) -> ScopeMember:
+        return await owners.console_member(
+            scope, check_holding_member=handoffs.check_holding_member
+        )
+
     async def prepare_key_bound(
         tx: TransactionManager,
         current: KeyBoundConsoleSession,
@@ -345,12 +350,14 @@ async def _compose(
         installation=InstallationLookup(fence),
         credential_audit=credentials,
         client_address_header=settings.client_address_header,
+        member=member,
         key_bound=key_bound,
         prepare_key_bound=prepare_key_bound,
     )
     holding = OwnerHoldingAuthority(console=console)
     handoffs = ConsoleHandoffs(
         db=db,
+        fence=fence,
         passkeys=passkeys,
         authority=HandoffAuthority(
             holding.credential_target,
@@ -662,7 +669,9 @@ def create_service(
             human(lambda s: owner_console_router(s.console)),
             human(
                 lambda s: console_ui_router(
-                    sessions=s.console.sessions, banner=s.audit_delivery.banner
+                    sessions=s.console.sessions,
+                    banner=s.audit_delivery.banner,
+                    app_id=settings.app_id,
                 )
             ),
             human(lambda s: console_bootstrap_router()),

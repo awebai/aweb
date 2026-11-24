@@ -12,15 +12,18 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from aweb_naapp import roles
+from aweb_naapp.console import ContactEnrolment, ScopeMember
 from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.approvals import ActionPolicy, Approver
+from aweb_naapp.runtime.human_member import HumanMemberProof
 from aweb_naapp.runtime.passkeys import Passkeys
+from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
@@ -250,6 +253,26 @@ class OwnerDirectory:
         read through ``db``; None for any other scope."""
         held = await owner_holding(db, scope)
         return None if held is None else PrincipalKey(held.team_id, held.principal)
+
+    async def has_contact_approver(self, scope: str) -> bool:
+        return bool(
+            await self._db.fetch_value(
+                "SELECT EXISTS(SELECT 1 FROM {{tables.approvers}} WHERE scope=$1)",
+                scope,
+            )
+        )
+
+    async def console_member(
+        self,
+        scope: str,
+        *,
+        check_holding_member: Callable[[str], Awaitable[HumanMemberProof]],
+    ) -> ScopeMember:
+        if await self.owner_of(self._db, scope) is not None:
+            return await check_holding_member(scope)
+        if not is_owner_scope(scope) and await self.has_contact_approver(scope):
+            return ContactEnrolment()
+        raise HTTPException(403, "principal_not_member")
 
     async def _owner(
         self, scope: str, *, tx: TransactionManager | None = None

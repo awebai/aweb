@@ -26,6 +26,7 @@ from aweb_secrets.custody.onepassword import project_item
 from aweb_secrets.owners import OWNER_ROLE
 from tests.custody.test_onepassword import field, reference, sdk_item
 from tests.custody.test_onepassword_staging import candidate
+from tests.human_owner import fixture_member_admission
 from tests.test_change_sets import ALICE, ORIGIN, TEAM, enrol_owner
 from tests.test_change_sets import world as _world
 from tests.test_console import API, login
@@ -47,6 +48,7 @@ async def console_clients(w):
 
     console = OwnerConsole(
         db=w.db,
+        member=fixture_member_admission(w),
         passkeys=w.passkeys,
         credential_audit=w.credential_audit,
         directory=w.directory,
