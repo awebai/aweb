@@ -4,6 +4,7 @@ These JSON files are exact raw deployed manifest bytes, not reserialized models:
 
 - `folio-deployed.json`: awebai/folio commit `bea8052c677e07565798c0de0580039b18df008a`, `src/folio/aweb-app.json`; SHA-256 `480b157753e1ecc9cd257daf70a35b97c5943960d69183971c32498b48c313e3`.
 - `library-deployed.json`: awebai/library commit `565d1e69bd8fee27ba99f374141e1b74e3d8cbf0`, `src/library/aweb-app.json`; SHA-256 `0019130d90bbbc61fde49c144b4f883eabac837889b0c69f515d206b35552329`.
+- `secrets-template.json`: aweb commit `d8ee9ed31ad275da7cab3a3cade0006e06587f02`, `naapp/secrets/src/aweb_secrets/aweb-app.json` (the Secrets manifest template, before Secrets moved to the naapp repository); SHA-256 `a4016cef63a56fb10233580df9ff1e231129404cf8c60c8d103382cf66b9cac5`. It is the template with key slots, not deployed bytes; the secrets run test fills the slots as a deployment does.
 
 The app owner independently matched both hashes to the live public manifest on
 2026-10-07. Folio declares events; the deployed Library manifest does not.

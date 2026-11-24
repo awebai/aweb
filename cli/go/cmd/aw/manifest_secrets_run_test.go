@@ -13,7 +13,7 @@ import (
 
 func secretsRunManifest(t *testing.T) (*appmanifest.Resolved, *appmanifest.Tool) {
 	t.Helper()
-	data, err := os.ReadFile("../../../../naapp/secrets/src/aweb_secrets/aweb-app.json")
+	data, err := os.ReadFile("../../internal/appmanifest/testdata/secrets-template.json")
 	if err != nil {
 		t.Fatal(err)
 	}
