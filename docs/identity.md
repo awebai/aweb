@@ -747,6 +747,10 @@ An admitted fallback produces one INFO entry with the team and its reason.
 unavailable or timed-out binding for five seconds in the process's bounded
 binding cache. Enforcing or fresh reads bypass these fallback observations.
 Newly observed key authority supersedes a conflicting fallback.
+After a timed-out or unavailable chain-status read, `PREFER_LIVE` suppresses
+status refreshes for that registry and domain for five seconds in the current
+process. It still uses fresh cached status when available. Enforcing reads
+retain their normal refresh behavior.
 
 `agents.did_aw_verified_key` records the key against which a projection was
 verified. Historical rows start with a null marker. Stable-DID and global-address

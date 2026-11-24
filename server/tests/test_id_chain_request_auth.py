@@ -10,6 +10,7 @@ import base64
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -195,6 +196,48 @@ async def test_enrollment_controls_domain_before_any_tree_fetch(enrollment, reas
         )
     assert refused.value.detail == reason
     assert refused.value.status_code == (503 if enrollment is None else 403)
+
+
+@pytest.mark.asyncio
+async def test_optional_chain_status_backoff_expires_and_leaves_strict_reads_live(monkeypatch):
+    from aweb.id_chain_auth import authenticate_id_chain
+
+    now = 100.0
+    monkeypatch.setattr("aweb.id_chain_auth.monotonic", lambda: now)
+    app = FastAPI()
+    reads = []
+
+    async def read_status(bundle, subject, *, domain, refresh=True):
+        if refresh:
+            reads.append(domain)
+        return None
+
+    reader = SimpleNamespace(registry_url="https://registry.example", id_chain_evidence=read_status)
+
+    async def authenticate(domain=DOMAIN, *, optional=True):
+        return await authenticate_id_chain(
+            request(app),
+            IdentityBinding(
+                did_aw=ALICE["did_aw"],
+                did_key=ALICE["did_key"],
+                id_tree=IDTreeEnrollment(True, domain),
+            ),
+            registry_client=reader,
+            allow_unavailable=optional,
+        )
+
+    assert (await authenticate())["reason"] == "evidence_unavailable"
+    now = 104.9
+    assert (await authenticate())["reason"] == "evidence_unavailable"
+    assert reads == [DOMAIN]
+    assert (await authenticate("other.example"))["reason"] == "evidence_unavailable"
+    with pytest.raises(HTTPException) as refused:
+        await authenticate(optional=False)
+    assert (refused.value.status_code, refused.value.detail) == (503, "evidence_unavailable")
+    assert reads == [DOMAIN, "other.example", DOMAIN]
+    now = 105.0
+    assert (await authenticate())["reason"] == "evidence_unavailable"
+    assert reads == [DOMAIN, "other.example", DOMAIN, DOMAIN]
 
 
 @pytest.mark.asyncio

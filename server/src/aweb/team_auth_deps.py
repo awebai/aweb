@@ -129,8 +129,9 @@ async def _prefer_live_identity_evidence(
         fallback = _IdentityEvidenceFallback(exc.reason.value)
     else:
         try:
-            async with asyncio.timeout_at(deadline):
-                chain_result = await authenticate_id_chain(request, binding, allow_unavailable=True)
+            chain_result = await authenticate_id_chain(
+                request, binding, allow_unavailable=True, deadline=deadline,
+            )
         except TimeoutError:
             _require_compatible_chain_claim(request, did_key=did_key, did_aw=binding.did_aw)
             _clear_live_identity_evidence(request)
