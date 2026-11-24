@@ -106,6 +106,15 @@ def run_guest(runtime, remote):
         ).hexdigest(),
         "duration": int(sum(budget.steps.values()) + 1),
         "seed": {
+            # Freeze scheduled package changes before the immutable host is admitted.
+            "package_update": False,
+            "package_upgrade": False,
+            "bootcmd": [
+                ["systemctl", "mask", "--runtime", "apt-daily.timer",
+                 "apt-daily-upgrade.timer", "apt-daily.service",
+                 "apt-daily-upgrade.service", "unattended-upgrades.service"],
+                ["systemctl", "stop", "apt-daily.timer", "apt-daily-upgrade.timer"],
+            ],
             "disable_root": False,
             "users": [{"name": "root", "ssh_authorized_keys": [public_key]}],
             "ssh_authorized_keys": [public_key],

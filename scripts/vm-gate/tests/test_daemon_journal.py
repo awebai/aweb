@@ -19,8 +19,10 @@ class DaemonJournalTests(unittest.TestCase):
 
             def journal(command, *, stdout, **kwargs):
                 self.assertIn("--boot", command)
-                self.assertIn("docker.service", command)
-                self.assertIn("containerd.service", command)
+                self.assertIn("_PID=1", command)
+                for unit in ("docker", "containerd", "dbus", "apt-daily-upgrade"):
+                    index = command.index(f"_SYSTEMD_UNIT={unit}.service")
+                    self.assertEqual(command[index - 1], "+")
                 self.assertNotIn("-n", command)
                 cursor = Path(
                     next(
