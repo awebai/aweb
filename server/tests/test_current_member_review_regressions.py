@@ -126,6 +126,90 @@ async def test_sender_membership_configuration_absence_is_unknown(pinning):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("standing", ["active", "revoked", "unavailable"])
+async def test_local_mail_reads_both_certificates_once_under_the_commit_lock(pinning, monkeypatch, standing):
+    import httpx
+    from awid.team_certificate import decode_team_certificate
+
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
+    env = pinning
+    sender = await _admit(env, "batched-sender")
+    recipient = await _admit(env, "batched-recipient")
+    if standing == "revoked":
+        name, domain = TEAM.split(":", 1)
+        await application_registry_client(env.app.state).revoke_team_certificate(
+            domain, name, team_controller_signing_key=env.team_sk,
+            certificate_id=decode_team_certificate(recipient.certificate)["certificate_id"],
+        )
+
+    reads = []
+
+    def observe_revocations(request, response):
+        if request.url.path.endswith("/revocations"):
+            reads.append(request.url.path)
+            if standing == "unavailable" and len(reads) == 2:
+                raise httpx.ConnectError("locked revocation read unavailable", request=request)
+        return None
+
+    monkeypatch.setattr(env.registry.transport, "fault", observe_revocations)
+    before = await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}")
+    response = await _http(env, sender, "POST", "/v1/messages", {
+        "to_alias": recipient.alias, "body": "locked certificate standings",
+    })
+    assert response.status_code == {"active": 200, "revoked": 404, "unavailable": 503}[standing], response.text
+    assert len(reads) == 2  # Ingress, then sender and recipient together after locking.
+    after = await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}")
+    assert after == before + int(standing == "active")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other_available", [True, False])
+async def test_delivery_membership_batches_preserve_distinct_team_authority(pinning, monkeypatch, other_available):
+    import httpx
+    from aweb.member_team_key import MemberReadLock, current_member_team_ids_for_identities
+    from aweb_naapp_testing import Member
+
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
+    env = pinning
+    local = await _admit(env, "batched-local")
+    other_team = "batched-other:example.test"
+    other = Member(team_id=other_team, alias="batched-other")
+    await env.registry.add_team(other_team, other.team_did_key)
+    await env.registry.add_certificate(other.certificate(), team_key=other.team_key)
+    body = b"{}"
+    path = "/v1/connect"
+    response = await env.client.post(path, content=body, headers={
+        **other.headers(aud=env.app.state.public_origin, method="POST", path=path, body=body),
+        "Content-Type": "application/json",
+    })
+    assert response.status_code == 200, response.text
+    reads = []
+
+    def observe_revocations(request, response):
+        if request.url.path.endswith("/revocations"):
+            reads.append(request.url.path)
+            if not other_available and "/batched-other/" in request.url.path:
+                raise httpx.ConnectError("other team's revocation read unavailable", request=request)
+        return None
+
+    monkeypatch.setattr(env.registry.transport, "fault", observe_revocations)
+    registry = application_registry_client(env.app.state)
+    async with env.db.transaction() as tx:
+        async def memberships():
+            return await current_member_team_ids_for_identities(
+                tx, [local.did], [other.did_key], registry_client=registry, read_lock=MemberReadLock.SHARE,
+            )
+
+        if other_available:
+            assert await memberships() == ({TEAM}, {other_team})
+        else:
+            with pytest.raises(HTTPException) as refused:
+                await memberships()
+            assert refused.value.status_code == 503
+    assert sorted(path.split("/")[-2] for path in reads) == sorted([TEAM.split(":", 1)[0], "batched-other"])
+
+
+@pytest.mark.asyncio
 async def test_unconfigured_team_registry_read_has_the_expected_503(pinning, monkeypatch):
     env = pinning
     monkeypatch.setenv("AWEB_DISCOVERY_ORIGIN", SERVICE)
@@ -439,12 +523,14 @@ async def test_certificate_stream_rechecks_its_original_authority_on_grant_caden
 
 
 @pytest.mark.asyncio
-async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, monkeypatch):
+@pytest.mark.parametrize("change", ["rotation", "revocation"])
+async def test_an_open_certificate_event_stream_reuses_admission_and_rechecks(pinning, monkeypatch, change):
     from datetime import datetime, timedelta, timezone
 
     from aweb import grant_streams
     from aweb.connection_scope import request_memo
     from aweb.routes import events
+    from awid.team_certificate import decode_team_certificate
 
     env = pinning
     actor = await _admit(env, "eventstreamoriginal")
@@ -473,12 +559,21 @@ async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, mo
         assert response.status_code == 200
         lines = response.aiter_lines()
         assert await _next_event(lines) == {"agent_id": str(actor.id), "team_id": TEAM}
-        await _change_key(env)
+        if change == "rotation":
+            await _change_key(env)
+        else:
+            name, domain = TEAM.split(":", 1)
+            await application_registry_client(env.app.state).revoke_team_certificate(
+                domain, name, team_controller_signing_key=env.team_sk,
+                certificate_id=decode_team_certificate(actor.certificate)["certificate_id"],
+            )
         terminal = await _next_event(lines)
         assert terminal["type"] == "team_membership_not_current", terminal
         async with asyncio.timeout(5):
             assert [line async for line in lines if line.startswith("data: ")] == []
-    assert True in standing_checks
+    assert not any(standing_checks)
+    if change == "revocation":
+        assert standing_checks
     assert member_reads and not any(member_reads)
 
 

@@ -59,6 +59,7 @@ from aweb.messaging.chat_send import (
     send_chat,
 )
 from aweb.messaging.runtime import messaging_runtime
+from aweb.messaging.sender_address import stored_sender_address
 from aweb.identity_auth_deps import participant_dids
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.messaging.chat import (
@@ -446,11 +447,13 @@ async def pending(
                     (item.get("last_from_did") or "").strip(), {}
                 ).get("stable_id", ""),
                 "last_from_did": (item.get("last_from_did") or "").strip(),
-                "last_from_address": item.get("last_from_address")
-                or routable_chat_address(
-                    identity_map.get((item.get("last_from_did") or "").strip(), {}),
-                    auth.team_id,
-                    item["last_from"],
+                "last_from_address": stored_sender_address(
+                    item.get("last_from_address"),
+                    routable_chat_address(
+                        identity_map.get((item.get("last_from_did") or "").strip(), {}),
+                        auth.team_id,
+                        item["last_from"],
+                    ),
                 ),
                 "unread_count": item["unread_count"],
                 "last_activity": _utc_iso(item["last_activity"]) if item["last_activity"] else "",
@@ -533,11 +536,10 @@ async def history(
     history_items: list[dict[str, Any]] = []
     for msg in messages:
         from_did = (msg.get("from_did") or "").strip()
-        from_address = msg.get("from_address") or routable_chat_address(
-            identity_map.get(from_did, {}),
-            auth.team_id,
-            msg["from_alias"],
-        )
+        from_address = stored_sender_address(
+            msg.get("from_address"),
+            routable_chat_address(identity_map.get(from_did, {}), auth.team_id, msg["from_alias"]),
+        ) or ""
         history_items.append(
             {
                 "attachment_refs": attachment_refs[str(msg["message_id"])],
@@ -969,11 +971,12 @@ async def _sse_events(
                     for row in new_msgs:
                         is_hang_on = bool(row["hang_on"])
                         from_did = (row.get("from_did") or "").strip()
-                        from_address = row.get("from_address") or routable_chat_address(
-                            identity_map.get(from_did, {}),
-                            viewer_team_id,
-                            row["from_alias"],
-                        )
+                        from_address = stored_sender_address(
+                            row.get("from_address"),
+                            routable_chat_address(
+                                identity_map.get(from_did, {}), viewer_team_id, row["from_alias"],
+                            ),
+                        ) or ""
                         payload = {
                             "sender_membership": memberships[
                                 (

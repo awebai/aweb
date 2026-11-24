@@ -1,4 +1,4 @@
-"""Revoked history must not multiply staged registration work on inbox reads."""
+"""Expose the inbox registration budget with and without enforcement."""
 
 import json
 
@@ -13,11 +13,7 @@ from test_team_room import admit_room_member
 __all__ = ["privacy_app"]
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("history", [0, 2000])
-async def test_warm_inbox_registration_pages_do_not_grow_with_revoked_history(
-    privacy_app, monkeypatch, history
-):
+async def _warm_inbox_registration_cost(privacy_app, monkeypatch, history, *, enforce):
     env = privacy_app
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
     for alias in ("alice", "bob"):
@@ -78,8 +74,8 @@ async def test_warm_inbox_registration_pages_do_not_grow_with_revoked_history(
                 )
             return await super().handle_async_request(request)
 
-    # A real uncached SDK client isolates the owner's active-view guarantee,
-    # including hosts whose wrapper does not delegate collection caching.
+    # Keep the real uncached SDK client. A cached client would hide repeated
+    # page acquisition for hosts that do not delegate collection caching.
     registry = RegistryClient(
         "http://registry.test",
         transport=CountedTransport(app=env.registry_app),
@@ -88,6 +84,7 @@ async def test_warm_inbox_registration_pages_do_not_grow_with_revoked_history(
     )
     env.app.state.awid_registry_client = registry
     try:
+        monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", str(enforce).lower())
         headers = _signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate)
         warm = await env.client.get("/v1/messages/inbox", headers=headers)
         assert warm.status_code == 200, warm.text
@@ -99,21 +96,49 @@ async def test_warm_inbox_registration_pages_do_not_grow_with_revoked_history(
             assert len(messages) == 1
             assert messages[0]["message_id"] == sent.json()["message_id"]
             assert messages[0]["sender_membership"]["state"] == "active"
-        assert len(pages) <= 10
-        assert pages
-        assert all(not page["cursor"] for page in pages)
-        print(
-            "INBOX_REGISTRATION_COST "
-            + json.dumps(
-                {
-                    "history": history,
-                    "warm_inbox_requests": 5,
-                    "certificate_pages": len(pages),
-                    "active_only_values": sorted({page["active_only"] for page in pages}),
-                },
-                sort_keys=True,
-            )
-        )
+        counts = {
+            "enforced": enforce,
+            "history": history,
+            "warm_inbox_requests": 5,
+            "certificate_pages": len(pages),
+            "cursor_pages": sum(page["cursor"] for page in pages),
+            "active_only_values": sorted({page["active_only"] for page in pages}),
+        }
+        print("INBOX_REGISTRATION_COST " + json.dumps(counts, sort_keys=True))
+        return counts
     finally:
         env.app.state.awid_registry_client = original
         await registry.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", [0, 2000])
+async def test_off_mode_warm_inboxes_never_read_registration_pages(privacy_app, monkeypatch, history):
+    counts = await _warm_inbox_registration_cost(privacy_app, monkeypatch, history, enforce=False)
+    assert counts["certificate_pages"] == 0, counts
+
+
+class _RegistrationBudgetExceeded(AssertionError):
+    pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "history",
+    [
+        0,
+        pytest.param(
+            2000,
+            marks=pytest.mark.xfail(
+                reason="aweb-adus: REQUIRED scans the full catalog, including revoked history",
+                raises=_RegistrationBudgetExceeded,
+                strict=True,
+            ),
+        ),
+    ],
+)
+async def test_required_warm_inboxes_stay_within_registration_budget(privacy_app, monkeypatch, history):
+    counts = await _warm_inbox_registration_cost(privacy_app, monkeypatch, history, enforce=True)
+    assert counts["active_only_values"] in ([], ["false"]), counts
+    if counts["certificate_pages"] > 10 or counts["cursor_pages"]:
+        raise _RegistrationBudgetExceeded(counts)

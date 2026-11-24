@@ -128,7 +128,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.27.51"
+version = "1.27.53"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
@@ -307,7 +307,7 @@ provides-extras = ["server"]
 
 [[package]]
 name = "awid-service"
-version = "0.5.40"
+version = "0.5.42"
 source = { editable = "../awid" }
 dependencies = [
     { name = "asyncpg" },

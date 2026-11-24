@@ -507,7 +507,15 @@ async def read_certificate_standings(
     remaining = selected - result.keys()
     if not remaining:
         return result
-    mode = mode if mode is not None else configured_registration_mode()
+    if mode is None:
+        mode = configured_registration_mode()
+        if mode is RegistrationMode.NOT_REQUIRED and registrations is None:
+            decision = RegistrationDecision(mode=mode, state=RegistrationState.NOT_OBSERVED)
+            result.update({
+                cid: CertificateStanding(CertificateStandingState.ACTIVE, registration=decision)
+                for cid in remaining
+            })
+            return result
     snapshot = registrations if registrations is not None else await observe_certificate_registrations(
         registry_client=registry_client, team_id=team_id, mode=mode,
     )
@@ -562,25 +570,30 @@ async def current_membership(
     if not row or not (team_id := str(row.get("team_id") or "").strip()):
         return row
     if not current_member(row):
-        reason = "the member is inactive or was accepted under a superseded key"
-    else:
-        certificate_id = str(row.get("certificate_id") or "").strip()
-        if not certificate_id:
-            return row
-        standings = await read_certificate_standings(
-            registry_client, team_id, [certificate_id], request=request
-        )
-        standing = standings[certificate_id]
-        if standing.state is CertificateStandingState.ACTIVE:
-            return row
-        if standing.state is CertificateStandingState.UNAVAILABLE:
-            if standing.registration is None:
-                standing.require_active()
-            raise HTTPException(
-                status_code=503,
-                detail="Certificate registration is unavailable. Retry in a moment.",
-            ) from standing.unavailable_cause
-        reason = f"certificate {certificate_id} is {standing.state}"
+        return _strip_team_context(row, team_id, "the member is inactive or was accepted under a superseded key")
+    certificate_id = str(row.get("certificate_id") or "").strip()
+    if not certificate_id:
+        return row
+    standings = await read_certificate_standings(registry_client, team_id, [certificate_id], request=request)
+    return _with_certificate_standing(row, team_id, certificate_id, standings[certificate_id])
+
+
+def _with_certificate_standing(
+    row: Mapping[str, Any], team_id: str, certificate_id: str, standing: CertificateStanding,
+) -> Mapping[str, Any]:
+    if standing.state is CertificateStandingState.ACTIVE:
+        return row
+    if standing.state is CertificateStandingState.UNAVAILABLE:
+        if standing.registration is None:
+            standing.require_active()
+        raise HTTPException(
+            status_code=503,
+            detail="Certificate registration is unavailable. Retry in a moment.",
+        ) from standing.unavailable_cause
+    return _strip_team_context(row, team_id, f"certificate {certificate_id} is {standing.state}")
+
+
+def _strip_team_context(row: Mapping[str, Any], team_id: str, reason: str) -> Mapping[str, Any]:
     logger.warning("Team context stripped for alias %r in %s: %s", row.get("alias"), team_id, reason)
     return {**row, "team_id": None, "alias": None, "agent_id": None}
 
@@ -611,16 +624,31 @@ async def current_member_team_ids_for_identities(
     if not selected:
         return tuple(set() for _ in scopes)
     rows = await current_member_projections(db, dids=sorted(selected), read_lock=read_lock)
-    projected = [row.verified_identity() for row in rows]
+    projected = [
+        (row.verified_identity(), str(row["certificate_id"] or "").strip())
+        for row in rows
+    ]
+    certificates_by_team: dict[str, set[str]] = {}
+    for row, certificate_id in projected:
+        if certificate_id:
+            certificates_by_team.setdefault(row["team_id"], set()).add(certificate_id)
+    # Read after the row selection and any caller-held locks. Each team keeps
+    # its own registry origin and each certificate its own standing decision.
+    standings_by_team = {
+        team_id: await read_certificate_standings(registry_client, team_id, certificate_ids)
+        for team_id, certificate_ids in certificates_by_team.items()
+    }
     results = []
     for scope in scopes:
         teams = set()
-        for row in projected:
+        for row, certificate_id in projected:
             if row["did_key"] not in scope and row["did_aw"] not in scope:
                 continue
-            standing = await current_membership(registry_client, row)
-            if standing is not None and standing.get("team_id"):
-                teams.add(standing["team_id"])
+            team_id = row["team_id"]
+            if not certificate_id or _with_certificate_standing(
+                row, team_id, certificate_id, standings_by_team[team_id][certificate_id]
+            ).get("team_id"):
+                teams.add(team_id)
         results.append(teams)
     return tuple(results)
 

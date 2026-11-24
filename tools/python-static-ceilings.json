@@ -421,12 +421,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/routes/conversations.py",
-      "code": "operator",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/routes/federation.py",
       "code": "union-attr",
       "count": 1
@@ -921,12 +915,6 @@
       "tool": "ruff",
       "file": "server/src/aweb/routes/conversations.py",
       "code": "B008",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/src/aweb/routes/conversations.py",
-      "code": "B905",
       "count": 1
     },
     {
