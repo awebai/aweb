@@ -30,7 +30,7 @@ run() {
   # These journeys use the CLI built in this runner. The other integration
   # targets build their own inputs or have no dependency on a stage artifact.
   case "$stage/$1" in
-    integration/_candidate-oats|integration/e2e-naapp)
+    integration/_candidate-oats)
       if grep -Eq '^(artifacts|integration)/build'$'\tFAILED\t' "$summary"; then
         if [[ "$stage_status" == 0 ]]; then stage_status=1; fi
         target_result "$1" SKIPPED 0 "build FAILED"
@@ -48,7 +48,7 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   : > "$summary"
   run test-server
   run test-awid
-  run test-naapp
+  run test-naapp-contracts
   run test-cli
   run test-cli-auth-v2
   run _candidate-unit-channel
@@ -74,7 +74,6 @@ host_published_port() {
 checks() {
   run check-python-static
   run check-product-table-writes
-  run check-secrets-shards
   run_step host-published-port host_published_port
   run check-generated-copies
   run test-generated-copies
@@ -82,12 +81,11 @@ checks() {
   run _candidate-gate-docker-boundaries
   run _candidate-gate-compose-adoption
   run test-shipping
-  run check-page-renderer-bundle
   run check-aw-commit-repo-stamp
   run check-cli-go-tidy
   run check-cli-release-vcs-stamps
   run test-python-locks
-  run lint-naapp
+  run lint-naapp-contracts
   run test-sot-source-inventories
   run test-identity-primitives
   run test-vector-provenance
@@ -112,7 +110,7 @@ unit() {
   run test-vector-provenance
   run test-sot-source-inventories
   run test-python-locks
-  run lint-naapp
+  run lint-naapp-contracts
   prepare_node
   run _candidate-unit-suites
   if [[ -f "$log_dir/test-egress/summary.tsv" ]]; then
@@ -125,7 +123,7 @@ artifacts() {
   run _candidate-artifact-server
   run _candidate-artifact-awid-package
   run _candidate-artifact-awid-image
-  run _candidate-artifact-naapp-package
+  run _candidate-artifact-contracts-package
   run _candidate-artifact-channel
   run _candidate-artifact-pi
   run _candidate-artifact-skills
@@ -145,7 +143,6 @@ integration() {
   run test-e2e
   run test-federation-e2e
   run cli-e2e
-  run e2e-naapp
   run e2e-folio-wakes
   run test-npm-exact-publish
   run test-pypi-exact-publish

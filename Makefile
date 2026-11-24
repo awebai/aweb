@@ -7,7 +7,7 @@ SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
 CANDIDATE_UNIT_PROFILE ?= $(or $(AWEB_GATE_UNIT_PROFILE),portable)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
-.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping production-awid-sync test-server lint-naapp-contracts test-naapp-contracts test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -21,12 +21,13 @@ SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER
 	cli-e2e _candidate-gate-docker-boundaries _candidate-gate-compose-adoption _candidate-channel-version _candidate-node-deps \
 	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
-	_candidate-artifact-naapp-package check-naapp-lib-package \
+	_candidate-artifact-contracts-package \
 	_candidate-artifact-channel _candidate-artifact-pi _candidate-artifact-skills _candidate-artifact-a2a-image
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
-NAAPP_LIB_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' naapp-lib/pyproject.toml 2>/dev/null | head -n 1)
+CONTRACTS_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' naapp-contracts/pyproject.toml | head -n 1)
+CONTRACTS_TESTING_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' naapp-contracts/testing/pyproject.toml | head -n 1)
 CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2>/dev/null)
 CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
 # aw CLI releases have independent semver. Derive the next patch from the
@@ -111,34 +112,7 @@ help:
 	@echo "  release-publish TAG=<tag>             publish one local tag without GitHub Actions"
 	@echo "  clean        Remove all build artifacts and caches"
 
-.PHONY: e2e-naapp e2e-folio-wakes naapp-e2e-packages
-# A new package joins the integration gate by joining this list.
-NAAPP_E2E_PACKAGES := naapp/folio naapp/library
-
-naapp-e2e-packages:
-	@printf '%s\n' $(NAAPP_E2E_PACKAGES)
-
-e2e-naapp: export PATH := $(CURDIR)/cli/go:$(PATH)
-e2e-naapp:
-	bash scripts/check-naapp-e2e-aw.sh
-	@set -eu; for package in $(NAAPP_E2E_PACKAGES); do \
-		if [ -n "$${NAAPP_E2E_ALLOCATIONS:-}" ]; then \
-			allocation=$$(printf '%s\n' "$$NAAPP_E2E_ALLOCATIONS" | awk -v package="$$package" '$$1 == package { print $$2, $$3, $$4 }'); \
-			[ -n "$$allocation" ] || { echo "missing allocation for $$package" >&2; exit 1; }; \
-			set -- $$allocation; \
-			registry_origin="http://$${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}:$$2"; \
-			if [ "$${NAAPP_E2E_CONTAINER_NETWORK:-}" = 1 ]; then \
-				registry_origin="http://$$(python3 scripts/candidate-network.py hostname "$$1" awid):8010"; \
-			fi; \
-			AWID_PUBLIC_ORIGINS="http://awid:8010,$$registry_origin" \
-			NAAPP_E2E_PROJECT="$$1" NAAPP_E2E_AWID_PORT="$$2" NAAPP_E2E_POSTGRES_PORT="$$3" \
-			NAAPP_E2E_HOST="$${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}" \
-			$(MAKE) -C "$$package" e2e; \
-		else \
-			$(MAKE) -C "$$package" e2e; \
-		fi; \
-	done
-
+.PHONY: e2e-folio-wakes
 e2e-folio-wakes:
 	bash scripts/e2e-folio-wakes.sh
 
@@ -198,7 +172,7 @@ test-uv-cache:
 	python3 -m unittest discover -s scripts -p "test_uv_cache.py" -v
 
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
-# awid (awid, server, naapp-lib and each naapp). Check them all without repair,
+# awid (awid, server and naapp-contracts). Check them all without repair,
 # then prove stale and missing dependent-lock entries are rejected.
 test-python-locks: test-uv-cache
 	bash scripts/check-python-locks.sh
@@ -370,43 +344,20 @@ test-server: production-awid-sync
 		uv build --out-dir "$$build_dir"
 	cd server && UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q $(SERVER_PYTEST_PARALLEL)
 
-# The naapp packages the candidate gate covers. Each provides `make lint` and
-# `make test`: the checks stage lints them, and the isolated unit stage runs
-# their suites against its Postgres. A package joins by being added here.
-# UV_FROZEN keeps the gate on each committed lock, a lock the run changed fails
-# it, and the suites run offline.
-NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs
+# The naapp contracts package: the checks stage lints it, and the unit stage
+# runs its suite offline on its committed lock; a lock the run changed fails it.
+lint-naapp-contracts:
+	cd naapp-contracts && UV_FROZEN=1 uv run --frozen ruff check .
+	git diff --exit-code -- naapp-contracts/uv.lock
 
-# Installs each package's locked dependencies, for a runner that then goes offline.
-naapp-sync:
-	set -e; for package in $(NAAPP_PACKAGES); do \
-		uv sync --frozen --project $$package; \
-	done
-
-lint-naapp:
-	set -e; for package in $(NAAPP_PACKAGES); do \
-		echo "=== lint $$package ==="; \
-		UV_FROZEN=1 $(MAKE) -C $$package lint; \
-		git diff --exit-code -- $$package/uv.lock; \
-	done
-
-test-naapp: production-awid-sync
-	set -e; for package in $(NAAPP_PACKAGES); do \
-		echo "=== test $$package ==="; \
-		uv sync --frozen --project $$package; \
-		UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
-			NAAPP_REQUIRE_TEST_DATABASE=1 LIBRARY_REQUIRE_TEST_DATABASE=1 $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
-		git diff --exit-code -- $$package/uv.lock; \
-	done
+test-naapp-contracts:
+	cd naapp-contracts && uv sync --frozen
+	cd naapp-contracts && UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+	git diff --exit-code -- naapp-contracts/uv.lock
 
 test-awid: production-awid-sync
 	cd awid && uv sync --frozen
 	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
-
-.PHONY: check-secrets-shards
-check-secrets-shards:
-	uv sync --frozen --project naapp/secrets
-	$(MAKE) -C naapp/secrets check-shards
 
 # awid's database session tests through a real transaction-mode PgBouncer.
 test-awid-pooler:
@@ -543,21 +494,6 @@ test-federation-e2e:
 test-a2a-gateway-e2e:
 	./scripts/e2e-a2a-gateway-docker.sh
 
-# The team deployment journey (deploy/team) on this Docker host: every image
-# from this clean checkout into TEAM_DEPLOYMENT_REGISTRY (a disposable local
-# registry), then the journey in a run directory of its own. With
-# OATS_SOURCE, a clean OATS checkout at its pinned commit, the agents and
-# their egress too.
-TEAM_DEPLOYMENT_REGISTRY ?= localhost:5000
-TEAM_DEPLOYMENT_PROJECT ?= teamcompose
-test-team-deployment-e2e:
-	@test -n "$(TEAM_DEPLOYMENT_RUN_DIR)" || { echo "TEAM_DEPLOYMENT_RUN_DIR is required: a new directory for this run" >&2; exit 2; }
-	mkdir -p "$(TEAM_DEPLOYMENT_RUN_DIR)"
-	./scripts/e2e/team-deployment-images.sh "$(TEAM_DEPLOYMENT_REGISTRY)" "$(TEAM_DEPLOYMENT_RUN_DIR)/images.txt" $(OATS_SOURCE)
-	uv run --project naapp/secrets python scripts/e2e/team_deployment_journey.py \
-		--run-dir "$(TEAM_DEPLOYMENT_RUN_DIR)/journey" --project "$(TEAM_DEPLOYMENT_PROJECT)" \
-		--images "$(TEAM_DEPLOYMENT_RUN_DIR)/images.txt" $(if $(OATS_SOURCE),--oats-source "$(OATS_SOURCE)")
-
 check-a2a-copy-guardrails:
 	./scripts/check-a2a-copy-guardrails.sh
 
@@ -656,14 +592,8 @@ check-awid-locked-suite:
 
 # ── awid.ai static-site deployment ─────────────────────────────────
 
-# Infrastructure acceptance for changes to the entry point (real Docker).
-.PHONY: test-naapp-e2e
-test-naapp-e2e:
-	python3 scripts/test_naapp_e2e.py
-
 test-candidate-ledger:
 	bash scripts/candidate-docker-gate.sh --check-disk
-	$(MAKE) test-naapp-e2e
 	python3 scripts/test_candidate_make_environment.py
 	python3 scripts/test_candidate_gate_ledger.py
 
@@ -758,21 +688,14 @@ _candidate-artifact-awid-package:
 	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
 	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
 
-_candidate-artifact-naapp-package: check-naapp-lib-package
-	rm -rf naapp-lib/dist
-	cd naapp-lib && uv build
-	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION).tar.gz
-	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION)-py3-none-any.whl
-	rm -rf naapp-lib/testing/dist
-	cd naapp-lib/testing && uv build
-	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION).tar.gz
-	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION)-py3-none-any.whl
-
-# aweb-naapp's and aweb-naapp-testing's release artifacts as a consumer sees them:
-# each wheel ships its package files, pins its dependencies, and installs and
-# imports in a fresh environment.
-check-naapp-lib-package:
-	python3 scripts/check-naapp-lib-package.py
+_candidate-artifact-contracts-package:
+	rm -rf naapp-contracts/dist naapp-contracts/testing/dist
+	cd naapp-contracts && uv build
+	test -f naapp-contracts/dist/aweb_naapp_contracts-$(CONTRACTS_VERSION).tar.gz
+	test -f naapp-contracts/dist/aweb_naapp_contracts-$(CONTRACTS_VERSION)-py3-none-any.whl
+	cd naapp-contracts/testing && uv build
+	test -f naapp-contracts/testing/dist/aweb_naapp_contracts_testing-$(CONTRACTS_TESTING_VERSION).tar.gz
+	test -f naapp-contracts/testing/dist/aweb_naapp_contracts_testing-$(CONTRACTS_TESTING_VERSION)-py3-none-any.whl
 
 _candidate-artifact-awid-image:
 	@mkdir -p /tmp/aweb-candidate-gate
@@ -836,12 +759,6 @@ test-isolated:
 test-egress-controls:
 	python3 scripts/test-egress/test_dns.py -v
 	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v
-
-# The shared page renderer is packaged in the Python wheel. Rebuild from its
-# exact npm lock and compare without rewriting committed bytes.
-.PHONY: check-page-renderer-bundle
-check-page-renderer-bundle:
-	cd naapp-lib/renderer && npm ci --ignore-scripts && node build.mjs --check
 
 .PHONY: e2e-user-paths
 e2e-user-paths:
