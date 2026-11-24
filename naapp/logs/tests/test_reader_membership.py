@@ -17,6 +17,7 @@ from aweb_logs.reader_acts import OWNER_ACTS
 from aweb_logs.readers import READER_ROLE
 
 from .reader_world import CONSOLE, reader_scope, world_fixture  # noqa: F401
+from .test_read_routes import READS
 from .test_reader_handoffs import Aw, aw  # noqa: F401
 from .test_reader_viewer import Html
 
@@ -81,7 +82,7 @@ async def open_sessions(aw: Aw) -> int:  # noqa: F811
 
 async def test_a_current_member_signs_in_and_reads(aw: Aw, clock: Clock):  # noqa: F811
     await signed_in(aw)
-    for path in ("/v1/events", "/v1/tail", "/v1/verify", "/v1/export"):
+    for path in READS:
         assert (await aw.client.get(path)).status_code == 200, path
 
 
@@ -92,7 +93,7 @@ async def test_a_reader_removed_from_the_team_cannot_sign_in(aw: Aw, clock: Cloc
     assert (await aw.client.get("/v1/events")).status_code == 401
 
 
-@pytest.mark.parametrize("path", ["/v1/events", "/v1/tail", "/v1/verify", "/v1/export"])
+@pytest.mark.parametrize("path", READS)
 async def test_removal_from_the_team_ends_an_open_session(aw: Aw, clock: Clock, path: str):  # noqa: F811
     await signed_in(aw)
     await removed_from_team(aw)

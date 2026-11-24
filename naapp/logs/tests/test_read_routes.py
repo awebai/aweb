@@ -53,6 +53,8 @@ from .reader_world import (
 
 OTHER_TEAM = "other:example.com"
 
+READS = ("/v1/session", "/v1/events", "/v1/tail", "/v1/verify", "/v1/export")
+
 
 async def no_handoff(*_: object, **__: object) -> NoReturn:
     """These tests sign in with a passkey only: no member starts an aw
@@ -156,7 +158,7 @@ async def test_a_reader_reads_its_own_teams_events_in_a_passkey_session(world: W
 async def test_without_a_session_nothing_is_read(world: World):
     await held_reader(world)
     async with origins(world) as (human, _):
-        for path in ("/v1/events", "/v1/tail", "/v1/verify", "/v1/export"):
+        for path in READS:
             response = await human.get(path)
             assert (response.status_code, response.json()) == (
                 401,
@@ -169,7 +171,7 @@ async def test_the_agent_origin_serves_no_reads(world: World):
     async with origins(world) as (human, agent):
         await login(world, human, scope)
         agent.cookies = human.cookies
-        for path in ("/v1/events", "/v1/tail", "/v1/verify", "/v1/export"):
+        for path in READS:
             assert (await agent.get(path)).status_code == 404, path
 
 
