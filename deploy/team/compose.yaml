@@ -37,12 +37,21 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     networks: [services]
+    # The server runs its init scripts as its own user, which must not need the
+    # checkout's file modes: root copies the script, then the image starts as
+    # it does by itself.
+    entrypoint:
+      - sh
+      - -c
+      - install -m 0755 /run/postgres-roles.sh /docker-entrypoint-initdb.d/roles.sh && exec docker-entrypoint.sh "$$@"
+      - sh
+    command: [postgres]
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres/password
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${POSTGRES_SECRETS:-postgres}:/run/secrets/postgres:ro"
-      - ./postgres-roles.sh:/docker-entrypoint-initdb.d/roles.sh:ro
+      - ./postgres-roles.sh:/run/postgres-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s

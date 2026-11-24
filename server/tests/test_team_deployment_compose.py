@@ -190,7 +190,21 @@ def test_the_bundled_postgres_creates_a_database_and_role_per_component_at_first
     assert environment(postgres) == {
         "POSTGRES_PASSWORD_FILE": "/run/secrets/postgres/password",
     }
-    assert "./postgres-roles.sh:/docker-entrypoint-initdb.d/roles.sh:ro" in postgres["volumes"]
+    # The server runs the script as its own user: a mount at the init path would
+    # give it the checkout's mode, unreadable after a clone under umask 077.
+    # Root copies it there instead, then starts the image's own entrypoint.
+    assert "./postgres-roles.sh:/run/postgres-roles.sh:ro" in postgres["volumes"]
+    assert not any("/docker-entrypoint-initdb.d" in volume for volume in postgres["volumes"])
+    assert postgres["entrypoint"] == [
+        "sh",
+        "-c",
+        "install -m 0755 /run/postgres-roles.sh /docker-entrypoint-initdb.d/roles.sh"
+        ' && exec docker-entrypoint.sh "$$@"',
+        "sh",
+    ]
+    # Setting an entrypoint clears the image's command.
+    assert postgres["command"] == ["postgres"]
+    assert "user" not in postgres
     script = (TEAM / "postgres-roles.sh").read_text(encoding="utf-8")
     # The password goes from the file to the server inside psql: it is in no
     # argument and no environment.
