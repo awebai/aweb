@@ -65,7 +65,7 @@ async def application(world: World, *, human_origin: str = ORIGIN, agent_origin:
     human = FastAPI()
     human.include_router(owner_console_router(services))
     human.include_router(
-        console_ui_router(app_id="sandbox-secrets", sessions=services.sessions, banner=no_banner)
+        console_ui_router(shell=services.shell, sessions=services.sessions, banner=no_banner)
     )
     return split_origins(FastAPI(), human, agent_origin=agent_origin, human_origin=human_origin)
 

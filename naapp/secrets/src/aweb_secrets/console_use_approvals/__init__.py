@@ -29,7 +29,6 @@ from fastapi.responses import HTMLResponse, Response
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
 from aweb_secrets.console_approval_authority import ConsoleApprovalAuthority
 from aweb_secrets.console_changes import _errors
-from aweb_secrets.console_ui import _page, console_page
 from aweb_secrets.run_approvals import run_approval_view
 from aweb_secrets.run_plan import RunPlanRefused
 from aweb_secrets.use_approval import UseApprovalRefused, UseApprovalView, use_approval_view
@@ -64,9 +63,7 @@ class ConsoleUseApprovals:
         if row is None:
             raise HTTPException(404, "approval_unknown")
         frozen = json.loads(row["request"])
-        admitted = await self.console.installation(
-            row["installation_id"], team_id=row["team_id"]
-        )
+        admitted = await self.console.installation(row["installation_id"], team_id=row["team_id"])
         if (
             admitted.installation_id != row["installation_id"]
             or admitted.team_id != row["team_id"]
@@ -198,6 +195,7 @@ def _proof(body: dict[str, Any]) -> dict:
 
 
 def _router(services: ConsoleUseApprovals, kind: Kind) -> APIRouter:
+    shell = services.console.shell
     router = APIRouter(route_class=ConsoleRoute)
     root = "/use-approvals" if kind == "use" else "/run-approvals"
     title = "Review a secret use" if kind == "use" else "Review a job credential"
@@ -225,11 +223,11 @@ def _router(services: ConsoleUseApprovals, kind: Kind) -> APIRouter:
             current = await services.console.sessions.current(request)
         except HTTPException as refused:
             if refused.status_code != 401:
-                raise
-            result = _page(title, content)
+                return shell.refused_page(refused)
+            result = shell.page(title, content)
             result.headers.update(refused.headers or {})
             return result
-        return console_page(title=title, body_html=content, session=current)
+        return shell.console_page(title=title, body_html=content, session=current)
 
     @router.post(root + "/sign-in", dependencies=[Depends(_require_json)])
     async def signin(request: Request):

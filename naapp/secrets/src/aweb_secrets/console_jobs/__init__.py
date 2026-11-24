@@ -12,7 +12,6 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from aweb_secrets.console_changes import ConsoleChanges, _errors
-from aweb_secrets.console_ui import _login_redirect, console_page
 from aweb_secrets.runners import mint_runner_id
 
 _ASSETS = Path(__file__).parent
@@ -72,13 +71,14 @@ def _job() -> str:
 
 def console_jobs_router(*, changes: ConsoleChanges) -> APIRouter:
     """Mount on the human app, using its exact shared ConsoleChanges instance."""
+    shell = changes.console.shell
     router = APIRouter(route_class=ConsoleRoute)
 
     async def render(request: Request, kind: str, installation_id: str | None = None):
         try:
             current = await changes.console.sessions.current(request)
         except HTTPException as refused:
-            return _login_redirect(refused)
+            return shell.refused_page(refused)
         async with _errors(changes.console, current):
             if installation_id is None:
                 installation_id = await changes.installation_for_session(current)
@@ -101,7 +101,7 @@ def console_jobs_router(*, changes: ConsoleChanges) -> APIRouter:
             )
         )
         action = "/installations/" + installation_id + "/change-sets"
-        return console_page(
+        return shell.console_page(
             title=title,
             session=current,
             body_html=f'<h1>{title}</h1><form id="definition-draft" data-kind="{kind}" method="post" action="{escape(action, quote=True)}">'

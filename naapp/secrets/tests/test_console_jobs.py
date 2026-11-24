@@ -62,7 +62,7 @@ async def application(w, *, origin=ORIGIN, agent_origin=API):
     app = FastAPI()
     app.include_router(owner_console_router(console))
     app.include_router(
-        console_ui_router(app_id="sandbox-secrets", sessions=console.sessions, banner=no_banner)
+        console_ui_router(shell=console.shell, sessions=console.sessions, banner=no_banner)
     )
     app.include_router(console_changes_router(changes))
     app.include_router(console_forms_router(changes=changes))

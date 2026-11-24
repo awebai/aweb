@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import asyncpg
 from aweb_naapp.console import ConsoleRoute, ConsoleSession, session_is_current
+from aweb_naapp.console.browser import member_refusal
 from aweb_naapp.dispatch import State
 from aweb_naapp.runtime.approvals import (
     ApprovalRefused,
@@ -24,7 +25,6 @@ from fastapi.responses import HTMLResponse, Response
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
 from aweb_secrets.console_changes import _errors
 from aweb_secrets.console_reconciliation.authority import ConsoleReconciliationFence
-from aweb_secrets.console_ui import _login_redirect, _page, console_page, recovery_page
 from aweb_secrets.console_use_approvals import _decision, _proof
 from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.owners import owner_binding, owner_scope
@@ -324,24 +324,24 @@ def _assets():
     )
 
 
-def _read_refusal(error: HTTPException) -> Response:
-    if error.status_code == 401:
-        return _login_redirect(error)
-    return recovery_page(
-        error,
-        message=(
-            "Settlement record not found."
-            if error.status_code == 404
-            else "Settlement could not be loaded."
-        ),
-        action_href="/activity",
-        action_label="View activity",
-    )
-
-
 def console_reconciliation_router(*, services: ConsoleReconciliation) -> APIRouter:
     """Human app only, alongside the shared S4 shell and custody entry router."""
+    shell = services.console.shell
     router = APIRouter(route_class=ConsoleRoute)
+
+    def _read_refusal(error: HTTPException) -> Response:
+        if error.status_code == 401 or member_refusal(error) is not None:
+            return shell.refused_page(error)
+        return shell.recovery_page(
+            error,
+            message=(
+                "Settlement record not found."
+                if error.status_code == 404
+                else "Settlement could not be loaded."
+            ),
+            action_href="/activity",
+            action_label="View activity",
+        )
 
     @router.get("/reconciliations/{reconcile_ref}", response_class=HTMLResponse)
     async def record_page(reconcile_ref: str, request: Request):
@@ -366,7 +366,9 @@ def console_reconciliation_router(*, services: ConsoleReconciliation) -> APIRout
                 '<button type="submit">Review this outcome</button></form>'
             )
         body += '<p id="reconciliation-status" role="status" tabindex="-1"></p>' + _assets()
-        return console_page(title="Resolve an uncertain outcome", body_html=body, session=current)
+        return shell.console_page(
+            title="Resolve an uncertain outcome", body_html=body, session=current
+        )
 
     @router.get("/reconciliations/{reconcile_ref}/record")
     async def record_json(reconcile_ref: str, request: Request):
@@ -415,7 +417,7 @@ def console_reconciliation_router(*, services: ConsoleReconciliation) -> APIRout
             '<p id="reconciliation-status" role="status" tabindex="-1"></p><dl id="settlement-receipt"></dl>'
             + _assets()
         )
-        return console_page(title="Settlement status", body_html=body, session=current)
+        return shell.console_page(title="Settlement status", body_html=body, session=current)
 
     @router.get("/reconciliation-controls/{approval_id}/status")
     async def control_status(approval_id: str, request: Request):
@@ -449,11 +451,11 @@ def console_reconciliation_router(*, services: ConsoleReconciliation) -> APIRout
             current = await services.console.sessions.current(request)
         except HTTPException as refused:
             if refused.status_code != 401:
-                raise
-            response = _page("Review an outcome", body)
+                return shell.refused_page(refused)
+            response = shell.page("Review an outcome", body)
             response.headers.update(refused.headers or {})
             return response
-        return console_page(title="Review an outcome", body_html=body, session=current)
+        return shell.console_page(title="Review an outcome", body_html=body, session=current)
 
     @router.post(_ROOT + "/sign-in", dependencies=[Depends(_require_json)])
     async def signin(request: Request):

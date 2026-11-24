@@ -10,7 +10,6 @@ from fastapi.responses import HTMLResponse, Response
 
 from aweb_secrets.console_changes import ConsoleChanges, _errors
 from aweb_secrets.console_forms.grants import grant_forms_router
-from aweb_secrets.console_ui import _login_redirect, _page, console_page
 from aweb_secrets.operation import CAPTURE_FIELDS
 from aweb_secrets.secret import KINDS, mint_secret_id
 
@@ -131,6 +130,7 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
     No values go into page templates, URLs, browser storage or returned results.
     The forms use only the shared POST and WebAuthn assertion helpers.
     """
+    shell = changes.console.shell
     router = APIRouter(route_class=ConsoleRoute)
     router.include_router(grant_forms_router(changes=changes))
 
@@ -141,7 +141,7 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
         try:
             current = await session(request)
         except HTTPException as refused:
-            return _login_redirect(refused)
+            return shell.refused_page(refused)
         async with _errors(changes.console, current):
             if installation_id is None:
                 installation_id = await changes.installation_for_session(current)
@@ -162,7 +162,7 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
             else "<p>Connect and confirm your team’s 1Password service account first.</p>"
             '<p><a href="/backend-credentials/onepassword/new">Connect 1Password</a></p>'
         )
-        return console_page(
+        return shell.console_page(
             title="Link a 1Password secret",
             session=current,
             body_html="<h1>Link a 1Password secret</h1>" + body + _STATUS + _SCRIPT,
@@ -184,11 +184,11 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
         try:
             current = await session(request)
         except HTTPException as refused:
-            return _login_redirect(refused)
+            return shell.refused_page(refused)
         async with _errors(changes.console, current):
             installation = await changes.installation_for_session(current)
         path = "/installations/" + installation + "/backend-credentials/onepassword/versions"
-        return console_page(
+        return shell.console_page(
             title="Connect 1Password",
             session=current,
             body_html="<h1>Connect 1Password</h1>"
@@ -208,8 +208,8 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
             current = await session(request)
         except HTTPException as refused:
             if refused.status_code != 401:
-                raise
-            response = _page(
+                return shell.refused_page(refused)
+            response = shell.page(
                 "Sign in to review",
                 "<div data-approval-entry></div><h1>Sign in to review an approval</h1>"
                 "<p>The approval link selects your sign-in. Your passkey is required to continue.</p>"
@@ -220,7 +220,7 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
             )
             response.headers.update(refused.headers or {})
             return response
-        return console_page(
+        return shell.console_page(
             title="Review approval",
             session=current,
             body_html="<div data-approval-entry></div>" + _REVIEW + _STATUS + _SCRIPT,
@@ -234,13 +234,13 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
         try:
             current = await session(request)
         except HTTPException as refused:
-            return _login_redirect(refused)
+            return shell.refused_page(refused)
         async with _errors(changes.console, current):
             frozen = await changes.read(current, installation_id, change_id)
         # HTML escaping protects even </pre>/<script> in an untrusted reason.
         # The script reads textContent, and every displayed field uses textContent.
         projection = '<pre id="frozen-change" hidden>' + escape(json.dumps(frozen)) + "</pre>"
-        return console_page(
+        return shell.console_page(
             title="Review approval",
             session=current,
             body_html=_REVIEW + projection + _STATUS + _SCRIPT,

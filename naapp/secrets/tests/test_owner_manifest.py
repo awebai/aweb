@@ -76,6 +76,7 @@ async def test_owner_session_actions_are_human_routes_and_protect_the_vault_toke
         assert response.status_code == 200
         actions = {item["name"]: item for item in response.json()["owner_acts"]["session_actions"]}
         assert set(actions) == {
+            "session",
             "draft-change",
             "change-set",
             "onepassword-token",
@@ -85,6 +86,14 @@ async def test_owner_session_actions_are_human_routes_and_protect_the_vault_toke
         assert all(action["role"] == "secrets.owner" for action in actions.values())
         assert not set(actions).intersection(tool["name"] for tool in TOOLS)
         assert all("scopes" not in action for action in actions.values())
+        session = actions["session"]
+        assert (session["kind"], session["method"], session["path"]) == (
+            "read",
+            "GET",
+            "/v1/session",
+        )
+        assert session["input_schema"] == {"type": "object", "properties": {}}
+        assert not session.get("params")
         draft = actions["draft-change"]
         assert draft["kind"] == "draft" and draft["method"] == "POST"
         assert draft["path"] == "/installations/{installation_id}/change-sets"

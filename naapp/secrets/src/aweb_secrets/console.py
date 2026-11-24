@@ -52,6 +52,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.change import ChangeRefused
+from aweb_secrets.console_ui import secrets_shell
 from aweb_secrets.owners import (
     OwnerDirectory,
     OwnerRequired,
@@ -114,6 +115,7 @@ class OwnerConsole:
         self.directory = directory
         self.fence = fence
         self.verifier = verifier
+        self.shell = secrets_shell(verifier.scope)
         self.installation = installation
         self.credential_audit = credential_audit
         self._prepare_key_bound = prepare_key_bound
@@ -207,6 +209,13 @@ def owner_console_router(services: OwnerConsole, *, prefix: str = "") -> APIRout
         credential_router(passkeys=services.passkeys, recorder=services.credential_audit)
     )
 
+    async def require_owner(
+        current: Annotated[ConsoleSession, Depends(services.sessions.current)],
+    ) -> None:
+        if await services.directory.owner_of(services.db, current.scope) is None:
+            raise HTTPException(403, "owner_required")
+
+    @router.get("/v1/session", dependencies=[Depends(require_owner)])
     @router.get("/session")
     async def session(
         current: Annotated[ConsoleSession, Depends(services.sessions.current)],

@@ -671,10 +671,10 @@ def create_service(
                 lambda s: console_ui_router(
                     sessions=s.console.sessions,
                     banner=s.audit_delivery.banner,
-                    app_id=settings.app_id,
+                    shell=s.console.shell,
                 )
             ),
-            human(lambda s: console_bootstrap_router()),
+            human(lambda s: console_bootstrap_router(s.console.shell)),
             human(lambda s: console_values_router(s.values)),
             human(lambda s: console_changes_router(s.changes)),
             human(lambda s: console_forms_router(changes=s.changes)),

@@ -18,6 +18,7 @@ from typing import Literal
 
 import asyncpg
 from aweb_naapp.console import ConsoleRoute, ConsoleSession, KeyBoundConsoleSession
+from aweb_naapp.console.browser import member_refusal
 from aweb_naapp.hooks.producer import (
     HOOKS_CHANNEL,
     Backlog,
@@ -34,7 +35,6 @@ from fastapi.responses import HTMLResponse, Response
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.console_access import hold_owner, owner_installation
 from aweb_secrets.console_changes import _errors
-from aweb_secrets.console_ui import _login_redirect, console_page, recovery_page
 
 _ASSETS = Path(__file__).parent
 
@@ -284,31 +284,31 @@ _RECOVERIES = {
 }
 
 
-def _recovery(refused: HTTPException) -> Response:
-    if refused.status_code == 401:
-        return _login_redirect(refused)
-    if refused.detail not in _RECOVERIES:
-        raise refused
-    message, href, label = _RECOVERIES[refused.detail]
-    return recovery_page(refused, message=message, action_href=href, action_label=label)
-
-
 def console_audit_delivery_router(*, services: ConsoleAuditDelivery) -> APIRouter:
     """Human app only; inject the same OwnerConsole the other owner pages use."""
+    shell = services.console.shell
     router = APIRouter(route_class=ConsoleRoute)
+
+    def _recovery(refused: HTTPException) -> Response:
+        if refused.status_code == 401 or member_refusal(refused) is not None:
+            return shell.refused_page(refused)
+        if refused.detail not in _RECOVERIES:
+            raise refused
+        message, href, label = _RECOVERIES[refused.detail]
+        return shell.recovery_page(refused, message=message, action_href=href, action_label=label)
 
     @router.get("/audit-delivery", response_class=HTMLResponse)
     async def page(request: Request) -> Response:
         try:
             current = await services.console.sessions.current(request)
         except HTTPException as refused:
-            return _login_redirect(refused)
+            return shell.refused_page(refused)
         try:
             async with _errors(services.console, current):
                 view = await services.view(current)
         except HTTPException as refused:
             return _recovery(refused)
-        return console_page(title="Audit delivery", body_html=_render(view), session=current)
+        return shell.console_page(title="Audit delivery", body_html=_render(view), session=current)
 
     @router.get("/console-audit-delivery/audit.css")
     async def style() -> Response:

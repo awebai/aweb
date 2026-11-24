@@ -10,14 +10,16 @@ import hashlib
 import json
 import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Annotated
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 from aweb_naapp.console import (
+    COOKIE_NAME,
     ClientIdentity,
     ConsoleSession,
     LoginLimiter,
@@ -25,6 +27,7 @@ from aweb_naapp.console import (
     session_is_current,
 )
 from aweb_naapp.console.handoff_authority import HandoffAuthority, PublicScope
+from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
 from aweb_naapp.roles import PrincipalKey, unassign
 from aweb_naapp.runtime.human_member import check_human_member
 from aweb_naapp.runtime.origins import split_origins
@@ -38,7 +41,9 @@ from awid.signing import canonical_json_bytes
 from fastapi import Depends, FastAPI, HTTPException, Request
 from nacl.signing import SigningKey
 
+from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.human_holding_identity import owner_holding_identity
+from aweb_secrets.manifest import OWNER_ACTS
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from tests.human_owner import apply_holder
 from tests.test_human_holders import authority
@@ -84,12 +89,17 @@ class Journey:
     member: Member
     scope: PublicScope
     device: SoftAuthenticator
-    factory: object
+    factory: ConsoleHandoffs
     world: object
     enrol_owner: Callable[[str], Awaitable[tuple[Member, PublicScope, SoftAuthenticator]]]
     registry: RegistryClient
+    controller_seed: bytes
 
-    async def open(self):
+    @property
+    def b3_scope(self) -> str:
+        return owner_scope(self.scope.installation_id, self.member.team_id, self.scope.principal)
+
+    async def start(self):
         key = SigningKey.generate()
         verifier = secrets.token_urlsafe(32)
         raw = json.dumps(
@@ -120,6 +130,10 @@ class Journey:
                 ),
             },
         )
+        return start, key, verifier
+
+    async def open(self):
+        start, key, verifier = await self.start()
         assert start.status_code == 201, start.text
         handoff = start.json()["handoff_id"]
         prefix = f"/handoff/{handoff}/session"
@@ -175,10 +189,6 @@ class Journey:
 
 @pytest.fixture
 async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[Journey]:
-    # Imported at runtime so collection remains possible while the factory is
-    # test-first work. It will fail at this exact supported API until implemented.
-    from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
-
     await apply_console_migrations(world.db)
     options = getattr(request, "param", {})
     team = options.get("team_id", TEAM)
@@ -259,6 +269,23 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
         api.include_router(factory.api_router())
         human.include_router(factory.human_router())
 
+        original = world.console
+        console = OwnerConsole(
+            db=original.db,
+            passkeys=original.passkeys,
+            directory=original.directory,
+            fence=original.fence,
+            verifier=original.verifier,
+            installation=original.installation,
+            credential_audit=original.credential_audit,
+            member=partial(
+                world.directory.console_member, check_holding_member=factory.check_holding_member
+            ),
+            key_bound=factory.current,
+            prepare_key_bound=factory.prepare,
+        )
+        human.include_router(owner_console_router(console))
+
         @human.api_route("/protected", methods=["GET", "POST"])
         async def protected(session: Annotated[ConsoleSession, Depends(factory.current)]):
             async with world.db.transaction() as tx:
@@ -289,15 +316,13 @@ async def journey(world, request, human_member_cache_seconds) -> AsyncIterator[J
                 world,
                 enrol_owner,
                 registry,
+                namespace.controller_seed,
             )
 
 
 async def test_two_fresh_bound_sessions_share_the_same_real_b3_pair(journey):
     first_key, first = await journey.open()
-    scope = owner_scope(
-        journey.scope.installation_id, journey.member.team_id, journey.scope.principal
-    )
-    retained = await journey.factory.check_holding_member(scope)
+    retained = await journey.factory.check_holding_member(journey.b3_scope)
     assert retained.principal == journey.scope.principal
     retained.require_fresh()
     second_key, second = await journey.open()
@@ -307,6 +332,87 @@ async def test_two_fresh_bound_sessions_share_the_same_real_b3_pair(journey):
     assert a.status_code == b.status_code == 200
     assert a.json() == b.json()
     assert (await journey.request(first_key, first, method="GET")).status_code == 200
+
+
+async def browser_login(journey):
+    options = await journey.client.post("/login/options", json={"scope": journey.b3_scope})
+    assert options.status_code == 200, options.text
+    return await journey.client.post(
+        "/login", json={"scope": journey.b3_scope, "assertion": journey.device.get(options.json())}
+    )
+
+
+async def reissue_owner_membership(journey, *, rotate=False):
+    old = journey.member
+    renewed = replace(old, certificate_id="renewed-holder")
+    registry = journey.world.registry
+    if rotate:
+        renewed.team_key = SigningKey.generate()
+        await registry.rotate_team_key_by_controller(
+            old.team_id, renewed.team_did_key, SigningKey(journey.controller_seed)
+        )
+    await registry.add_certificate(renewed.certificate(), team_key=renewed.team_key)
+    if not rotate:
+        await registry.revoke(old.certificate_id, team_id=old.team_id)
+    journey.member = renewed
+
+
+async def held_state(journey):
+    db = journey.world.db
+    statements = (
+        "SELECT * FROM {{tables.role_assignments}} ORDER BY team_id,role,principal_did",
+        "SELECT * FROM {{tables.role_holdings}} ORDER BY b3_scope",
+        "SELECT * FROM {{tables.passkey_approvers}} ORDER BY scope,subject",
+        "SELECT * FROM {{tables.passkey_credentials}} ORDER BY credential_id",
+        "SELECT * FROM {{tables.console_sessions}} ORDER BY token_sha256",
+        "SELECT * FROM {{tables.outbox_events}} ORDER BY position",
+    )
+    return [[dict(row) for row in await db.fetch_all(statement)] for statement in statements]
+
+
+@pytest.mark.parametrize("rotate_team_key", [False, True])
+async def test_the_owner_session_action_restores_browser_sign_in(journey, rotate_team_key):
+    await reissue_owner_membership(journey, rotate=rotate_team_key)
+    refused = await browser_login(journey)
+    assert (refused.status_code, refused.json()) == (403, {"detail": "principal_not_member"})
+    assert COOKIE_NAME not in journey.client.cookies
+    action = next(action for action in OWNER_ACTS["session_actions"] if action["name"] == "session")
+    key, issued = await journey.open()
+    before = await held_state(journey)
+    response = await journey.request(key, issued, path=action["path"], method=action["method"])
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert set(result) == {"scope", "expires_at"}
+    assert result["scope"] == journey.b3_scope
+    assert datetime.fromisoformat(result["expires_at"]) == datetime.fromisoformat(
+        issued["expires_at"]
+    )
+    assert await held_state(journey) == before
+    assert (await journey.client.get(API + action["path"])).status_code == 404
+    assert (await browser_login(journey)).status_code == 200
+
+
+async def test_the_owner_session_action_refuses_removed_members(journey):
+    await journey.world.registry.revoke(
+        journey.member.certificate_id, team_id=journey.member.team_id
+    )
+    before = await held_state(journey)
+    started, _, _ = await journey.start()
+    assert started.status_code in (401, 403), started.text
+    assert "handoff_id" not in started.json()
+    assert (await journey.client.get("/v1/session")).status_code == 401
+    assert await held_state(journey) == before
+    refused = await browser_login(journey)
+    assert (refused.status_code, refused.json()) == (403, {"detail": "principal_not_member"})
+    assert COOKIE_NAME not in journey.client.cookies
+
+
+async def test_an_abandoned_owner_session_handoff_keeps_the_holding(journey):
+    await reissue_owner_membership(journey)
+    before = await held_state(journey)
+    started, _, _ = await journey.start()
+    assert started.status_code == 201, started.text
+    assert await held_state(journey) == before
 
 
 async def test_signed_session_refuses_replay_and_never_becomes_a_cookie(journey):

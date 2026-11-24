@@ -14,13 +14,13 @@ from urllib.parse import quote, urlencode
 from uuid import UUID
 
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
+from aweb_naapp.console.browser import member_refusal
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from aweb_secrets.activity_service import ActivityCursor, ActivityPage, ActivityReads
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.console_changes import _errors
-from aweb_secrets.console_ui import _login_redirect, console_page, recovery_page
 from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.owners import owner_binding, owner_scope
 from aweb_secrets.principal_display import principal_html
@@ -162,6 +162,7 @@ def _render(page: ActivityPage, limit: int, team_id: str) -> str:
 
 def console_activity_router(*, services: ConsoleActivity) -> APIRouter:
     """Human app only; inject the same OwnerConsole and app-owned ActivityReads."""
+    shell = services.console.shell
     router = APIRouter(route_class=ConsoleRoute)
 
     @router.get("/activity", response_class=HTMLResponse)
@@ -172,9 +173,9 @@ def console_activity_router(*, services: ConsoleActivity) -> APIRouter:
             async with _errors(services.console, current):
                 result, team_id = await services.page(current, before=before, limit=count)
         except HTTPException as refused:
-            if refused.status_code == 401:
-                return _login_redirect(refused)
-            return recovery_page(
+            if refused.status_code == 401 or member_refusal(refused) is not None:
+                return shell.refused_page(refused)
+            return shell.recovery_page(
                 refused,
                 message=(
                     "Activity link is invalid."
@@ -184,7 +185,7 @@ def console_activity_router(*, services: ConsoleActivity) -> APIRouter:
                 action_href="/activity",
                 action_label="View activity",
             )
-        return console_page(
+        return shell.console_page(
             title="Activity", body_html=_render(result, count, team_id), session=current
         )
 
