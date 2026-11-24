@@ -78,6 +78,27 @@ def guest_transport(directory, run, host, container):
     return transport
 
 
+def validate_cloud_config(host, image, seed, directory):
+    """Validate the exact NoCloud input on the launcher host before allocating KVM."""
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
+        raise Refused("Merak cloud-init validator requires an immutable image ID")
+    user_data = "#cloud-config\n" + json.dumps(seed)
+    check = "umask 077; cat > /tmp/user-data; cloud-init --version; cloud-init schema --config-file /tmp/user-data"
+    argv = ["docker", "run", "--rm", "-i", "--pull=never", "--read-only",
+            "--network=none", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+            "--tmpfs", "/tmp:mode=0700", "--entrypoint", "/bin/sh", image, "-ec", check]
+    result = subprocess.run(
+        [*host_ssh(), host, shlex.join(argv)], input=user_data, text=True,
+        capture_output=True, env=child_environment(), timeout=60,
+    )
+    # A schema diagnostic can quote supplied host key material. Only retain the verdict.
+    proof = {"validator_image": image, "user_data_sha256": hashlib.sha256(user_data.encode()).hexdigest(),
+             "exit": result.returncode, "valid": result.returncode == 0}
+    (directory / "cloud-config-schema.json").write_text(json.dumps(proof, indent=2) + "\n")
+    if result.returncode:
+        raise Refused("Merak cloud-init schema refused the user-data before guest allocation")
+
+
 def run_guest(runtime, remote):
     cfg, run, directory = runtime.config, runtime.run_id, runtime.directory
     host, base, launcher = endpoint(cfg)
@@ -126,6 +147,9 @@ def run_guest(runtime, remote):
             },
         },
     }
+    validator = cfg["merak"].get("cloud_init_validator_image_id")
+    if validator:
+        validate_cloud_config(host, validator, spec["seed"], directory)
     helper = Path(__file__).with_name("merak_host.py").read_text()
     command = "python3 -u -c " + shlex.quote(helper)
     summary = {
