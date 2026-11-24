@@ -44,10 +44,14 @@ class HumanMemberProof:
         """The team checked by the original membership proof."""
         return self.membership.team_id
 
+    def is_fresh(self) -> bool:
+        """Whether the original remote deadline still stands."""
+        now = monotonic_ns()
+        return self.checked_at <= now <= self.fresh_until and self.membership.is_fresh_at(now)
+
     def require_fresh(self) -> None:
         """Recheck the original remote deadline after local authority waits."""
-        now = monotonic_ns()
-        if not (self.checked_at <= now <= self.fresh_until and self.membership.is_fresh_at(now)):
+        if not self.is_fresh():
             raise _refused(503, "principal_status_unavailable")
 
 

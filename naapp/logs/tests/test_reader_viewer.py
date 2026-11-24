@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
-from typing import Any, NoReturn
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
@@ -29,10 +29,11 @@ from aweb_naapp.console import (
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import TEAM_ID
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI
 
 from aweb_logs.ledger import append
 from aweb_logs.reader_service import ReaderService, reader_sessions
+from aweb_logs.retention import purge
 
 from .fixtures import admitted_evidence, signed_event
 from .reader_world import (
@@ -43,7 +44,7 @@ from .reader_world import (
     held_reader,
     world_fixture,  # noqa: F401
 )
-from .test_read_routes import login, other_team_event, team_chain_ids
+from .test_read_routes import login, no_handoff, other_team_event, team_chain_ids
 
 VIEWER_PAGES = ("/events", "/follow", "/integrity")
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source"}
@@ -110,12 +111,6 @@ def within_event(element: dict[str, Any], event_id: str) -> bool:
     return any(attrs.get("data-event-id") == event_id for attrs in element["within"])
 
 
-async def no_handoff(*_: object, **__: object) -> NoReturn:
-    """The viewer's tests sign in with a passkey only: no member starts an aw
-    handoff, and one that tried would be refused as unauthenticated."""
-    raise HTTPException(status_code=401, detail="unauthenticated")
-
-
 def viewer_service(world: World, *, login_limit: int = 12) -> ReaderService:
     """:class:`ReaderService` as logs composes it, with no aw handoffs."""
     limiter = LoginLimiter(
@@ -127,7 +122,7 @@ def viewer_service(world: World, *, login_limit: int = 12) -> ReaderService:
         fence=world.fence,
         passkeys=world.passkeys,
         principal=no_handoff,
-        human_member=no_handoff,
+        human_member=world.human_member,
         limiter=limiter,
     )
     return ReaderService(
@@ -181,14 +176,24 @@ async def recorded(world: World, kind: str, **fields: Any) -> str:
 
 
 async def purged(world: World, event_id: str) -> int:
-    """L5's purge, as the chain's schema defines it: content gone, the act
-    named. Returns the event's position in the chain."""
-    return await world.db.fetch_value(
-        "UPDATE {{tables.chain_events}} SET salt = NULL, signing_bytes = NULL, signature = NULL,"
-        " purge_act = 'erase:1' WHERE team_id = $1 AND event_id = $2 RETURNING team_seq",
+    """The event purged by Logs' own purge under the act ``erase:1``. Returns
+    its position in the chain."""
+    position = await world.db.fetch_one(
+        "SELECT chain_epoch, team_seq FROM {{tables.chain_events}}"
+        " WHERE team_id = $1 AND event_id = $2",
         TEAM_ID,
         uuid.UUID(event_id),
     )
+    async with world.db.transaction() as tx:
+        count = await purge(
+            tx,
+            world.purges,
+            TEAM_ID,
+            [(position["chain_epoch"], position["team_seq"])],
+            act="erase:1",
+        )
+    assert count == 1
+    return position["team_seq"]
 
 
 async def signed_in(world: World, human: httpx.AsyncClient) -> None:

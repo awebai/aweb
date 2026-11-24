@@ -20,6 +20,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH, read_store
 from aweb_logs.ledger import LogsSigner, append, append_on, open_next_epoch
 from aweb_logs.read_store import REFERENCES, Cursor, EventFilter, InvalidRead, query, tail
+from aweb_logs.retention import purge
 
 from .fixtures import (
     CORE_ORIGIN,
@@ -32,6 +33,7 @@ from .fixtures import (
     SECRETS_SEED,
     TEAM_ID,
     did_key,
+    purge_ledger,
     signed_event,
 )
 
@@ -352,16 +354,12 @@ async def test_a_team_never_reads_another_teams_events(db: AsyncDatabaseManager)
 
 
 async def test_a_purged_event_shows_only_its_skeleton_and_matches_no_content_filter(
-    db: AsyncDatabaseManager,
+    db: AsyncDatabaseManager, test_db_factory
 ) -> None:
-    purged_id = await _append(db, secret_use(job_id="job-7", seq=1))
-    # L5's purge, as the chain's schema defines it: content gone, the act named.
-    await db.execute(
-        "UPDATE {{tables.chain_events}} SET salt = NULL, signing_bytes = NULL, signature = NULL,"
-        " purge_act = 'erase:1' WHERE team_id = $1 AND event_id = $2",
-        TEAM_ID,
-        uuid.UUID(purged_id),
-    )
+    await _append(db, secret_use(job_id="job-7", seq=1))
+    ledger = await purge_ledger(test_db_factory, db)
+    async with db.transaction() as tx:
+        assert await purge(tx, ledger, TEAM_ID, [(1, 1)], act="erase:1") == 1
 
     page = await query(db, TEAM_ID, _filter())
     assert page.events == [
