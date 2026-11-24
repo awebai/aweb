@@ -595,6 +595,16 @@ def logs_reader_signs_in_again_after_a_reissue(
         time.sleep(15)
     assert answer == {"status": 403, "detail": "principal_not_member"}
 
+    # With the replaced certificate still installed, aw's session is refused and
+    # opens no page. What aw says is kept with the run.
+    child = holder.act(principal, "app", "human", LOGS_APP_ID, "session")
+    refused = holder.answer_passphrases(child)
+    child.close()
+    (lane.runtime / "session-with-replaced-certificate.txt").write_text(refused)
+    print(refused)
+    assert child.exitstatus not in (0, None), refused
+    assert holder.login(LOGS_CONSOLE, scope) == {"status": 403, "detail": "principal_not_member"}
+
     holder.run(principal, "--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM,
                "--cert-id", reissued["new_certificate_id"], "--registry", REGISTRY, "--force")
     shown = holder.run_in_browser(principal, LOGS_CONSOLE, "session", "app", "human", LOGS_APP_ID, "session")
