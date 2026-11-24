@@ -1,32 +1,29 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone as timezone_mod
 from typing import Dict, List, Optional, cast
-from urllib.parse import quote
 
 from redis.asyncio import Redis
-from redis.exceptions import WatchError
 
 from .coordination.roles import ROLE_MAX_LENGTH, is_valid_role, normalize_role
 
 DEFAULT_PRESENCE_TTL_SECONDS = 1800  # 30 minutes
+_PRESENCE_PROJECTION_FIELDS = frozenset({
+    "program", "model", "human_name", "repo_id", "member_email", "status",
+    "current_branch", "role", "canonical_origin", "timezone",
+})
 
 
-def _safe_key_component(value: str) -> str:
-    """URL-encode a value for safe use in Redis keys.
+@dataclass(frozen=True)
+class HostedHeartbeatPresence:
+    """Already-loaded host fields for an exact workspace and canonical team."""
 
-    Prevents key collision attacks where values containing colons could
-    create ambiguous key boundaries. For example, without encoding:
-      team_id="abc", alias="xyz:def" -> "idx:alias:abc:xyz:def"
-      team_id="abc:xyz", alias="def" -> "idx:alias:abc:xyz:def" (COLLISION!)
-
-    With encoding:
-      team_id="abc", alias="xyz:def" -> "idx:alias:abc:xyz%3Adef"
-      team_id="abc:xyz", alias="def" -> "idx:alias:abc%3Axyz:def" (DISTINCT)
-    """
-    return quote(value, safe="")
+    workspace_id: str
+    team_id: str
+    projection: Mapping[str, str | None]
 
 
 def _presence_key(workspace_id: str) -> str:
@@ -39,33 +36,9 @@ def _presence_coordinates_key(workspace_id: str) -> str:
     return f"presence_coordinates:{workspace_id}"
 
 
-def _team_workspaces_index_key(team_id: str) -> str:
-    """Secondary index: workspace_ids by team_id."""
-    return f"idx:team_workspaces:{team_id}"
-
-
-def _repo_workspaces_index_key(repo_id: str) -> str:
-    """Secondary index: workspace_ids by repo_id."""
-    return f"idx:repo_workspaces:{repo_id}"
-
-
-def _branch_workspaces_index_key(repo_id: str, branch: str) -> str:
-    """Secondary index: workspace_ids by repo_id and branch."""
-    return f"idx:branch_workspaces:{repo_id}:{_safe_key_component(branch)}"
-
-
 def _all_workspaces_index_key() -> str:
     """Global index: all workspace_ids with active presence."""
     return "idx:all_workspaces"
-
-
-def _alias_index_key(team_id: str, alias: str) -> str:
-    """Secondary index: workspace_id by (team_id, alias).
-
-    Enables O(1) alias collision checking instead of SCAN.
-    Key maps to a single workspace_id (aliases are unique per team).
-    """
-    return f"idx:alias:{_safe_key_component(team_id)}:{_safe_key_component(alias)}"
 
 
 async def update_agent_presence(
@@ -79,7 +52,7 @@ async def update_agent_presence(
     repo_id: Optional[str] = None,
     agent_id: Optional[str] = None,
     member_email: Optional[str] = None,
-    status: str = "active",
+    status: Optional[str] = None,
     current_branch: Optional[str] = None,
     role: Optional[str] = None,
     canonical_origin: Optional[str] = None,
@@ -95,6 +68,7 @@ async def update_agent_presence(
         human_name: Name of the human who owns this workspace.
         team_id: Team address (for secondary index).
         repo_id: UUID of the repo (for secondary index).
+        status: Preserved when omitted. A new record defaults to active.
         current_branch: Optional branch name.
         role: Brief description of workspace purpose (max 50 chars).
         canonical_origin: Normalized repo origin (e.g. "github.com/org/repo").
@@ -111,7 +85,6 @@ async def update_agent_presence(
         "workspace_id": workspace_id,
         "alias": alias,
         "team_id": team_id or "",
-        "status": status,
         "last_seen": now,
     }
     # None means this heartbeat did not carry the coordinate. An explicit
@@ -120,6 +93,7 @@ async def update_agent_presence(
         "human_name": human_name,
         "repo_id": repo_id,
         "member_email": member_email,
+        "status": status,
         "program": program,
         "model": model,
         "current_branch": current_branch,
@@ -143,65 +117,92 @@ async def update_agent_presence(
     return now
 
 
+async def refresh_agent_presence(
+    redis: Redis,
+    *,
+    workspace_id: str,
+    team_id: str,
+    alias: str,
+    ttl_seconds: int = DEFAULT_PRESENCE_TTL_SECONDS,
+    projection: Mapping[str, str | None] | None = None,
+) -> dict[str, str]:
+    """Refresh a verified workspace with known projection fields and return its merged hash."""
+    supplied = projection if projection is not None else {}
+    if supplied.keys() - _PRESENCE_PROJECTION_FIELDS:
+        raise ValueError("Unknown field in the workspace presence projection")
+    fields = {name: value for name, value in supplied.items() if value is not None and value != ""}
+    if role := fields.pop("role", None):
+        if len(role) <= ROLE_MAX_LENGTH and is_valid_role(role):
+            fields["role"] = normalize_role(role)
+    fields.update(
+        workspace_id=workspace_id,
+        team_id=team_id,
+        alias=alias,
+        last_seen=datetime.now(timezone_mod.utc).isoformat(),
+    )
+    return await _store_presence_fields(redis, workspace_id=workspace_id, fields=fields, ttl_seconds=ttl_seconds)
+
+
+_STORE_PRESENCE = """
+local key, coordinates = KEYS[1], KEYS[2]
+local workspace, ttl = ARGV[1], tonumber(ARGV[2])
+local index_ttl = ttl * 2
+
+-- Match urllib.parse.quote(value, safe="") over UTF-8 bytes, including
+-- preserved values read from Redis and values supplied by this writer.
+local function key_component(value)
+    return string.gsub(value, '([^A-Za-z0-9_%.~%-])', function(byte)
+        return string.format('%%%02X', string.byte(byte))
+    end)
+end
+
+redis.call('HSET', key, unpack(ARGV, 3))
+redis.call('HSETNX', key, 'status', 'active')
+local merged = redis.call('HGETALL', key)
+local fields = {}
+for i = 1, #merged, 2 do
+    fields[merged[i]] = merged[i + 1]
+end
+redis.call('EXPIRE', key, ttl)
+
+local function renew_set(index)
+    redis.call('SADD', index, workspace)
+    redis.call('EXPIRE', index, index_ttl)
+    redis.call('HSET', coordinates, 'set:' .. index, '1')
+end
+renew_set('idx:all_workspaces')
+if fields.team_id and fields.team_id ~= '' then
+    renew_set('idx:team_workspaces:' .. fields.team_id)
+    local alias = 'idx:alias:' .. key_component(fields.team_id) .. ':' .. key_component(fields.alias or '')
+    redis.call('SET', alias, workspace, 'EX', index_ttl)
+    redis.call('HSET', coordinates, 'alias:' .. alias, workspace)
+end
+if fields.repo_id and fields.repo_id ~= '' then
+    renew_set('idx:repo_workspaces:' .. fields.repo_id)
+    if fields.current_branch and fields.current_branch ~= '' then
+        renew_set('idx:branch_workspaces:' .. fields.repo_id .. ':' .. key_component(fields.current_branch))
+    end
+end
+redis.call('PERSIST', coordinates)
+return merged
+"""
+
+
 async def _store_presence_fields(
     redis: Redis,
     *,
     workspace_id: str,
     fields: dict[str, str],
     ttl_seconds: int,
-) -> None:
+) -> dict[str, str]:
     """Commit one metadata generation and its current indices atomically."""
-    key = _presence_key(workspace_id)
-    # Read the same generation whose optional coordinates we preserve. Only its
-    # current repo/branch is renewed; cleanup coordinates also retain historical
-    # indices so lifecycle can remove them without scanning Redis.
-    index_ttl = ttl_seconds * 2
-    coordinates_key = _presence_coordinates_key(workspace_id)
-    for _ in range(4):
-        async with redis.pipeline(transaction=True) as pipe:
-            try:
-                await pipe.watch(key)
-                current = {
-                    **await cast(Awaitable[dict[str, str]], pipe.hgetall(key)),
-                    **fields,
-                }
-                set_indices = [_all_workspaces_index_key()]
-                alias_indices = []
-                if current.get("team_id"):
-                    set_indices.append(_team_workspaces_index_key(current["team_id"]))
-                    alias_indices.append(
-                        _alias_index_key(current["team_id"], current["alias"])
-                    )
-                if current.get("repo_id"):
-                    set_indices.append(_repo_workspaces_index_key(current["repo_id"]))
-                    if current.get("current_branch"):
-                        set_indices.append(
-                            _branch_workspaces_index_key(
-                                current["repo_id"], current["current_branch"]
-                            )
-                        )
-                reverse_coordinates = {
-                    f"set:{index_key}": "1" for index_key in set_indices
-                }
-                reverse_coordinates.update(
-                    {f"alias:{index_key}": workspace_id for index_key in alias_indices}
-                )
-                pipe.multi()
-                pipe.hset(key, mapping=fields)
-                pipe.expire(key, ttl_seconds)
-                for index_key in set_indices:
-                    pipe.sadd(index_key, workspace_id)
-                    pipe.expire(index_key, index_ttl)
-                for index_key in alias_indices:
-                    pipe.set(index_key, workspace_id, ex=index_ttl)
-                pipe.hset(coordinates_key, mapping=reverse_coordinates)
-                pipe.persist(coordinates_key)
-                await pipe.execute()
-                break
-            except WatchError:
-                continue
-    else:
-        raise RuntimeError("Concurrent workspace heartbeats did not converge")
+    arguments = [entry for item in fields.items() for entry in item]
+    reply = await cast(Awaitable[list[str | bytes]], redis.eval(
+        _STORE_PRESENCE, 2, _presence_key(workspace_id), _presence_coordinates_key(workspace_id),
+        workspace_id, ttl_seconds, *arguments,
+    ))
+    values = [value.decode("utf-8") if isinstance(value, bytes) else value for value in reply]
+    return dict(zip(values[::2], values[1::2], strict=True))
 
 
 async def get_agent_presence(

@@ -66,7 +66,7 @@ from aweb.team_auth_deps import (
     team_identity_with_grant_scope,
 )
 
-from ..presence import update_agent_presence
+from ..presence import HostedHeartbeatPresence, refresh_agent_presence, update_agent_presence
 from aweb.config import get_presence_ttl_seconds
 from aweb.workspace_activity import (
     PresenceStatus,
@@ -671,13 +671,23 @@ async def heartbeat(
         raise HTTPException(status_code=409, detail="Agent has no active workspace")
 
     ttl_seconds = get_presence_ttl_seconds()
-    last_seen = await update_agent_presence(
-        redis,
-        workspace_id=str(workspace["workspace_id"]),
-        alias=identity.alias,
-        team_id=identity.team_id,
-        ttl_seconds=ttl_seconds,
-    )
+    workspace_id = str(workspace["workspace_id"])
+    hosted = getattr(request.state, "hosted_heartbeat_presence", None)
+    if (
+        isinstance(hosted, HostedHeartbeatPresence)
+        and hosted.workspace_id == workspace_id
+        and hosted.team_id == identity.team_id
+    ):
+        merged = await refresh_agent_presence(
+            redis, workspace_id=workspace_id, alias=identity.alias, team_id=identity.team_id,
+            ttl_seconds=ttl_seconds, projection=hosted.projection,
+        )
+        last_seen = merged["last_seen"]
+    else:
+        last_seen = await update_agent_presence(
+            redis, workspace_id=workspace_id, alias=identity.alias, team_id=identity.team_id,
+            ttl_seconds=ttl_seconds,
+        )
 
     return HeartbeatResponse(
         agent_id=identity.agent_id,
