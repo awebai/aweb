@@ -298,6 +298,7 @@ test-go-vulnerability-audit:
 	python3 -m unittest discover -s scripts -p "test_check_go_vulnerability_audit.py" -v
 
 check-node-audit:
+	bash scripts/check-node-audit.sh --self-test
 	bash scripts/check-node-audit.sh
 
 # Runtime copies ship in Git for source-based plugin/capability installs. Edit
