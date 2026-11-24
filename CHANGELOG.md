@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- awid-service 0.5.42 remembers the result of the Ed25519 point check for
+  public keys and certificate signatures it has already checked, which removes
+  most of the processor time of identity-chain checks.
+
 - Server 1.27.53 is the first published release with the workspace-contact
   change below. Warm team certificate admission reads the member and team key
   in one PostgreSQL snapshot without locking either row. Embedders that relied
