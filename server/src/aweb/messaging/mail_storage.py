@@ -34,7 +34,8 @@ class MailSender:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "did", self.did.strip())
-        object.__setattr__(self, "address", (self.address or "").strip() or None)
+        if self.address is not None:
+            object.__setattr__(self, "address", self.address.strip())
 
     @property
     def display_alias(self) -> str:

@@ -9,8 +9,8 @@
   their write-time policy on the locked reread via `before_write`.
 - Migration 057 adds one partial index for mail without a conversation ID,
   so the conversation list can skip scanning the full messages table for
-  legacy mail. Message writes wait while it builds (about 0.1 s in an
-  isolated test at 300,000 messages).
+  legacy mail. Message writes can wait while it builds. The migration uses
+  a two-second lock timeout and a five-second CREATE INDEX statement timeout.
 
 - Self-hosted CLI and wake processes retain access to private or HTTP AWID
   registries chosen by the operator. `aw` records a saved `--registry`,

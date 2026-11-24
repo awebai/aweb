@@ -37,6 +37,7 @@ from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.messaging.mail_ack import acknowledge_mail
 from aweb.messaging.mail_send import SentMail, resolve_mail_target, send_mail
 from aweb.messaging.runtime import messaging_runtime
+from aweb.messaging.sender_address import stored_sender_address
 from aweb.messaging.kinds import MessagePriority
 from aweb.messaging.verification import (
     message_verification_status,
@@ -169,9 +170,9 @@ async def _inbox_response_from_rows(
                 to_did=to_did or None,
                 from_stable_id=(identity_map.get(from_did, {}).get("stable_id") or None),
                 to_stable_id=(identity_map.get(to_did, {}).get("stable_id") or None),
-                from_address=(
-                    r.get("from_address") or identity_map.get(from_did, {}).get("address") or None
-                ),
+                from_address=stored_sender_address(
+                    r.get("from_address"), identity_map.get(from_did, {}).get("address"),
+                ) or None,
                 to_address=(identity_map.get(to_did, {}).get("address") or None),
                 signature=r.get("signature"),
                 signed_payload=r.get("signed_payload"),
