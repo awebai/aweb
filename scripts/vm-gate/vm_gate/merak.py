@@ -120,7 +120,6 @@ def run_guest(runtime, remote):
             "ssh_authorized_keys": [public_key],
             "ssh_pwauth": False,
             "ssh_deletekeys": True,
-            "ssh_genkeytypes": [],
             "ssh_keys": {
                 "ed25519_private": cfg["ssh_host_private"],
                 "ed25519_public": cfg["ssh_host_public"],
