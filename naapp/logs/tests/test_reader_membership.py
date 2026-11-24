@@ -11,12 +11,15 @@ import httpx
 import pytest
 from aweb_naapp.runtime import human_member
 from aweb_naapp_testing.owner_acts import TEAM_ID
+from fastapi import HTTPException
 from nacl.signing import SigningKey
 
+from aweb_logs.console_ui import logs_shell
 from aweb_logs.reader_acts import OWNER_ACTS
 from aweb_logs.readers import READER_ROLE
 
 from .reader_world import CONSOLE, reader_scope, world_fixture  # noqa: F401
+from .test_read_routes import READS
 from .test_reader_handoffs import Aw, aw  # noqa: F401
 from .test_reader_viewer import Html
 
@@ -81,7 +84,7 @@ async def open_sessions(aw: Aw) -> int:  # noqa: F811
 
 async def test_a_current_member_signs_in_and_reads(aw: Aw, clock: Clock):  # noqa: F811
     await signed_in(aw)
-    for path in ("/v1/events", "/v1/tail", "/v1/verify", "/v1/export"):
+    for path in READS:
         assert (await aw.client.get(path)).status_code == 200, path
 
 
@@ -92,7 +95,7 @@ async def test_a_reader_removed_from_the_team_cannot_sign_in(aw: Aw, clock: Cloc
     assert (await aw.client.get("/v1/events")).status_code == 401
 
 
-@pytest.mark.parametrize("path", ["/v1/events", "/v1/tail", "/v1/verify", "/v1/export"])
+@pytest.mark.parametrize("path", READS)
 async def test_removal_from_the_team_ends_an_open_session(aw: Aw, clock: Clock, path: str):  # noqa: F811
     await signed_in(aw)
     await removed_from_team(aw)
@@ -271,3 +274,10 @@ async def test_an_abandoned_session_handoff_changes_nothing_held(aw: Aw):  # noq
     started, _, _ = await aw.start()
     assert started.status_code == 201, started.text
     assert (await held_state(aw), await retained(aw)) == (before, certificate)
+
+
+def test_the_page_names_the_deployments_own_app_id():
+    (action,) = OWNER_ACTS["session_actions"]
+    page = logs_shell("team-logs").refused_page(HTTPException(403, "principal_not_member"))
+    command = f"aw app human team-logs {action['name']}"
+    assert command in bytes(page.body).decode()
