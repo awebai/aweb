@@ -732,11 +732,14 @@ binding unavailability it retains the stored, verified address. A definite
 address absence withholds the address. Neither fallback updates the member
 projection or supplies a kind or ID chain. With a successful live binding
 and unavailable ID ancestry, the request retains that binding without kind
-or a chain. A superseded, stale-issuer, revoked or malformed chain remains a
-refusal, as do a missing stable DID record, conflicting key or address, and
-malformed binding claims. Connect, identity-only and grant authorization
-retain strict verification. After a superseded-chain Connect refusal, run
-`aw id parent refresh` in the identity home and reconnect.
+or a chain. This also drops the carried chain for a `did:key` sender during
+ancestry unavailability, where `ENFORCE` can retain it without verified kind.
+A stale issuer follows the shared chain disposition: a `did:key` subject can
+continue without verified kind, and a `did:aw` subject is refused. Superseded,
+revoked or malformed chains remain refusals, as do a missing stable DID record,
+conflicting key or address, and malformed binding claims. Connect, identity-only
+and grant authorization retain strict verification. After a superseded-chain
+Connect refusal, run `aw id parent refresh` in the identity home and reconnect.
 An admitted fallback produces one INFO entry with the team and its reason.
 `aweb_identity_evidence_fallbacks_total` counts by reason only:
 `address_missing`, `unavailable`, `timed_out`, or `chain_unavailable`.

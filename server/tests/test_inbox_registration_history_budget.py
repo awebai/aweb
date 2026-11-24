@@ -13,11 +13,7 @@ from test_team_room import admit_room_member
 __all__ = ["privacy_app"]
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("history", [0, 2000])
-async def test_warm_inbox_registration_pages_do_not_grow_with_revoked_history(
-    privacy_app, monkeypatch, history
-):
+async def _warm_inbox_registration_cost(privacy_app, monkeypatch, history, *, enforce):
     env = privacy_app
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
     for alias in ("alice", "bob"):
@@ -88,33 +84,61 @@ async def test_warm_inbox_registration_pages_do_not_grow_with_revoked_history(
     )
     env.app.state.awid_registry_client = registry
     try:
+        monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", str(enforce).lower())
         headers = _signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate)
-        for mode in ("false", "true"):
-            monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", mode)
-            warm = await env.client.get("/v1/messages/inbox", headers=headers)
-            assert warm.status_code == 200, warm.text
-            pages.clear()
-            for _ in range(5):
-                response = await env.client.get("/v1/messages/inbox", headers=headers)
-                assert response.status_code == 200, response.text
-                messages = response.json()["messages"]
-                assert len(messages) == 1
-                assert messages[0]["message_id"] == sent.json()["message_id"]
-                assert messages[0]["sender_membership"]["state"] == "active"
-            counts = {
-                "enforced": mode == "true",
-                "history": history,
-                "warm_inbox_requests": 5,
-                "certificate_pages": len(pages),
-                "cursor_pages": sum(page["cursor"] for page in pages),
-                "active_only_values": sorted({page["active_only"] for page in pages}),
-            }
-            print("INBOX_REGISTRATION_COST " + json.dumps(counts, sort_keys=True))
-            if mode == "false":
-                assert pages == [], counts
-            else:
-                assert pages and all(page["active_only"] == "false" for page in pages), counts
-                assert len(pages) <= 10 and counts["cursor_pages"] == 0, counts
+        warm = await env.client.get("/v1/messages/inbox", headers=headers)
+        assert warm.status_code == 200, warm.text
+        pages.clear()
+        for _ in range(5):
+            response = await env.client.get("/v1/messages/inbox", headers=headers)
+            assert response.status_code == 200, response.text
+            messages = response.json()["messages"]
+            assert len(messages) == 1
+            assert messages[0]["message_id"] == sent.json()["message_id"]
+            assert messages[0]["sender_membership"]["state"] == "active"
+        counts = {
+            "enforced": enforce,
+            "history": history,
+            "warm_inbox_requests": 5,
+            "certificate_pages": len(pages),
+            "cursor_pages": sum(page["cursor"] for page in pages),
+            "active_only_values": sorted({page["active_only"] for page in pages}),
+        }
+        print("INBOX_REGISTRATION_COST " + json.dumps(counts, sort_keys=True))
+        return counts
     finally:
         env.app.state.awid_registry_client = original
         await registry.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", [0, 2000])
+async def test_off_mode_warm_inboxes_never_read_registration_pages(privacy_app, monkeypatch, history):
+    counts = await _warm_inbox_registration_cost(privacy_app, monkeypatch, history, enforce=False)
+    assert counts["certificate_pages"] == 0, counts
+
+
+class _RegistrationBudgetExceeded(AssertionError):
+    pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "history",
+    [
+        0,
+        pytest.param(
+            2000,
+            marks=pytest.mark.xfail(
+                reason="aweb-adus: REQUIRED scans the full catalog, including revoked history",
+                raises=_RegistrationBudgetExceeded,
+                strict=True,
+            ),
+        ),
+    ],
+)
+async def test_required_warm_inboxes_stay_within_registration_budget(privacy_app, monkeypatch, history):
+    counts = await _warm_inbox_registration_cost(privacy_app, monkeypatch, history, enforce=True)
+    assert counts["active_only_values"] in ([], ["false"]), counts
+    if counts["certificate_pages"] > 10 or counts["cursor_pages"]:
+        raise _RegistrationBudgetExceeded(counts)

@@ -148,8 +148,6 @@ async def _prefer_live_identity_evidence(
             return (
                 replace(binding, fresh_observation=False), None, _IdentityEvidenceFallback.TIMED_OUT,
             )
-        if chain_result["reason"] == "stale_issuer_key":
-            raise HTTPException(status_code=403, detail="stale_issuer_key")
         if chain_result["outcome"] == "unavailable":
             _require_compatible_chain_claim(request, did_key=did_key, did_aw=binding.did_aw)
             return (

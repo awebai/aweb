@@ -20,10 +20,11 @@ from awid.id_certificates import (
     id_certificate_id,
     sign_id_certificate,
 )
+from awid.identity_observation import IdentityKindObservation, unverified_kind
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 
-from aweb import identity_auth_deps
+from aweb import id_chain_auth, identity_auth_deps
 from aweb.application_state import application_registry_client
 from aweb.identity_binding import (
     identity_binding_cache,
@@ -49,7 +50,7 @@ from test_id_chain_request_auth import ROOT, _signed_fixture_certificate
 __all__ = ["privacy_app"]
 
 
-def mount_policy(env, monkeypatch):
+def mount_policy(env, monkeypatch, *, chain_reasons=None):
     live_kinds = []
 
     async def mounted_identity(request: Request, db):
@@ -61,6 +62,8 @@ def mount_policy(env, monkeypatch):
             identity_evidence=IdentityEvidencePolicy.PREFER_LIVE,
         )
         live_kinds.append(checked["identity_kind"])
+        if chain_reasons is not None:
+            chain_reasons.append(request.state.id_chain_result["reason"])
         snapshot = await read_team_member_snapshot(env.db, checked, request=request)
         resolved = await resolve_team_membership(
             env.db, checked, request=request, snapshot=snapshot
@@ -90,19 +93,19 @@ async def sign_revision(certificate, issuer):
     )
 
 
-async def registered_chain(env, registry, actor, *, domain, reissue=None):
+async def registered_chain(env, registry, actor, *, domain, change=None):
     root = SigningKey(bytes.fromhex(ROOT["seed_hex"]))
     await env.registry.ensure_namespace(domain=domain, controller=bytes(root))
     cert = _signed_fixture_certificate(
         "root-agent",
         domain=domain,
-        identity=actor.stable_id,
+        identity=actor.stable_id or actor.did_key,
         parent={"kind": "namespace", "id": domain},
         issuer="root",
     )
     parents = []
     issuer = root
-    if reissue is not None:
+    if change is not None:
         issuer = SigningKey.generate()
         parent_did = did_key_from_signing_key(bytes(issuer))
         parent_id = (await registry.register_did(parent_did, bytes(issuer))).did_aw
@@ -130,13 +133,14 @@ async def registered_chain(env, registry, actor, *, domain, reissue=None):
         )
     chain = identity_chain(*parents, cert)
     key = SigningKey(actor.signing_key)
-    await registry.register_id_certificate(
-        chain,
-        signer=signer_for(key),
-        expected_head=None,
-        invitation_id=None,
-    )
-    if reissue == "superseded-own":
+    if actor.stable_id:
+        await registry.register_id_certificate(
+            chain,
+            signer=signer_for(key),
+            expected_head=None,
+            invitation_id=None,
+        )
+    if change == "superseded-own":
         current = await sign_revision(cert, issuer)
         await registry.register_id_certificate(
             identity_chain(*parents, current),
@@ -144,13 +148,18 @@ async def registered_chain(env, registry, actor, *, domain, reissue=None):
             expected_head=id_certificate_id(cert["certificate"]),
             invitation_id=None,
         )
-    elif reissue == "superseded-parent":
+    elif change == "superseded-parent":
         current = await sign_revision(parent, root)
         await registry.register_id_certificate(
             identity_chain(current),
             signer=signer_for(issuer),
             expected_head=id_certificate_id(parent["certificate"]),
             invitation_id=None,
+        )
+    elif change == "rotate-parent":
+        rotated = bytes(SigningKey.generate())
+        await registry.rotate_key(
+            parent_id, did_key_from_signing_key(rotated), bytes(issuer), rotated
         )
     return chain
 
@@ -276,7 +285,7 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
         registry,
         sender,
         domain=issuer_domain,
-        reissue=scenario if superseded else None,
+        change=scenario if superseded else None,
     )
     if scenario == "chain-hung-wrong-subject":
         other = await admit_messaging_actor(env, alias="other-sender", team_id=TEAM)
@@ -497,6 +506,48 @@ async def test_preferred_live_certificate_sender_preserves_authority_and_deliver
             assert before["address"] == sender.address
             assert await sender_projection(env, sender) == before
             assert live_kinds == [None, None]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("local", [True, False], ids=["did-key", "did-aw"])
+async def test_preferred_live_preserves_stale_issuer_disposition(privacy_app, monkeypatch, local):
+    env = privacy_app
+    registry = application_registry_client(env.app.state)
+    sender = await admit_messaging_actor(env, alias="stale-issuer", team_id=TEAM, local=local)
+    receiver = await admit_messaging_actor(env, alias="receiver", team_id=TEAM, local=True)
+    chain = await registered_chain(
+        env, registry, sender, domain=f"issuer-{uuid4().hex[:8]}.test", change="rotate-parent",
+    )
+    if not local:
+        # AWID preserves the issuer version of a registered child, so a normal
+        # parent rotation only makes the unregistered local leaf stale. Supply
+        # the same verifier verdict for the global subject to exercise refusal.
+        async def stale_observation(_registry, binding, bundle):
+            assert (binding.did_key, binding.did_aw, bundle) == (sender.did_key, sender.stable_id, chain)
+            return IdentityKindObservation(
+                binding.did_key, binding.did_aw, unverified_kind("stale_issuer_key"),
+            )
+
+        monkeypatch.setattr(id_chain_auth, "observe_identity_kind", stale_observation)
+
+    reasons = []
+    mount_policy(env, monkeypatch, chain_reasons=reasons)
+    body = json.dumps({"to_did": receiver.did_key, "subject": "stale issuer", "body": "hello"}).encode()
+    headers = messaging_actor_headers(sender, body=body)
+    headers["X-AWID-ID-Chain"] = encode_id_chain_header(chain)
+    response = await env.client.post("/v1/messages", content=body, headers=headers)
+    if local:
+        assert response.status_code == 200, response.text
+        assert reasons == ["stale_issuer_key"]
+        received = await env.client.get(
+            f"/v1/messages/{response.json()['message_id']}",
+            headers=messaging_actor_headers(receiver),
+        )
+        assert received.status_code == 200, received.text
+        assert received.json()["id_chain"] == chain
+    else:
+        assert response.status_code == 403, response.text
+        assert response.json()["detail"] == "stale_issuer_key"
 
 
 @pytest.mark.asyncio
