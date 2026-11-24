@@ -25,10 +25,16 @@ from aweb_naapp.runtime.approvals import DeliveryStatus
 from aweb_naapp.runtime.authorization import Grant
 from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.credential_audit import CredentialAudit
+from aweb_naapp.runtime.human_member import HumanMemberProof, check_human_member
 from aweb_naapp.runtime.installation import InstallationFence, apply_installation_migrations
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
+from aweb_naapp.runtime.team_auth import AWIDTeamCache
+from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member
+from aweb_naapp_testing.human_members import HumanMember, HumanNamespace, human_namespace
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID, TeamOwner, team_owner
 from aweb_naapp_testing.webauthn import SoftAuthenticator
+from awid.did import stable_id_from_public_key
+from awid.signing import canonical_json_bytes
 from awid_service.testing import Registry, running_registry
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
@@ -47,14 +53,18 @@ LOGS = "https://logs.example.test"
 CONSOLE = "https://console.logs.example.test"
 
 
-READER = "did:aw:2Wq7mXn4kP9rT1vY5zA8bC3dE6"
+def _principal(key: SigningKey) -> str:
+    return stable_id_from_public_key(bytes(key.verify_key))
 
 
-OTHER_READER = "did:aw:3Xr8nYo5mQ1sU2wZ6aB9cD4eF7"
+READER_KEY, OTHER_READER_KEY = SigningKey.generate(), SigningKey.generate()
 
 
-# The member's team certificate a designation retains; the reads here never
-# check it.
+READER, OTHER_READER = _principal(READER_KEY), _principal(OTHER_READER_KEY)
+
+
+# What a designation retains for a principal that is no member; no test signs
+# it in.
 CERTIFICATE = b'{"certificate_id":"cert-reader"}'
 
 
@@ -135,9 +145,36 @@ class World:
     recorder: CredentialAudit = field(init=False)
     passkeys: Passkeys = field(init=False)
     devices: dict[str, SoftAuthenticator] = field(default_factory=dict)
+    # The team's human members, and the certificate of each by principal.
+    namespace: HumanNamespace = field(init=False)
+    members: AWIDTeamCache = field(init=False)
+    certificates: dict[str, bytes] = field(default_factory=dict)
     # Awaited inside each governance transaction just before logs appends its
     # own event: a test holds one change open here while another runs.
     before_append: Callable[[], Awaitable[None]] = _unblocked
+
+    async def join(self, alias: str, key: SigningKey | None = None) -> HumanMember:
+        """A human member who joins the team under ``key``, or a new one."""
+        member = Member(
+            team_id=TEAM_ID,
+            team_key=self.owner.team_key,
+            member_key=key or SigningKey.generate(),
+            alias=alias,
+            certificate_id=f"cert-{alias}",
+        )
+        human = await self.namespace.register(member)
+        self.certificates[human.principal] = canonical_json_bytes(member.certificate())
+        return human
+
+    async def human_member(self, team_id, *, principal, certificate) -> HumanMemberProof:
+        """The runtime's human-member check, against this world's AWID."""
+        return await check_human_member(
+            self.members,
+            self.namespace.client,
+            team_id=team_id,
+            principal=principal,
+            certificate=certificate,
+        )
 
 
 @pytest.fixture(name="world")
@@ -174,57 +211,68 @@ async def world_fixture(test_db_factory) -> AsyncIterator[World]:
 
     async with running_registry(registry_db.config.get_dsn()) as registry:
         owner = await team_owner(registry, team_id=TEAM_ID, acts=APP_ACTS + LOGS_ACTS)
-        directory = ReaderDirectory(db, app_id=APP_ID, passkeys=lambda: state.passkeys)
-        state = World(db, owner, signer, directory, Inbox(), registered, installations.grant, fence)
-        state.registry = registry
-        append_own = directory.appender(signer)
+        async with human_namespace(registry, TEAM_ID.split(":", 1)[1]) as namespace:
+            directory = ReaderDirectory(db, app_id=APP_ID, passkeys=lambda: state.passkeys)
+            state = World(
+                db, owner, signer, directory, Inbox(), registered, installations.grant, fence
+            )
+            state.registry, state.namespace = registry, namespace
+            state.members = AWIDTeamCache(
+                registry_url=REGISTRY_URL,
+                ttl_seconds=60,
+                service_token=SERVICE_TOKEN,
+                transport=registry.transport,
+            )
+            await state.join("first-reader", READER_KEY)
+            await state.join("other-reader", OTHER_READER_KEY)
+            append_own = directory.appender(signer)
 
-        async def append(tx, event_id) -> None:
-            await state.before_append()
-            await append_own(tx, event_id)
+            async def append(tx, event_id) -> None:
+                await state.before_append()
+                await append_own(tx, event_id)
 
-        state.recorder = CredentialAudit(
-            db=db,
-            app_id=APP_ID,
-            fence=fence,
-            contexts=directory.proof_context(app_id=APP_ID),
-            owner_act_scope=owner.verifier.scope,
-            producer=lambda **_: producer,
-            passkeys=lambda: state.passkeys,
-            role_of=directory.role_of,
-            registration_view=view,
-            max_backlog_age=timedelta(minutes=5),
-            migration_module="aweb_logs_credential_audit",
-            after_enqueue=append,
-            ungated_acts=SELF_RECORDED_ACTS,
-            human_roles=frozenset({READER_ROLE}),
-        )
-        await state.recorder.migrate()
-        state.passkeys = Passkeys(
-            db,
-            rp=RelyingParty(origin=CONSOLE, name="logs"),
-            delivery=state.inbox,
-            audit=state.recorder,
-            retirement=directory,
-            enrolment_ttl=timedelta(hours=1),
-            challenge_ttl=timedelta(minutes=5),
-            proof_context=directory.proof_context(app_id=APP_ID),
-            holding_scopes=is_holding_scope,
-        )
-        await state.passkeys.migrate()
-        state.purges = await purge_ledger(test_db_factory, db)
-        state.governance = LogsGovernance(
-            db,
-            purges=state.purges,
-            fence=fence,
-            verifier=owner.verifier,
-            recorder=state.recorder,
-            logs_origin=LOGS,
-        )
-        state.removals = ReaderRemovals(
-            directory, fence=fence, passkeys=state.passkeys, recorder=state.recorder
-        )
-        yield state
+            state.recorder = CredentialAudit(
+                db=db,
+                app_id=APP_ID,
+                fence=fence,
+                contexts=directory.proof_context(app_id=APP_ID),
+                owner_act_scope=owner.verifier.scope,
+                producer=lambda **_: producer,
+                passkeys=lambda: state.passkeys,
+                role_of=directory.role_of,
+                registration_view=view,
+                max_backlog_age=timedelta(minutes=5),
+                migration_module="aweb_logs_credential_audit",
+                after_enqueue=append,
+                ungated_acts=SELF_RECORDED_ACTS,
+                human_roles=frozenset({READER_ROLE}),
+            )
+            await state.recorder.migrate()
+            state.passkeys = Passkeys(
+                db,
+                rp=RelyingParty(origin=CONSOLE, name="logs"),
+                delivery=state.inbox,
+                audit=state.recorder,
+                retirement=directory,
+                enrolment_ttl=timedelta(hours=1),
+                challenge_ttl=timedelta(minutes=5),
+                proof_context=directory.proof_context(app_id=APP_ID),
+                holding_scopes=is_holding_scope,
+            )
+            await state.passkeys.migrate()
+            state.purges = await purge_ledger(test_db_factory, db)
+            state.governance = LogsGovernance(
+                db,
+                purges=state.purges,
+                fence=fence,
+                verifier=owner.verifier,
+                recorder=state.recorder,
+                logs_origin=LOGS,
+            )
+            state.removals = ReaderRemovals(
+                directory, fence=fence, passkeys=state.passkeys, recorder=state.recorder
+            )
+            yield state
 
 
 async def chained(world: World) -> list[dict]:
@@ -308,10 +356,12 @@ async def _owner_act(world: World, act: str, subject: dict, apply) -> object:
 
 
 async def held_reader(
-    world: World, principal: str = READER, *, certificate: bytes = CERTIFICATE
+    world: World, principal: str = READER, *, certificate: bytes | None = None
 ) -> tuple[str, str]:
     """A reader the owner designated by a human-role act, with its credential
-    bound and in effect and ``certificate`` retained: its scope and holder."""
+    bound and in effect and its certificate retained, by default the one its
+    principal is a member under: its scope and holder."""
+    retained = certificate or world.certificates.get(principal, CERTIFICATE)
     device, credential = _credential(world)
 
     async def designate(tx, act):
@@ -319,7 +369,7 @@ async def held_reader(
             tx,
             act=act,
             credential=HumanCredential.parse(credential),
-            certificate=certificate,
+            certificate=retained,
             notice_contact=None,
         )
 
@@ -343,7 +393,7 @@ async def replaced_reader(world: World, principal: str = READER) -> None:
             tx,
             act=act,
             credential=HumanCredential.parse(credential),
-            certificate=CERTIFICATE,
+            certificate=world.certificates.get(principal, CERTIFICATE),
             notice_contact=None,
         )
 

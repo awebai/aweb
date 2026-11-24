@@ -23,11 +23,9 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 from aweb_naapp.console import ClientIdentity, LoginLimiter, apply_console_migrations
-from aweb_naapp.runtime.human_member import check_human_member
 from aweb_naapp.runtime.origins import split_origins
-from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
-from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
-from aweb_naapp_testing.human_members import human_namespace
+from aweb_naapp.runtime.team_auth import authenticate_request
+from aweb_naapp_testing import Member, did_key
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID, TEAM_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.signing import canonical_json_bytes
@@ -102,6 +100,8 @@ class Aw:
     world: World
     # A human member of the same team who holds no reader role.
     outsider: tuple[Member, str]
+    # Both origins, for another browser on the same machine.
+    transport: httpx.ASGITransport
 
     async def start(self, principal: str | None = None) -> tuple[httpx.Response, SigningKey, str]:
         key = SigningKey.generate()
@@ -176,85 +176,54 @@ async def aw(world: World) -> AsyncIterator[Aw]:
     reader sessions: the public origin starts handoffs, the console origin
     approves them and serves the reads."""
     await apply_console_migrations(world.db)
-    async with human_namespace(world.registry, "example.com") as namespace:
-        reader, outsider = [
-            await namespace.register(
-                Member(
-                    team_id=TEAM_ID,
-                    team_key=world.owner.team_key,
-                    alias=alias,
-                    certificate_id=f"cert-{alias}",
-                )
-            )
-            for alias in ("reader", "outsider")
-        ]
-        scope, _ = await held_reader(
-            world,
+    reader, outsider = [await world.join(alias) for alias in ("reader", "outsider")]
+    scope, _ = await held_reader(world, reader.principal)
+
+    async def signer(request: Request):
+        return await authenticate_request(request, public_origin=LOGS, team_cache=world.members)
+
+    limiter = LoginLimiter(
+        world.db, client_identity=ClientIdentity(), limit=100, window=timedelta(minutes=1)
+    )
+    sessions, handoffs = reader_sessions(
+        db=world.db,
+        directory=world.directory,
+        fence=world.fence,
+        passkeys=world.passkeys,
+        principal=signer,
+        human_member=world.human_member,
+        limiter=limiter,
+    )
+    service = ReaderService(
+        db=world.db,
+        directory=world.directory,
+        fence=world.fence,
+        passkeys=world.passkeys,
+        recorder=world.recorder,
+        sessions=sessions,
+        handoffs=handoffs,
+        limiter=limiter,
+        chain_keys=frozenset({world.signer.did_key}),
+        governance=world.governance,
+        # This world designates its readers directly: no owner-act delivery.
+        owner_acts=APIRouter(),
+    )
+    api, human = FastAPI(), FastAPI()
+    api.include_router(service.handoff_router)
+    human.include_router(service.console_router)
+    transport = httpx.ASGITransport(
+        app=split_origins(api, human, agent_origin=LOGS, human_origin=CONSOLE)
+    )
+    async with httpx.AsyncClient(transport=transport, base_url=CONSOLE) as client:
+        yield Aw(
+            client,
+            reader.member,
             reader.principal,
-            certificate=canonical_json_bytes(reader.member.certificate()),
+            world.devices[scope],
+            world,
+            (outsider.member, outsider.principal),
+            transport,
         )
-        cache = AWIDTeamCache(
-            registry_url=REGISTRY_URL,
-            ttl_seconds=60,
-            service_token=SERVICE_TOKEN,
-            transport=world.registry.transport,
-        )
-
-        async def signer(request: Request):
-            return await authenticate_request(request, public_origin=LOGS, team_cache=cache)
-
-        async def human_member(team_id, *, principal, certificate):
-            return await check_human_member(
-                cache,
-                namespace.client,
-                team_id=team_id,
-                principal=principal,
-                certificate=certificate,
-            )
-
-        limiter = LoginLimiter(
-            world.db, client_identity=ClientIdentity(), limit=100, window=timedelta(minutes=1)
-        )
-        sessions, handoffs = reader_sessions(
-            db=world.db,
-            directory=world.directory,
-            fence=world.fence,
-            passkeys=world.passkeys,
-            principal=signer,
-            human_member=human_member,
-            limiter=limiter,
-        )
-        service = ReaderService(
-            db=world.db,
-            directory=world.directory,
-            fence=world.fence,
-            passkeys=world.passkeys,
-            recorder=world.recorder,
-            sessions=sessions,
-            handoffs=handoffs,
-            limiter=limiter,
-            chain_keys=frozenset({world.signer.did_key}),
-            governance=world.governance,
-            # This world designates its readers directly: no owner-act delivery.
-            owner_acts=APIRouter(),
-        )
-        api, human = FastAPI(), FastAPI()
-        api.include_router(service.handoff_router)
-        human.include_router(service.console_router)
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(
-                app=split_origins(api, human, agent_origin=LOGS, human_origin=CONSOLE)
-            ),
-            base_url=CONSOLE,
-        ) as client:
-            yield Aw(
-                client,
-                reader.member,
-                reader.principal,
-                world.devices[scope],
-                world,
-                (outsider.member, outsider.principal),
-            )
 
 
 async def test_aw_exports_the_readers_team_log_with_its_key_bound_session(aw: Aw):

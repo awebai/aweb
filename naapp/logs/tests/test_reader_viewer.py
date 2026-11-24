@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
-from typing import Any, NoReturn
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import httpx
@@ -29,7 +29,7 @@ from aweb_naapp.console import (
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import TEAM_ID
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI
 
 from aweb_logs.ledger import append
 from aweb_logs.reader_service import ReaderService, reader_sessions
@@ -44,7 +44,7 @@ from .reader_world import (
     held_reader,
     world_fixture,  # noqa: F401
 )
-from .test_read_routes import login, other_team_event, team_chain_ids
+from .test_read_routes import login, no_handoff, other_team_event, team_chain_ids
 
 VIEWER_PAGES = ("/events", "/follow", "/integrity")
 _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source"}
@@ -111,12 +111,6 @@ def within_event(element: dict[str, Any], event_id: str) -> bool:
     return any(attrs.get("data-event-id") == event_id for attrs in element["within"])
 
 
-async def no_handoff(*_: object, **__: object) -> NoReturn:
-    """The viewer's tests sign in with a passkey only: no member starts an aw
-    handoff, and one that tried would be refused as unauthenticated."""
-    raise HTTPException(status_code=401, detail="unauthenticated")
-
-
 def viewer_service(world: World, *, login_limit: int = 12) -> ReaderService:
     """:class:`ReaderService` as logs composes it, with no aw handoffs."""
     limiter = LoginLimiter(
@@ -128,7 +122,7 @@ def viewer_service(world: World, *, login_limit: int = 12) -> ReaderService:
         fence=world.fence,
         passkeys=world.passkeys,
         principal=no_handoff,
-        human_member=no_handoff,
+        human_member=world.human_member,
         limiter=limiter,
     )
     return ReaderService(

@@ -14,11 +14,11 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import NoReturn
 
 import httpx
 from aweb_naapp.console import (
     ClientIdentity,
-    ConsoleSessions,
     LoginLimiter,
     apply_console_migrations,
     console_login_router,
@@ -26,12 +26,13 @@ from aweb_naapp.console import (
 from aweb_naapp.hooks.envelope import verify
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp_testing.owner_acts import TEAM_ID
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from aweb_logs.export import verify_bundle
 from aweb_logs.ledger import append
 from aweb_logs.read_routes import ReaderReads, reader_read_router
 from aweb_logs.read_store import Cursor
+from aweb_logs.reader_service import reader_sessions
 
 from .fixtures import admitted_evidence, signed_event
 from .reader_world import (
@@ -53,16 +54,28 @@ from .reader_world import (
 OTHER_TEAM = "other:example.com"
 
 
+async def no_handoff(*_: object, **__: object) -> NoReturn:
+    """These tests sign in with a passkey only: no member starts an aw
+    handoff, and one that tried would be refused as unauthenticated."""
+    raise HTTPException(status_code=401, detail="unauthenticated")
+
+
 @asynccontextmanager
 async def origins(world: World) -> AsyncIterator[tuple[httpx.AsyncClient, httpx.AsyncClient]]:
     """logs' console origin, serving login and the reader's API, and its agent
     origin, serving neither."""
     await apply_console_migrations(world.db)
-    sessions = ConsoleSessions(
-        world.db, passkeys=world.passkeys, scopes=world.directory.is_current_reader
-    )
     limiter = LoginLimiter(
         world.db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
+    )
+    sessions, _ = reader_sessions(
+        db=world.db,
+        directory=world.directory,
+        fence=world.fence,
+        passkeys=world.passkeys,
+        principal=no_handoff,
+        human_member=world.human_member,
+        limiter=limiter,
     )
     console = FastAPI()
     console.include_router(console_login_router(sessions=sessions, limiter=limiter))

@@ -3,7 +3,9 @@ AWID registry: both admit only a holder who is a current human team member."""
 
 from __future__ import annotations
 
+import asyncio
 import time
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -136,3 +138,23 @@ async def test_logout_needs_no_membership(aw: Aw, clock: Clock, ended: str):  # 
     assert await open_sessions(aw) == 1
     assert (await aw.client.post("/logout", headers=headers)).status_code == 200
     assert await open_sessions(aw) == 0
+
+
+async def test_a_session_handoff_refreshes_the_certificate_sign_in_checks(aw: Aw):  # noqa: F811
+    reissued = replace(aw.member, certificate_id="cert-reissued")
+    registry = aw.world.registry
+    await registry.add_certificate(reissued.certificate(), team_key=reissued.team_key)
+    await registry.revoke(aw.member.certificate_id, team_id=TEAM_ID)
+    assert outcome(await login(aw)) == NOT_A_MEMBER
+    aw.member = reissued
+    await aw.open()
+    assert (await login(aw)).status_code == 200
+
+
+async def test_two_sessions_of_one_holding_open_at_once(aw: Aw):  # noqa: F811
+    async with httpx.AsyncClient(transport=aw.transport, base_url=CONSOLE) as other:
+        async with asyncio.timeout(30):
+            opened = await asyncio.gather(aw.open(), replace(aw, client=other).open())
+    for key, issued in opened:
+        assert (await aw.get(key, issued, "/v1/events")).status_code == 200
+    assert (await login(aw)).status_code == 200
