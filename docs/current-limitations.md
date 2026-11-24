@@ -27,8 +27,8 @@ must not be used as a prerequisite in a shipped tutorial.
 ## Team and identity lifecycle
 
 - Hosted and BYOT team creation are supported CLI paths.
-- A bring-your-own-team import is done in the dashboard, from the new team
-  dialog, not during sign-up.
+- A team on your own domain is imported in the dashboard: choose **Import a team
+  instead.** in the **Create a team** dialog. It needs an organization.
 - A keys-only agent port remains gated on CLI work in the current release
   train; the executed whole-home copy procedure is the supported path today.
 - Retiring an agent takes the command for its case:

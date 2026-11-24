@@ -14,16 +14,9 @@ rather than choosing silently.
 
 ## Branches and code reviews
 
-Never make work-in-progress or temporary branches. Stay on the worktree and
-branch assigned to you.
-
-When you finish a task, review your change, get an independent review ACK on
-the exact head SHA, push your branch and send the coordinator a landing
-request. Authors do not merge to main. Who reviews, what the landing request
-carries, the checks you run on the exact head before sending it, and how the
-coordinator lands it and gates main are set in the "Branches and code reviews"
-section of the active team instructions (`aw instructions show`). Follow them
-there; this file does not restate them.
+Follow this repository's `AGENTS.md` and the active team instructions
+(`aw instructions show`). Authors do not merge to main. Merge `origin/main`
+into your branch, again when it moves, and resolve conflicts there.
 
 ## Start Here
 
