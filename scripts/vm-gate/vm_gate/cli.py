@@ -15,7 +15,6 @@ from .errors import Infrastructure, Refused
 from .lifecycle import write_summary
 from .source import git, prepare
 from .signals import handling
-from .local_guard import run_guard
 
 
 class Parser(argparse.ArgumentParser):
@@ -56,7 +55,6 @@ def main(argv=None, *, factory=None, out=None):
     out = out or sys.stdout
     directory = None
     sha = None
-    local_checks = None
     try:
         args = parser().parse_args(argv)
         if not args.config:
@@ -101,10 +99,6 @@ def main(argv=None, *, factory=None, out=None):
                 intent=intent,
                 lock_root=config["state_root"],
             )
-            if args.action == "run":
-                local_checks = run_guard(
-                    source, directory, config.get("lint_timeout_seconds", 600)
-                )
             config["repo"] = str(repo)
         else:
             run_id = None
@@ -121,7 +115,6 @@ def main(argv=None, *, factory=None, out=None):
         with handling():
             result = getattr(runtime, args.action)()
         if directory is not None:
-            result["local_checks"] = local_checks
             write_summary(directory, result)
         if result.get("spend", {}).get("warn"):
             print(
@@ -140,7 +133,6 @@ def main(argv=None, *, factory=None, out=None):
             "infrastructure": exc.classification if known else "infrastructure",
             "error": str(exc) if known else type(exc).__name__,
             "finished": time.time(),
-            "local_checks": getattr(exc, "local_checks", local_checks),
         }
         if directory is not None:
             write_summary(directory, result)
