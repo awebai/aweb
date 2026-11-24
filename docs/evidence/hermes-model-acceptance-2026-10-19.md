@@ -260,8 +260,8 @@ are not exactly-once.
 
 The README gives the public installation route. For the disposable server
 fixtures and opt-in checks, use the README's
-[compatibility checks](../../packages/hermes-aweb-platform/README.md#compatibility-checks) with the v0.22.2 interpreter/source. Run one
-receiver at a time. The small model harness requests a nonce-bearing mail
+[compatibility checks](../../packages/hermes-aweb-platform/README.md#compatibility-checks)
+with the v0.22.2 interpreter/source. Run one receiver at a time. The small model harness requests a nonce-bearing mail
 acknowledgement and a nonce-bearing chat clarify/answer continuation, and
 asserts committed routes/read ordering plus actual provider/model usage.
 Do not rerun the paid turns merely to check an artifact hash.

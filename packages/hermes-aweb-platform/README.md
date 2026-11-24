@@ -271,12 +271,14 @@ python -m unittest discover -s packages/hermes-aweb-platform/tests \
   -p test_live_delivery.py -v
 ```
 
-Fixtures for the live checks are a disposable stack on unused ports:
+Fixtures for the live checks are a disposable stack. The delivery probe fixes
+ports 28180 and 28110, so all three ports below must be free. The addresses keep
+the stack on loopback:
 
 ```bash
-export LIBRARY_E2E_AWEB_PORT=28180
-export LIBRARY_E2E_AWID_PORT=28110
-export LIBRARY_E2E_POSTGRES_PORT=55483
+export LIBRARY_E2E_AWEB_PORT=127.0.0.1:28180
+export LIBRARY_E2E_AWID_PORT=127.0.0.1:28110
+export LIBRARY_E2E_POSTGRES_PORT=127.0.0.1:55483
 export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN=http://127.0.0.1:28180
 export LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL=http://127.0.0.1:28110
 COMPOSE_PARALLEL_LIMIT=1 docker compose -p hermes-acft1 -f docker-compose.e2e.yml \
@@ -285,9 +287,11 @@ COMPOSE_PARALLEL_LIMIT=1 docker compose -p hermes-acft1 -f docker-compose.e2e.ym
   -f packages/hermes-aweb-platform/tests/fixture-local-registry.compose.yml up -d --wait aweb
 ```
 
-Provision real `hermes` and `alice` identities in one team on these services with
-the normal aw commands, and a separate `mallory` identity for unauthorized
-traffic. Never point the checks at an operator or team identity.
+Provision real `hermes` and `alice` identities in one team of the
+`hermes-acft1.test` namespace on these services with the normal aw commands, and
+a separate `mallory` identity for unauthorized traffic. The namespace's
+controller home must be a folder named `controller` beside the receiver's home:
+the delivery probe uses it to create a second team, `other`. Never point the checks at an operator or team identity.
 
 The opt-in tests require disposable loopback aweb/AWID/PostgreSQL fixtures,
 receiver alias `hermes`, sender alias `alice`, address `hermes-acft1.test/alice`,
