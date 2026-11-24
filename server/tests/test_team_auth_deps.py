@@ -551,12 +551,13 @@ class TestResolveTeamIdentity:
 
 
 @pytest.mark.asyncio
-async def test_mounted_certificate_uses_stored_verified_identity_when_evidence_is_skipped(
+async def test_mounted_certificate_retains_routing_after_its_verified_address_is_withdrawn(
     privacy_app, monkeypatch,
 ):
     from aweb import identity_auth_deps, team_auth_deps
     from aweb.application_state import application_registry_client
     from aweb.human_kind import is_verified_human
+    from aweb.identity_binding import identity_binding_cache
     from aweb.lifecycle_agent import AgentDisposition, apply_agent_disposition_on
     from aweb.member_team_key import CurrentMembershipRequired
     from aweb.resource_startup import start_agent_wakes, stop_agent_wakes
@@ -606,8 +607,11 @@ async def test_mounted_certificate_uses_stored_verified_identity_when_evidence_i
     )
     addressed = certificate_for(addressed_id, f"{domain}/{name}")
     await _register_fixture_certificate(env, addressed)
+    connected = await env.client.post("/v1/connect", headers=headers(addressed, b"{}"), content=b"{}")
+    assert connected.status_code == 200, connected.text
     await registry.delete_address(domain, name, env.namespace_sk)
     assert await registry.resolve_address_fresh(domain, name) is None
+    identity_binding_cache(env.app.state).clear()
     refused = await env.client.post("/v1/connect", headers=headers(addressed, b"{}"), content=b"{}")
     assert refused.status_code == 403, refused.text
     assert refused.json()["detail"] == "identity_binding_mismatch"
@@ -616,7 +620,7 @@ async def test_mounted_certificate_uses_stored_verified_identity_when_evidence_i
 
     async def mounted_member(request: Request):
         checked = await team_auth_deps.verify_request_certificate(
-            request, env.infra, identity_evidence=team_auth_deps.IdentityEvidencePolicy.SKIP,
+            request, env.infra, identity_evidence=team_auth_deps.IdentityEvidencePolicy.PREFER_LIVE,
         )
         snapshot = await team_auth_deps.read_team_member_snapshot(env.db, checked, request=request)
         try:
@@ -632,6 +636,7 @@ async def test_mounted_certificate_uses_stored_verified_identity_when_evidence_i
         checked, resolved = await mounted_member(request)
         assert resolved.snapshot.member is not None
         attribution = resolved.snapshot.member.verified_identity()
+        kind = checked["identity_kind"]
         return {
             "key": resolved.identity.did_key,
             "did_aw": resolved.identity.did_aw,
@@ -639,7 +644,7 @@ async def test_mounted_certificate_uses_stored_verified_identity_when_evidence_i
             "verified_did_aw": checked["verified_member_did_aw"],
             "verified_address": checked["verified_member_address"],
             "verified_key": checked["did_aw_verified_key"],
-            "kind": checked["identity_kind"],
+            "kind": kind.kind if kind is not None else None,
             "id_chain": request.state.id_chain,
             "id_chain_result": request.state.id_chain_result,
             "verified_human": is_verified_human(resolved.snapshot.member),
@@ -647,25 +652,30 @@ async def test_mounted_certificate_uses_stored_verified_identity_when_evidence_i
         }
 
     started = len(env.registry.transport.calls)
-    served = await env.client.get(
+    malformed = await env.client.get(
         "/_test/mounted-certificate",
-        headers={**headers(addressed), "X-AWID-ID-Chain": "unfinished-chain"},
+        headers={**headers(addressed), "X-AWID-ID-Chain": "invalid!"},
     )
+    assert malformed.status_code == 403, malformed.text
+    assert malformed.json()["detail"] == "invalid_encoding"
+    served = await env.client.get("/_test/mounted-certificate", headers=headers(addressed))
     assert served.status_code == 200, served.text
     assert served.json() == {
         "key": member.did, "did_aw": stable, "address": "", "verified_did_aw": "",
         "verified_address": "", "verified_key": "", "kind": None, "id_chain": None,
         "id_chain_result": None, "verified_human": False,
-        "stored_attribution": [stable, None, None],
+        "stored_attribution": [stable, f"{domain}/{name}", None],
     }
     routes = [request.url.path for request in env.registry.transport.calls[started:]]
-    team_path = f"/v1/namespaces/example.test/teams/{TEAM_NAME}"
     assert any(path.endswith("/revocations") for path in routes)
-    assert all(path == team_path or path.startswith(f"{team_path}/") for path in routes)
+    assert routes.count(f"/v1/did/{stable}/key") == 1
+    assert sum(path.endswith(f"/addresses/{name}") for path in routes) == 1
     stored = await env.db.fetch_one(
         "SELECT did_aw, address, did_aw_verified_key FROM {{tables.agents}} WHERE agent_id = $1", member.id,
     )
-    assert dict(stored) == {"did_aw": stable, "address": None, "did_aw_verified_key": member.did}
+    assert dict(stored) == {
+        "did_aw": stable, "address": f"{domain}/{name}", "did_aw_verified_key": member.did,
+    }
 
     # The embedding hook supplies actual verified membership to the native
     # routes. Native Connect continues to require the live address evidence.
@@ -754,7 +764,7 @@ async def test_mounted_certificate_uses_stored_verified_identity_when_evidence_i
     assert human_response.json()["did_aw"] == human.stable_id
     assert human_response.json()["address"] == human.address
     assert human_response.json()["verified_human"] is True
-    assert human_response.json()["kind"] is None
+    assert human_response.json()["kind"] == "human"
     assert human_response.json()["id_chain"] is None
 
     claimed_only = _encode_certificate(make_certificate(
@@ -762,13 +772,12 @@ async def test_mounted_certificate_uses_stored_verified_identity_when_evidence_i
         certificate_id=str(uuid.uuid4()), member_did_aw=stable,
         member_address=f"{domain}/{name}", identity_scope="global",
     ))
-    skipped_claim = await env.client.get(
+    mismatched_claim = await env.client.get(
         "/_test/mounted-certificate",
         headers=_signed_team_headers(alice.sk, alice.did, TEAM, claimed_only),
     )
-    assert skipped_claim.status_code == 200, skipped_claim.text
-    assert skipped_claim.json()["key"] == alice.did
-    assert skipped_claim.json()["did_aw"] == skipped_claim.json()["address"] == ""
+    assert mismatched_claim.status_code == 403, mismatched_claim.text
+    assert mismatched_claim.json()["detail"] == "identity_binding_mismatch"
 
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
     unregistered = await env.client.get(

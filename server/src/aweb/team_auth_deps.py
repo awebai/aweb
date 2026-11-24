@@ -34,6 +34,7 @@ from aweb.deps import get_db
 from aweb.id_chain_auth import authenticate_id_chain, read_id_chain_header
 from aweb.identity_address import AddressResolution, AddressResolutionState
 from aweb.identity_binding import (
+    BindingFallback,
     IdentityBinding,
     refresh_projection_binding,
     verify_identity_binding,
@@ -80,7 +81,6 @@ class IdentityEvidencePolicy(StrEnum):
     """Acquisition of identity evidence after certificate authority is verified."""
 
     ENFORCE = "enforce"
-    SKIP = "skip"
     PREFER_LIVE = "prefer_live"
 
 
@@ -119,25 +119,14 @@ async def _prefer_live_identity_evidence(
     ):
         raise IdentityBindingError(IdentityBindingCode.MISMATCH)
     did_aw, address = (did_aw or "").strip(), (address or "").strip()
-    refusal: IdentityBindingError
     try:
-        async with asyncio.timeout_at(deadline):
-            binding = await verify_identity_binding(
-                request, did_key=did_key, did_aw=did_aw, address=address,
-                require_registered_did=True,
-            )
-    except IdentityBindingError as exc:
-        if not exc.address_missing and exc.code is not IdentityBindingCode.UNAVAILABLE:
-            raise
-        refusal = exc
-        fallback = (
-            _IdentityEvidenceFallback.ADDRESS_MISSING
-            if exc.address_missing
-            else _IdentityEvidenceFallback.UNAVAILABLE
+        binding = await verify_identity_binding(
+            request, did_key=did_key, did_aw=did_aw, address=address,
+            require_registered_did=True, fallback_deadline=deadline,
         )
-    except TimeoutError:
-        refusal = IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
-        fallback = _IdentityEvidenceFallback.TIMED_OUT
+    except BindingFallback as exc:
+        refusal = exc
+        fallback = _IdentityEvidenceFallback(exc.reason.value)
     else:
         try:
             async with asyncio.timeout_at(deadline):
@@ -438,10 +427,7 @@ async def resolve_team_membership(
     if not verified_team_did_key:
         raise CurrentMembershipRequired()
 
-    if identity_evidence is IdentityEvidencePolicy.SKIP:
-        # Only the final admitted row can supply stored attribution.
-        binding = IdentityBinding(did_key=did_key)
-    elif not isinstance(binding, IdentityBinding):
+    if not isinstance(binding, IdentityBinding):
         binding = IdentityBinding()
         if request is not None:
             binding = await verify_identity_binding(
@@ -451,8 +437,8 @@ async def resolve_team_membership(
                 address=cert_info.get("member_address") or "",
             )
     if (
-        identity_evidence is not IdentityEvidencePolicy.SKIP and binding_refusal is None
-        and request is not None and not binding.did_aw and (row.get("did_aw") or row.get("address"))
+        binding_refusal is None and request is not None
+        and not binding.did_aw and (row.get("did_aw") or row.get("address"))
     ):
         # A claimless certificate cannot inherit stored global identity
         # metadata without independently proving that row's exact binding.
@@ -497,8 +483,7 @@ async def resolve_team_membership(
             update_certificate = _changes_certificate(row, presented_certificate_id, verified_team_did_key)
             if before_write is not None and (binding.fresh_observation or update_certificate):
                 before_write(snapshot)
-            if identity_evidence is not IdentityEvidencePolicy.SKIP:
-                await refresh_projection_binding(tx, agent_id=row["agent_id"], did_key=did_key, binding=binding)
+            await refresh_projection_binding(tx, agent_id=row["agent_id"], did_key=did_key, binding=binding)
             if update_certificate:
                 await tx.execute(
                     "UPDATE {{tables.agents}} SET certificate_id = $2, accepted_team_did_key = $3 WHERE agent_id = $1",
@@ -511,10 +496,7 @@ async def resolve_team_membership(
 
     did_aw, address = binding.did_aw, binding.address
     address_resolution = AddressResolution()
-    if identity_evidence is IdentityEvidencePolicy.SKIP:
-        stored = row.verified_identity()
-        did_aw, address = stored["did_aw"] or "", stored["address"] or ""
-    elif binding_refusal is not None:
+    if binding_refusal is not None:
         stored = row.verified_identity()
         if not stored["did_aw"] or stored["did_aw"] != binding_did_aw.strip():
             raise binding_refusal
@@ -580,8 +562,8 @@ async def verify_request_certificate(
     in the local DB — suitable for /v1/connect where the agent may not
     exist yet.
 
-    Ordinary embedding routes may SKIP live identity evidence or PREFER_LIVE
-    with a bounded, read-only fallback to the admitted member's stored stable
+    Ordinary embedding routes may PREFER_LIVE identity evidence with a
+    bounded, read-only fallback to the admitted member's stored stable
     DID. Resolve membership for that projection. The certificate and its
     standing must pass under every policy. Only ENFORCE can require fresh proof.
 
@@ -652,10 +634,7 @@ async def verify_request_certificate(
         did_key=did_key,
     )
 
-    if identity_evidence is IdentityEvidencePolicy.SKIP:
-        binding = IdentityBinding(did_key=did_key)
-        _clear_live_identity_evidence(request)
-    elif identity_evidence is IdentityEvidencePolicy.PREFER_LIVE:
+    if identity_evidence is IdentityEvidencePolicy.PREFER_LIVE:
         deadline = asyncio.get_running_loop().time() + _OPTIONAL_IDENTITY_EVIDENCE_SECONDS
         binding, refusal, fallback = await _prefer_live_identity_evidence(
             request, did_key=did_key, did_aw=cert_info["member_did_aw"],

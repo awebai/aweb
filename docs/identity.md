@@ -743,6 +743,10 @@ Connect refusal, run `aw id parent refresh` in the identity home and reconnect.
 An admitted fallback produces one INFO entry with the team and its reason.
 `aweb_identity_evidence_fallbacks_total` counts by reason only:
 `address_missing`, `unavailable`, `timed_out`, or `chain_unavailable`.
+`PREFER_LIVE` can reuse an address-missing result for 60 seconds or an
+unavailable or timed-out binding for five seconds in the process's bounded
+binding cache. Enforcing or fresh reads bypass these fallback observations.
+Newly observed key authority supersedes a conflicting fallback.
 
 `agents.did_aw_verified_key` records the key against which a projection was
 verified. Historical rows start with a null marker. Stable-DID and global-address
