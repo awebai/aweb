@@ -293,7 +293,8 @@ Binding times are UTC to the millisecond (`YYYY-MM-DDTHH:MM:SS.mmmZ`), the hook
 event spelling; `active_from` is rounded up, so a binding never reads as active
 earlier than it is. `as_of` and `max_age_seconds` are as for the grant read.
 
-Conformance: the `hook-resolve` cases of `test-vectors/app-read-credential-v1.json`.
+Conformance: the `hook-resolve` cases of `test-vectors/app-read-credential-v1.json`
+for the credential; `docs/vectors/hook-resolution-v1.json` for the answers.
 
 ## The core hook producer's keys
 
@@ -328,6 +329,8 @@ event names.
   fields, a repeated kid, an invalid Ed25519 `did:key`, a time in another
   spelling or an impossible date, or a key that ends before it starts.
 - `as_of` and `max_age_seconds` are as for the grant read.
+
+Conformance: the `core_producer_keys` answer of `docs/vectors/hook-resolution-v1.json`.
 
 ## Operator reseed from manifest bytes
 

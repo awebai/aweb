@@ -1,0 +1,570 @@
+{
+  "version": 1,
+  "description": "An app's hook resolution reads (docs/app-registry.md, 'An app resolves its hooks' and 'The core hook producer's keys'): the answers the server gives for one scenario, and what an app's HookResolver makes of them. The server consumer (server/tests/test_app_self_read_vectors.py) seeds the scenario and compares each server answer; the app consumer (naapp-lib/tests/runtime/test_app_self_read_vectors.py) serves each answer's status and body to the public HookResolver and checks the outcome. Each refused answer is one JSON-pointer change to an accepted answer, so it carries exactly one fault: reverting it gives an answer the app reads. The app folds every malformed answer into the one code answer_malformed, so the revert check is what shows each refusal is the intended one.",
+  "scenario": {
+    "team_id": "backend:acme.com",
+    "max_age_seconds": 60,
+    "apps": {
+      "logs": {
+        "origin": "https://logs.example",
+        "description": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": 1,
+        "resolve_key": {
+          "kid": "resolve-logs",
+          "seed_hex": "2121212121212121212121212121212121212121212121212121212121212121",
+          "did_key": "did:key:z6MkodJHzY8Bn6PycRu3pon7V3vzfk12nbndWcBz2mxMAsa2"
+        },
+        "hook_keys": [],
+        "digest": "sha256:87e5928c337cffc7dd5866cc7449baaaeb8442a9be6efec163dbf009cea526b9"
+      },
+      "secrets": {
+        "origin": "https://secrets.example",
+        "description": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "installation_id": "6f1c2d3e-4b5a-4978-8c6d-5e4f3a2b1c0d",
+        "generation": 1,
+        "resolve_key": {
+          "kid": "resolve-secrets",
+          "seed_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+          "did_key": "did:key:z6MkqGC3nWZhYieEVTVDKW5v588CiGfsDSmRVG9ZwwWTvLSK"
+        },
+        "hook_keys": [
+          {
+            "kid": "hook-delivery-1",
+            "seed_hex": "2424242424242424242424242424242424242424242424242424242424242424",
+            "purposes": [
+              "hook-delivery"
+            ],
+            "did_key": "did:key:z6MkkR2HMq9xJ6NiexPumkFnkabGMwvk3vpokjE1VZsNwj79"
+          },
+          {
+            "kid": "hook-event-1",
+            "seed_hex": "2323232323232323232323232323232323232323232323232323232323232323",
+            "purposes": [
+              "hook-event"
+            ],
+            "did_key": "did:key:z6MknKrzUBQ488kw5dAksw6Xknx4V3KJY6JmQr1wVNzF7p72"
+          }
+        ],
+        "digest": "sha256:370cbe4aba811d15764f1ea6e0dbad78960928b49147f8c92379d2ec671152b5"
+      }
+    },
+    "bindings": [
+      {
+        "label": "logs_ingest",
+        "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+        "kind": "registration",
+        "app": "logs",
+        "hook": [
+          "aweb.hooks",
+          1,
+          "post-secret-use-hook"
+        ],
+        "tool": "ingest",
+        "method": "POST",
+        "path": "/hooks/ingest",
+        "scopes": [
+          "logs:ingest"
+        ],
+        "state": "active",
+        "ended_by": null,
+        "identity": true,
+        "activated_at": "2026-10-20T11:59:00.123456Z",
+        "active_from": "2026-10-20T12:00:00.123456Z",
+        "revoked_at": null
+      },
+      {
+        "label": "secrets_use",
+        "binding_id": "0e0f4b2a-7f53-4c47-9a4e-2d8c3b1a5f60",
+        "kind": "production",
+        "app": "secrets",
+        "hook": [
+          "aweb.hooks",
+          1,
+          "post-secret-use-hook"
+        ],
+        "tool": null,
+        "method": null,
+        "path": null,
+        "scopes": [],
+        "state": "active",
+        "ended_by": null,
+        "identity": true,
+        "activated_at": "2026-10-20T11:59:00.123456Z",
+        "active_from": "2026-10-20T12:00:00.123456Z",
+        "revoked_at": null
+      },
+      {
+        "label": "logs_governance_revoked",
+        "binding_id": "3c7d1e9a-2b4f-4e6a-8d5c-9f0a1b2c3d4e",
+        "kind": "registration",
+        "app": "logs",
+        "hook": [
+          "aweb.hooks",
+          1,
+          "post-governance-hook"
+        ],
+        "tool": "governance",
+        "method": "POST",
+        "path": "/hooks/governance",
+        "scopes": [
+          "logs:ingest"
+        ],
+        "state": "revoked",
+        "ended_by": "owner_act",
+        "identity": true,
+        "activated_at": "2026-10-19T10:00:00.000500Z",
+        "active_from": "2026-10-19T10:01:00.000500Z",
+        "revoked_at": "2026-10-20T09:00:00.500000Z"
+      },
+      {
+        "label": "logs_mutation_legacy_pending",
+        "binding_id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+        "kind": "registration",
+        "app": "logs",
+        "hook": [
+          "aweb.hooks",
+          1,
+          "post-mutation-hook"
+        ],
+        "tool": "mutation",
+        "method": "POST",
+        "path": "/hooks/mutation",
+        "scopes": [
+          "logs:ingest"
+        ],
+        "state": "pending",
+        "ended_by": null,
+        "identity": false,
+        "activated_at": null,
+        "active_from": null,
+        "revoked_at": null
+      }
+    ],
+    "producer_keys": [
+      {
+        "kid": "core-2026-09",
+        "did_key": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+        "valid_from": "2026-09-01T00:00:00Z",
+        "valid_until": "2026-10-01T00:00:00Z"
+      },
+      {
+        "kid": "core-2026-10",
+        "did_key": "did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue",
+        "valid_from": "2026-10-01T00:00:00Z",
+        "valid_until": null
+      }
+    ]
+  },
+  "server_generated": {
+    "binding_id": "Substituted by label: the server generates binding ids. Before substituting, the consumer asserts the canonical lowercase UUID spelling the app requires.",
+    "as_of": "Never compared: the server's clock. The consumer asserts YYYY-MM-DDTHH:MM:SSZ."
+  },
+  "times": "Binding times are seeded with microseconds and answered to the millisecond: activated_at and revoked_at truncate, active_from rounds up, so a binding never reads as active earlier than it is.",
+  "nullability": "Resolution lists hold active bindings only, which always carry installation_id and generation. Own bindings list every state; a pending binding written before installations carried an identity has both null (migration 032), and deployed databases may still hold one.",
+  "answers": [
+    {
+      "name": "registrations_for_a_producer",
+      "caller": "secrets",
+      "request": {
+        "read": "registrations",
+        "hook": [
+          "aweb.hooks",
+          1,
+          "post-secret-use-hook"
+        ]
+      },
+      "path": "/v1/apps/self/hooks/aweb.hooks/1/post-secret-use-hook/registrations",
+      "status": 200,
+      "body": "{\"team_id\":\"backend:acme.com\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"bindings\":[{\"binding_id\":\"6f9619ff-8b86-4011-b42d-00c04fc964ff\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"generation\":1,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/ingest\",\"digest\":\"sha256:87e5928c337cffc7dd5866cc7449baaaeb8442a9be6efec163dbf009cea526b9\",\"active_from\":\"2026-10-20T12:00:00.124Z\"}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "labels": [
+        "logs_ingest"
+      ],
+      "outcome": "read"
+    },
+    {
+      "name": "productions_for_a_target",
+      "caller": "logs",
+      "request": {
+        "read": "productions",
+        "hook": [
+          "aweb.hooks",
+          1,
+          "post-secret-use-hook"
+        ]
+      },
+      "path": "/v1/apps/self/hooks/aweb.hooks/1/post-secret-use-hook/productions",
+      "status": 200,
+      "body": "{\"team_id\":\"backend:acme.com\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"bindings\":[{\"binding_id\":\"0e0f4b2a-7f53-4c47-9a4e-2d8c3b1a5f60\",\"kind\":\"production\",\"app_id\":\"secrets\",\"installation_id\":\"6f1c2d3e-4b5a-4978-8c6d-5e4f3a2b1c0d\",\"generation\":1,\"origin\":\"https://secrets.example\",\"method\":null,\"path\":null,\"digest\":\"sha256:370cbe4aba811d15764f1ea6e0dbad78960928b49147f8c92379d2ec671152b5\",\"active_from\":\"2026-10-20T12:00:00.124Z\",\"keys\":[{\"kid\":\"hook-delivery-1\",\"did_key\":\"did:key:z6MkkR2HMq9xJ6NiexPumkFnkabGMwvk3vpokjE1VZsNwj79\",\"purposes\":[\"hook-delivery\"]},{\"kid\":\"hook-event-1\",\"did_key\":\"did:key:z6MknKrzUBQ488kw5dAksw6Xknx4V3KJY6JmQr1wVNzF7p72\",\"purposes\":[\"hook-event\"]}]}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "labels": [
+        "secrets_use"
+      ],
+      "outcome": "read"
+    },
+    {
+      "name": "registrations_without_a_production",
+      "caller": "logs",
+      "request": {
+        "read": "registrations",
+        "hook": [
+          "aweb.hooks",
+          1,
+          "post-secret-use-hook"
+        ]
+      },
+      "path": "/v1/apps/self/hooks/aweb.hooks/1/post-secret-use-hook/registrations",
+      "status": 403,
+      "body": "{\"detail\":\"hook_binding_required\"}",
+      "labels": [],
+      "outcome": "binding_required"
+    },
+    {
+      "name": "a_hook_no_binding_names",
+      "caller": "secrets",
+      "request": {
+        "read": "registrations",
+        "hook": [
+          "aweb.hooks",
+          1,
+          "no-such-hook"
+        ]
+      },
+      "path": "/v1/apps/self/hooks/aweb.hooks/1/no-such-hook/registrations",
+      "status": 403,
+      "body": "{\"detail\":\"hook_binding_required\"}",
+      "labels": [],
+      "outcome": "binding_required"
+    },
+    {
+      "name": "own_binding_by_id",
+      "caller": "logs",
+      "request": {
+        "read": "own_bindings",
+        "binding": "logs_ingest"
+      },
+      "path": "/v1/apps/self/hooks/bindings?binding_id={logs_ingest}",
+      "status": 200,
+      "body": "{\"team_id\":\"backend:acme.com\",\"bindings\":[{\"binding_id\":\"6f9619ff-8b86-4011-b42d-00c04fc964ff\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"generation\":1,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/ingest\",\"digest\":\"sha256:87e5928c337cffc7dd5866cc7449baaaeb8442a9be6efec163dbf009cea526b9\",\"active_from\":\"2026-10-20T12:00:00.124Z\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-secret-use-hook\",\"state\":\"active\",\"ended_by\":null,\"activated_at\":\"2026-10-20T11:59:00.123Z\",\"revoked_at\":null}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "labels": [
+        "logs_ingest"
+      ],
+      "outcome": "read"
+    },
+    {
+      "name": "own_revoked_binding_by_hook",
+      "caller": "logs",
+      "request": {
+        "read": "own_bindings",
+        "hook": [
+          "aweb.hooks",
+          1,
+          "post-governance-hook"
+        ]
+      },
+      "path": "/v1/apps/self/hooks/bindings?hook=aweb.hooks%2F1%2Fpost-governance-hook",
+      "status": 200,
+      "body": "{\"team_id\":\"backend:acme.com\",\"bindings\":[{\"binding_id\":\"3c7d1e9a-2b4f-4e6a-8d5c-9f0a1b2c3d4e\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"generation\":1,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/governance\",\"digest\":\"sha256:87e5928c337cffc7dd5866cc7449baaaeb8442a9be6efec163dbf009cea526b9\",\"active_from\":\"2026-10-19T10:01:00.001Z\",\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-governance-hook\",\"state\":\"revoked\",\"ended_by\":\"owner_act\",\"activated_at\":\"2026-10-19T10:00:00.000Z\",\"revoked_at\":\"2026-10-20T09:00:00.500Z\"}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "labels": [
+        "logs_governance_revoked"
+      ],
+      "outcome": "read"
+    },
+    {
+      "name": "own_pending_binding_without_installation_identity",
+      "caller": "logs",
+      "request": {
+        "read": "own_bindings",
+        "hook": [
+          "aweb.hooks",
+          1,
+          "post-mutation-hook"
+        ]
+      },
+      "path": "/v1/apps/self/hooks/bindings?hook=aweb.hooks%2F1%2Fpost-mutation-hook",
+      "status": 200,
+      "body": "{\"team_id\":\"backend:acme.com\",\"bindings\":[{\"binding_id\":\"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d\",\"kind\":\"registration\",\"app_id\":\"logs\",\"installation_id\":null,\"generation\":null,\"origin\":\"https://logs.example\",\"method\":\"POST\",\"path\":\"/hooks/mutation\",\"digest\":\"sha256:87e5928c337cffc7dd5866cc7449baaaeb8442a9be6efec163dbf009cea526b9\",\"active_from\":null,\"catalog\":{\"id\":\"aweb.hooks\",\"version\":1},\"hook\":\"post-mutation-hook\",\"state\":\"pending\",\"ended_by\":null,\"activated_at\":null,\"revoked_at\":null}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "labels": [
+        "logs_mutation_legacy_pending"
+      ],
+      "outcome": "read"
+    },
+    {
+      "name": "core_producer_keys",
+      "caller": null,
+      "request": {
+        "read": "core_producer_keys"
+      },
+      "path": "/v1/hooks/producer-keys",
+      "status": 200,
+      "body": "{\"keys\":[{\"kid\":\"core-2026-09\",\"did_key\":\"did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja\",\"valid_from\":\"2026-09-01T00:00:00Z\",\"valid_until\":\"2026-10-01T00:00:00Z\"},{\"kid\":\"core-2026-10\",\"did_key\":\"did:key:z6MkknhhwAGsRrcTTthPSsBbQtrNX6CMqt4poro5jdP6uCue\",\"valid_from\":\"2026-10-01T00:00:00Z\",\"valid_until\":null}],\"as_of\":\"2026-10-20T12:00:30Z\",\"max_age_seconds\":60}",
+      "labels": [],
+      "outcome": "read"
+    }
+  ],
+  "refused_answers": {
+    "outcome": {
+      "unavailable": "answer_malformed"
+    },
+    "cases": [
+      {
+        "name": "other_team",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/team_id",
+        "value": "frontend:acme.com"
+      },
+      {
+        "name": "other_catalog_id",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/catalog/id",
+        "value": "aweb.other"
+      },
+      {
+        "name": "other_catalog_version",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/catalog/version",
+        "value": 2
+      },
+      {
+        "name": "catalog_version_bool",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/catalog/version",
+        "value": true
+      },
+      {
+        "name": "extra_catalog_member",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/catalog/name",
+        "value": "aw-hooks"
+      },
+      {
+        "name": "other_hook",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/hook",
+        "value": "post-governance-hook"
+      },
+      {
+        "name": "bindings_not_a_list",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/bindings",
+        "value": {}
+      },
+      {
+        "name": "other_kind",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/bindings/0/kind",
+        "value": "production"
+      },
+      {
+        "name": "uppercase_binding_id",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/bindings/0/binding_id",
+        "value": "6F9619FF-8B86-4011-B42D-00C04FC964FF"
+      },
+      {
+        "name": "empty_app_id",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/bindings/0/app_id",
+        "value": ""
+      },
+      {
+        "name": "generation_bool",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/bindings/0/generation",
+        "value": true
+      },
+      {
+        "name": "registration_without_method",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/bindings/0/method",
+        "value": null
+      },
+      {
+        "name": "registration_without_path",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/bindings/0/path",
+        "value": null
+      },
+      {
+        "name": "registration_with_keys",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/bindings/0/keys",
+        "value": []
+      },
+      {
+        "name": "active_from_in_seconds",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/bindings/0/active_from",
+        "value": "2026-10-20T12:00:00Z"
+      },
+      {
+        "name": "active_from_null",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/bindings/0/active_from",
+        "value": null
+      },
+      {
+        "name": "max_age_negative",
+        "base": "registrations_for_a_producer",
+        "op": "set",
+        "path": "/max_age_seconds",
+        "value": -1
+      },
+      {
+        "name": "max_age_missing",
+        "base": "registrations_for_a_producer",
+        "op": "remove",
+        "path": "/max_age_seconds"
+      },
+      {
+        "name": "keys_not_a_list",
+        "base": "productions_for_a_target",
+        "op": "set",
+        "path": "/bindings/0/keys",
+        "value": {}
+      },
+      {
+        "name": "key_without_a_hook_purpose",
+        "base": "productions_for_a_target",
+        "op": "set",
+        "path": "/bindings/0/keys/0/purposes",
+        "value": [
+          "hook-resolve"
+        ]
+      },
+      {
+        "name": "key_purposes_not_a_list",
+        "base": "productions_for_a_target",
+        "op": "set",
+        "path": "/bindings/0/keys/0/purposes",
+        "value": "hook-delivery"
+      },
+      {
+        "name": "key_without_did_key",
+        "base": "productions_for_a_target",
+        "op": "set",
+        "path": "/bindings/0/keys/0/did_key",
+        "value": ""
+      },
+      {
+        "name": "another_apps_binding",
+        "base": "own_binding_by_id",
+        "op": "set",
+        "path": "/bindings/0/app_id",
+        "value": "secrets"
+      },
+      {
+        "name": "another_origin",
+        "base": "own_binding_by_id",
+        "op": "set",
+        "path": "/bindings/0/origin",
+        "value": "https://logs.example.net"
+      },
+      {
+        "name": "another_binding_id",
+        "base": "own_binding_by_id",
+        "op": "set",
+        "path": "/bindings/0/binding_id",
+        "value": "0e0f4b2a-7f53-4c47-9a4e-2d8c3b1a5f60"
+      },
+      {
+        "name": "unknown_state",
+        "base": "own_binding_by_id",
+        "op": "set",
+        "path": "/bindings/0/state",
+        "value": "paused"
+      },
+      {
+        "name": "activated_at_in_seconds",
+        "base": "own_binding_by_id",
+        "op": "set",
+        "path": "/bindings/0/activated_at",
+        "value": "2026-10-20T11:59:00Z"
+      },
+      {
+        "name": "catalog_version_string",
+        "base": "own_binding_by_id",
+        "op": "set",
+        "path": "/bindings/0/catalog/version",
+        "value": "1"
+      },
+      {
+        "name": "another_hook_than_selected",
+        "base": "own_revoked_binding_by_hook",
+        "op": "set",
+        "path": "/bindings/0/hook",
+        "value": "post-mutation-hook"
+      },
+      {
+        "name": "unknown_ended_by",
+        "base": "own_revoked_binding_by_hook",
+        "op": "set",
+        "path": "/bindings/0/ended_by",
+        "value": "admin"
+      },
+      {
+        "name": "revoked_at_in_seconds",
+        "base": "own_revoked_binding_by_hook",
+        "op": "set",
+        "path": "/bindings/0/revoked_at",
+        "value": "2026-10-20T09:00:00Z"
+      },
+      {
+        "name": "extra_key_field",
+        "base": "core_producer_keys",
+        "op": "set",
+        "path": "/keys/0/note",
+        "value": "rotated"
+      },
+      {
+        "name": "missing_valid_until",
+        "base": "core_producer_keys",
+        "op": "remove",
+        "path": "/keys/1/valid_until"
+      },
+      {
+        "name": "valid_from_with_fraction",
+        "base": "core_producer_keys",
+        "op": "set",
+        "path": "/keys/0/valid_from",
+        "value": "2026-09-01T00:00:00.000Z"
+      },
+      {
+        "name": "valid_from_with_offset",
+        "base": "core_producer_keys",
+        "op": "set",
+        "path": "/keys/0/valid_from",
+        "value": "2026-09-01T00:00:00+00:00"
+      },
+      {
+        "name": "empty_kid",
+        "base": "core_producer_keys",
+        "op": "set",
+        "path": "/keys/0/kid",
+        "value": ""
+      },
+      {
+        "name": "keys_not_a_list",
+        "base": "core_producer_keys",
+        "op": "set",
+        "path": "/keys",
+        "value": {}
+      }
+    ]
+  }
+}

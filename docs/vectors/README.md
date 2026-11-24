@@ -220,6 +220,22 @@ seeds the scenario through the real install path and compares each answer;
 `naapp-lib/tests/runtime/test_app_self_read_vectors.py` serves each answer to
 the public `TeamGrantSource`. See [the app registry](../app-registry.md).
 
+### `hook-resolution-v1.json`
+
+An app's hook resolution reads: registrations for a producer, productions with
+their hook keys for a target, `403 hook_binding_required` without the
+complementary binding or for a hook no binding names, the app's own bindings by
+id and by hook (active, revoked, and a pending binding from before installations
+carried an identity, with null identity), and the core hook producer's keys.
+Binding times are seeded with microseconds, so the answers pin the millisecond
+spelling and `active_from` rounding up. Refused answers are single JSON-pointer
+changes to accepted answers; the app refuses each as `answer_malformed`.
+Binding ids are server-generated and substituted by label after a canonical
+UUID check. `server/tests/test_app_self_read_vectors.py` seeds the scenario and
+compares each answer; `naapp-lib/tests/runtime/test_app_self_read_vectors.py`
+serves each answer to the public `HookResolver`. See
+[the app registry](../app-registry.md).
+
 ### `principal-attestation-v1.json`
 
 Signed bytes and signatures of the team-key-signed `aweb.team-custodian/1`,

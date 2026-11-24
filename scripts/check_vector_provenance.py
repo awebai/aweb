@@ -227,12 +227,14 @@ ROOT_CONSUMERS = {
         'ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
     ),
     PurePosixPath("server/tests/test_app_self_read_vectors.py"): _consumer(
-        "app-grant-status-v1.json",
+        ("app-grant-status-v1.json", "hook-resolution-v1.json"),
         'ROOT / "docs" / "vectors" / "app-grant-status-v1.json"',
+        'ROOT / "docs" / "vectors" / "hook-resolution-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_app_self_read_vectors.py"): _consumer(
-        "app-grant-status-v1.json",
+        ("app-grant-status-v1.json", "hook-resolution-v1.json"),
         'AWEB_ROOT / "docs" / "vectors" / "app-grant-status-v1.json"',
+        'AWEB_ROOT / "docs" / "vectors" / "hook-resolution-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/approvals/test_passkey_proof.py"): _consumer(
         "passkey-evidence-v1.json",
