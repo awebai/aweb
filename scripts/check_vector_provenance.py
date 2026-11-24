@@ -222,6 +222,18 @@ ROOT_CONSUMERS = {
         "app-request-credential-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
     ),
+    PurePosixPath("server/tests/test_app_credential_signing.py"): _consumer(
+        "app-request-credential-v1.json",
+        'ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
+    ),
+    PurePosixPath("server/tests/test_app_self_read_vectors.py"): _consumer(
+        "app-grant-status-v1.json",
+        'ROOT / "docs" / "vectors" / "app-grant-status-v1.json"',
+    ),
+    PurePosixPath("naapp-lib/tests/runtime/test_app_self_read_vectors.py"): _consumer(
+        "app-grant-status-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "app-grant-status-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/runtime/approvals/test_passkey_proof.py"): _consumer(
         "passkey-evidence-v1.json",
         'Path(__file__).resolve().parents[4] / "docs/vectors/passkey-evidence-v1.json"',
@@ -588,11 +600,9 @@ ROOT_CONSUMERS = {
     PurePosixPath("naapp-lib/tests/runtime/test_task_request_vectors.py"): _consumer(
         (
             "app-task-authorization-v1.json",
-            "app-request-credential-v1.json",
             "task-answer-v1.json",
         ),
         'AWEB_ROOT / "docs" / "vectors" / "app-task-authorization-v1.json"',
-        'AWEB_ROOT / "docs" / "vectors" / "app-request-credential-v1.json"',
         'AWEB_ROOT / "docs" / "vectors" / "task-answer-v1.json"',
     ),
     PurePosixPath("naapp-lib/tests/runtime/test_prepare_vectors.py"): _consumer(

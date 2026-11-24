@@ -206,6 +206,20 @@ bytes; `awid/tests/test_registry_team_server.py` also checks the Python record
 builder and signer against the frozen Go bytes and signatures.
 See [the team contract](../awid-sot.md#teams).
 
+### `app-grant-status-v1.json`
+
+An app's own grant, `GET /v1/apps/self/grant`: for one installed app, the
+server's answer in each installation state (active, active with no granted
+scopes, pending origin verification, uninstalled) and with no installation
+(`403 app_key_not_registered`), and what an app's grant source makes of each
+under a pinned digest or a manifest-version digest table. Refused answers are
+single JSON-pointer changes to the active answer, each refused as malformed.
+The server-generated values (installation id, install time, `as_of`) are named
+with the spelling an app accepts. `server/tests/test_app_self_read_vectors.py`
+seeds the scenario through the real install path and compares each answer;
+`naapp-lib/tests/runtime/test_app_self_read_vectors.py` serves each answer to
+the public `TeamGrantSource`. See [the app registry](../app-registry.md).
+
 ### `principal-attestation-v1.json`
 
 Signed bytes and signatures of the team-key-signed `aweb.team-custodian/1`,
@@ -506,7 +520,7 @@ body bounds. The reference consumers are `aweb_naapp.runtime.task_requests` in
 The `app-request` purpose of the app credential family (aweb-acgg.8): one
 request's signed payload, canonical bytes, signature and headers, plus
 request-level refusals for the task service's verifier. The reference consumer
-is `aweb_naapp.runtime.task_requests`. See
+is `aweb_naapp.runtime.app_credentials`. See
 [app task requests](../app-task-requests.md) §2.
 
 ### `task-answer-v1.json`

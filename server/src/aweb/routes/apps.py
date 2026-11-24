@@ -117,8 +117,7 @@ class AppGrantStatusResponse(BaseModel):
     manifest_version: int
     digest: str
     granted_scopes: list[str]
-    # Present from the start and null until installations carry an identity,
-    # a generation and origin provenance; consumers that bind them refuse null.
+    # Never null for an installation: the columns are NOT NULL (migration 035).
     installation_id: str | None
     generation: int | None
     origin_verified: bool | None

@@ -188,7 +188,8 @@ Response:
   no key is active for `app-grant-read` under the team's installed digest,
   which is also the answer once the app has no installation.
 
-Conformance: `test-vectors/app-read-credential-v1.json`.
+Conformance: `test-vectors/app-read-credential-v1.json` for the credential;
+`docs/vectors/app-grant-status-v1.json` for the answers.
 
 ### App-side grant source
 

@@ -1,0 +1,376 @@
+{
+  "version": 1,
+  "description": "An app's own grant, GET /v1/apps/self/grant (docs/app-registry.md, 'An app reads its own grant'): the answers the server gives for a scenario, and what an app's grant source makes of them. The server consumer (server/tests/test_app_self_read_vectors.py) seeds the scenario through the real install path and compares each server answer; the app consumer (naapp-lib/tests/runtime/test_app_self_read_vectors.py) serves every answer's status and body to the public TeamGrantSource and checks the outcome. Each refused answer is one JSON-pointer change to the base answer, so it carries exactly one fault: reverting it gives the base, which is accepted.",
+  "scenario": {
+    "team_id": "backend:acme.com",
+    "app_id": "folio",
+    "origin": "https://folio.aweb.ai",
+    "manifest": "{\"manifest_version\":1,\"app\":{\"id\":\"folio\",\"version\":\"1.4.0\",\"origin\":\"https://folio.aweb.ai\"},\"tools\":[{\"name\":\"fixture-read\",\"method\":\"GET\",\"path\":\"/fixture\",\"description\":\"Registry test fixture\",\"scopes\":[\"folio:read\",\"folio:write\"]}],\"events\":[],\"event_emitters\":[]}",
+    "digest": "sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c",
+    "max_age_seconds": 60,
+    "grant_read_key": {
+      "kid": "read-1",
+      "seed_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  "server_generated": {
+    "installation_id": "Substituted: the server generates it. Before substituting, the consumer asserts a non-empty string.",
+    "installed_at": "Substituted: the install time. Before substituting, the consumer asserts the spelling the app accepts: YYYY-MM-DDTHH:MM:SS, optional fraction, then Z or +00:00.",
+    "as_of": "Never compared: the server's clock. The consumer asserts YYYY-MM-DDTHH:MM:SSZ."
+  },
+  "nullability": "installation_id, generation and origin_verified are NOT NULL in team_app_installs (migration 035), so the server never answers null for them. An app's acceptance of null is tolerance, not this contract.",
+  "clients": {
+    "pinned": {
+      "app_id": "folio",
+      "origin": "https://folio.aweb.ai",
+      "digest": "sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c"
+    },
+    "by_manifest_version": {
+      "app_id": "folio",
+      "origin": "https://folio.aweb.ai",
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "manifest_digests": [
+        [
+          1,
+          "sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c"
+        ]
+      ]
+    },
+    "other_manifest_version": {
+      "app_id": "folio",
+      "origin": "https://folio.aweb.ai",
+      "digest": "sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c",
+      "manifest_digests": [
+        [
+          2,
+          "sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c"
+        ]
+      ]
+    }
+  },
+  "answers": [
+    {
+      "name": "active",
+      "seed": {
+        "state": "active",
+        "origin_verified": true,
+        "granted_scopes": [
+          "folio:read",
+          "folio:write"
+        ]
+      },
+      "status": 200,
+      "body": "{\"team_id\":\"backend:acme.com\",\"app_id\":\"folio\",\"state\":\"active\",\"origin\":\"https://folio.aweb.ai\",\"app_version\":\"1.4.0\",\"manifest_version\":1,\"digest\":\"sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c\",\"granted_scopes\":[\"folio:read\",\"folio:write\"],\"installation_id\":\"inst_01JB7Q\",\"generation\":1,\"origin_verified\":true,\"installed_at\":\"2026-10-20T11:59:30.123456Z\",\"as_of\":\"2026-10-20T12:00:00Z\",\"max_age_seconds\":60}",
+      "outcomes": {
+        "pinned": {
+          "status": {
+            "team_id": "backend:acme.com",
+            "app_id": "folio",
+            "origin": "https://folio.aweb.ai",
+            "digest": "sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c",
+            "state": "active",
+            "app_version": "1.4.0",
+            "manifest_version": 1,
+            "granted_scopes": [
+              "folio:read",
+              "folio:write"
+            ],
+            "installation_id": "inst_01JB7Q",
+            "generation": 1,
+            "origin_verified": true,
+            "installed_at": "2026-10-20T11:59:30.123456Z",
+            "as_of": "2026-10-20T12:00:00Z",
+            "max_age_seconds": 60
+          },
+          "grant": {
+            "scopes": [
+              "folio:read",
+              "folio:write"
+            ],
+            "installation_id": "inst_01JB7Q",
+            "generation": 1
+          }
+        },
+        "by_manifest_version": {
+          "status": {
+            "team_id": "backend:acme.com",
+            "app_id": "folio",
+            "origin": "https://folio.aweb.ai",
+            "digest": "sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c",
+            "state": "active",
+            "app_version": "1.4.0",
+            "manifest_version": 1,
+            "granted_scopes": [
+              "folio:read",
+              "folio:write"
+            ],
+            "installation_id": "inst_01JB7Q",
+            "generation": 1,
+            "origin_verified": true,
+            "installed_at": "2026-10-20T11:59:30.123456Z",
+            "as_of": "2026-10-20T12:00:00Z",
+            "max_age_seconds": 60
+          },
+          "grant": {
+            "scopes": [
+              "folio:read",
+              "folio:write"
+            ],
+            "installation_id": "inst_01JB7Q",
+            "generation": 1
+          }
+        },
+        "other_manifest_version": {
+          "unavailable": "grant_answer_malformed"
+        }
+      }
+    },
+    {
+      "name": "active_without_scopes",
+      "seed": {
+        "state": "active",
+        "origin_verified": true,
+        "granted_scopes": []
+      },
+      "status": 200,
+      "body": "{\"team_id\":\"backend:acme.com\",\"app_id\":\"folio\",\"state\":\"active\",\"origin\":\"https://folio.aweb.ai\",\"app_version\":\"1.4.0\",\"manifest_version\":1,\"digest\":\"sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c\",\"granted_scopes\":[],\"installation_id\":\"inst_01JB7Q\",\"generation\":1,\"origin_verified\":true,\"installed_at\":\"2026-10-20T11:59:30.123456Z\",\"as_of\":\"2026-10-20T12:00:00Z\",\"max_age_seconds\":60}",
+      "outcomes": {
+        "pinned": {
+          "status": {
+            "team_id": "backend:acme.com",
+            "app_id": "folio",
+            "origin": "https://folio.aweb.ai",
+            "digest": "sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c",
+            "state": "active",
+            "app_version": "1.4.0",
+            "manifest_version": 1,
+            "granted_scopes": [],
+            "installation_id": "inst_01JB7Q",
+            "generation": 1,
+            "origin_verified": true,
+            "installed_at": "2026-10-20T11:59:30.123456Z",
+            "as_of": "2026-10-20T12:00:00Z",
+            "max_age_seconds": 60
+          },
+          "grant": {
+            "scopes": [],
+            "installation_id": "inst_01JB7Q",
+            "generation": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "pending_origin_verification",
+      "seed": {
+        "state": "pending_origin_verification",
+        "origin_verified": false,
+        "granted_scopes": [
+          "folio:read",
+          "folio:write"
+        ]
+      },
+      "status": 200,
+      "body": "{\"team_id\":\"backend:acme.com\",\"app_id\":\"folio\",\"state\":\"pending_origin_verification\",\"origin\":\"https://folio.aweb.ai\",\"app_version\":\"1.4.0\",\"manifest_version\":1,\"digest\":\"sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c\",\"granted_scopes\":[\"folio:read\",\"folio:write\"],\"installation_id\":\"inst_01JB7Q\",\"generation\":1,\"origin_verified\":false,\"installed_at\":\"2026-10-20T11:59:30.123456Z\",\"as_of\":\"2026-10-20T12:00:00Z\",\"max_age_seconds\":60}",
+      "outcomes": {
+        "pinned": {
+          "status": {
+            "team_id": "backend:acme.com",
+            "app_id": "folio",
+            "origin": "https://folio.aweb.ai",
+            "digest": "sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c",
+            "state": "pending_origin_verification",
+            "app_version": "1.4.0",
+            "manifest_version": 1,
+            "granted_scopes": [
+              "folio:read",
+              "folio:write"
+            ],
+            "installation_id": "inst_01JB7Q",
+            "generation": 1,
+            "origin_verified": false,
+            "installed_at": "2026-10-20T11:59:30.123456Z",
+            "as_of": "2026-10-20T12:00:00Z",
+            "max_age_seconds": 60
+          },
+          "grant": null
+        }
+      }
+    },
+    {
+      "name": "uninstalled",
+      "seed": {
+        "state": "uninstalled",
+        "origin_verified": false,
+        "granted_scopes": [
+          "folio:read",
+          "folio:write"
+        ]
+      },
+      "status": 200,
+      "body": "{\"team_id\":\"backend:acme.com\",\"app_id\":\"folio\",\"state\":\"uninstalled\",\"origin\":\"https://folio.aweb.ai\",\"app_version\":\"1.4.0\",\"manifest_version\":1,\"digest\":\"sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c\",\"granted_scopes\":[\"folio:read\",\"folio:write\"],\"installation_id\":\"inst_01JB7Q\",\"generation\":1,\"origin_verified\":false,\"installed_at\":\"2026-10-20T11:59:30.123456Z\",\"as_of\":\"2026-10-20T12:00:00Z\",\"max_age_seconds\":60}",
+      "outcomes": {
+        "pinned": {
+          "status": {
+            "team_id": "backend:acme.com",
+            "app_id": "folio",
+            "origin": "https://folio.aweb.ai",
+            "digest": "sha256:8931223639be32a77e2af37c75b9171ef5d230bd2dfef2e8393dbed077a59a4c",
+            "state": "uninstalled",
+            "app_version": "1.4.0",
+            "manifest_version": 1,
+            "granted_scopes": [
+              "folio:read",
+              "folio:write"
+            ],
+            "installation_id": "inst_01JB7Q",
+            "generation": 1,
+            "origin_verified": false,
+            "installed_at": "2026-10-20T11:59:30.123456Z",
+            "as_of": "2026-10-20T12:00:00Z",
+            "max_age_seconds": 60
+          },
+          "grant": null
+        }
+      }
+    },
+    {
+      "name": "no_installation",
+      "seed": null,
+      "status": 403,
+      "body": "{\"detail\":\"app_key_not_registered\"}",
+      "outcomes": {
+        "pinned": {
+          "status": null,
+          "grant": null
+        }
+      }
+    }
+  ],
+  "refused_answers": {
+    "base": "active",
+    "client": "pinned",
+    "outcome": {
+      "unavailable": "grant_answer_malformed"
+    },
+    "cases": [
+      {
+        "name": "other_team",
+        "op": "set",
+        "path": "/team_id",
+        "value": "frontend:acme.com"
+      },
+      {
+        "name": "other_app",
+        "op": "set",
+        "path": "/app_id",
+        "value": "library"
+      },
+      {
+        "name": "other_origin",
+        "op": "set",
+        "path": "/origin",
+        "value": "https://folio.example"
+      },
+      {
+        "name": "other_digest",
+        "op": "set",
+        "path": "/digest",
+        "value": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      {
+        "name": "empty_state",
+        "op": "set",
+        "path": "/state",
+        "value": ""
+      },
+      {
+        "name": "missing_app_version",
+        "op": "remove",
+        "path": "/app_version"
+      },
+      {
+        "name": "manifest_version_as_string",
+        "op": "set",
+        "path": "/manifest_version",
+        "value": "1"
+      },
+      {
+        "name": "manifest_version_zero",
+        "op": "set",
+        "path": "/manifest_version",
+        "value": 0
+      },
+      {
+        "name": "empty_scope",
+        "op": "set",
+        "path": "/granted_scopes",
+        "value": [
+          ""
+        ]
+      },
+      {
+        "name": "scopes_not_a_list",
+        "op": "set",
+        "path": "/granted_scopes",
+        "value": "folio:read"
+      },
+      {
+        "name": "empty_installation_id",
+        "op": "set",
+        "path": "/installation_id",
+        "value": ""
+      },
+      {
+        "name": "generation_zero",
+        "op": "set",
+        "path": "/generation",
+        "value": 0
+      },
+      {
+        "name": "generation_bool",
+        "op": "set",
+        "path": "/generation",
+        "value": true
+      },
+      {
+        "name": "origin_verified_string",
+        "op": "set",
+        "path": "/origin_verified",
+        "value": "true"
+      },
+      {
+        "name": "installed_at_with_space",
+        "op": "set",
+        "path": "/installed_at",
+        "value": "2026-10-20 11:59:30Z"
+      },
+      {
+        "name": "as_of_other_offset",
+        "op": "set",
+        "path": "/as_of",
+        "value": "2026-10-20T13:00:00+01:00"
+      },
+      {
+        "name": "max_age_zero",
+        "op": "set",
+        "path": "/max_age_seconds",
+        "value": 0
+      }
+    ],
+    "by_manifest_version_cases": [
+      {
+        "name": "manifest_version_as_string",
+        "op": "set",
+        "path": "/manifest_version",
+        "value": "1"
+      },
+      {
+        "name": "unlisted_manifest_version",
+        "op": "set",
+        "path": "/manifest_version",
+        "value": 3
+      }
+    ]
+  }
+}
