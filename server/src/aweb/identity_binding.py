@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
 from collections import OrderedDict
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from time import monotonic
 
+from awid.did import validate_stable_id
 from awid.identity_observation import (
     IdentityBinding,
     IdentityObservationRefused,
@@ -17,6 +19,7 @@ from awid.identity_observation import (
 from awid.identity_observation import (
     observe_identity_binding as observe_public_identity_binding,
 )
+from awid.registry_types import RegistryError
 from fastapi import Request
 
 from aweb.application_state import application_registry_client
@@ -26,12 +29,73 @@ from aweb.application_state import native_application_state
 
 logger = logging.getLogger(__name__)
 _BINDING_TTL = 60
+_BINDING_UNAVAILABLE_TTL = 5
 _CACHE_LIMIT = 4096
 
 
 class IdentityProjectionField(StrEnum):
     STABLE_DID = "did_aw"
     ADDRESS = "address"
+
+
+class _AddressMissing(IdentityObservationRefused):
+    """A recognized address 404, as distinct from other binding refusals."""
+
+
+class BindingFallbackReason(StrEnum):
+    ADDRESS_MISSING = "address_missing"
+    UNAVAILABLE = "unavailable"
+    TIMED_OUT = "timed_out"
+
+
+class BindingFallback(IdentityBindingError):
+    def __init__(self, reason: BindingFallbackReason, *, headers: dict[str, str] | None = None):
+        address_missing = reason is BindingFallbackReason.ADDRESS_MISSING
+        super().__init__(
+            IdentityBindingCode.MISMATCH if address_missing else IdentityBindingCode.UNAVAILABLE,
+            headers=headers, address_missing=address_missing,
+        )
+        self.reason = reason
+
+
+@dataclass
+class _PendingBinding:
+    """An optional read may finish after another read settles its authority."""
+
+    superseded: bool = False
+
+
+@dataclass(frozen=True)
+class _FallbackObservation:
+    reason: BindingFallbackReason
+    pending: _PendingBinding
+    headers: dict[str, str] | None
+
+
+class _BindingRegistry:
+    """Adapt two exact lookups while the SDK owns the binding comparison."""
+
+    def __init__(self, client, *, require_registered_did: bool):
+        self._client = client
+        self._require_registered_did = require_registered_did
+        self.current_did_key: str | None = None
+
+    async def resolve_key_fresh(self, did_aw: str):
+        try:
+            resolved = await self._client.resolve_key_fresh(did_aw)
+        except RegistryError as exc:
+            if self._require_registered_did and exc.status_code == 404:
+                raise IdentityObservationRefused("identity_binding_mismatch") from exc
+            raise
+        if resolved.did_aw == did_aw:
+            self.current_did_key = resolved.current_did_key
+        return resolved
+
+    async def resolve_address_fresh(self, domain: str, name: str):
+        address = await self._client.resolve_address_fresh(domain, name)
+        if self._require_registered_did and address is None:
+            raise _AddressMissing("identity_binding_mismatch")
+        return address
 
 
 def verified_key_sql(agent: str = "") -> str:
@@ -86,6 +150,8 @@ async def verify_identity_binding(
     address: str = "",
     fresh: bool = False,
     registry_client=None,
+    require_registered_did: bool = False,
+    fallback_deadline: float | None = None,
 ) -> IdentityBinding:
     """Verify the claimed stable identity and address against the supplied registry evidence."""
     did_aw, address = (did_aw or "").strip(), (address or "").strip()
@@ -93,6 +159,15 @@ async def verify_identity_binding(
         return IdentityBinding(did_key=did_key)
     if not did_aw or not did_aw.startswith("did:aw:"):
         raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+    if require_registered_did:
+        try:
+            validate_stable_id(did_aw)
+        except ValueError as exc:
+            raise IdentityBindingError(IdentityBindingCode.MISMATCH) from exc
+        if address:
+            domain, separator, name = address.partition("/")
+            if not separator or not domain or not name or "/" in name or max(len(domain), len(name)) > 256:
+                raise IdentityBindingError(IdentityBindingCode.MISMATCH)
     client = (
         registry_client
         if registry_client is not None
@@ -107,13 +182,25 @@ async def verify_identity_binding(
         observations = {}
         request.state.identity_binding_observations = observations
     if not fresh and key in observations:
+        if require_registered_did and observations[key].self_derived:
+            raise IdentityBindingError(IdentityBindingCode.MISMATCH)
         return observations[key]
     started = monotonic()
     cached = cache.get(key)
+    fallback_deadline = None if fresh else fallback_deadline
     # Unknown enrollment is refetched rather than pinned by this positive cache.
-    if not fresh and cached is not None and cached[0] > started and cached[1].id_tree is not None:
-        return replace(cached[1], fresh_observation=False)
-    binding = await _observe_into_cache(client, cache, key, started)
+    if not fresh and cached is not None and cached[0] > started:
+        evidence = cached[1]
+        if isinstance(evidence, IdentityBinding) and evidence.id_tree is not None:
+            if require_registered_did and evidence.self_derived:
+                raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+            return replace(evidence, fresh_observation=False)
+        if fallback_deadline is not None and isinstance(evidence, _FallbackObservation):
+            raise BindingFallback(evidence.reason, headers=evidence.headers)
+    binding = await _observe_into_cache(
+        client, cache, key, started, require_registered_did=require_registered_did,
+        fallback_deadline=fallback_deadline,
+    )
     observations[key] = binding
     return binding
 
@@ -152,26 +239,96 @@ async def observe_current_identity_binding(
 
 
 async def _observe_into_cache(
-    client, cache: OrderedDict, key: tuple, started: float
+    client, cache: OrderedDict, key: tuple, started: float, *, require_registered_did: bool = False,
+    fallback_deadline: float | None = None,
 ) -> IdentityBinding:
     did_aw, did_key, address = key[:3]
-    cache.pop(key, None)
-    binding = await observe_identity_binding(
-        client, did_key=did_key, did_aw=did_aw, address=address
-    )
-    # A newly observed current key supersedes older positive cache entries.
+    previous = cache.get(key, (0.0, None))[1]
+    if isinstance(previous, _FallbackObservation):
+        pending = previous.pending
+        if fallback_deadline is not None:
+            _store_binding_entry(cache, key, 0.0, pending)
+    elif isinstance(previous, _PendingBinding):
+        pending = previous
+    else:
+        pending = None
+        if fallback_deadline is None:
+            cache.pop(key, None)
+        else:
+            pending = _PendingBinding()
+            _store_binding_entry(cache, key, 0.0, pending)
+    registry = _BindingRegistry(client, require_registered_did=require_registered_did)
+    try:
+        async with asyncio.timeout_at(fallback_deadline):
+            binding = await observe_identity_binding(
+                registry, did_key=did_key, did_aw=did_aw, address=address,
+            )
+    except TimeoutError:
+        if fallback_deadline is None:
+            raise
+        refusal = BindingFallback(BindingFallbackReason.TIMED_OUT)
+    except IdentityBindingError as exc:
+        if pending is not None and pending.superseded:
+            raise IdentityBindingError(IdentityBindingCode.MISMATCH) from exc
+        if exc.address_missing:
+            _discard_other_keys(cache, did_aw, did_key)
+            reason = BindingFallbackReason.ADDRESS_MISSING
+        elif exc.code is IdentityBindingCode.UNAVAILABLE:
+            reason = BindingFallbackReason.UNAVAILABLE
+        else:
+            _discard_binding_entry(cache, key)
+            if registry.current_did_key and registry.current_did_key != did_key:
+                _discard_other_keys(cache, did_aw, registry.current_did_key)
+            raise
+        if fallback_deadline is None:
+            raise
+        refusal = BindingFallback(reason, headers=exc.headers)
+    else:
+        if pending is not None and pending.superseded:
+            raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+        _discard_other_keys(cache, did_aw, did_key)
+        _store_binding_entry(cache, key, started + _BINDING_TTL, binding)
+        return binding
+
+    assert pending is not None
+    if pending.superseded:
+        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
+    if cache.get(key, (0.0, None))[1] is pending:
+        expiry = (
+            started + _BINDING_TTL if refusal.address_missing
+            else monotonic() + _BINDING_UNAVAILABLE_TTL
+        )
+        _store_binding_entry(cache, key, expiry, _FallbackObservation(refusal.reason, pending, refusal.headers))
+    raise refusal
+
+
+def _discard_other_keys(cache: OrderedDict, did_aw: str, did_key: str) -> None:
+    # A newly observed current key supersedes older evidence and pending reads.
     for cached_key in list(cache):
         if cached_key[0] == did_aw and cached_key[1] != did_key:
-            cache.pop(cached_key, None)
-    cache[key] = (started + _BINDING_TTL, binding)
+            _discard_binding_entry(cache, cached_key)
+
+
+def _discard_binding_entry(cache: OrderedDict, key: tuple) -> None:
+    _, value = cache.pop(key, (0.0, None))
+    if isinstance(value, _FallbackObservation):
+        value = value.pending
+    if isinstance(value, _PendingBinding):
+        value.superseded = True
+
+
+def _store_binding_entry(
+    cache: OrderedDict, key: tuple, expires: float,
+    value: IdentityBinding | _PendingBinding | _FallbackObservation,
+) -> None:
+    cache[key] = (expires, value)
     cache.move_to_end(key)
     while len(cache) > _CACHE_LIMIT:
         cache.popitem(last=False)
-    return binding
 
 
 async def observe_identity_binding(
-    client, *, did_key: str, did_aw: str, address: str = ""
+    client, *, did_key: str, did_aw: str, address: str = "",
 ) -> IdentityBinding:
     """The compatible server adapter for the shared public AWID observation."""
     try:
@@ -195,7 +352,9 @@ async def observe_identity_binding(
         ):
             # Never shorten an upstream window or busy-loop a zero hint.
             headers = {"Retry-After": str(max(1, math.ceil(delay)))}
-        raise IdentityBindingError(code, headers=headers) from exc
+        raise IdentityBindingError(
+            code, headers=headers, address_missing=isinstance(exc, _AddressMissing),
+        ) from exc
 
 
 async def refresh_projection_binding(db, *, agent_id, did_key: str, binding: IdentityBinding):

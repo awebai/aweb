@@ -2,6 +2,7 @@
 
 import json
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -253,6 +254,19 @@ async def complete(env, prepared, *, fail=None, key=None):
             raise RuntimeError("provider operation failed")
         await uow.finish_ingress(result)
         return result
+
+
+@pytest.mark.asyncio
+async def test_native_human_mail_addressless_sender_keeps_null_address(native_send):
+    env = native_send
+    env["auth"] = replace(env["auth"], address="")
+    prepared = await env["prepared"](caller=env["auth"])
+    await complete(env, prepared)
+    row = await env["db"].fetch_one(
+        "SELECT from_address FROM {{tables.messages}} WHERE message_id=$1",
+        UUID(prepared.value["message_id"]),
+    )
+    assert row is not None and row["from_address"] is None
 
 
 @pytest.mark.asyncio

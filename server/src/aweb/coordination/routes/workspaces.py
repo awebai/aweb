@@ -288,6 +288,7 @@ async def heartbeat(
             repo_id=str(existing["repo_id"]) if existing.get("repo_id") else None,
             program="aw",
             model=None,
+            status="active",
             canonical_origin=repo_row["canonical_origin"] if repo_row else None,
             role=payload.role,
             ttl_seconds=get_presence_ttl_seconds(),

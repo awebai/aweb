@@ -420,7 +420,7 @@ async def get_pending_conversations(
             "last_message_version": int(row.get("last_message_version") or 1),
             "last_encrypted_envelope": _json_object(row.get("last_encrypted_envelope")),
             "last_from": row["last_from"] or "",
-            "last_from_address": row["last_from_address"] or "",
+            "last_from_address": row["last_from_address"],
             "last_from_did": row.get("last_from_did"),
             "last_from_agent_id": (
                 str(row["last_from_agent_id"]) if row.get("last_from_agent_id") else None
@@ -528,7 +528,7 @@ async def get_message_history(
             ),
             "from_did": row.get("from_did"),
             "from_alias": row["from_alias"],
-            "from_address": row["from_address"] or "",
+            "from_address": row["from_address"],
             "body": row["body"],
             "created_at": row["created_at"],
             "sender_leaving": bool(row["sender_leaving"]),

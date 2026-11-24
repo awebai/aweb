@@ -13,6 +13,8 @@ import pytest
 from awid.registry import RegistryClient
 from awid.team_ids import parse_team_id
 from fastapi import HTTPException
+from aweb.config import get_presence_ttl_seconds
+from aweb.coordination.routes import workspaces as workspace_routes
 from aweb.lifecycle import (
     AgentDisposition,
     LifecycleActor,
@@ -21,6 +23,8 @@ from aweb.lifecycle import (
 )
 from aweb.mcp.server import create_mcp_app
 from aweb.presence import clear_workspace_presence
+from aweb.routes.connect import WorkspaceContact, connect_agent
+from aweb.workspace_activity import workspace_stale_cutoff
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app
 from test_identity_grants import _grant_headers, _session_keypair
@@ -68,7 +72,7 @@ async def _send_member_request(
 
 
 async def _connect_registered_member(
-    env, *, alias: str, team_id: str = TEAM, scope: str = "local"
+    env, *, alias: str, team_id: str = TEAM, scope: str = "local", reserve: bool = False,
 ):
     registry = env.app.state.awid_registry_client
     namespace, team_name = parse_team_id(team_id)
@@ -76,34 +80,45 @@ async def _connect_registered_member(
     did_aw = (await registry.register_did(did, sk)).did_aw if scope == "global" else None
     certificate_id = f"workspace-test-{uuid4()}"
     certificate_fields = {} if did_aw is None else {"member_did_aw": did_aw}
-    certificate = _encode_certificate(
-        _make_certificate(
-            env.team_sk, env.team_did, did, team_id=team_id, alias=alias,
-            identity_scope=scope, certificate_id=certificate_id, **certificate_fields,
-        )
+    claims = _make_certificate(
+        env.team_sk, env.team_did, did, team_id=team_id, alias=alias,
+        identity_scope=scope, certificate_id=certificate_id, **certificate_fields,
     )
+    certificate = _encode_certificate(claims)
     await registry.register_team_certificate(
         namespace, team_name,
         team_controller_signing_key=env.team_sk, certificate_id=certificate_id,
         member_did_key=did, member_did_aw=did_aw, member_address=None,
         alias=alias, identity_scope=scope, certificate=certificate,
     )
-    body = json.dumps({
+    profile = {
         "hostname": "workspace-test", "workspace_path": f"/tmp/workspace-test/{alias}",
         "repo_origin": "",
-    }).encode()
-    response = await env.client.post(
-        "/v1/connect",
-        content=body,
-        headers={
-            **_signed_team_headers(sk, did, team_id, certificate, body),
-            "Content-Type": "application/json",
-        },
-    )
-    assert response.status_code == 200, response.text
+    }
+    if reserve:
+        connected = await connect_agent(
+            db=env.db,
+            cert_info={**claims, "did_key": did},
+            team_did_key=env.team_did,
+            contact=WorkspaceContact.NONE,
+            role="", human_name="", agent_type="agent",
+            **profile,
+        )
+    else:
+        body = json.dumps(profile).encode()
+        response = await env.client.post(
+            "/v1/connect",
+            content=body,
+            headers={
+                **_signed_team_headers(sk, did, team_id, certificate, body),
+                "Content-Type": "application/json",
+            },
+        )
+        assert response.status_code == 200, response.text
+        connected = response.json()
     member = SimpleNamespace(
         alias=alias, sk=sk, did=did, certificate=certificate,
-        id=UUID(response.json()["agent_id"]), workspace=UUID(response.json()["workspace_id"]),
+        id=UUID(connected["agent_id"]), workspace=UUID(connected["workspace_id"]),
     )
     env.actors[alias] = member
     return member
@@ -185,6 +200,80 @@ async def _root_last_seen(env):
         "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
         env.actors["alice"].workspace,
     )
+
+
+def _set_workspace_route_time(monkeypatch, now):
+    class WorkspaceRouteClock(datetime):
+        @classmethod
+        def now(cls, tz):
+            return now.astimezone(tz)
+
+    monkeypatch.setattr(workspace_routes, "datetime", WorkspaceRouteClock)
+
+
+@pytest.mark.asyncio
+async def test_reserved_workspace_ages_for_peer_cleanup_and_planning_without_appearing_online(
+    privacy_app, monkeypatch,
+):
+    env = privacy_app
+    monkeypatch.setenv("AWEB_PRESENCE_TTL_SECONDS", "1800")
+    actor = await _connect_registered_member(env, alias="reserved-peer", reserve=True)
+    row = await env.db.fetch_one(
+        "SELECT created_at, last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+        actor.workspace,
+    )
+    assert row["last_seen_at"] is None
+    roster = await _send_member_request(env, alias="bob", method="GET", path="/v1/agents")
+    assert roster.status_code == 200, roster.text
+    visible = next(agent for agent in roster.json()["agents"] if agent["alias"] == actor.alias)
+    assert visible["online"] is False and visible["last_seen"] is None
+
+    workspace_path = f"/v1/workspaces/{actor.workspace}"
+    fresh_cutoff = workspace_stale_cutoff(now=datetime.now(UTC))
+    plan = LifecycleCascadeRequest(
+        operation="delete_local_workspace",
+        actor=LifecycleActor(
+            actor_id=str(env.actors["bob"].id), actor_type="agent", authority="team_identity"
+        ),
+        team_id=TEAM,
+        target_agent_id=str(actor.id),
+        target_workspace_ids=(str(actor.workspace),),
+        require_identity_scope="local",
+        agent_disposition=AgentDisposition.DELETED,
+        stale_before=fresh_cutoff,
+        dry_run=True,
+    )
+    registry = env.app.state.awid_registry_client
+    fresh = await _send_member_request(env, alias="bob", method="DELETE", path=workspace_path)
+    assert fresh.status_code == 409, fresh.text
+    assert fresh.json()["detail"]["code"] == "local_workspace_still_active"
+    planned = await apply_lifecycle_cascade(env.db, env.redis, plan, registry_client=registry)
+    assert [error.code for error in planned.errors] == ["local_workspace_still_active"]
+
+    later = row["created_at"] + timedelta(minutes=30, seconds=1)
+    _set_workspace_route_time(monkeypatch, later)
+    planned = await apply_lifecycle_cascade(
+        env.db, env.redis, replace(plan, stale_before=workspace_stale_cutoff(now=later)),
+        registry_client=registry,
+    )
+    assert planned.dry_run and planned.errors == ()
+    aged = await _send_member_request(env, alias="bob", method="DELETE", path=workspace_path)
+    assert aged.status_code == 200, aged.text
+    assert aged.json()["identity_deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_owner_can_delete_fresh_reserved_workspace(privacy_app):
+    env = privacy_app
+    actor = await _connect_registered_member(env, alias="reserved-self", reserve=True)
+    assert await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1", actor.workspace,
+    ) is None
+    response = await _send_member_request(
+        env, alias=actor.alias, method="DELETE", path=f"/v1/workspaces/{actor.workspace}",
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["identity_deleted"] is True
 
 
 @pytest.mark.asyncio
@@ -269,6 +358,16 @@ async def test_invalid_grant_liveness_does_not_prevent_stale_workspace_cleanup(
         env, path=GrantHeartbeatRoute.AGENT,
         ttl_seconds=60 if grant_state == InvalidGrantActivity.EXPIRED else 600,
     )
+    created_at = await env.db.fetch_value(
+        "SELECT created_at FROM {{tables.workspaces}} WHERE workspace_id=$1", actor.workspace,
+    )
+    last_seen = await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.identity_grant_liveness}} WHERE grant_id=$1", grant_id,
+    )
+    # The cutoff puts the reservation behind the window but the grant
+    # heartbeat ahead of it. Only invalid grant evidence permits cleanup.
+    cutoff = created_at + (last_seen - created_at) / 2
+    assert created_at < cutoff < last_seen
     if grant_state == InvalidGrantActivity.REVOKED:
         response = await _send_member_request(
             env, alias="alice", method="POST", path=f"/v1/identity-grants/{grant_id}/revoke"
@@ -280,14 +379,11 @@ async def test_invalid_grant_liveness_does_not_prevent_stale_workspace_cleanup(
             grant_id,
         )
     else:
-        last_seen = await env.db.fetch_value(
-            "SELECT last_seen_at FROM {{tables.identity_grant_liveness}} WHERE grant_id=$1",
-            grant_id,
-        )
         expired_at = last_seen + timedelta(seconds=10)
     if grant_state != InvalidGrantActivity.REVOKED:
         # The actual HTTP-minted grant or its configured activity window expires.
         await asyncio.sleep(max(0, (expired_at - datetime.now(UTC)).total_seconds()) + 0.05)
+    _set_workspace_route_time(monkeypatch, cutoff + timedelta(seconds=get_presence_ttl_seconds()))
     response = await _send_member_request(
         env, alias="bob", method="DELETE", path=f"/v1/workspaces/{actor.workspace}"
     )

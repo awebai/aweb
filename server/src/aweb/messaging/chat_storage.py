@@ -16,6 +16,7 @@ from uuid import UUID
 from aweb.agent_wake import record_did_wakes
 from aweb.attachment_service import attachment_transaction
 from aweb.messaging.kinds import ContentMode
+from aweb.messaging.sender_address import sender_address_for_storage
 
 
 def parse_optional_uuid(value: str | UUID | None) -> UUID | None:
@@ -106,7 +107,7 @@ async def store_chat(
         session_id,
         sender_agent_uuid,
         sender_did,
-        (sender_address or "").strip() or None,
+        sender_address_for_storage(sender_address),
         body,
         bool(leaving),
         bool(hang_on),

@@ -21,7 +21,6 @@ from fastapi import HTTPException, Request
 from aweb.application_state import application_registry_client
 from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext, MessagingAuth, TeamIdentity
 from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
-from aweb.certificate_registration import configured_registration_mode
 from aweb.config import get_settings
 from aweb.grant_expiry import never_expires
 from aweb.id_chain_auth import authenticate_id_chain
@@ -234,7 +233,6 @@ async def _require_request_grant_validity(request: Request, row) -> str:
         row=row,
         now=datetime.now(UTC),
         registry_client=application_registry_client(request.app.state),
-        registration_mode=configured_registration_mode(),
         request=request,
     )
     observation.raise_if_unavailable()

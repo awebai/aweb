@@ -15,6 +15,7 @@ import json
 import os
 import time
 import uuid
+from contextlib import aclosing
 
 import httpx
 import pytest
@@ -23,7 +24,7 @@ from redis.asyncio import Redis
 
 import awid.registry as registry_module
 from awid.dns_verify import DnsVerificationError, DomainAuthority
-from awid.id_certificates import IDChainEvidence, verify_id_chain
+from awid.id_certificates import IDChainEvidence, status_request, verify_id_chain
 from awid.registry import CachedRegistryClient, MalformedIDStatusError, RegistryError
 from awid_service.deps import get_domain_verifier
 
@@ -252,6 +253,105 @@ async def test_evidence_is_reused_through_60_seconds_without_dns_or_http(env):
     evidence = await _evidence(env)
     assert evidence.age_seconds == 60
     assert len(env.requests) == len(env.dns_lookups) == len(env.routings) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "configured_origin,initial_miss",
+    [(REGISTRY, False), ("http://other-registry.test", False), (REGISTRY, True)],
+    ids=["same-origin", "different-origin", "same-origin-initial-miss"],
+)
+async def test_warm_status_reads_each_generation_key_once(env, monkeypatch, configured_origin, initial_miss):
+    client = CachedRegistryClient(
+        configured_origin,
+        env.redis,
+        transport=httpx.MockTransport(env.handler),
+        domain_registry_resolver=env.route,
+        domain_verifier=env.verify_domain,
+    )
+    async with aclosing(client):
+        expected = await _evidence(env, client=client)
+        request = status_request(BUNDLE, SUBJECT, domain=DOMAIN)
+        assert request is not None
+        route_generation = client._id_status_generation_key(DOMAIN)
+        status_generation = client._id_status_generation_key(DOMAIN, registry_url=REGISTRY)
+        route_token = env.redis.values[route_generation]
+        status_token = env.redis.values[status_generation]
+        route_key = f"{client._id_status_route_key(request)}:generation:{route_token}"
+        status_key = f"{client._id_status_cache_key(request, registry_url=REGISTRY)}:generation:{status_token}"
+        commands = []
+        get, set_, redis_time = env.redis.get, env.redis.set, env.redis.time
+
+        async def trace_get(key):
+            is_initial_miss = initial_miss and not commands and key == route_generation
+            commands.append(("GET", key))
+            # A concurrent initializer has won SET NX by the second GET.
+            return None if is_initial_miss else await get(key)
+
+        async def trace_set(key, value, *, ex=None, nx=False):
+            commands.append(("SET NX" if nx else "SET", key))
+            return await set_(key, value, ex=ex, nx=nx)
+
+        async def trace_time():
+            commands.append(("TIME",))
+            return await redis_time()
+
+        monkeypatch.setattr(env.redis, "get", trace_get)
+        monkeypatch.setattr(env.redis, "set", trace_set)
+        monkeypatch.setattr(env.redis, "time", trace_time)
+        assert await _evidence(env, client=client) == expected
+
+    initialization = [("SET NX", route_generation), ("GET", route_generation)] if initial_miss else []
+    distinct_origin = [("GET", status_generation)] if route_generation != status_generation else []
+    assert commands == [
+        ("GET", route_generation), *initialization, ("TIME",), ("GET", route_key),
+        *distinct_origin, ("TIME",), ("GET", status_key),
+    ]
+    assert len(env.requests) == len(env.dns_lookups) == len(env.routings) == 1
+
+
+@pytest.mark.asyncio
+async def test_invalidation_between_warm_reads_keeps_one_generation_and_next_request_refetches(env, monkeypatch):
+    old = await _evidence(env)
+    env.clock[0] += 60
+    route_read = env.client._read_registry_cache_route
+    status_read = env.client._read_id_status_entry
+    seen = []
+
+    async def route_then_invalidate(client, key):
+        result = await route_read(key)
+        if not seen:
+            seen.append(key.rsplit(":", 1)[-1])
+            env.status[DOMAIN] = _fixture("alice-revoked-now")
+            await client._invalidate_id_status_cache(DOMAIN)
+        return result
+
+    async def trace_status(_client, key):
+        seen.append(key.rsplit(":", 1)[-1])
+        return await status_read(key)
+
+    monkeypatch.setattr(CachedRegistryClient, "_read_registry_cache_route", route_then_invalidate)
+    monkeypatch.setattr(CachedRegistryClient, "_read_id_status_entry", trace_status)
+    overlapping = await _evidence(env)
+    route_token, status_token = seen
+    assert route_token == status_token
+    assert status_token != env.redis.values[env.client._id_status_generation_key(DOMAIN)]
+    assert (overlapping.status, overlapping.age_seconds) == (old.status, 60)
+    assert len(env.requests) == 1
+
+    fresh = await _evidence(env)
+    assert fresh.status == env.status[DOMAIN]
+    assert _verdict(fresh)["reason"] == "revoked"
+    assert len(env.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_malformed_generation_never_reuses_retained_status(env):
+    assert _verdict(await _evidence(env))["reason"] == "verified"
+    await env.redis.set(env.client._id_status_generation_key(DOMAIN), "malformed")
+    env.status[DOMAIN] = _fixture("alice-revoked-now")
+    assert _verdict(await _evidence(env))["reason"] == "revoked"
+    assert len(env.requests) == 2
 
 
 @pytest.mark.asyncio
@@ -544,21 +644,28 @@ class UnavailableRedis(FakeRedis):
 
 @pytest.mark.asyncio
 async def test_without_redis_each_read_is_fetched_and_none_is_reused(env):
+    assert _verdict(await _evidence(env))["reason"] == "verified"
+    redis = UnavailableRedis()
+    redis.values.update(env.redis.values)
     client = CachedRegistryClient(
         REGISTRY,
-        UnavailableRedis(),
+        redis,
         transport=httpx.MockTransport(env.handler),
         domain_registry_resolver=env.route,
         domain_verifier=env.verify_domain,
     )
     try:
+        env.status[DOMAIN] = _fixture("alice-revoked-now")
         first = await _evidence(env, client=client)
         env.clock[0] += 1
+        env.http_status = 503
         second = await _evidence(env, client=client)
     finally:
         await client.aclose()
-    assert (first.age_seconds, second.age_seconds) == (0, 0)
-    assert len(env.requests) == 2
+    assert _verdict(first)["reason"] == "revoked"
+    assert (first.age_seconds, second.age_seconds) == (0, None)
+    assert _verdict(second)["reason"] == "evidence_unavailable"
+    assert len(env.requests) == 3
 
 
 @pytest.mark.asyncio

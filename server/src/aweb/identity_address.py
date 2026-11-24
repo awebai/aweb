@@ -9,6 +9,7 @@ from fastapi import HTTPException
 class AddressResolutionState(StrEnum):
     NOT_REQUESTED = "not_requested"
     EMPTY = "empty"
+    WITHHELD = "withheld"
     VERIFIED = "verified"
     UNKNOWN = "unknown"
     CONTEXT_REQUIRED = "context_required"

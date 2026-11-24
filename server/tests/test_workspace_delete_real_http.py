@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -12,6 +13,7 @@ import pytest
 from redis.asyncio import Redis
 
 from aweb.api import create_app
+from aweb.config import get_presence_ttl_seconds
 from aweb.events import team_events_channel_name
 from aweb.lifecycle import replay_lifecycle_side_effects
 from aweb.outbox_recovery import stop_outbox_recovery
@@ -19,7 +21,11 @@ from aweb.presence import clear_workspace_presence
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app
 from test_messages_http import _signed_team_headers
-from test_workspace_liveness_http import _connect_registered_member, _send_member_request
+from test_workspace_liveness_http import (
+    _connect_registered_member,
+    _send_member_request,
+    _set_workspace_route_time,
+)
 
 __all__ = ["privacy_app"]
 
@@ -191,14 +197,18 @@ async def _redis_without_command(env, command: str):
 
 
 @pytest.mark.asyncio
-async def test_post_commit_redis_permission_failure_is_retried_against_real_service(privacy_app):
+async def test_post_commit_redis_permission_failure_is_retried_against_real_service(privacy_app, monkeypatch):
     env = privacy_app
     alice, bob = env.actors["alice"], env.actors["bob"]
     await _claim_tasks(env, count=1)
-    assert await env.db.fetch_value(
-        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+    reservation = await env.db.fetch_one(
+        "SELECT created_at, last_seen_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
         alice.workspace,
-    ) is None
+    )
+    assert reservation["last_seen_at"] is None
+    _set_workspace_route_time(
+        monkeypatch, reservation["created_at"] + timedelta(seconds=get_presence_ttl_seconds() + 1),
+    )
     await clear_workspace_presence(env.redis, [str(alice.workspace)])
     # This host owns replay explicitly; the test drives it after the outage.
     await stop_outbox_recovery(env.app)

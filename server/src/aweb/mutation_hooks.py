@@ -57,7 +57,7 @@ from .lifecycle import (
     LifecycleCascadeRequest,
     apply_lifecycle_cascade,
 )
-from .presence import get_agent_presence
+from .presence import get_agent_presence, list_agent_presences_by_workspace_ids
 
 if TYPE_CHECKING:
     from .db import DatabaseInfrastructure
@@ -438,8 +438,11 @@ async def _enrich(
     """Add aliases, subjects, and previews via Redis/DB lookups."""
 
     if isinstance(event, MessageDeliveredEvent):
-        event.from_alias = await _alias_for(redis, event.from_workspace)
-        event.to_alias = await _alias_for(redis, event.workspace_id)
+        workspaces = list(dict.fromkeys((event.from_workspace, event.workspace_id)))
+        presence = await list_agent_presences_by_workspace_ids(redis, workspaces)
+        aliases = {row.get("workspace_id"): row.get("alias", "") for row in presence}
+        event.from_alias = aliases.get(event.from_workspace, "")
+        event.to_alias = aliases.get(event.workspace_id, "")
 
     elif isinstance(event, MessageAcknowledgedEvent):
         if event.message_id:
