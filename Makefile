@@ -9,7 +9,6 @@ SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER
 
 .PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit test-go-vulnerability-audit \
-	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
 	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps \
@@ -88,8 +87,6 @@ help:
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
 	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
 	@echo "  check-extension-docs Verify extension docs, source events, vectors, and authority map"
-	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
-	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
 	@echo "  e2e-library-stack             Bring up awid+aweb+Library, seed aweb.team, verify, tear down (requires Docker + ../library + ../blueprints)"
 	@echo "  e2e-library-stack-up / -seed / -down  Drive the combined stack step by step"
 	@echo ""
@@ -539,24 +536,6 @@ check-a2a-copy-guardrails:
 check-extension-docs:
 	python3 scripts/check-extension-docs.py
 	python3 scripts/check-extension-docs.py --self-test
-
-selfhost-up:
-	cd server && docker compose up --build -d
-
-selfhost-down:
-	cd server && docker compose down
-
-selfhost-logs:
-	cd server && docker compose logs -f aweb awid
-
-awid-up:
-	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose up --build -d
-
-awid-down:
-	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose down
-
-awid-logs:
-	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose logs -f awid
 
 # ---- combined e2e stack: awid + aweb + Library, seeded ----------------------
 # Requires Docker and sibling ../library + ../blueprints checkouts.

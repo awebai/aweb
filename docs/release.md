@@ -320,6 +320,19 @@ refuses a same-version byte conflict. `aw-v` can publish all npm platform
 packages directly; hosted binary assets remain resumable when GitHub returns.
 Skills ZIPs are likewise resumable hosted assets after the npm package is safe.
 
+## Manual npm repairs
+
+Two manually dispatched workflows change npm metadata for a version that is
+already published. Neither builds nor publishes, and both use the repository's
+`NPM_TOKEN` secret.
+
+- `npm-dist-tag.yml` points a dist-tag other than `latest` at an exact
+  published version (inputs: package, tag, version), then prints the package's
+  dist-tags. `latest` moves only through `publication.py promote-latest`.
+- `npm-deprecate.yml` deprecates an exact published version with the message
+  npm shows on install (inputs: package, version, message), then reads the
+  deprecation back.
+
 ## Repository boundary
 
 This repository never changes or deploys AC. For a paired release, the OSS
