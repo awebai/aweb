@@ -20,13 +20,13 @@ from awid.team_certificate import (
     verify_team_certificate_signature,
 )
 
-from aweb_naapp.hooks.owner_act import (
+from aweb_naapp_contracts.hooks.owner_act import (
     HUMAN_ROLE_ACTS,
     HumanCredential,
     Refused,
     owner_act_signing_bytes,
 )
-from aweb_naapp.hooks.owner_act import _verify_owner_act as verify_owner_act
+from aweb_naapp_contracts.hooks.owner_act import _verify_owner_act as verify_owner_act
 from tests.hooks.owner_act_delivery_vector import build_vector, render
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]

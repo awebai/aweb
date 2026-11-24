@@ -8,7 +8,7 @@ lifetime, naming the expected subject. It cannot tell who held the key: that
 only the organization owner signs, after a fresh step-up, is the signing
 deployment's obligation.
 
-The public way to verify an act is ``aweb_naapp.hooks.owner_act_nonces``:
+The public way to verify an act is ``aweb_naapp_contracts.hooks.owner_act_nonces``:
 ``OwnerActVerifier.prepare`` outside any transaction, then ``consume_in`` in
 the transaction that applies the act's effect, which alone returns a
 ``VerifiedOwnerAct``. This module holds the checks those two call; they are
@@ -30,7 +30,7 @@ from awid.did import public_key_from_did
 from awid.signature_wire import verify_bytes
 from nacl.exceptions import BadSignatureError
 
-from aweb_naapp.hooks.strictjson import (
+from aweb_naapp_contracts.hooks.strictjson import (
     MAX_SAFE_INTEGER,
     Refused,
     canonical,

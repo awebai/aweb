@@ -15,10 +15,10 @@ import re._parser as regex_parser
 from pathlib import Path
 from typing import Any
 
-from aweb_naapp.hooks import envelope
-from aweb_naapp.hooks.catalog import load_catalog
-from aweb_naapp.hooks.envelope import MAX_ENVELOPE_BYTES, PREFIX
-from aweb_naapp.hooks.strictjson import MAX_SAFE_INTEGER
+from aweb_naapp_contracts.hooks import envelope
+from aweb_naapp_contracts.hooks.catalog import load_catalog
+from aweb_naapp_contracts.hooks.envelope import MAX_ENVELOPE_BYTES, PREFIX
+from aweb_naapp_contracts.hooks.strictjson import MAX_SAFE_INTEGER
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 CATALOG_PATH = AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aweb_naapp.manifest import canonical_bytes, load_manifest
+from aweb_naapp_contracts.manifest import canonical_bytes, load_manifest
 
 
 def _tool(name: str, path: str) -> dict:

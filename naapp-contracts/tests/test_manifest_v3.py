@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.manifest import (
+from aweb_naapp_contracts.manifest import (
     SUPPORTED_MANIFEST_VERSIONS,
     ManifestError,
     canonical_bytes,

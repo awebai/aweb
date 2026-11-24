@@ -16,8 +16,7 @@ HEAVY = (
     "pydantic_settings",
     "starlette",
     "webauthn",
-    "aweb_naapp.runtime",
-    "aweb_naapp.outbox",
+    "aweb_naapp",
 )
 
 
@@ -25,7 +24,7 @@ def test_egress_loads_no_runtime_dependency() -> None:
     probe = (
         "import sys\n"
         f"sys.path.insert(0, {str(SRC)!r})\n"
-        "import aweb_naapp.egress\n"
+        "import aweb_naapp_contracts.egress\n"
         f"print(','.join(m for m in {HEAVY!r} if m in sys.modules))\n"
     )
     result = subprocess.run(

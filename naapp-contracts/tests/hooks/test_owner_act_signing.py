@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.hooks.owner_act import (
+from aweb_naapp_contracts.hooks.owner_act import (
     PREFIX,
     Refused,
     hook_binding_subject,

@@ -17,9 +17,9 @@ import pytest
 from awid import did as did_module
 from awid.did import did_from_public_key, generate_keypair
 
-from aweb_naapp import manifest as manifest_module
-from aweb_naapp.did_key import DID_KEY_ENCODED_MAX
-from aweb_naapp.manifest import Manifest, ManifestError, canonical_bytes, load_manifest
+from aweb_naapp_contracts import manifest as manifest_module
+from aweb_naapp_contracts.did_key import DID_KEY_ENCODED_MAX
+from aweb_naapp_contracts.manifest import Manifest, ManifestError, canonical_bytes, load_manifest
 
 VECTORS = Path(__file__).resolve().parents[2] / "test-vectors" / "app-manifests"
 V2 = json.loads((VECTORS / "app-manifest-v2-v1.json").read_text(encoding="utf-8"))
@@ -44,7 +44,7 @@ def decoded(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def check_manifest_keys(manifest: Manifest) -> None:
-    from aweb_naapp.manifest_keys import check_manifest_keys as check
+    from aweb_naapp_contracts.manifest_keys import check_manifest_keys as check
 
     check(manifest)
 

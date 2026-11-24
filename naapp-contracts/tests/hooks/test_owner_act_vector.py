@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.hooks.owner_act import Refused
-from aweb_naapp.hooks.owner_act import _verify_owner_act as verify_owner_act
+from aweb_naapp_contracts.hooks.owner_act import Refused
+from aweb_naapp_contracts.hooks.owner_act import _verify_owner_act as verify_owner_act
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTOR = json.loads((AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json").read_bytes())
@@ -50,7 +50,7 @@ def test_negative_case_is_refused_with_its_code(case) -> None:
 
 
 def test_vocabularies_match_the_vector() -> None:
-    from aweb_naapp.hooks.owner_act import APP_ACTS, CORE_ACTS, HUMAN_ROLE_ACTS, LOGS_ACTS
+    from aweb_naapp_contracts.hooks.owner_act import APP_ACTS, CORE_ACTS, HUMAN_ROLE_ACTS, LOGS_ACTS
 
     vocabularies = VECTOR["scheme"]["vocabularies"]
     assert (list(CORE_ACTS), list(APP_ACTS), list(HUMAN_ROLE_ACTS), list(LOGS_ACTS)) == (
@@ -112,7 +112,7 @@ def test_a_naive_clock_is_refused() -> None:
 
 
 def test_only_the_verified_type_the_signing_bytes_and_constants_are_public() -> None:
-    import aweb_naapp.hooks.owner_act as owner_act
+    import aweb_naapp_contracts.hooks.owner_act as owner_act
 
     assert set(owner_act.__all__) == {
         "APP_ACTS",

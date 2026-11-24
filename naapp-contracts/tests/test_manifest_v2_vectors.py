@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from aweb_naapp.manifest import (
+from aweb_naapp_contracts.manifest import (
     Attestation,
     Manifest,
     ManifestError,
@@ -18,7 +18,7 @@ from aweb_naapp.manifest import (
     load_manifest,
     select_variant,
 )
-from aweb_naapp.manifest_keys import check_manifest_keys
+from aweb_naapp_contracts.manifest_keys import check_manifest_keys
 
 VECTORS = Path(__file__).resolve().parents[2] / "test-vectors" / "app-manifests"
 V2 = json.loads((VECTORS / "app-manifest-v2-v1.json").read_text(encoding="utf-8"))

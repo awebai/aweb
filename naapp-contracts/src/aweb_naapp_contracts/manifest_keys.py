@@ -1,6 +1,6 @@
 """The key check every consumer of a loaded manifest makes before acting on its keys.
 
-:func:`aweb_naapp.manifest.load_manifest` checks only a declared did:key's
+:func:`aweb_naapp_contracts.manifest.load_manifest` checks only a declared did:key's
 shape. This decodes each one with awid, which refuses anything that is not a
 canonical prime-order Ed25519 key, and refuses the manifest with the code its
 version's did:key rule carries. It needs ``awid-service``, which the
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from awid.did import validate_did
 
-from aweb_naapp.manifest import Manifest, ManifestError
+from aweb_naapp_contracts.manifest import Manifest, ManifestError
 
 
 def check_manifest_keys(manifest: Manifest) -> None:

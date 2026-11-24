@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from nacl.signing import SigningKey
 
-from aweb_naapp.runtime.task_requests import (
+from aweb_naapp_contracts.task_requests import (
     TaskRequestRefused,
     answer_sha256,
     parse_json,
@@ -24,7 +24,7 @@ from aweb_naapp.runtime.task_requests import (
     verify_task_authorization,
 )
 
-AWEB_ROOT = Path(__file__).resolve().parents[3]
+AWEB_ROOT = Path(__file__).resolve().parents[2]
 AUTH = json.loads((AWEB_ROOT / "docs" / "vectors" / "app-task-authorization-v1.json").read_text())
 ANSWERS = json.loads((AWEB_ROOT / "docs" / "vectors" / "task-answer-v1.json").read_text())
 

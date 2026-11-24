@@ -26,7 +26,7 @@ from typing import Any
 
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, TransactionManager
 
-from aweb_naapp.hooks.owner_act import (
+from aweb_naapp_contracts.hooks.owner_act import (
     CLOCK_SKEW,
     Refused,
     VerifiedOwnerAct,

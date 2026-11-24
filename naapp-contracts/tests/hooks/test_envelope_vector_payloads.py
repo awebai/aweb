@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.hooks.catalog import PayloadRefused, load_catalog
+from aweb_naapp_contracts.hooks.catalog import PayloadRefused, load_catalog
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTOR = json.loads((AWEB_ROOT / "docs" / "vectors" / "hook-event-envelope-v1.json").read_bytes())

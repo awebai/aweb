@@ -14,7 +14,7 @@ vectors in ``test-vectors/app-manifests/``; their error codes are the contract.
 This module is standard library only, so a declared did:key is checked for its
 shape alone: the ``did:key:z`` prefix, awid's encoded-length bound and the
 base58 alphabet. It is never decoded here. Whether it is an Ed25519 key is
-checked by :func:`aweb_naapp.manifest_keys.check_manifest_keys`, which every
+checked by :func:`aweb_naapp_contracts.manifest_keys.check_manifest_keys`, which every
 consumer that acts on a manifest's keys calls; the aw CLI checks both at load.
 """
 
@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from aweb_naapp.did_key import DID_KEY_ENCODED_MAX
+from aweb_naapp_contracts.did_key import DID_KEY_ENCODED_MAX
 
 
 def canonical_bytes(obj: Any) -> bytes:

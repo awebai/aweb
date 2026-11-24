@@ -27,7 +27,7 @@ from awid.team_certificate import (
     decode_team_certificate,
 )
 
-from aweb_naapp.hooks.envelope import (
+from aweb_naapp_contracts.hooks.envelope import (
     TEAM_ID_PATTERN,
     UUID_PATTERN,
     Envelope,
@@ -37,7 +37,7 @@ from aweb_naapp.hooks.envelope import (
     verify,
     verify_signature,
 )
-from aweb_naapp.hooks.strictjson import (
+from aweb_naapp_contracts.hooks.strictjson import (
     Refused,
     canonical,
     decode_base64url,

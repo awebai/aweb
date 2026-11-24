@@ -1,4 +1,4 @@
-"""The hook catalog ships inside naapp-lib, so an installed app loads it with
+"""The hook catalog ships inside aweb-naapp-contracts, so an installed app loads it with
 no repository checkout. The package copy is the public vector's bytes; the
 provenance check refuses any difference."""
 
@@ -9,10 +9,10 @@ import sys
 import zipfile
 from pathlib import Path
 
-from aweb_naapp.hooks.catalog import load_catalog, packaged_catalog
+from aweb_naapp_contracts.hooks.catalog import load_catalog, packaged_catalog
 
-NAAPP_LIB = Path(__file__).resolve().parents[2]
-AWEB_ROOT = NAAPP_LIB.parent
+PACKAGE = Path(__file__).resolve().parents[2]
+AWEB_ROOT = PACKAGE.parent
 VECTOR = AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"
 
 
@@ -31,21 +31,21 @@ def test_an_installed_wheel_loads_the_catalog_without_a_checkout(tmp_path: Path)
             "--no-build-isolation",
             "--out-dir",
             str(tmp_path / "dist"),
-            str(NAAPP_LIB),
+            str(PACKAGE),
         ],
         capture_output=True,
         check=True,
     )
-    (wheel,) = (tmp_path / "dist").glob("aweb_naapp-*.whl")
+    (wheel,) = (tmp_path / "dist").glob("aweb_naapp_contracts-*.whl")
     installed = tmp_path / "site"
     with zipfile.ZipFile(wheel) as archive:
         archive.extractall(installed)
     # -I -S: no site-packages and no environment, so nothing can come from the
-    # checkout; the only aweb_naapp on the path is the unpacked wheel.
+    # checkout; the only aweb_naapp_contracts on the path is the unpacked wheel.
     probe = (
         "import sys\n"
         f"sys.path.insert(0, {str(installed)!r})\n"
-        "from aweb_naapp.hooks import catalog\n"
+        "from aweb_naapp_contracts.hooks import catalog\n"
         "loaded = catalog.packaged_catalog()\n"
         "print(catalog.__file__)\n"
         "print(','.join(sorted(loaded.hooks)))\n"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from aweb_naapp.manifest import canonical_bytes, write_manifest_file
+from aweb_naapp_contracts.manifest import canonical_bytes, write_manifest_file
 
 _MANIFEST = {
     "manifest_version": 1,

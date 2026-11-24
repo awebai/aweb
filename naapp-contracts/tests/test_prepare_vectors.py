@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from nacl.signing import SigningKey
 
-from aweb_naapp.runtime.task_requests import (
+from aweb_naapp_contracts.task_requests import (
     SIGNER_FIELDS,
     TASK_AUTHORIZATION_BINDINGS,
     TaskRequestRefused,
@@ -21,7 +21,7 @@ from aweb_naapp.runtime.task_requests import (
     verify_task_authorization,
 )
 
-AWEB_ROOT = Path(__file__).resolve().parents[3]
+AWEB_ROOT = Path(__file__).resolve().parents[2]
 PREPARE = json.loads((AWEB_ROOT / "docs" / "vectors" / "page-action-prepare-v1.json").read_text())
 
 CALLS = {"prepare", "submit", "deliver", "reconcile"}

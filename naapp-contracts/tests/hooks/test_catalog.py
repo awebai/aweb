@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.hooks.catalog import CatalogError, PayloadRefused, load_catalog
+from aweb_naapp_contracts.hooks.catalog import CatalogError, PayloadRefused, load_catalog
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 CATALOG_PATH = AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"

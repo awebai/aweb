@@ -25,7 +25,7 @@ from aweb_naapp_testing.network import (
     make_certificates,
 )
 
-from aweb_naapp.egress import (
+from aweb_naapp_contracts.egress import (
     AddressPolicy,
     Bounds,
     CanonicalURL,

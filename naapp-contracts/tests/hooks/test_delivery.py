@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.hooks.delivery import (
+from aweb_naapp_contracts.hooks.delivery import (
     MAX_DELIVERY_BYTES,
     ReceiveOptions,
     sign_delivery,
     verify_delivery,
 )
-from aweb_naapp.hooks.envelope import Refused
+from aweb_naapp_contracts.hooks.envelope import Refused
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTOR = json.loads(

@@ -19,7 +19,7 @@ from awid.did import did_key_from_signing_key, public_key_from_did
 from awid.signature_wire import sign_bytes, verify_bytes
 from nacl.exceptions import BadSignatureError
 
-from aweb_naapp.hooks.strictjson import (
+from aweb_naapp_contracts.hooks.strictjson import (
     Refused,
     canonical,
     decode_base64url,

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.egress import (
+from aweb_naapp_contracts.egress import (
     PUBLIC_SUFFIX_LIST_VERSION,
     EgressRefused,
     HeaderRules,

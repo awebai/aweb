@@ -20,8 +20,8 @@ from awid.signing import canonical_json_bytes, sign_message
 from cryptography.hazmat.primitives.asymmetric import ec
 from nacl.signing import SigningKey
 
-from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS, owner_act_signing_bytes
-from aweb_naapp.hooks.strictjson import canonical, encode_signature
+from aweb_naapp_contracts.hooks.owner_act import HUMAN_ROLE_ACTS, owner_act_signing_bytes
+from aweb_naapp_contracts.hooks.strictjson import canonical, encode_signature
 
 TEAM_SEED = bytes(range(0x21, 0x41))
 ADMIN_SEED = bytes(range(0x41, 0x61))
