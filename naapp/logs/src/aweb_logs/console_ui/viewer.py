@@ -28,7 +28,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from aweb_naapp.console import ConsoleRoute, ConsoleSession
-from aweb_naapp.console.browser import ConsoleShell, login_redirect
+from aweb_naapp.console.browser import ConsoleShell, member_refusal
 from aweb_naapp.hooks import envelope as hook_envelope
 from aweb_naapp.hooks.producer import VIEW_MAX_AGE
 from fastapi import APIRouter, HTTPException, Request
@@ -379,8 +379,8 @@ class Viewer:
         self.reads = reads
 
     def refused(self, error: HTTPException) -> Response:
-        if error.status_code == 401:
-            return login_redirect(error)
+        if error.status_code == 401 or member_refusal(error) is not None:
+            return self.shell.refused_page(error)
         if error.status_code == 404:
             return self.shell.recovery_page(
                 error,

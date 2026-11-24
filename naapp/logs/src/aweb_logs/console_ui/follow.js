@@ -47,7 +47,12 @@
       setTimeout(poll, interval);
       return;
     }
-    if (response.status === 401) return stop("follow-ended");
+    if (response.status === 503) {
+      show("retrying", "Events cannot be read right now. Retrying…");
+      setTimeout(poll, interval);
+      return;
+    }
+    if (response.status === 401 || response.status === 403) return stop("follow-ended");
     if (!response.ok) return stop("follow-failed");
     const page = eventsOf(body);
     if (!page) return stop("follow-failed");

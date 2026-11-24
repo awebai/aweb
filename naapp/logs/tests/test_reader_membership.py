@@ -14,6 +14,7 @@ from aweb_naapp_testing.owner_acts import TEAM_ID
 
 from .reader_world import CONSOLE, reader_scope, world_fixture  # noqa: F401
 from .test_reader_handoffs import Aw, aw  # noqa: F401
+from .test_reader_viewer import Html
 
 # Longer than any membership evidence stays fresh.
 EVIDENCE_WINDOW_NS = 61 * 1_000_000_000
@@ -158,3 +159,43 @@ async def test_two_sessions_of_one_holding_open_at_once(aw: Aw):  # noqa: F811
     for key, issued in opened:
         assert (await aw.get(key, issued, "/v1/events")).status_code == 200
     assert (await login(aw)).status_code == 200
+
+
+PAGES = ("/", "/login", "/events", "/follow", "/integrity")
+
+
+@pytest.mark.parametrize("path", PAGES)
+async def test_a_page_refused_to_a_non_member_leads_on_to_sign_in(
+    aw: Aw,  # noqa: F811
+    clock: Clock,
+    path: str,
+):
+    await signed_in(aw)
+    await removed_from_team(aw)
+    clock.expire_evidence()
+    refused = await aw.client.get(path)
+    assert refused.status_code == 403
+    action = Html(refused.text).all("a", id="console-recovery-action")[0]
+    # The way on ends at a page: the refused session is closed, so nothing loops.
+    after = await aw.client.get(action["href"])
+    assert after.status_code == 200
+    assert not Html(after.text).all("a", id="console-recovery-action")
+
+
+@pytest.mark.parametrize("path", PAGES)
+async def test_a_page_that_cannot_check_membership_retries_itself(
+    aw: Aw,  # noqa: F811
+    clock: Clock,
+    path: str,
+):
+    await signed_in(aw)
+    clock.expire_evidence()
+    aw.world.registry.transport.down = True
+    refused = await aw.client.get(path)
+    assert refused.status_code == 503
+    action = Html(refused.text).all("a", id="console-recovery-action")[0]
+    assert action["href"] == ""
+    aw.world.registry.transport.down = False
+    retried = await aw.client.get(path, follow_redirects=True)
+    assert retried.status_code == 200
+    assert not Html(retried.text).all("a", id="console-recovery-action")

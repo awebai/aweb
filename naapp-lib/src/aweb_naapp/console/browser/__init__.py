@@ -16,6 +16,7 @@ CSRF storage key and the copy they show. ``console.js`` exports
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from html import escape
@@ -29,6 +30,51 @@ from aweb_naapp.console import ConsoleRoute, ConsoleSession, ConsoleSessions
 from aweb_naapp.css import CSS_SHA256
 
 _ASSETS = files(__package__)
+
+
+@dataclass(frozen=True)
+class MemberRefusal:
+    """What a person reads, and can do, when a member check refuses them."""
+
+    status: int
+    message: str
+    remedy: str
+    action_href: str
+    action_label: str
+
+
+# By the refusal's code. An empty link reloads the page that was refused; a
+# definite refusal has closed the session, so sign-in does not lead back to it.
+MEMBER_REFUSALS = {
+    "principal_not_member": MemberRefusal(
+        403,
+        "Your current team membership does not open this console.",
+        "If you are a member of the team, start a sign-in from aw once, then sign in here. "
+        "Otherwise ask the team’s owner.",
+        "/login",
+        "Go to sign-in",
+    ),
+    "principal_not_human": MemberRefusal(
+        403,
+        "This console needs a member identity registered as a person’s.",
+        "Ask the team’s owner how your identity is registered.",
+        "/login",
+        "Go to sign-in",
+    ),
+    "principal_status_unavailable": MemberRefusal(
+        503,
+        "Your team membership cannot be checked right now.",
+        "Try again in a moment.",
+        "",
+        "Try again",
+    ),
+}
+
+
+def member_refusal(error: HTTPException) -> MemberRefusal | None:
+    """The member check's refusal ``error`` is, or None for any other error."""
+    refusal = MEMBER_REFUSALS.get(error.detail) if isinstance(error.detail, str) else None
+    return refusal if refusal is not None and refusal.status == error.status_code else None
 
 
 @dataclass(frozen=True)
@@ -110,6 +156,9 @@ class ConsoleShell:
                 "data-copy-waiting": copy.waiting,
                 "data-copy-failed": copy.failed,
                 "data-copy-sign-out-failed": copy.sign_out_failed,
+                "data-copy-member-refusals": json.dumps(
+                    {code: f"{r.message} {r.remedy}" for code, r in MEMBER_REFUSALS.items()}
+                ),
             }
         )
         product = escape(self.brand.product)
@@ -149,12 +198,32 @@ class ConsoleShell:
             f"{escape(copy.reauth_link)}</a></section>",
         )
 
+    def refused_page(self, error: HTTPException) -> Response:
+        """A browser GET's refusal by the session: a member refusal as a page
+        with its remedy, a 401 as login_redirect, any other raised again."""
+        refusal = member_refusal(error)
+        if refusal is None:
+            return login_redirect(error)
+        return self.recovery_page(
+            error,
+            message=refusal.message,
+            remedy=refusal.remedy,
+            action_href=refusal.action_href,
+            action_label=refusal.action_label,
+        )
+
     def recovery_page(
-        self, error: HTTPException, *, message: str, action_href: str, action_label: str
+        self,
+        error: HTTPException,
+        *,
+        message: str,
+        action_href: str,
+        action_label: str,
+        remedy: str = "",
     ) -> HTMLResponse:
         """A browser GET refusal as a page: its own status and headers, one sentence, one way on.
 
-        message, action_href and action_label are fixed by the caller, never request values.
+        message, remedy, action_href and action_label are fixed by the caller, never request values.
         The page sits outside console_page's per-tab guard, so it shows without a CSRF token,
         and it shows nothing the refused read would have shown. Serve through ConsoleRoute.
         A 401 goes to login_redirect instead.
@@ -162,7 +231,8 @@ class ConsoleShell:
         response = self.page(
             message,
             f'<section id="console-recovery"><h1>{escape(message)}</h1>'
-            f'<p><a id="console-recovery-action" href="{escape(action_href, quote=True)}">'
+            + (f"<p>{escape(remedy)}</p>" if remedy else "")
+            + f'<p><a id="console-recovery-action" href="{escape(action_href, quote=True)}">'
             f"{escape(action_label)}</a></p></section>",
         )
         response.status_code = error.status_code
@@ -195,7 +265,7 @@ class ConsoleShell:
                 session = await sessions.current(request)
                 body_html = await home(session)
             except HTTPException as error:
-                return login_redirect(error)
+                return self.refused_page(error)
             return self.console_page(title=home_title, body_html=body_html, session=session)
 
         @router.get("/login", response_class=HTMLResponse)
@@ -212,7 +282,7 @@ class ConsoleShell:
                 await sessions.current(request)
             except HTTPException as error:
                 if error.status_code != 401:
-                    raise
+                    return self.refused_page(error)
                 response = self.page(
                     copy.title,
                     f"<h1>{escape(copy.heading)}</h1><p>{escape(copy.unscoped_hint)}</p>",
