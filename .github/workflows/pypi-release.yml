@@ -19,9 +19,6 @@ jobs:
     if: startsWith(github.event.release.tag_name, 'server-v') || startsWith(github.event.release.tag_name, 'awid-service-v')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      contents: read
-      id-token: write
     env:
       TAG: ${{ github.event.release.tag_name }}
     steps:
@@ -49,4 +46,5 @@ jobs:
       - name: Publish or adopt the locked release files
         env:
           ASSETS: ${{ runner.temp }}/release-assets
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: python3 scripts/publish_release.py --only pypi --assets "$ASSETS" "$TAG"
