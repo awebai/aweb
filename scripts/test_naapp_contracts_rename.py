@@ -141,6 +141,43 @@ class NamesImportedFromAPackage(unittest.TestCase):
         )
 
 
+class ContractTestSupport(unittest.TestCase):
+    def test_contract_test_modules_move_to_the_contracts_testing_package(self):
+        for module in ("network", "production_registry", "team_facts", "human_members"):
+            with self.subTest(module=module):
+                self.assertEqual(
+                    _rename(f"from aweb_naapp_testing.{module} import thing\n"),
+                    f"from aweb_naapp_contracts_testing.{module} import thing\n",
+                )
+
+    def test_the_root_names_move_with_the_root(self):
+        self.assertEqual(
+            _rename("from aweb_naapp_testing import REGISTRY_URL, Member, did_key\n"),
+            "from aweb_naapp_contracts_testing import REGISTRY_URL, Member, did_key\n",
+        )
+
+    def test_runtime_test_support_is_left_alone(self):
+        source = (
+            "from aweb_naapp_testing.owner_acts import TeamOwner\n"
+            "from aweb_naapp_testing.webauthn import SoftAuthenticator\n"
+            'pytest_plugins = ("pgdbm.fixtures.conftest", "aweb_naapp_testing.server")\n'
+        )
+        self.assertEqual(_rename(source), source)
+
+    def test_a_root_import_naming_a_runtime_module_is_split(self):
+        self.assertEqual(
+            _rename("from aweb_naapp_testing import Member, owner_acts\n"),
+            "from aweb_naapp_testing import owner_acts\n"
+            "from aweb_naapp_contracts_testing import Member\n",
+        )
+
+    def test_the_bare_testing_package_is_reported(self):
+        source = "import aweb_naapp_testing\n"
+        renamed, ambiguous = rename_source(source)
+        self.assertEqual(renamed, source)
+        self.assertEqual(ambiguous, [(1, "aweb_naapp_testing")])
+
+
 class AmbiguousReferences(unittest.TestCase):
     def test_the_bare_hooks_package_is_reported_not_guessed(self):
         source = "import aweb_naapp.hooks\n"

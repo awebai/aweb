@@ -3,16 +3,18 @@
 
 The naapp contracts (manifest, egress, the hook wire formats, task requests and
 their helpers) are published as the aweb-naapp-contracts distribution under the
-import name aweb_naapp_contracts. Code that imported them from aweb_naapp runs
-this over its Python files:
+import name aweb_naapp_contracts, and their test support (the AWID member and
+registry helpers and the network fixtures) as aweb-naapp-contracts-testing,
+imported as aweb_naapp_contracts_testing. Code that imported them from
+aweb_naapp or aweb_naapp_testing runs this over its Python files:
 
     python3 scripts/naapp_contracts_rename.py PATH [PATH ...]
 
 Dotted names are renamed wherever they appear, in imports, strings and
 comments. ``from aweb_naapp[.hooks|.runtime] import ...`` statements that name
 both contract and runtime modules are split in two. A reference the script
-cannot place (the bare ``aweb_naapp.hooks`` package, or a split import with a
-comment inside) is printed with its line and left as it is, and the exit status
+cannot place (the bare ``aweb_naapp.hooks`` or ``aweb_naapp_testing`` package,
+or a split import with a comment inside) is printed with its line and left as it is, and the exit status
 is 1, so a person decides it. The pgdbm migration module name
 ``aweb_naapp_hooks`` is a different name and is never touched.
 
@@ -30,6 +32,22 @@ from dataclasses import dataclass
 from pathlib import Path
 
 CONTRACTS = "aweb_naapp_contracts"
+CONTRACTS_TESTING = "aweb_naapp_contracts_testing"
+# The contract test support that moves out of aweb_naapp_testing: its root
+# names and these modules.
+_TESTING_MODULES = ("network", "production_registry", "team_facts", "human_members")
+_TESTING_ROOT_NAMES = {
+    "REGISTRY_URL",
+    "SERVICE_TOKEN",
+    "Member",
+    "RecordingTransport",
+    "Registry",
+    "attested",
+    "awid_registry",
+    "did_key",
+    "envelope_headers",
+    "utc_timestamp",
+}
 
 # Contract modules under each aweb_naapp package that a ``from X import name``
 # can name, and where each lands in the contracts package.
@@ -43,6 +61,7 @@ _IMPORTED_MODULES = {
         {"strictjson", "owner_act", "owner_act_nonces", "catalog", "envelope", "delivery"},
     ),
     "aweb_naapp.runtime": (CONTRACTS, {"task_requests"}),
+    "aweb_naapp_testing": (CONTRACTS_TESTING, _TESTING_ROOT_NAMES | set(_TESTING_MODULES)),
 }
 
 _DOTTED = re.compile(
@@ -52,11 +71,17 @@ _DOTTED = re.compile(
     r"|client_identity|did_key|key_file|manifest_keys|manifest|egress)"
     r"(?![A-Za-z0-9_])"
 )
+_DOTTED_TESTING = re.compile(
+    r"\baweb_naapp_testing\.(" + "|".join(_TESTING_MODULES) + r")(?![A-Za-z0-9_])"
+)
 _PACKAGED_HOOKS = re.compile(r"""files\((["'])aweb_naapp\.hooks\1\)""")
-# A ``from aweb_naapp.hooks import`` left after the split names runtime hooks only.
-_BARE_HOOKS = re.compile(r"\baweb_naapp\.hooks(?![.A-Za-z0-9_])(?! import )")
+# A ``from aweb_naapp.hooks import`` or ``from aweb_naapp_testing import`` left
+# after the split names runtime modules only.
+_BARE_PACKAGES = re.compile(
+    r"\b(?:aweb_naapp\.hooks|aweb_naapp_testing)(?![.A-Za-z0-9_])(?! import )"
+)
 _TEXT_IMPORT = re.compile(
-    r"from (aweb_naapp(?:\.hooks|\.runtime)?) import ([A-Za-z_][A-Za-z0-9_]*(?: as [A-Za-z_][A-Za-z0-9_]*)?"
+    r"from (aweb_naapp(?:\.hooks|\.runtime)?|aweb_naapp_testing) import ([A-Za-z_][A-Za-z0-9_]*(?: as [A-Za-z_][A-Za-z0-9_]*)?"
     r"(?:, *[A-Za-z_][A-Za-z0-9_]*(?: as [A-Za-z_][A-Za-z0-9_]*)?)*)"
 )
 _LINE_LENGTH = 100
@@ -120,8 +145,9 @@ def rename_source(source: str) -> tuple[str, list[tuple[int, str]]]:
     renamed = "\n".join(lines)
     renamed = _PACKAGED_HOOKS.sub(lambda m: f"files({m.group(1)}{CONTRACTS}.hooks{m.group(1)})", renamed)
     renamed = _DOTTED.sub(_dotted, renamed)
+    renamed = _DOTTED_TESTING.sub(lambda m: f"{CONTRACTS_TESTING}.{m.group(1)}", renamed)
     for number, line in enumerate(renamed.split("\n"), start=1):
-        for match in _BARE_HOOKS.finditer(line):
+        for match in _BARE_PACKAGES.finditer(line):
             ambiguous.append((number, match.group(0)))
         # Real import statements were split above; one still naming a contract
         # module is inside a string, where only a person can rewrite it.
