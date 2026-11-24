@@ -187,7 +187,14 @@ fi
 pending=""
 for stage in $REQUESTED; do
   case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
-  if [[ "$(recorded "$stage" | cut -f3)" == passed ]]; then
+  row="$(recorded "$stage")"
+  if [[ "$stage" == checks && "$(cut -f10 <<<"$row")" == "federation harness pytest in unit"* &&
+        " $REQUESTED " != *" unit "* && "$(recorded unit | cut -f3)" != passed ]]; then
+    # An interrupted combined attempt may have committed checks before
+    # the unit stage ran the harness. A checks-only caller needs both.
+    row=""
+  fi
+  if [[ "$(cut -f3 <<<"$row")" == passed ]]; then
     printf 'gate: tree %s already passed %s; original log %s\n' "$TREE" "$stage" "$(recorded "$stage" | cut -f6)"
     if [[ "$stage" == user-paths ]]; then
       # Reusing the proof must not hide its coverage gap in an otherwise green gate.

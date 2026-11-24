@@ -126,7 +126,7 @@ fi
 #    artifact and requires a diagnostic failure. Both directions matter: an
 #    always-red gate is no more trustworthy than an always-green one.
 section "freshness negative fixtures (clean pass + stale fail)"
-if scripts/test-freshness-negative-fixtures.sh; then
+if scripts/test-freshness-negative-fixtures.sh "$@"; then
   echo "freshness checks pass clean fixtures and reject stale fixtures"
 else
   echo "FAIL: a freshness check did not prove both its positive and negative direction"

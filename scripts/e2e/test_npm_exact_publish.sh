@@ -11,6 +11,11 @@
 
 set -euo pipefail
 
+case "$#:${1:-}" in
+  0:|1:--readback-already-tested) ;;
+  *) printf 'usage: %s [--readback-already-tested]\n' "$0" >&2; exit 2 ;;
+esac
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LANE="$ROOT/scripts/npm-exact-publish.sh"
 PASS=0
@@ -377,8 +382,12 @@ expect_refusal "guard probe refuses outage" "never proof of absence" \
 # ── post-action readback: real owned registry, no external publication ──
 expect_refusal "readback requires an earlier publish/adopt" "post-action" \
   verify-published-bounded --tgz "$staged" --package '@awebai/lane-fixture' --version 1.2.3
-python3 "$ROOT/scripts/test_npm_readback.py"
-ok "bounded exact readback and all seven aw packages verified against owned registry"
+if [[ "${1:-}" == --readback-already-tested ]]; then
+  echo "owned-registry readback self-test already passed in candidate checks"
+else
+  python3 "$ROOT/scripts/test_npm_readback.py"
+  ok "bounded exact readback and all seven aw packages verified against owned registry"
+fi
 
 # ── committed metadata and ZIP source/output contract ───────────────
 node - "$ROOT" <<'NODE'

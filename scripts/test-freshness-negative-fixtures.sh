@@ -6,6 +6,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+case "$#:${1:-}" in
+  0:|1:--cli-reference-already-tested) ;;
+  *) printf 'usage: %s [--cli-reference-already-tested]\n' "$0" >&2; exit 2 ;;
+esac
+
 run_self_test() {
   local label="$1" expected="$2"
   shift 2
@@ -24,9 +29,13 @@ run_self_test() {
 run_self_test "Python lock" \
   "self-test passed: clean locks pass; stale AWID versions in server, naapp-lib, naapp/folio, naapp/library, naapp/secrets and naapp/logs and a missing dependent-lock dependency fail" \
   bash scripts/check-python-locks.sh --self-test
-run_self_test "generated CLI reference" \
-  "self-test passed: clean generation plus visible-addition, removed-command, and stale-output controls" \
-  bash scripts/regenerate-cli-reference.sh --self-test
+if [[ "${1:-}" == --cli-reference-already-tested ]]; then
+  echo "generated CLI reference self-test already passed in candidate checks"
+else
+  run_self_test "generated CLI reference" \
+    "self-test passed: clean generation plus visible-addition, removed-command, and stale-output controls" \
+    bash scripts/regenerate-cli-reference.sh --self-test
+fi
 run_self_test "AWID public site document links" \
   "self-test passed: generated documents pass; dead publication-context links fail" \
   bash scripts/test-awid-site-doc-links.sh

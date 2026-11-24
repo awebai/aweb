@@ -68,7 +68,13 @@ finalize_candidate() {
     fi
     cp "$LOG_DIR/$stage.log" "$stage_log" || return 1
     if [[ " $eligible " == *" $stage "* ]] && candidate_stage_passed "$stage" "$retained/summary.tsv" "$stage_log"; then
-      record_candidate_row "$stage" passed "$stage_log" || return 1
+      # The checks-only caller needs to know whether the native harness
+      # pytest was delegated to unit before it reuses this stage.
+      local stage_note=""
+      if [[ "$stage" == checks ]]; then
+        stage_note="$(awk -F '\t' '$1 == "checks" { print $5 }' "$retained/summary.tsv")" || return 1
+      fi
+      record_candidate_row "$stage" passed "$stage_log" "$stage_note" || return 1
     elif [[ "$interrupted" == 0 ]]; then
       record_candidate_row "$stage" failed "$stage_log" || return 1
       status=1

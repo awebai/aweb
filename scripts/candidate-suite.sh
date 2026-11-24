@@ -26,7 +26,35 @@ run_step() {
   fi
 }
 
+passed_in_checks() {
+  awk -F '\t' -v entry="checks/$1" '
+    $1 == entry { count++; passed = ($2 == "PASSED") }
+    END { exit !(count == 1 && passed) }
+  ' "$summary"
+}
+
 run() {
+  local target="$1"
+  local -a args=()
+  case "$stage/$target" in
+    checks/test-federation-harness)
+      if [[ "$selected" == *" unit "* ]]; then
+        args+=(FEDERATION_HARNESS_IN_UNIT=1)
+      fi ;;
+    integration/freshness)
+      if passed_in_checks test-cli-reference; then
+        args+=(FRESHNESS_ARGS=--cli-reference-already-tested)
+      fi ;;
+    integration/test-npm-exact-publish)
+      if passed_in_checks test-shipping; then
+        args+=(NPM_EXACT_PUBLISH_TEST_ARGS=--readback-already-tested)
+      fi ;;
+    unit/test-identity-primitives|unit/test-vector-provenance|unit/test-sot-source-inventories|unit/test-python-locks|unit/lint-naapp)
+      if passed_in_checks "$target"; then
+        printf 'candidate: %s already passed in checks\n' "$target"
+        return
+      fi ;;
+  esac
   # These journeys use the CLI built in this runner. The other integration
   # targets build their own inputs or have no dependency on a stage artifact.
   case "$stage/$1" in
@@ -37,7 +65,7 @@ run() {
         return
       fi ;;
   esac
-  run_step "$1" make "$1"
+  run_step "$target" make "$target" ${args[@]+"${args[@]}"}
 }
 
 if [[ "${1:-}" == "--isolated-suites" ]]; then
@@ -106,8 +134,8 @@ user-paths() {
   run e2e-user-paths
 }
 unit() {
-  # Keep source controls first, and keep collecting the independent results
-  # when one of them finds a defect.
+  # Standalone unit still proves the source controls. A combined run can
+  # reuse controls that already passed in checks on this invocation.
   run test-identity-primitives
   run test-vector-provenance
   run test-sot-source-inventories
@@ -192,6 +220,9 @@ for stage in $all_stages; do
     if [[ "$suite_status" == 0 ]]; then suite_status=$status; fi
   fi
   coverage=""
+  if [[ "$stage" == checks && "$selected" == *" unit "* ]]; then
+    coverage="federation harness pytest in unit"
+  fi
   if [[ "$stage" == user-paths && -f "$log_dir/user-paths/coverage-summary.txt" ]]; then
     coverage="$(cat "$log_dir/user-paths/coverage-summary.txt")"
     printf 'user-paths coverage: %s\n' "$coverage"

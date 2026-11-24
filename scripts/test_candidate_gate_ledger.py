@@ -71,7 +71,7 @@ class CompleteGateVerdictTests(unittest.TestCase):
             root = Path(temporary)
             (root / "host-published-port.log").write_text("host preflight\n")
             for name, command in {
-                "make": 'case " $FAILURES " in *" $1 "*) exit 23;; esac\n',
+                "make": 'printf "make %s\\n" "$*"\ncase " $FAILURES " in *" $1 "*) exit 23;; esac\n',
                 "docker": "exit 0\n",
             }.items():
                 tool = root / name
@@ -96,6 +96,41 @@ class CompleteGateVerdictTests(unittest.TestCase):
                     line.split("\t")[:2] for line in summary.read_text().splitlines()
                 )
             return result, rows
+
+    def test_duplicate_controls_reuse_only_their_own_candidate_proof(self):
+        shared_checks = (
+            "test-identity-primitives", "test-vector-provenance",
+            "test-sot-source-inventories", "test-python-locks", "lint-naapp",
+        )
+        result, rows = self.suite("checks unit integration")
+        lines = result.stdout.splitlines()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        for target in shared_checks:
+            self.assertEqual(lines.count(f"make {target}"), 1)
+            self.assertNotIn(f"unit/{target}", rows)
+        self.assertIn("make test-federation-harness FEDERATION_HARNESS_IN_UNIT=1", lines)
+        self.assertIn("make freshness FRESHNESS_ARGS=--cli-reference-already-tested", lines)
+        self.assertIn(
+            "make test-npm-exact-publish NPM_EXACT_PUBLISH_TEST_ARGS=--readback-already-tested",
+            lines,
+        )
+
+        for selection, targets in (
+            ("checks", ("test-federation-harness",)),
+            ("unit", shared_checks),
+            ("integration", ("freshness", "test-npm-exact-publish")),
+        ):
+            with self.subTest(selection=selection):
+                result, _ = self.suite(selection)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                for target in targets:
+                    self.assertIn(f"make {target}", result.stdout.splitlines())
+
+        result, rows = self.suite("checks unit integration", "test-shipping", "test-cli-reference")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(rows["checks"], "FAILED")
+        self.assertIn("make test-npm-exact-publish", result.stdout.splitlines())
+        self.assertIn("make freshness", result.stdout.splitlines())
 
     def test_every_stage_and_independent_target_reports_after_failures(self):
         result, rows = self.suite(

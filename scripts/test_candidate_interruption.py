@@ -27,6 +27,7 @@ class CandidateInterruption(unittest.TestCase):
         during_cleanup="",
         parent_only=False,
         late_summary=False,
+        harness_in_unit=False,
     ):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -63,7 +64,7 @@ run_candidate() {
   trap 'cleanup_control 130' INT
  fi
  printf '%s\\n' "$CONTROL_RUN_ID" > "$LOG_DIR/run-id"
- printf 'checks\\tPASSED\\tchecks.log\\t1s\\t\\nartifacts\\tPASSED\\tartifacts.log\\t2s\\t\\n' > "$LOG_DIR/summary.tsv"
+ printf 'checks\\tPASSED\\tchecks.log\\t1s\\t%s\\nartifacts\\tPASSED\\tartifacts.log\\t2s\\t\\n' "$CHECKS_NOTE" > "$LOG_DIR/summary.tsv"
  if [[ "$EMPTY_LOG" == 0 ]]; then printf 'real completed checks\\n' > "$LOG_DIR/checks.log"; else : > "$LOG_DIR/checks.log"; fi
  printf 'real completed artifacts\\n' > "$LOG_DIR/artifacts.log"
  printf 'integration incomplete\\n' > "$LOG_DIR/integration.log"
@@ -135,6 +136,7 @@ run_candidate() {
             CLEANUP_CONTROL=str(int(cleanup_control)),
             DURING_CLEANUP=during_cleanup,
             LATE_SUMMARY=str(int(late_summary)),
+            CHECKS_NOTE="federation harness pytest in unit" if harness_in_unit else "",
         )
         env.pop(
             "AWEB_GATE_RUN_REGISTRY", None
@@ -266,6 +268,35 @@ run_candidate() {
         code, rows, _, _ = self.invoke(run_id="old-run")
         self.assertEqual(code, 143)
         self.assertEqual(rows, [])
+
+    def test_interrupted_checks_delegation_requires_unit_proof(self):
+        code, rows, logs, output = self.invoke(harness_in_unit=True)
+        self.assertEqual(code, 143, output)
+        checks = next(row for row in rows if row[1] == "checks")
+        self.assertEqual(checks[9], "federation harness pytest in unit")
+        source = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
+        read_ledger = source[source.index("recorded() {"):source.index('failed="$(awk')]
+        select = source[source.index('pending=""'):source.index('if [[ -z "$pending" ]]')]
+        program = read_ledger + select + 'printf "pending=%s\\n" "$pending"\n'
+        ledger = logs.parent / "ledger.tsv"
+        env = dict(os.environ, LEDGER=str(ledger), KEY=checks[0], TREE="fixture-tree")
+
+        def pending(requested):
+            result = subprocess.run(
+                ["bash", "-euc", program], env=dict(env, REQUESTED=requested),
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return result.stdout.splitlines()[-1]
+
+        self.assertEqual(pending("checks"), "pending=checks")
+        self.assertEqual(pending("checks unit"), "pending=unit")
+        unit = [*checks]
+        unit[1] = "unit"
+        unit[9] = ""
+        with ledger.open("a") as stream:
+            stream.write("\t".join(unit) + "\n")
+        self.assertEqual(pending("checks"), "pending=")
 
     def test_empty_stage_log_cannot_supply_pass(self):
         code, rows, _, _ = self.invoke(empty_log=True)

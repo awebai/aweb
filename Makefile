@@ -248,10 +248,12 @@ test-federation-authority-mutations:
 # The direct-core historical harness inventories all 51 contract rows without
 # claiming ingress coverage and kills topology/provenance weakening mutations.
 test-federation-harness:
-	cd server && uv sync --frozen
 	python3 scripts/check_federation_harness.py
 	python3 scripts/check_federation_harness.py --self-test
+ifneq ($(FEDERATION_HARNESS_IN_UNIT),1)
+	cd server && uv sync --frozen
 	cd server && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_federation_preactivation_harness.py
+endif
 
 # The public CLI inventory comes from live Cobra help. Root completion is an
 # independent exact-set control so grouped and Additional Commands cannot vanish
@@ -282,7 +284,7 @@ check-private-boundary:
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
 # fail on drift. The clean local release gate runs it before publication.
 freshness:
-	bash scripts/check-freshness.sh
+	bash scripts/check-freshness.sh $(FRESHNESS_ARGS)
 
 # The Go audit runs in candidate checks under the exact pinned toolchain and
 # consults the live advisory database. Keep it outside deterministic `make test`;
@@ -698,7 +700,7 @@ deploy-site: verify-site
 		echo "Advanced $(SITE_DEPLOY_BRANCH) to $$source_sha; verify the Render deploy and https://awid.ai"
 
 test-npm-exact-publish:
-	bash scripts/e2e/test_npm_exact_publish.sh
+	bash scripts/e2e/test_npm_exact_publish.sh $(NPM_EXACT_PUBLISH_TEST_ARGS)
 
 test-pypi-exact-publish:
 	bash scripts/e2e/test_pypi_exact_publish.sh
