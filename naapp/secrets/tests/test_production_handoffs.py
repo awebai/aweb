@@ -33,7 +33,6 @@ from tests.test_production_bootstrap import signed_in_owner
 async def registered_member(root, registry):
     # Reuse the actual installed production root and its owner bootstrap.
     # Credential collection grants this second certified member no holding.
-    await signed_in_owner(root)
     _, _, _, owner, _, _, _, _ = root
     member = Member(
         team_id=owner.team_id,
@@ -44,6 +43,9 @@ async def registered_member(root, registry):
     principal = await registry.register_did(member.member_key)
     member.extra_cert_fields = {"member_did_aw": principal}
     await registry.add_certificate(member.certificate(), team_key=member.team_key)
+    # Signing in reads the team's facts, which are then kept for a few seconds:
+    # a certificate published after that is not seen at once.
+    await signed_in_owner(root)
     return member, principal
 
 

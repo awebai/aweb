@@ -102,6 +102,8 @@ class Aw:
     outsider: tuple[Member, str]
     # Both origins, for another browser on the same machine.
     transport: httpx.ASGITransport
+    # What each login adds to the passkey's counter.
+    count_step: int = 1
 
     async def start(self, principal: str | None = None) -> tuple[httpx.Response, SigningKey, str]:
         key = SigningKey.generate()
@@ -144,7 +146,9 @@ class Aw:
         options = await self.client.post(prefix + "/options", json={}, headers=browser)
         assert options.status_code == 200, options.text
         logged_in = await self.client.post(
-            prefix + "/login", json={"assertion": self.device.get(options.json())}, headers=browser
+            prefix + "/login",
+            json={"assertion": self.device.get(options.json(), count_step=self.count_step)},
+            headers=browser,
         )
         assert logged_in.status_code == 200, logged_in.text
         allowed = await self.client.post(prefix + "/allow", json={"allow": True}, headers=browser)

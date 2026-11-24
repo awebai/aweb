@@ -10,6 +10,9 @@ from dataclasses import replace
 import httpx
 import pytest
 from aweb_naapp.runtime import human_member
+from aweb_naapp.runtime.clock import seconds_to_ns
+from aweb_naapp.runtime.team_auth import UNKNOWN_CERTIFICATE_REFRESH_SECONDS
+from aweb_naapp_testing import Member
 from aweb_naapp_testing.owner_acts import TEAM_ID
 from fastapi import HTTPException
 from nacl.signing import SigningKey
@@ -42,6 +45,11 @@ class Clock:
 
     def expire_evidence(self) -> None:
         self.offset += EVIDENCE_WINDOW_NS
+
+    def pass_failed_read(self) -> None:
+        """A failed read of the team's facts answers for a few seconds before
+        the registry is asked again."""
+        self.offset += seconds_to_ns(UNKNOWN_CERTIFICATE_REFRESH_SECONDS + 1)
 
 
 @pytest.fixture
@@ -111,6 +119,7 @@ async def test_an_unreadable_registry_refuses_and_the_session_recovers(aw: Aw, c
     assert outcome(await aw.client.get("/v1/events")) == UNAVAILABLE
     assert await open_sessions(aw) == 1
     aw.world.registry.transport.down = False
+    clock.pass_failed_read()
     assert (await aw.client.get("/v1/events")).status_code == 200
 
 
@@ -149,6 +158,8 @@ async def test_logout_needs_no_membership(aw: Aw, clock: Clock, ended: str):  # 
 
 
 async def test_two_sessions_of_one_holding_open_at_once(aw: Aw):  # noqa: F811
+    # A synced passkey keeps its counter at zero, so two logins may overlap.
+    aw.count_step = 0
     async with httpx.AsyncClient(transport=aw.transport, base_url=CONSOLE) as other:
         async with asyncio.timeout(30):
             opened = await asyncio.gather(aw.open(), replace(aw, client=other).open())
@@ -194,6 +205,7 @@ async def test_a_page_that_cannot_check_membership_retries_itself(
     action = Html(refused.text).all("a", id="console-recovery-action")[0]
     assert action["href"] == ""
     aw.world.registry.transport.down = False
+    clock.pass_failed_read()
     retried = await aw.client.get(path, follow_redirects=True)
     assert retried.status_code == 200
     assert not Html(retried.text).all("a", id="console-recovery-action")
@@ -225,26 +237,30 @@ async def retained(aw: Aw) -> bytes:  # noqa: F811
     )
 
 
+async def certify_anew(aw: Aw, renewed: Member) -> None:  # noqa: F811
+    """The member holds one active certificate: the old one is revoked first."""
+    registry = aw.world.registry
+    await registry.revoke(aw.member.certificate_id, team_id=TEAM_ID)
+    await registry.add_certificate(renewed.certificate(), team_key=renewed.team_key)
+    aw.member = renewed
+
+
 async def reissued(aw: Aw) -> None:  # noqa: F811
     """The member's certificate is replaced, under the same team key."""
-    renewed = replace(aw.member, certificate_id="cert-reissued")
-    registry = aw.world.registry
-    await registry.add_certificate(renewed.certificate(), team_key=renewed.team_key)
-    await registry.revoke(aw.member.certificate_id, team_id=TEAM_ID)
-    aw.member = renewed
+    await certify_anew(aw, replace(aw.member, certificate_id="cert-reissued"))
 
 
 async def rotated(aw: Aw) -> None:  # noqa: F811
-    """The team's key is rotated, and the member certified under the new one."""
+    """The team's key is rotated, which alone refuses the certificate it signed;
+    then the member is certified under the new key."""
     renewed = replace(
         aw.member, team_key=SigningKey.generate(), certificate_id="cert-after-rotation"
     )
-    registry = aw.world.registry
-    await registry.rotate_team_key_by_controller(
+    await aw.world.registry.rotate_team_key_by_controller(
         TEAM_ID, renewed.team_did_key, SigningKey(aw.world.namespace.controller_seed)
     )
-    await registry.add_certificate(renewed.certificate(), team_key=renewed.team_key)
-    aw.member = renewed
+    assert outcome(await login(aw)) == NOT_A_MEMBER
+    await certify_anew(aw, renewed)
 
 
 @pytest.mark.parametrize("change", [reissued, rotated])
