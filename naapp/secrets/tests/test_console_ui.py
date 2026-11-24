@@ -178,3 +178,13 @@ def test_recovery_page_is_exported_in_the_secrets_brand():
     assert "That record is not available · Secrets" in response.body.decode()
     action = next(attrs for tag, attrs in page.tags if attrs.get("id") == "console-recovery-action")
     assert action["href"] == "/activity"
+
+
+def test_membership_help_names_the_deployment():
+    from fastapi import HTTPException
+
+    from aweb_secrets.console_ui import secrets_shell
+
+    page = secrets_shell("sandbox-secrets").refused_page(HTTPException(403, "principal_not_member"))
+    assert page.status_code == 403
+    assert b"sign in to sandbox-secrets from aw." in page.body
