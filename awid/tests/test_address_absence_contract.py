@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
 
+from awid.did import did_key_from_signing_key
 from awid.external_http import PinnedRegistryHTTP
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
@@ -64,9 +65,7 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
 ):
     state = response_server
     domain = f"absence-{uuid4().hex}.example"
-    state["body"] = {
-        "detail": {"code": "address_not_found", "message": "Address not found"}
-    }
+    state["body"] = {"detail": {"code": "address_not_found", "message": "Address not found"}}
     if kind == "legacy":
         state["body"] = {"detail": "Address not found"}
     elif kind == "namespace-legacy":
@@ -91,9 +90,7 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
         }
     redis = Redis.from_url(os.environ["REDIS_URL"]) if cached else None
     client = (
-        CachedRegistryClient(state["origin"], redis)
-        if cached
-        else RegistryClient(state["origin"])
+        CachedRegistryClient(state["origin"], redis) if cached else RegistryClient(state["origin"])
     )
     key = legacy = None
     try:
@@ -101,7 +98,8 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
             key = client._address_cache_key(
                 domain, "person", registry_url=state["origin"], caller_did_key=None
             )
-            legacy = key.replace(":v3:address:", ":v2:address:")
+            legacy = key.replace(":v4:address:", ":v3:address:")
+            assert legacy != key
             await client._write_cache_entry(
                 legacy, value=None, ttl_seconds=60, encode=lambda value: value
             )
@@ -120,9 +118,7 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
                     assert await redis.get(key) is None
         assert len(state["requests"]) == 2
         legacy_reads = [
-            r
-            for r in caplog.records
-            if getattr(r, "event", "") == "awid_legacy_address_not_found"
+            r for r in caplog.records if getattr(r, "event", "") == "awid_legacy_address_not_found"
         ]
         assert len(legacy_reads) == (2 if kind in ("legacy", "namespace-legacy") else 0)
     finally:
@@ -160,8 +156,7 @@ async def test_strict_404_retains_callers_refusal_reason(
         assert refused.value.reason == not_found_reason
         # Strict reads refuse; they do not use the SDK's absence classifier.
         assert not any(
-            getattr(r, "event", "") == "awid_legacy_address_not_found"
-            for r in caplog.records
+            getattr(r, "event", "") == "awid_legacy_address_not_found" for r in caplog.records
         )
     finally:
         await client.aclose()
@@ -210,6 +205,7 @@ async def test_revocation_scan_requires_a_complete_success_not_404(
 ):
     state = response_server
     domain = f"revocations-{uuid4().hex}.example"
+    team_did_key = did_key_from_signing_key(bytes(32))
     state["status"] = 404
     state["body"] = {"detail": "Team not found"}
     if stage == "first":
@@ -220,7 +216,7 @@ async def test_revocation_scan_requires_a_complete_success_not_404(
                 "team_id": f"ops:{domain}",
                 "domain": domain,
                 "name": "ops",
-                "team_did_key": "did:key:known-team",
+                "team_did_key": team_did_key,
                 "created_at": "2026-11-17T00:00:00Z",
             },
         }
@@ -243,33 +239,22 @@ async def test_revocation_scan_requires_a_complete_success_not_404(
     elif stage in ("empty", "revoked"):
         state["status"] = 200
         state["body"] = {
-            "revocations": (
-                [{"certificate_id": "withdrawn"}] if stage == "revoked" else []
-            ),
+            "revocations": ([{"certificate_id": "withdrawn"}] if stage == "revoked" else []),
             "has_more": False,
         }
     redis = Redis.from_url(os.environ["REDIS_URL"]) if cached else None
     client = (
-        CachedRegistryClient(state["origin"], redis)
-        if cached
-        else RegistryClient(state["origin"])
+        CachedRegistryClient(state["origin"], redis) if cached else RegistryClient(state["origin"])
     )
     key = client._team_revocations_cache_key(domain, "ops") if cached else None
-    legacy = (
-        key.replace(":v2:team_revocations:", ":v1:team_revocations:")
-        if cached
-        else None
-    )
+    legacy = key.replace(":v3:team_revocations:", ":v2:team_revocations:") if cached else None
     try:
         if cached:
+            assert legacy != key
             # An old client could stamp an uncoded 404 as a fresh empty set.
-            await client._write_cache_entry(
-                legacy, value=set(), ttl_seconds=60, encode=sorted
-            )
+            await client._write_cache_entry(legacy, value=set(), ttl_seconds=60, encode=sorted)
         if stage == "first":
-            assert (
-                await client.get_team_public_key(domain, "ops") == "did:key:known-team"
-            )
+            assert await client.get_team_public_key(domain, "ops") == team_did_key
         if stage in ("first", "later"):
             with pytest.raises(RegistryError) as refused:
                 await client.get_team_revocations(domain, "ops")
@@ -285,13 +270,9 @@ async def test_revocation_scan_requires_a_complete_success_not_404(
             assert await client.get_team_revocations(domain, "ops") == (
                 {"withdrawn"} if stage == "revoked" else set()
             )
-        assert len(state["requests"]) == (
-            2 if stage in ("missing", "first", "later") else 1
-        )
+        assert len(state["requests"]) == (2 if stage in ("missing", "first", "later") else 1)
         missing_reads = [
-            r
-            for r in caplog.records
-            if getattr(r, "event", "") == "awid_legacy_team_not_found"
+            r for r in caplog.records if getattr(r, "event", "") == "awid_legacy_team_not_found"
         ]
         assert len(missing_reads) == (1 if stage == "missing" else 0)
     finally:

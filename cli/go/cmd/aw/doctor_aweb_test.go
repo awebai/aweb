@@ -245,10 +245,10 @@ func TestAwDoctorAwebOnlineHappyPath(t *testing.T) {
 
 	server := newDoctorAwebServer(t, nil)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorLocalFixture(t, tmp, server.Server.URL)
+	registryURL := writeDoctorLocalFixture(t, tmp, server.Server.URL)
 	before := readWorkspaceYAMLForDoctorTest(t, tmp)
 
-	out, err := runDoctorCLI(t, bin, tmp, "doctor", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, bin, tmp, registryURL, "doctor", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor online failed: %v\n%s", err, string(out))
 	}
@@ -297,7 +297,7 @@ func TestAwDoctorTeamOnlineUsesWorkspaceRoleName(t *testing.T) {
 
 	server := newDoctorAwebServer(t, nil)
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorLocalFixture(t, tmp, server.Server.URL)
+	registryURL := writeDoctorLocalFixture(t, tmp, server.Server.URL)
 	workspacePath := filepath.Join(tmp, awconfig.DefaultWorktreeWorkspaceRelativePath())
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
 	if err != nil {
@@ -311,7 +311,7 @@ func TestAwDoctorTeamOnlineUsesWorkspaceRoleName(t *testing.T) {
 		t.Fatalf("save workspace: %v", err)
 	}
 
-	out, err := runDoctorCLI(t, bin, tmp, "doctor", "team", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, bin, tmp, registryURL, "doctor", "team", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor team failed: %v\n%s", err, string(out))
 	}
@@ -463,9 +463,9 @@ func TestAwDoctorTeamMembershipAuthorizedDetectsTeamMismatch(t *testing.T) {
 
 	server := newDoctorAwebServer(t, &doctorAwebServer{RolesTeamID: "backend:other.example.com"})
 	bin, tmp := buildDoctorBinary(t)
-	writeDoctorLocalFixture(t, tmp, server.Server.URL)
+	registryURL := writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
-	out, err := runDoctorCLI(t, bin, tmp, "doctor", "team", "--online", "--json")
+	out, err := runDoctorCLIWithRegistry(t, bin, tmp, registryURL, "doctor", "team", "--online", "--json")
 	if err != nil {
 		t.Fatalf("doctor team failed: %v\n%s", err, string(out))
 	}

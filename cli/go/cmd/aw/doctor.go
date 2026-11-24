@@ -394,6 +394,7 @@ func (r *doctorRunner) addContractCheck() {
 func (r *doctorRunner) runCategory(category string) {
 	switch category {
 	case "local":
+		r.runSignupRecoveryCheck()
 		r.runLocalChecks()
 	case "identity":
 		r.runIdentityDoctorChecks()

@@ -270,37 +270,27 @@ async def create_conversation(
     # a savepoint would only add two round trips.
     in_transaction = isinstance(aweb_db, TransactionManager)
     async with (nullcontext(aweb_db) if in_transaction else aweb_db.transaction()) as tx:
-        row = await tx.fetch_one(
-            """
-            INSERT INTO {{tables.conversations}} (
-                conversation_id, conversation_type, team_id, created_by_did,
-                created_at, updated_at, expires_at
-            )
-            VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $5, $6)
-            RETURNING conversation_id, conversation_type, status, team_id, created_by_did,
-                      created_at, updated_at, closed_at, expires_at
-            """,
-            conversation_uuid,
-            normalized_type,
-            team_id,
-            creator_did,
-            now,
-            effective_expires_at,
-        )
-        if not row:
-            raise ServiceError("Failed to create conversation")
-        conversation_id = row["conversation_id"]
-        # One statement for every participant, returned in the order
-        # list_conversation_participants reads them.
         participant_rows = await tx.fetch_all(
             """
-            WITH inserted AS (
+            WITH conversation AS (
+                INSERT INTO {{tables.conversations}} (
+                    conversation_id, conversation_type, team_id, created_by_did,
+                    created_at, updated_at, expires_at
+                )
+                VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $5, $6)
+                RETURNING conversation_id, conversation_type, status, team_id, created_by_did,
+                          created_at, updated_at, closed_at, expires_at
+            ), inserted AS (
                 INSERT INTO {{tables.conversation_participants}} (
                     conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
                 )
-                SELECT $1, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
-                FROM unnest($2::text[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[])
-                    AS p(did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role)
+                SELECT c.conversation_id, p.did, p.agent_id, p.alias, p.address, p.delivery_origin,
+                       p.current_did_key, p.transport_hint, p.role
+                FROM conversation c
+                CROSS JOIN unnest(
+                    $7::text[], $8::uuid[], $9::text[], $10::text[],
+                    $11::text[], $12::text[], $13::text[], $14::text[]
+                ) AS p(did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role)
                 ON CONFLICT (conversation_id, did) DO UPDATE
                 SET agent_id = EXCLUDED.agent_id,
                     alias = EXCLUDED.alias,
@@ -312,9 +302,17 @@ async def create_conversation(
                 RETURNING conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key,
                           transport_hint, role, joined_at
             )
-            SELECT * FROM inserted ORDER BY joined_at, alias
+            SELECT c.*, p.did, p.agent_id, p.alias, p.address, p.delivery_origin,
+                   p.current_did_key, p.transport_hint, p.role, p.joined_at
+            FROM conversation c JOIN inserted p USING (conversation_id)
+            ORDER BY p.joined_at, p.alias
             """,
-            conversation_id,
+            conversation_uuid,
+            normalized_type,
+            team_id,
+            creator_did,
+            now,
+            effective_expires_at,
             [participant["did"] for participant in participant_records],
             [participant["agent_id"] for participant in participant_records],
             [participant["alias"] for participant in participant_records],
@@ -324,8 +322,10 @@ async def create_conversation(
             [participant["transport_hint"] for participant in participant_records],
             [participant["role"] for participant in participant_records],
         )
+        if not participant_rows:
+            raise ServiceError("Failed to create conversation")
 
-    conversation = _conversation_dict(dict(row))
+    conversation = _conversation_dict(dict(participant_rows[0]))
     conversation["participants"] = [_participant_dict(dict(participant)) for participant in participant_rows]
     return conversation
 

@@ -1,9 +1,42 @@
-"""Wire-shape validation for Ed25519 message signatures."""
+"""Plaintext message signature shape and authenticated authorship."""
 
 from __future__ import annotations
 
 import base64
 import binascii
+import logging
+
+from awid.signing import verify_did_key_signature
+from aweb.messaging.refusals import DeliveryRefusal
+from http import HTTPStatus
+
+logger = logging.getLogger(__name__)
+
+INVALID_MESSAGE_SIGNATURE = (
+    "The message signature does not verify. "
+    "Sign the message again with the authenticated sender's key and resend it."
+)
+
+
+def require_verified_message_signature(
+    *, signed_payload: str, signature: str, did_key: str
+) -> None:
+    """Authenticate original bytes under the transport sender's key.
+
+    Implements Direct Address Send Protocol (docs/identity-messaging-contract.md:156-168).
+    """
+    try:
+        verify_did_key_signature(
+            did_key=did_key,
+            payload=signed_payload.encode("utf-8"),
+            signature_b64=signature,
+        )
+    except ValueError as exc:
+        logger.warning("message_signature_invalid")
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail=INVALID_MESSAGE_SIGNATURE,
+        ) from exc
 
 
 ED25519_SIGNATURE_BYTES = 64

@@ -71,6 +71,9 @@ func TestChatToAPersonSaysToUseMail(t *testing.T) {
 			default:
 				_ = json.NewEncoder(w).Encode(awid.ChatCreateSessionResponse{SessionID: "agent-1", MessageID: "chat-1"})
 			}
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/chat/sessions/") && strings.HasSuffix(r.URL.Path, "/messages"):
+			// A session's history: no encrypted message to inherit.
+			_ = json.NewEncoder(w).Encode(awid.ChatHistoryResponse{Messages: []awid.ChatMessage{}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions/human-1/messages":
 			refuse(w, "recipient_human_mail_only", "juan")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions/group-1/messages":

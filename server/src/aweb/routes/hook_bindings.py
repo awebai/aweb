@@ -15,9 +15,9 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from aweb.application_state import application_registry_client, native_application_state
 from aweb.awid_error_handling import (
     awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
 )
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.hook_bindings import (
@@ -34,10 +34,10 @@ from aweb.service_errors import ServiceError
 from aweb.team_auth_deps import get_team_identity
 from aweb.team_key_pins import (
     TeamKeyUnverified,
-    pinned_team_key,
     team_key_unverified_exception,
     txt_resolver_for,
 )
+from aweb.team_registry import team_key_pin_memo_for
 
 # The owner act's record is the binding row, which keeps the act's SHA-256.
 # The hook_binding.activated / .revoked events of §A3 are enqueued through the
@@ -139,20 +139,18 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
     signing = _signing(payload.act)
     try:
         identity = await get_team_identity(request, db_infra)
-        registry_client = getattr(request.app.state, "awid_registry_client", None)
-        if registry_client is None:
-            raise awid_registry_not_configured_exception(operation="AWID owner-act team key")
-        async def pin_team_key(team_id: str, served_key: str) -> str:
-            return await pinned_team_key(
-                db=db_infra.get_manager("aweb"), registry_client=registry_client,
-                txt_resolver=txt_resolver_for(request.app.state), team_id=team_id, served_key=served_key,
-            )
-
+        registry_client = application_registry_client(request.app.state)
+        state = native_application_state(request.app.state)
+        db = db_infra.get_manager("aweb")
         verifier = core_owner_act_verifier(
-            audience=request.app.state.public_origin, registry_client=registry_client, pin_team_key=pin_team_key,
+            audience=request.app.state.public_origin,
+            db=db,
+            registry_client=registry_client,
+            txt_resolver=txt_resolver_for(state),
+            pin_memo=team_key_pin_memo_for(state),
         )
         binding = await change(
-            db_infra.get_manager("aweb"), verifier, team_id=identity.team_id, binding_id=binding_id,
+            db, verifier, team_id=identity.team_id, binding_id=binding_id,
             signing=signing, signature=payload.signature,
         )
     except ServiceError as exc:

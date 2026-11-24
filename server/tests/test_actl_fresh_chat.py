@@ -2,6 +2,7 @@
 
 Real HTTP, signatures, AWID, PG and (for the foreign cases) federation/DNS.
 """
+
 import json
 from copy import deepcopy
 from uuid import uuid4
@@ -9,41 +10,71 @@ from uuid import uuid4
 import pytest
 
 from chat_pair_support import (  # noqa: F401
-    route_pair, _submission, _send, _stored, _effects, _signed_team_headers,
+    route_pair,
+    _submission,
+    _send,
+    _stored,
+    _effects,
+    _signed_team_headers,
 )
+
+__all__ = ["route_pair"]
 
 
 async def _post(sender, submission):
     path, payload, _ = submission
     raw = json.dumps(payload).encode()
-    return await sender.node.client.post(path, content=raw, headers={
-        **_signed_team_headers(sender.sk, sender.did, sender.node.team_id,
-                               sender.encoded_certificate, raw),
-        "Content-Type": "application/json",
-    })
+    return await sender.node.client.post(
+        path,
+        content=raw,
+        headers={
+            **_signed_team_headers(
+                sender.sk,
+                sender.did,
+                sender.node.team_id,
+                sender.encoded_certificate,
+                raw,
+            ),
+            "Content-Type": "application/json",
+        },
+    )
 
 
 async def _snapshot(pair):
     result = []
     for node in (pair.source, pair.target):
-        result.append((await _effects(node), await node.db.fetch_all(
-            "SELECT conversation_id, status, updated_at, closed_at FROM {{tables.conversations}} "
-            "ORDER BY conversation_id"), await node.db.fetch_all(
-            "SELECT * FROM {{tables.conversation_participants}} ORDER BY conversation_id,did"),
-            await node.db.fetch_all(
-                "SELECT * FROM {{tables.chat_sessions}} ORDER BY session_id")))
+        result.append(
+            (
+                await _effects(node),
+                await node.db.fetch_all(
+                    "SELECT conversation_id, status, updated_at, closed_at FROM {{tables.conversations}} "
+                    "ORDER BY conversation_id"
+                ),
+                await node.db.fetch_all(
+                    "SELECT * FROM {{tables.conversation_participants}} ORDER BY conversation_id,did"
+                ),
+                await node.db.fetch_all(
+                    "SELECT * FROM {{tables.chat_sessions}} ORDER BY session_id"
+                ),
+            )
+        )
     return result
 
 
 async def _status(node, cid):
     return await node.db.fetch_value(
-        "SELECT status FROM {{tables.conversations}} WHERE conversation_id=$1", cid)
+        "SELECT status FROM {{tables.conversations}} WHERE conversation_id=$1", cid
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("foreign", [False, True], ids=["local", "federated"])
-@pytest.mark.parametrize("encrypted", [False, True], ids=["v2-then-plaintext", "plaintext-then-v2"])
-async def test_signed_fresh_chat_replaces_in_both_orders(route_pair, foreign, encrypted):
+@pytest.mark.parametrize(
+    "encrypted", [False, True], ids=["v2-then-plaintext", "plaintext-then-v2"]
+)
+async def test_signed_fresh_chat_replaces_in_both_orders(
+    route_pair, foreign, encrypted
+):
     pair = route_pair
     sender = pair.source.global_actor if foreign else pair.source.local
     target = (pair.target if foreign else pair.source).global_actor
@@ -63,10 +94,18 @@ async def test_signed_fresh_chat_replaces_in_both_orders(route_pair, foreign, en
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("foreign", [False, True], ids=["local", "federated"])
-@pytest.mark.parametrize("encrypted,fault", [(e, f) for e in (False, True)
-    for f in ("mismatched-id", "unsigned", "tampered", "foreign-signer")
-    if e or f in ("mismatched-id", "unsigned", "foreign-signer")])
-async def test_unbound_fresh_chat_does_not_close_or_deliver(route_pair, foreign, encrypted, fault):
+@pytest.mark.parametrize(
+    "encrypted,fault",
+    [
+        (e, f)
+        for e in (False, True)
+        for f in ("mismatched-id", "unsigned", "tampered", "foreign-signer")
+        if e or f in ("mismatched-id", "unsigned", "foreign-signer")
+    ],
+)
+async def test_unbound_fresh_chat_does_not_close_or_deliver(
+    route_pair, foreign, encrypted, fault
+):
     pair = route_pair
     sender = pair.source.global_actor if foreign else pair.source.local
     target = (pair.target if foreign else pair.source).global_actor
@@ -92,7 +131,9 @@ async def test_unbound_fresh_chat_does_not_close_or_deliver(route_pair, foreign,
     before = await _snapshot(pair)
     posts = len(pair.target.calls)
     response = await _post(sender, fresh)
-    assert response.status_code in ({409, 422} if fault == "foreign-signer" else {409}), response.text
+    assert response.status_code in (
+        {409, 422} if fault == "foreign-signer" else {409}
+    ), response.text
     assert await _snapshot(pair) == before
     assert await _status(pair.source, old.cid) == "active"
     assert len(pair.target.calls) == posts
@@ -100,7 +141,9 @@ async def test_unbound_fresh_chat_does_not_close_or_deliver(route_pair, foreign,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("foreign", [False, True], ids=["local", "federated"])
-async def test_exact_encrypted_waiting_create_retry_preserves_wait_state(route_pair, foreign):
+async def test_exact_encrypted_waiting_create_retry_preserves_wait_state(
+    route_pair, foreign
+):
     pair = route_pair
     sender = pair.source.global_actor if foreign else pair.source.local
     target = (pair.target if foreign else pair.source).global_actor
@@ -113,7 +156,9 @@ async def test_exact_encrypted_waiting_create_retry_preserves_wait_state(route_p
     if not foreign:
         waiting = await pair.source.db.fetch_one(
             "SELECT wait_seconds, wait_started_at, wait_started_by "
-            "FROM {{tables.chat_sessions}} WHERE session_id=$1", fresh[2].cid)
+            "FROM {{tables.chat_sessions}} WHERE session_id=$1",
+            fresh[2].cid,
+        )
         assert waiting["wait_seconds"] == 300
         assert waiting["wait_started_at"] is not None
         assert waiting["wait_started_by"] == sender.id
@@ -135,13 +180,18 @@ async def test_exact_encrypted_waiting_create_retry_preserves_wait_state(route_p
     assert retry.json()["session_id"] == str(fresh[2].cid)
     assert await _status(pair.source, newer[2].cid) == "active"
     assert await _snapshot(pair) == before
-    assert (pair.source.calls.count(federation), pair.target.calls.count(federation)) == calls
+    assert (
+        pair.source.calls.count(federation),
+        pair.target.calls.count(federation),
+    ) == calls
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("foreign", [False, True], ids=["local", "federated"])
 @pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
-async def test_exact_fresh_chat_retry_does_not_close_newer_session(route_pair, foreign, encrypted):
+async def test_exact_fresh_chat_retry_does_not_close_newer_session(
+    route_pair, foreign, encrypted
+):
     pair = route_pair
     sender = pair.source.global_actor if foreign else pair.source.local
     target = (pair.target if foreign else pair.source).global_actor
@@ -164,10 +214,11 @@ async def test_exact_fresh_chat_retry_does_not_close_newer_session(route_pair, f
     else:
         changed[1]["message"] += " changed"
     conflict = await _post(sender, changed)
-    assert conflict.status_code == 409, conflict.text
+    assert conflict.status_code == (409 if encrypted else 422), conflict.text
     assert conflict.json()["detail"] == (
-        "This message ID has already been used for a different chat request. "
-        "Retry the original request unchanged. Use a new message ID only if you intend to send a new message."
+        "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
+        if encrypted
+        else "signed_payload body must match the chat message. Check the chat fields and sign the message again."
     )
     assert await _snapshot(pair) == before
     retry = await _post(sender, fresh)
@@ -182,14 +233,17 @@ async def test_exact_fresh_chat_retry_does_not_close_newer_session(route_pair, f
 @pytest.mark.asyncio
 @pytest.mark.parametrize("foreign", [False, True], ids=["local", "federated"])
 @pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
-async def test_exact_create_retry_without_outer_session_id(route_pair, foreign, encrypted):
+async def test_exact_create_retry_without_outer_session_id(
+    route_pair, foreign, encrypted
+):
     pair = route_pair
     sender = pair.source.global_actor if foreign else pair.source.local
     target = (pair.target if foreign else pair.source).global_actor
     first, old = await _send(sender, target, "chat")
     assert first.status_code == 200, first.text
-    _, payload, submitted = _submission(sender, target, "chat", encrypted=encrypted,
-                                         continuation=str(old.cid))
+    _, payload, submitted = _submission(
+        sender, target, "chat", encrypted=encrypted, continuation=str(old.cid)
+    )
     payload["message"] = payload.pop("body")
     payload["to_addresses"] = [target.address]
     request = ("/v1/chat/sessions", payload, submitted)
@@ -209,3 +263,88 @@ async def test_exact_create_retry_without_outer_session_id(route_pair, foreign, 
     assert await _status(pair.source, newest.cid) == "active"
     assert await _snapshot(pair) == before
     assert len(pair.target.calls) == posts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("foreign", [False, True], ids=["local", "federated"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_continued_chat_exact_retry_returns_one_accepted_message(
+    route_pair, foreign, encrypted
+):
+    pair = route_pair
+    sender = pair.source.global_actor if foreign else pair.source.local
+    target = (pair.target if foreign else pair.source).global_actor
+    opened, session = await _send(sender, target, "chat", encrypted=encrypted)
+    assert opened.status_code == 200, opened.text
+    request = _submission(
+        sender, target, "chat", encrypted=encrypted, continuation=str(session.cid)
+    )
+    accepted = await _post(sender, request)
+    assert accepted.status_code == 200, accepted.text
+    before = await _snapshot(pair)
+    posts = len(pair.target.calls)
+    if encrypted:
+        changed_controls = deepcopy(request)
+        changed_controls[1]["hang_on"] = not request[1].get("hang_on", False)
+        conflict = await _post(sender, changed_controls)
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["detail"] == (
+            "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
+        )
+        assert await _snapshot(pair) == before
+        assert len(pair.target.calls) == posts
+    repeated = await _post(sender, request)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json() == accepted.json()
+    assert await _snapshot(pair) == before
+    assert len(pair.target.calls) == posts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("foreign", [False, True], ids=["local", "federated"])
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "v2"])
+async def test_concurrent_continued_chat_exact_retry_rereads_committed_winner(
+    route_pair, monkeypatch, foreign, encrypted
+):
+    """A real unique violation is forced after two actual empty stored reads."""
+    import asyncio
+    import aweb.messaging.chat_send as chat_send
+
+    pair = route_pair
+    sender = pair.source.global_actor if foreign else pair.source.local
+    target = (pair.target if foreign else pair.source).global_actor
+    opened, session = await _send(sender, target, "chat", encrypted=encrypted)
+    assert opened.status_code == 200, opened.text
+    request = _submission(
+        sender, target, "chat", encrypted=encrypted, continuation=str(session.cid)
+    )
+    original = chat_send._stored_exact_chat_send
+    arrivals = 0
+    both = asyncio.Event()
+
+    async def held_read(db, payload, **kwargs):
+        nonlocal arrivals
+        result = await original(db, payload, **kwargs)
+        if payload.message_id == str(request[2].mid) and arrivals < 2:
+            assert result is None
+            arrivals += 1
+            if arrivals == 2:
+                both.set()
+            await asyncio.wait_for(both.wait(), timeout=10)
+        return result
+
+    monkeypatch.setattr(chat_send, "_stored_exact_chat_send", held_read)
+    results = await asyncio.gather(_post(sender, request), _post(sender, request))
+    assert arrivals == 2
+    assert [response.status_code for response in results] == [200, 200], [
+        response.text for response in results
+    ]
+    assert results[0].json() == results[1].json()
+    for node in (pair.source, pair.target) if foreign else (pair.source,):
+        assert (
+            await node.db.fetch_value(
+                "SELECT count(*) FROM {{tables.chat_messages}} WHERE message_id=$1",
+                request[2].mid,
+            )
+            == 1
+        )

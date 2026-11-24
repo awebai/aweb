@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import io
+import tokenize
 import json
 import subprocess
 import sys
@@ -45,6 +48,31 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("awid/tests/test_unowned_team_claim.py"): _consumer(
+        "team-control-requests-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("server/tests/test_unowned_team_claim_registry.py"): _consumer(
+        "team-control-requests-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("cli/go/awid/team_claim_artifact_test.go"): _consumer(
+        "team-control-requests-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-control-requests-v1.json")',
+    ),
+    PurePosixPath("cli/go/cmd/aw/claim_human_controller_test.go"): _consumer(
+        "team-control-requests-v1.json",
+        'filepath.Join("..", "..", "..", "..", "docs", "vectors", "team-control-requests-v1.json")',
+    ),
+    PurePosixPath("cli/go/cmd/aw/id_team_test.go"): _consumer(
+        "team-control-requests-v1.json",
+        'filepath.Join("..", "..", "..", "..", "docs", "vectors", "team-control-requests-v1.json")',
+    ),
+    PurePosixPath("server/tests/test_message_event_contracts.py"): _consumer(
+        "mutation-hook-call-sites-v1.json",
+        "root = Path(__file__).resolve().parents[2]",
+        '(root / "docs/vectors/mutation-hook-call-sites-v1.json").read_text()',
+    ),
     PurePosixPath("cli/go/cmd/aw/team_invite_issuance_test.go"): _consumer(
         "cli-integration-codes-v1.json",
         'filepath.Join("..", "..", "..", "..", "docs", "vectors", "cli-integration-codes-v1.json")',
@@ -94,7 +122,7 @@ ROOT_CONSUMERS = {
     ),
     PurePosixPath("server/tests/test_human_chat_policy.py"): _consumer(
         "id-certificates-v1.json",
-        "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
+        'Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json"',
     ),
     PurePosixPath("server/tests/test_id_chain_request_auth.py"): _consumer(
         "id-certificates-v1.json",
@@ -122,7 +150,7 @@ ROOT_CONSUMERS = {
     ),
     PurePosixPath("awid/tests/test_id_chain_vectors.py"): _consumer(
         "id-certificates-v1.json",
-        "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
+        'Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json"',
     ),
     PurePosixPath("cli/go/internal/conformance/id_chain_test.go"): _consumer(
         "id-certificates-v1.json",
@@ -890,6 +918,10 @@ ROOT_CONSUMERS = {
         'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
         'filepath.Join("..", "..", "..", "docs", "vectors", "message-display-binding-v1.json")',
     ),
+    PurePosixPath("cli/go/chat/stream_display_binding_test.go"): _consumer(
+        "team-auth-envelope-v2.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+    ),
     PurePosixPath("channel-core/test/request_envelope_as_message.test.ts"): _consumer(
         {
             "message-display-binding-v1.json",
@@ -936,6 +968,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("cli/go/awid/registry_origin.go"): (
+        "vectors/atomic-address-claim-v1.json",
+    ),
     PurePosixPath("awid/src/awid/external_authority.py"): (
         "federation-origin-ip-v1.json",
     ),
@@ -1036,6 +1071,40 @@ def _reader(
         return (root / Path(*path.parts)).read_bytes()
 
     return read
+
+
+def _python_tokens(source: str) -> tuple[tuple[int, str], ...] | None:
+    """Keep Python syntax and literal values, ignoring formatting and comments."""
+    ignored = {tokenize.ENCODING, tokenize.ENDMARKER, tokenize.NEWLINE,
+               tokenize.NL, tokenize.INDENT, tokenize.DEDENT, tokenize.COMMENT}
+    result = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type in ignored:
+                continue
+            value = token.string
+            if token.type == tokenize.STRING:
+                try:
+                    value = repr(ast.literal_eval(value))
+                except (ValueError, SyntaxError):
+                    # Older Python tokenizers retain an entire f-string token.
+                    # It is not a literal path expression and cannot supply one.
+                    value = token.string
+            result.append((token.type, value))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return None
+    return tuple(result)
+
+
+def _root_marker_present(consumer: PurePosixPath, *, source: str, marker: str) -> bool:
+    """Require the inventoried root expression without depending on quote style."""
+    if consumer.suffix != ".py":
+        return marker in source
+    actual, expected = _python_tokens(source), _python_tokens(marker)
+    if actual is None or not expected:
+        return False
+    return any(actual[index:index+len(expected)] == expected
+               for index in range(len(actual)-len(expected)+1))
 
 
 def check(
@@ -1143,7 +1212,7 @@ def check(
                 f"{consumer} has unclassified public vector references: {', '.join(unexpected_names)}"
             )
         for marker in spec.root_markers:
-            if marker not in source:
+            if not _root_marker_present(consumer, source=source, marker=marker):
                 failures.append(
                     f"{consumer} does not resolve the repository-root authority: {marker}"
                 )
@@ -1161,11 +1230,11 @@ def check(
             source = read(path).decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        referenced_names = sorted(name for name in public_vectors if name in source)
-        if referenced_names:
+        unclassified_vector_names = sorted(name for name in public_vectors if name in source)
+        if unclassified_vector_names:
             failures.append(
                 f"unclassified public-vector code reference in {path}: "
-                f"{', '.join(referenced_names)}"
+                f"{', '.join(unclassified_vector_names)}"
             )
 
     for reference_guard, markers in NON_CONSUMING_CODE_REFERENCES.items():
@@ -1259,6 +1328,37 @@ def self_test(root: Path) -> None:
     baseline = check(root, tracked)
     if baseline:
         raise AssertionError(f"baseline provenance check is not green: {baseline}")
+
+    formatted_consumer = PurePosixPath("server/tests/test_id_chain_request_auth.py")
+    original = read_bytes(root, formatted_consumer)
+    spellings = (b'"docs/vectors/id-certificates-v1.json"', b"'docs/vectors/id-certificates-v1.json'")
+    for quoted, opposite in (spellings, tuple(reversed(spellings))):
+        # Start each variant from the other spelling, whichever source this
+        # shared guard is composed with. Neither positive can be a no-op.
+        base = original.replace(spellings[0], opposite).replace(spellings[1], opposite)
+        alternate = base.replace(opposite, quoted)
+        if alternate == base or ast.dump(ast.parse(alternate)) != ast.dump(ast.parse(base)):
+            raise AssertionError("quote control must change bytes while preserving Python syntax")
+        failures = check(root, tracked, {formatted_consumer: alternate})
+        if failures:
+            raise AssertionError(f"equivalent formatted vector root refused: {failures}")
+    spaced = original.replace(b"Path(__file__).resolve().parents[2]",
+                              b"Path(\n    __file__\n).resolve().parents[2]")
+    if spaced == original or ast.dump(ast.parse(spaced)) != ast.dump(ast.parse(original)):
+        raise AssertionError("whitespace control must change bytes while preserving Python syntax")
+    if failures := check(root, tracked, {formatted_consumer: spaced}):
+        raise AssertionError(f"equivalent whitespace in vector root refused: {failures}")
+    with_fstring = original + b'\ndiagnostic = f"vector {len(ALICE)}"\n'
+    if failures := check(root, tracked, {formatted_consumer: with_fstring}):
+        raise AssertionError(f"ordinary f-string refused: {failures}")
+    for label, alternate in (
+        ("f-string-only Python root", b'marker = f"Path(__file__).resolve().parents[2] / \'docs/vectors/id-certificates-v1.json\'"\n'),
+        ("wrong Python root", original.replace(b"parents[2]", b"parents[1]")),
+        ("wrong Python path", original.replace(b"docs/vectors/", b"local-fixtures/")),
+        ("comment-only Python root", b"# " + original.replace(b"\n", b"\n# ")),
+    ):
+        _expect_mutation(label, root, tracked, overrides={formatted_consumer: alternate},
+                         expected="does not resolve the repository-root authority")
 
     _expect_mutation(
         "server hand copy",

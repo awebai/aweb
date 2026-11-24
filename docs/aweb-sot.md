@@ -1029,7 +1029,10 @@ verified shared-team authority.
 existing conversation ID starts a new conversation. An explicit existing
 `conversation_id` continues that conversation, subject to participant and
 recipient checks. The server preserves the sender's signed conversation ID;
-an initial ID collision refuses with 409 `conversation_exists`. The accepted
+an initial ID collision refuses with 409 `conversation_exists`. The HTTP detail
+retains that released value, with an additive `recovery_action` directing the
+sender to continue the existing conversation or choose a new ID. MCP carries
+the same action and the stable `conversation_exists` reason. The accepted
 `new_conversation` field is a no-op. HTTP, MCP and saved-contact mail all use
 this rule; chat session reuse is unchanged. `aw mail send` to a recipient
 creates a fresh signed UUID without conversation/inbox pair lookup and rejects
@@ -1096,7 +1099,7 @@ transient `did:key`.
 |-------|-------|
 | `GET /v1/agents/{alias}/events` | SSE event stream |
 | `GET /v1/status` | Team status |
-| `GET /v1/status/stream` | Team coordination SSE; message/chat events restricted to the authenticated actor's own active workspaces. Embedded public readers receive no messaging events. |
+| `GET /v1/status/stream` | Team coordination SSE. Message and chat events are restricted to the authenticated actor's own active workspaces. Certificate-authenticated streams check membership standing every 30 seconds and close on definite membership loss. A temporary AWID outage keeps the admitted connection open while its local membership and checked key still match. Certificate and grant connections close within 300 seconds, or at the grant's earlier expiry. Embedded public readers receive no messaging events. |
 | `POST /v1/agents/heartbeat` | Keep-alive |
 | `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |
@@ -1185,9 +1188,15 @@ claim. The release does not depend on the mutation
 hook; the hook only announces it, as `task.unclaimed` workspace and team
 events. Answering a task (`POST /v1/tasks/{ref}/answer`) and cancelling an app
 request close the task and release its claims the same way. Closing a parent
-closes its open descendants without changing their claims, and deleting a task
-releases its claims through the `task.deleted` hook cascade rather than in the
-deleting transaction.
+also closes its open descendants and releases their claims in the same
+transaction. The close takes all affected task row locks before any claimant
+workspace lock. Deleting a task releases its claims in the delete transaction.
+After commit, the status and delete hooks announce the recorded releases.
+Retrying a team-scoped DELETE by ID or task reference returns the same deleted
+task identity. An announcement failure can still return
+`503 task_deleted_notification_failed` after deletion and claim release have
+committed. An embedding host holding events for an outer transaction retains
+the explicit deferred notification status until that transaction commits.
 
 Task claims have no time-based expiry or implicit lease in v1.
 `GET /v1/tasks/active` includes `owner_last_seen_at` for claim-backed tasks.
@@ -1223,10 +1232,70 @@ metadata.
 `DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone local
 workspace and its bound agent row, plus releases any task claims held by
 the workspace. It returns `409` if the bound agent is global
-(global identities outlive workspaces) or if `last_seen_at` is
-within the 30-minute presence TTL and the workspace is not yet
-considered gone. The caller must present a team certificate for the same
+(global identities outlive workspaces), or when another member targets a
+workspace whose activity is within the presence TTL (30 minutes by default,
+configured by `AWEB_PRESENCE_TTL_SECONDS`). Activity is the newest workspace
+`last_seen_at`, Redis heartbeat timestamp, or currently valid grant-liveness
+timestamp. Embedded callers pass their selected registry client explicitly
+to the lifecycle planner and cascade. Before a remote membership revocation,
+the host checks the workspace with the shared planner and preserves its
+refusal. The lifecycle planner, cascade and agent list use the same activity
+owner, as do HTTP/MCP workspace status, online lists, dashboard snapshots and
+agent-health observations. Omitted heartbeat metadata is preserved; narrow
+heartbeats renew only the current metadata's Redis indices. Dashboard streams
+are read-only: the shared native/HOST maintenance operation reconciles presence
+without viewers, atomically recording a transition and publishing its canonical
+team event once. Unknown authority or a failed publication retains the previous
+projection and makes maintenance report failure. Malformed pub/sub frames are
+ignored by the reader and cannot create a presence transition.
+First connect and MCP heartbeats record `last_seen_at`; grant heartbeats
+keep their separate liveness records and do not overwrite shared metadata.
+Expired, revoked or stale grants do not keep a workspace live. Self cleanup
+remains immediate. The caller must present a team certificate for the same
 `team_id` as the target workspace.
+
+Repo deletion applies that same local-workspace cleanup owner to every workspace
+in the repo. It reports ineligible targets in `skipped_workspaces` with their
+refusal codes. A repo with skipped live or global workspaces stays available
+(`repo_deleted: false`); eligible cleanup still commits and emits the lifecycle
+events. Redis cleanup failures remain in the outbox and set `cleanup_pending`.
+
+Ordinary reservation release protects another active holder. Emergency
+`POST /v1/reservations/revoke` remains available to any team-certificate member,
+including an empty prefix to revoke all active team reservations. It records the
+verified actor in the operator audit transaction, emits the ordinary
+`reservation.released` event for each affected reservation and notifies its
+holder's workspace. Grants cannot invoke emergency revoke. Neither operation
+deletes coordination history.
+
+The Python coordination lifecycle owner accepts a named `AgentDisposition`
+(`PRESERVED`, `DELETED`, `RETIRED`, `PREPARED_REMOVAL`) in
+`LifecycleCascadeRequest.agent_disposition`. This is an embedding API, not an
+HTTP authority flag. `MemberStatus` is the one stored `agents.status`
+vocabulary; each disposition maps explicitly to its constants. Native state
+writes and coordination cleanup require a nonempty team ID. A released Python
+request that omits it must resolve exactly one canonical target team before
+writing; omission never authorizes cross-team cleanup. The existing local-delete
+boolean remains a compatibility adapter for released embedding callers while they convert to the named choice;
+it is removed in a separate change after those callers have migrated. Native
+workspace cleanup already uses the named choice. Explicit `target_agent_id`
+cleanup works with zero or already-deleted workspaces; `all_for_agent` cleans all active workspace paths. Claims on deleted
+paths, reservations, session admission leases, grant liveness, pending controls,
+status and presence are also cleared. Pending controls become consumed history;
+chat participants become left, retaining chat/mail/identity history. Cleanup
+locks the complete active/retained-claim workspace set in UUID order before
+claim/focus writes; claim acquisition/release uses the same workspace order.
+Bulk repo cleanup locks its combined target set before invoking each cleanup.
+
+`DELETED` and `RETIRED` set the corresponding native status and `deleted_at`.
+`PREPARED_REMOVAL` atomically requires the agent still be active, then sets
+`deleted_at` while retaining native status `active`, reports neither terminal identity flag, and denies ordinary native activity.
+The embedding host owns the exact removal ledger, restricted completion access,
+external certificate revocation and credential/custody disposal. Clearing grant
+liveness does not revoke retained session grants. `PRESERVED` leaves identity
+state unchanged while cleaning coordination. Named dispositions never destroy
+host credentials. The released archive option still archives native state;
+hosted custody cleanup belongs to the embedding host in that path as well.
 
 Lifecycle Redis effects are driven by `lifecycle_side_effect_outbox`, not by
 reconstructing deleted claim rows. Claim release captures workspace/team
@@ -1239,7 +1308,9 @@ commit and attempt replay before returning. A transaction-handle cascade
 returns its `LifecycleCascadeResult.outbox_operation_id`; an outer caller that
 requires synchronous post-commit effects invokes the canonical
 `replay_lifecycle_side_effects(..., operation_id=...)` only after its own
-transaction exits.
+transaction exits. A cascade with no side effects reports post-commit completion
+with no outbox operation and schedules no replay, including an idempotent
+workspace-removal retry inside an outer transaction.
 
 Replay locks pending rows and records each delivered effect so an ordinary
 retry does not publish it twice. Chat-waiting delivery uses a strict Redis path;
@@ -2123,3 +2194,90 @@ falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
 | Dashboard | Out of scope for aweb (any external service that holds `AWEB_DASHBOARD_JWT_SECRET`) |
 | Human accounts | Out of scope for aweb (hosted operator concern) |
 | Coordination (mail, chat, tasks, claims, locks, roles, instructions) | aweb |
+
+## Native request authority reads
+
+### Serving registry selection
+
+All native serving consumers borrow the registry client through
+`aweb.application_state.application_registry_client`. A host's selected
+`native_resources` reference takes precedence over an application-state slot;
+a missing or invalid client in that reference cannot fall through to another
+client. Without a resource reference, the initialized native application slot
+is selected. This reference is configuration, never member or request proof.
+Missing or invalid selected configuration returns `503` with
+`registry_client_unavailable` and the action to configure the serving client
+and start the application. Read-only sender-membership projections retain
+`unknown` when that authority cannot be acquired.
+
+### Current certificate acceptance and stream lifetime
+
+A certificate verifier sets `certificate_verified` on the authenticated
+context after admission and retains its checked controller key as
+`verified_team_did_key`. Acceptance checks
+the current-member owner under the same team/member transaction locks as any
+acceptance or projection writes. A cached key or a host snapshot cannot
+substitute for that check, and a missing checked key cannot be filled from the
+member's stored accepted key.
+
+Certificate-authenticated event, status and chat streams recheck their original
+checked key, current membership and certificate standing on the existing
+30-second grant-stream cadence. Rotation, revocation or inactive membership
+closes the stream with `team_membership_not_current`. A temporary AWID outage
+keeps the admitted stream open while its local membership and checked key
+still match. Registry standing is retried at the next check. The normal
+deadline and the checks for new stream admission still apply. Readmitting
+the member under a new certificate does not change
+the credential that opened the old stream. Independent identity-only thread
+participation remains governed by the Identity and Messaging Contract.
+The synchronous agent event stream opening check can use the exact admitted
+member from the same request and still checks registry standing. Each later
+check reads current membership again.
+Embedding hosts set `certificate_verified` and `verified_team_did_key` after
+certificate verification and admission. API-key and proxy credentials retain
+their own admission with `certificate_verified` false, including when their
+transport supplies an opaque certificate identifier.
+
+Revocation without a key rotation removes authentication and delivery standing.
+Roster, assignee, room fan-out and alias projections use the admitted member
+row and current team key until its recorded admission changes.
+
+Native app-task authorization still uses the fresh registry certificate list
+to bind an originator or target before the server has a local attribution row
+(`server/src/aweb/coordination/app_tasks.py:110–137`). It checks the same
+certificate standing and requires fresh registry evidence for the app act.
+
+A task claim conflicts with a new claimant only while its holder remains a
+current member. The claim owner releases a non-current holder's claim through
+its normal claim/focus release operation in the new claim transaction. Key
+rotation does not sweep unrelated tasks or claims.
+After a committed takeover, the service announces each released claim before
+the replacement claim, including when the task stays `in_progress`.
+
+### Staged certificate-registration observations
+
+While registration enforcement is off, successful artifact and revocation
+checks still evaluate registration and record the would-refuse observation.
+This deliberate measurement supports the decision to enable enforcement; an
+off-mode observation is not a promise of no existence read. The read uses the
+existing SDK active-certificate view after revocation checks, without a new
+cache. An unavailable observation remains unknown and cannot turn an otherwise
+valid off-mode operation into a refusal. Enforcing mode retains its complete
+registration-list and signature-verified miss-refresh owners. AWID's
+`evaluate_team_certificate_standing` applies the same acquired revocation and
+registration facts to the server, registry SDK and checked artifact path. This
+staged measurement does not change request or certificate authority.
+
+### Controller-key acquisition and request validation
+
+Native authentication, app-task authorization, hook owner acts and service
+registration use `team_key_reader.read_team_key` to acquire SDK key evidence
+and apply the existing native pin owner. Their cached or fresh acquisition
+strength remains explicit; a consumer cannot accept a registry key by bypassing
+that pin. A verified request whose certificate fails under the cached key can
+ask the same reader for the SDK's bounded signature-failure refresh. Hook owner
+acts keep fresh registry acquisition and share the native pin memo. A controller
+registration request checks its timestamp and signature
+before a pin can change, including `dry_run` requests. It refuses if the
+admitted key differs from the key that verified the signature. Invalid request
+bytes cannot advance the admitted key or its controller-act timestamp.

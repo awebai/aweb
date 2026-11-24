@@ -17,6 +17,9 @@ const (
 	registryDiscoveryTTL = 15 * time.Minute
 	registryAddressTTL   = 5 * time.Minute
 	registryKeyTTL       = 15 * time.Minute
+	// registryForcedReadInterval bounds the reads a disagreeing cached answer
+	// forces: one per sender per interval (docs/trust-model.md).
+	registryForcedReadInterval = 30 * time.Second
 )
 
 type cachedValue[T any] struct {
@@ -114,6 +117,14 @@ type RegistryResolver struct {
 	keyCache            map[string]cachedValue[*DidKeyResolution]
 	headCache           map[string]*VerifiedLogHead
 	receivedRegistries  map[string]*RegistryResolver
+	forcedReads         map[string]forcedRegistryRead
+}
+
+// forcedRegistryRead is the last read a disagreeing cached answer forced for
+// one sender's address or key.
+type forcedRegistryRead struct {
+	at     time.Time
+	failed bool
 }
 
 func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *RegistryResolver {
@@ -132,6 +143,36 @@ func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *Regi
 		memberCache:   make(map[string]cachedValue[*registryTeamMemberCacheValue]),
 		keyCache:      make(map[string]cachedValue[*DidKeyResolution]),
 		headCache:     make(map[string]*VerifiedLogHead),
+		forcedReads:   make(map[string]forcedRegistryRead),
+	}
+}
+
+// claimForcedRead decides whether a cached answer that disagrees with a
+// signed message may be read again from the registry now: once per
+// registryForcedReadInterval for that sender. When it may not, lastFailed
+// reports whether the read that used the interval failed; the cache then still
+// holds the older answer.
+func (r *RegistryResolver) claimForcedRead(key string) (allowed bool, lastFailed bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.forcedReads == nil {
+		r.forcedReads = make(map[string]forcedRegistryRead)
+	}
+	now := r.now()
+	if last, ok := r.forcedReads[key]; ok && now.Sub(last.at) < registryForcedReadInterval {
+		return false, last.failed
+	}
+	r.forcedReads[key] = forcedRegistryRead{at: now}
+	return true, false
+}
+
+// recordForcedRead records how a claimed forced read ended.
+func (r *RegistryResolver) recordForcedRead(key string, failed bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if read, ok := r.forcedReads[key]; ok {
+		read.failed = failed
+		r.forcedReads[key] = read
 	}
 }
 
@@ -182,7 +223,7 @@ func canonicalFallbackRegistryURL(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
-	return canonicalRegistryServerOrigin(raw)
+	return CanonicalRegistryServerOrigin(raw)
 }
 
 func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
@@ -284,12 +325,12 @@ func (r *RegistryResolver) resolve(ctx context.Context, identifier string, force
 		return nil, fmt.Errorf("RegistryResolver: address/key mismatch for %s", identifier)
 	}
 	r.mu.Lock()
-	cachedHead := r.headCache[address.response.DIDAW]
+	cachedHead := r.anchorFor(address.authority.RegistryURL, address.response.DIDAW)
 	r.mu.Unlock()
 	outcome, nextHead, verifyErr := VerifyDidKeyResolution(keyRes, cachedHead, r.now())
 	if outcome == StableIdentityVerified && nextHead != nil {
 		r.mu.Lock()
-		r.headCache[address.response.DIDAW] = nextHead
+		r.headCache[headCacheKey(address.authority.RegistryURL, address.response.DIDAW)] = nextHead
 		r.mu.Unlock()
 	}
 	if outcome == StableIdentityHardError {
@@ -333,6 +374,14 @@ func (r *RegistryResolver) VerifyStableIdentity(ctx context.Context, address, st
 }
 
 func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, address, stableID, expectedCurrentDIDKey string) *StableIdentityVerification {
+	return r.VerifyStableIdentityCheckpointed(ctx, address, stableID, expectedCurrentDIDKey, nil)
+}
+
+// VerifyStableIdentityCheckpointed is VerifyStableIdentityCurrent against the
+// caller's anti-rollback checkpoint for the registry that answers: checkpoint
+// is asked for that registry before verifying. The result names the registry,
+// and whether it had no checkpoint for this identity (NewCheckpoint).
+func (r *RegistryResolver) VerifyStableIdentityCheckpointed(ctx context.Context, address, stableID, expectedCurrentDIDKey string, checkpoint func(registryURL string) *VerifiedLogHead) *StableIdentityVerification {
 	domain, name, ok := splitRegistryAddress(address)
 	if !ok || strings.TrimSpace(stableID) == "" {
 		return &StableIdentityVerification{Outcome: StableIdentityDegraded}
@@ -345,9 +394,17 @@ func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, addr
 		}
 	}
 	if addr.response.DIDAW != stableID {
-		addr, err = r.resolveAddressFresh(ctx, domain, name, true)
-		if err != nil {
-			return &StableIdentityVerification{Outcome: StableIdentityStaleCache, Error: err.Error()}
+		readKey := "address:" + domain + "/" + name
+		allowed, lastFailed := r.claimForcedRead(readKey)
+		if !allowed && lastFailed {
+			return &StableIdentityVerification{Outcome: StableIdentityStaleCache, Error: "registry address could not be read again in this interval"}
+		}
+		if allowed {
+			addr, err = r.resolveAddressFresh(ctx, domain, name, true)
+			r.recordForcedRead(readKey, err != nil)
+			if err != nil {
+				return &StableIdentityVerification{Outcome: StableIdentityStaleCache, Error: err.Error()}
+			}
 		}
 		if addr.response.DIDAW != stableID {
 			return &StableIdentityVerification{
@@ -356,7 +413,12 @@ func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, addr
 			}
 		}
 	}
-	return r.verifyStableIdentityAtRegistry(ctx, addr.authority.RegistryURL, stableID, expectedCurrentDIDKey, false)
+	registryURL := addr.authority.RegistryURL
+	newCheckpoint := r.seedCheckpoint(registryURL, stableID, checkpoint)
+	result := r.verifyStableIdentityAtRegistry(ctx, registryURL, stableID, expectedCurrentDIDKey, false)
+	result.RegistryURL = registryURL
+	result.NewCheckpoint = newCheckpoint
+	return result
 }
 
 func (r *RegistryResolver) verifyStableIdentityAtRegistry(ctx context.Context, registryURL, stableID, expectedCurrentDIDKey string, fresh bool) *StableIdentityVerification {
@@ -368,14 +430,26 @@ func (r *RegistryResolver) verifyStableIdentityAtRegistry(ctx context.Context, r
 		}
 	}
 	expectedCurrentDIDKey = strings.TrimSpace(expectedCurrentDIDKey)
-	if expectedCurrentDIDKey != "" && strings.TrimSpace(keyRes.CurrentDIDKey) != expectedCurrentDIDKey {
+	if expectedCurrentDIDKey != "" && strings.TrimSpace(keyRes.CurrentDIDKey) != expectedCurrentDIDKey && !fresh {
 		staleCurrentDIDKey := keyRes.CurrentDIDKey
-		keyRes, err = r.resolveKeyFresh(ctx, registryURL, stableID, true)
-		if err != nil {
+		readKey := "key:" + registryURL + "|" + stableID
+		allowed, lastFailed := r.claimForcedRead(readKey)
+		if !allowed && lastFailed {
 			return &StableIdentityVerification{
 				Outcome:       StableIdentityStaleCache,
 				CurrentDIDKey: staleCurrentDIDKey,
-				Error:         err.Error(),
+				Error:         "registry key could not be read again in this interval",
+			}
+		}
+		if allowed {
+			keyRes, err = r.resolveKeyFresh(ctx, registryURL, stableID, true)
+			r.recordForcedRead(readKey, err != nil)
+			if err != nil {
+				return &StableIdentityVerification{
+					Outcome:       StableIdentityStaleCache,
+					CurrentDIDKey: staleCurrentDIDKey,
+					Error:         err.Error(),
+				}
 			}
 		}
 	}
@@ -387,7 +461,7 @@ func (r *RegistryResolver) verifyStableIdentityAtRegistry(ctx context.Context, r
 	}
 
 	r.mu.Lock()
-	cachedHead := r.headCache[stableID]
+	cachedHead := r.anchorFor(registryURL, stableID)
 	r.mu.Unlock()
 
 	if cachedHead == nil {
@@ -397,7 +471,7 @@ func (r *RegistryResolver) verifyStableIdentityAtRegistry(ctx context.Context, r
 	outcome, nextHead, verifyErr := VerifyDidKeyResolution(keyRes, cachedHead, r.now())
 	if outcome == StableIdentityVerified && nextHead != nil {
 		r.mu.Lock()
-		r.headCache[stableID] = nextHead
+		r.headCache[headCacheKey(registryURL, stableID)] = nextHead
 		r.mu.Unlock()
 	}
 	if outcome == StableIdentityDegraded && verifyErr == nil {
@@ -417,23 +491,78 @@ func (r *RegistryResolver) verifyStableIdentityAtRegistry(ctx context.Context, r
 	}
 }
 
-// SeedVerifiedHead installs a previously verified log head as the anti-rollback
-// anchor for stableID. Callers restore it from the checkpoint persisted with the
-// pin so a restart does not forget which sequence was already verified — without
-// it a registry can serve a valid truncated prefix and roll a rotated identity
-// back to a retired key (default-aajc.8). Seeding never moves the anchor
-// backwards: a lower or equal sequence is ignored.
+// headCacheKey scopes a verified log head to the registry that served it:
+// a checkpoint is one registry's view, and a move to another registry starts
+// a new one (docs/trust-model.md).
+func headCacheKey(registryURL, stableID string) string {
+	return strings.TrimRight(strings.TrimSpace(registryURL), "/") + "|" + strings.TrimSpace(stableID)
+}
+
+// anyRegistryAnchor is the key of an anchor seeded without a registry, through
+// the released SeedVerifiedHead.
+func anyRegistryAnchor(stableID string) string {
+	return headCacheKey("*", stableID)
+}
+
+// anchorFor is the anti-rollback anchor for stableID at registryURL: the
+// higher of the one verified or seeded there and one seeded without a
+// registry, so the released SeedVerifiedHead advances a resolver that already
+// holds a lower anchor, as before anchors were kept per registry.
+func (r *RegistryResolver) anchorFor(registryURL, stableID string) *VerifiedLogHead {
+	scoped := r.headCache[headCacheKey(registryURL, stableID)]
+	released := r.headCache[anyRegistryAnchor(stableID)]
+	if released != nil && (scoped == nil || released.Seq > scoped.Seq) {
+		return released
+	}
+	return scoped
+}
+
+// SeedVerifiedHeadAt installs a previously verified log head as the
+// anti-rollback anchor for stableID at registryURL. Callers restore it from the
+// persisted checkpoint so a restart does not forget which sequence was already
+// verified — without it a registry can serve a valid truncated prefix and roll
+// a rotated identity back to a retired key (default-aajc.8). Seeding never
+// moves the anchor backwards: a lower or equal sequence is ignored.
+func (r *RegistryResolver) SeedVerifiedHeadAt(registryURL, stableID string, head *VerifiedLogHead) {
+	r.seedAnchor(headCacheKey(registryURL, stableID), stableID, head)
+}
+
+// SeedVerifiedHead is the released form (aw-v1.36.58), kept for Go callers of
+// this public package: it seeds an anchor for stableID that applies at every
+// registry, and wins over a registry's own anchor when its sequence is higher
+// (anchorFor), which is what the anchor meant before anchors were kept per
+// registry.
 func (r *RegistryResolver) SeedVerifiedHead(stableID string, head *VerifiedLogHead) {
-	stableID = strings.TrimSpace(stableID)
-	if stableID == "" || head == nil || head.Seq < 1 || !isLowerHex(strings.TrimSpace(head.EntryHash)) {
+	r.seedAnchor(anyRegistryAnchor(stableID), stableID, head)
+}
+
+func (r *RegistryResolver) seedAnchor(key, stableID string, head *VerifiedLogHead) {
+	if strings.TrimSpace(stableID) == "" || head == nil || head.Seq < 1 || !isLowerHex(strings.TrimSpace(head.EntryHash)) {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if existing := r.headCache[stableID]; existing != nil && existing.Seq >= head.Seq {
+	if existing := r.headCache[key]; existing != nil && existing.Seq >= head.Seq {
 		return
 	}
-	r.headCache[stableID] = head
+	r.headCache[key] = head
+}
+
+// seedCheckpoint installs the caller's persisted checkpoint for registryURL
+// (seeding only ever advances the in-memory anchor). It reports whether the
+// caller holds no checkpoint for this identity at that registry: a new
+// checkpoint. A head this resolver cached while resolving the same message is
+// not a checkpoint.
+func (r *RegistryResolver) seedCheckpoint(registryURL, stableID string, checkpoint func(registryURL string) *VerifiedLogHead) bool {
+	if checkpoint == nil {
+		return true
+	}
+	head := checkpoint(registryURL)
+	if head == nil {
+		return true
+	}
+	r.SeedVerifiedHeadAt(registryURL, stableID, head)
+	return false
 }
 
 func (r *RegistryResolver) verifyStableIdentityViaFullLog(ctx context.Context, registryURL, stableID, currentDIDKey string) *StableIdentityVerification {
@@ -473,7 +602,7 @@ func (r *RegistryResolver) verifyStableIdentityViaFullLog(ctx context.Context, r
 	// retired key) or a valid fork that never included our entry
 	// (default-aajc.8).
 	r.mu.Lock()
-	checkpoint := r.headCache[stableID]
+	checkpoint := r.anchorFor(registryURL, stableID)
 	r.mu.Unlock()
 	if checkpoint != nil {
 		if head.Seq < checkpoint.Seq {
@@ -492,7 +621,7 @@ func (r *RegistryResolver) verifyStableIdentityViaFullLog(ctx context.Context, r
 		}
 	}
 	r.mu.Lock()
-	r.headCache[stableID] = head
+	r.headCache[headCacheKey(registryURL, stableID)] = head
 	r.mu.Unlock()
 	return &StableIdentityVerification{
 		Outcome:       StableIdentityVerified,

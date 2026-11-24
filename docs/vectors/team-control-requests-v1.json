@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "description": "Released ordinary-import bytes and domain-separated unowned-controller claim; account inputs are already normalized by their owner.",
+  "rulings": [
+    "9117ca82-fdad-42eb-acbc-8311994a9e22",
+    "9d4835b6-44c3-46e5-a32f-18883f009110"
+  ],
+  "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "signer_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+  "import_cases": [
+    {
+      "name": "released-org-dry-run",
+      "input": {
+        "awid_team_id": "research:acme.com",
+        "organization_id": "org-1",
+        "team_id": null,
+        "dry_run": true,
+        "timestamp": "2026-05-09T12:00:00Z"
+      },
+      "canonical_payload": "{\"awid_team_id\":\"research:acme.com\",\"dry_run\":true,\"operation\":\"byoidt_import\",\"organization_id\":\"org-1\",\"team_id\":\"\",\"timestamp\":\"2026-05-09T12:00:00Z\"}",
+      "signature": "wJ9qUNecyxiqSF45ALU6upFloyUPiQW1RXkste671QcTjBM9nGqN9ngTcgGwVX2OO+s4gQ/yFIXKL7OewHelBw"
+    },
+    {
+      "name": "selected-team-apply",
+      "input": {
+        "awid_team_id": " research:acme.com ",
+        "organization_id": null,
+        "team_id": " existing-team ",
+        "dry_run": false,
+        "timestamp": " 2026-05-09T12:00:00Z "
+      },
+      "canonical_payload": "{\"awid_team_id\":\"research:acme.com\",\"dry_run\":false,\"operation\":\"byoidt_import\",\"organization_id\":\"\",\"team_id\":\"existing-team\",\"timestamp\":\"2026-05-09T12:00:00Z\"}",
+      "signature": "1ZVqp+Guy/MsgJ3YPPAoR1p8wsuLwQSIW9YIkFdhmCJBEqBXewOEHT/sKSagMnl1N9p1fVnEwQQhLYUqeaP8Cw"
+    },
+    {
+      "name": "blank-selectors",
+      "input": {
+        "awid_team_id": "research:acme.com",
+        "organization_id": " \t",
+        "team_id": null,
+        "dry_run": true,
+        "timestamp": "2026-05-09T12:00:00Z"
+      },
+      "canonical_payload": "{\"awid_team_id\":\"research:acme.com\",\"dry_run\":true,\"operation\":\"byoidt_import\",\"organization_id\":\"\",\"team_id\":\"\",\"timestamp\":\"2026-05-09T12:00:00Z\"}",
+      "signature": "HMpT2jwhF/uPdgV7uXe2gyum+wpep4JAlKZaGXIkkA7AK4A8LNXp5f3MSgKNG2H077VXwaZpTwtcVdnkcXBfDg"
+    },
+    {
+      "name": "utf8-wire-text-component",
+      "input": {
+        "awid_team_id": "research:acme.com",
+        "organization_id": "<org \"雪\">\\ ",
+        "team_id": null,
+        "dry_run": false,
+        "timestamp": "2026-05-09T12:00:00Z"
+      },
+      "canonical_payload": "{\"awid_team_id\":\"research:acme.com\",\"dry_run\":false,\"operation\":\"byoidt_import\",\"organization_id\":\"<org \\\"雪\\\">\\\\\",\"team_id\":\"\",\"timestamp\":\"2026-05-09T12:00:00Z\"}",
+      "signature": "7JC9F2Qj2EvjbK8SG3MK0KtqjFEaE5vr+WhuG1UgDcXGsXFIP+3YkRdtHGz3SogR16G+kAXLjQngYOCrSR5HDg"
+    }
+  ],
+  "claim_cases": [
+    {
+      "name": "prospective-owner",
+      "input": {
+        "awid_team_id": "research:acme.com",
+        "email": "owner@example.com",
+        "username": "owner",
+        "timestamp": "2026-05-09T12:00:00Z"
+      },
+      "canonical_payload": "{\"awid_team_id\":\"research:acme.com\",\"email\":\"owner@example.com\",\"operation\":\"claim_unowned_team\",\"timestamp\":\"2026-05-09T12:00:00Z\",\"username\":\"owner\"}",
+      "signature": "KkxEQ3Uqw6bwA1QA/ddJUyAsr13V2P5Q9fpV067HZJbMafeYDHkVwxXz9JaDELFtHObHY/9p24n4awjWDIaUCg",
+      "artifact": {
+        "request": {
+          "operation": "claim_unowned_team",
+          "awid_team_id": "research:acme.com",
+          "email": "owner@example.com",
+          "username": "owner",
+          "timestamp": "2026-05-09T12:00:00Z"
+        },
+        "signer_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "signature": "KkxEQ3Uqw6bwA1QA/ddJUyAsr13V2P5Q9fpV067HZJbMafeYDHkVwxXz9JaDELFtHObHY/9p24n4awjWDIaUCg"
+      }
+    },
+    {
+      "name": "existing-owner",
+      "input": {
+        "awid_team_id": "research:acme.com",
+        "email": "existing@example.net",
+        "username": "existing-owner",
+        "timestamp": "2026-05-09T12:00:00Z"
+      },
+      "canonical_payload": "{\"awid_team_id\":\"research:acme.com\",\"email\":\"existing@example.net\",\"operation\":\"claim_unowned_team\",\"timestamp\":\"2026-05-09T12:00:00Z\",\"username\":\"existing-owner\"}",
+      "signature": "9bowJdXrw/pBdfl3WADK+2Va2G0hK0C49ZWxl6YCx7B09IZMvkwxRRpjnC5CVgBqm99dbHjr3jsHmdazsncHAw",
+      "artifact": {
+        "request": {
+          "operation": "claim_unowned_team",
+          "awid_team_id": "research:acme.com",
+          "email": "existing@example.net",
+          "username": "existing-owner",
+          "timestamp": "2026-05-09T12:00:00Z"
+        },
+        "signer_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "signature": "9bowJdXrw/pBdfl3WADK+2Va2G0hK0C49ZWxl6YCx7B09IZMvkwxRRpjnC5CVgBqm99dbHjr3jsHmdazsncHAw"
+      }
+    }
+  ]
+}

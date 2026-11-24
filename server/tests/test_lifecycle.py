@@ -3,7 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+import os
+
 import pytest
+import pytest_asyncio
+from redis.asyncio import Redis
+
+from aweb.messaging.waiting import get_waiting_agents, register_waiting
 
 import aweb.lifecycle as lifecycle
 from aweb.lifecycle import (
@@ -27,8 +33,8 @@ async def _seed_workspace_with_claim(aweb_db, *, identity_scope: str = "local"):
     )
     await aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', $3, 'developer')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role, inbound_mode)
+        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', $3, 'developer', 'open')
         """,
         agent_id,
         team_id,
@@ -59,16 +65,12 @@ async def _seed_workspace_with_claim(aweb_db, *, identity_scope: str = "local"):
     return team_id, agent_id, workspace_id
 
 
-class _FakeRedis:
-    def __init__(self, *, fail_zrem: bool = False):
-        self.fail_zrem = fail_zrem
-        self.zrem_calls: list[tuple[str, str]] = []
-
-    async def zrem(self, key: str, member: str):
-        self.zrem_calls.append((key, member))
-        if self.fail_zrem:
-            raise ConnectionError("redis unavailable")
-        return 1
+@pytest_asyncio.fixture
+async def lifecycle_redis():
+    """Use the isolated gate Redis; never flush keys owned by another test."""
+    async with Redis.from_url(os.environ["REDIS_URL"], decode_responses=True) as redis:
+        await redis.ping()
+        yield redis
 
 
 async def _seed_waiting_chat(aweb_db, *, team_id: str, agent_id):
@@ -122,9 +124,7 @@ def _request(
 
 @pytest.mark.asyncio
 async def test_lifecycle_plan_reports_claims_without_mutating(aweb_cloud_db):
-    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
-        aweb_cloud_db.aweb_db
-    )
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(aweb_cloud_db.aweb_db)
 
     result = await plan_lifecycle_cascade(
         aweb_cloud_db.aweb_db,
@@ -134,6 +134,7 @@ async def test_lifecycle_plan_reports_claims_without_mutating(aweb_cloud_db):
             workspace_id=workspace_id,
             dry_run=True,
         ),
+        registry_client=None,
     )
 
     assert result.dry_run is True
@@ -156,13 +157,11 @@ async def test_lifecycle_plan_reports_claims_without_mutating(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_lifecycle_outer_transaction_defers_side_effects_until_commit(
-    aweb_cloud_db, monkeypatch
+    aweb_cloud_db, monkeypatch, lifecycle_redis
 ):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
-    session_id, did = await _seed_waiting_chat(
-        db, team_id=team_id, agent_id=agent_id
-    )
+    session_id, did = await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
     published: list[tuple[str, str]] = []
     presence_clears: list[tuple[str, ...]] = []
     waiting_clears: list[tuple[str, str]] = []
@@ -190,8 +189,9 @@ async def test_lifecycle_outer_transaction_defers_side_effects_until_commit(
     async with db.transaction() as outer:
         result = await apply_lifecycle_cascade(
             outer,
-            object(),
+            lifecycle_redis,
             _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+            registry_client=None,
         )
         assert result.post_commit_status == "pending"
         assert result.outbox_operation_id is not None
@@ -201,7 +201,7 @@ async def test_lifecycle_outer_transaction_defers_side_effects_until_commit(
 
     replay = await lifecycle.replay_lifecycle_side_effects(
         db,
-        object(),
+        lifecycle_redis,
         operation_id=result.outbox_operation_id,
     )
 
@@ -213,7 +213,7 @@ async def test_lifecycle_outer_transaction_defers_side_effects_until_commit(
 
 @pytest.mark.asyncio
 async def test_lifecycle_outer_transaction_rollback_emits_no_side_effects(
-    aweb_cloud_db, monkeypatch
+    aweb_cloud_db, monkeypatch, lifecycle_redis
 ):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
@@ -247,12 +247,13 @@ async def test_lifecycle_outer_transaction_rollback_emits_no_side_effects(
         async with db.transaction() as outer:
             result = await apply_lifecycle_cascade(
                 outer,
-                object(),
+                lifecycle_redis,
                 _request(
                     team_id=team_id,
                     agent_id=agent_id,
                     workspace_id=workspace_id,
                 ),
+                registry_client=None,
             )
             assert result.post_commit_status == "pending"
             assert result.outbox_operation_id is not None
@@ -261,24 +262,30 @@ async def test_lifecycle_outer_transaction_rollback_emits_no_side_effects(
 
     replay = await lifecycle.replay_lifecycle_side_effects(
         db,
-        object(),
+        lifecycle_redis,
         operation_id=result.outbox_operation_id,
     )
     assert replay.pending_count == 0
     assert observed == []
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
-        workspace_id,
-    ) == 1
-    assert await db.fetch_value(
-        "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
-        workspace_id,
-    ) is None
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
+            workspace_id,
+        )
+        == 1
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
+            workspace_id,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
 async def test_lifecycle_plain_handle_still_publishes_side_effects(
-    aweb_cloud_db, monkeypatch
+    aweb_cloud_db, monkeypatch, lifecycle_redis
 ):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
@@ -307,8 +314,9 @@ async def test_lifecycle_plain_handle_still_publishes_side_effects(
 
     result = await apply_lifecycle_cascade(
         db,
-        object(),
+        lifecycle_redis,
         _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        registry_client=None,
     )
 
     assert result.post_commit_status == "completed"
@@ -321,7 +329,7 @@ async def test_lifecycle_plain_handle_still_publishes_side_effects(
 
 @pytest.mark.asyncio
 async def test_lifecycle_committed_outbox_replays_after_process_death(
-    aweb_cloud_db, monkeypatch
+    aweb_cloud_db, monkeypatch, lifecycle_redis
 ):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
@@ -357,28 +365,35 @@ async def test_lifecycle_committed_outbox_replays_after_process_death(
     async with db.transaction() as outer:
         result = await apply_lifecycle_cascade(
             outer,
-            object(),
+            lifecycle_redis,
             _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+            registry_client=None,
         )
         assert result.post_commit_status == "pending"
 
     assert observed == []
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
-        workspace_id,
-    ) == 0
-    assert await db.fetch_value(
-        """
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
+            workspace_id,
+        )
+        == 0
+    )
+    assert (
+        await db.fetch_value(
+            """
         SELECT COUNT(*)
         FROM {{tables.lifecycle_side_effect_outbox}}
         WHERE delivered_at IS NULL
         """
-    ) == 4
+        )
+        == 4
+    )
 
     assert result.outbox_operation_id is not None
     replay = await lifecycle.replay_lifecycle_side_effects(
         db,
-        object(),
+        lifecycle_redis,
         operation_id=result.outbox_operation_id,
     )
 
@@ -394,7 +409,7 @@ async def test_lifecycle_committed_outbox_replays_after_process_death(
 
 @pytest.mark.asyncio
 async def test_operation_replay_drains_more_than_the_global_batch_default(
-    aweb_cloud_db, monkeypatch
+    aweb_cloud_db, monkeypatch, lifecycle_redis
 ):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
@@ -435,13 +450,14 @@ async def test_operation_replay_drains_more_than_the_global_batch_default(
     async with db.transaction() as outer:
         result = await apply_lifecycle_cascade(
             outer,
-            object(),
+            lifecycle_redis,
             _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+            registry_client=None,
         )
 
     replay = await lifecycle.replay_lifecycle_side_effects(
         db,
-        object(),
+        lifecycle_redis,
         operation_id=result.outbox_operation_id,
     )
 
@@ -453,7 +469,7 @@ async def test_operation_replay_drains_more_than_the_global_batch_default(
 
 @pytest.mark.asyncio
 async def test_lifecycle_duplicate_replay_does_not_redeliver_completed_rows(
-    aweb_cloud_db, monkeypatch
+    aweb_cloud_db, monkeypatch, lifecycle_redis
 ):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
@@ -476,13 +492,14 @@ async def test_lifecycle_duplicate_replay_does_not_redeliver_completed_rows(
 
     result = await apply_lifecycle_cascade(
         db,
-        object(),
+        lifecycle_redis,
         _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        registry_client=None,
     )
     assert result.post_commit_status == "completed"
     assert published == ["workspace", "team"]
 
-    duplicate = await lifecycle.replay_lifecycle_side_effects(db, object())
+    duplicate = await lifecycle.replay_lifecycle_side_effects(db, lifecycle_redis)
 
     assert duplicate.attempted_count == 0
     assert duplicate.delivered_count == 0
@@ -492,12 +509,25 @@ async def test_lifecycle_duplicate_replay_does_not_redeliver_completed_rows(
 
 @pytest.mark.asyncio
 async def test_chat_waiting_failure_stays_pending_then_replays(
-    aweb_cloud_db, monkeypatch
+    aweb_cloud_db, monkeypatch, lifecycle_redis
 ):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
-    await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
-    redis = _FakeRedis(fail_zrem=True)
+    session_id, did = await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
+    redis = lifecycle_redis
+    await register_waiting(redis, str(session_id), did)
+    assert await get_waiting_agents(redis, str(session_id), [did]) == [did]
+    real_zrem = redis.zrem
+    release_attempts = 0
+
+    async def _fail_first_waiting_release(key: str, *members: str):
+        nonlocal release_attempts
+        release_attempts += 1
+        if release_attempts == 1:
+            raise ConnectionError("injected waiting-release outage")
+        return await real_zrem(key, *members)
+
+    monkeypatch.setattr(redis, "zrem", _fail_first_waiting_release)
 
     async def _capture_event(_redis, _event):
         return 1
@@ -513,22 +543,25 @@ async def test_chat_waiting_failure_stays_pending_then_replays(
         db,
         redis,
         _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        registry_client=None,
     )
 
     assert result.post_commit_status == "failed"
     assert result.chat_waiting_cleanup_status == "failed"
-    assert await db.fetch_value(
-        """
+    assert (
+        await db.fetch_value(
+            """
         SELECT COUNT(*)
         FROM {{tables.lifecycle_side_effect_outbox}}
         WHERE operation_id = $1
           AND effect_kind = 'chat_waiting_clear'
           AND delivered_at IS NULL
         """,
-        UUID(result.outbox_operation_id),
-    ) == 1
+            UUID(result.outbox_operation_id),
+        )
+        == 1
+    )
 
-    redis.fail_zrem = False
     replay = await lifecycle.replay_lifecycle_side_effects(
         db,
         redis,
@@ -537,12 +570,13 @@ async def test_chat_waiting_failure_stays_pending_then_replays(
 
     assert replay.delivered_count == 1
     assert replay.pending_count == 0
-    assert len(redis.zrem_calls) == 2
+    assert release_attempts == 2
+    assert await get_waiting_agents(redis, str(session_id), [did]) == []
 
 
 @pytest.mark.asyncio
 async def test_global_replay_advances_past_a_full_failed_batch(
-    aweb_cloud_db, monkeypatch
+    aweb_cloud_db, monkeypatch, lifecycle_redis
 ):
     db = aweb_cloud_db.aweb_db
     await db.execute(
@@ -591,7 +625,7 @@ async def test_global_replay_advances_past_a_full_failed_batch(
     monkeypatch.setattr(lifecycle, "publish_event", _fail_event)
     monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
 
-    first = await lifecycle.replay_lifecycle_side_effects(db, object())
+    first = await lifecycle.replay_lifecycle_side_effects(db, lifecycle_redis)
     scheduled_failure_count = await db.fetch_value(
         """
         SELECT COUNT(*)
@@ -601,7 +635,7 @@ async def test_global_replay_advances_past_a_full_failed_batch(
           AND next_attempt_at > created_at
         """
     )
-    second = await lifecycle.replay_lifecycle_side_effects(db, object())
+    second = await lifecycle.replay_lifecycle_side_effects(db, lifecycle_redis)
 
     assert first.attempted_count == 100
     assert scheduled_failure_count == 100
@@ -613,10 +647,10 @@ async def test_global_replay_advances_past_a_full_failed_batch(
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db, monkeypatch):
-    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
-        aweb_cloud_db.aweb_db
-    )
+async def test_lifecycle_apply_reports_post_commit_event_failures(
+    aweb_cloud_db, monkeypatch, lifecycle_redis
+):
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(aweb_cloud_db.aweb_db)
     cleared_workspaces: list[list[str]] = []
 
     async def _fail_workspace_event(_redis, _event):
@@ -635,8 +669,9 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db,
 
     result = await apply_lifecycle_cascade(
         aweb_cloud_db.aweb_db,
-        object(),
+        lifecycle_redis,
         _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        registry_client=None,
     )
 
     assert result.errors == ()
@@ -659,13 +694,16 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db,
     )
     assert claim_count == 0
     assert workspace_deleted_at is not None
-    assert await aweb_cloud_db.aweb_db.fetch_value(
-        """
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            """
         SELECT COUNT(*)
         FROM {{tables.lifecycle_side_effect_outbox}}
         WHERE delivered_at IS NULL
         """
-    ) == 1
+        )
+        == 1
+    )
 
     retried: list[str] = []
 
@@ -676,12 +714,12 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db,
     monkeypatch.setattr(lifecycle, "publish_event", _retry_workspace_event)
     replay = await lifecycle.replay_lifecycle_side_effects(
         aweb_cloud_db.aweb_db,
-        object(),
+        lifecycle_redis,
         operation_id=result.outbox_operation_id,
     )
     duplicate = await lifecycle.replay_lifecycle_side_effects(
         aweb_cloud_db.aweb_db,
-        object(),
+        lifecycle_redis,
         operation_id=result.outbox_operation_id,
     )
 
@@ -693,8 +731,7 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db,
 
 @pytest.mark.asyncio
 async def test_lifecycle_archive_global_agent_cleans_coordination_state(
-    aweb_cloud_db,
-    monkeypatch,
+    aweb_cloud_db, monkeypatch, lifecycle_redis
 ):
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
         aweb_cloud_db.aweb_db,
@@ -762,7 +799,8 @@ async def test_lifecycle_archive_global_agent_cleans_coordination_state(
         session_id,
         agent_id,
     )
-    redis = _FakeRedis()
+    redis = lifecycle_redis
+    await register_waiting(redis, str(session_id), "did:key:z6Mkalice")
 
     async def _publish_noop(_redis, _event):
         return 1
@@ -789,6 +827,7 @@ async def test_lifecycle_archive_global_agent_cleans_coordination_state(
             workspace_scope="all_for_agent",
             require_identity_scope="global",
         ),
+        registry_client=None,
     )
 
     assert result.errors == ()
@@ -801,7 +840,7 @@ async def test_lifecycle_archive_global_agent_cleans_coordination_state(
     assert result.chat_waiting_cleared_count == 1
     assert len(result.workspace_changes) == 2
     assert "agent.archive_global" in result.completed_mutations
-    assert redis.zrem_calls == [(f"chat:waiting:{session_id}", "did:key:z6Mkalice")]
+    assert await get_waiting_agents(redis, str(session_id), ["did:key:z6Mkalice"]) == []
 
     agent = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -820,7 +859,7 @@ async def test_lifecycle_archive_global_agent_cleans_coordination_state(
         agent_id,
     )
     participant_count = await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.chat_participants}} WHERE agent_id = $1",
+        "SELECT COUNT(*) FROM {{tables.chat_participants}} WHERE agent_id = $1 AND left_at IS NULL",
         agent_id,
     )
     wait_started_by = await aweb_cloud_db.aweb_db.fetch_value(
@@ -838,7 +877,7 @@ async def test_lifecycle_archive_global_agent_cleans_coordination_state(
 
     assert agent["status"] == "archived"
     assert agent["deleted_at"] is not None
-    assert agent["signing_key_enc"] is None
+    assert agent["signing_key_enc"] == b"hosted-key"
     assert claim_count == 0
     assert reservation_count == 0
     assert participant_count == 0
@@ -861,8 +900,8 @@ async def test_lifecycle_archive_global_agent_without_workspace_archives_agent(
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', 'global', 'developer')
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, identity_scope, role, inbound_mode)
+        VALUES ($1, $2, 'did:key:z6Mkalice', 'alice', 'global', 'developer', 'open')
         """,
         agent_id,
         team_id,
@@ -883,6 +922,7 @@ async def test_lifecycle_archive_global_agent_without_workspace_archives_agent(
             workspace_scope="all_for_agent",
             require_identity_scope="global",
         ),
+        registry_client=None,
     )
 
     agent = await aweb_cloud_db.aweb_db.fetch_one(
@@ -892,7 +932,8 @@ async def test_lifecycle_archive_global_agent_without_workspace_archives_agent(
     assert result.errors == ()
     assert result.workspace_changes == ()
     assert result.identity_archived is True
-    assert result.post_commit_status == "completed"
+    assert result.post_commit_status == "skipped_no_redis"
+    assert result.outbox_operation_id is not None
     assert agent["status"] == "archived"
     assert agent["deleted_at"] is not None
 
@@ -922,6 +963,7 @@ async def test_lifecycle_archive_global_agent_rejects_workspace_subset(
             workspace_scope="explicit",
             require_identity_scope="global",
         ),
+        registry_client=None,
     )
 
     assert [error.code for error in result.errors] == [
@@ -969,11 +1011,10 @@ async def test_lifecycle_archive_global_agent_rejects_non_global_target(
             workspace_scope="all_for_agent",
             require_identity_scope="global",
         ),
+        registry_client=None,
     )
 
-    assert "lifecycle_identity_scope_precondition_failed" in {
-        error.code for error in result.errors
-    }
+    assert "lifecycle_identity_scope_precondition_failed" in {error.code for error in result.errors}
     agent = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT status, deleted_at FROM {{tables.agents}} WHERE agent_id = $1",
         agent_id,
@@ -1023,6 +1064,7 @@ async def test_chat_waiting_cleanup_wakes_the_remaining_participants(aweb_cloud_
                     db,
                     redis,
                     _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+                    registry_client=None,
                 )
                 assert result.chat_waiting_cleanup_status == "cleared"
                 await asyncio.wait_for(wakes.wait(), 1.0)

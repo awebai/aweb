@@ -116,8 +116,12 @@ func runTeamHumanAgentStatus(cmd *cobra.Command, args []string) error {
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
+	signers, err := teamReadSigners(workingDir, domain, team)
+	if err != nil {
+		return err
+	}
 	out := teamAgentStatusOutput{TeamID: teamID, Alias: alias}
-	readAgentCertificateState(ctx, &out, domain, team, isAwebHostedNamespace(domain), teamReadSigners(workingDir, domain, team))
+	readAgentCertificateState(ctx, &out, domain, team, isAwebHostedNamespace(domain), signers)
 	readAgentCoordinationState(ctx, client, &out, alias)
 
 	out.deriveState()
@@ -193,7 +197,18 @@ func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, 
 		out.Unreadable = append(out.Unreadable, fmt.Sprintf("certificate store: %v", err))
 		return
 	}
-	registryURL := resolveTeamRemoveRegistryURL(registry)
+	workingDir, err := os.Getwd()
+	if err != nil {
+		out.Certificate = agentCertificateUnknown
+		out.Unreadable = append(out.Unreadable, fmt.Sprintf("certificate store: %v", err))
+		return
+	}
+	registryURL, err := resolveTeamCommandRegistry(ctx, registry, workingDir, domain, awid.BuildTeamID(domain, team), "")
+	if err != nil {
+		out.Certificate = agentCertificateUnknown
+		out.Unreadable = append(out.Unreadable, fmt.Sprintf("certificate store: %v", err))
+		return
+	}
 
 	// The key the team read was admitted with is the one the member read
 	// reuses: the second read is gated on the same visibility, so re-walking

@@ -48,7 +48,7 @@ func (c *RegistryClient) GetA2APublicationAt(ctx context.Context, registryURL, d
 }
 
 func (c *RegistryClient) PublishA2ADelegationAt(ctx context.Context, registryURL string, params A2ADelegationParams) (*A2AWriteResponse, error) {
-	registryURL, err := canonicalRegistryServerOrigin(registryURL)
+	registryURL, err := CanonicalRegistryServerOrigin(registryURL)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (c *RegistryClient) PublishA2ADelegationAt(ctx context.Context, registryURL
 }
 
 func (c *RegistryClient) PublishA2APublicationAt(ctx context.Context, registryURL string, params A2APublicationParams) (*A2AWriteResponse, error) {
-	registryURL, err := canonicalRegistryServerOrigin(registryURL)
+	registryURL, err := CanonicalRegistryServerOrigin(registryURL)
 	if err != nil {
 		return nil, err
 	}

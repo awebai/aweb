@@ -1,166 +1,123 @@
-from __future__ import annotations
-
-import json
-from datetime import datetime, timezone
-from uuid import uuid4
+"""MCP coordination reads through the real signed transport and mounted tools."""
 
 import pytest
+from test_dashboard_privacy import privacy_app
 
-from aweb.mcp.auth import AuthContext
-from aweb.mcp.tools import _common as common_tools
-from aweb.mcp.tools import work as work_tools
-from aweb.mcp.tools import workspace as workspace_tools
+from test_coordination_state_http import call_mcp, request_as
+from test_coordination_state_http import coordination_mcp
 
-
-class DBInfra:
-    def __init__(self, aweb_db):
-        self._aweb_db = aweb_db
-
-    def get_manager(self, name: str):
-        if name != "aweb":
-            raise KeyError(name)
-        return self._aweb_db
+__all__ = ["coordination_mcp", "privacy_app"]
 
 
 @pytest.mark.asyncio
-async def test_work_ready_uses_workspace_id_not_agent_id(aweb_cloud_db, monkeypatch):
-    workspace_id = uuid4()
-    other_workspace_id = uuid4()
-    agent_id = uuid4()
-    team_id = "backend:acme.com"
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_claims}} (
-            team_id, workspace_id, alias, human_name, task_ref, claimed_at
-        )
-        VALUES ($1, $2, 'alice', 'Alice', 'backend-1234', $3)
-        """,
-        team_id,
-        workspace_id,
-        datetime.now(timezone.utc),
+async def test_workspace_status_uses_workspace_rows_as_primary_identity(
+    coordination_mcp,
+):
+    env = coordination_mcp
+    task = await request_as(
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
+        payload={"title": "Held by the workspace"},
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_claims}} (
-            team_id, workspace_id, alias, human_name, task_ref, claimed_at
-        )
-        VALUES ($1, $2, 'bob', 'Bob', 'backend-5678', $3)
-        """,
-        team_id,
-        other_workspace_id,
-        datetime.now(timezone.utc),
+    assert task.status_code == 200, task.text
+    claim = await request_as(
+        env,
+        alias="alice",
+        method="PATCH",
+        path=f"/v1/tasks/{task.json()['task_ref']}",
+        payload={"status": "in_progress"},
     )
-
-    monkeypatch.setattr(
-        common_tools,
-        "get_auth",
-        lambda: AuthContext(
-            certificate_id="cert-1",
-            team_id=team_id,
-            agent_id=str(agent_id),
-            workspace_id=str(workspace_id),
-            alias="alice",
-            did_key="did:key:z6MkAlice",
-        ),
+    assert claim.status_code == 200, claim.text
+    body = await call_mcp(env, name="workspace_status")
+    alice = env.actors["alice"]
+    assert alice.workspace != alice.id
+    assert body["workspace_id"] == str(alice.workspace)
+    assert body["self"]["workspace_id"] == str(alice.workspace)
+    assert [claim["task_ref"] for claim in body["self"]["claims"]] == [
+        task.json()["task_ref"]
+    ]
+    assert {entry["workspace_id"] for entry in body["team_agents"]} == {
+        str(env.actors[alias].workspace) for alias in ("bob", "carol")
+    }
+    assert body["self"]["status"] == "active"
+    assert body["self"]["last_seen"]
+    agents = await call_mcp(env, name="list_agents")
+    assert {entry["alias"] for entry in agents["agents"] if entry["online"]} == set(
+        env.actors
     )
-    async def _list_ready_tasks(*_args, **_kwargs):
-        return [
-            {
-                "task_ref": "backend-1234",
-                "title": "Fix workspace split",
-                "priority": 1,
-            },
-            {
-                "task_ref": "backend-5678",
-                "title": "Held elsewhere",
-                "priority": 1,
-            },
-        ]
-
-    monkeypatch.setattr(work_tools, "list_ready_tasks", _list_ready_tasks)
-
-    body = json.loads(await work_tools.work_ready(DBInfra(aweb_cloud_db.aweb_db)))
-
-    assert [item["task_ref"] for item in body["tasks"]] == ["backend-1234"]
 
 
 @pytest.mark.asyncio
-async def test_workspace_status_uses_workspace_rows_as_primary_identity(aweb_cloud_db, monkeypatch):
-    team_id = "backend:acme.com"
-    alice_agent_id = uuid4()
-    alice_workspace_id = uuid4()
-    bob_agent_id = uuid4()
-    bob_workspace_id = uuid4()
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'backend', 'did:key:team')
-        """,
-        team_id,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias, human_name, role, identity_scope, status, agent_type, inbound_mode)
-        VALUES
-            ($1, $2, 'did:key:alice', 'alice', 'Alice', 'developer', 'global', 'active', 'agent', 'open'),
-            ($3, $2, 'did:key:bob', 'bob', 'Bob', 'reviewer', 'global', 'active', 'agent', 'open')
-        """,
-        alice_agent_id,
-        team_id,
-        bob_agent_id,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, human_name, role, workspace_type
+async def test_work_ready_excludes_tasks_claimed_by_another_workspace(coordination_mcp):
+    env = coordination_mcp
+    tasks = {}
+    for alias in ("alice", "bob"):
+        created = await request_as(
+            env,
+            alias=alias,
+            method="POST",
+            path="/v1/tasks",
+            payload={"title": f"Work for {alias}"},
         )
-        VALUES
-            ($1, $3, $2, 'alice', 'Alice', 'developer', 'manual'),
-            ($4, $3, $5, 'bob', 'Bob', 'reviewer', 'manual')
-        """,
-        alice_workspace_id,
-        alice_agent_id,
-        team_id,
-        bob_workspace_id,
-        bob_agent_id,
+        assert created.status_code == 200, created.text
+        tasks[alias] = created.json()
+    claimed = await request_as(
+        env,
+        alias="bob",
+        method="PATCH",
+        path=f"/v1/tasks/{tasks['bob']['task_ref']}",
+        payload={"status": "in_progress"},
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.task_claims}} (
-            team_id, workspace_id, alias, human_name, task_ref, claimed_at
-        )
-        VALUES ($1, $2, 'alice', 'Alice', 'backend-1234', $3)
-        """,
-        team_id,
-        alice_workspace_id,
-        datetime.now(timezone.utc),
+    assert claimed.status_code == 200, claimed.text
+    body = await call_mcp(env, name="work_ready")
+    assert [task["task_ref"] for task in body["tasks"]] == [tasks["alice"]["task_ref"]]
+
+
+@pytest.mark.asyncio
+async def test_active_claim_activity_matches_http_and_mcp(coordination_mcp):
+    from datetime import UTC, datetime, timedelta
+    from aweb.presence import update_agent_presence
+
+    env = coordination_mcp
+    created = await request_as(
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
+        payload={"title": "Active observation"},
     )
-
-    monkeypatch.setattr(
-        common_tools,
-        "get_auth",
-        lambda: AuthContext(
-            certificate_id="cert-1",
-            team_id=team_id,
-            agent_id=str(alice_agent_id),
-            workspace_id=str(alice_workspace_id),
-            alias="alice",
-            did_key="did:key:alice",
-        ),
+    assert created.status_code == 200, created.text
+    claimed = await request_as(
+        env,
+        alias="alice",
+        method="PATCH",
+        path=f"/v1/tasks/{created.json()['task_ref']}",
+        payload={"status": "in_progress"},
     )
-    async def _list_presences(_redis, workspace_ids):
-        return [
-            {"workspace_id": str(alice_workspace_id), "status": "active", "role": "developer"},
-            {"workspace_id": str(bob_workspace_id), "status": "active", "role": "reviewer"},
-        ]
+    assert claimed.status_code == 200, claimed.text
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=$1 WHERE workspace_id=$2",
+        datetime.now(UTC) - timedelta(days=2),
+        env.actors["alice"].workspace,
+    )
+    # Supply the actual team, independent of whether the task DTO includes it.
+    from test_dashboard_privacy import TEAM
 
-    monkeypatch.setattr(workspace_tools, "list_agent_presences_by_workspace_ids", _list_presences)
-
-    body = json.loads(await workspace_tools.workspace_status(DBInfra(aweb_cloud_db.aweb_db), None))
-
-    assert body["workspace_id"] == str(alice_workspace_id)
-    assert body["self"]["workspace_id"] == str(alice_workspace_id)
-    assert [claim["task_ref"] for claim in body["self"]["claims"]] == ["backend-1234"]
-    assert [entry["workspace_id"] for entry in body["team_agents"]] == [str(bob_workspace_id)]
+    newest = await update_agent_presence(
+        env.redis,
+        workspace_id=str(env.actors["alice"].workspace),
+        alias="alice",
+        team_id=TEAM,
+        current_branch="work-branch",
+    )
+    http = await request_as(env, alias="alice", method="GET", path="/v1/tasks/active")
+    assert http.status_code == 200, http.text
+    mcp = await call_mcp(env, name="work_active")
+    for rows in (http.json()["tasks"], mcp["tasks"]):
+        assert len(rows) == 1
+        assert rows[0]["task_ref"] == created.json()["task_ref"]
+        assert rows[0]["workspace_id"] == str(env.actors["alice"].workspace)
+        assert rows[0]["owner_last_seen_at"] == newest
+        assert rows[0]["branch"] == "work-branch"

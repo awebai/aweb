@@ -3,6 +3,7 @@
 The delivery function and the address policy are the real ones. Names resolve
 through a recording resolver, and every listener is on this machine.
 """
+
 from __future__ import annotations
 
 import ast
@@ -92,7 +93,12 @@ class Hosts:
 class Listener:
     """A loopback HTTP listener that records every connection and request."""
 
-    def __init__(self, status: int = 200, body: bytes = b"{}", headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        status: int = 200,
+        body: bytes = b"{}",
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status = status
         self.body = body
         self.headers = headers or {}
@@ -111,7 +117,9 @@ class Listener:
         self.server.close()
         await self.server.wait_closed()
 
-    async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _serve(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         self.connections += 1
         try:
             head = await reader.readuntil(b"\r\n\r\n")
@@ -121,7 +129,9 @@ class Listener:
                 if name.strip().lower() == b"content-length":
                     length = int(value)
             self.requests.append(head + await reader.readexactly(length))
-            extra = "".join(f"{name}: {value}\r\n" for name, value in self.headers.items())
+            extra = "".join(
+                f"{name}: {value}\r\n" for name, value in self.headers.items()
+            )
             writer.write(
                 f"HTTP/1.1 {self.status} Answer\r\nContent-Type: application/json\r\n"
                 f"Content-Length: {len(self.body)}\r\n{extra}Connection: close\r\n\r\n".encode()
@@ -167,7 +177,9 @@ def no_system_resolution(monkeypatch):
 
     def numeric_only(host, *args, **kwargs):
         try:
-            socket.inet_pton(socket.AF_INET6 if ":" in str(host) else socket.AF_INET, str(host))
+            socket.inet_pton(
+                socket.AF_INET6 if ":" in str(host) else socket.AF_INET, str(host)
+            )
         except OSError:
             raise AssertionError(f"system resolver was asked for {host!r}") from None
         return real(host, *args, **kwargs)
@@ -184,7 +196,11 @@ async def _deliver(origin: str, transport) -> dict:
     )
 
 
-def _assert_refused(error: FederatedMailDeliveryError, origin: str, reason: str = "delivery_origin_refused") -> None:
+def _assert_refused(
+    error: FederatedMailDeliveryError,
+    origin: str,
+    reason: str = "delivery_origin_refused",
+) -> None:
     assert error.status_code == 502
     assert error.reason == reason
     assert str(error) == f"Federated mail delivery to {origin} failed: {reason}"
@@ -209,7 +225,9 @@ async def test_http_delivery_origin_is_refused_before_resolution_or_connection(d
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("address", NON_PUBLIC_ADDRESSES)
-async def test_delivery_origin_resolving_to_a_non_public_address_is_refused(address, dials):
+async def test_delivery_origin_resolving_to_a_non_public_address_is_refused(
+    address, dials
+):
     async with Listener() as listener:
         hosts = Hosts({"peer.example": (address,)})
         origin = f"https://peer.example:{listener.port}"
@@ -236,7 +254,12 @@ async def test_refused_loopback_answer_reaches_no_listener(address):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "answers",
-    [(PUBLIC_IPV4, "10.0.0.5"), ("169.254.169.254", PUBLIC_IPV4), (PUBLIC_IPV6, "fd00::1"), ()],
+    [
+        (PUBLIC_IPV4, "10.0.0.5"),
+        ("169.254.169.254", PUBLIC_IPV4),
+        (PUBLIC_IPV6, "fd00::1"),
+        (),
+    ],
 )
 async def test_every_answer_must_be_public(answers, dials):
     hosts = Hosts({"peer.example": answers})
@@ -249,7 +272,13 @@ async def test_every_answer_must_be_public(answers, dials):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "origin",
-    ["https://10.0.0.5", "https://127.0.0.1", "https://169.254.169.254", "https://[::1]", f"https://{PUBLIC_IPV4}"],
+    [
+        "https://10.0.0.5",
+        "https://127.0.0.1",
+        "https://169.254.169.254",
+        "https://[::1]",
+        f"https://{PUBLIC_IPV4}",
+    ],
 )
 async def test_address_literal_delivery_origin_is_refused(origin, dials):
     hosts = Hosts({})
@@ -270,7 +299,9 @@ async def test_address_literal_delivery_origin_is_refused(origin, dials):
         ((PUBLIC_IPV6, PUBLIC_IPV4), PUBLIC_IPV6),
     ],
 )
-async def test_delivery_connects_to_the_address_that_was_checked(answers, connected, dials, no_system_resolution):
+async def test_delivery_connects_to_the_address_that_was_checked(
+    answers, connected, dials, no_system_resolution
+):
     hosts = Hosts({"peer.example": answers})
 
     assert await _deliver("https://peer.example:8443", _transport(hosts)) == {}
@@ -287,7 +318,9 @@ async def test_delivery_connects_to_the_address_that_was_checked(answers, connec
 
 
 @pytest.mark.asyncio
-async def test_delivery_tries_the_next_checked_address_when_one_does_not_connect(monkeypatch, no_system_resolution):
+async def test_delivery_tries_the_next_checked_address_when_one_does_not_connect(
+    monkeypatch, no_system_resolution
+):
     attempts: list[tuple[str, float]] = []
 
     async def dial(_self, request: httpx.Request) -> httpx.Response:
@@ -330,9 +363,13 @@ async def test_isolated_development_reaches_a_listener_on_the_second_address():
     async with Listener() as listener:
         hosts = Hosts({"peer.test": ("::1", "127.0.0.1")})
 
-        assert await _deliver(
-            f"http://peer.test:{listener.port}", _transport(hosts, ISOLATED_DEVELOPMENT),
-        ) == {}
+        assert (
+            await _deliver(
+                f"http://peer.test:{listener.port}",
+                _transport(hosts, ISOLATED_DEVELOPMENT),
+            )
+            == {}
+        )
 
         assert hosts.queries == ["peer.test"]
         assert listener.connections == 1
@@ -354,7 +391,9 @@ async def test_each_delivery_resolves_and_checks_again(dials):
 
 
 @pytest.mark.asyncio
-async def test_isolated_development_delivers_over_http_to_the_resolved_address(no_system_resolution):
+async def test_isolated_development_delivers_over_http_to_the_resolved_address(
+    no_system_resolution,
+):
     async with Listener() as listener:
         hosts = Hosts({"peer.test": ("127.0.0.1",)})
         origin = f"http://peer.test:{listener.port}"
@@ -363,7 +402,9 @@ async def test_isolated_development_delivers_over_http_to_the_resolved_address(n
 
         assert hosts.queries == ["peer.test"]
         assert listener.connections == 1
-        assert listener.requests[0].startswith(b"POST /v1/federation/messages HTTP/1.1\r\n")
+        assert listener.requests[0].startswith(
+            b"POST /v1/federation/messages HTTP/1.1\r\n"
+        )
         assert listener.header("Host") == f"peer.test:{listener.port}"
 
 
@@ -371,16 +412,40 @@ async def test_isolated_development_delivers_over_http_to_the_resolved_address(n
 @pytest.mark.parametrize(
     ("context", "host"),
     [
-        (OriginContext(app_env="production", federation_test_enabled=True, listener_origin="http://127.0.0.1:8000"), "peer.test"),
-        (OriginContext(app_env="development", federation_test_enabled=False, listener_origin="http://127.0.0.1:8000"), "peer.test"),
-        (OriginContext(app_env="development", federation_test_enabled=True, listener_origin="https://aweb.example"), "peer.test"),
+        (
+            OriginContext(
+                app_env="production",
+                federation_test_enabled=True,
+                listener_origin="http://127.0.0.1:8000",
+            ),
+            "peer.test",
+        ),
+        (
+            OriginContext(
+                app_env="development",
+                federation_test_enabled=False,
+                listener_origin="http://127.0.0.1:8000",
+            ),
+            "peer.test",
+        ),
+        (
+            OriginContext(
+                app_env="development",
+                federation_test_enabled=True,
+                listener_origin="https://aweb.example",
+            ),
+            "peer.test",
+        ),
         (ISOLATED_DEVELOPMENT, "peer.example"),
     ],
 )
 async def test_isolated_development_allowance_needs_every_condition(context, host):
     async with Listener() as listener:
         hosts = Hosts({host: ("127.0.0.1",)})
-        for scheme, reason in (("http", "delivery_origin_refused"), ("https", "delivery_address_refused")):
+        for scheme, reason in (
+            ("http", "delivery_origin_refused"),
+            ("https", "delivery_address_refused"),
+        ):
             origin = f"{scheme}://{host}:{listener.port}"
             with pytest.raises(FederatedMailDeliveryError) as caught:
                 await _deliver(origin, _transport(hosts, context))
@@ -391,7 +456,9 @@ async def test_isolated_development_allowance_needs_every_condition(context, hos
 @pytest.mark.asyncio
 async def test_redirect_answer_is_not_followed():
     async with Listener() as target:
-        redirect = {"Location": f"http://127.0.0.1:{target.port}/v1/federation/messages"}
+        redirect = {
+            "Location": f"http://127.0.0.1:{target.port}/v1/federation/messages"
+        }
         async with Listener(status=307, headers=redirect) as listener:
             hosts = Hosts({"peer.test": ("127.0.0.1",)})
             origin = f"http://peer.test:{listener.port}"
@@ -446,7 +513,11 @@ async def test_large_error_answer_reaches_the_caller_as_a_status_only(caplog):
     assert error.status_code == 502
     assert error.reason == "HTTP 500"
     assert str(error) == f"Federated mail delivery to {origin} failed: HTTP 500"
-    records = [record.getMessage() for record in caplog.records if record.name == "aweb.federation.mail"]
+    records = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "aweb.federation.mail"
+    ]
     assert len(records) == 1
     assert origin in records[0]
     assert "500" in records[0]
@@ -464,7 +535,9 @@ def test_delivery_requires_a_transport():
 async def test_delivery_without_a_transport_makes_no_request(dials):
     with pytest.raises(TypeError):
         await deliver_federated_message(
-            delivery_origin="https://peer.example", envelope=_envelope(), signature="signature",
+            delivery_origin="https://peer.example",
+            envelope=_envelope(),
+            signature="signature",
         )
     assert dials == []
 
@@ -473,7 +546,10 @@ async def test_delivery_without_a_transport_makes_no_request(dials):
 async def test_a_server_with_no_delivery_transport_refuses_and_makes_no_request(dials):
     with pytest.raises(FederatedMailDeliveryError) as refused:
         await _deliver("https://peer.example", None)
-    assert (refused.value.reason, refused.value.status_code) == ("delivery_unavailable", 502)
+    assert (refused.value.reason, refused.value.status_code) == (
+        "delivery_unavailable",
+        502,
+    )
     assert dials == []
 
 
@@ -482,7 +558,10 @@ def _calls(tree: ast.AST, name: str) -> list[ast.Call]:
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
-        and (getattr(node.func, "id", None) == name or getattr(node.func, "attr", None) == name)
+        and (
+            getattr(node.func, "id", None) == name
+            or getattr(node.func, "attr", None) == name
+        )
     ]
 
 
@@ -505,8 +584,13 @@ def test_outbound_client_factories_match_reviewed_inventory():
         if relative in {"cli.py", "testing.py"}:
             continue
         tree = ast.parse(path.read_text())
-        clients += [relative for _ in _calls(tree, "AsyncClient") + _calls(tree, "Client")]
-        dialers += [relative for _ in _calls(tree, "AsyncHTTPTransport") + _calls(tree, "HTTPTransport")]
+        clients += [
+            relative for _ in _calls(tree, "AsyncClient") + _calls(tree, "Client")
+        ]
+        dialers += [
+            relative
+            for _ in _calls(tree, "AsyncHTTPTransport") + _calls(tree, "HTTPTransport")
+        ]
     reviewed_clients = {
         "federation/mail.py": "peer delivery through the admitted federation transport",
     }
@@ -530,7 +614,9 @@ def test_federation_authority_carries_the_delivery_transport(monkeypatch):
     monkeypatch.delenv("AWEB_FEDERATION_TEST", raising=False)
     monkeypatch.delenv("AWEB_FEDERATION_TEST_DEFAULT_REGISTRY", raising=False)
     database = SimpleNamespace(get_manager=lambda _name: object())
-    authority = build_federation_authority_activation(database, public_origin="https://aweb.example")
+    authority = build_federation_authority_activation(
+        database, public_origin="https://aweb.example"
+    )
 
     transport = authority.delivery_transport
     assert isinstance(transport, AddressCheckedTransport)
@@ -538,9 +624,13 @@ def test_federation_authority_carries_the_delivery_transport(monkeypatch):
     assert transport.host_resolver is authority.resolver.host_resolver
     assert transport.origin_context is authority.resolver.origin_context
     assert delivery_transport(authority) is transport
-    assert delivery_transport(authority, None, None) is transport
+    assert delivery_transport(authority, fallback_transports=(None,)) is transport
     host_set = httpx.MockTransport(lambda _request: httpx.Response(200, json={}))
-    assert delivery_transport(authority, None, host_set) is host_set
+    assert delivery_transport(authority, fallback_transports=(host_set,)) is host_set
+    assert (
+        delivery_transport(authority, host_set, fallback_transports=(transport,))
+        is host_set
+    )
     assert delivery_transport(None) is None
     assert delivery_transport(SimpleNamespace()) is None
 
@@ -562,27 +652,37 @@ class Rows:
 def _authority(monkeypatch, setting: str | None, row: dict | None = None):
     from aweb.federation.activation import build_federation_authority_activation
 
-    for name in ("APP_ENV", "AWEB_FEDERATION_TEST", "AWEB_FEDERATION_TEST_DEFAULT_REGISTRY"):
+    for name in (
+        "APP_ENV",
+        "AWEB_FEDERATION_TEST",
+        "AWEB_FEDERATION_TEST_DEFAULT_REGISTRY",
+    ):
         monkeypatch.delenv(name, raising=False)
     if setting is None:
         monkeypatch.delenv(PRIVATE_DELIVERY_ORIGINS, raising=False)
     else:
         monkeypatch.setenv(PRIVATE_DELIVERY_ORIGINS, setting)
     database = SimpleNamespace(get_manager=lambda _name: Rows(row or {}))
-    return build_federation_authority_activation(database, public_origin="https://aweb.example")
+    return build_federation_authority_activation(
+        database, public_origin="https://aweb.example"
+    )
 
 
 def _private_hosts() -> Hosts:
-    return Hosts({
-        "aweb.acme.internal": ("10.0.0.5",),
-        "mail.aweb.acme.internal": ("10.0.0.5",),
-        "acme.internal": ("10.0.0.5",),
-    })
+    return Hosts(
+        {
+            "aweb.acme.internal": ("10.0.0.5",),
+            "mail.aweb.acme.internal": ("10.0.0.5",),
+            "acme.internal": ("10.0.0.5",),
+        }
+    )
 
 
 @pytest.mark.asyncio
 async def test_private_delivery_origin_is_refused_by_default_and_the_log_names_the_setting(
-    monkeypatch, dials, caplog,
+    monkeypatch,
+    dials,
+    caplog,
 ):
     authority = _authority(monkeypatch, None)
     authority.resolver.host_resolver = hosts = _private_hosts()
@@ -595,7 +695,11 @@ async def test_private_delivery_origin_is_refused_by_default_and_the_log_names_t
     assert PRIVATE_DELIVERY_ORIGINS not in str(caught.value)
     assert hosts.queries == ["aweb.acme.internal"]
     assert dials == []
-    [record] = [record for record in caplog.records if record.name == "aweb.federation.transport"]
+    [record] = [
+        record
+        for record in caplog.records
+        if record.name == "aweb.federation.transport"
+    ]
     assert record.levelno == logging.WARNING
     assert PRIVATE_ORIGIN in record.getMessage()
     assert PRIVATE_DELIVERY_ORIGINS in record.getMessage()
@@ -604,10 +708,17 @@ async def test_private_delivery_origin_is_refused_by_default_and_the_log_names_t
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "setting",
-    [PRIVATE_ORIGIN, "https://AWEB.acme.internal.:443/", f" https://other.internal , {PRIVATE_ORIGIN} "],
+    [
+        PRIVATE_ORIGIN,
+        "https://AWEB.acme.internal.:443/",
+        f" https://other.internal , {PRIVATE_ORIGIN} ",
+    ],
 )
 async def test_listed_private_delivery_origin_is_delivered_to_the_checked_address(
-    setting, monkeypatch, dials, no_system_resolution,
+    setting,
+    monkeypatch,
+    dials,
+    no_system_resolution,
 ):
     authority = _authority(monkeypatch, setting)
     authority.resolver.host_resolver = hosts = _private_hosts()
@@ -643,7 +754,10 @@ async def test_listed_private_delivery_origin_is_delivered_to_the_checked_addres
     ],
 )
 async def test_listed_delivery_origin_admits_private_networks_at_the_checked_address(
-    answers, monkeypatch, dials, no_system_resolution,
+    answers,
+    monkeypatch,
+    dials,
+    no_system_resolution,
 ):
     authority = _authority(monkeypatch, PRIVATE_ORIGIN)
     authority.resolver.host_resolver = hosts = Hosts({"aweb.acme.internal": answers})
@@ -683,7 +797,10 @@ async def test_listed_delivery_origin_admits_private_networks_at_the_checked_add
     ],
 )
 async def test_listed_delivery_origin_refuses_addresses_outside_the_private_networks(
-    answers, monkeypatch, dials, caplog,
+    answers,
+    monkeypatch,
+    dials,
+    caplog,
 ):
     authority = _authority(monkeypatch, PRIVATE_ORIGIN)
     authority.resolver.host_resolver = Hosts({"aweb.acme.internal": answers})
@@ -694,18 +811,30 @@ async def test_listed_delivery_origin_refuses_addresses_outside_the_private_netw
 
     _assert_address_refused(caught.value, PRIVATE_ORIGIN)
     assert dials == []
-    [record] = [record for record in caplog.records if record.name == "aweb.federation.transport"]
+    [record] = [
+        record
+        for record in caplog.records
+        if record.name == "aweb.federation.transport"
+    ]
     assert record.levelno == logging.WARNING
     message = record.getMessage()
     assert PRIVATE_ORIGIN in message
-    for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"):
+    for network in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "fc00::/7",
+    ):
         assert network in message
     assert f"add {PRIVATE_ORIGIN} to" not in message
 
 
 @pytest.mark.parametrize("address", ["100.64.1.2", "172.16.0.1", "fd00::5"])
 @pytest.mark.asyncio
-async def test_private_networks_of_listed_origins_stay_refused_for_unlisted_origins(address, monkeypatch, dials):
+async def test_private_networks_of_listed_origins_stay_refused_for_unlisted_origins(
+    address, monkeypatch, dials
+):
     authority = _authority(monkeypatch, PRIVATE_ORIGIN)
     authority.resolver.host_resolver = Hosts({"aweb.partner.internal": (address,)})
 
@@ -726,7 +855,9 @@ async def test_private_networks_of_listed_origins_stay_refused_for_unlisted_orig
         ("https://acme.internal", "delivery_address_refused"),
     ],
 )
-async def test_origin_differing_from_the_listed_one_is_refused(origin, reason, monkeypatch, dials):
+async def test_origin_differing_from_the_listed_one_is_refused(
+    origin, reason, monkeypatch, dials
+):
     authority = _authority(monkeypatch, PRIVATE_ORIGIN)
     authority.resolver.host_resolver = _private_hosts()
 
@@ -738,22 +869,33 @@ async def test_origin_differing_from_the_listed_one_is_refused(origin, reason, m
 
 
 @pytest.mark.asyncio
-async def test_listed_private_delivery_origin_does_not_widen_id_tree_registry_reads(monkeypatch, dials):
+async def test_listed_private_delivery_origin_does_not_widen_id_tree_registry_reads(
+    monkeypatch, dials
+):
     from awid.federation_errors import FederationAuthorityError
 
     row = {
-        "authority_selection": "dns", "authority_name": "acme.internal", "controller_did": "did:key:controller",
-        "inherited": False, "registry_explicit": True, "registry_origin": PRIVATE_ORIGIN,
+        "authority_selection": "dns",
+        "authority_name": "acme.internal",
+        "controller_did": "did:key:controller",
+        "inherited": False,
+        "registry_explicit": True,
+        "registry_origin": PRIVATE_ORIGIN,
         "authority_statement_digest": "digest",
     }
     authority = _authority(monkeypatch, PRIVATE_ORIGIN, row)
     authority.resolver.host_resolver = hosts = _private_hosts()
     token = SimpleNamespace(
-        canonical_address="acme.internal/bob", did_aw="did:aw:bob", checkpoint_revision=1, cohort_generation=1,
+        canonical_address="acme.internal/bob",
+        did_aw="did:aw:bob",
+        checkpoint_revision=1,
+        cohort_generation=1,
     )
 
     with pytest.raises(FederationAuthorityError) as caught:
-        async with authority.received_registry_client(token, named_did_key("bob"), None):
+        async with authority.received_registry_client(
+            token, named_did_key("bob"), None
+        ):
             pass
 
     assert caught.value.reason == "sender_registry_origin_forbidden"
@@ -769,8 +911,13 @@ def test_only_the_delivery_transport_receives_the_private_delivery_origins():
     for path in SOURCE.rglob("*.py"):
         for call in _calls(ast.parse(path.read_text()), "admitted_addresses"):
             keywords = {keyword.arg for keyword in call.keywords}
-            callers.append((path.relative_to(SOURCE).as_posix(), "private_origins" in keywords))
-    assert sorted(callers) == [("federation/id_tree_registry.py", False), ("federation/transport.py", True)]
+            callers.append(
+                (path.relative_to(SOURCE).as_posix(), "private_origins" in keywords)
+            )
+    assert sorted(callers) == [
+        ("federation/id_tree_registry.py", False),
+        ("federation/transport.py", True),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -791,7 +938,9 @@ def test_only_the_delivery_transport_receives_the_private_delivery_origins():
         "ftp://aweb.acme.internal",
     ],
 )
-def test_invalid_private_delivery_origin_refuses_start_up_naming_the_entry(entry, monkeypatch):
+def test_invalid_private_delivery_origin_refuses_start_up_naming_the_entry(
+    entry, monkeypatch
+):
     with pytest.raises(ValueError) as caught:
         _authority(monkeypatch, f"{PRIVATE_ORIGIN},{entry}")
     assert PRIVATE_DELIVERY_ORIGINS in str(caught.value)
@@ -800,7 +949,9 @@ def test_invalid_private_delivery_origin_refuses_start_up_naming_the_entry(entry
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("setting", [None, "", "  ", " , "])
-async def test_unset_or_empty_private_delivery_origins_keep_the_default(setting, monkeypatch, dials):
+async def test_unset_or_empty_private_delivery_origins_keep_the_default(
+    setting, monkeypatch, dials
+):
     authority = _authority(monkeypatch, setting)
     authority.resolver.host_resolver = _private_hosts()
 
@@ -816,7 +967,9 @@ def _private_origin_authority():
     return SimpleNamespace(delivery_transport=_transport(hosts)), hosts
 
 
-REFUSED_DETAIL = "Federated mail delivery to https://remote.example failed: delivery_address_refused"
+REFUSED_DETAIL = (
+    "Federated mail delivery to https://remote.example failed: delivery_address_refused"
+)
 
 
 async def _signer_for(signing_key, did):
@@ -840,7 +993,8 @@ async def _mcp_sender(aweb_db, monkeypatch, tools):
     await aweb_db.execute(
         "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
         "VALUES ($1, 'acme.com', 'ops', $2)",
-        team_id, named_did_key("z6MkTeam"),
+        team_id,
+        named_did_key("z6MkTeam"),
     )
     await aweb_db.execute(
         """
@@ -848,17 +1002,30 @@ async def _mcp_sender(aweb_db, monkeypatch, tools):
             (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode, did_aw_verified_key)
         VALUES ($1, $2, $3, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open', $3)
         """,
-        agent_id, team_id, did,
+        agent_id,
+        team_id,
+        did,
     )
     monkeypatch.setattr(
         tools,
         "get_auth",
         lambda: AuthContext(
-            team_id=team_id, agent_id=str(agent_id), workspace_id=str(workspace_id), alias="alice",
-            did_key=did, did_aw="did:aw:alice", address="acme.com/alice", trusted_proxy=True,
+            team_id=team_id,
+            agent_id=str(agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=did,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
         ),
     )
-    return SimpleNamespace(team_id=team_id, agent_id=agent_id, did=did, signer=await _signer_for(signing_key, did))
+    return SimpleNamespace(
+        team_id=team_id,
+        agent_id=agent_id,
+        did=did,
+        signer=await _signer_for(signing_key, did),
+    )
 
 
 def _registered_tools(aweb_db, authority, signer) -> ToolCollector:
@@ -876,7 +1043,9 @@ def _registered_tools(aweb_db, authority, signer) -> ToolCollector:
 
 
 @pytest.mark.asyncio
-async def test_mcp_federated_mail_to_a_private_address_is_refused(aweb_cloud_db, monkeypatch, dials):
+async def test_mcp_federated_mail_to_a_private_address_is_refused(
+    aweb_cloud_db, monkeypatch, dials
+):
     db = aweb_cloud_db.aweb_db
     sender = await _mcp_sender(db, monkeypatch, mail_tools)
     conversation_id = uuid4()
@@ -885,7 +1054,8 @@ async def test_mcp_federated_mail_to_a_private_address_is_refused(aweb_cloud_db,
         INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
         VALUES ($1, 'mail', $2, 'did:aw:alice')
         """,
-        conversation_id, sender.team_id,
+        conversation_id,
+        sender.team_id,
     )
     await db.execute(
         """
@@ -897,14 +1067,22 @@ async def test_mcp_federated_mail_to_a_private_address_is_refused(aweb_cloud_db,
             ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', $4,
              'federation:https://remote.example', 'participant')
         """,
-        conversation_id, sender.agent_id, sender.did, named_did_key("bob"),
+        conversation_id,
+        sender.agent_id,
+        sender.did,
+        named_did_key("bob"),
     )
     authority, hosts = _private_origin_authority()
     tools = _registered_tools(db, authority, sender.signer)
 
-    result = json.loads(await tools.funcs["send_mail"](
-        conversation_id=str(conversation_id), subject="Re", body="federated reply", plaintext=True,
-    ))
+    result = json.loads(
+        await tools.funcs["send_mail"](
+            conversation_id=str(conversation_id),
+            subject="Re",
+            body="federated reply",
+            plaintext=True,
+        )
+    )
 
     assert result == {"error": REFUSED_DETAIL}
     assert hosts.queries == ["remote.example"]
@@ -913,13 +1091,16 @@ async def test_mcp_federated_mail_to_a_private_address_is_refused(aweb_cloud_db,
 
 
 @pytest.mark.asyncio
-async def test_mcp_federated_chat_to_a_private_address_is_refused(aweb_cloud_db, monkeypatch, dials):
+async def test_mcp_federated_chat_to_a_private_address_is_refused(
+    aweb_cloud_db, monkeypatch, dials
+):
     db = aweb_cloud_db.aweb_db
     sender = await _mcp_sender(db, monkeypatch, chat_tools)
     session_id = uuid4()
     await db.execute(
         "INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by) VALUES ($1, $2, 'alice')",
-        session_id, sender.team_id,
+        session_id,
+        sender.team_id,
     )
     await db.execute(
         """
@@ -930,14 +1111,21 @@ async def test_mcp_federated_chat_to_a_private_address_is_refused(aweb_cloud_db,
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3),
             ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://remote.example', $4)
         """,
-        session_id, sender.agent_id, sender.did, named_did_key("bob"),
+        session_id,
+        sender.agent_id,
+        sender.did,
+        named_did_key("bob"),
     )
     authority, hosts = _private_origin_authority()
     tools = _registered_tools(db, authority, sender.signer)
 
-    result = json.loads(await tools.funcs["send_chat"](
-        conversation_id=str(session_id), message="federated continuation", plaintext=True,
-    ))
+    result = json.loads(
+        await tools.funcs["send_chat"](
+            conversation_id=str(session_id),
+            message="federated continuation",
+            plaintext=True,
+        )
+    )
 
     assert result == {"error": REFUSED_DETAIL}
     assert hosts.queries == ["remote.example"]
@@ -964,13 +1152,19 @@ def _signed(sender_key, payload: dict) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_mail_route_delivers_through_the_authority_transport(aweb_cloud_db, dials):
+async def test_mail_route_delivers_through_the_authority_transport(
+    aweb_cloud_db, dials
+):
     db = aweb_cloud_db.aweb_db
     alice_key, _, alice_did = test_messages_http._make_keypair()
     await test_messages_http._insert_team(db, "backend:acme.com")
     agent_id = await test_messages_http._insert_agent(
-        db, team_id="backend:acme.com", alias="alice", did_key=alice_did,
-        did_aw="did:aw:alice", address="acme.com/alice",
+        db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
     )
     registry = AsyncMock()
     registry.resolve_address = AsyncMock(return_value=_remote_bob())
@@ -978,24 +1172,55 @@ async def test_mail_route_delivers_through_the_authority_transport(aweb_cloud_db
     authority, hosts = _private_origin_authority()
     app.state.federation_authority.delivery_transport = authority.delivery_transport
     app.dependency_overrides[get_messaging_auth] = lambda: MessagingAuth(
-        did_key=alice_did, did_aw="did:aw:alice", address="acme.com/alice",
-        team_id="backend:acme.com", alias="alice", agent_id=agent_id,
+        did_key=alice_did,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+        team_id="backend:acme.com",
+        alias="alice",
+        agent_id=agent_id,
     )
     message_id, conversation_id = str(uuid4()), str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    signed_payload, signature = _signed(alice_key, {
-        "body": "hello", "conversation_id": conversation_id, "from": "acme.com/alice",
-        "from_did": alice_did, "from_stable_id": "did:aw:alice", "message_id": message_id,
-        "subject": "private origin", "timestamp": timestamp, "to": "otherco.com/bob",
-        "to_did": named_did_key("bob"), "to_stable_id": "did:aw:bob", "type": "mail",
-    })
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    signed_payload, signature = _signed(
+        alice_key,
+        {
+            "body": "hello",
+            "conversation_id": conversation_id,
+            "from": "acme.com/alice",
+            "from_did": alice_did,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "subject": "private origin",
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": named_did_key("bob"),
+            "to_stable_id": "did:aw:bob",
+            "type": "mail",
+        },
+    )
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post("/v1/messages", json={
-            "to_address": "otherco.com/bob", "subject": "private origin", "body": "hello",
-            "conversation_id": conversation_id, "message_id": message_id, "timestamp": timestamp,
-            "from_did": alice_did, "signature": signature, "signed_payload": signed_payload,
-        })
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/v1/messages",
+            json={
+                "to_address": "otherco.com/bob",
+                "subject": "private origin",
+                "body": "hello",
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "from_did": alice_did,
+                "signature": signature,
+                "signed_payload": signed_payload,
+            },
+        )
 
     assert response.status_code == 502, response.text
     assert response.json() == {"detail": REFUSED_DETAIL}
@@ -1005,7 +1230,9 @@ async def test_mail_route_delivers_through_the_authority_transport(aweb_cloud_db
 
 
 @pytest.mark.asyncio
-async def test_chat_route_delivers_through_the_authority_transport(aweb_cloud_db, dials):
+async def test_chat_route_delivers_through_the_authority_transport(
+    aweb_cloud_db, dials
+):
     db = aweb_cloud_db.aweb_db
     alice_key, _, alice_did = test_chat_http._make_keypair()
     await db.execute(
@@ -1024,7 +1251,9 @@ async def test_chat_route_delivers_through_the_authority_transport(aweb_cloud_db
     )
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=named_did_key("bob"))
+        return_value=KeyResolution(
+            did_aw="did:aw:bob", current_did_key=named_did_key("bob")
+        )
     )
     registry.resolve_address = AsyncMock(return_value=_remote_bob())
     app = test_chat_http._build_test_app(db, registry)
@@ -1032,24 +1261,53 @@ async def test_chat_route_delivers_through_the_authority_transport(aweb_cloud_db
     authority, hosts = _private_origin_authority()
     app.state.federation_authority.delivery_transport = authority.delivery_transport
     app.dependency_overrides[get_messaging_auth] = lambda: MessagingAuth(
-        did_key=alice_did, did_aw="did:aw:alice", address="acme.com/alice",
-        team_id="backend:acme.com", alias="alice", agent_id=agent_id,
+        did_key=alice_did,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+        team_id="backend:acme.com",
+        alias="alice",
+        agent_id=agent_id,
     )
     session_id, message_id = str(uuid4()), str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    signed_payload, signature = _signed(alice_key, {
-        "body": "private origin chat", "conversation_id": session_id, "from": "acme.com/alice",
-        "from_did": alice_did, "from_stable_id": "did:aw:alice", "message_id": message_id,
-        "timestamp": timestamp, "to": "otherco.com/bob", "to_did": named_did_key("bob"),
-        "to_stable_id": "did:aw:bob", "type": "chat",
-    })
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    signed_payload, signature = _signed(
+        alice_key,
+        {
+            "body": "private origin chat",
+            "conversation_id": session_id,
+            "from": "acme.com/alice",
+            "from_did": alice_did,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": named_did_key("bob"),
+            "to_stable_id": "did:aw:bob",
+            "type": "chat",
+        },
+    )
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post("/v1/chat/sessions", json={
-            "session_id": session_id, "to_addresses": ["otherco.com/bob"], "message": "private origin chat",
-            "from_did": alice_did, "message_id": message_id, "timestamp": timestamp,
-            "signature": signature, "signed_payload": signed_payload,
-        })
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/v1/chat/sessions",
+            json={
+                "session_id": session_id,
+                "to_addresses": ["otherco.com/bob"],
+                "message": "private origin chat",
+                "from_did": alice_did,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "signature": signature,
+                "signed_payload": signed_payload,
+            },
+        )
 
     assert response.status_code == 502, response.text
     assert response.json() == {"detail": REFUSED_DETAIL}

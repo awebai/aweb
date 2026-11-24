@@ -1,5 +1,5 @@
-export const MAX_HTTP_RESPONSE_BYTES = 10 * 1024 * 1024;
-export const MAX_HTTP_ERROR_BYTES = 64 * 1024;
+const MAX_HTTP_RESPONSE_BYTES = 10 * 1024 * 1024;
+const MAX_HTTP_ERROR_BYTES = 64 * 1024;
 
 export async function readBoundedResponse(
   response: Response,

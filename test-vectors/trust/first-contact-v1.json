@@ -236,6 +236,33 @@
       "expected_pin_store_after": null
     },
     {
+      "name": "pinned-sender-whose-address-the-registry-no-longer-has",
+      "description": "The registry answers that a pinned sender’s address does not exist, and the message is signed by the pinned key: not a forgery, and not current verification (verification_stale).",
+      "from_address": "bob.example.com/bob",
+      "from_did": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs",
+      "from_stable_id": "",
+      "resolver": "registry",
+      "address_resolution": {
+        "outcome": "not_found"
+      },
+      "stable_identity": null,
+      "pin_store_before": {
+        "pins": {
+          "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
+            "address": "bob.example.com/bob",
+            "stable_id": "",
+            "did_key": "",
+            "confirmed_by": ""
+          }
+        },
+        "addresses": {
+          "bob.example.com/bob": "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs"
+        }
+      },
+      "expected_status": "verification_stale",
+      "expected_pin_store_after": null
+    },
+    {
       "name": "pinned-sender-and-the-registry-names-another-key",
       "description": "A later registry answer that contradicts the pin is a mismatch, and the pin is kept.",
       "from_address": "bob.example.com/bob",

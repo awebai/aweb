@@ -142,23 +142,18 @@ def test_b3_completion_examples_preserve_original_authority_and_candidate_states
     )
     scheduled = rows["approver_contact_change_by_owner_scheduled"]
     proven = rows["approver_contact_proven"]
-    cancelled = rows["approver_contact_change_cancelled"]
     assert scheduled["approval_evidence_sha256"] == proven["approval_evidence_sha256"]
     assert scheduled["approval_id"] == proven["approval_id"]
-    assert cancelled["approval_evidence_sha256"] != proven["approval_evidence_sha256"]
-    assert "approval_id" not in cancelled
     contacts = [
         payload for payload in rows.values() if payload.get("resource_type") == "pending_contact"
     ]
-    assert len(contacts) == 4
-    assert len({payload["resource_ref"] for payload in contacts}) == 1
+    assert contacts == [scheduled, proven]
+    assert scheduled["resource_ref"] == proven["resource_ref"]
     assert proven["before_ref"] == scheduled["after_ref"]
-    assert cancelled["before_ref"] == proven["after_ref"]
-    assert len({scheduled["after_ref"], proven["after_ref"], cancelled["after_ref"]}) == 3
+    assert scheduled["after_ref"] != proven["after_ref"]
     assert {payload["reason_code"] for payload in contacts} == {
         "contact_change_scheduled",
         "contact_proven",
-        "contact_change_cancelled",
     }
 
 

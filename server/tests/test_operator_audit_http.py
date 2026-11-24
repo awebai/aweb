@@ -15,6 +15,8 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_identity_grants import _grant_headers
 from test_messages_http import _make_keypair, _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 async def _request(env, method, path, body=None, *, version=1):
     actor = env.actors['alice']

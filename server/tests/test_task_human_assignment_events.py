@@ -31,8 +31,8 @@ async def _member(db, alias, *, human=False, team_id=TEAM_ID, deleted=False):
     member_id = uuid4()
     await db.execute(
         """INSERT INTO {{tables.agents}}
-           (agent_id, team_id, did_key, alias, agent_type, identity_scope, deleted_at)
-           VALUES ($1, $2, $3, $4, $5, 'local', CASE WHEN $6 THEN NOW() END)""",
+           (agent_id, team_id, did_key, alias, agent_type, identity_scope, deleted_at, inbound_mode)
+           VALUES ($1, $2, $3, $4, $5, 'local', CASE WHEN $6 THEN NOW() END, 'open')""",
         member_id, team_id, f"did:key:{member_id}", alias,
         "human" if human else "agent", deleted,
     )

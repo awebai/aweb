@@ -14,15 +14,23 @@ import { DiagnosticOutput, cleanupPassiveTerminal, createProbeAssertions, wakeTi
 const KernelBackend = Object.freeze({ Tmux: "tmux" });
 const OWNED_TMUX = ["tmux", "-L", "oats"];
 const ProbeOutcome = Object.freeze({ Passed: "PASSED", Failed: "FAILED" });
-const STAGED = "/opt/user-paths/released-oats";
-const KERNEL = join(STAGED, "node_modules/@awebai/oats/bin/oats.mjs");
-const PROVIDER = "/opt/user-paths/oats-aweb/oats-package/capabilities/oats-aweb";
-const PIN = JSON.parse(readFileSync(join(STAGED, "provider.json"), "utf8"));
 const { values } = parseArgs({ options: {
   aw: { type: "string" }, root: { type: "string" }, seat: { type: "string" },
   "fixture-home": { type: "string" }, sender: { type: "string" }, team: { type: "string" }, output: { type: "string" },
   "source-commit": { type: "string" },
+  "released-lifecycle": { type: "boolean" }, "released-artifacts": { type: "string" }, "aw-actor": { type: "string" },
 } });
+const released = values["released-lifecycle"];
+const manual = Boolean(values["aw-actor"]);
+if (released && !values["released-artifacts"]) {
+  throw new Error("--released-artifacts is required for published client validation");
+}
+const STAGED = values["released-artifacts"] || "/opt/user-paths/released-oats";
+const KERNEL = join(STAGED, "node_modules/@awebai/oats/bin/oats.mjs");
+const artifacts = released ? JSON.parse(readFileSync(join(STAGED, "provenance.json"), "utf8")) : null;
+const PIN = artifacts?.provider ?? JSON.parse(readFileSync(join(STAGED, "provider.json"), "utf8"));
+const PROVIDER = join(released ? STAGED : "/opt/user-paths/oats-aweb", PIN.capability_path);
+
 const evidence = {};
 const assert = createProbeAssertions({ evidence, output: values.output });
 for (const option of ["aw", "root", "seat", "sender", "team", "output", "source-commit", "fixture-home"]) {
@@ -31,6 +39,14 @@ for (const option of ["aw", "root", "seat", "sender", "team", "output", "source-
 const root = resolve(values.root);
 const { home, deployment, source, bin } = prepareKernelProbeDirectories({ root });
 Object.assign(evidence, { scope: "released OATS kernel -> candidate aw wake path; not the lab image, supervisor or Helm storage", provider: PIN, candidate_source_commit: values["source-commit"], candidate_binary_sha256: createHash("sha256").update(readFileSync(values.aw)).digest("hex"), process_uid: process.geteuid(), process_gid: process.getegid() });
+if (released) {
+  evidence.scope = manual ? "released aw manual native-broker registration" : "released OATS kernel and aweb provider with released aw";
+  evidence.lifecycle = {};
+}
+function recordLifecycle(operation, visible) {
+  if (manual && operation === "wake") evidence.lifecycle["aw/wake"] = { status: "PASSED", visible };
+  if (released && !manual) evidence.lifecycle["oats/" + operation] = { status: "PASSED", visible };
+}
 const env = {
   PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, HOME: home,
   TMUX_TMPDIR: join(root, "tmux"), OATS_TMUX_SESSION: "r20-kernel-wake",
@@ -114,24 +130,27 @@ let brokerErrors = "";
 const cleanupErrors = [];
 try {
   evidence.kernel = parseObject(oats("--version", "--json"));
-  assert.equal(JSON.parse(readFileSync(join(STAGED, "node_modules/@awebai/oats/package.json"), "utf8")).version, "0.69.19", "released kernel version must match the locked 0.69.19");
-  evidence.kernel_integrity = JSON.parse(readFileSync(join(STAGED, "package-lock.json"), "utf8")).packages["node_modules/@awebai/oats"].integrity;
+  assert.equal(JSON.parse(readFileSync(join(STAGED, "node_modules/@awebai/oats/package.json"), "utf8")).version, artifacts?.kernel.version ?? "0.69.19", "kernel version must match the verified package");
+  evidence.kernel_integrity = artifacts?.kernel.integrity ?? JSON.parse(readFileSync(join(STAGED, "package-lock.json"), "utf8")).packages["node_modules/@awebai/oats"].integrity;
   evidence.node = process.version;
   evidence.aw = command({ name: "aw version", argv: [join(bin, "aw"), "version"], output: DiagnosticOutput.Public });
   assert.match(evidence.aw, new RegExp(`commit: ${values["source-commit"]} `), "candidate aw identifies the requested source SHA");
-  assert.equal(JSON.parse(readFileSync(join(PROVIDER, "oats.json"), "utf8")).version, PIN.version, "provider version must match its locked pin");
+  if (!manual) assert.equal(JSON.parse(readFileSync(join(PROVIDER, "oats.json"), "utf8")).version, PIN.version, "provider version must match the verified release");
   const ref = pathToFileURL(source).href;
   mkdirSync(join(source, "souls/probe"), { recursive: true });
-  cpSync(PROVIDER, join(source, "capabilities/oats-aweb"), { recursive: true });
-  writeFileSync(join(source, "oats-workspace.yaml"), `schemaVersion: 2\nname: wake-probe\nmembers:\n  - ${ref}\nlocalTeams: true\ndefaults:\n  messaging:\n    oats.aweb: { from: local/${source} }\n`);
+  if (!manual) cpSync(PROVIDER, join(source, "capabilities/oats-aweb"), { recursive: true });
+  const messaging = manual ? "" : `defaults:\n  messaging:\n    oats.aweb: { from: local/${source} }\n`;
+  writeFileSync(join(source, "oats-workspace.yaml"), `schemaVersion: 2\nname: wake-probe\nmembers:\n  - ${ref}\nlocalTeams: true\n${messaging}`);
   writeFileSync(join(source, "oats-membership.yaml"), `schemaVersion: 2\nworkspace: ${ref}\n`);
   writeFileSync(join(source, "souls/probe/soul.yaml"), `schemaVersion: 2\nname: probe\ndescription: released kernel wake probe\nwork: directory\nlaunch: { harness: ${passiveLaunch.harness} }\n`);
   writeFileSync(join(source, "souls/probe/AGENTS.md"), "Disposable passive wake probe.\n");
   for (const args of [["init", "-q"], ["add", "."], ["commit", "-qm", "owned wake-probe workspace"]]) {
     command({ name: `git ${args[0]}`, argv: ["git", "-C", source, "-c", "user.name=Wake probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args], output: DiagnosticOutput.Public });
   }
-  writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\nsettings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\nlaunch-configs:\n  passive: ${JSON.stringify(passiveLaunch)}\nsouls:\n  launch:\n    '*': passive\n`);
-  evidence.mint_preflight = prepareMintAuthority({ seat: values.seat, fixtureHome: values["fixture-home"], team: values.team });
+  const registrySetting = released ? `    registry: ${JSON.stringify(env.AWID_REGISTRY_URL)}\n` : "";
+  const deploymentMessaging = manual ? "" : `settings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\n${registrySetting}`;
+  writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\n${deploymentMessaging}launch-configs:\n  passive: ${JSON.stringify(passiveLaunch)}\nsouls:\n  launch:\n    '*': passive\n`);
+  if (!manual) evidence.mint_preflight = prepareMintAuthority({ seat: values.seat, fixtureHome: values["fixture-home"], team: values.team });
   // Capture bounded public failure text; credentials remain in the owned volume.
   const startOwnedBroker = () => {
     const child = spawn(join(bin, "aw"), ["wake", "run"], { cwd: home, env, stdio: ["ignore", "ignore", "pipe"] });
@@ -142,72 +161,91 @@ try {
   // A downgraded aw could trust this old stamp; candidate aw must remove it
   // without reading or rewriting the now-unused legacy runner file.
   const state = join(home, ".config/aw/wake"), cache = join(state, "channel-core");
-  mkdirSync(cache, { recursive: true, mode: 0o700 });
   const legacyBytes = "throw new Error('unused legacy cache must never execute');\n";
-  writeFileSync(join(cache, "runner.mjs"), legacyBytes, { mode: 0o600 });
-  writeFileSync(join(cache, "runner.sha256"), "old success stamp\n", { mode: 0o600 });
+  if (!released) {
+    mkdirSync(cache, { recursive: true, mode: 0o700 });
+    writeFileSync(join(cache, "runner.mjs"), legacyBytes, { mode: 0o600 });
+    writeFileSync(join(cache, "runner.sha256"), "old success stamp\n", { mode: 0o600 });
+  }
   broker = startOwnedBroker();
   const wakeStatus = () => parseObject(command({ name: "aw wake status", argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home }));
   await until({ read: wakeStatus, ready: (status) => status.daemon_running === true && status.daemon_pid === broker.pid, label: "isolated broker" });
-  const spawned = parseObject(oats("spawn", "probe", "--name", "r20-wake-probe", "--backend", KernelBackend.Tmux, "--no-launch", "--json"));
+  const spawnArgs = ["spawn", "probe", "--name", "r20-wake-probe", "--backend", KernelBackend.Tmux];
+  if (!released) spawnArgs.push("--no-launch");
+  const spawned = parseObject(oats(...spawnArgs, "--json"));
   evidence.kernel_spawn = { ok: spawned.ok, instance: spawned.result?.instance, home: spawned.result?.home };
-  assert.equal(spawned.ok, true, "kernel spawn.ok must confirm the no-launch spawn");
+  assert.equal(spawned.ok, true, "kernel spawn.ok must confirm the spawn");
   ({ instance, home: instanceHome } = spawned.result);
   assert.ok(instance && instanceHome, "kernel spawn must return its instance and home");
-  const beforeLaunch = kernelInstanceStatus();
-  evidence.kernel_status_before = beforeLaunch.status;
-  assert.equal(beforeLaunch.row.running, false, "a no-launch instance is recorded without a running session");
+  if (manual) {
+    command({ name: "aw wake register", argv: [join(bin, "aw"), "wake", "register", "--home", instanceHome,
+      "--identity-home", join(resolve(values["aw-actor"]), ".aw"), "--delivery", "session", "--backend", "tmux"] });
+  }
   const runnerReady = (status) => status.daemon_running === true && status.daemon_pid === broker.pid && wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true);
-  const prelaunchKernel = parseObject(oats("session", "inspect", "--home", instanceHome, "--json"));
-  evidence.kernel_prelaunch = kernelSessionSnapshot(prelaunchKernel);
-  assert.equal(prelaunchKernel.result.state, "not-launched", "kernel prelaunch.state must be not-launched");
-  const prelaunch = await until({ read: wakeStatus, ready: (status) => runnerReady(status) && wakeInstances(status).some((row) => row.home === instanceHome && row.last_state === "not-launched" && row.channel_core.readiness_state === "not-launched"), label: "prelaunch observation and ready handshake before process creation" });
-  evidence.wake_prelaunch = prelaunch;
-  const prelaunchRow = wakeInstances(prelaunch).find((row) => row.home === instanceHome);
-  assert.equal(prelaunchRow.phase, "pending", "wake prelaunch.phase must be pending before session creation");
-  const started = parseObject(oats("session", "start", "--home", instanceHome, "--json"));
-  evidence.kernel_start = { ok: typeof started.ok === "boolean" ? started.ok : null };
-  assert.equal(started.ok, true, "kernel session start.ok must confirm launch");
+  let prelaunchRow;
+  if (!released) {
+    const beforeLaunch = kernelInstanceStatus();
+    evidence.kernel_status_before = beforeLaunch.status;
+    assert.equal(beforeLaunch.row.running, false, "a no-launch instance is recorded without a running session");
+    const prelaunchKernel = parseObject(oats("session", "inspect", "--home", instanceHome, "--json"));
+    evidence.kernel_prelaunch = kernelSessionSnapshot(prelaunchKernel);
+    assert.equal(prelaunchKernel.result.state, "not-launched", "kernel prelaunch.state must be not-launched");
+    const prelaunch = await until({ read: wakeStatus, ready: (status) => runnerReady(status) && wakeInstances(status).some((row) => row.home === instanceHome && row.last_state === "not-launched" && row.channel_core.readiness_state === "not-launched"), label: "prelaunch observation and ready handshake before process creation" });
+    evidence.wake_prelaunch = prelaunch;
+    prelaunchRow = wakeInstances(prelaunch).find((row) => row.home === instanceHome);
+    assert.equal(prelaunchRow.phase, "pending", "wake prelaunch.phase must be pending before session creation");
+    const started = parseObject(oats("session", "start", "--home", instanceHome, "--json"));
+    evidence.kernel_start = { ok: typeof started.ok === "boolean" ? started.ok : null };
+    assert.equal(started.ok, true, "kernel session start.ok must confirm launch");
+  }
   const liveKernel = parseObject(oats("session", "inspect", "--home", instanceHome, "--json"));
   evidence.kernel_started_idle = kernelSessionSnapshot(liveKernel);
   assert.equal(liveKernel.result.present, true, "kernel started_idle.present must be true before quiet wake readiness");
   assert.equal(liveKernel.result.running, true, "kernel started_idle.running must be true before quiet wake readiness");
   evidence.kernel_status_started_idle = activeKernelStatus();
-  const fresh = await until({ read: wakeStatus, ready: (status) => runnerReady(status) && wakeInstances(status).some((row) => row.home === instanceHome && row.phase === "active") && status.readiness?.some((verdict) => verdict.home === instanceHome && verdict.ready === true), label: "quiet startup readiness before any mail" });
+  const fresh = await until({ read: wakeStatus, ready: (status) => runnerReady(status) && (released ||
+    (wakeInstances(status).some((row) => row.home === instanceHome && row.phase === "active") &&
+     status.readiness?.some((verdict) => verdict.home === instanceHome && verdict.ready === true))), label: "quiet startup readiness before any mail" });
   evidence.wake_fresh = fresh;
   const freshRow = wakeInstances(fresh).find((row) => row.home === instanceHome);
-  // Go omits generation=0 and serializes time.Time's zero as a nonempty string.
-  assert.equal(freshRow.channel_core.generation ?? 0, prelaunchRow.channel_core.generation ?? 0, "quiet startup must keep the registered runner generation");
-  assert.ok(prelaunchRow.channel_core.last_run_at && !wakeTimestampIsUnset(prelaunchRow.channel_core.last_run_at), "prelaunch runner must have a recorded start time");
-  assert.equal(freshRow.channel_core.last_run_at, prelaunchRow.channel_core.last_run_at, "quiet startup must keep the same runner process start");
-  assert.ok(wakeTimestampIsUnset(freshRow.channel_core.last_input_at), "startup inspection submits no input");
-  await sleep(1000);
-  const idle = wakeStatus();
-  evidence.wake_idle_after_presence = idle;
-  const idleRow = wakeInstances(idle).find((row) => row.home === instanceHome);
-  assert.equal(idleRow.last_inspect_at, freshRow.last_inspect_at, "startup observer stops after first live observation");
-  assert.ok(wakeTimestampIsUnset(idleRow.channel_core.last_input_at), "idle startup needs no delivery event");
-  evidence.private_execution_fresh = executionPermissions(fresh);
-  assert.equal(existsSync(join(cache, "runner.sha256")), false, "candidate removes the legacy stamp");
-  assert.equal(readFileSync(join(cache, "runner.mjs"), "utf8"), legacyBytes, "candidate leaves unused legacy bytes alone");
-  evidence.legacy_cache = { stamp_removed: true, runner_unchanged: true };
-  evidence.permissions_fresh = [join(home, ".config/aw"), state, cache].map(permission);
-  await stopOwnedBroker(broker);
-  chmodSync(state, 0o770);
-  chmodSync(cache, 0o770);
-  chmodSync(join(cache, "runner.mjs"), 0o660);
-  evidence.storage_mode_setup = "owned fixture emulates group-write widening; not a Kubernetes/PVC qualification";
-  broker = startOwnedBroker();
-  const before = await until({ read: wakeStatus, ready: runnerReady, label: "runner restart with group-widened data cache" });
-  evidence.wake_before = before;
-  evidence.kernel_status_after_group_widening = activeKernelStatus();
-  evidence.private_execution_after_group_widening = executionPermissions(before);
-  evidence.permissions_before = [join(home, ".config/aw"), state, cache, join(cache, "runner.mjs")].map(permission);
-  const address = parseObject(aw({ identity: instanceHome, args: ["whoami", "--json"] }));
+  let before = fresh;
+  if (!released) {
+    // Go omits generation=0 and serializes time.Time's zero as a nonempty string.
+    assert.equal(freshRow.channel_core.generation ?? 0, prelaunchRow.channel_core.generation ?? 0, "quiet startup must keep the registered runner generation");
+    assert.ok(prelaunchRow.channel_core.last_run_at && !wakeTimestampIsUnset(prelaunchRow.channel_core.last_run_at), "prelaunch runner must have a recorded start time");
+    assert.equal(freshRow.channel_core.last_run_at, prelaunchRow.channel_core.last_run_at, "quiet startup must keep the same runner process start");
+    assert.ok(wakeTimestampIsUnset(freshRow.channel_core.last_input_at), "startup inspection submits no input");
+    await sleep(1000);
+    const idle = wakeStatus();
+    evidence.wake_idle_after_presence = idle;
+    const idleRow = wakeInstances(idle).find((row) => row.home === instanceHome);
+    assert.equal(idleRow.last_inspect_at, freshRow.last_inspect_at, "startup observer stops after first live observation");
+    assert.ok(wakeTimestampIsUnset(idleRow.channel_core.last_input_at), "idle startup needs no delivery event");
+    evidence.private_execution_fresh = executionPermissions(fresh);
+    assert.equal(existsSync(join(cache, "runner.sha256")), false, "candidate removes the legacy stamp");
+    assert.equal(readFileSync(join(cache, "runner.mjs"), "utf8"), legacyBytes, "candidate leaves unused legacy bytes alone");
+    evidence.legacy_cache = { stamp_removed: true, runner_unchanged: true };
+    evidence.permissions_fresh = [join(home, ".config/aw"), state, cache].map(permission);
+    await stopOwnedBroker(broker);
+    chmodSync(state, 0o770);
+    chmodSync(cache, 0o770);
+    chmodSync(join(cache, "runner.mjs"), 0o660);
+    evidence.storage_mode_setup = "owned fixture emulates group-write widening; not a Kubernetes/PVC qualification";
+    broker = startOwnedBroker();
+    before = await until({ read: wakeStatus, ready: runnerReady, label: "runner restart with group-widened data cache" });
+    evidence.wake_before = before;
+    evidence.kernel_status_after_group_widening = activeKernelStatus();
+    evidence.private_execution_after_group_widening = executionPermissions(before);
+    evidence.permissions_before = [join(home, ".config/aw"), state, cache, join(cache, "runner.mjs")].map(permission);
+  }
+  const identity = manual ? resolve(values["aw-actor"]) : instanceHome;
+  const address = parseObject(aw({ identity, args: ["whoami", "--json"] }));
   const recipient = address.address || address.alias || address.name;
   assert.ok(typeof recipient === "string" && recipient, "spawned seat must be addressable");
-  const subject = "R20 released-kernel wake probe";
-  const sent = parseObject(aw({ identity: values.sender, args: ["mail", "send", "--to", recipient, "--subject", subject, "--body", "Disposable wake-path qualification; no action.", "--json"] }));
+  recordLifecycle("join", { recipient, team: values.team, session: kernelSessionSnapshot(liveKernel) });
+  const subject = manual ? "Released aw native broker wake" : "R20 released-kernel wake probe";
+  const mailBody = "Disposable wake-path qualification; no action.";
+  const sent = parseObject(aw({ identity: values.sender, args: ["mail", "send", "--to", recipient, "--subject", subject, "--body", mailBody, "--json"] }));
   assert.ok(sent.message_id, "mail send must return its message id");
   evidence.message_id = sent.message_id;
   evidence.wake_after = await until({ read: wakeStatus, ready: (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.last_input_at && !wakeTimestampIsUnset(row.channel_core.last_input_at) && row.channel_core.last_input_at !== wakeInstances(before).find((entry) => entry.home === instanceHome)?.channel_core?.last_input_at), label: "broker input receipt" });
@@ -217,7 +255,29 @@ try {
     return panes.map((pane) => command({ name: "tmux capture-pane", argv: [...OWNED_TMUX, "capture-pane", "-p", "-S", "-400", "-t", pane] })).join("\n");
   };
   evidence.presented_wake = await until({ read: capture, ready: (text) => text.includes(sent.message_id) && text.includes(subject), label: "fresh wake in the isolated kernel session" });
-  evidence.permissions_after = [join(home, ".config/aw"), state, cache].map(permission);
+  if (manual) {
+    const mailView = parseObject(aw({ identity, args: ["mail", "show", "--conversation-id", sent.conversation_id, "--json"] }));
+    const mail = (mailView.messages || []).find((message) => message.message_id === sent.message_id);
+    assert.equal(mail?.body, mailBody, "the registered released aw identity reads the exact presented mail");
+    recordLifecycle("wake", { subject, event: "mail", presented_through: "tmux", registration: "aw wake register",
+      verification_status: mail.verification_status });
+  } else if (released) {
+    const mailView = parseObject(aw({ identity: instanceHome, args: ["mail", "show", "--conversation-id", sent.conversation_id, "--json"] }));
+    const mail = (mailView.messages || []).find((message) => message.message_id === sent.message_id);
+    assert.equal(mail?.body === mailBody, true, "released OATS identity reads the presented mail");
+    recordLifecycle("mail", { subject, body: mail.body, verification_status: mail.verification_status, content_mode: mail.content_mode });
+    recordLifecycle("wake", { subject, event: "mail", presented_through: "tmux", native_broker: true });
+    const chatBody = "Released OATS chat on the RC validation team.";
+    const chat = parseObject(aw({ identity: values.sender, args: ["chat", "send-and-wait", recipient, chatBody, "--plaintext", "--wait", "0", "--json"] }));
+    assert.ok(chat.session_id && chat.message_id, "released OATS chat must return a session and message");
+    evidence.presented_chat = await until({ read: capture, ready: (text) => text.includes(chat.message_id) && text.includes(chatBody), label: "chat wake in the isolated kernel session" });
+    const chatView = parseObject(aw({ identity: instanceHome, args: ["chat", "history", "--session-id", chat.session_id, "--json"] }));
+    const received = (chatView.messages || []).find((message) => message.message_id === chat.message_id);
+    assert.equal(received?.body === chatBody, true, "released OATS identity reads the presented chat");
+    recordLifecycle("chat", { body: received.body, verification_status: received.verification_status, content_mode: received.content_mode });
+  } else {
+    evidence.permissions_after = [join(home, ".config/aw"), state, cache].map(permission);
+  }
   evidence.kernel_events = oats("instance", "events", instance, "--json");
   evidence.kernel_status_after = activeKernelStatus();
   evidence.result = ProbeOutcome.Passed;
@@ -227,6 +287,10 @@ try {
   if (error.diagnostic) evidence.failed_command = error.diagnostic;
   process.exitCode = 1;
 } finally {
+  if (instanceHome && manual) {
+    try { command({ name: "aw wake deregister", argv: [join(bin, "aw"), "wake", "deregister", "--home", instanceHome] }); }
+    catch (error) { cleanupErrors.push(String(error)); }
+  }
   if (instance) {
     try {
       // Plain retire --json in released 0.69.19 returns the receipt directly.
@@ -235,9 +299,28 @@ try {
       assert.equal(evidence.retire.removedDir, true, "retire.removedDir must confirm home removal");
       assert.ok(!evidence.retire.rollbackIncomplete, "retire must not leave rollback incomplete");
       assert.ok(!evidence.retire.forcedIncomplete, "retire must not force past incomplete cleanup");
-      assert.equal(evidence.retire.capabilityMeta?.["oats.aweb"]?.retired, true, "provider retirement must confirm completed coordination and revocation");
-      assert.equal(evidence.retire.capabilityMeta?.["oats.aweb"]?.aliasReusable, true, "provider retirement must confirm the alias is reusable");
       assert.equal(existsSync(instanceHome), false, "retired instance home must be absent");
+      if (!manual) {
+        assert.equal(evidence.retire.capabilityMeta?.["oats.aweb"]?.retired, true, "provider retirement must confirm completed coordination and revocation");
+        const provider = evidence.retire.capabilityMeta["oats.aweb"];
+        if (released && provider.aliasReusable === false && provider.aliasReason === "team_not_hosted") {
+          const pending = provider.pendingControllerCleanup?.find((row) => row.team === values.team && row.alias === instance);
+          assert.ok(pending?.certificateId, "released OATS must identify the certificate for remaining owner cleanup");
+          const [team, domain] = values.team.split(":");
+          aw({ identity: values.seat, args: ["id", "team", "remove-member", "--namespace", domain, "--team", team,
+            "--cert-id", pending.certificateId, "--json"] });
+        } else {
+          assert.equal(provider.aliasReusable, true, "provider retirement must confirm the alias is reusable");
+        }
+        if (released) {
+          const observed = parseObject(aw({ identity: values.seat, args: ["team", "admin", "agent-status", instance, "--json"] }));
+          assert.equal(observed.state, "clear", "controller readback proves retirement");
+          assert.equal(observed.name_reusable, true, "controller readback proves alias reuse");
+          recordLifecycle("retire", { retired: evidence.retire.retired, removedDir: evidence.retire.removedDir,
+            retiredByProvider: provider.retired, aliasReusable: provider.aliasReusable, aliasReason: provider.aliasReason,
+            state: observed.state, name_reusable: observed.name_reusable });
+        }
+      }
     } catch (error) { cleanupErrors.push(String(error)); }
   }
   await stopOwnedBroker(broker);

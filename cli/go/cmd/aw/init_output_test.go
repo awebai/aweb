@@ -30,10 +30,11 @@ func TestCLITutorialRouteIsNotAliasedToTaskWorkflow(t *testing.T) {
 }
 
 func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
-	lines := initNextStepLines(initNextSteps(&initResult{
+	lines := initStepLines(initNextStepsAfter(&initResult{
+		Path:          initPathNewTeam,
 		ServerName:    "app.aweb.ai",
 		ExportBaseURL: "https://app.aweb.ai/api",
-	}, t.TempDir(), false, false))
+	}, t.TempDir(), initSetupDone{DocsInjected: false, ChannelSetUp: false}), true)
 	text := strings.Join(lines, "\n")
 
 	for _, want := range []string{
@@ -57,10 +58,11 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 }
 
 func TestInitNextStepLinesLocalDirAllDoneStillShowsChannelLaunch(t *testing.T) {
-	lines := initNextStepLines(initNextSteps(&initResult{
+	lines := initStepLines(initNextStepsAfter(&initResult{
+		Path:          initPathNewTeam,
 		ServerName:    "localhost",
 		ExportBaseURL: "http://127.0.0.1:8000/api",
-	}, t.TempDir(), true, true))
+	}, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: true}), true)
 	text := strings.Join(lines, "\n")
 
 	if !strings.Contains(text, "claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace") {
@@ -82,35 +84,13 @@ func TestInitNextStepLinesLocalDirAllDoneStillShowsChannelLaunch(t *testing.T) {
 	}
 }
 
-func TestChannelLaunchInstructionsCarryInstallLaunchWhyAndPi(t *testing.T) {
-	var buf strings.Builder
-	printChannelLaunchInstructions(&buf)
-	text := buf.String()
-
-	for _, want := range []string{
-		"claude plugin marketplace add awebai/claude-plugins",
-		"claude plugin install aweb-channel@awebai-marketplace",
-		"claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
-		"Channel delivery works in any permission mode, including auto and plan.",
-		"confirm --dangerously-load-development-channels; that is expected",
-		"pi install npm:@awebai/pi@latest",
-		"sender's verification shown",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("missing %q in channel launch instructions:\n%s", want, text)
-		}
-	}
-	if strings.Contains(text, "--dangerously-skip-permissions") {
-		t.Fatalf("channel instructions prescribe a permission mode:\n%s", text)
-	}
-}
-
 func TestInitNextStepLinesAPIKeyAuthSuppressesClaimHuman(t *testing.T) {
-	lines := initNextStepLines(initNextSteps(&initResult{
+	lines := initStepLines(initNextStepsAfter(&initResult{
+		Path:          initPathAPIKey,
 		ServerName:    "app.aweb.ai",
 		ExportBaseURL: "https://app.aweb.ai/api",
 		APIKeyAuth:    true,
-	}, t.TempDir(), false, false))
+	}, t.TempDir(), initSetupDone{DocsInjected: false, ChannelSetUp: false}), true)
 	text := strings.Join(lines, "\n")
 
 	if strings.Contains(text, "aw claim-human") {
@@ -133,12 +113,12 @@ func TestInitNextStepLinesTellHowToAddASecondAgentToThisTeam(t *testing.T) {
 		result *initResult
 		done   bool
 	}{
-		{"hosted", &initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}, false},
-		{"api-key", &initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api", APIKeyAuth: true}, false},
-		{"local-all-done", &initResult{ServerName: "localhost", ExportBaseURL: "http://127.0.0.1:8000/api"}, true},
+		{"hosted", &initResult{Path: initPathNewTeam, ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}, false},
+		{"api-key", &initResult{Path: initPathAPIKey, ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api", APIKeyAuth: true}, false},
+		{"local-all-done", &initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://127.0.0.1:8000/api"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			text := strings.Join(initNextStepLines(initNextSteps(tc.result, t.TempDir(), tc.done, tc.done)), "\n")
+			text := strings.Join(initStepLines(initNextStepsAfter(tc.result, t.TempDir(), initSetupDone{DocsInjected: tc.done, ChannelSetUp: tc.done}), true), "\n")
 			if tc.result.APIKeyAuth {
 				if !strings.Contains(text, "create one from the dashboard") || strings.Contains(text, "separate account and team") {
 					t.Fatalf("API-key second-agent advice contradicts same-team creation:\n%s", text)

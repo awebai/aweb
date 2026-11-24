@@ -2,6 +2,7 @@ package awid
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +23,7 @@ func TestReceivedCheckpointMalformedFile(t *testing.T) {
 			}
 			c := &Client{}
 			c.SetPinStore(ps, path)
-			if _, err := c.receivedCheckpoint("https://registry.test", "did:aw:sender"); err == nil {
+			if _, err := c.identityCheckpoint("https://registry.test", "did:aw:sender"); err == nil {
 				t.Fatal("malformed persisted checkpoint accepted")
 			}
 		})
@@ -45,7 +46,7 @@ func TestReceivedSenderOtherTeamIsUnproven(t *testing.T) {
 		{"different member", "selected:example.test", "active", "did:aw:other", IdentityMismatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _ := c.NormalizeReceivedSenderTrust(context.Background(), Verified, "", "sender", "did:key:sender", "did:aw:sender", &SenderMembership{TeamID: tc.team, State: tc.state, MemberDIDAW: tc.stable}, nil, nil, nil)
+			got, _ := c.NormalizeReceivedSender(context.Background(), Verified, ReceivedSender{Alias: "sender", DID: "did:key:sender", StableID: "did:aw:sender", Membership: &SenderMembership{TeamID: tc.team, State: tc.state, MemberDIDAW: tc.stable}})
 			if got != tc.want {
 				t.Fatalf("status = %s, want %s", got, tc.want)
 			}
@@ -56,22 +57,49 @@ func TestReceivedSenderOtherTeamIsUnproven(t *testing.T) {
 // Same decision matrix as "cross-team received local sender" in channel-core.
 func TestReceivedLocalSenderMatrix(t *testing.T) {
 	key := "did:key:z6Mkf5qoqVvkppr8VP9wGDqJNZoq1gMQy7KpGAaTZCpypWzH"
-	for _, tc := range []struct {
-		name string
-		want VerificationStatus
-	}{
-		{"active", Verified}, {"missing", VerificationStale}, {"unknown", VerificationStale},
-		{"empty-team", VerificationStale}, {"inactive", IdentityMismatch}, {"wrong-team", IdentityMismatch}, {"wrong-label", IdentityMismatch},
-		{"global-projection", IdentityMismatch}, {"wrong-projected-key", IdentityMismatch},
-		{"missing-projected-key", VerificationStale}, {"failed-signature", Failed},
-		{"wrong-recipient", IdentityMismatch}, {"plaintext-label", Verified}, {"qualified-team-label", Verified},
-	} {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "test-vectors", "trust", "sender-standing-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var standing struct {
+		Cases []struct {
+			ID     string             `json:"id"`
+			State  string             `json:"state"`
+			Status VerificationStatus `json:"verification_status"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &standing); err != nil {
+		t.Fatal(err)
+	}
+	if len(standing.Cases) == 0 {
+		t.Fatal("sender standing vectors contain no cases")
+	}
+	type testCase struct {
+		name  string
+		want  VerificationStatus
+		state string
+	}
+	cases := []testCase{
+		{name: "missing", want: VerificationStale}, {name: "unknown", want: VerificationStale},
+		{name: "empty-team", want: VerificationStale}, {name: "wrong-team", want: IdentityMismatch},
+		{name: "wrong-label", want: IdentityMismatch}, {name: "global-projection", want: IdentityMismatch},
+		{name: "wrong-projected-key", want: IdentityMismatch}, {name: "missing-projected-key", want: VerificationStale},
+		{name: "failed-signature", want: Failed}, {name: "wrong-recipient", want: IdentityMismatch},
+		{name: "plaintext-label", want: Verified}, {name: "qualified-team-label", want: Verified},
+	}
+	for _, vector := range standing.Cases {
+		cases = append(cases, testCase{name: vector.ID, want: vector.Status, state: vector.State})
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &Client{resolver: &ChainResolver{Team: &TeamRosterResolver{TeamID: "support:acme.com"}}}
 			c.SetPinStore(NewPinStore(), "")
 			member := &SenderMembership{TeamID: "outbound:sender.test", State: "active"}
 			binding := ReceivedSenderBinding{ProjectedDID: key, TeamID: "outbound:sender.test"}
 			status, address := Verified, ""
+			if tc.state != "" {
+				member.State = tc.state
+			}
 			switch tc.name {
 			case "missing":
 				member = nil
@@ -79,8 +107,6 @@ func TestReceivedLocalSenderMatrix(t *testing.T) {
 				member.State = "unknown"
 			case "empty-team":
 				member.TeamID = ""
-			case "inactive":
-				member.State = "inactive"
 			case "wrong-team":
 				member.TeamID = "another:another.test"
 			case "wrong-label":
@@ -102,7 +128,7 @@ func TestReceivedLocalSenderMatrix(t *testing.T) {
 				address = "outbound:sender.test/alice"
 				binding.TeamID = ""
 			}
-			got, contact := c.NormalizeReceivedSenderTrust(context.Background(), status, address, "alice", key, "", member, nil, nil, nil, binding)
+			got, contact := c.NormalizeReceivedSender(context.Background(), status, ReceivedSender{Address: address, Alias: "alice", DID: key, Membership: member, Binding: &binding})
 			if got != tc.want || contact != nil {
 				t.Fatalf("got %s, want %s", got, tc.want)
 			}

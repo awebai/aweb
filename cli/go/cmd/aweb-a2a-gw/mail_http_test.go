@@ -49,6 +49,7 @@ type mailHTTPFixture struct {
 	targetDID    string
 	targetStable string
 	gatewayDID   string
+	gatewayKey   ed25519.PrivateKey
 	notices      atomic.Int32
 	failNotice   atomic.Bool
 	resolutions  atomic.Int32

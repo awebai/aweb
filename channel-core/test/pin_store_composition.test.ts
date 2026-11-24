@@ -8,7 +8,7 @@ import { PinStore } from "../src/identity/pinstore.js";
 import { PinStoreCASConflictError } from "../src/local_aw.js";
 import { SenderTrustManager } from "../src/identity/trust.js";
 import { computeDIDKey } from "../src/identity/did.js";
-import type { AgentEvent } from "../src/types.js";
+import type { AgentEvent } from "../src/api/events.js";
 
 // COMPOSITION of aweb-abdk (last_seen coalescing) with aweb-abbu (bounded CAS
 // retry). Neither change is sufficient alone and the two arms attribute to

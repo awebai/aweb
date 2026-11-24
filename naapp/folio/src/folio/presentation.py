@@ -11,6 +11,8 @@ from uuid import UUID
 import markdown
 import nh3
 
+from folio.models import AssetKind
+
 _ALLOWED_TAGS = {
     "a",
     "blockquote",
@@ -109,16 +111,30 @@ _LAYOUT_ALLOWED = {
 }
 _COLOR_SCHEME_META = {"light": "light", "dark": "dark", "auto": "light dark"}
 _LIGHT_PALETTE = {
-    "--bg": "#ffffff", "--surface": "#ffffff", "--text": "#17191c",
-    "--muted": "#4c515b", "--border": "#c3c9d3", "--accent": "#2342e8",
-    "--accent-ink": "#ffffff", "--code-bg": "#f0f2f5",
-    "--warn": "#b45309", "--danger": "#b91c1c", "--danger-ink": "#ffffff",
+    "--bg": "#ffffff",
+    "--surface": "#ffffff",
+    "--text": "#17191c",
+    "--muted": "#4c515b",
+    "--border": "#c3c9d3",
+    "--accent": "#2342e8",
+    "--accent-ink": "#ffffff",
+    "--code-bg": "#f0f2f5",
+    "--warn": "#b45309",
+    "--danger": "#b91c1c",
+    "--danger-ink": "#ffffff",
 }
 _DARK_PALETTE = {
-    "--bg": "#17191c", "--surface": "#17191c", "--text": "#f7f8fb",
-    "--muted": "#bfc5d0", "--border": "#454e5e", "--accent": "#a5b5ff",
-    "--accent-ink": "#17191c", "--code-bg": "#252a33",
-    "--warn": "#e0a544", "--danger": "#f06d6d", "--danger-ink": "#17191c",
+    "--bg": "#17191c",
+    "--surface": "#17191c",
+    "--text": "#f7f8fb",
+    "--muted": "#bfc5d0",
+    "--border": "#454e5e",
+    "--accent": "#a5b5ff",
+    "--accent-ink": "#17191c",
+    "--code-bg": "#252a33",
+    "--warn": "#e0a544",
+    "--danger": "#f06d6d",
+    "--danger-ink": "#17191c",
 }
 _AWEB_LIGHT_PALETTE = _LIGHT_PALETTE
 _AWEB_DARK_PALETTE = _DARK_PALETTE
@@ -146,6 +162,7 @@ def _identity_meta(public_origin: str | None) -> str:
   <meta name="twitter:image" content="{origin}/brand/field-v1/folio-card.png">
   <meta name="twitter:image:alt" content="folio">'''
 
+
 # Built-in named themes: a preset supplies a (light, dark) base palette applied
 # per color_scheme. Per-team custom color tokens still override the base.
 _BUILTIN_THEMES = {
@@ -163,9 +180,13 @@ def _resolve_base_palettes(preset: Any) -> tuple[dict[str, str], dict[str, str]]
     if name is not None:
         return _BUILTIN_THEMES[name]
     return _LIGHT_PALETTE, _DARK_PALETTE
+
+
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 _RGB_COLOR_RE = re.compile(r"^rgba?\(([^)]+)\)$", re.IGNORECASE)
-_ASSET_PATH_RE = re.compile(r"^/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$")
+_ASSET_PATH_RE = re.compile(
+    r"^/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+)
 _IMG_WITHOUT_SRC_RE = re.compile(r"<img\b(?![^>]*\bsrc=)[^>]*>", re.IGNORECASE)
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 _MEDIA_IMAGE_PLACEMENTS = {"block", "wrap-left", "wrap-right", "full-width", "full-bleed"}
@@ -320,7 +341,9 @@ def sanitize_theme_tokens(tokens: Any) -> dict[str, dict[str, str]]:
         safe_fonts = {
             str(key): value.lower().strip()
             for key, value in fonts.items()
-            if key in _FONT_VARIABLES and isinstance(value, str) and value.lower().strip() in _FONT_ALLOWLIST
+            if key in _FONT_VARIABLES
+            and isinstance(value, str)
+            and value.lower().strip() in _FONT_ALLOWLIST
         }
         if safe_fonts:
             sanitized["fonts"] = safe_fonts
@@ -376,7 +399,9 @@ def theme_contrast_error(tokens: Any, *, preset: Any = None) -> str | None:
         surface = custom_surface or palette["--surface"]
         for label, value in (("text", text), ("surface", surface)):
             if not _is_opaque_color(value):
-                return f"Theme {label} color must be a fully opaque color so contrast can be verified."
+                return (
+                    f"Theme {label} color must be a fully opaque color so contrast can be verified."
+                )
         ratio = contrast_ratio(text, surface)
         if ratio is None:
             return "Theme text/surface colors could not be evaluated for contrast."
@@ -431,11 +456,13 @@ def _editor_theme_css(theme: dict[str, Any] | None) -> str:
     palette = dark if scheme == "dark" else light
     if scheme == "auto":
         palette = {name: f"light-dark({value}, {dark[name]})" for name, value in light.items()}
-    return (f"color-scheme: {_COLOR_SCHEME_META[scheme]};\n"
-            + _palette_declarations(palette, "      ")
-            + "\n      --font-body: Archivo, Arial, sans-serif;"
-            + "\n      --font-heading: var(--font-body);\n"
-            + _theme_css(safe))
+    return (
+        f"color-scheme: {_COLOR_SCHEME_META[scheme]};\n"
+        + _palette_declarations(palette, "      ")
+        + "\n      --font-body: Archivo, Arial, sans-serif;"
+        + "\n      --font-heading: var(--font-body);\n"
+        + _theme_css(safe)
+    )
 
 
 def _theme_css(tokens: dict[str, dict[str, str]] | None) -> str:
@@ -480,11 +507,31 @@ def _asset_id_from_same_origin_src(src: str, *, public_origin: str | None) -> UU
         return None
 
 
-def _safe_image_src(src: str, *, public_origin: str | None, image_asset_ids: set[UUID]) -> str | None:
+def _safe_image_src(
+    src: str, *, public_origin: str | None, image_asset_ids: set[UUID]
+) -> str | None:
     asset_id = _asset_id_from_same_origin_src(src, public_origin=public_origin)
     if asset_id is None or asset_id not in image_asset_ids:
         return None
     return src.strip()
+
+
+def _served_image_src(
+    src: str,
+    *,
+    public_origin: str | None,
+    image_asset_ids: set[UUID],
+    image_urls: dict[UUID, str],
+) -> str | None:
+    """The ``src`` a viewer loads for a validated asset reference: the URL the
+    caller's capability serves it at. A reference no capability serves shows nothing."""
+    reference = _safe_image_src(src, public_origin=public_origin, image_asset_ids=image_asset_ids)
+    if reference is None:
+        return None
+    asset_id = _asset_id_from_same_origin_src(reference, public_origin=public_origin)
+    if asset_id is None:
+        return None
+    return image_urls.get(asset_id)
 
 
 def _video_iframe_html(*, iframe_url: str, title: str) -> str:
@@ -495,8 +542,8 @@ def _video_iframe_html(*, iframe_url: str, title: str) -> str:
         f'<iframe src="{safe_url}" title="{safe_title}" loading="lazy" '
         'allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture" '
         'allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation"></iframe>'
-        f'<figcaption>{safe_title}</figcaption>'
-        '</figure>'
+        f"<figcaption>{safe_title}</figcaption>"
+        "</figure>"
     )
 
 
@@ -517,17 +564,23 @@ def _replace_video_markdown(
             return match.group(0)
         iframe_url = str(embed.get("iframe_url") or "")
         if not iframe_url:
-            status = escape(str(embed.get("status") or "processing"))
+            status = escape(str(embed["status"]))
             return f'\n\n<div class="folio-video-pending">Video is {status}.</div>\n\n'
         token = f"FOLIO_VIDEO_{secrets.token_urlsafe(24)}"
-        replacements[token] = _video_iframe_html(iframe_url=iframe_url, title=alt or "Embedded video")
+        replacements[token] = _video_iframe_html(
+            iframe_url=iframe_url, title=alt or "Embedded video"
+        )
         return f"\n\n{token}\n\n"
 
     return _MARKDOWN_IMAGE_RE.sub(replace, body), replacements
 
 
 def _media_img_tag(src: str, alt: str, state: dict[str, bool]) -> str:
-    attrs = ['class="folio-img"', f'src="{escape(src, quote=True)}"', f'alt="{escape(alt, quote=True)}"']
+    attrs = [
+        'class="folio-img"',
+        f'src="{escape(src, quote=True)}"',
+        f'alt="{escape(alt, quote=True)}"',
+    ]
     if state["first"]:
         attrs.append('fetchpriority="high"')
         state["first"] = False
@@ -554,9 +607,14 @@ def _parse_directive_fields(block: str) -> tuple[dict[str, str], list[str]]:
 
 
 def _render_image_directive(
-    fields: dict[str, str], public_origin: str | None, image_asset_ids: set[UUID], state: dict[str, bool]
+    fields: dict[str, str],
+    public_origin: str | None,
+    image_asset_ids: set[UUID],
+    state: dict[str, bool],
 ) -> str:
-    safe = _safe_image_src(fields.get("src", ""), public_origin=public_origin, image_asset_ids=image_asset_ids)
+    safe = _safe_image_src(
+        fields.get("src", ""), public_origin=public_origin, image_asset_ids=image_asset_ids
+    )
     if safe is None:
         return ""
     placement = fields.get("placement", "block").strip().lower()
@@ -587,7 +645,9 @@ def _render_gallery_directive(
         match = _GALLERY_ITEM_RE.match(raw_item.strip())
         if match is None:
             continue
-        safe = _safe_image_src(match.group(1), public_origin=public_origin, image_asset_ids=image_asset_ids)
+        safe = _safe_image_src(
+            match.group(1), public_origin=public_origin, image_asset_ids=image_asset_ids
+        )
         if safe is None:
             continue
         img = _media_img_tag(safe, match.group(2) or "", state)
@@ -620,7 +680,9 @@ def _preprocess_media(body: str, *, public_origin: str | None, image_asset_ids: 
             if kind == "media":
                 return _render_image_directive(fields, public_origin, image_asset_ids, state)
             return _render_gallery_directive(fields, items, public_origin, image_asset_ids, state)
-        safe = _safe_image_src(match.group("src"), public_origin=public_origin, image_asset_ids=image_asset_ids)
+        safe = _safe_image_src(
+            match.group("src"), public_origin=public_origin, image_asset_ids=image_asset_ids
+        )
         if safe is None:
             return match.group(0)
         img = _media_img_tag(safe, match.group("alt"), state)
@@ -650,18 +712,25 @@ def render_presented_markdown(
     body: str,
     *,
     public_origin: str | None = None,
-    allowed_asset_ids: set[UUID] | None = None,
     asset_embeds: dict[UUID, dict[str, str]] | None = None,
 ) -> str:
-    """Render Markdown to sanitized HTML safe for unauthenticated public pages."""
+    """Render Markdown to sanitized HTML safe for unauthenticated public pages.
+
+    The body names images by reference (``/assets/<uuid>``). An image embed's
+    ``url`` is where the viewer's capability serves it, and becomes its ``src``.
+    """
 
     embeds = asset_embeds or {}
-    image_asset_ids = {
-        asset_id for asset_id, embed in embeds.items() if str(embed.get("kind") or "image") == "image"
+    image_urls = {
+        asset_id: embed["url"]
+        for asset_id, embed in embeds.items()
+        if str(embed.get("kind") or AssetKind.IMAGE) == AssetKind.IMAGE and embed.get("url")
     }
-    image_asset_ids.update(allowed_asset_ids or set())
+    image_asset_ids = set(image_urls)
     video_embeds = {
-        asset_id: embed for asset_id, embed in embeds.items() if str(embed.get("kind") or "") == "video"
+        asset_id: embed
+        for asset_id, embed in embeds.items()
+        if str(embed.get("kind") or "") == AssetKind.VIDEO
     }
     preprocessed_body, trusted_video_replacements = _replace_video_markdown(
         body,
@@ -677,7 +746,12 @@ def render_presented_markdown(
             kept = " ".join(token for token in value.split() if token.startswith("folio-"))
             return kept or None
         if tag == "img" and attribute == "src":
-            return _safe_image_src(value, public_origin=public_origin, image_asset_ids=image_asset_ids)
+            return _served_image_src(
+                value,
+                public_origin=public_origin,
+                image_asset_ids=image_asset_ids,
+                image_urls=image_urls,
+            )
         return value
 
     unsafe_html = markdown.markdown(
@@ -705,14 +779,12 @@ def render_presented_page(
     body: str,
     theme: dict[str, Any] | None = None,
     public_origin: str | None = None,
-    allowed_asset_ids: set[UUID] | None = None,
     asset_embeds: dict[UUID, dict[str, str]] | None = None,
     nonce: str | None = None,
 ) -> str:
     content = render_presented_markdown(
         body,
         public_origin=public_origin,
-        allowed_asset_ids=allowed_asset_ids,
         asset_embeds=asset_embeds,
     )
     tokens = (theme or {}).get("tokens")
@@ -723,7 +795,9 @@ def render_presented_page(
     root_css = _root_css(layout, theme_css, light_palette=light_palette, dark_palette=dark_palette)
     body_class = f"folio-layout-{layout['mode']} folio-measure-{layout['measure']}"
     color_scheme_meta = _COLOR_SCHEME_META[layout["color_scheme"]]
-    fullscreen_html = _fullscreen_control(nonce) if layout["mode"] == "presentation" and nonce else ""
+    fullscreen_html = (
+        _fullscreen_control(nonce) if layout["mode"] == "presentation" and nonce else ""
+    )
     logo_url = str((theme or {}).get("logo_url") or "")
     header = str((theme or {}).get("header") or "")
     footer = str((theme or {}).get("footer") or "")
@@ -732,8 +806,12 @@ def render_presented_page(
         if logo_url
         else ""
     )
-    header_html = f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
-    footer_html = f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    header_html = (
+        f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
+    )
+    footer_html = (
+        f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    )
     title = escape("Presented document")
     return f"""<!doctype html>
 <html lang="en">
@@ -919,14 +997,12 @@ def render_editor_page(
     version_number: int,
     theme: dict[str, Any] | None = None,
     public_origin: str | None = None,
-    allowed_asset_ids: set[UUID] | None = None,
     asset_embeds: dict[UUID, dict[str, str]] | None = None,
     nonce: str,
 ) -> str:
     preview = render_presented_markdown(
         body,
         public_origin=public_origin,
-        allowed_asset_ids=allowed_asset_ids,
         asset_embeds=asset_embeds,
     )
     logo_url = str((theme or {}).get("logo_url") or "")
@@ -937,8 +1013,12 @@ def render_editor_page(
         if logo_url
         else ""
     )
-    header_html = f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
-    footer_html = f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    header_html = (
+        f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
+    )
+    footer_html = (
+        f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    )
     initial_json = _script_json({"body": body, "version_number": version_number, "token": token})
     root_css = ":root {" + _editor_theme_css(theme) + "}"
     return f"""<!doctype html>
@@ -950,7 +1030,76 @@ def render_editor_page(
   <title>Edit · folio</title>
   {_identity_meta(public_origin)}
   <style>
-    {_FONT_FACE}
+{_editor_styles(root_css=root_css)}
+  </style>
+  <style id="session-theme"></style>
+</head>
+<body>
+  <header class="bar">
+    <span class="brand"><svg viewBox="0 0 48 64" width="18" height="24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5"><path stroke="#b76e17" d="M13 3 C12 17 21 22 43 22"/><path d="M3 32 H43"/><path d="M7 61 C16 47 25 42 43 42"/></g></svg>folio<span class="sub">editing</span></span>
+    <div class="tabs" role="tablist" aria-label="View">
+      <button id="tab-edit" type="button" role="tab" aria-selected="true">Write</button>
+      <button id="tab-preview" type="button" role="tab" aria-selected="false">Preview</button>
+    </div>
+    <div class="actions">
+      <span id="status" class="status" role="status" aria-live="polite"></span>
+      <input id="editor-name" aria-label="Name (optional)" class="ghost-input" type="text" maxlength="120" autocomplete="name" placeholder="Name (optional)">
+      <button id="discard" class="ghost-button" type="button">Discard changes</button>
+      <button id="save" class="save" type="button">Save new version</button>
+    </div>
+  </header>
+  <div id="link-recovery" class="link-recovery" role="alert" tabindex="-1" hidden>
+    <p id="recovery-message">This edit link has expired or been revoked. Your unsaved text is still in the editor.</p>
+    <button id="copy-draft" class="ghost-button" type="button">Copy your text</button>
+    <p id="reopen-instructions">Return to your dashboard and reopen Edit, then paste your text.</p>
+    <p id="copy-status" role="status"></p>
+  </div>
+  <div id="new-version" class="link-recovery" hidden>
+    <p id="new-version-message" role="status"></p>
+    <button id="load-latest" class="ghost-button" type="button">Load latest version</button>
+  </div>
+  <dialog id="load-dialog" class="modal" aria-labelledby="load-title">
+    <div class="modal-card">
+      <h2 id="load-title" class="modal-title">Load the latest version?</h2>
+      <p class="modal-text">Your unsaved changes will be discarded.</p>
+      <div class="modal-actions">
+        <button id="load-cancel" class="ghost-button" type="button" autofocus>Keep editing</button>
+        <button id="load-confirm" class="btn-danger" type="button">Load latest version</button>
+      </div>
+    </div>
+  </dialog>
+  <main class="workspace">
+    <div id="bootstrap-status" class="bootstrap-status" role="status" aria-atomic="true" data-state="loading">Opening the editor…</div>
+    <section id="pane-edit" class="pane pane-edit is-active">
+      <textarea id="body" aria-label="Write" class="editor" spellcheck="false" autofocus disabled placeholder=""></textarea>
+    </section>
+    <section id="pane-preview" class="pane pane-preview" tabindex="0" aria-label="Preview">
+      <article class="surface" id="preview-card">
+{logo_html}        <p class="eyebrow" id="preview-eyebrow">Version {version_number}</p>
+{header_html}        <div class="document-body" id="preview">{preview}</div>
+{footer_html}      </article>
+    </section>
+  </main>
+  <dialog id="discard-dialog" class="modal" aria-labelledby="discard-title">
+    <div class="modal-card">
+      <h2 id="discard-title" class="modal-title">Discard unsaved changes?</h2>
+      <p class="modal-text">This reverts the editor to the last saved version. Your unsaved edits will be lost.</p>
+      <div class="modal-actions">
+        <button id="discard-cancel" class="ghost-button" type="button">Keep editing</button>
+        <button id="discard-confirm" class="btn-danger" type="button">Discard changes</button>
+      </div>
+    </div>
+  </dialog>
+  <script nonce="{escape(nonce, quote=True)}">
+{_editor_script(initial_json=initial_json)}
+  </script>
+</body>
+</html>"""
+
+
+def _editor_styles(*, root_css: str) -> str:
+    """The editor page's stylesheet, with the team theme's root variables."""
+    return f"""    {_FONT_FACE}
     {root_css}
     :root {{
       --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -1050,6 +1199,7 @@ def render_editor_page(
     .document-body pre {{ overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; }}
     .document-body blockquote {{ border-left: 4px solid var(--border); color: var(--muted); margin-left: 0; padding-left: 1rem; }}
     .document-body img {{ display: block; max-width: 100%; height: auto; border-radius: 12px; margin: 1rem 0; }}
+    img[data-folio-image] {{ min-height: 2.5rem; padding: 0.5rem; border: 1px dashed currentColor; font-size: 0.9rem; }}
     .document-body table {{ border-collapse: collapse; width: 100%; }}
     .document-body th, .document-body td {{ border: 1px solid var(--border); padding: 0.5rem; }}
     @media (max-width: 900px) {{
@@ -1084,68 +1234,12 @@ def render_editor_page(
       border: 1px solid var(--danger); background: var(--danger); color: var(--danger-ink);
       border-radius: 2px; padding: 8px 16px; font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer;
     }}
-    .btn-danger:hover {{ opacity: 0.92; }}
-  </style>
-  <style id="session-theme"></style>
-</head>
-<body>
-  <header class="bar">
-    <span class="brand"><svg viewBox="0 0 48 64" width="18" height="24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5"><path stroke="#b76e17" d="M13 3 C12 17 21 22 43 22"/><path d="M3 32 H43"/><path d="M7 61 C16 47 25 42 43 42"/></g></svg>folio<span class="sub">editing</span></span>
-    <div class="tabs" role="tablist" aria-label="View">
-      <button id="tab-edit" type="button" role="tab" aria-selected="true">Write</button>
-      <button id="tab-preview" type="button" role="tab" aria-selected="false">Preview</button>
-    </div>
-    <div class="actions">
-      <span id="status" class="status" role="status" aria-live="polite"></span>
-      <input id="editor-name" aria-label="Name (optional)" class="ghost-input" type="text" maxlength="120" autocomplete="name" placeholder="Name (optional)">
-      <button id="discard" class="ghost-button" type="button">Discard changes</button>
-      <button id="save" class="save" type="button">Save new version</button>
-    </div>
-  </header>
-  <div id="link-recovery" class="link-recovery" role="alert" tabindex="-1" hidden>
-    <p id="recovery-message">This edit link has expired or been revoked. Your unsaved text is still in the editor.</p>
-    <button id="copy-draft" class="ghost-button" type="button">Copy your text</button>
-    <p id="reopen-instructions">Return to your dashboard and reopen Edit, then paste your text.</p>
-    <p id="copy-status" role="status"></p>
-  </div>
-  <div id="new-version" class="link-recovery" hidden>
-    <p id="new-version-message" role="status"></p>
-    <button id="load-latest" class="ghost-button" type="button">Load latest version</button>
-  </div>
-  <dialog id="load-dialog" class="modal" aria-labelledby="load-title">
-    <div class="modal-card">
-      <h2 id="load-title" class="modal-title">Load the latest version?</h2>
-      <p class="modal-text">Your unsaved changes will be discarded.</p>
-      <div class="modal-actions">
-        <button id="load-cancel" class="ghost-button" type="button" autofocus>Keep editing</button>
-        <button id="load-confirm" class="btn-danger" type="button">Load latest version</button>
-      </div>
-    </div>
-  </dialog>
-  <main class="workspace">
-    <div id="bootstrap-status" class="bootstrap-status" role="status" aria-atomic="true" data-state="loading">Opening the editor…</div>
-    <section id="pane-edit" class="pane pane-edit is-active">
-      <textarea id="body" aria-label="Write" class="editor" spellcheck="false" autofocus disabled placeholder=""></textarea>
-    </section>
-    <section id="pane-preview" class="pane pane-preview" tabindex="0" aria-label="Preview">
-      <article class="surface" id="preview-card">
-{logo_html}        <p class="eyebrow" id="preview-eyebrow">Version {version_number}</p>
-{header_html}        <div class="document-body" id="preview">{preview}</div>
-{footer_html}      </article>
-    </section>
-  </main>
-  <dialog id="discard-dialog" class="modal" aria-labelledby="discard-title">
-    <div class="modal-card">
-      <h2 id="discard-title" class="modal-title">Discard unsaved changes?</h2>
-      <p class="modal-text">This reverts the editor to the last saved version. Your unsaved edits will be lost.</p>
-      <div class="modal-actions">
-        <button id="discard-cancel" class="ghost-button" type="button">Keep editing</button>
-        <button id="discard-confirm" class="btn-danger" type="button">Discard changes</button>
-      </div>
-    </div>
-  </dialog>
-  <script nonce="{escape(nonce, quote=True)}">
-    (() => {{
+    .btn-danger:hover {{ opacity: 0.92; }}"""
+
+
+def _editor_script(*, initial_json: str) -> str:
+    """The editor page's script: opener exchange, session requests, preview and live refresh."""
+    return f"""    (() => {{
     // The fragment must leave history before storage, parsing or requests.
     let opener = window.location.hash;
     history.replaceState(null, '', window.location.pathname + window.location.search);
@@ -1188,18 +1282,91 @@ def render_editor_page(
 
     let previewTimer = null;
     let previewSeq = 0;
+    // Images are served to this edit session only, so each is fetched with the
+    // session header and shown from a blob: URL. A refused image (removed, or
+    // not this session's to read) is marked with a message saying so; an
+    // outage or failed read is marked as retrying and retried with backoff,
+    // then marked as failed with what the person can do.
+    const sessionImagePrefix = endpoint + '/assets/';
+    const sessionImages = new Map();
+    // A marked image's state, as its data-folio-image attribute.
+    const ImageState = Object.freeze({{REFUSED: 'refused', RETRYING: 'retrying', FAILED: 'failed'}});
+    const IMAGE_REFUSED = 'This image is not available to this editing session. It may have been removed.';
+    const IMAGE_RETRYING = 'This image could not be loaded yet. Retrying.';
+    const IMAGE_FAILED = 'This image could not be loaded. Reload the editor to try again.';
+    const IMAGE_RETRY_DELAYS_MS = [2000, 4000, 8000];
+    function sessionImagePath(source) {{
+      try {{
+        const url = new URL(source || '', window.location.href);
+        if (url.origin === window.location.origin && url.pathname.startsWith(sessionImagePrefix)
+            && !url.search && !url.hash) return url.pathname;
+      }} catch (err) {{ /* not a URL: not a session image */ }}
+      return null;
+    }}
+    async function readSessionImage(path) {{
+      // Resolves to a blob: URL, or to null when the server refuses the image;
+      // rejects on an outage or a failed read, which the caller retries.
+      const response = await sessionFetch(path.slice(endpoint.length));
+      if (response.status === 403 || response.status === 404) return null;
+      if (!response.ok) throw new Error('image read answered HTTP ' + response.status);
+      return URL.createObjectURL(await response.blob());
+    }}
+    function markImage(img, state, message) {{
+      img.dataset.folioImage = state;
+      img.alt = message;
+      img.title = message;
+    }}
+    function showSessionImage(img, source, attempt = 0) {{
+      if (attempt === 0) {{
+        img.removeAttribute('src');
+        img.dataset.folioSource = source || '';
+        img.dataset.folioAlt = img.alt;
+      }}
+      const path = sessionImagePath(source);
+      if (path === null) return;
+      if (!sessionImages.has(path)) sessionImages.set(path, readSessionImage(path));
+      sessionImages.get(path).then((blobUrl) => {{
+        if (img.dataset.folioSource !== source) return;
+        if (blobUrl === null) {{
+          sessionImages.delete(path);
+          markImage(img, ImageState.REFUSED, IMAGE_REFUSED);
+          return;
+        }}
+        delete img.dataset.folioImage;
+        img.removeAttribute('title');
+        img.alt = img.dataset.folioAlt || '';
+        img.src = blobUrl;
+      }}, () => {{
+        sessionImages.delete(path);
+        if (img.dataset.folioSource !== source) return;
+        if (attempt >= IMAGE_RETRY_DELAYS_MS.length) {{
+          markImage(img, ImageState.FAILED, IMAGE_FAILED);
+          return;
+        }}
+        markImage(img, ImageState.RETRYING, IMAGE_RETRYING);
+        setTimeout(() => {{
+          if (img.isConnected && img.dataset.folioSource === source) showSessionImage(img, source, attempt + 1);
+        }}, IMAGE_RETRY_DELAYS_MS[attempt]);
+      }});
+    }}
+    let shownBlocks = new Set();
     function applyPreview(html) {{
-      // Compare against the current blocks (ignoring any prior highlight) and
-      // briefly flash the blocks that changed.
-      for (const el of previewEl.children) el.classList.remove('folio-changed');
-      const prev = new Set([...previewEl.children].map((el) => el.outerHTML));
-      previewEl.innerHTML = html;
-      for (const el of previewEl.children) {{
-        if (!prev.has(el.outerHTML)) {{
+      // Parse in an inert template, so no image request leaves without the
+      // session header, then briefly flash the blocks whose HTML changed.
+      const incoming = document.createElement('template');
+      incoming.innerHTML = html;
+      const blocks = [...incoming.content.children].map((el) => [el, el.outerHTML]);
+      const images = [...incoming.content.querySelectorAll('img')].map((img) => [img, img.getAttribute('src')]);
+      for (const [img] of images) img.removeAttribute('src');
+      previewEl.replaceChildren(incoming.content);
+      for (const [img, source] of images) showSessionImage(img, source);
+      for (const [el, key] of blocks) {{
+        if (!shownBlocks.has(key)) {{
           el.classList.add('folio-changed');
           setTimeout(() => el.classList.remove('folio-changed'), 1700);
         }}
       }}
+      shownBlocks = new Set(blocks.map(([, key]) => key));
     }}
     async function refreshPreview() {{
       if (unavailable || !ready) return;
@@ -1387,7 +1554,7 @@ def render_editor_page(
         }}
         let logo = previewCard.querySelector('.brand-logo');
         if (!logo && state.theme.logo_url) {{ logo = document.createElement('img'); logo.className='brand-logo'; logo.alt='Team logo'; previewCard.prepend(logo); }}
-        if (logo) {{ logo.hidden = !state.theme.logo_url; if (state.theme.logo_url) logo.src=state.theme.logo_url; }}
+        if (logo) {{ logo.hidden = !state.theme.logo_url; if (state.theme.logo_url) showSessionImage(logo, state.theme.logo_url); }}
       }}
       savedBody = state.body;
       baseVersion = state.version_number;
@@ -1499,7 +1666,4 @@ def render_editor_page(
     }}
     updateButtons();
     startSession();
-    }})();
-  </script>
-</body>
-</html>"""
+    }})();"""

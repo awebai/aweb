@@ -29,17 +29,11 @@ class _DbInfra:
 
 
 @pytest.mark.asyncio
-async def test_health_hides_internal_exception_details(monkeypatch, caplog):
-    async def _noop_mount(_app, _db_infra, _redis, _registry_client):
-        return None
-
-    async def _noop_registry_validation(_registry_client):
-        return None
-
-    monkeypatch.setattr("aweb.api._mount_mcp_app", _noop_mount)
-    monkeypatch.setattr("aweb.api._validate_awid_registry_client", _noop_registry_validation)
+async def test_health_hides_internal_exception_details(caplog):
     caplog.set_level(logging.ERROR, logger="aweb.api")
-    app = create_app(db_infra=_DbInfra(), redis=_FailingRedis())
+    app = create_app(db_infra=_DbInfra(), redis=_FailingRedis(), host_runs_outbox_recovery=True)
+    app.state.db = _DbInfra()
+    app.state.redis = _FailingRedis()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/health")
@@ -56,6 +50,8 @@ async def test_health_hides_internal_exception_details(monkeypatch, caplog):
     assert "postgres://secret@db.internal/aweb refused" not in response.text
     assert "Health check failed for Redis" in caplog.text
     assert "Health check failed for database" in caplog.text
+    assert "redis://secret@internal-host:6379/0 refused" in caplog.text
+    assert "postgres://secret@db.internal/aweb refused" in caplog.text
 
 
 @pytest.mark.asyncio

@@ -191,7 +191,7 @@ async def test_real_server_refusal_and_exception_do_not_log_credentials(
 ):
     import logging
 
-    from folio import api
+    from folio import present_routes
 
     origin, _ = live_browser
     link = await mint(live_world)
@@ -205,7 +205,7 @@ async def test_real_server_refusal_and_exception_do_not_log_credentials(
             def broken_renderer(*args, **kwargs):
                 raise RuntimeError("Synthetic rendering failure")
 
-            monkeypatch.setattr(api, "render_presented_markdown", broken_renderer)
+            monkeypatch.setattr(present_routes, "render_presented_markdown", broken_renderer)
             failed = await client.post(
                 path + "/preview", headers={HEADER: secret}, json={"body": "Draft"}
             )

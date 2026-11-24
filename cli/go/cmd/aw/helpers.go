@@ -63,7 +63,10 @@ func isIdentityMismatchError(err error) bool {
 }
 
 func resolveClientSelection() (*aweb.Client, *awconfig.Selection, error) {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, nil, err
+	}
 	return resolveClientSelectionForDir(wd)
 }
 
@@ -120,22 +123,16 @@ func resolveSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (
 }
 
 func resolveSelectionAtIdentityHome(workingDir, teamIDOverride string, identityHome awconfig.IdentityHome) (*awconfig.Selection, error) {
-	sel, err := awconfig.ResolveWorkspace(awconfig.ResolveOptions{
-		ServerName:           serverFlag,
-		TeamIDOverride:       strings.TrimSpace(teamIDOverride),
-		WorkingDir:           workingDir,
-		IdentityHome:         identityHome.Root,
-		ExternalIdentityHome: identityHome.External(),
-		AllowEnvOverrides:    true,
+	return selectClientWorkspace(clientRequest{
+		WorkingDir: workingDir, Home: identityHome, TeamID: teamIDOverride, ServerName: serverFlag,
 	})
-	if err != nil {
-		return nil, err
-	}
-	return sel, nil
 }
 
 func resolveIdentity() (*awconfig.ResolvedIdentity, error) {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
 	return resolveIdentityForDir(wd)
 }
 
@@ -219,6 +216,10 @@ func resolveCertificateIdentityAtHome(workingDir, identityHome string) (*awconfi
 	return resolved, nil
 }
 
+func missingGlobalIdentityFile() error {
+	return usageError("current global identity is missing .aw/identity.yaml; restore it or run `aw init` again")
+}
+
 func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIdentity, error) {
 	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if err != nil {
@@ -247,7 +248,7 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 		return nil, fmt.Errorf("load active team certificate for %s: %w", activeTeamID, err)
 	}
 	if awid.NormalizeIdentityScope(cert.IdentityScope) != awid.IdentityModeLocal {
-		return nil, usageError("current global identity is missing .aw/identity.yaml; restore it or run `aw init` again")
+		return nil, missingGlobalIdentityFile()
 	}
 
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
@@ -267,7 +268,10 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 		return nil, fmt.Errorf("current signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
 	}
 
-	domain, _, _ := awid.ParseTeamID(cert.Team)
+	domain, _, err := awid.ParseTeamID(cert.Team)
+	if err != nil {
+		return nil, fmt.Errorf("invalid active team certificate team: %w", err)
+	}
 	return &awconfig.ResolvedIdentity{
 		WorkingDir:     strings.TrimSpace(workingDir),
 		IdentityPath:   "",
@@ -332,36 +336,27 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 }
 
 func resolveClientSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (*aweb.Client, *awconfig.Selection, error) {
-	c, sel, err := buildClientSelectionForDir(context.Background(), workingDir, teamIDOverride, resolveAuthenticatedBaseURLContext)
+	home, err := identityHomeForDir(workingDir)
 	if err != nil {
 		return nil, nil, err
 	}
-	lastClient = c
-	return c, sel, nil
+	return newClient(context.Background(), clientRequest{
+		WorkingDir: workingDir, Home: home, TeamID: teamIDOverride, ServerName: serverFlag,
+		BaseURL: resolveAuthenticatedBaseURLContext, Record: clientForCommand,
+	})
 }
 
-// buildClientSelectionForDir resolves the identity home for workingDir and
-// builds its client, grant-authenticated or certificate-authenticated. It
-// does not record the client as the command's last client, so it is safe off
-// the command's goroutine. baseURL chooses the API base from the stored server
-// URL; probes it makes run within ctx.
+// buildClientSelectionForDir captures the command's selection inputs, but leaves
+// lastClient unchanged so a reload can build a client off the command goroutine.
 func buildClientSelectionForDir(ctx context.Context, workingDir, teamIDOverride string, baseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
-	identityHome, err := identityHomeForDir(workingDir)
+	home, err := identityHomeForDir(workingDir)
 	if err != nil {
 		return nil, nil, err
 	}
-	if awconfig.IsGrantHome(identityHome.Root) {
-		return buildGrantClientSelectionForTeam(ctx, workingDir, identityHome, teamFlag, baseURL)
-	}
-	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
-	if err != nil {
-		return nil, nil, err
-	}
-	selectedHome := ""
-	if sel != nil {
-		selectedHome = strings.TrimSpace(sel.IdentityHome)
-	}
-	return buildClientForSelectionAtIdentityHome(ctx, workingDir, selectedHome, sel, baseURL)
+	return newClient(ctx, clientRequest{
+		WorkingDir: workingDir, Home: home, TeamID: teamIDOverride, ServerName: serverFlag,
+		BaseURL: baseURL, Record: clientDetached,
+	})
 }
 
 func resolveClientSelectionAtIdentityHome(workingDir string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
@@ -369,75 +364,37 @@ func resolveClientSelectionAtIdentityHome(workingDir string, identityHome awconf
 }
 
 func resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, teamIDOverride string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
-	if awconfig.IsGrantHome(identityHome.Root) {
-		return resolveGrantClientSelectionForTeam(workingDir, identityHome, teamIDOverride)
-	}
-	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
-	if err != nil {
-		return nil, nil, err
-	}
-	return resolveClientForSelectionAtIdentityHome(workingDir, externalIdentityHomeRoot(identityHome), sel)
+	return newClient(context.Background(), clientRequest{
+		WorkingDir: workingDir, Home: identityHome, TeamID: teamIDOverride, ServerName: serverFlag,
+		BaseURL: resolveAuthenticatedBaseURLContext, Record: clientForCommand,
+	})
 }
 
 func resolveClientForSelection(workingDir string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
-	identityHome := ""
+	home := awconfig.IdentityHome{}
 	if sel != nil {
-		identityHome = strings.TrimSpace(sel.IdentityHome)
+		home.Root = strings.TrimSpace(sel.IdentityHome)
 	}
-	return resolveClientForSelectionAtIdentityHome(workingDir, identityHome, sel)
-}
-
-func resolveClientForSelectionAtIdentityHome(workingDir, identityHome string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
-	c, sel, err := buildClientForSelectionAtIdentityHome(context.Background(), workingDir, identityHome, sel, resolveAuthenticatedBaseURLContext)
-	if err != nil {
-		return nil, nil, err
-	}
-	lastClient = c
-	return c, sel, nil
-}
-
-// buildClientForSelectionAtIdentityHome builds the selection's
-// certificate-authenticated client for the API base resolveBaseURL chooses
-// from the stored server URL. A probe it makes runs within ctx.
-func buildClientForSelectionAtIdentityHome(ctx context.Context, workingDir, identityHome string, sel *awconfig.Selection, resolveBaseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
-	if sel != nil && strings.TrimSpace(sel.WorkspacePath) == "" {
-		if recovery, ok := workspaceConnectRecoveryCommand(workingDir, identityHome); ok {
-			return nil, nil, usageError("current identity is not connected to an aweb workspace; run `%s`", recovery)
-		}
-	}
-	if err := checkIdentityMismatchAtIdentityHome(workingDir, identityHome, sel); err != nil {
-		return nil, nil, err
-	}
-
-	baseURL, err := resolveBaseURL(ctx, sel.BaseURL)
-	if err != nil {
-		return nil, nil, err
-	}
-	sel.BaseURL = baseURL
-
-	c, err := resolveCertificateClient(sel, baseURL)
-	if err != nil {
-		return nil, nil, err
-	}
-	if c == nil {
-		return nil, nil, errors.New("current workspace is not certificate-authenticated; accept a team invite and run `aw init` here")
-	}
-	if err := configureResolvedClient(c, sel, baseURL); err != nil {
-		return nil, nil, err
-	}
-	home := strings.TrimSpace(sel.IdentityHome)
-	if home == "" {
-		home = filepath.Dir(sel.SigningKey)
-	}
-	selected := *sel
-	c.SetTeamCertificateRefresh(func(ctx context.Context) (string, error) {
-		return refreshOwnTeamCertificate(ctx, &selected, home)
+	return newClient(context.Background(), clientRequest{
+		WorkingDir: workingDir, Home: home, Selection: sel,
+		BaseURL: resolveAuthenticatedBaseURLContext, Record: clientForCommand,
 	})
-	return c, sel, nil
+}
+
+// buildClientForSelectionAtIdentityHome adapts an already selected principal to
+// the shared constructor without changing the command's last client.
+func buildClientForSelectionAtIdentityHome(ctx context.Context, workingDir, identityHome string, sel *awconfig.Selection, resolveBaseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
+	return newClient(ctx, clientRequest{
+		WorkingDir: workingDir, Home: awconfig.IdentityHome{Root: identityHome}, Selection: sel,
+		BaseURL: resolveBaseURL, Record: clientDetached,
+	})
 }
 
 func resolveIdentityMessagingClientSelection() (*aweb.Client, *awconfig.Selection, error) {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, nil, err
+	}
 	return resolveIdentityMessagingClientSelectionForDir(wd)
 }
 
@@ -545,7 +502,10 @@ const aliasTeamSearchHelp = "\n\nA bare recipient name is looked up in the selec
 	"recipient before delivery."
 
 func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias string) (*aweb.Client, *awconfig.Selection, error) {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, nil, err
+	}
 	c, sel, err := resolveClientSelectionForDir(wd)
 	if err != nil {
 		return nil, nil, err
@@ -697,36 +657,25 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 	if err != nil {
 		return liveTeamMemberAliasTarget{}, false, err
 	}
-	registryURL := ""
-	var state *awconfig.TeamState
-	var stateErr error
-	if strings.TrimSpace(sel.IdentityHome) != "" {
-		state, stateErr = awconfig.LoadTeamStateFromIdentityHome(sel.IdentityHome)
-	} else {
-		state, stateErr = awconfig.LoadTeamState(sel.WorkingDir)
-	}
-	if stateErr != nil {
-		debugLog("load team state for alias fallback registry %s: %v", strings.TrimSpace(sel.TeamID), stateErr)
-	} else if state != nil {
-		if membership := state.Membership(sel.TeamID); membership != nil {
-			registryURL = registryURLForTeamMembersMembership(membership)
-		}
-	}
-	registryURL = firstNonEmpty(registryURL, strings.TrimSpace(sel.RegistryURL))
-	if registryURL != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return liveTeamMemberAliasTarget{}, false, err
-		}
+	registryURL, err := resolveRegistryAuthority(ctx, registryAuthorityRequest{
+		Kind: registryTeamRoute, Domain: domain, TeamID: sel.TeamID,
+		WorkingDir: sel.WorkingDir, IdentityHome: sel.IdentityHome, DefaultURL: registry.DefaultRegistryURL,
+	})
+	if err != nil {
+		return liveTeamMemberAliasTarget{}, false, err
 	}
 	// The selection's own signing key is the member credential for this team,
 	// which is what lets the roster read keep working after the team goes
 	// private. Best-effort: with no usable key the read goes out unsigned,
 	// exactly as before.
-	signers := teamReadSignersForKeyPath(sel.SigningKey, domain, team)
+	signers, err := teamReadSignersForKeyPath(sel.SigningKey, domain, team)
+	if err != nil {
+		return liveTeamMemberAliasTarget{}, false, err
+	}
 	var member *awid.TeamMemberReference
 	if _, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
 		var resolveErr error
-		member, resolveErr = registry.ResolveTeamMember(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, targetAlias, key)
+		member, resolveErr = registry.ResolveTeamMember(ctx, registryURL, domain, team, targetAlias, key)
 		return resolveErr
 	}); err != nil {
 		var registryErr *awid.RegistryError
@@ -794,6 +743,9 @@ func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Cl
 	}
 	cert, err := loadWorkspaceTeamCertificate(sel, workspace)
 	if err != nil {
+		return nil, err
+	}
+	if err := recheckUnconfirmedTeamKey(sel, cert); err != nil {
 		return nil, err
 	}
 	signingKeyPath := sel.SigningKey
@@ -873,17 +825,18 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	if err != nil {
 		return err
 	}
+	trustStoredRegistryOrigins(registry, sel.WorkingDir, sel.IdentityHome)
 	registry.TeamReadSigningKey = c.SigningKey()
 	// Received addressless identities are verified at the selected TEAM's
 	// registry. Do not inherit a global identity's unrelated home registry.
 	teamRegistry := newAWIDRegistryResolver(c.Client.HTTPClient(), nil)
-	teamRegistryURL := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
-	if state, err := awconfig.LoadTeamStateFromIdentityHome(sel.IdentityHome); err == nil && state != nil {
-		if membership := state.Membership(sel.TeamID); membership != nil {
-			if pinned := strings.TrimSpace(membership.RegistryURL); pinned != "" {
-				teamRegistryURL = pinned
-			}
-		}
+	trustStoredRegistryOrigins(teamRegistry, sel.WorkingDir, sel.IdentityHome)
+	teamRegistryURL, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{
+		Kind: registryDeliveryTeamRoute, TeamID: sel.TeamID, IdentityHome: sel.IdentityHome,
+		WorkingDir: sel.WorkingDir, DeliveryResolver: teamRegistry,
+	})
+	if err != nil {
+		return err
 	}
 	if teamRegistryURL != "" {
 		if err := teamRegistry.SetFallbackRegistryURL(teamRegistryURL); err != nil {
@@ -912,7 +865,7 @@ func cleanBaseURL(raw string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("empty base url")
 	}
-	u, err := url.Parse(raw)
+	u, err := parseAwebSelectionURL(raw)
 	if err != nil {
 		return "", err
 	}
@@ -920,10 +873,7 @@ func cleanBaseURL(raw string) (string, error) {
 		return "", fmt.Errorf("invalid base url %q", raw)
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/")
-	u.RawPath = ""
-	u.RawQuery = ""
-	u.Fragment = ""
-	return strings.TrimSuffix(u.String(), "/"), nil
+	return awebSelectionURLString(u), nil
 }
 
 // redirectLocationDisplay is diagnostic-only: never use its output for a request.
@@ -954,11 +904,6 @@ func redirectLocationDisplay(raw string, base *url.URL) string {
 	return display
 }
 
-func probeAwebBaseURL(ctx context.Context, baseURL string) (bool, error) {
-	ok, _, err := probeAwebBaseURLOutcome(ctx, baseURL)
-	return ok, err
-}
-
 const awebBaseURLProbeTimeout = 2 * time.Second
 
 // probeAwebBaseURLOutcome reports whether baseURL serves the aweb API. When it
@@ -986,7 +931,9 @@ func probeAwebBaseURLOutcome(ctx context.Context, baseURL string) (ok bool, outc
 		// Never reflect that server-controlled header through transport diagnostics.
 		return false, "", fmt.Errorf("heartbeat probe request failed at %q (transport failure or invalid redirect)", redirectLocationDisplay(baseURL, req.URL))
 	}
-	_ = resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		return false, "", fmt.Errorf("close heartbeat probe response: %w", err)
+	}
 	debugLog("probe aweb base url: %s -> %d", baseURL, resp.StatusCode)
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		return false, "", fmt.Errorf("server redirected %q to %q; set AWEB_URL to the intended API base at that address", redirectLocationDisplay(baseURL, req.URL), redirectLocationDisplay(resp.Header.Get("Location"), req.URL))
@@ -1007,10 +954,6 @@ func probeAwebBaseURLOutcome(ctx context.Context, baseURL string) (ok bool, outc
 		return false, fmt.Sprintf("web app (HTTP %d HTML)", resp.StatusCode), nil
 	}
 	return true, "", nil
-}
-
-func resolveWorkingBaseURL(raw string) (string, error) {
-	return resolveWorkingBaseURLContext(context.Background(), raw)
 }
 
 func resolveWorkingBaseURLContext(ctx context.Context, raw string) (string, error) {
@@ -1127,18 +1070,14 @@ func configureAnsweringMountHint(c *aweb.Client, sel *awconfig.Selection, baseUR
 
 func newSelectionRegistryResolver(httpClient *http.Client, selectionRegistryURL, identityAddress string) (*awid.RegistryResolver, error) {
 	registry := newAWIDRegistryResolver(httpClient, nil)
-	registryURL := strings.TrimSpace(selectionRegistryURL)
-	if registryURL == "" {
-		registryURL = strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
+	registryURL, err := resolveRegistryURLSetting(registryURLSettingInput{ExplicitURL: selectionRegistryURL})
+	if err != nil {
+		return nil, err
 	}
 	if registryURL == "" {
 		return registry, nil
 	}
-	if strings.EqualFold(registryURL, "local") {
-		return nil, fmt.Errorf("registry URL 'local' is not supported; use an explicit registry URL")
-	}
 	identityDomain, hasIdentityAddress := registryIdentityDomain(identityAddress)
-	var err error
 	if hasIdentityAddress {
 		err = registry.SetIdentityRegistryURL(registryURL, identityDomain)
 	} else {
@@ -1192,17 +1131,17 @@ func loadOptionalWorktreeSigningKey(workingDir string) (ed25519.PrivateKey, erro
 // configureEmbeddedRegistryBaseURL applies AWID_REGISTRY_URL, the operator's
 // process-wide registry choice, as the client's fallback registry.
 func configureEmbeddedRegistryBaseURL(setFallback func(string) error) error {
-	registryValue := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
+	registryValue, err := resolveRegistryURLSetting(registryURLSettingInput{})
+	if err != nil {
+		return err
+	}
 	if registryValue == "" {
 		return nil
 	}
-	if !strings.EqualFold(registryValue, "local") {
-		if err := setFallback(registryValue); err != nil {
-			return fmt.Errorf("invalid registry URL: %w", err)
-		}
-		return nil
+	if err := setFallback(registryValue); err != nil {
+		return fmt.Errorf("invalid registry URL: %w", err)
 	}
-	return fmt.Errorf("registry URL 'local' is not supported; use an explicit registry URL")
+	return nil
 }
 
 func persistResolvedAwebURL(workspacePath, baseURL string) error {

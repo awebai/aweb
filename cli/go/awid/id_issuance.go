@@ -59,7 +59,7 @@ func issueIDCertificate(certificate map[string]any, current string, sign IDCerti
 		return nil, err
 	}
 	if signer != current {
-		return nil, idCertificateRefusal("issuer_key_not_current")
+		return nil, idCertificateRefusal(IDRefusalIssuerKeyNotCurrent)
 	}
 	signed := map[string]any{"certificate": certificate, "signature": base64.RawURLEncoding.EncodeToString(signature)}
 	if err = VerifyIDCertificate(signed, current); err != nil {
@@ -92,7 +92,7 @@ func idIssuanceRecorded(store IDIssuanceStore, parent *idStatusIdentity, id stri
 }
 
 func idIssuanceRecordedByKey(store IDIssuanceStore, id string, keyInHistory func(string) bool) error {
-	refused := idCertificateRefusal("issuance_not_recorded")
+	refused := idCertificateRefusal(IDRefusalIssuanceNotRecorded)
 	entry, err := store.Entry(id)
 	if err != nil {
 		return err
@@ -100,14 +100,14 @@ func idIssuanceRecordedByKey(store IDIssuanceStore, id string, keyInHistory func
 	if entry == nil {
 		return refused
 	}
-	c, err := idCertificateShape(entry.Signed)
+	c, err := checkedIDCertificateView(entry.Signed)
 	if err != nil {
 		return refused
 	}
-	if stored, err := IDCertificateID(c); err != nil || stored != id {
+	if stored, err := c.CertificateID(); err != nil || stored != id {
 		return refused
 	}
-	issuer := c["issuer_key"].(string)
+	issuer := c.IssuerKey()
 	if !keyInHistory(issuer) || VerifyIDCertificate(entry.Signed, issuer) != nil {
 		return refused
 	}
