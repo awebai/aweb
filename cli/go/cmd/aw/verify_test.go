@@ -47,19 +47,47 @@ func TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting(t *testing.T) {
 	}
 	senderKey := fixtureKey(sender.SeedHex)
 	entry := testDidLogEntry(t, sender.DIDAW, senderKey, sender.DIDKey, "create", nil, nil, 1)
+	type registryReply struct {
+		unavailableAt string
+		enrollment    string
+		status        string
+	}
+	var reply atomic.Pointer[registryReply]
 	var keyReads, logReads, statusReads, foreignReads atomic.Int32
 	senderRegistry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := reply.Load()
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/did/" + sender.DIDAW + "/key":
 			keyReads.Add(1)
-			_ = json.NewEncoder(w).Encode(map[string]any{"did_aw": sender.DIDAW, "current_did_key": sender.DIDKey,
-				"id_tree": map[string]any{"enrolled": true, "domain": "example.com"}})
+			if current.unavailableAt == "key" {
+				http.Error(w, "key unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			answer := map[string]any{"did_aw": sender.DIDAW, "current_did_key": sender.DIDKey}
+			switch current.enrollment {
+			case "not enrolled":
+				answer["id_tree"] = map[string]any{"enrolled": false}
+			case "unknown": // The old response shape has no enrollment field.
+			case "uppercase":
+				answer["id_tree"] = map[string]any{"enrolled": true, "domain": "EXAMPLE.COM"}
+			default:
+				answer["id_tree"] = map[string]any{"enrolled": true, "domain": "example.com"}
+			}
+			_ = json.NewEncoder(w).Encode(answer)
 		case "GET /v1/did/" + sender.DIDAW + "/log":
 			logReads.Add(1)
+			if current.unavailableAt == "log" {
+				http.Error(w, "log unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			_ = json.NewEncoder(w).Encode([]awid.DidKeyEvidence{entry})
 		case "POST /v1/id-certificates/status":
 			statusReads.Add(1)
-			_ = json.NewEncoder(w).Encode(v.Statuses["normal"])
+			if current.unavailableAt == "status" {
+				http.Error(w, "status unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(v.Statuses[firstNonEmpty(current.status, "normal")])
 		default:
 			t.Errorf("unexpected registry request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -74,12 +102,8 @@ func TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting(t *testing.T) {
 	senderOrigin := strings.Replace(senderRegistry.URL, "127.0.0.1", "registry.example", 1)
 	foreignOrigin := strings.Replace(foreignRegistry.URL, "127.0.0.1", "registry.test", 1)
 
-	message := &awid.MessageEnvelope{From: "example.com/sender", FromDID: sender.DIDKey, FromStableID: sender.DIDAW,
-		To: "recipient", Type: "mail", Body: "fixture", Timestamp: time.Now().UTC().Format(time.RFC3339)}
-	signature, err := awid.SignMessage(senderKey, message)
-	if err != nil {
-		t.Fatal(err)
-	}
+	message := awid.MessageEnvelope{From: "example.com/sender", FromDID: sender.DIDKey, FromStableID: sender.DIDAW,
+		To: "recipient", Type: "mail", Body: "fixture", Timestamp: "2026-10-26T00:15:00Z"}
 	leaf := map[string]any{"v": 1, "type": "aweb.id-certificate", "id": sender.DIDAW, "domain": foreign,
 		"parent": map[string]any{"kind": "namespace", "id": foreign}, "kind": "agent", "issuer_key": foreignRoot.DIDKey, "issued_at": "2026-04-04T00:00:00Z"}
 	payload, err := awid.IDCertificateSigningBytes(leaf)
@@ -88,45 +112,77 @@ func TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting(t *testing.T) {
 	}
 	foreignLeaf := map[string]any{"certificate": leaf, "signature": base64.RawURLEncoding.EncodeToString(ed25519.Sign(fixtureKey(foreignRoot.SeedHex), payload))}
 	senderChain := []any{v.Certificates["alice"].Signed, v.Certificates["global-agent"].Signed}
+	localChain := []any{v.Certificates["alice"].Signed, v.Certificates["coordinator"].Signed}
+	// The release comparison uses the same cases with a CLI built from the
+	// release tag and the DNS-only test entry point above. A release without
+	// verify can also be checked directly from the published binary.
+	baseline := os.Getenv("AW_TEST_VERIFY_BASELINE")
+	published := os.Getenv("AW_TEST_VERIFY_PUBLISHED_BINARY")
 	for _, tc := range []struct {
 		name, reason string
 		domain       string
 		certificates []any
 		exit         int
 		keyReads     int32
+		logReads     int32
 		statusReads  int32
 		privateHome  bool
+		local        bool
+		registry     registryReply
 	}{
-		{name: "sender domain", reason: "verified", domain: "example.com", certificates: senderChain, keyReads: 1, statusReads: 1},
-		{name: "foreign domain", reason: "domain_mismatch", domain: "example.com", certificates: []any{foreignLeaf}, exit: 1, keyReads: 1},
+		{name: "sender domain", reason: "verified", domain: "example.com", certificates: senderChain, keyReads: 1, logReads: 1, statusReads: 1},
+		{name: "foreign domain", reason: "domain_mismatch", domain: "example.com", certificates: []any{foreignLeaf}, exit: 1, keyReads: 1, logReads: 1},
 		{name: "mixed domains", reason: "domain_mismatch", certificates: []any{senderChain[0], foreignLeaf}, exit: 1},
 		{name: "private conflict", reason: "evidence_unavailable", certificates: senderChain, exit: 2, privateHome: true},
+		{name: "key unavailable", reason: "evidence_unavailable", certificates: senderChain, exit: 2, keyReads: 1, registry: registryReply{unavailableAt: "key"}},
+		{name: "log unavailable", reason: "evidence_unavailable", certificates: senderChain, exit: 2, keyReads: 1, logReads: 1, registry: registryReply{unavailableAt: "log"}},
+		{name: "status unavailable", reason: "evidence_unavailable", domain: "example.com", certificates: senderChain, exit: 2, keyReads: 1, logReads: 1, statusReads: 1, registry: registryReply{unavailableAt: "status"}},
+		{name: "leaf revoked", reason: "revoked", domain: "example.com", certificates: senderChain, exit: 1, keyReads: 1, logReads: 1, statusReads: 1, registry: registryReply{status: "agent-directly-revoked"}},
+		{name: "not enrolled with chain", reason: "unregistered_identity", certificates: senderChain, keyReads: 1, logReads: 1, registry: registryReply{enrollment: "not enrolled"}},
+		{name: "unknown enrollment", reason: "evidence_unavailable", certificates: senderChain, exit: 2, keyReads: 1, logReads: 1, registry: registryReply{enrollment: "unknown"}},
+		{name: "noncanonical enrollment domain", reason: "evidence_unavailable", certificates: senderChain, exit: 2, keyReads: 1, logReads: 1, registry: registryReply{enrollment: "uppercase"}},
+		{name: "global sender omitted chain", reason: "verified", domain: "example.com", keyReads: 1, logReads: 1, statusReads: 1},
+		{name: "did key sender with chain", reason: "verified", domain: "example.com", certificates: localChain, statusReads: 1, local: true},
+		{name: "did key sender without chain", reason: "legacy_no_chain", local: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			export := messageExport{V: 1, Type: "aweb.message-envelope", SignedPayload: awid.CanonicalJSON(message), Signature: signature, SigningKeyID: sender.DIDKey,
-				IDChain: awid.ReceivedIDChain{"v": 1, "type": "aweb.id-chain", "certificates": tc.certificates}}
-			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting$")
-			cmd.Dir = t.TempDir()
+			reply.Store(&tc.registry)
+			dir := t.TempDir()
 			flag := senderOrigin
+			input := message
+			key := senderKey
 			if tc.privateHome {
-				cmd.Dir = whoIdentity(t, v, false, true)
-				identityRegistryTestGlobalHome(t, cmd.Dir, v)
-				path := filepath.Join(cmd.Dir, ".aw", "identity.yaml")
-				identity := loadIdentityForTest(t, cmd.Dir)
+				dir = whoIdentity(t, v, false, true)
+				identityRegistryTestGlobalHome(t, dir, v)
+				path := filepath.Join(dir, ".aw", "identity.yaml")
+				identity := loadIdentityForTest(t, dir)
 				identity.RegistryURL, identity.RegistryOperatorOrigin = senderOrigin, senderOrigin
 				if err := awconfig.SaveWorktreeIdentityTo(path, identity); err != nil {
 					t.Fatal(err)
 				}
 				flag = foreignOrigin
-				alias := *message
-				alias.From = foreign + "/sender"
-				export.SignedPayload = awid.CanonicalJSON(&alias)
-				signature, err := awid.SignMessage(senderKey, &alias)
-				if err != nil {
-					t.Fatal(err)
-				}
-				export.Signature = signature
+				input.From = foreign + "/sender"
 			}
+			if tc.local {
+				local := v.Keys["coordinator"]
+				input.From, input.FromDID, input.FromStableID = foreign+"/sender", local.DIDKey, ""
+				key = fixtureKey(local.SeedHex)
+			}
+			signature, err := awid.SignMessage(key, &input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			export := messageExport{V: 1, Type: "aweb.message-envelope", SignedPayload: awid.CanonicalJSON(&input), Signature: signature, SigningKeyID: input.FromDID}
+			if tc.certificates != nil {
+				export.IDChain = awid.ReceivedIDChain{"v": 1, "type": "aweb.id-chain", "certificates": tc.certificates}
+			}
+			binary := firstNonEmpty(published, baseline, os.Args[0])
+			args := []string{"-test.run=^TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting$"}
+			if published != "" {
+				args = []string{"verify", "--registry", flag, "--json"}
+			}
+			cmd := exec.CommandContext(t.Context(), binary, args...)
+			cmd.Dir = dir
 			cmd.Stdin = strings.NewReader(string(marshalMessageExport(t, export)))
 			cmd.Env = append(testCommandEnv(t.TempDir()), "AWEB_IDENTITY_HOME=", "AWID_REGISTRY_URL=", "APP_ENV=development",
 				"AW_TEST_VERIFY_SENDER_REGISTRY="+flag, "NO_PROXY=registry.example,registry.test",
@@ -137,6 +193,7 @@ func TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting(t *testing.T) {
 			keyReads.Store(0)
 			logReads.Store(0)
 			statusReads.Store(0)
+			foreignReads.Store(0)
 			output, err := cmd.Output()
 			code := 0
 			if err != nil {
@@ -147,18 +204,37 @@ func TestVerifyBinaryBindsChainToSenderEnrollmentBeforeRouting(t *testing.T) {
 				code = exit.ExitCode()
 			}
 			var result whoOutput
-			if json.Unmarshal(output, &result) != nil || code != tc.exit || result.Reason != tc.reason {
+			k, l, s, f := keyReads.Load(), logReads.Load(), statusReads.Load(), foreignReads.Load()
+			if published != "" && code == 1 && len(output) == 0 && strings.Contains(stderr.String(), `unknown command "verify"`) && k+l+s+f == 0 {
+				t.Logf("verdict command_unavailable, exit %d, reads key/log/status/foreign %d/%d/%d/%d", code, k, l, s, f)
+				return
+			}
+			if err := json.Unmarshal(output, &result); err != nil {
+				t.Fatalf("decode verify result: %v, exit %d, stdout %s, stderr %s", err, code, output, &stderr)
+			}
+			t.Logf("verdict %s, exit %d, reads key/log/status/foreign %d/%d/%d/%d", result.Reason, code, k, l, s, f)
+			if baseline != "" || published != "" {
+				return
+			}
+			if code != tc.exit || result.Reason != tc.reason || result.Domain != tc.domain {
 				t.Errorf("verify exit %d (want %d), stdout %s, stderr %s", code, tc.exit, output, &stderr)
 			}
 			if tc.privateHome {
-				if !strings.Contains(stderr.String(), senderOrigin) || !strings.Contains(stderr.String(), foreignOrigin) || result.IdentityValid != nil {
+				if !strings.Contains(stderr.String(), senderOrigin) || !strings.Contains(stderr.String(), foreignOrigin) {
 					t.Errorf("expected explicit private registry conflict: %s %s", output, &stderr)
 				}
-			} else if result.IdentityValid == nil || *result.IdentityValid != (tc.exit == 0) || result.Domain != tc.domain {
+			}
+			if tc.reason == "verified" || tc.exit == 1 {
+				if result.IdentityValid == nil || *result.IdentityValid != (tc.reason == "verified") {
+					t.Errorf("unexpected identity validity: %s", output)
+				}
+			} else if result.IdentityValid != nil || result.HumanID != nil || result.Kind != nil || len(result.Chain) != 0 {
 				t.Errorf("unexpected enrollment result: %s", output)
 			}
-			if k, l, s, f := keyReads.Load(), logReads.Load(), statusReads.Load(), foreignReads.Load(); k != tc.keyReads || l != tc.keyReads || s != tc.statusReads || f != 0 {
-				t.Errorf("registry reads key/log/status/foreign = %d/%d/%d/%d; want %d/%d/%d/0", k, l, s, f, tc.keyReads, tc.keyReads, tc.statusReads)
+			keyOK := k == tc.keyReads || tc.registry.unavailableAt == "key" && k > tc.keyReads
+			logOK := l == tc.logReads || tc.registry.unavailableAt == "log" && l > tc.logReads
+			if !keyOK || !logOK || s != tc.statusReads || f != 0 {
+				t.Errorf("registry reads key/log/status/foreign = %d/%d/%d/%d; want %d/%d/%d/0 (retry allowed on failed key/log reads)", k, l, s, f, tc.keyReads, tc.logReads, tc.statusReads)
 			}
 		})
 	}
