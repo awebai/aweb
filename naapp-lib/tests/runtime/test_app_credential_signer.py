@@ -7,6 +7,7 @@ produces exactly what the server accepts, and nothing it refuses.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from datetime import UTC, datetime
@@ -23,6 +24,7 @@ from aweb_naapp.runtime.app_credentials import (
     HOOK_RESOLVE,
     PURPOSES,
     AppCredentialSigner,
+    app_request_credential,
     sign_app_credential,
 )
 from aweb_naapp.runtime.app_emit import sign_app_emit_credential
@@ -112,6 +114,27 @@ def test_app_request_matches_its_frozen_wire_vector(object_api):
     assert credential.signature_b64 == REQUEST_VECTOR["signature"]
     assert credential.headers == REQUEST_VECTOR["headers"]
     assert json.loads(credential.canonical_payload) == REQUEST_VECTOR["payload"]
+
+
+def test_app_request_credential():
+    request = REQUEST_VECTOR["request"]
+    payload = REQUEST_VECTOR["payload"]
+    headers = app_request_credential(
+        signing_key=SigningKey(bytes.fromhex(REQUEST_VECTOR["keys"]["app"]["seed_hex"])),
+        aud=payload["aud"],
+        method=request["method"],
+        path=request["path"],
+        team_id=payload["team_id"],
+        app_id=payload["app_id"],
+        kid=payload["kid"],
+        installation_id=payload["installation_id"],
+        installation_generation=payload["installation_generation"],
+        body=request["body"].encode("utf-8"),
+        timestamp=payload["timestamp"],
+    )
+    assert headers == REQUEST_VECTOR["headers"]
+    signed = base64.urlsafe_b64decode(headers["X-AWEB-Signed-Payload"] + "==")
+    assert signed == REQUEST_VECTOR["canonical_payload"].encode("utf-8")
 
 
 @pytest.mark.parametrize("object_api", [False, True])

@@ -1,9 +1,8 @@
-"""The frozen app task request vectors: task authorizations, the app-request
-credential and task answer digests (docs/app-task-requests.md)."""
+"""The frozen app task request vectors: task authorizations, stage receipts and
+task answer digests (docs/app-task-requests.md)."""
 
 from __future__ import annotations
 
-import base64
 import json
 from datetime import datetime
 from pathlib import Path
@@ -11,7 +10,6 @@ from pathlib import Path
 import pytest
 from nacl.signing import SigningKey
 
-from aweb_naapp.runtime.app_credentials import app_request_credential
 from aweb_naapp.runtime.task_requests import (
     TaskRequestRefused,
     answer_sha256,
@@ -28,9 +26,6 @@ from aweb_naapp.runtime.task_requests import (
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 AUTH = json.loads((AWEB_ROOT / "docs" / "vectors" / "app-task-authorization-v1.json").read_text())
-CREDENTIAL = json.loads(
-    (AWEB_ROOT / "docs" / "vectors" / "app-request-credential-v1.json").read_text()
-)
 ANSWERS = json.loads((AWEB_ROOT / "docs" / "vectors" / "task-answer-v1.json").read_text())
 
 
@@ -120,27 +115,6 @@ def test_task_body_refusals(case):
     with pytest.raises(TaskRequestRefused) as refused:
         validate_task(case["task"])
     assert refused.value.code == case["expect"]
-
-
-def test_app_request_credential():
-    request = CREDENTIAL["request"]
-    payload = CREDENTIAL["payload"]
-    headers = app_request_credential(
-        signing_key=SigningKey(bytes.fromhex(CREDENTIAL["keys"]["app"]["seed_hex"])),
-        aud=payload["aud"],
-        method=request["method"],
-        path=request["path"],
-        team_id=payload["team_id"],
-        app_id=payload["app_id"],
-        kid=payload["kid"],
-        installation_id=payload["installation_id"],
-        installation_generation=payload["installation_generation"],
-        body=request["body"].encode("utf-8"),
-        timestamp=payload["timestamp"],
-    )
-    assert headers == CREDENTIAL["headers"]
-    signed = base64.urlsafe_b64decode(headers["X-AWEB-Signed-Payload"] + "==")
-    assert signed == CREDENTIAL["canonical_payload"].encode("utf-8")
 
 
 @pytest.mark.parametrize("case", ANSWERS["bodies"], ids=lambda case: case["name"])
