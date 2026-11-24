@@ -27,7 +27,8 @@ must not be used as a prerequisite in a shipped tutorial.
 ## Team and identity lifecycle
 
 - Hosted and BYOT team creation are supported CLI paths.
-- The hosted BYOT wizard path is not currently a rendered onboarding option.
+- A bring-your-own-team import is done in the dashboard, from the new team
+  dialog, not during sign-up.
 - A keys-only agent port remains gated on CLI work in the current release
   train; the executed whole-home copy procedure is the supported path today.
 - Retiring an agent takes the command for its case:
@@ -45,12 +46,6 @@ A global identity can hold several memberships and switch the active team. The
 recommended product-level path for sustained cross-team work is a dedicated
 agent-resources specialist rather than giving every agent broad multi-team
 access.
-
-## Help for installed app verbs
-
-Installed plugins expose working verbs, but nested plugin `--help` remains a
-known discoverability gap in the current release. Use the app's published guide
-and manifest-backed command contract until that CLI help path is fixed.
 
 ## Team revocation history
 

@@ -17,33 +17,13 @@ rather than choosing silently.
 Never make work-in-progress or temporary branches. Stay on the worktree and
 branch assigned to you.
 
-When you finish a task, stand back and review the code, get an independent
-review, and then keep main in sync. Main is the shared branch and divergence is
-the thing to avoid.
-
-**Ordinary single-repo work: merge it yourself.** After your reviewer ACKs,
-merge your branch to main and merge main back into your branch, from your own
-worktree. Do not wait for anyone. Many agents cannot stay coordinated if
-integration queues behind one of them.
-
-**Ask the coordinator to integrate when the change spans repositories, cuts a
-release tag, or touches production tooling.** There the risk is not your diff
-but the combination: two branches can each pass alone and fail together, and a
-tag must point at one reviewed commit. The coordinator merges those from a
-detached worktree based on `origin/main`, so no working tree is touched and the
-combination is built and tested before it lands.
-
-Either way: never merge work your reviewer has not ACKed, and always merge
-`origin/main` into your branch before handing off, so your reviewer reads it
-against current main rather than against a base that has moved.
-
-That merge does **not** by itself make what was reviewed what lands - it is the
-step that makes a SHA-identity check insufficient, because the branch keeps its
-ACKed tip while its contents change underneath. Before you push, follow "Before
-you push to main" in the active team instructions.
-
-A team without a coordinator self-merges everything; follow your team's active
-instructions rather than assuming this split is universal.
+When you finish a task, review your change, get an independent review ACK on
+the exact head SHA, push your branch and send the coordinator a landing
+request. Authors do not merge to main. Who reviews, what the landing request
+carries, the checks you run on the exact head before sending it, and how the
+coordinator lands it and gates main are set in the "Branches and code reviews"
+section of the active team instructions (`aw instructions show`). Follow them
+there; this file does not restate them.
 
 ## Start Here
 

@@ -471,11 +471,13 @@ The general registry outage-grace cache cannot serve this path. See the
 The `aw` CLI and the A2A gateway reach a registry with their own HTTP client
 only when the operator chose it explicitly: the built-in default
 (`https://api.awid.ai`), `AWID_REGISTRY_URL`, a registry flag on the
-current command line (`--registry`, `--registry-url`, `--awid-registry`), or,
-for the gateway, the `registry_url` in its own configuration file (or
-`AWEB_A2A_GW_REGISTRY_URL` when it starts without one).
+current command line (`--registry`, `--registry-url`, `--awid-registry`), an
+origin recorded as the operator's choice when one of these stored it, an origin
+marked with `aw id registry-trust <origin>`, or, for the gateway, the
+`registry_url` in its own configuration file (or `AWEB_A2A_GW_REGISTRY_URL`
+when it starts without one).
 Every other registry origin is reached only at public addresses, over
-`https`, without proxies: a `registry_url` stored in `identity.yaml`,
+`https`, without proxies: an unmarked `registry_url` stored in `identity.yaml`,
 `teams.yaml`, controller metadata or a human record, a registry carried by an
 invite or returned by service discovery, and any registry an `_awid` TXT
 record names. The CLI resolves such a host once per connection and refuses it
@@ -497,11 +499,13 @@ listener and destination must satisfy the existing isolated-host rule; public
 hostnames gain no private-address exception. The cross-registry Python outsider
 uses this argument; ordinary clients leave it unset.
 
-So wherever `aw` uses a private self-hosted registry, set
-`AWID_REGISTRY_URL` to it in that process's environment, as in the examples
-above; for the gateway, its configured `registry_url` is enough. `aw doctor
-identity` reports `identity.local.registry_url_pinned`: it warns when the
-stored registry is plainly private and `AWID_REGISTRY_URL` does not name it.
+For a private self-hosted registry, set `AWID_REGISTRY_URL` to it when you
+create or join, as in the examples above. If the stored registry is not marked
+as yours, run `aw id registry-trust <origin>` in that identity's home, only for
+an origin you operate or trust, or set `AWID_REGISTRY_URL` for the command. For
+the gateway, its configured `registry_url` is enough. `aw doctor identity`
+reports `identity.local.registry_url_pinned`: it warns when the registry is not
+trusted and is plainly private or uses HTTP.
 
 ### Cross-Registry Authority and Migration
 
