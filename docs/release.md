@@ -149,9 +149,10 @@ they create and remove their own bounded builder when none is supplied.
 
 `make candidate-gate`, direct `scripts/candidate-docker-gate.sh` calls and the
 release command use that same ledger. The key includes the source tree,
-effective CLI/A2A versions, external Library/blueprint revisions, and non-default
-resource settings. Commit metadata, stage selection and log paths do not create
-another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
+effective CLI/A2A versions, external Library/blueprint revisions, non-default
+resource settings, and the content of synchronized main's product-table write
+ceilings, the only part of main a stage reads. Commit metadata, main's commit,
+stage selection and log paths do not create another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
 retained logs; all callers must share them.
 
 For focused pre-landing checks, use `AWEB_CANDIDATE_STAGES='checks unit' make

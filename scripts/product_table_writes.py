@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 import io
@@ -578,17 +579,26 @@ def ceilings(raw: str) -> Budget:
     )
 
 
-def violations(root: Path, report: Report) -> list[str]:
-    candidate = ceilings((root / CEILINGS).read_text())
+def reviewed_ceilings_text(root: Path) -> str | None:
+    """Synchronized main's ceilings file, the only main content this check reads."""
     git(root, "rev-parse", "--verify", "refs/remotes/origin/main")
     exists = git(
         root, "ls-tree", "--name-only", "refs/remotes/origin/main", "--", CEILINGS
     ).strip()
-    reviewed = (
-        ceilings(git(root, "show", f"refs/remotes/origin/main:{CEILINGS}"))
-        if exists
-        else None
-    )
+    return git(root, "show", f"refs/remotes/origin/main:{CEILINGS}") if exists else None
+
+
+def reviewed_identity(root: Path) -> str:
+    text = reviewed_ceilings_text(root)
+    if text is None:
+        return "absent"
+    return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+
+
+def violations(root: Path, report: Report) -> list[str]:
+    candidate = ceilings((root / CEILINGS).read_text())
+    text = reviewed_ceilings_text(root)
+    reviewed = ceilings(text) if text is not None else None
     errors: list[str] = []
     reviewed_marked = reviewed["marked_files"] if reviewed is not None else {}
     for file, count in sorted(candidate["marked_files"].items()):
@@ -662,8 +672,16 @@ def main() -> int:
         action="store_true",
         help="inventory without ceiling comparison (not a gate check)",
     )
+    parser.add_argument(
+        "--reviewed-identity",
+        action="store_true",
+        help="print the identity of synchronized main's ceilings, the check's only main input",
+    )
     args = parser.parse_args()
     try:
+        if args.reviewed_identity:
+            print(reviewed_identity(args.root))
+            return 0
         report = scan(args.root)
         errors = [] if args.report_only else violations(args.root, report)
         if args.json:
