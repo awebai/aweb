@@ -596,7 +596,7 @@ def logs_reader_signs_in_again_after_a_reissue(
     assert answer == {"status": 403, "detail": "principal_not_member"}
 
     holder.run(principal, "--json", "id", "team", "fetch-cert", "--namespace", DOMAIN, "--team", TEAM,
-               "--cert-id", reissued["new_certificate_id"], "--registry", REGISTRY)
+               "--cert-id", reissued["new_certificate_id"], "--registry", REGISTRY, "--force")
     shown = holder.run_in_browser(principal, LOGS_CONSOLE, "session", "app", "human", LOGS_APP_ID, "session")
     assert scope in shown, shown
     assert holder.login(LOGS_CONSOLE, scope)["status"] == 200
