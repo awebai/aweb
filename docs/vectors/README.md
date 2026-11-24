@@ -20,7 +20,7 @@ vectors (manifests' owner acts, hooks, egress, task requests and the app
 self-reads), which ship inside the aweb-naapp-contracts package so naapps read
 the same bytes from the release they pin. Python, Go, TypeScript, package
 references, and generated references consume these bytes directly or through
-the classified package copy below. An unclassified hand-maintained copy is
+the classified package copies below. An unclassified hand-maintained copy is
 forbidden even when its bytes happen to match; `make test-vector-provenance`
 rejects a returning mirror or unclassified consumer-local link.
 
@@ -28,6 +28,7 @@ The other tracked vector directories have disjoint, explicit purposes:
 
 | Directory | Classification |
 |---|---|
+| `awid/src/awid/vectors/` | Byte-enforced package copies of awid's protocol vectors that naapps consume (canonical JSON, message signing, signature primitives and point encoding, team-auth envelope, team-certificate verification, principal attestation), shipped in the awid-service wheel so a naapp checks its implementation against the release it pins. `awid/tests/test_packaged_vectors.py` checks the built wheel. |
 | `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
 | `naapp-contracts/src/aweb_naapp_contracts/vectors/` | Public authority for the naapp contract vectors, shipped in the aweb-naapp-contracts wheel; an installed app loads the hook catalog from it (`aweb_naapp_contracts.hooks.catalog.packaged_catalog`) with no repository checkout. |
 | `naapp-lib/tests/vectors/` | External cryptographic known-answer fixtures: `hpke-rfc9180-base-x25519.json` pins RFC 9180 upstream test-vector data for `test_crypto_hpke.py`; it is not an aweb public protocol vector. |

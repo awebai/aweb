@@ -1,0 +1,41 @@
+[
+  {
+    "name": "mail_basic",
+    "signing_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "signing_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+    "message": {
+      "from": "mycompany/researcher",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "to": "acme/monitor",
+      "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+      "type": "mail",
+      "message_id": "8b1c2c69-7c2a-4fbb-9f4a-3dfb7d7a26c0",
+      "subject": "status update",
+      "body": "task complete",
+      "timestamp": "2026-02-22T10:00:00Z"
+    },
+    "canonical_payload": "{\"body\":\"task complete\",\"from\":\"mycompany/researcher\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"message_id\":\"8b1c2c69-7c2a-4fbb-9f4a-3dfb7d7a26c0\",\"subject\":\"status update\",\"timestamp\":\"2026-02-22T10:00:00Z\",\"to\":\"acme/monitor\",\"to_did\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"type\":\"mail\"}",
+    "signature_b64": "OF5hbFcpZi5OsYtUrWgze2K64ZP47PHFFTbXCWhKD8yjRkNUB6SQZ226M9h2tIUvoTlzmNZtMRWVUPpfT/kfDg"
+  },
+  {
+    "name": "mail_with_stable_ids_unicode",
+    "signing_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "signing_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+    "message": {
+      "from": "mycompany/researcher",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "to": "acme/monitor",
+      "to_did": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+      "type": "mail",
+      "message_id": "8b1c2c69-7c2a-4fbb-9f4a-3dfb7d7a26c0",
+      "subject": "café",
+      "body": "task complete",
+      "timestamp": "2026-02-22T10:00:00Z",
+      "from_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+      "to_stable_id": "did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7"
+    },
+    "canonical_payload": "{\"body\":\"task complete\",\"from\":\"mycompany/researcher\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"from_stable_id\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"message_id\":\"8b1c2c69-7c2a-4fbb-9f4a-3dfb7d7a26c0\",\"subject\":\"café\",\"timestamp\":\"2026-02-22T10:00:00Z\",\"to\":\"acme/monitor\",\"to_did\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"to_stable_id\":\"did:aw:WsPUbr9PzoJKNvBcQ5xRys6wJS7\",\"type\":\"mail\"}",
+    "signature_b64": "dHpwIJ7jhPz+o8fwUIrAyOqeGhsT96QLQjNHi5/MWe/JkDxdSibCfkB4qFg/upmTSIXe+/bXlO4pB8ZK0hS/CQ"
+  }
+]
+

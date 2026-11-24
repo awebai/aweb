@@ -23,6 +23,7 @@ EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("cli/go/internal/conformance/vectors"),
     PUBLIC_ROOT,
     CONTRACTS_PUBLIC_ROOT,
+    PurePosixPath("awid/src/awid/vectors"),
     PurePosixPath("naapp-lib/tests/vectors"),
     PurePosixPath("naapp/library/tests/vectors"),
     PurePosixPath("naapp/library/test-vectors"),
@@ -30,6 +31,15 @@ EXPECTED_VECTOR_ROOTS = {
     PurePosixPath("test-vectors"),
 }
 MANAGED_PUBLIC_COPIES = {
+    # awid's protocol vectors ship in the awid-service wheel, so naapps check
+    # their implementations against the release they pin.
+    PurePosixPath("awid/src/awid/vectors/canonical-json-v1.json"): PUBLIC_ROOT / "canonical-json-v1.json",
+    PurePosixPath("awid/src/awid/vectors/message-signing-v1.json"): PUBLIC_ROOT / "message-signing-v1.json",
+    PurePosixPath("awid/src/awid/vectors/principal-attestation-v1.json"): PUBLIC_ROOT / "principal-attestation-v1.json",
+    PurePosixPath("awid/src/awid/vectors/signature-point-encoding-v2.json"): PUBLIC_ROOT / "signature-point-encoding-v2.json",
+    PurePosixPath("awid/src/awid/vectors/signature-primitives-v1.json"): PUBLIC_ROOT / "signature-primitives-v1.json",
+    PurePosixPath("awid/src/awid/vectors/team-auth-envelope-v2.json"): PUBLIC_ROOT / "team-auth-envelope-v2.json",
+    PurePosixPath("awid/src/awid/vectors/team-certificate-verification-v1.json"): PUBLIC_ROOT / "team-certificate-verification-v1.json",
     PurePosixPath("cli/go/internal/conformance/vectors/team-auth-envelope-v2.json"): (
         PUBLIC_ROOT / "team-auth-envelope-v2.json"
     ),
@@ -51,6 +61,18 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("awid/tests/test_packaged_vectors.py"): _consumer(
+        (
+            "canonical-json-v1.json",
+            "message-signing-v1.json",
+            "principal-attestation-v1.json",
+            "signature-point-encoding-v2.json",
+            "signature-primitives-v1.json",
+            "team-auth-envelope-v2.json",
+            "team-certificate-verification-v1.json",
+        ),
+        'AWID.parent / "docs" / "vectors"',
+    ),
     # Installed apps load the hook catalog from the package, without a checkout.
     PurePosixPath("naapp-contracts/src/aweb_naapp_contracts/hooks/catalog.py"): _consumer(
         "hook-catalog-v1.json",
