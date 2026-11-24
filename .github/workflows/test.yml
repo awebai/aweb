@@ -1,6 +1,7 @@
 name: Test suite
 
-# `make test` on every pull request. This is the PR-time signal that the
+# `make test` on every pull request and every push to main, so a release run
+# can start from a CI-green main. This is the PR-time signal that the
 # deleted comprehensive hosted gate used to provide as a side effect of running
 # on pull requests too - at the cost of a ~120-minute job with a 54%
 # cancellation rate, most of whose expensive half the focused workflows already
@@ -12,6 +13,8 @@ name: Test suite
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
