@@ -388,6 +388,9 @@ class PypiLaneContractTest(unittest.TestCase):
         patcher = patch.multiple(PUBLISH, run=run, request_json=request_json)
         patcher.start()
         self.addCleanup(patcher.stop)
+        token = patch.dict(os.environ, {"UV_PUBLISH_TOKEN": "test-token-not-a-secret"})
+        token.start()
+        self.addCleanup(token.stop)
         return uploaded, asked
 
     def test_the_lane_uploads_exactly_the_locked_files_and_never_builds(self):
@@ -396,8 +399,8 @@ class PypiLaneContractTest(unittest.TestCase):
         self.assertEqual(asked, ["https://pypi.org/pypi/awid-service/2.3.4/json",
                                  "https://pypi.org/pypi/aweb/1.2.3/json"])
         self.assertEqual(len(uploaded), 1)
-        self.assertEqual(uploaded[0][:4], ("uv", "publish", "--trusted-publishing", "always"))
-        self.assertEqual(sorted(Path(path).name for path in uploaded[0][4:]), sorted(self.locked))
+        self.assertEqual(uploaded[0][:2], ("uv", "publish"))
+        self.assertEqual(sorted(Path(path).name for path in uploaded[0][2:]), sorted(self.locked))
 
     def test_a_rerun_uploads_only_the_files_pypi_lacks(self):
         wheel = "aweb-1.2.3-py3-none-any.whl"
@@ -405,7 +408,14 @@ class PypiLaneContractTest(unittest.TestCase):
             (200, {"urls": [{"filename": wheel, "digests": {"sha256": self.locked[wheel]}}]})
         )
         PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
-        self.assertEqual([Path(path).name for path in uploaded[0][4:]], ["aweb-1.2.3.tar.gz"])
+        self.assertEqual([Path(path).name for path in uploaded[0][2:]], ["aweb-1.2.3.tar.gz"])
+
+    def test_the_lane_refuses_without_a_pypi_token_before_upload(self):
+        uploaded, _asked = self.uploads()
+        with patch.dict(os.environ, {"UV_PUBLISH_TOKEN": ""}):
+            with self.assertRaisesRegex(PUBLISH.PublishRefusal, "UV_PUBLISH_TOKEN"):
+                PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
+        self.assertEqual(uploaded, [])
 
     def test_a_wrong_asset_uploads_nothing(self):
         uploaded, _asked = self.uploads()
@@ -448,9 +458,9 @@ class PypiLaneContractTest(unittest.TestCase):
         source = (ROOT / ".github/workflows/pypi-release.yml").read_text()
         self.assertIn("release:\n    types: [published]", source)
         self.assertNotIn("push:", source)
-        self.assertNotIn("PYPI_TOKEN", source)
+        self.assertIn("UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}", source)
         self.assertNotIn("uv build", source)
-        self.assertIn("id-token: write", source)
+        self.assertNotIn("id-token", source)
         self.assertIn('gh release download "$TAG" --dir "$ASSETS"', source)
         self.assertIn('git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"', source)
         self.assertIn('python3 scripts/publish_release.py --only pypi --assets "$ASSETS" "$TAG"', source)

@@ -323,15 +323,14 @@ tag is annotated, its message lists files, and the assets are exactly those
 files with those sha256 digests: a missing file, an extra file or a different
 digest refuses before anything is uploaded. It then requires one sdist and one
 wheel of the tag's package and version, uploads only the files PyPI does not
-yet serve with PyPI trusted publishing, so a rerun after a partial upload
+yet serve, with the repository's `PYPI_TOKEN` secret, so a rerun after a partial upload
 adopts what is there, and reads PyPI back. A file PyPI already serves with
 other bytes refuses permanently.
 
 The `aweb` upload first waits up to three minutes for the in-repo
 `awid-service` version to be public, so release `awid-service` first and wait
-for PyPI to serve it before releasing `aweb`. PyPI must list
-`.github/workflows/pypi-release.yml` of this repository as a trusted publisher
-for both `aweb` and `awid-service`; the workflow holds no PyPI token.
+for PyPI to serve it before releasing `aweb`. The PyPI token lives only in
+that GitHub secret, never on the operator's machine.
 
 ## Runnerless publication
 
@@ -350,7 +349,7 @@ Provide the credential required by the destination:
 
 The runnerless path builds from a detached worktree at the local tag and
 refuses a same-version byte conflict. PyPI is not runnerless: only the release
-workflow uploads, through trusted publishing, so a runnerless `server-v` uses
+workflow uploads, with the repository's PyPI secret, so a runnerless `server-v` uses
 `python3 scripts/publish_release.py --only oci <tag>`. `aw-v` can publish all npm platform
 packages directly; hosted binary assets remain resumable when GitHub returns.
 Skills ZIPs are likewise resumable hosted assets after the npm package is safe.

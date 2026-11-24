@@ -176,6 +176,8 @@ def publish_pypi(root: Path, tag: str, source_sha: str, assets: Path) -> None:
     """Upload the gated release files the tag locks; never build."""
     prefix, version = tag_parts(tag)
     package = PYPI_PACKAGES[prefix]
+    if not os.environ.get("UV_PUBLISH_TOKEN", "").strip():
+        raise PublishRefusal("UV_PUBLISH_TOKEN is required")
     verify_release_assets(assets, locked_files(root, tag))
     exact = ("bash", str(Path(__file__).resolve().parent / "pypi-exact-publish.sh"))
     lane = ("--dist", str(assets), "--package", package, "--version", version)
@@ -204,7 +206,7 @@ def publish_pypi(root: Path, tag: str, source_sha: str, assets: Path) -> None:
         )
     files = [assets / name for name in plan.splitlines() if name]
     if files:
-        run(root, "uv", "publish", "--trusted-publishing", "always", *(str(path) for path in files), capture=False)
+        run(root, "uv", "publish", *(str(path) for path in files), capture=False)
     run(root, *exact, "verify-published", *lane)
 
 
