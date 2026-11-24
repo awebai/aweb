@@ -36,6 +36,7 @@ from aweb.identity_binding import (
 from aweb.identity_scope import normalize_identity_scope
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+    CertificateStanding,
     CurrentMembershipRequired,
     MemberProjection,
     MemberReadLock,
@@ -105,19 +106,51 @@ class ResolvedTeamMembership:
     snapshot: TeamMemberSnapshot
 
 
+@dataclass(frozen=True)
+class _AdmittedMember:
+    request_state: dict[str, Any] | None
+    member: MemberProjection
+    credential: _MemberCredential
+    registry_client: Any
+    standing: CertificateStanding | None
+
+
+def _admitted_member(request: Request) -> _AdmittedMember | None:
+    memo = request_memo()
+    if memo is None or (admitted := memo.get(_ADMITTED_MEMBER)) is None:
+        return None
+    return admitted if admitted.request_state is request.scope.get("state") else None
+
+
+def admitted_certificate_standing(
+    request: Request, registry_client, *, team_id: str, certificate_id: str, team_key: str,
+) -> CertificateStanding | None:
+    """Use standing for the same admitted issuer on an authenticated display read."""
+    admitted = _admitted_member(request)
+    if (
+        admitted is not None
+        and admitted.registry_client is registry_client
+        and admitted.credential.team_id == team_id
+        and admitted.credential.team_key == team_key
+        and admitted.credential.certificate_id == certificate_id
+        and admitted.member["certificate_id"] == certificate_id
+    ):
+        return admitted.standing
+    return None
+
+
 def admitted_member_projection(
     request: Request, identity: TeamIdentity | MessagingAuth,
 ) -> MemberProjection | None:
     """Return the exact certificate member admitted within this open request."""
     if identity.grant is not None or not has_verified_team_certificate(identity):
         return None
-    memo = request_memo()
-    if memo is None or (admitted := memo.get(_ADMITTED_MEMBER)) is None:
+    admitted = _admitted_member(request)
+    if admitted is None:
         return None
-    request_state, member = admitted
+    member = admitted.member
     if (
-        request_state is request.scope.get("state")
-        and member["team_id"] == identity.team_id
+        member["team_id"] == identity.team_id
         and str(member["agent_id"]) == identity.agent_id
         and member["did_key"] == identity.did_key
         and identity.certificate_id
@@ -374,7 +407,10 @@ async def resolve_team_membership(
     if request is not None and memo is not None:
         # After reacceptance, row is the persisted projection from the UPDATE
         # transaction. A verifier-only snapshot never publishes admission.
-        memo[_ADMITTED_MEMBER] = (snapshot._request_state, row)
+        memo[_ADMITTED_MEMBER] = _AdmittedMember(
+            snapshot._request_state, row, credential,
+            cert_info.get("_standing_registry_client"), cert_info.get("_certificate_standing"),
+        )
     return ResolvedTeamMembership(identity, snapshot)
 
 
@@ -531,8 +567,9 @@ async def _verify_admitting_certificate(
             evidence = EvidenceMode.FRESH
 
         certificate_id = checked.claims["certificate_id"]
+        registry_client = application_registry_client(request.app.state)
         standings = await read_certificate_standings(
-            application_registry_client(request.app.state), cert_team_id, [certificate_id],
+            registry_client, cert_team_id, [certificate_id],
             request=request, revocation_evidence=evidence,
         )
         standing = standings[certificate_id]
@@ -556,6 +593,8 @@ async def _verify_admitting_certificate(
         raise certificate_refusal(exc) from None
     cert_info = project_verified_team_certificate(checked.claims)
     cert_info["registration_decision"] = standing.registration
+    cert_info["_standing_registry_client"] = registry_client
+    cert_info["_certificate_standing"] = standing
     return cert_info, team_did_key
 
 

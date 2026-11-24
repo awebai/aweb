@@ -1,6 +1,9 @@
 """Real native roster budget and newest-of-all-three activity evidence."""
 
+import base64
+import json
 from datetime import datetime
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -8,8 +11,13 @@ from pgdbm import AsyncDatabaseManager
 
 from aweb import connection_scope
 from aweb.embedding import OutboxRecoveryOwnership
+from aweb.grant_liveness import GrantLivenessFailurePolicy, valid_grant_liveness_by_workspace
 from aweb.presence import clear_workspace_presence, update_agent_presence
+from awid.registry import RegistryError
+from fastapi import HTTPException
+from messaging_actor_support import admit_messaging_actor, register_messaging_team
 from test_dashboard_privacy import TEAM, privacy_stack
+from test_identity_grants import _grant_headers, _session_keypair
 from test_messages_http import _signed_team_headers
 from test_team_room import admit_room_member
 from test_workspace_liveness_http import (
@@ -116,6 +124,16 @@ async def test_roster_checks_distinct_grant_issuer_with_configured_registration(
     assert checked_ids == [viewer["certificate_id"], issuer["certificate_id"]]
     assert active_views == ([False, False] if required else [])
 
+    # Alice's certificate already passed both checks at ingress.
+    checked_ids.clear()
+    active_views.clear()
+    agents = await roster(env)
+    assert datetime.fromisoformat(next(
+        agent["last_seen"] for agent in agents if agent["alias"] == "alice"
+    )) == grant_seen
+    assert checked_ids == [issuer["certificate_id"]]
+    assert active_views == ([False] if required else [])
+
     await sdk.revoke_team_certificate(
         domain, name,
         team_controller_signing_key=env.team_sk,
@@ -131,6 +149,93 @@ async def test_roster_checks_distinct_grant_issuer_with_configured_registration(
         for agent in response.json()["agents"]
     )
     assert active_views == ([False] if required else [])
+
+
+async def _publish_grant_liveness(env, actor):
+    session_key, session_did = _session_keypair()
+    body = json.dumps({
+        "grant_did_key": session_did,
+        "scopes": ["presence.write"],
+        "ttl_seconds": 600,
+    }).encode()
+    minted = await env.client.post(
+        "/v1/identity-grants",
+        content=body,
+        headers={
+            **_signed_team_headers(
+                actor.signing_key, actor.did_key, actor.team_id, actor.certificate, body
+            ),
+            "Content-Type": "application/json",
+        },
+    )
+    assert minted.status_code == 200, minted.text
+    grant_id = minted.json()["grant_id"]
+    heartbeat = await env.client.post(
+        "/v1/agents/heartbeat",
+        headers=_grant_headers(
+            signing_key=session_key,
+            did_key=session_did,
+            grant_id=grant_id,
+            method="POST",
+            path="/v1/agents/heartbeat",
+            aud=env.app.state.public_origin,
+        ),
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+    return grant_id
+
+
+@pytest.mark.asyncio
+async def test_liveness_batches_twenty_two_live_issuers_by_team(roster_stack, monkeypatch):
+    env = roster_stack
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
+    other_team = f"budget-{uuid4().hex[:12]}:example.test"
+    await register_messaging_team(env, team_id=other_team)
+    grants, certificate_ids = {}, {}
+    for team, size in ((TEAM, 20), (other_team, 2)):
+        grants[team] = {}
+        certificate_ids[team] = set()
+        for index in range(size):
+            actor = await admit_messaging_actor(
+                env, team_id=team, alias=f"budget-{index}", local=True,
+            )
+            grants[team][actor.workspace_id] = await _publish_grant_liveness(env, actor)
+            certificate_ids[team].add(json.loads(base64.b64decode(actor.certificate))["certificate_id"])
+    workspace_ids = [workspace for team_grants in grants.values() for workspace in team_grants]
+
+    sdk = env.app.state.awid_registry_client
+    client_type = type(sdk)
+    get_revocations = client_type.get_team_revocations_for_certificates
+    reads = []
+    unavailable = False
+
+    async def observe_revocations(client, domain, name, ids, *, fresh=False):
+        team = f"{name}:{domain}"
+        if client is sdk:
+            reads.append((team, set(ids)))
+            if unavailable and team == other_team:
+                raise RegistryError("fixture authority suspended", status_code=503)
+        return await get_revocations(client, domain, name, ids, fresh=fresh)
+
+    monkeypatch.setattr(client_type, "get_team_revocations_for_certificates", observe_revocations)
+    result = await valid_grant_liveness_by_workspace(env.db, workspace_ids, registry_client=sdk)
+    assert {workspace: str(row["grant_id"]) for workspace, row in result.items()} == (
+        grants[TEAM] | grants[other_team]
+    )
+    assert sorted(reads) == sorted(certificate_ids.items())
+
+    unavailable = True
+    reads.clear()
+    result = await valid_grant_liveness_by_workspace(env.db, workspace_ids, registry_client=sdk)
+    assert {workspace: str(row["grant_id"]) for workspace, row in result.items()} == grants[TEAM]
+    assert sorted(reads) == sorted(certificate_ids.items())
+
+    with pytest.raises(HTTPException) as refusal:
+        await valid_grant_liveness_by_workspace(
+            env.db, workspace_ids, registry_client=sdk,
+            failure_policy=GrantLivenessFailurePolicy.REQUIRE_KNOWN,
+        )
+    assert refusal.value.status_code == 503
 
 
 @pytest.mark.asyncio
