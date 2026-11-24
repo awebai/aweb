@@ -25,7 +25,7 @@ async def logs_receiver(
     name,
     certificates,
     *,
-    database_pool_limit: int = 5,
+    database_pool_limit: int | None = None,
 ):
     """One real app/lifespan; caller keeps DNS and authority alive until teardown.
 
@@ -45,6 +45,9 @@ async def logs_receiver(
         keys[entry["kid"]] = path
 
     password = directory / "logs-smtp-password"
+    pool_settings = {}
+    if database_pool_limit is not None:
+        pool_settings["db_pool_max_connections"] = database_pool_limit
 
     def factory(ports):
         return create_app(
@@ -53,13 +56,13 @@ async def logs_receiver(
                 database_url=database.config.get_dsn(),
                 purge_ledger_database_url=purge_ledger.config.get_dsn(),
                 db_schema=database.schema,
-                db_pool_max_connections=database_pool_limit,
                 app_id="logs-hook-network",
                 public_origin=f"https://{name}:{ports[0]}",
                 console_origin=f"https://console.{name}:{ports[0]}",
                 awid_registry_url=REGISTRY_URL,
                 awid_service_token=SERVICE_TOKEN,
                 app_key_files=keys,
+                **pool_settings,
             ),
             email=EmailSettings.from_env(
                 "LOGS_",
