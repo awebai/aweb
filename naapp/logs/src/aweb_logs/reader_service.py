@@ -81,6 +81,7 @@ def reader_sessions(
     )
     handoffs = ConsoleHandoffs(
         db=db,
+        fence=fence,
         passkeys=passkeys,
         authority=HandoffAuthority(
             holdings.credential_target,
@@ -94,7 +95,12 @@ def reader_sessions(
         limiter=limiter,
     )
     sessions = ConsoleSessions(
-        db, passkeys=passkeys, scopes=directory.is_current_reader, key_bound=handoffs.current
+        db,
+        passkeys=passkeys,
+        scopes=directory.is_current_reader,
+        # Every scope a reader signs in to is a holding.
+        member=handoffs.check_holding_member,
+        key_bound=handoffs.current,
     )
     return sessions, handoffs
 

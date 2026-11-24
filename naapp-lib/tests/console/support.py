@@ -16,7 +16,12 @@ from aweb_naapp_testing.webauthn import SoftAuthenticator, b64url
 from awid_service.testing import Registry
 from pgdbm import AsyncDatabaseManager
 
-from aweb_naapp.console import MAX_SESSION, ConsoleSessions, apply_console_migrations
+from aweb_naapp.console import (
+    MAX_SESSION,
+    ConsoleSessions,
+    ContactEnrolment,
+    apply_console_migrations,
+)
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
 from aweb_naapp.runtime.approvals import ApprovalRevocation, PgApprovalStore
 from aweb_naapp.runtime.passkeys import (
@@ -47,8 +52,14 @@ class Console:
         """The app's predicate: which scopes may log in on this console."""
         return scope in self.allowed
 
+    async def member(self, scope: str) -> ContactEnrolment:
+        """Every scope here is an owner-designated contact's enrolment."""
+        return ContactEnrolment()
+
     def sessions(self, ttl: timedelta = MAX_SESSION) -> ConsoleSessions:
-        return ConsoleSessions(self.db, passkeys=self.passkeys, scopes=self.admits, ttl=ttl)
+        return ConsoleSessions(
+            self.db, passkeys=self.passkeys, scopes=self.admits, member=self.member, ttl=ttl
+        )
 
     async def enrol(self, scope: str, contact: str | None = None) -> tuple[str, SoftAuthenticator]:
         """Designate the scope's first approver and enrol its passkey."""

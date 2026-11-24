@@ -15,6 +15,7 @@ from aweb_naapp.console import (
     ClientIdentity,
     ConsoleSession,
     ConsoleSessions,
+    ContactEnrolment,
     LoginLimiter,
     apply_console_migrations,
     console_assets_router,
@@ -104,7 +105,13 @@ async def shell_app(world: World, *, human_origin: str, agent_origin: str) -> Sh
     async def admitted(scope: str) -> bool:
         return await admits(world, scope)
 
-    sessions = ConsoleSessions(world.db, passkeys=world.passkeys, scopes=admitted)
+    async def member(scope: str) -> ContactEnrolment:
+        # Every scope here is an owner-designated contact's enrolment.
+        return ContactEnrolment()
+
+    sessions = ConsoleSessions(
+        world.db, passkeys=world.passkeys, scopes=admitted, member=member
+    )
     limiter = LoginLimiter(
         world.db, client_identity=ClientIdentity(), limit=50, window=timedelta(minutes=1)
     )

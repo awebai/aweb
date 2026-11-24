@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -42,6 +42,7 @@ from aweb_naapp.console.assets import console_assets_router as console_assets_ro
 from aweb_naapp.hooks.strictjson import Refused
 from aweb_naapp.runtime.approvals import AuthenticationFailed
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
+from aweb_naapp.runtime.human_member import HumanMemberProof
 from aweb_naapp.runtime.installation import InstallationRefused
 from aweb_naapp.runtime.passkeys import ContactChangeRefused, EnrolmentRefused, Passkeys
 
@@ -83,12 +84,27 @@ class IssuedSession:
 
 
 @dataclass(frozen=True)
+class ContactEnrolment:
+    """The app's answer for a scope whose authority is a contact's enrolment,
+    read from that scope's own current record, and not team membership."""
+
+    def require_fresh(self) -> None:
+        """The enrolment's own checks are read from the database on each use."""
+
+
+ScopeMember = HumanMemberProof | ContactEnrolment
+
+
+@dataclass(frozen=True)
 class ConsoleSession:
+    """``member`` is what the request was admitted on, in this process only."""
+
     subject: str
     scope: str
     evidence_ref: str
     expires_at: datetime
     token_sha256: bytes
+    member: ScopeMember = field(kw_only=True, repr=False, compare=False)
 
 
 class BoundSessionCheck(Protocol):
@@ -128,6 +144,7 @@ async def session_is_current(
         " FROM {{tables.console_sessions}} WHERE token_sha256=$1" + (" FOR SHARE" if hold else ""),
         session.token_sha256,
     )
+    session.member.require_fresh()
     return (
         row is not None
         and row["closed_at"] is None
@@ -174,6 +191,12 @@ async def _prune_sessions(db: AsyncDatabaseManager) -> None:
 
 
 ScopeAdmission = Callable[[str], Awaitable[bool]]
+MemberAdmission = Callable[[str], Awaitable[ScopeMember]]
+
+
+def _ends_session(refused: HTTPException) -> bool:
+    """Whether a membership refusal is definite, rather than unreadable."""
+    return refused.status_code == 403
 
 
 class ConsoleSessions:
@@ -183,6 +206,13 @@ class ConsoleSessions:
     refused, and closed, once the subject is no longer the scope's in-effect
     approver, the exact passkey behind its login evidence is revoked, or the
     app no longer admits the scope.
+
+    ``member`` answers for each scope ``scopes`` admits, after the passkey at
+    login and on every cookie request: the proof that its holder is a current
+    human member of the holding's team, or :class:`ContactEnrolment`. It raises
+    403 for a holder who is not one, which ends the session, 503 when that
+    cannot be read, which refuses the request only, and 403 for any scope it
+    does not name.
     """
 
     def __init__(
@@ -191,6 +221,7 @@ class ConsoleSessions:
         *,
         passkeys: Passkeys,
         scopes: ScopeAdmission,
+        member: MemberAdmission,
         ttl: timedelta = MAX_SESSION,
         key_bound: Callable[[Request], Awaitable[ConsoleSession]] | None = None,
     ) -> None:
@@ -200,6 +231,7 @@ class ConsoleSessions:
         self._ttl = ttl
         self.passkeys = passkeys
         self.scopes = scopes
+        self.member = member
         self._key_bound = key_bound
 
     async def open(self, *, subject: str, scope: str, evidence_ref: str) -> IssuedSession:
@@ -260,6 +292,28 @@ class ConsoleSessions:
             if self._key_bound is None:
                 raise self._required()
             return await self._key_bound(request)
+        row = await self._cookie_row(request)
+        try:
+            member = await self.member(row["scope"])
+        except HTTPException as refused:
+            if not _ends_session(refused):
+                raise
+            await self._close(bytes(row["token_sha256"]))
+            raise HTTPException(
+                refused.status_code, refused.detail, headers=self._required().headers
+            ) from None
+        return ConsoleSession(
+            subject=row["subject"],
+            scope=row["scope"],
+            evidence_ref=row["evidence_ref"],
+            expires_at=row["expires_at"],
+            token_sha256=bytes(row["token_sha256"]),
+            member=member,
+        )
+
+    async def _cookie_row(self, request: Request) -> Any:
+        """The open session row of the request's cookie, by local reads only. A
+        state change must also carry its CSRF token."""
         token = request.cookies.get(COOKIE_NAME)
         if not token:
             raise self._required()
@@ -284,13 +338,19 @@ class ConsoleSessions:
             supplied = request.headers.get(CSRF_HEADER, "")
             if not hmac.compare_digest(_sha256(supplied), bytes(row["csrf_sha256"])):
                 raise HTTPException(status_code=403, detail="csrf_token_required")
-        return ConsoleSession(
-            subject=row["subject"],
-            scope=row["scope"],
-            evidence_ref=row["evidence_ref"],
-            expires_at=row["expires_at"],
-            token_sha256=bytes(row["token_sha256"]),
-        )
+        return row
+
+    async def logout(self, request: Request) -> None:
+        """Close the request's own session. A cookie session closes without the
+        membership check, so it can be ended by anyone who holds it, whatever
+        their membership and while that cannot be read."""
+        from aweb_naapp.console.handoff_wire import CONSOLE_SIGNATURE_HEADERS
+
+        if any(name in request.headers for name in CONSOLE_SIGNATURE_HEADERS):
+            await self.close(await self.current(request))
+            return
+        row = await self._cookie_row(request)
+        await self._close(bytes(row["token_sha256"]))
 
     async def close(self, session: ConsoleSession) -> None:
         await self._close(session.token_sha256)
@@ -485,6 +545,8 @@ def console_login_router(
             verified = await passkeys.verify_login(body.scope, body.assertion)
         except AuthenticationFailed:
             raise HTTPException(status_code=401, detail=LOGIN_REFUSED) from None
+        member = await sessions.member(body.scope)
+        member.require_fresh()
         issued = await sessions.open(
             subject=verified.subject, scope=body.scope, evidence_ref=verified.evidence_ref
         )
@@ -492,10 +554,8 @@ def console_login_router(
         return {"csrf_token": issued.csrf_token}
 
     @router.post("/logout")
-    async def logout(
-        response: Response, session: Annotated[ConsoleSession, Depends(sessions.current)]
-    ) -> dict[str, bool]:
-        await sessions.close(session)
+    async def logout(request: Request, response: Response) -> dict[str, bool]:
+        await sessions.logout(request)
         sessions.clear_cookie(response)
         return {"closed": True}
 

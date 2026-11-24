@@ -4,12 +4,16 @@ All remote admission precedes effect transactions. App callbacks retain their
 own holding authority; this module never reads app tables or invents a scope.
 """
 
+import asyncio
 import base64
+import hashlib
 import hmac
 import json
+import logging
 import secrets
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
+from weakref import WeakValueDictionary
 
 from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -49,9 +53,12 @@ from aweb_naapp.console.handoff_wire import (
 from aweb_naapp.runtime.approvals import AuthenticationFailed
 from aweb_naapp.runtime.approvals.request import parse_request_json
 from aweb_naapp.runtime.human_member import HumanMemberProof
+from aweb_naapp.runtime.installation import InstallationFence, InstallationRefused
 from aweb_naapp.runtime.passkeys import Passkeys
 from aweb_naapp.runtime.passkeys.service import _client_challenge
 from aweb_naapp.runtime.team_auth import Principal
+
+logger = logging.getLogger(__name__)
 
 
 def _required() -> HTTPException:
@@ -181,6 +188,7 @@ class ConsoleHandoffs:
         self,
         *,
         db: AsyncDatabaseManager,
+        fence: InstallationFence,
         passkeys: Passkeys,
         authority: HandoffAuthority,
         principal: Callable[[Request], Awaitable[Principal]],
@@ -188,12 +196,17 @@ class ConsoleHandoffs:
         limiter: LoginLimiter,
         requester_parent: RequesterParent | None = None,
     ):
-        self.db, self.passkeys, self.authority = db, passkeys, authority
+        self.db, self.fence = db, fence
+        self.passkeys, self.authority = passkeys, authority
         # Admits a session start by the holder's verified direct-child agent
         # (handoff-wire 1a). None admits only starts the holder signs.
         self.requester_parent = requester_parent
         self.principal, self.human_member, self.limiter = principal, human_member, limiter
         self.store = HandoffStore(db)
+        self._member_proofs: dict[tuple[str, str, bytes], HumanMemberProof] = {}
+        self._member_locks: WeakValueDictionary[tuple[str, str, bytes], asyncio.Lock] = (
+            WeakValueDictionary()
+        )
 
     async def prune(self) -> None:
         """Bounded post-commit cleanup, never part of request authentication."""
@@ -216,37 +229,45 @@ class ConsoleHandoffs:
             raise
 
     async def _proof(self, target, certificate):
+        return await self._certificate_proof(
+            target.team_id, target.public_scope.principal, certificate
+        )
+
+    async def _certificate_proof(self, team_id, principal, certificate):
         try:
             decoded = decode_team_certificate(certificate or "")
         except TeamCertificateError:
             raise HTTPException(403, "principal_not_member") from None
-        return await self.human_member(
-            target.team_id,
-            principal=target.public_scope.principal,
-            certificate=decoded,
-        )
+        return await self.human_member(team_id, principal=principal, certificate=decoded)
 
-    async def check_holding_member(self, scope: PublicScope, *, team_id: str) -> HumanMemberProof:
-        """Refresh shared retained evidence for the app's browser admission.
+    async def check_holding_member(self, b3_scope: str) -> HumanMemberProof:
+        """The proof that the current holder of ``b3_scope`` is a current human
+        member of the holding's team, by the certificate its canonical holding
+        retains. 403 principal_not_member for no holding or no certificate.
 
-        Scope selects no authority. The app supplies its actual holding and
-        separately prepares role/B3/session fences. Retain this proof's original
-        deadline through those waits and recheck it at the final effect fence.
-        Legacy holdings with no artifact require a fresh certificate handoff.
+        A scope selects no authority: the app admits it separately. A proof is
+        reused in this process until its own deadline, which no reuse renews,
+        so a holder costs one observation per window. Recheck it at the final
+        effect fence, after any lock waits.
         """
-        target = await self._target(scope, team_id=team_id)
-        row = await self.db.fetch_one(
-            "SELECT holding_identity,member_certificate FROM {{tables.console_holding_certificates}} "
-            "WHERE installation_id=$1 AND role=$2 AND principal=$3",
-            scope.installation_id,
-            scope.role,
-            scope.principal,
-        )
-        if row is None or row["holding_identity"] != self.authority.holding_identity(target):
+        holding = await roles.read_holding_of_scope(self.db, b3_scope)
+        if holding is None or holding.certificate is None:
             raise HTTPException(403, "principal_not_member")
-        proof = await self._proof(target, row["member_certificate"])
-        proof.require_fresh()
-        return proof
+        certificate = holding.certificate
+        key = (holding.team_id, holding.principal, hashlib.sha256(certificate).digest())
+        async with self._member_locks.setdefault(key, asyncio.Lock()):
+            proof = self._member_proofs.get(key)
+            if proof is not None and proof.is_fresh():
+                return proof
+            self._member_proofs = {
+                known: kept for known, kept in self._member_proofs.items() if kept.is_fresh()
+            }
+            proof = await self._certificate_proof(
+                holding.team_id, holding.principal, base64.b64encode(certificate).decode()
+            )
+            proof.require_fresh()
+            self._member_proofs[key] = proof
+            return proof
 
     async def _context(self, row):
         if not isinstance(row["team_id"], str) or not row["team_id"]:
@@ -378,12 +399,11 @@ class ConsoleHandoffs:
 
     async def _retain_certificate(self, tx, target, certificate: str, *, held_since) -> bool:
         """Retain the holder's verified certificate for exactly the holding
-        held since ``held_since``: in the canonical holding record, which
-        rechecks that holding under its lock, then in the console's
-        browser-admission cache. False, writing nothing, when that holding
-        has ended."""
+        held since ``held_since``, in the canonical holding record, which
+        rechecks that holding under its lock. False, writing nothing, when that
+        holding has ended."""
         scope = target.public_scope
-        refreshed = await roles.refresh_holding_certificate(
+        return await roles.refresh_holding_certificate(
             tx,
             installation_id=scope.installation_id,
             team_id=target.team_id,
@@ -392,21 +412,21 @@ class ConsoleHandoffs:
             held_since=held_since,
             certificate=base64.b64decode(certificate, validate=True),
         )
-        if not refreshed:
-            return False
-        await tx.execute(
-            "INSERT INTO {{tables.console_holding_certificates}} VALUES($1,$2,$3,$4,$5,$6,$7) "
-            "ON CONFLICT(installation_id,role,principal) DO UPDATE SET "
-            "holding_identity=$4,b3_scope=$5,subject=$6,member_certificate=$7",
-            scope.installation_id,
-            scope.role,
-            scope.principal,
-            self.authority.holding_identity(target),
-            target.b3_scope,
-            target.subject,
-            certificate,
-        )
-        return True
+
+    async def _refresh_after_login(self, target, proof, certificate: str, *, held_since) -> None:
+        """Retain the certificate a committed login verified, in its own
+        transaction: the installation fence, then the holding, and no B3 or
+        session row. Upgrading the login's own FOR SHARE hold would deadlock
+        two logins of one holding. The login stands either way, so evidence or
+        an installation that has since lapsed leaves the certificate as it was.
+        """
+        try:
+            async with self.db.transaction() as tx:
+                await self.fence.check(tx, target.admitted)
+                if proof.is_fresh():
+                    await self._retain_certificate(tx, target, certificate, held_since=held_since)
+        except InstallationRefused as refused:
+            logger.info("holding certificate not refreshed after login: %s", refused.code)
 
     def api_router(self):
         router = handoff_start_router(
@@ -489,6 +509,7 @@ class ConsoleHandoffs:
             scope.role,
             scope.principal,
             binding,
+            member=proof,
         )
         binding.session = session
         # The exact retired LOGIN is checked before any changed digest.
@@ -694,6 +715,9 @@ class ConsoleHandoffs:
         async def login(handoff_id: str, request: Request):
             body = await _body(request, {"assertion"})
             row = await self._browser_row(handoff_id, request)
+            # Read before the holding's identity is checked, so a holding that
+            # began since is never the one refreshed.
+            holding = await roles.read_holding_of_scope(self.db, row["b3_scope"])
             target, proof = await self._context(row)
             challenge = await self.db.fetch_value(
                 "UPDATE {{tables.console_handoffs}} SET challenge=NULL WHERE handoff_id=$1 "
@@ -729,23 +753,13 @@ class ConsoleHandoffs:
                 )
                 if changed is None:
                     raise _refused()
-                # Refresh only after this exact holding's own successful LOGIN.
-                scope = target.public_scope
-                await tx.execute(
-                    "INSERT INTO {{tables.console_holding_certificates}} VALUES($1,$2,$3,$4,$5,$6,$7) "
-                    "ON CONFLICT(installation_id,role,principal) DO UPDATE SET "
-                    "holding_identity=$4,b3_scope=$5,subject=$6,member_certificate=$7",
-                    scope.installation_id,
-                    scope.role,
-                    scope.principal,
-                    row["holding_identity"],
-                    target.b3_scope,
-                    target.subject,
-                    row["member_certificate"],
-                )
                 if not await self.authority.check_session_target(tx, held):
                     raise _required()
                 proof.require_fresh()
+            if holding is not None:
+                await self._refresh_after_login(
+                    target, proof, row["member_certificate"], held_since=holding.held_since
+                )
             return {"logged_in": True}
 
         @router.post(

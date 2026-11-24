@@ -308,6 +308,7 @@ async def _session(console: Console, cookie: str) -> ConsoleSession:
         evidence_ref=row["evidence_ref"],
         expires_at=row["expires_at"],
         token_sha256=bytes(row["token_sha256"]),
+        member=await console.member(row["scope"]),
     )
 
 
