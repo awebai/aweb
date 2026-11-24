@@ -173,14 +173,21 @@ def rename_file(path: Path) -> Result:
     return Result(path=path, changed=renamed != source, ambiguous=ambiguous)
 
 
-def _python_files(paths: list[Path]) -> list[Path]:
+# This script and its tests name the old imports on purpose.
+_SELF = frozenset(
+    Path(__file__).resolve().parent / name
+    for name in ("naapp_contracts_rename.py", "test_naapp_contracts_rename.py")
+)
+
+
+def python_files(paths: list[Path]) -> list[Path]:
     found: list[Path] = []
     for path in paths:
         if path.is_dir():
             found += sorted(p for p in path.rglob("*.py") if ".venv" not in p.parts)
         else:
             found.append(path)
-    return found
+    return [path for path in found if path.resolve() not in _SELF]
 
 
 def main(argv: list[str]) -> int:
@@ -188,7 +195,7 @@ def main(argv: list[str]) -> int:
         print(__doc__, file=sys.stderr)
         return 2
     unresolved = False
-    for path in _python_files([Path(arg) for arg in argv]):
+    for path in python_files([Path(arg) for arg in argv]):
         result = rename_file(path)
         if result.changed:
             print(f"renamed {path}")

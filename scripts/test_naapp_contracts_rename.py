@@ -5,7 +5,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from naapp_contracts_rename import rename_file, rename_source
+from naapp_contracts_rename import python_files, rename_file, rename_source
 
 
 def _rename(source: str) -> str:
@@ -203,6 +203,13 @@ class AmbiguousReferences(unittest.TestCase):
 
 
 class Files(unittest.TestCase):
+    def test_the_rename_never_rewrites_itself_or_its_tests(self):
+        scripts = Path(__file__).resolve().parent
+        found = set(python_files([scripts]))
+        self.assertNotIn(scripts / "naapp_contracts_rename.py", found)
+        self.assertNotIn(scripts / "test_naapp_contracts_rename.py", found)
+        self.assertIn(scripts / "release_versions.py", found)
+
     def test_rewriting_twice_changes_nothing_the_second_time(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "module.py"
