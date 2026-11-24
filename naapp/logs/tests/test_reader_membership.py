@@ -206,20 +206,23 @@ async def test_a_page_that_cannot_check_membership_retries_itself(
     assert not Html(retried.text).all("a", id="console-recovery-action")
 
 
-HELD_STATE = (
-    "SELECT * FROM {{tables.passkey_approvers}} ORDER BY scope, subject",
-    "SELECT * FROM {{tables.passkey_credentials}} ORDER BY credential_id",
-    "SELECT * FROM {{tables.role_assignments}} ORDER BY team_id, principal_did, role",
-    "SELECT b3_scope, installation_id, team_id, role, principal_did, ended_in"
-    " FROM {{tables.role_holdings}} ORDER BY b3_scope",
-    "SELECT * FROM {{tables.outbox_events}} ORDER BY position",
-)
-
-
 async def held_state(aw: Aw) -> list[list[dict]]:  # noqa: F811
     """Every holder's credentials, holdings and governance events, but not the
     certificates the holdings retain."""
-    return [[dict(row) for row in await aw.world.db.fetch_all(sql)] for sql in HELD_STATE]
+    db = aw.world.db
+    state = [
+        await db.fetch_all("SELECT * FROM {{tables.passkey_approvers}} ORDER BY scope, subject"),
+        await db.fetch_all("SELECT * FROM {{tables.passkey_credentials}} ORDER BY credential_id"),
+        await db.fetch_all(
+            "SELECT * FROM {{tables.role_assignments}} ORDER BY team_id, principal_did, role"
+        ),
+        await db.fetch_all(
+            "SELECT b3_scope, installation_id, team_id, role, principal_did, ended_in"
+            " FROM {{tables.role_holdings}} ORDER BY b3_scope"
+        ),
+        await db.fetch_all("SELECT * FROM {{tables.outbox_events}} ORDER BY position"),
+    ]
+    return [[dict(row) for row in rows] for rows in state]
 
 
 async def retained(aw: Aw) -> bytes:  # noqa: F811
