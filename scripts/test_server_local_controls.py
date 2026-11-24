@@ -24,7 +24,7 @@ class LocalControls(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0)
 
                 with tempfile.TemporaryDirectory() as scratch:
-                    report = Path(scratch) / "receipt"
+                    report = Path(scratch).resolve() / "receipt"
                     environment = {
                         "AWEB_TEST_SERVICES": "1",
                         "TEST_DB_PORT": "15432",

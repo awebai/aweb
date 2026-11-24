@@ -35,7 +35,9 @@ test("passive terminal cleanup retains its socket root on child failure", () => 
 
 test("the wake probe keeps its socket root when its owned tmux cleanup fails", () => {
   // The real probe, failing early, tears down through its own finally block.
-  assert.ok(existsSync("/opt/user-paths/oats-aweb"), "the probe runs only with the gate image's staged kernel and provider");
+  const gateStaged = "/opt/user-paths/released-oats";
+  const staged = existsSync(gateStaged) ? gateStaged : fileURLToPath(new URL("../../candidate-gate/released-oats", import.meta.url));
+  assert.ok(existsSync(join(staged, "node_modules/@awebai/oats/bin/oats.mjs")), "Run make prepare-released-kernel-test first.");
   const probe = fileURLToPath(new URL("./user_paths_oats.mjs", import.meta.url));
   const tmuxBinary = spawnSync("/usr/bin/which", ["tmux"], { encoding: "utf8" }).stdout.trim();
   assert.ok(tmuxBinary, "the no-server case requires installed tmux");
@@ -51,7 +53,7 @@ test("the wake probe keeps its socket root when its owned tmux cleanup fails", (
       // Not an executable aw: the probe fails at its first aw command.
       writeFileSync(notAw, "not an aw binary\n", { mode: 0o600 });
       const run = spawnSync(process.execPath, [probe, "--aw", notAw, "--root", root, "--seat", scratch, "--fixture-home", scratch, "--sender", scratch,
-        "--team", "members:probe.test", "--source-commit", "0000000", "--output", output], { encoding: "utf8", timeout: 60000 });
+        "--team", "members:probe.test", "--source-commit", "0000000", "--released-artifacts", staged, "--output", output], { encoding: "utf8", timeout: 60000 });
       assert.equal(run.status, 1, `${outcome}: the probe fails`);
       const receipt = JSON.parse(readFileSync(output, "utf8"));
       assert.equal(receipt.result, "FAILED", outcome);
