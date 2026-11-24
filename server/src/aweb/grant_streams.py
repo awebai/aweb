@@ -14,7 +14,6 @@ from aweb.auth_context import (
     TeamIdentity,
     has_verified_team_certificate,
 )
-from aweb.certificate_registration import configured_registration_mode
 from aweb.identity_grant_status import GrantValidityState, grant_validity
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
@@ -155,7 +154,6 @@ async def grant_terminal_reason(
         row=row,
         now=now,
         registry_client=application_registry_client(request.app.state),
-        registration_mode=configured_registration_mode(),
         request=request,
     )
     observation.raise_if_unavailable()

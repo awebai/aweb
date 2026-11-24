@@ -77,6 +77,63 @@ async def test_warm_roster_uses_three_statements_and_one_pool_checkout(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("required", [False, True])
+async def test_roster_checks_distinct_grant_issuer_with_configured_registration(
+    roster_stack, monkeypatch, required
+):
+    env = roster_stack
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", str(required).lower())
+    issuer = await admit_room_member(env, alias="alice")
+    viewer = await admit_room_member(env, alias="bob")
+    grant_id = await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.WORKSPACE)
+    grant_seen = await env.db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.identity_grant_liveness}} WHERE grant_id=$1",
+        grant_id,
+    )
+    name, domain = TEAM.split(":", 1)
+    sdk = env.app.state.awid_registry_client
+    client_type = type(sdk)
+    revocations = client_type.get_team_revocations_for_certificates
+    catalogs = client_type.list_team_certificates
+    checked_ids, active_views = [], []
+
+    async def observe_revocations(client, domain, name, certificate_ids, *, fresh=False):
+        if client is sdk:
+            checked_ids.extend(certificate_ids)
+        return await revocations(client, domain, name, certificate_ids, fresh=fresh)
+
+    async def observe_catalog(client, domain, name, *, active_only=True, signing_key=None):
+        if client is sdk:
+            active_views.append(active_only)
+        return await catalogs(client, domain, name, active_only=active_only, signing_key=signing_key)
+
+    monkeypatch.setattr(client_type, "get_team_revocations_for_certificates", observe_revocations)
+    monkeypatch.setattr(client_type, "list_team_certificates", observe_catalog)
+    response = await _send_member_request(env, alias="bob", method="GET", path="/v1/agents")
+    assert response.status_code == 200, response.text
+    alice = next(agent for agent in response.json()["agents"] if agent["alias"] == "alice")
+    assert datetime.fromisoformat(alice["last_seen"]) == grant_seen
+    assert checked_ids == [viewer["certificate_id"], issuer["certificate_id"]]
+    assert active_views == ([False, False] if required else [])
+
+    await sdk.revoke_team_certificate(
+        domain, name,
+        team_controller_signing_key=env.team_sk,
+        certificate_id=issuer["certificate_id"],
+    )
+    checked_ids.clear()
+    active_views.clear()
+    response = await _send_member_request(env, alias="bob", method="GET", path="/v1/agents")
+    assert response.status_code == 200, response.text
+    assert checked_ids == [viewer["certificate_id"], issuer["certificate_id"]]
+    assert all(
+        agent["alias"] != "alice" or agent["last_seen"] != alice["last_seen"]
+        for agent in response.json()["agents"]
+    )
+    assert active_views == ([False] if required else [])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("newest", ["grant", "redis", "sql"])
 async def test_listening_roster_keeps_the_newest_activity_source(roster_stack, newest):
     env = roster_stack

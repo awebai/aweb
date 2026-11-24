@@ -11,7 +11,6 @@ from .auth_context import GrantContext
 from .member_team_key import grant_issuer_current_sql, member_key_columns_sql
 from .identity_grant_status import GrantValidityState, grant_validity
 from .grant_expiry import never_expires
-from .certificate_registration import configured_registration_mode
 from starlette.requests import Request
 
 
@@ -183,7 +182,6 @@ async def _valid_grant_liveness_candidates(
             row=row,
             now=now,
             registry_client=registry_client,
-            registration_mode=configured_registration_mode(),
             request=request,
         )
         if failure_policy is GrantLivenessFailurePolicy.REQUIRE_KNOWN:

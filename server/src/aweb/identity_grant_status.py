@@ -11,11 +11,7 @@ from typing import Any
 from fastapi import Request
 
 from aweb.application_state import application_registry_client
-from aweb.certificate_registration import (
-    RegistrationDecision,
-    RegistrationMode,
-    configured_registration_mode,
-)
+from aweb.certificate_registration import RegistrationDecision, RegistrationMode
 from aweb.grant_expiry import GrantLifetimeState, grant_lifetime_state
 from aweb.member_team_key import (
     GRANT_ISSUER_RECOVERY_DETAIL,
@@ -86,15 +82,16 @@ async def grant_validity(
     row: Mapping[str, Any],
     now: datetime,
     registry_client,
-    registration_mode: RegistrationMode,
+    registration_mode: RegistrationMode | None = None,
     request: Request | None = None,
 ) -> GrantValidityObservation:
     """Decide grant eligibility once for every native transport and read.
 
     Session grants (docs/identity.md:773-811) requires the same subject, issuer and lifetime
     rule everywhere. SDK readers own freshness. Invalid authority scope is
-    distinct from unavailable evidence; staged registration never waives the
-    ordinary issuer revocation check or adds an off-mode refusal.
+    distinct from unavailable evidence. The standing owner selects the
+    configured registration policy unless a caller requests an explicit
+    observation. Issuer revocation is checked in either case.
     """
     state = _stored_grant_validity(row, now=now)
     if state is not GrantValidityState.ACTIVE:
@@ -126,7 +123,6 @@ async def effective_grant_status(
         row=row,
         now=now,
         registry_client=application_registry_client(request.app.state),
-        registration_mode=configured_registration_mode(),
         request=request,
     )
     observation.raise_if_unavailable()
