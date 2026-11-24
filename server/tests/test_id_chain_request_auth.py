@@ -9,8 +9,8 @@ from __future__ import annotations
 import base64
 import json
 import time
+from contextlib import aclosing
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -19,7 +19,7 @@ from aweb.service_errors import IdentityBindingError
 from fastapi import FastAPI, HTTPException, Request
 
 from awid.dns_verify import DnsVerificationError, DomainAuthority
-from awid.id_certificates import id_certificate_signing_bytes
+from awid.id_certificates import encode_id_chain_header, id_certificate_signing_bytes
 from awid.registry import CachedRegistryClient, IDTreeEnrollment
 from awid_service.deps import get_domain_verifier
 from aweb.api import _build_awid_registry_client
@@ -173,7 +173,6 @@ async def test_factory_without_cached_evidence_never_fetches_a_tree(monkeypatch,
     ids=["unknown-is-not-legacy", "presented-domain-must-match-enrollment"],
 )
 async def test_enrollment_controls_domain_before_any_tree_fetch(enrollment, reason):
-    from awid.id_certificates import encode_id_chain_header
     from aweb.id_chain_auth import authenticate_id_chain
 
     class NoTreeRead:
@@ -199,45 +198,101 @@ async def test_enrollment_controls_domain_before_any_tree_fetch(enrollment, reas
 
 
 @pytest.mark.asyncio
-async def test_optional_chain_status_backoff_expires_and_leaves_strict_reads_live(monkeypatch):
+async def test_optional_chain_status_backoff_expires_and_leaves_strict_reads_live(
+    privacy_app, monkeypatch,
+):
+    from aweb.application_state import application_registry_client
     from aweb.id_chain_auth import authenticate_id_chain
 
+    env = privacy_app
+    registry = env.registry
+    writer = application_registry_client(env.app.state)
+    domains = [f"chain-backoff-{uuid4().hex}.test" for _ in range(2)]
     now = 100.0
     monkeypatch.setattr("aweb.id_chain_auth.monotonic", lambda: now)
+    async with aclosing(CachedRegistryClient(
+        writer.registry_url, env.redis,
+        transport=registry.transport, domain_verifier=registry.namespace_authority,
+        service_token=writer.service_token,
+    )) as reader:
+        monkeypatch.setattr(env.app.state, "awid_registry_client", reader)
+        subjects = []
+        for domain, name in zip(domains, ("alice", "bob"), strict=True):
+            await registry.ensure_namespace(domain=domain, controller=bytes.fromhex(ROOT["seed_hex"]))
+            key = VECTORS["keys"][name]
+            mapping = await writer.register_did(key["did_key"], bytes.fromhex(key["seed_hex"]))
+            certificate = _signed_fixture_certificate(
+                "alice", domain=domain, identity=mapping.did_aw,
+                parent={"kind": "namespace", "id": domain}, issuer="root",
+            )
+            bundle = {"v": 1, "type": "aweb.id-chain", "certificates": [certificate]}
+            await writer.register_id_certificate(
+                bundle, signer=_fixture_signer(name), expected_head=None, invitation_id=None,
+            )
+            binding = await verify_identity_binding(
+                request(env.app), did_aw=mapping.did_aw, did_key=key["did_key"],
+            )
+            assert binding.id_tree == IDTreeEnrollment(True, domain)
+            subjects.append((binding, encode_id_chain_header(bundle)))
+
+        def status_failure(req, response):
+            if req.url.path == "/v1/id-certificates/status":
+                assert response.status_code == 200
+                return httpx.Response(503, json={"detail": "temporarily unavailable"})
+            return None
+
+        async def authenticate(index=0, *, optional=True):
+            binding, chain_header = subjects[index]
+            return await authenticate_id_chain(
+                request(env.app, {"X-AWID-ID-Chain": chain_header}), binding,
+                allow_unavailable=optional,
+            )
+
+        before = len(registry.transport.calls)
+
+        def requested_domains():
+            return [
+                json.loads(call.content)["domain"] for call in registry.transport.calls[before:]
+                if call.url.path == "/v1/id-certificates/status"
+            ]
+
+        monkeypatch.setattr(registry.transport, "fault", status_failure)
+        assert (await authenticate())["reason"] == "evidence_unavailable"
+        assert requested_domains() == domains[:1]
+        after_failure = len(registry.transport.calls)
+        now = 104.9
+        assert (await authenticate())["reason"] == "evidence_unavailable"
+        assert len(registry.transport.calls) == after_failure
+        assert (await authenticate(1))["reason"] == "evidence_unavailable"
+        with pytest.raises(HTTPException) as refused:
+            await authenticate(optional=False)
+        assert (refused.value.status_code, refused.value.detail) == (503, "evidence_unavailable")
+        assert requested_domains() == [*domains, domains[0]]
+
+        now = 105.1
+        monkeypatch.setattr(registry.transport, "fault", None)
+        assert (await authenticate())["identity_valid"] is True
+        assert requested_domains() == [*domains, domains[0], domains[0]]
+
+
+@pytest.mark.asyncio
+async def test_optional_chain_status_refuses_missing_registry_identity():
+    from aweb.application_state import RegistryClientUnavailable
+    from aweb.id_chain_auth import authenticate_id_chain
+
     app = FastAPI()
-    reads = []
-
-    async def read_status(bundle, subject, *, domain, refresh=True):
-        if refresh:
-            reads.append(domain)
-        return None
-
-    reader = SimpleNamespace(registry_url="https://registry.example", id_chain_evidence=read_status)
-
-    async def authenticate(domain=DOMAIN, *, optional=True):
-        return await authenticate_id_chain(
-            request(app),
-            IdentityBinding(
-                did_aw=ALICE["did_aw"],
-                did_key=ALICE["did_key"],
-                id_tree=IDTreeEnrollment(True, domain),
-            ),
-            registry_client=reader,
-            allow_unavailable=optional,
-        )
-
-    assert (await authenticate())["reason"] == "evidence_unavailable"
-    now = 104.9
-    assert (await authenticate())["reason"] == "evidence_unavailable"
-    assert reads == [DOMAIN]
-    assert (await authenticate("other.example"))["reason"] == "evidence_unavailable"
-    with pytest.raises(HTTPException) as refused:
-        await authenticate(optional=False)
-    assert (refused.value.status_code, refused.value.detail) == (503, "evidence_unavailable")
-    assert reads == [DOMAIN, "other.example", DOMAIN]
-    now = 105.0
-    assert (await authenticate())["reason"] == "evidence_unavailable"
-    assert reads == [DOMAIN, "other.example", DOMAIN, DOMAIN]
+    async with aclosing(CachedRegistryClient("https://registry.example", _FakeRedis())) as reader:
+        object.__delattr__(reader, "registry_url")
+        with pytest.raises(RegistryClientUnavailable) as refused:
+            await authenticate_id_chain(
+                request(app),
+                IdentityBinding(
+                    did_aw=ALICE["did_aw"], did_key=ALICE["did_key"],
+                    id_tree=IDTreeEnrollment(True, DOMAIN),
+                ),
+                registry_client=reader, allow_unavailable=True,
+            )
+        assert refused.value.status_code == 503
 
 
 @pytest.mark.asyncio
