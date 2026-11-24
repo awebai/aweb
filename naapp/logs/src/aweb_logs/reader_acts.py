@@ -27,7 +27,21 @@ OWNER_ACTS: dict[str, Any] = {
             "acts": sorted(HUMAN_ROLE_ACTS),
             "notice_contact": False,
         }
-    ]
+    ],
+    # A reader's one aw action opens a session, which refreshes the certificate
+    # browser sign-in checks. aw shows an action's answer in the terminal, so
+    # this one answers with the session alone and nothing of the log.
+    "session_actions": [
+        {
+            "name": "session",
+            "description": "Sign in as a log reader from aw.",
+            "kind": "read",
+            "role": READER_ROLE,
+            "method": "GET",
+            "path": "/v1/session",
+            "input_schema": {"type": "object", "properties": {}},
+        }
+    ],
 }
 
 

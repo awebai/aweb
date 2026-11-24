@@ -114,8 +114,10 @@
       if (typeof result.csrf_token !== "string" || !result.csrf_token) throw new Error("Sign-in incomplete");
       sessionStorage.setItem(csrfKey, result.csrf_token);
       window.location.replace("/");
-    } catch {
-      notice.textContent = config.copyFailed;
+    } catch (error) {
+      const refusals = JSON.parse(config.copyMemberRefusals);
+      notice.textContent = Object.hasOwn(refusals, error.detail)
+        ? refusals[error.detail] : config.copyFailed;
     } finally {
       button.disabled = false;
     }

@@ -125,6 +125,11 @@ def reader_read_router(reads: ReaderReads) -> APIRouter:
         _, reader = await reads.session(request)
         return reader
 
+    @router.get("/v1/session")
+    async def session(request: Request) -> dict[str, str]:
+        current, _ = await reads.session(request)
+        return {"scope": current.scope, "expires_at": current.expires_at.isoformat()}
+
     @router.get("/v1/events")
     async def events(
         request: Request, reader: Annotated[Reader, Depends(current_reader)]
