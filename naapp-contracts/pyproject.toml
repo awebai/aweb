@@ -55,10 +55,12 @@ packages = ["src/aweb_naapp_contracts"]
 
 [tool.uv.sources]
 awid-service = { path = "../awid", editable = true }
+aweb-naapp-contracts-testing = { path = "testing", editable = true }
 
 [dependency-groups]
 dev = [
   "aweb-naapp-contracts[egress,hooks]",
+  "aweb-naapp-contracts-testing",
   "cbor2>=6.1.2",
   "cryptography>=44.0.0",
   "pytest>=9.0.0",

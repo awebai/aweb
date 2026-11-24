@@ -17,7 +17,7 @@ from ipaddress import ip_address
 from pathlib import Path
 
 import pytest
-from aweb_naapp_testing.network import (
+from aweb_naapp_contracts_testing.network import (
     Certificates,
     DnsServer,
     TlsServer,

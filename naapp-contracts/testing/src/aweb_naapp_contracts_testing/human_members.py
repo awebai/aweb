@@ -19,7 +19,7 @@ from awid.signing import sign_message
 from awid_service.deps import get_domain_verifier
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry
 
-from aweb_naapp_testing import Member
+from aweb_naapp_contracts_testing import Member
 
 
 def _signature(seed: bytes, message: bytes) -> bytes:

@@ -184,6 +184,7 @@ hooks = [
 [package.dev-dependencies]
 dev = [
     { name = "aweb-naapp-contracts", extra = ["egress", "hooks"] },
+    { name = "aweb-naapp-contracts-testing" },
     { name = "cbor2" },
     { name = "cryptography" },
     { name = "hatchling" },
@@ -208,6 +209,7 @@ provides-extras = ["egress", "hooks"]
 [package.metadata.requires-dev]
 dev = [
     { name = "aweb-naapp-contracts", extras = ["egress", "hooks"] },
+    { name = "aweb-naapp-contracts-testing", editable = "testing" },
     { name = "cbor2", specifier = ">=6.1.2" },
     { name = "cryptography", specifier = ">=44.0.0" },
     { name = "hatchling", specifier = ">=1.32.4" },
@@ -215,6 +217,23 @@ dev = [
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
     { name = "ruff", specifier = ">=0.14.0" },
+]
+
+[[package]]
+name = "aweb-naapp-contracts-testing"
+version = "0.1.0"
+source = { editable = "testing" }
+dependencies = [
+    { name = "awid-service" },
+    { name = "cryptography" },
+    { name = "dnspython" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "awid-service", editable = "../awid" },
+    { name = "cryptography", specifier = ">=46.0.0" },
+    { name = "dnspython", specifier = ">=2.7.0" },
 ]
 
 [[package]]
