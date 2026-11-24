@@ -31,6 +31,7 @@ from aweb.inbound_modes import effective_inbound_mode
 from aweb.service_errors import ServiceError, ValidationError
 from aweb.team_admission import admit_team
 from aweb.team_auth_deps import get_team_identity, verify_request_certificate
+from aweb.id_chain_auth import SUPERSEDED_ID_CHAIN_RECOVERY
 
 router = APIRouter(prefix="/v1", tags=["connect"])
 
@@ -787,7 +788,16 @@ async def connect_endpoint(
     Uses certificate-only auth (no agent lookup) since the agent may not
     exist yet — this endpoint creates the agent row.
     """
-    cert_info = await verify_request_certificate(request, db, fresh=True)
+    try:
+        cert_info = await verify_request_certificate(request, db, fresh=True)
+    except HTTPException as exc:
+        if exc.status_code != 403 or exc.detail != "superseded_certificate":
+            raise
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail, "message": SUPERSEDED_ID_CHAIN_RECOVERY},
+            headers=exc.headers,
+        )
 
     aweb_db = db.get_manager("aweb")
 

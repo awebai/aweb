@@ -37,7 +37,7 @@ AWID source pin with a released `awid-service` version that provides
 `get_team_certificate_status_fresh`, regenerate its lock and check normal
 service startup. The key holder always builds against this checkout's `awid`.
 
-## Release candidates and the Cloud pair
+## Release candidate spellings
 
 Python lanes also accept strict `X.Y.ZrcN` versions, with `N >= 1`:
 `server-v1.27.34rc1`, `awid-service-v0.5.32rc1`, and
@@ -48,10 +48,9 @@ The manifest versions, including `aweb-naapp-testing` or the runner's lockstep
 values package, must equal the tag. The aw spelling is SemVer:
 `aw-v1.36.48-rc.1`. Other artifact lanes continue to accept final versions only.
 
-The coordinator publishes these RCs first. The Cloud candidate pins the exact
-RC versions and must pass its ordinary pin gate against real services before
-OSS final publication and Cloud deployment. Python RCs publish to PyPI; server
-and registry RCs also publish the immutable RC image tag without moving
+RCs are optional: a final needs no prior RC. One full gate qualifies the exact
+tree that is tagged, and that tree is what publishes. Python RCs publish to
+PyPI; server and registry RCs also publish the immutable RC image tag without moving
 `latest`. On every image lane only a final published by its own tag push
 moves `latest`. A `workflow_dispatch` of the image workflow publishes an
 existing tag's image again as a recovery (`--recovery`): it publishes and reads
@@ -114,43 +113,7 @@ An interrupted promotion reports its failure; it does not roll back tags or
 invent replacement versions. A later explicit invocation repeats the same
 checks and same-version tag assignments.
 
-Before final tagging, `release_candidate.py` selects the highest numbered
-existing RC tag for the same artifact and base version. Its commit must be an
-ancestor of the final commit. The complete RC-to-final diff is checked for the
-package being promoted: `server/`, `awid/`, `naapp-lib/` (including its lockstep
-`testing/` package), or `cli/go/` (including all npm platform packages). These
-trees include source, manifests, locks and package build configuration. The
-shared build commands in `scripts/publish_release.py`, root checkout filters
-(`.gitignore`, `.gitattributes`), and the lane's build configuration also count:
-Python's root `pyproject.toml`, `uv.toml`, `uv.lock`, `.python-version` and PyPI
-workflow; Go's root `go.work`, `go.work.sum`, aw release workflow and shared
-`scripts/npm-exact-publish.sh` packing recipe.
-The server image also bundles `awid/` and `naapp-lib/`, so those trees, the
-root `.dockerignore`, service image workflow and `scripts/oci-exact-publish.sh`
-are server RC inputs. Unbundled package source and unrelated files such as the
-root Makefile do not force a new RC.
-
-Within that scope, only manifest versions and exact dependency pins or
-lower-bound floors on promoted packages may move to the same final base.
-A pin may change only when its target package's manifest is promoted in those
-same compared trees; external manifests provide that version evidence without
-pulling their source into this package's scope. Parsed extras, markers, scripts
-and other metadata remain equal. Existing uv/npm lock records may promote those
-same versions; artifact URLs, hashes, sizes, integrity and upload times may
-change only for promoted records. Lock records may not be added or removed.
-File additions, deletions, renames, mode changes and source changes within the
-scope refuse. Commit package-local release notes before RC1; unrelated release
-notes outside the package do not block promotion.
-
-The same check runs in the tag publisher, including runnerless publication.
-The aw sync workflow calls the read-only `publish_release.py --check-tag`
-entry point before it clones, syncs, pushes or tags the downstream repository.
-It proves source identity plus version promotion, **not qualification**.
-The coordinator must separately hold the Cloud train's green receipt for the
-exact selected RC before final tagging. A paired-package final with no
-matching RC refuses; there is no implicit exception path. Both candidate
-creation and publication need the RC tag history: run `git fetch --tags`
-before either entry point. A missing fetch fails closed. Tags are immutable.
+Tags are immutable. Run `git fetch --tags` before either entry point.
 
 ## 1. Test the final candidate locally
 
@@ -357,12 +320,25 @@ refuses a same-version byte conflict. `aw-v` can publish all npm platform
 packages directly; hosted binary assets remain resumable when GitHub returns.
 Skills ZIPs are likewise resumable hosted assets after the npm package is safe.
 
+## Manual npm repairs
+
+Two manually dispatched workflows change npm metadata for a version that is
+already published. Neither builds nor publishes, and both use the repository's
+`NPM_TOKEN` secret.
+
+- `npm-dist-tag.yml` points a dist-tag other than `latest` at an exact
+  published version (inputs: package, tag, version), then prints the package's
+  dist-tags. `latest` moves only through `publication.py promote-latest`.
+- `npm-deprecate.yml` deprecates an exact published version with the message
+  npm shows on install (inputs: package, version, message), then reads the
+  deprecation back.
+
 ## Repository boundary
 
-This repository never changes or deploys AC. For a paired release, publish the
-relevant OSS RCs first. AC updates its exact dependency lock and runs its
-ordinary candidate pin gate. Only after that gate is green does the coordinator
-publish the version-only OSS finals and deploy the paired Cloud/Folio release.
+This repository never changes or deploys AC. For a paired release, the OSS
+finals are tagged from their one green full gate and published. AC then pins
+those finals, builds its image once, runs one full gate on that image's digest,
+and tags and deploys that same digest.
 
 There are no release-intent tags, done tags, release branches, workflow
 monitors, or cross-repository release transactions.
@@ -456,8 +432,8 @@ and failure cleanup use the same record reader.
 A `server-v*` tag dispatches both the Python and image publishers. The PyPI
 workflow selects `--only pypi`; the service image workflow selects `--only oci`,
 so each needs only its own registry credentials. Runnerless publication without
-`--only` publishes both. Both selectors still validate the tagged manifest and
-RC-to-final source identity before checking out that exact commit.
+`--only` publishes both. Both selectors still validate the tagged manifest
+version before checking out that exact commit.
 
 A server tag publishes `ghcr.io/awebai/aweb-server`, the coordination server,
 from `server/Dockerfile` and the repository root. It builds Linux amd64 and

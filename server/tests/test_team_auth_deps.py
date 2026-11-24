@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
 import uuid
 from contextlib import aclosing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -272,7 +273,32 @@ class TestResolveTeamIdentity:
             await resolve_team_identity(db, cert_info)
 
     @pytest.mark.asyncio
-    async def test_rechecks_the_exact_native_snapshot_under_acceptance_locks(self, privacy_app):
+    @pytest.mark.parametrize("locked_row", ["member", "team"])
+    async def test_warm_certificate_reads_complete_while_update_lock_is_held(self, privacy_app, locked_row):
+        from test_dashboard_privacy import TEAM
+        from test_messages_http import _signed_team_headers
+
+        env = privacy_app
+        member, _ = await _admitted_cert_info(env, alias="bob")
+        headers = _signed_team_headers(member.sk, member.did, TEAM, member.certificate, b"")
+        async with env.db.transaction() as writer:
+            # PostgreSQL takes this row lock for an UPDATE of non-key columns.
+            if locked_row == "member":
+                assert await writer.fetch_value(
+                    "SELECT agent_id FROM {{tables.agents}} WHERE agent_id = $1 FOR NO KEY UPDATE",
+                    member.id,
+                ) == member.id
+            else:
+                assert await writer.fetch_value(
+                    "SELECT team_id FROM {{tables.teams}} WHERE team_id = $1 FOR NO KEY UPDATE", TEAM,
+                ) == TEAM
+            async with asyncio.timeout(3):
+                for path in ("/v1/agents", "/v1/messages/inbox"):
+                    response = await env.client.get(path, headers=headers)
+                    assert response.status_code == 200, response.text
+
+    @pytest.mark.asyncio
+    async def test_reads_the_exact_native_snapshot_in_an_existing_transaction(self, privacy_app):
         from aweb.member_team_key import read_member_projection
         from aweb.team_auth_deps import resolve_team_identity
 
@@ -293,10 +319,10 @@ class TestResolveTeamIdentity:
             query for query in queries if "agents" in query.lower() and "select" in query.lower()
         ]
         assert len(member_reads) == 1, member_reads
-        assert "FOR SHARE OF t, a" in member_reads[0]
+        assert "FOR SHARE" not in member_reads[0] and "FOR UPDATE" not in member_reads[0]
 
     @pytest.mark.asyncio
-    async def test_warm_acceptance_takes_one_statement_on_the_request_connection(self, privacy_app):
+    async def test_warm_admission_takes_one_statement_on_the_request_connection(self, privacy_app):
         from aweb.connection_scope import connection_scope
         from aweb.member_team_key import read_member_projection
         from aweb.team_auth_deps import resolve_team_identity
@@ -316,10 +342,10 @@ class TestResolveTeamIdentity:
         assert identity.agent_id == str(member.id)
         admission = [query for query in queries if query != "SELECT 1"]
         assert len(admission) == 1, admission
-        assert "FOR SHARE OF t, a" in admission[0]
+        assert "FOR SHARE" not in admission[0] and "FOR UPDATE" not in admission[0]
 
     @pytest.mark.asyncio
-    async def test_mounted_snapshot_carries_the_locked_row_and_overlay_once(self, privacy_app):
+    async def test_mounted_snapshot_reads_member_and_overlay_together(self, privacy_app):
         from dataclasses import replace
 
         from aweb.connection_scope import connection_scope
@@ -382,7 +408,7 @@ class TestResolveTeamIdentity:
         }
         admission = [query for query in queries if query != "SELECT 1"]
         assert len(admission) == 1, admission
-        assert "FOR SHARE OF t, a" in admission[0]
+        assert "FOR SHARE" not in admission[0] and "FOR UPDATE" not in admission[0]
         assert admitted_member_projection(request, admitted.identity) is None
         with pytest.raises(ValueError, match="different request or certificate"):
             await resolve_team_membership(env.db, cert_info, request=request, snapshot=snapshot)
@@ -521,7 +547,274 @@ class TestResolveTeamIdentity:
             query for query in queries if "agents" in query.lower() and "select" in query.lower()
         ]
         assert len(member_reads) == 2, member_reads
-        assert "FOR SHARE OF t, a" in member_reads[-1]
+        assert "FOR SHARE" not in member_reads[-1] and "FOR UPDATE" not in member_reads[-1]
+
+
+@pytest.mark.asyncio
+async def test_mounted_certificate_retains_routing_after_its_verified_address_is_withdrawn(
+    privacy_app, monkeypatch,
+):
+    from aweb import identity_auth_deps, team_auth_deps
+    from aweb.application_state import application_registry_client
+    from aweb.human_kind import is_verified_human
+    from aweb.identity_binding import identity_binding_cache
+    from aweb.lifecycle_agent import AgentDisposition, apply_agent_disposition_on
+    from aweb.member_team_key import CurrentMembershipRequired
+    from aweb.resource_startup import start_agent_wakes, stop_agent_wakes
+    from awid.identity_observation import IdentityKind
+    from messaging_actor_support import admit_messaging_actor
+    from test_dashboard_privacy import TEAM, TEAM_NAME
+    from test_events_http import _http_frames, _next_named
+    from test_messages_http import _make_certificate as make_certificate
+    from test_messages_http import _signed_team_headers
+    from test_team_room import admit_room_member
+    from test_workspace_liveness_http import _send_member_request
+
+    env = privacy_app
+    member = env.actors["bob"]
+    registry = application_registry_client(env.app.state)
+    stable = (await registry.register_did(member.did, member.sk)).did_aw
+    resolution = await registry.resolve_key_fresh(stable)
+    assert resolution.current_did_key == member.did
+    assert resolution.id_tree is not None and not resolution.id_tree.enrolled
+
+    def certificate_for(certificate_id, address=""):
+        return _encode_certificate(make_certificate(
+            env.team_sk, env.team_did, member.did,
+            team_id=TEAM, alias="bob", certificate_id=certificate_id,
+            member_did_aw=stable, member_address=address, identity_scope="global",
+        ))
+
+    def headers(certificate, body=b""):
+        return {**_signed_team_headers(member.sk, member.did, TEAM, certificate, body),
+                "Content-Type": "application/json"}
+
+    first_id, addressed_id = str(uuid.uuid4()), str(uuid.uuid4())
+    first = certificate_for(first_id)
+    await _register_fixture_certificate(env, first)
+    connected = await env.client.post("/v1/connect", headers=headers(first, b"{}"), content=b"{}")
+    assert connected.status_code == 200, connected.text
+    control = await env.client.get("/v1/agents", headers=headers(first))
+    assert control.status_code == 200, control.text
+
+    domain, name = "identity-address.test", "withdrawn"
+    # AWID guards active certificates in the address namespace's own teams.
+    # A controller can withdraw an address used by one of its other teams.
+    await env.registry.ensure_namespace(domain=domain, controller=env.namespace_sk)
+    await registry.register_address(domain, name, stable, env.namespace_sk, member.did)
+    await registry.revoke_team_certificate(
+        "example.test", TEAM_NAME, team_controller_signing_key=env.team_sk, certificate_id=first_id,
+    )
+    addressed = certificate_for(addressed_id, f"{domain}/{name}")
+    await _register_fixture_certificate(env, addressed)
+    connected = await env.client.post("/v1/connect", headers=headers(addressed, b"{}"), content=b"{}")
+    assert connected.status_code == 200, connected.text
+    await registry.delete_address(domain, name, env.namespace_sk)
+    assert await registry.resolve_address_fresh(domain, name) is None
+    identity_binding_cache(env.app.state).clear()
+    refused = await env.client.post("/v1/connect", headers=headers(addressed, b"{}"), content=b"{}")
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"] == "identity_binding_mismatch"
+    strict = await env.client.get("/v1/agents", headers=headers(addressed))
+    assert strict.status_code == 403, strict.text
+
+    async def mounted_member(request: Request):
+        checked = await team_auth_deps.verify_request_certificate(
+            request, env.infra, identity_evidence=team_auth_deps.IdentityEvidencePolicy.PREFER_LIVE,
+        )
+        snapshot = await team_auth_deps.read_team_member_snapshot(env.db, checked, request=request)
+        try:
+            resolved = await team_auth_deps.resolve_team_membership(
+                env.db, checked, request=request, snapshot=snapshot,
+            )
+        except CurrentMembershipRequired as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return checked, resolved
+
+    @env.app.get("/_test/mounted-certificate")
+    async def mounted_certificate(request: Request):
+        checked, resolved = await mounted_member(request)
+        assert resolved.snapshot.member is not None
+        attribution = resolved.snapshot.member.verified_identity()
+        kind = checked["identity_kind"]
+        return {
+            "key": resolved.identity.did_key,
+            "did_aw": resolved.identity.did_aw,
+            "address": resolved.identity.address,
+            "verified_did_aw": checked["verified_member_did_aw"],
+            "verified_address": checked["verified_member_address"],
+            "verified_key": checked["did_aw_verified_key"],
+            "kind": kind.kind if kind is not None else None,
+            "id_chain": request.state.id_chain,
+            "id_chain_result": request.state.id_chain_result,
+            "verified_human": is_verified_human(resolved.snapshot.member),
+            "stored_attribution": [attribution["did_aw"], attribution["address"], attribution["human_verified_key"]],
+        }
+
+    started = len(env.registry.transport.calls)
+    malformed = await env.client.get(
+        "/_test/mounted-certificate",
+        headers={**headers(addressed), "X-AWID-ID-Chain": "invalid!"},
+    )
+    assert malformed.status_code == 403, malformed.text
+    assert malformed.json()["detail"] == "invalid_encoding"
+    served = await env.client.get("/_test/mounted-certificate", headers=headers(addressed))
+    assert served.status_code == 200, served.text
+    assert served.json() == {
+        "key": member.did, "did_aw": stable, "address": "", "verified_did_aw": "",
+        "verified_address": "", "verified_key": "", "kind": None, "id_chain": None,
+        "id_chain_result": None, "verified_human": False,
+        "stored_attribution": [stable, f"{domain}/{name}", None],
+    }
+    routes = [request.url.path for request in env.registry.transport.calls[started:]]
+    assert any(path.endswith("/revocations") for path in routes)
+    assert routes.count(f"/v1/did/{stable}/key") == 1
+    assert sum(path.endswith(f"/addresses/{name}") for path in routes) == 1
+    stored = await env.db.fetch_one(
+        "SELECT did_aw, address, did_aw_verified_key FROM {{tables.agents}} WHERE agent_id = $1", member.id,
+    )
+    assert dict(stored) == {
+        "did_aw": stable, "address": f"{domain}/{name}", "did_aw_verified_key": member.did,
+    }
+
+    # The embedding hook supplies actual verified membership to the native
+    # routes. Native Connect continues to require the live address evidence.
+    async def mounted_team_identity(request: Request, db=None):
+        _, resolved = await mounted_member(request)
+        return resolved.identity
+
+    monkeypatch.setattr(identity_auth_deps, "get_team_identity", mounted_team_identity)
+    event_route = next(route for route in env.app.routes if route.path == "/v1/events/stream")
+    event_auth = next(
+        dependency.call for dependency in event_route.dependant.dependencies
+        if getattr(dependency.call, "_aweb_grant_scope", None) == "events.read"
+    )
+    env.app.dependency_overrides[event_auth] = mounted_team_identity
+    await admit_room_member(env, alias="alice")
+
+    await start_agent_wakes(env.app, env.redis)
+    try:
+        async with env.client.stream(
+            "GET", "/v1/events/stream",
+            params={"deadline": (datetime.now(timezone.utc) + timedelta(seconds=15)).isoformat()},
+            headers=headers(addressed),
+        ) as stream:
+            assert stream.status_code == 200, await stream.aread()
+            async with aclosing(_http_frames(stream.aiter_lines())) as frames:
+                await _next_named(frames, "connected")
+                incoming = await _send_member_request(
+                    env, alias="alice", method="POST", path="/v1/messages",
+                    body={"to_did": stable, "subject": "stable inbox", "body": "hello"},
+                )
+                assert incoming.status_code == 200, incoming.text
+                message_id = incoming.json()["message_id"]
+                assert (await _next_named(frames, "actionable_mail"))["message_id"] == message_id
+    finally:
+        await stop_agent_wakes(env.app)
+
+    inbox = await env.client.get("/v1/messages/inbox", headers=headers(addressed))
+    assert inbox.status_code == 200, inbox.text
+    assert [(item["message_id"], item["to_did"]) for item in inbox.json()["messages"]] == [
+        (message_id, stable)
+    ]
+    chat = await _send_member_request(
+        env, alias="alice", method="POST", path="/v1/chat/sessions",
+        body={"to_dids": [stable], "message": "stable pending"},
+    )
+    assert chat.status_code == 200, chat.text
+    pending = await env.client.get("/v1/chat/pending", headers=headers(addressed))
+    assert pending.status_code == 200, pending.text
+    assert chat.json()["session_id"] in {item["session_id"] for item in pending.json()["pending"]}
+
+    alice = env.actors["alice"]
+    signed_mail = {
+        "message_id": str(uuid.uuid4()),
+        "conversation_id": str(uuid.uuid4()),
+        "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "subject": "stable sender",
+        "body": "reply",
+        "from_did": member.did,
+    }
+    signed = canonical_json_bytes({
+        **signed_mail, "type": "mail", "from_stable_id": stable, "to_did": alice.did,
+    })
+    payload = json.dumps({
+        **signed_mail, "to_did": alice.did, "signature": sign_message(member.sk, signed),
+        "signed_payload": signed.decode(),
+    }).encode()
+    sent = await env.client.post("/v1/messages", headers=headers(addressed, payload), content=payload)
+    assert sent.status_code == 200, sent.text
+    received = await _send_member_request(
+        env, alias="alice", method="GET", path=f"/v1/messages/{sent.json()['message_id']}",
+    )
+    assert received.status_code == 200, received.text
+    assert received.json()["from_stable_id"] == stable
+    assert received.json().get("id_chain") is None
+    assert received.json().get("from_address") != f"{domain}/{name}"
+
+    human = await admit_messaging_actor(
+        env, alias="mounted-human", team_id=TEAM, address="example.test/mounted-human",
+        kind=IdentityKind.HUMAN,
+    )
+    human_response = await env.client.get(
+        "/_test/mounted-certificate",
+        headers=_signed_team_headers(human.signing_key, human.did_key, TEAM, human.certificate),
+    )
+    assert human_response.status_code == 200, human_response.text
+    assert human_response.json()["did_aw"] == human.stable_id
+    assert human_response.json()["address"] == human.address
+    assert human_response.json()["verified_human"] is True
+    assert human_response.json()["kind"] == "human"
+    assert human_response.json()["id_chain"] is None
+
+    claimed_only = _encode_certificate(make_certificate(
+        env.team_sk, env.team_did, alice.did, team_id=TEAM, alias="alice",
+        certificate_id=str(uuid.uuid4()), member_did_aw=stable,
+        member_address=f"{domain}/{name}", identity_scope="global",
+    ))
+    mismatched_claim = await env.client.get(
+        "/_test/mounted-certificate",
+        headers=_signed_team_headers(alice.sk, alice.did, TEAM, claimed_only),
+    )
+    assert mismatched_claim.status_code == 403, mismatched_claim.text
+    assert mismatched_claim.json()["detail"] == "identity_binding_mismatch"
+
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
+    unregistered = await env.client.get(
+        "/_test/mounted-certificate", headers=headers(certificate_for(str(uuid.uuid4()))),
+    )
+    assert unregistered.status_code == 401, unregistered.text
+    wrong_signer = await env.client.get(
+        "/_test/mounted-certificate",
+        headers=_signed_team_headers(alice.sk, alice.did, TEAM, addressed),
+    )
+    assert wrong_signer.status_code == 401, wrong_signer.text
+    wrong_team_key, _, wrong_team_did = _make_keypair()
+    wrong_controller = _encode_certificate(make_certificate(
+        wrong_team_key, wrong_team_did, member.did, team_id=TEAM, alias="bob",
+        certificate_id=str(uuid.uuid4()), identity_scope="global",
+    ))
+    rejected_team_key = await env.client.get(
+        "/_test/mounted-certificate", headers=headers(wrong_controller),
+    )
+    assert rejected_team_key.status_code == 401, rejected_team_key.text
+    assert rejected_team_key.json()["detail"]["code"] == "team_key_not_current"
+
+    await registry.revoke_team_certificate(
+        "example.test", TEAM_NAME, team_controller_signing_key=env.team_sk, certificate_id=addressed_id,
+    )
+    revoked = await env.client.get("/_test/mounted-certificate", headers=headers(addressed))
+    assert revoked.status_code == 401, revoked.text
+    assert revoked.json()["detail"]["code"] == "certificate_revoked"
+    replacement = certificate_for(str(uuid.uuid4()))
+    await _register_fixture_certificate(env, replacement)
+    async with env.db.transaction() as tx:
+        assert await apply_agent_disposition_on(
+            tx, agent_ids=[member.id], team_id=TEAM,
+            disposition=AgentDisposition.DELETED, deleted_at=datetime.now(timezone.utc),
+        ) == 1
+    removed = await env.client.get("/_test/mounted-certificate", headers=headers(replacement))
+    assert removed.status_code == 403, removed.text
 
 
 @pytest.mark.asyncio

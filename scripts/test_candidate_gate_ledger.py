@@ -99,13 +99,13 @@ class CompleteGateVerdictTests(unittest.TestCase):
 
     def test_every_stage_and_independent_target_reports_after_failures(self):
         result, rows = self.suite(
-            STAGES, "check-python-static", "e2e-user-paths",
+            STAGES, "check-product-table-writes", "e2e-user-paths",
             "test-python-locks", "build", "_candidate-artifact-server",
         )
         self.assertNotEqual(result.returncode, 0)
         for stage in STAGES.split():
             self.assertEqual(rows.get(stage), "FAILED", result.stdout)
-        self.assertEqual(rows["checks/check-python-static"], "FAILED")
+        self.assertEqual(rows["checks/check-product-table-writes"], "FAILED")
         self.assertEqual(rows["checks/test-release-cli-version"], "PASSED")
         self.assertEqual(rows["unit/_candidate-unit-suites"], "PASSED")
         self.assertEqual(rows["artifacts/_candidate-artifact-a2a-image"], "PASSED")
@@ -250,7 +250,7 @@ def verify_same_tree_commit_cache(
     run_fixed_baseline_gate: Callable[[], str],
     run_full_gate: Callable[[], str],
 ) -> list[str]:
-    """Same-tree reuse also requires the same reviewed main (docs/python-static-analysis.md)."""
+    """Same-tree reuse also requires the same reviewed main."""
     previous_rows = ledger.read_text().splitlines()
     previous_main = checked(repo, "git", "rev-parse", "refs/remotes/origin/main")
     previous_tree = checked(repo, "git", "rev-parse", "HEAD^{tree}")
@@ -444,24 +444,9 @@ candidate-gate:
             ),
             run_full_gate=lambda: invoke("same-tree-commit", "make", "candidate-gate"),
         )
-        refused_final = invoke(
-            "final-without-rc",
-            sys.executable,
-            "scripts/release_candidate.py",
-            "aw-v1.2.3",
-            stages="checks",
-            success=False,
-        )
-        assert "final requires a prior RC" in refused_final
-        assert (
-            run(repo, "git", "rev-parse", "--verify", "refs/tags/aw-v1.2.3").returncode
-            != 0
-        )
-        assert ledger.read_text().splitlines() == rows
-        checked(repo, "git", "tag", "aw-v1.2.3-rc.1")
-        # The real RC must require all stages despite an inherited focused selector.
+        # A release must require all stages despite an inherited focused selector.
         output = invoke(
-            "rc-reuse",
+            "final-reuse",
             sys.executable,
             "scripts/release_candidate.py",
             "aw-v1.2.3",

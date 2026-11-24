@@ -153,13 +153,6 @@ The UID-1000 candidate can write LOGS, including exit/supervisor receipts; these
 are operator observations, not an attestation against malicious candidate code.
 Root stop validates the live PID/start-time/UID/command before sending a signal.
 
-The complete native caller packet is `scripts/vm-gate/native_proof.py`, with
-`--source-sha` set to the reviewed commit and a fresh `--evidence` directory.
-It performs no allocation. Only the coordinator-authorized Linux VM run executes
-it: real GNU timeout, PID-bound operator-stop ordering, real gate Docker cleanup
-and absence before VM deletion, plus a memory receipt while an owned container
-is live. Local unit/process/filesystem controls do not claim that native proof.
-
 [errors.py](vm_gate/errors.py) is the single exit-code authority. Normal gate
 exits pass through; refusal and infrastructure errors have separate classes.
 Read `summary.infrastructure` to disambiguate a gate using the same numeric code.

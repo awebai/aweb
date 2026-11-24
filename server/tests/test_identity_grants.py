@@ -963,8 +963,10 @@ async def test_grant_with_unregistered_issuing_certificate_rejected_when_require
 
 
 @pytest.mark.asyncio
-async def test_grant_flag_off_measures_missing_issuer_without_refusing(aweb_cloud_db, monkeypatch):
-    """OFF measures the actual missing issuer without imposing a registration gate."""
+async def test_grant_flag_off_checks_revocation_without_acquiring_registrations(
+    aweb_cloud_db, monkeypatch
+):
+    """OFF accepts an unregistered issuer and still checks its revocation."""
     monkeypatch.delenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", raising=False)
     app, _ = await _fixture(aweb_cloud_db.env, register_issuer=False)
     signing_key, did_key = _session_keypair()
@@ -985,13 +987,9 @@ async def test_grant_flag_off_measures_missing_issuer_without_refusing(aweb_clou
             ),
         )
     assert resp.status_code == 200, resp.text
-    catalogs = [
-        request
-        for request in calls[start:]
-        if request.url.path == "/v1/namespaces/acme.com/teams/backend/certificates"
-    ]
-    assert len(catalogs) == 1
-    assert catalogs[0].method == "GET"
+    reads = {request.url.path.rsplit("/", 1)[-1] for request in calls[start:]}
+    assert "revocations" in reads
+    assert "certificates" not in reads
     certificates = await app.state.awid_registry_client.list_team_certificates(
         "acme.com", "backend", active_only=False
     )

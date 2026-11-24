@@ -690,7 +690,7 @@ async def chat_history(
                 "message_id": msg["message_id"],
                 "conversation_id": str(session_uuid),
                 "from_alias": msg["from_alias"],
-                "from_address": msg.get("from_address"),
+                "from_address": msg.get("from_address") or "",
                 "from_did": msg.get("from_did"),
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),

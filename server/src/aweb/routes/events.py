@@ -47,6 +47,7 @@ from aweb.identity_metadata import (
     routable_chat_address,
 )
 from aweb.messaging.chat import get_pending_conversations
+from aweb.messaging.sender_address import stored_sender_address
 from aweb.messaging.room_notices import (
     RoomAuthorityUnavailable,
     RoomAuthorityWindow,
@@ -244,12 +245,11 @@ async def _current_actionable_mail(
             "from_stable_id": sender_map.get((r.get("from_did") or "").strip(), {}).get(
                 "stable_id", ""
             ),
-            "from_address": (
-                r.get("from_address")
-                or sender_map.get((r.get("from_did") or "").strip(), {}).get("address")
-                or r["from_alias"]
-                or ""
-            ),
+            "from_address": stored_sender_address(
+                r.get("from_address"),
+                sender_map.get((r.get("from_did") or "").strip(), {}).get("address")
+                or r["from_alias"],
+            ) or "",
             "subject": ""
             if r.get("content_mode") == ContentMode.ENCRYPTED
             else (r["subject"] or ""),
@@ -368,6 +368,14 @@ async def _current_actionable_chat(
         if recipient_waiting:
             continue
         last_activity = item.get("last_activity")
+        from_address = stored_sender_address(
+            item.get("last_from_address"),
+            routable_chat_address(
+                participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
+                viewer_team_id,
+                item.get("last_from") or "",
+            ),
+        )
         actionable.append(
             {
                 "type": "actionable_chat",
@@ -394,19 +402,9 @@ async def _current_actionable_chat(
                 "from_stable_id": participant_identity_map.get(
                     (item.get("last_from_did") or "").strip(), {}
                 ).get("stable_id", ""),
-                "from_address": item.get("last_from_address")
-                or routable_chat_address(
-                    participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
-                    viewer_team_id,
-                    item.get("last_from") or "",
-                ),
+                "from_address": from_address,
                 "last_from": item.get("last_from") or "",
-                "last_from_address": item.get("last_from_address")
-                or routable_chat_address(
-                    participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
-                    viewer_team_id,
-                    item.get("last_from") or "",
-                ),
+                "last_from_address": from_address,
                 "last_message": item.get("last_message") or "",
                 "last_activity": (
                     last_activity.astimezone(timezone.utc).isoformat() if last_activity else ""

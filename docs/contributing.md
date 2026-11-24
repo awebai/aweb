@@ -221,16 +221,15 @@ acceptance usable when runners are unavailable or urgency warrants proceeding.
 
 `make check-node-audit` and `make check-go-vulnerability-audit` audit the
 dependencies a release ships. The Go audit runs in the Docker candidate gate's
-**checks** stage, alongside its checker unit tests. An audit refusal fails that
-stage. Neither audit runs from `make test`: the Go audit requires the exact
-toolchain in `cli/go/go.mod`, and live advisory databases move independently of
-the source tree.
+**checks** stage, alongside its checker unit tests. The Node audit runs with its
+self-test in the **artifacts** stage, after the gate installs the Node
+workspaces. An audit refusal fails its stage. Neither audit runs from
+`make test`: the Go audit requires the exact toolchain in `cli/go/go.mod`, and
+live advisory databases move independently of the source tree.
 
 The candidate Go scan checks reachable findings and their reviewed exception
-deadlines. `make check-exception-deadlines` checks deadlines without a scanner
-or toolchain, including when no candidate is being built. These targets do not
-schedule scans themselves; a green scan describes the advisory database at its
-execution time.
+deadlines. These targets do not schedule scans themselves; a green scan
+describes the advisory database at its execution time.
 
 The Go audit refuses to run under the wrong toolchain and prints the two
 commands that install the pinned one. `make check-node-audit` needs the

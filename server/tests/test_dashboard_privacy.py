@@ -93,6 +93,7 @@ async def privacy_stack(
     shared_test_pool, monkeypatch, tls=None, *,
     aliases=("alice", "bob", "carol"), team_visibility="public", database=None,
     outbox_recovery=OutboxRecoveryOwnership.NATIVE, proxy_verification=None,
+    workspace_counts=None,
 ):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
@@ -183,14 +184,17 @@ async def privacy_stack(
                     did,
                     alias,
                 )
-                await manager.execute(
-                    "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
-                    "VALUES ($1, $2, $3, $4)",
-                    workspace_id,
-                    TEAM,
-                    agent_id,
-                    alias,
-                )
+                extras = (workspace_counts or {}).get(alias, 1) - 1
+                workspace_ids = [workspace_id, *(uuid4() for _ in range(extras))]
+                for index, workspace in enumerate(workspace_ids):
+                    await manager.execute(
+                        "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
+                        "VALUES ($1, $2, $3, $4)",
+                        workspace,
+                        TEAM,
+                        agent_id,
+                        alias if index == 0 else f"{alias}-workspace-{index + 1}",
+                    )
                 certificate = _encode_certificate(
                     _make_certificate(
                         team_sk,
@@ -207,6 +211,7 @@ async def privacy_stack(
                     did=did,
                     id=agent_id,
                     workspace=workspace_id,
+                    workspace_ids=workspace_ids,
                     certificate=certificate,
                 )
             host, certificates = tls or ("127.0.0.1", None)

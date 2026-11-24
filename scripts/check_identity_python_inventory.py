@@ -39,7 +39,7 @@ KEY_TYPES = frozenset(
 SHARED_SITES = {
     ("awid/src/awid/signature_wire.py", "verify_bytes"),
     ("awid/src/awid/signature_wire.py", "sign_bytes"),
-    ("awid/src/awid/signature_wire.py", "prime_point"),
+    ("awid/src/awid/signature_wire.py", "_prime_point"),
     ("awid/src/awid/did.py", "generate_keypair"),
     ("awid/src/awid/did.py", "did_key_from_signing_key"),
 }

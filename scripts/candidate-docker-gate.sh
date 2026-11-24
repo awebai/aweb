@@ -93,8 +93,8 @@ if [[ -z "$STAGES" ]]; then
   git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
     || refuse "source SHA is not on the synchronized origin/main history"
 fi
-# docs/python-static-analysis.md: allowances use synchronized main, never the
-# candidate's own budget. Focused callers supply this ref during preparation.
+# The synchronized main the candidate is checked against. Focused callers
+# supply this ref during preparation.
 SYNCHRONIZED_MAIN_SHA="$(git -C "$ROOT" rev-parse --verify 'refs/remotes/origin/main^{commit}')" \
   || refuse "synchronized origin/main is missing. Synchronize main and start a new gate invocation."
 [[ -d "$LIBRARY_E2E_BLUEPRINT_SRC" ]] || refuse "blueprint input is missing"

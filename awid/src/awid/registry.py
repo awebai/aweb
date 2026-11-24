@@ -2422,16 +2422,25 @@ class CachedRegistryClient(RegistryClient):
             return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
         # The locator is fenced by the configured registry's write generation.
         # It preserves the no-DNS fresh-hit rule without mixing answering origins.
-        route_key = await self._generation_cache_key(
-            self._id_status_route_key(request), self._id_status_generation_key(domain)
-        )
+        route_generation_key = self._id_status_generation_key(domain)
+        route_generation = await self._read_cache_generation(route_generation_key)
+        route_key = self._cache_key_at_generation(self._id_status_route_key(request), route_generation)
         route_now, route = await self._read_registry_cache_route(route_key)
         if route is not None and route_now >= route.fetched_at * _MICROSECONDS:
             route_age = _whole_seconds_up((route_now - route.fetched_at * _MICROSECONDS) * 1_000)
             if route_age <= _ID_STATUS_FRESH_SECONDS:
-                cache_key = await self._generation_cache_key(
+                status_generation_key = self._id_status_generation_key(
+                    domain, registry_url=route.registry_url
+                )
+                # One observation selects both keys when their generation is shared.
+                status_generation = (
+                    route_generation
+                    if status_generation_key == route_generation_key
+                    else await self._read_cache_generation(status_generation_key)
+                )
+                cache_key = self._cache_key_at_generation(
                     self._id_status_cache_key(request, registry_url=route.registry_url),
-                    self._id_status_generation_key(domain, registry_url=route.registry_url),
+                    status_generation,
                 )
                 redis_now_us, cached = await self._read_id_status_entry(cache_key)
                 if cached is not None and redis_now_us >= cached["fetched_at"] * _MICROSECONDS:
@@ -4185,6 +4194,14 @@ class CachedRegistryClient(RegistryClient):
     async def _generation_cache_key(self, cache_key: str, generation_key: str) -> str:
         # Snapshot before acquisition. An older producer can only write its old
         # token's key; invalidation never lets it repopulate the current cache.
+        token = await self._read_cache_generation(generation_key)
+        return self._cache_key_at_generation(cache_key, token)
+
+    @staticmethod
+    def _cache_key_at_generation(cache_key: str, token: str) -> str:
+        return f"{cache_key}:generation:{token}"
+
+    async def _read_cache_generation(self, generation_key: str) -> str:
         token = None
         try:
             token = await self.redis_client.get(generation_key)
@@ -4207,7 +4224,7 @@ class CachedRegistryClient(RegistryClient):
         ):
             # Unknown/lost metadata must not select any retained evidence.
             token = uuid4().hex
-        return f"{cache_key}:generation:{token}"
+        return token
 
     def _id_status_generation_key(self, domain: str, *, registry_url: str | None = None) -> str:
         origin = canonical_server_origin(registry_url or self.registry_url)

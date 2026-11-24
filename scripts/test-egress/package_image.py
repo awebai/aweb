@@ -21,14 +21,13 @@ print(json.dumps(receipt))
 """
 
 
-def prepare_image(root, evidence, image, projects=None):
-    if projects is None:
-        projects = [
-            str(Path(p).parent)
-            for p in subprocess.check_output(
-                ["git", "ls-files", "*uv.lock"], cwd=root, text=True
-            ).splitlines()
-        ]
+def prepare_image(root, evidence, image):
+    projects = [
+        str(Path(p).parent)
+        for p in subprocess.check_output(
+            ["git", "ls-files", "*uv.lock"], cwd=root, text=True
+        ).splitlines()
+    ]
     # Copy only source files and a self-contained Git bundle. A worktree's
     # .git file points outside it and cannot be copied into the runner.
     with tempfile.TemporaryDirectory(prefix="aw-egress-source-") as tmp:

@@ -76,7 +76,7 @@ run_candidate() {
  fi
  if [[ "$TARGET_SUMMARY" == 1 ]]; then
   printf 'checks\\tFAILED\\tchecks.log\\t1s\\nartifacts\\tPASSED\\tartifacts.log\\t2s\\n' > "$LOG_DIR/summary.tsv"
-  printf 'checks/check-python-static\\tFAILED\\tchecks.log\\t1s\\texit 23\\nartifacts/build\\tPASSED\\tartifacts.log\\t2s\\n' >> "$LOG_DIR/summary.tsv"
+  printf 'checks/check-product-table-writes\\tFAILED\\tchecks.log\\t1s\\texit 23\\nartifacts/build\\tPASSED\\tartifacts.log\\t2s\\n' >> "$LOG_DIR/summary.tsv"
   printf 'integration/e2e-naapp\\tSKIPPED\\tintegration.log\\t0s\\tbuild FAILED\\n' >> "$LOG_DIR/summary.tsv"
  fi
  if [[ -n "$DURING_CLEANUP" ]]; then
@@ -303,7 +303,7 @@ run_candidate() {
                 self.assertEqual(code, status, output)
                 by_entry = {row[1]: row for row in rows}
                 self.assertEqual(by_entry["artifacts"][2], "passed")
-                self.assertEqual(by_entry["checks/check-python-static"][2], "failed")
+                self.assertEqual(by_entry["checks/check-product-table-writes"][2], "failed")
                 self.assertEqual(by_entry["artifacts/build"][2], "passed")
                 skipped = by_entry["integration/e2e-naapp"]
                 self.assertEqual(skipped[2], "skipped")

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- awid-service 0.5.42 remembers the result of the Ed25519 point check for
+  public keys and certificate signatures it has already checked, which removes
+  most of the processor time of identity-chain checks.
+
+- Server 1.27.53 is the first published release with the workspace-contact
+  change below. Warm team certificate admission reads the member and team key
+  in one PostgreSQL snapshot without locking either row. Embedders that relied
+  on `read_team_member_snapshot` to wait for a concurrent writer should enforce
+  their write-time policy on the locked reread via `before_write`.
+- Migration 057 adds one partial index for mail without a conversation ID,
+  so the conversation list can skip scanning the full messages table for
+  legacy mail. Message writes can wait while it builds. The migration uses
+  a two-second lock timeout and a five-second CREATE INDEX statement timeout.
+
 - Self-hosted CLI and wake processes retain access to private or HTTP AWID
   registries chosen by the operator. `aw` records a saved `--registry`,
   `--awid-registry` or `AWID_REGISTRY_URL` choice, and treats the identity’s
@@ -20,6 +34,9 @@
   row only once contact was recorded. Hosts that call `connect_agent` directly
   must pass `WorkspaceContact.SIGNED_CONNECT` for an agent's own connect, or
   that agent is never shown as connected.
+- Peer cleanup and retirement planning measure an uncontacted workspace's
+  inactivity from reservation time. Contacted workspaces use their latest
+  observed activity. Self-delete remains immediate.
 
 - A pin-store write no longer fails because another `aw` process on the same
   home changed the trust store first. `aw id pin-store compare-and-set`

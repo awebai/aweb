@@ -15,8 +15,8 @@ certificate must additionally EXIST at the AWID registry:
 - registry unavailable → same fail-closed 503 posture as the revocation
   check, honoring the cached client's internal staleness/grace semantics.
 
-When OFF, known registrations are measured without adding a refusal.
-Unavailable measurement retains the working flow.
+With configured enforcement OFF, authority still checks revocation and skips
+the registration catalogue. An explicit observation can measure it separately.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from starlette.requests import Request
 from awid.did import did_from_public_key
 from awid.registry import RegistryClient, RegistryError
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.certificate_registration import RegistrationState
 from aweb.member_team_key import current_membership
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.team_auth_deps import verify_request_certificate
@@ -68,12 +69,14 @@ class _FakeRegistry(LegacyTeamFacts, RegistryClient):
         self.revocations_error = revocations_error
         self.list_error = list_error
         self.list_calls = 0
+        self.revocation_calls = 0
         self.last_active_only: bool | None = None
 
     async def get_team_public_key(self, domain: str, name: str) -> str | None:
         return self.team_did_key
 
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
+        self.revocation_calls += 1
         if self.revocations_error is not None:
             raise self.revocations_error
         return set(self.revoked)
@@ -164,7 +167,7 @@ def _identity_request(registry: _FakeRegistry):
 
 
 @pytest.mark.asyncio
-async def test_flag_off_unregistered_certificate_verifies_and_measures_registration(
+async def test_flag_off_unregistered_certificate_checks_revocation_without_registration(
     monkeypatch, db_infra
 ):
     monkeypatch.delenv(FLAG, raising=False)
@@ -175,8 +178,9 @@ async def test_flag_off_unregistered_certificate_verifies_and_measures_registrat
 
     assert cert_info["certificate_id"] == "cert-001"
     assert cert_info["team_id"] == TEAM_ID
-    # OFF path adds zero registry existence reads.
-    assert registry.list_calls == 1
+    assert cert_info["registration_decision"].state is RegistrationState.NOT_OBSERVED
+    assert registry.list_calls == 0
+    assert registry.revocation_calls == 1
 
 
 @pytest.mark.asyncio
@@ -282,7 +286,7 @@ _ROW = {
 
 
 @pytest.mark.asyncio
-async def test_identity_flag_off_unregistered_recorded_certificate_keeps_context(
+async def test_identity_flag_off_checks_revocation_without_registration_and_keeps_context(
     monkeypatch,
 ):
     monkeypatch.delenv(FLAG, raising=False)
@@ -290,7 +294,8 @@ async def test_identity_flag_off_unregistered_recorded_certificate_keeps_context
     out = await current_membership(registry, dict(_ROW), request=_identity_request(registry))
     assert out["team_id"] == TEAM_ID
     assert out["alias"] == "alice"
-    assert registry.list_calls == 1
+    assert registry.list_calls == 0
+    assert registry.revocation_calls == 1
 
 
 @pytest.mark.asyncio
