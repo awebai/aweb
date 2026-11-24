@@ -32,7 +32,7 @@ func TestProbeAwebBaseURLRejectsRedirects(t *testing.T) {
 				w.WriteHeader(status)
 			}))
 			defer source.Close()
-			ok, err := probeAwebBaseURL(context.Background(), source.URL)
+			ok, _, err := probeAwebBaseURLOutcome(context.Background(), source.URL)
 			if ok || err == nil || sourceHits.Load() != 1 || targetHits.Load() != 0 {
 				t.Fatalf("redirect candidate: ok=%v err=%v source=%d target=%d", ok, err, sourceHits.Load(), targetHits.Load())
 			}
@@ -56,7 +56,7 @@ func TestProbeAwebBaseURLPreservesResponses(t *testing.T) {
 				w.WriteHeader(tc.status)
 			}))
 			defer server.Close()
-			ok, err := probeAwebBaseURL(context.Background(), server.URL)
+			ok, _, err := probeAwebBaseURLOutcome(context.Background(), server.URL)
 			if err != nil || ok != tc.want {
 				t.Fatalf("ok=%v err=%v, want %v", ok, err, tc.want)
 			}
@@ -112,7 +112,7 @@ func TestProbeAwebBaseURLRejectsSameOriginRedirect(t *testing.T) {
 		redirectedHits.Add(1)
 	}))
 	defer server.Close()
-	ok, err := probeAwebBaseURL(context.Background(), server.URL)
+	ok, _, err := probeAwebBaseURLOutcome(context.Background(), server.URL)
 	if ok || err == nil || probeHits.Load() != 1 || redirectedHits.Load() != 0 {
 		t.Fatalf("same-origin redirect: ok=%v err=%v probe=%d redirected=%d", ok, err, probeHits.Load(), redirectedHits.Load())
 	}
@@ -192,7 +192,7 @@ func TestProbeAwebBaseURLReportsTemporaryFailures(t *testing.T) {
 				w.WriteHeader(tc.status)
 			}))
 			defer server.Close()
-			ok, err := probeAwebBaseURL(context.Background(), server.URL)
+			ok, _, err := probeAwebBaseURLOutcome(context.Background(), server.URL)
 			if ok || err == nil || !strings.Contains(err.Error(), "temporarily failing") || !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", tc.status)) {
 				t.Fatalf("ok=%v err=%v, want a temporary failure naming HTTP %d", ok, err, tc.status)
 			}
@@ -210,7 +210,7 @@ func TestResolveWorkingBaseURLNamesWhatEachCandidateAnswered(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-	_, err := resolveWorkingBaseURL(server.URL)
+	_, err := resolveWorkingBaseURLContext(context.Background(), server.URL)
 	if err == nil {
 		t.Fatal("a failing API behind a web app resolved")
 	}
@@ -228,7 +228,7 @@ func TestProbeAwebBaseURLNamesATimeout(t *testing.T) {
 	}))
 	defer server.Close()
 	defer close(release)
-	ok, err := probeAwebBaseURL(context.Background(), server.URL)
+	ok, _, err := probeAwebBaseURLOutcome(context.Background(), server.URL)
 	if ok || err == nil || !strings.Contains(err.Error(), "timed out after 2s") {
 		t.Fatalf("ok=%v err=%v, want a named timeout", ok, err)
 	}

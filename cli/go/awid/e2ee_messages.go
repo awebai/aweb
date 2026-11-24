@@ -474,30 +474,37 @@ func DecryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdent
 	return plain, nil
 }
 
-func decryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEInnerPayload, error) {
+func verifyE2EEMessageEnvelope(envelope *E2EEMessageEnvelope) error {
 	if envelope == nil {
-		return nil, fmt.Errorf("missing e2ee envelope")
+		return fmt.Errorf("missing e2ee envelope")
 	}
 	if envelope.MessageVersion != E2EEMessageVersion || envelope.EnvelopeType != E2EEEnvelopeType {
-		return nil, fmt.Errorf("unsupported e2ee envelope version")
+		return fmt.Errorf("unsupported e2ee envelope version")
 	}
 	if err := VerifyE2EEMessageEnvelopeSignature(envelope); err != nil {
-		return nil, err
+		return err
 	}
 	ciphertext, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(envelope.Ciphertext))
 	if err != nil {
-		return nil, fmt.Errorf("decode ciphertext: %w", err)
+		return fmt.Errorf("decode ciphertext: %w", err)
 	}
 	if got := e2eeHashBytes(ciphertext); got != strings.TrimSpace(envelope.Crypto.CiphertextHash) {
-		return nil, fmt.Errorf("ciphertext hash mismatch")
+		return fmt.Errorf("ciphertext hash mismatch")
 	}
 	if len(ciphertext) != envelope.Crypto.CiphertextSize {
-		return nil, fmt.Errorf("ciphertext size mismatch")
+		return fmt.Errorf("ciphertext size mismatch")
 	}
 	if got, err := e2eeHashCanonical("key_wraps", e2eeKeyWrapsJSONValue(envelope.KeyWraps)); err != nil {
-		return nil, err
+		return err
 	} else if got != strings.TrimSpace(envelope.Crypto.KeyWrapsHash) {
-		return nil, fmt.Errorf("key_wraps hash mismatch")
+		return fmt.Errorf("key_wraps hash mismatch")
+	}
+	return nil
+}
+
+func decryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdentity) (*E2EEInnerPayload, error) {
+	if err := verifyE2EEMessageEnvelope(envelope); err != nil {
+		return nil, err
 	}
 	if identity.PrivateKey == nil {
 		return nil, errMissingEncryptionPrivateKey
@@ -517,6 +524,10 @@ func decryptE2EEMessage(envelope *E2EEMessageEnvelope, identity E2EEDecryptIdent
 	aad, err := e2eeContentAAD(envelope)
 	if err != nil {
 		return nil, err
+	}
+	ciphertext, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(envelope.Ciphertext))
+	if err != nil {
+		return nil, fmt.Errorf("decode ciphertext: %w", err)
 	}
 	plain, err := aesGCMOpen(cek, nonce, ciphertext, aad)
 	if err != nil {

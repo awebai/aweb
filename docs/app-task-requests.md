@@ -221,8 +221,10 @@ Each step fails closed. Nothing is written before step 8.
    `member_did_key` equal the payload's `team_id`, `certificate_id` and
    `actor_did_key`. A certificate that fails the check is 401 with the
    check's own reason (see Errors); one that names another team or
-   certificate than the payload is 401 `signature_invalid`. Registry
-   failure: 503 `authority_unavailable`, with no stale fallback.
+   certificate than the payload is 401 `signature_invalid`. An absent AWID
+   team gives 404 `awid_team_not_found`. An unusable controller answer gives
+   422 `registry_response_unusable`. A failed registry read gives 503
+   `authority_unavailable`, with no stale fallback.
 5. **Binding.** `aud` is this service's public origin. `team_id`, `app_id`,
    `installation_id` and `installation_generation` equal the transport's.
    `app_origin` equals the installed app's origin. `task_body_sha256` equals
@@ -549,11 +551,13 @@ request and on a schedule, so a missed wake cannot strand a request.
 | 403 | `target_mismatch` | A bound field disagrees with the body, transport or task, or the answerer is not the assignee. |
 | 403 | `scope_denied` | The installation is retired, its generation moved, or it lacks `requests.create` / `requests.read`. |
 | 404 | `resource_not_found` | Absent, or not visible to the caller. |
+| 404 | `awid_team_not_found` | AWID reports that the team is absent. |
 | 409 | `idempotency_conflict` | A known key with different content. |
 | 409 | `revision_conflict` | Stale `expected_task_rev`, a closed task, or the question already answered. |
 | 409 | `approval_changed` | The proposal fields differ from the task's. |
 | 422 | `schema_invalid` | Body shape or choice. |
 | 422 | `target_unresolved` | The assignee does not resolve to exactly one current member. |
+| 422 | `registry_response_unusable` | AWID answered without a usable team controller key. |
 | 428 | `precondition_required` | `expected_task_rev` is missing. |
 | 503 | `authority_unavailable` | The registry could not be read. |
 

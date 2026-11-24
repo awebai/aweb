@@ -638,9 +638,8 @@ session mode to check without new plumbing.
 2. **Rate limit shape.** The approved draft specified a token bucket of 2
    events per second with a burst of 10, and said aweb enforced no route rate
    limit. Agent health has since added one: a fixed window per agent, with
-   Redis `SET NX` (`server/src/aweb/routes/agent_status.py:300-309`). The
-   `app.state.rate_limiter` built at `server/src/aweb/api.py:257,317` is still
-   not enforced by any route. Proposed: a fixed-window counter in the same
+   Redis `SET NX` (`server/src/aweb/routes/agent_status.py:300-309`).
+   Proposed: a fixed-window counter in the same
    style, `INCR` plus `EXPIRE` on `agent-activity-rate:{agent_id}`, at most 10
    events per 5-second window, 429 `rate_limited` with `Retry-After` set to
    the window's remaining TTL. Its bound: at most 10 events in any one window,

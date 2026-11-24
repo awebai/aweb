@@ -501,6 +501,18 @@ func TestChatSendBareAliasFallsBackToUniqueLocalTeamMembership(t *testing.T) {
 	if !ok || len(toAliases) != 1 || toAliases[0] != "randy" {
 		t.Fatalf("to_aliases=%#v, want [randy]", postedBody["to_aliases"])
 	}
+	// The agent list confirmed randy: the new session's signature binds that
+	// member's key, and the request still names the recipient by alias alone.
+	var signed map[string]any
+	if err := json.Unmarshal([]byte(postedBody["signed_payload"].(string)), &signed); err != nil {
+		t.Fatal(err)
+	}
+	if signed["to"] != "randy" || signed["to_did"] != "did:key:z6Mkrandy" || signed["to_stable_id"] != nil {
+		t.Fatalf("signed to=%v to_did=%v to_stable_id=%v, want randy did:key:z6Mkrandy and no stable id", signed["to"], signed["to_did"], signed["to_stable_id"])
+	}
+	if _, ok := postedBody["to_dids"]; ok {
+		t.Fatalf("the confirmed binding leaked into the routing selectors: %v", postedBody["to_dids"])
+	}
 	if got := registryReads.Load(); got != 1 {
 		t.Fatalf("local registry reads=%d, want 1", got)
 	}

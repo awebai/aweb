@@ -46,6 +46,7 @@ async def test_reused_certificate_metadata_cannot_manufacture_federation_members
         await deliver_federated_phase_b(
             _DB(manager), envelope=envelope, signature="signed-message",
             recipient=recipient, authority_token=token,
+            registry_client=None,
         )
     assert refused.value.reason == "recipient_policy_rejected"
     assert await manager.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
@@ -59,6 +60,7 @@ async def test_reused_certificate_metadata_cannot_manufacture_federation_members
     result = await deliver_federated_phase_b(
         _DB(manager), envelope=envelope, signature="signed-message",
         recipient=recipient, authority_token=token,
+        registry_client=None,
     )
     assert result["message_id"] == envelope.message_id
     assert await manager.fetch_value(

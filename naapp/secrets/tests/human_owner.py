@@ -21,7 +21,6 @@ from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
 from aweb_naapp_testing.owner_acts import TeamOwner
 from aweb_naapp_testing.webauthn import SoftAuthenticator, SoftCredential
 from awid.did import stable_id_from_public_key
-from awid.dns_verify import DomainAuthority
 from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import RegistryClient
 from awid_service.deps import get_domain_verifier
@@ -72,28 +71,24 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
     )
     root = getattr(world, "human_root", None)
     if root is None:
-        root = world.human_root = SigningKey.generate()
+        seed = await world.registry.ensure_namespace(domain="example.com")
+        root = world.human_root = SigningKey(seed)
         world.human_members = {}
         world.human_identities = {}
 
-    async def dns(domain):
-        assert domain == "example.com"
-        return DomainAuthority(did_key(root), REGISTRY_URL, "_awid.example.com")
-
-    world.registry.app.dependency_overrides[get_domain_verifier] = lambda: dns
+    authority = world.registry.namespace_authority
+    world.registry.app.dependency_overrides[get_domain_verifier] = lambda: authority
     world.registry.app.state.awid_public_origins = (REGISTRY_URL,)
     async with aclosing(
         RegistryClient(
             REGISTRY_URL,
             transport=world.registry.transport,
             service_token=SERVICE_TOKEN,
-            domain_verifier=dns,
+            domain_verifier=authority,
         )
     ) as registry:
         member = world.human_members.get(principal)
         if member is None:
-            if not world.human_members:
-                await registry.register_namespace("example.com", did_key(root), bytes(root))
             member = Member(
                 team_id=principal.team_id,
                 team_key=world.owner.team_key,
@@ -104,7 +99,7 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
             mapping = await registry.register_did(member.did_key, bytes(member.member_key))
             assert mapping.did_aw == principal.principal_did
             member.extra_cert_fields = {"member_did_aw": mapping.did_aw}
-            await world.registry.add_certificate(member.certificate())
+            await world.registry.add_certificate(member.certificate(), team_key=member.team_key)
             fields = {
                 "v": 1,
                 "type": "aweb.id-certificate",
@@ -250,7 +245,7 @@ async def register_holder_member(world, registry, principal, *, team_key):
         extra_cert_fields={"member_did_aw": principal.principal_did},
     )
     assert await registry.register_did(member.member_key) == principal.principal_did
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
 

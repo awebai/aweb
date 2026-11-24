@@ -32,6 +32,9 @@ from collections.abc import Generator, Iterable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
+from aweb.application_state import native_application_state
+from aweb.reconnect import ReconnectBackoff
+
 logger = logging.getLogger(__name__)
 
 WAKE_MARK_TTL_SECONDS = 24 * 60 * 60
@@ -52,14 +55,17 @@ _KINDS_BY_KEY_TYPE = {
 
 
 def did_wake_key(did: str) -> str:
+    """Name the canonical identity wake stream without resolving authority."""
     return f"did:{did}"
 
 
 def agent_wake_key(agent_id: str) -> str:
+    """Name the local actor wake stream for the given agent ID."""
     return f"agent:{agent_id}"
 
 
 def team_room_wake_key(team_id: str) -> str:
+    """Name the shared room notification stream for the given native team."""
     return f"team-room:{team_id}"
 
 
@@ -69,10 +75,12 @@ def wake_kinds_for_key(key: str) -> tuple[str, ...]:
 
 
 def wake_channel(key: str) -> str:
+    """Map a wake key to its Redis subscription channel."""
     return f"agent-wake:{key}"
 
 
 def wake_mark(key: str, kind: str) -> str:
+    """Name the Redis key holding a persisted wake marker."""
     return f"agent-mark:{kind}:{key}"
 
 
@@ -134,6 +142,8 @@ def agent_wake_scope(publisher: AgentWakePublisher | None) -> Generator[None]:
 
 def agent_wake_publisher(state) -> AgentWakePublisher | None:
     """The process's publisher on an application state, if it runs one."""
+
+    state = native_application_state(state)
     return getattr(state, "agent_wake_publisher", None)
 
 
@@ -149,6 +159,7 @@ class AgentWakePublisher:
         self._task: asyncio.Task | None = None
 
     def submit(self, wakes: Mapping[str, Iterable[str]]) -> None:
+        """Queue a committed mutation wake for publication by this serving process."""
         _merge(self._pending, wakes)
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run(), name="agent-wake-publisher")
@@ -260,9 +271,11 @@ class AgentWakeSubscription:
         self._event.set()
 
     async def wait(self) -> None:
+        """Wait for a wake without consuming the accumulated reasons."""
         await self._event.wait()
 
     def take(self) -> AgentWakeBatch:
+        """Consume the reasons accumulated since the previous read."""
         batch = AgentWakeBatch(kinds=frozenset(self._kinds), resync=self._resync)
         self._kinds.clear()
         self._resync = False
@@ -287,11 +300,18 @@ class AgentWakeHub:
         self._requests: asyncio.Queue[tuple[str, list[str]]] = asyncio.Queue()
         self._task: asyncio.Task | None = None
 
+    @property
+    def is_running(self) -> bool:
+        """Whether this resource has an active serving task."""
+        return self._task is not None and not self._task.done()
+
     async def start(self) -> None:
+        """Start the native subscriber once; repeated starts reuse the running task."""
         if self._task is None:
             self._task = asyncio.create_task(self._run(), name="agent-wake-hub")
 
     async def close(self) -> None:
+        """Stop this native resource and release only the resources it owns."""
         if self._task is not None:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -330,18 +350,18 @@ class AgentWakeHub:
                 waiter.cancel()
             released = []
             for channel in channels:
-                holders = self._subscriptions.get(channel)
-                if holders is None:
+                remaining_subscriptions = self._subscriptions.get(channel)
+                if remaining_subscriptions is None:
                     continue
-                holders.discard(subscription)
-                if not holders:
+                remaining_subscriptions.discard(subscription)
+                if not remaining_subscriptions:
                     del self._subscriptions[channel]
                     released.append(channel)
             if released:
                 self._requests.put_nowait(("unsubscribe", released))
 
     async def _run(self) -> None:
-        reconnect_delay = 0.5
+        backoff = ReconnectBackoff(initial_delay=0.5, maximum_delay=HUB_RECONNECT_MAX_SECONDS)
         connected_before = False
         while True:
             pubsub = self._redis.pubsub()
@@ -352,18 +372,17 @@ class AgentWakeHub:
                 if self._subscriptions:
                     await pubsub.subscribe(*self._subscriptions)
                 connected_before = True
-                reconnect_delay = 0.5
+                backoff.reset()
                 await self._read(pubsub, resync_pending)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.warning(
                     "Agent wake subscriber lost Redis; reconnecting in %.1f s",
-                    reconnect_delay,
+                    backoff.delay,
                     exc_info=True,
                 )
-                await asyncio.sleep(reconnect_delay)
-                reconnect_delay = min(reconnect_delay * 2, HUB_RECONNECT_MAX_SECONDS)
+                await asyncio.sleep(backoff.schedule(asyncio.get_running_loop().time()))
             finally:
                 with contextlib.suppress(Exception):
                     await pubsub.aclose()

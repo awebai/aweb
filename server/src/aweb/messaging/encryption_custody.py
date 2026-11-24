@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from aweb.identity_binding import verified_key_sql
+
 import json
 import logging
+from collections.abc import Mapping, Sequence
+from typing import Any
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -24,7 +28,8 @@ async def _verified_hosted_key(db, *, agent_id, did, stable_id, key_id, invalid_
         """SELECT assertion_canonical, assertion_signature
            FROM {{tables.agent_encryption_keys}}
            WHERE agent_id=$1 AND encryption_key_id=$2 AND revoked_at IS NULL""",
-        UUID(str(agent_id)), key_id,
+        UUID(str(agent_id)),
+        key_id,
     )
     if row is None:
         return False
@@ -34,7 +39,9 @@ async def _verified_hosted_key(db, *, agent_id, did, stable_id, key_id, invalid_
             return False
         assertion["signature"] = row["assertion_signature"]
         validate_encryption_key_assertion(
-            assertion, current_did_key=did, stable_id=stable_id or None,
+            assertion,
+            current_did_key=did,
+            stable_id=stable_id or None,
             now=datetime.now(timezone.utc),
         )
         if assertion["encryption_key_id"] != key_id:
@@ -46,7 +53,11 @@ async def _verified_hosted_key(db, *, agent_id, did, stable_id, key_id, invalid_
 
 
 async def require_non_custodial_recipients(
-    db, envelope: dict, recipients: list[dict], *, sender: MessagingAuth,
+    db,
+    envelope: dict,
+    recipients: Sequence[Mapping[str, Any]],
+    *,
+    sender: MessagingAuth,
 ) -> None:
     """Only a verified hosted sender key exempts managed encrypted-v2 sends.
 
@@ -56,15 +67,21 @@ async def require_non_custodial_recipients(
     """
     wraps = envelope.get("key_wraps")
     if isinstance(wraps, list) and wraps:
-        keys = [wrap.get("sender_encryption_key_id") if isinstance(wrap, dict) else None for wrap in wraps]
+        keys = [
+            wrap.get("sender_encryption_key_id") if isinstance(wrap, dict) else None
+            for wrap in wraps
+        ]
         if any(not isinstance(key, str) or not key for key in keys) or len(set(keys)) != 1:
             raise FederationAuthorityError("federation_envelope_invalid")
         sender_ref = envelope.get("from")
         if not isinstance(sender_ref, dict) or sender_ref.get("encryption_key_id") != keys[0]:
             raise FederationAuthorityError("federation_envelope_invalid")
         if await _verified_hosted_key(
-            db, agent_id=sender.agent_id, did=sender.did_key,
-            stable_id=(sender.did_aw or "").strip(), key_id=keys[0],
+            db,
+            agent_id=sender.agent_id,
+            did=sender.did_key,
+            stable_id=(sender.did_aw or "").strip(),
+            key_id=keys[0],
             invalid_reason="federation_envelope_invalid",
         ):
             return
@@ -74,7 +91,10 @@ async def require_non_custodial_recipients(
         return  # Malformed envelopes still go through the shared validator.
     for recipient in recipients:
         did = str(recipient.get("did_key") or recipient.get("current_did_key") or "").strip()
-        reference = next((item for item in references if isinstance(item, dict) and item.get("did") == did), None)
+        reference = next(
+            (item for item in references if isinstance(item, dict) and item.get("did") == did),
+            None,
+        )
         if not reference:
             continue
         key_id = reference.get("encryption_key_id")
@@ -84,15 +104,20 @@ async def require_non_custodial_recipients(
         # optional actor projection cannot select it or suppress this check.
         stable_id = str(recipient.get("did_aw") or "").strip()
         rows = await db.get_manager("aweb").fetch_all(
-            """SELECT agent_id FROM {{tables.agents}}
+            f"""SELECT agent_id FROM {{{{tables.agents}}}}
                WHERE deleted_at IS NULL AND did_key=$1
-                 AND ($2::text='' OR (did_aw=$2 AND did_aw_verified_key=did_key))
-               ORDER BY agent_id""", did, stable_id,
+                 AND ($2::text='' OR (did_aw=$2 AND {verified_key_sql()}))
+               ORDER BY agent_id""",
+            did,
+            stable_id,
         )
         for row in rows:
             if await _verified_hosted_key(
-                db, agent_id=row["agent_id"], did=did,
-                stable_id=stable_id, key_id=key_id,
+                db,
+                agent_id=row["agent_id"],
+                did=did,
+                stable_id=stable_id,
+                key_id=key_id,
                 invalid_reason="recipient_encryption_assertion_invalid_or_stale",
             ):
                 raise FederationAuthorityError("recipient_custodial_no_e2ee")

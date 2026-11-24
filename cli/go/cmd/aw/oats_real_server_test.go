@@ -192,8 +192,12 @@ func TestOATSRealTeamNameTakenPreservesThePrivateTeamBoundary(t *testing.T) {
 	world := newRealCommandWorld(t)
 	t.Setenv("HOME", world.UserHome)
 	_, err := ensureLocalTeamRegistered(world.Context, world.Registry, world.Stack.RegistryURL, world.Domain, "backend", "Existing private team", world.NamespaceKey)
-	if err == nil || errorCodeOf(err) != codeTeamNameTaken || !strings.HasSuffix(err.Error(), "Restore this team's controller key to reuse it, or choose another --name.") {
-		t.Fatalf("private name conflict lost code or action: %v", err)
+	if err == nil || !strings.HasPrefix(err.Error(), "create team at registry: ") {
+		t.Fatalf("private name conflict lost the registry refusal: %v", err)
+	}
+	refusal := errorEnvelope(err, err.Error()).Error
+	if refusal.Code != "http_error" || refusal.HTTPStatus != 409 || refusal.Classification != codeTeamNameTaken {
+		t.Fatalf("unexpected private team refusal: %+v", refusal)
 	}
 	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
 		t.Fatal(err)

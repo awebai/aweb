@@ -245,15 +245,7 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 // --registry origin when the record names none. A --registry that
 // contradicts the record is refused.
 func domainRegistryURL(authority awid.DomainAuthority, override string) (string, error) {
-	named := strings.TrimSpace(authority.RegistryURL)
-	override = strings.TrimSpace(override)
-	if override == "" {
-		return named, nil
-	}
-	if named != "" && named != awid.DefaultAWIDRegistryURL && named != override {
-		return "", usageError("--registry %s contradicts the registry %s that %s names", override, named, authority.DNSName)
-	}
-	return override, nil
+	return resolveRegistryAuthority(context.Background(), registryAuthorityRequest{Kind: registryDNSAuthority, Authority: authority, Override: override})
 }
 
 // prepareRequestedHuman is init without --as-root: it only prepares a human
@@ -344,12 +336,13 @@ func prepareHuman(domain, registryURL, path string, opts idHumanInitOptions) (*a
 	}
 	defer wipeBytes(key)
 	rec := &awconfig.HumanRecord{
-		StableID:    awid.ComputeStableID(public),
-		DIDKey:      awid.ComputeDIDKey(public),
-		Domain:      domain,
-		RegistryURL: registryURL,
-		State:       awconfig.HumanPrepared,
-		Path:        path,
+		StableID:               awid.ComputeStableID(public),
+		DIDKey:                 awid.ComputeDIDKey(public),
+		Domain:                 domain,
+		RegistryURL:            registryURL,
+		RegistryOperatorOrigin: operatorRegistryOrigin(registryURL, ""),
+		State:                  awconfig.HumanPrepared,
+		Path:                   path,
 	}
 	passphrase, err := opts.Prompt(fmt.Sprintf("Choose a passphrase for your human key %s (at least %d characters): ", rec.StableID, awid.HumanKeyMinPassphrase))
 	defer wipeBytes(passphrase)

@@ -743,10 +743,9 @@ to a participant who kept the old `cek` or plaintext.
 
 Participant removal is durable membership state, not chat turn-completion.
 `sender_leaving=true` means the sender ended its current wait/turn and remains
-eligible for future wraps. A group member is removed only by an explicit
-participant-removal operation recorded on the session participant state, such as
-`chat_participants.left_at`; future send validation and continuation target
-discovery must use that active participant set.
+eligible for future wraps. Lifecycle removal deletes the group member's
+participant row. Future send validation and continuation target discovery use
+the remaining participant rows.
 
 Federated group chat is not currently enabled. A v2 chat envelope that would
 require delivery to more than one remote federation target,

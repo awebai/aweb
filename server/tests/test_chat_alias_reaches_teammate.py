@@ -16,6 +16,8 @@ import pytest
 from chat_pair_support import route_pair, _actor, _send, _signed_team_headers  # noqa: F401
 from test_cli_human_reply import _cli, _pem
 
+__all__ = ["route_pair"]
+
 
 def _cli_home(tmp_path, actor):
     """The actor's identity home, written as the CLI writes it."""
@@ -33,6 +35,18 @@ def _cli_home(tmp_path, actor):
         "aweb_url": node.origin, "memberships": [{**member, "workspace_id": str(actor.workspace)}],
     }))
     _pem(home / "signing.key", "ED25519 PRIVATE KEY", actor.sk)
+    # The actor's one published encryption key, stored as the CLI stores it.
+    assertion = actor.encryption_key
+    _pem(home / "encryption.key", "X25519 PRIVATE KEY", actor.encryption_private)
+    (home / "assertion.json").write_text(json.dumps(assertion))
+    (home / "encryption.yaml").write_text(json.dumps({
+        "active_key_id": assertion["encryption_key_id"], "keys": [{
+            "key_id": assertion["encryption_key_id"], "public_key": assertion["encryption_public_key"],
+            "private_key_path": "encryption.key", "assertion_path": "assertion.json",
+            **{key: assertion[key] for key in ("created_at", "not_before", "expires_at")},
+            "published_at": assertion["created_at"],
+        }],
+    }))
     if actor.stable:
         (home / "identity.yaml").write_text(json.dumps({
             "did": actor.did, "stable_id": actor.stable, "address": actor.address,
@@ -110,12 +124,14 @@ async def test_chat_to_a_teammate_alias_never_reaches_an_outsider_with_that_name
 
 
 async def _cli_result(binary, cwd, env, *args):
+    """The exit code, stdout (the --json document) and all output, stderr
+    included (a read with no local encryption key warns there)."""
     process = await asyncio.create_subprocess_exec(
         str(binary), *args, cwd=cwd, env=env,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
     )
-    output, _ = await asyncio.wait_for(process.communicate(), 30)
-    return process.returncode, output.decode()
+    stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
+    return process.returncode, stdout.decode(), stdout.decode() + stderr.decode()
 
 
 @pytest.mark.usefixtures("source_cli_binary")
@@ -144,7 +160,7 @@ async def test_extend_wait_to_a_teammate_alias_never_posts_into_an_outsiders_ses
         "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1", outsider_session,
     )
 
-    code, output = await _cli_result(binary, root, env, "chat", "extend-wait", "--plaintext", "bob", "one more minute", "--json")
+    code, stdout, output = await _cli_result(binary, root, env, "chat", "extend-wait", "--plaintext", "bob", "one more minute", "--json")
 
     assert await pair.target.db.fetch_value(
         "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1", outsider_session,
@@ -152,7 +168,7 @@ async def test_extend_wait_to_a_teammate_alias_never_posts_into_an_outsiders_ses
     assert pair.source.calls.count(("POST", "/v1/federation/messages")) == federated_before
     if earlier_teammate_session:
         assert code == 0, output
-        assert json.loads(output)["session_id"] == teammate_session
+        assert json.loads(stdout)["session_id"] == teammate_session
     else:
         assert code != 0, output
         assert "no conversation found" in output, output
@@ -186,13 +202,68 @@ async def test_reading_a_teammate_alias_uses_the_teammates_session_never_the_out
     args = ["chat", command, "bob", "--json"]
     if command == "listen":
         args += ["--wait", "1"]
-    code, output = await _cli_result(binary, root, env, *args)
+    code, stdout, output = await _cli_result(binary, root, env, *args)
 
     assert "multiple conversations match" not in output, output
     assert first_contact.fields["body"] not in output, "the outsider's message was shown"
     if earlier_teammate_session:
         assert code == 0, output
-        assert json.loads(output)["session_id"] == teammate_session, output
+        assert json.loads(stdout)["session_id"] == teammate_session, output
     else:
         assert code != 0, output
         assert "no conversation found" in output or "no pending conversation" in output, output
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_encrypted_first_chat_to_a_teammate_alias_is_encrypted_to_the_teammate(route_pair, tmp_path):
+    pair = route_pair
+    me = pair.target.global_actor
+    teammate = await _actor(pair.target, "bob", global_identity=False)
+    outsider = await _actor(pair.source, "bob", global_identity=True)
+    root, env = _cli_home(tmp_path, me)
+    teammate_root, teammate_env = _cli_home(tmp_path, teammate)
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
+
+    sent = await _cli(binary, root, env, "chat", "send-and-leave", "--e2ee", "--start-conversation",
+                      "bob", "encrypted first contact", "--json")
+
+    stored = await pair.target.db.fetch_one(
+        "SELECT body, encrypted_ciphertext, encrypted_envelope, encrypted_key_wraps"
+        " FROM {{tables.chat_messages}} WHERE message_id=$1", sent["message_id"],
+    )
+    assert stored["encrypted_ciphertext"], dict(stored)
+    assert "encrypted first contact" not in (stored["body"] or ""), dict(stored)
+    envelope, wraps = (json.loads(v) if isinstance(v, str) else v
+                       for v in (stored["encrypted_envelope"], stored["encrypted_key_wraps"]))
+    assert [r["did"] for r in envelope["recipients"]] == [teammate.did], envelope["recipients"]
+    assert [w["recipient_did"] for w in wraps if w["wrap_purpose"] == "delivery"] == [teammate.did], wraps
+    dids, addresses = await _participants(pair.target, sent["session_id"])
+    assert teammate.did in dids, dids
+    assert outsider.did not in dids and outsider.stable not in dids, (dids, addresses)
+    assert outsider.address not in addresses, (dids, addresses)
+    history = await _cli(binary, teammate_root, teammate_env, "chat", "history", me.alias, "--json")
+    assert "encrypted first contact" in json.dumps(history), history
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["pending", "open", "history", "listen", "show-pending"])
+async def test_a_chat_read_whose_encryption_key_cannot_load_says_so(route_pair, tmp_path, command):
+    pair = route_pair
+    me = pair.target.global_actor
+    teammate = await _actor(pair.target, "bob", global_identity=False)
+    root, env = _cli_home(tmp_path, me)
+    teammate_root, teammate_env = _cli_home(tmp_path, teammate)
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
+    await _cli(binary, root, env, "chat", "send-and-leave", "--plaintext", "--start-conversation",
+               "bob", "waiting for bob", "--json")
+    (teammate_root / ".aw" / "encryption.key").unlink()
+
+    args = ["chat", command] + ([] if command == "pending" else [me.alias]) + ["--json"]
+    if command == "listen":
+        args += ["--wait", "1"]
+    code, _, output = await _cli_result(binary, teammate_root, teammate_env, *args)
+
+    assert code != 0, output
+    assert "encryption.key" in output, output

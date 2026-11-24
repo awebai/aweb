@@ -87,7 +87,7 @@ afterAll(async () => {
 });
 
 describe("pin store compare-and-set delegation", () => {
-  test("barriers stale Node writers before distinct-address and same-address CAS races", async () => {
+  test("barriers stale Node writers: distinct addresses both commit, the same address refuses one", async () => {
     for (const sameAddress of [false, true]) {
       for (let iteration = 0; iteration < 8; iteration += 1) {
         const dir = await mkdtemp(join(tmpdir(), "aweb-pin-cas-race-"));
@@ -114,20 +114,24 @@ describe("pin store compare-and-set delegation", () => {
           await waitForBarrier([aliceReady, bobReady]);
           await writeFile(releasePath, "release\n", "utf-8");
           const results = await Promise.allSettled(commits);
-          expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-          const rejected = results.filter((result) => result.status === "rejected");
-          expect(rejected).toHaveLength(1);
-          expect(rejected[0]?.reason).toBeInstanceOf(PinStoreCASConflictError);
-          expect(String(rejected[0]?.reason)).toMatch(/changed since it was read/);
-
           const persisted = PinStore.fromYAML(await readFile(path, "utf-8"));
-          expect(persisted.pins.size).toBe(1);
-          expect(persisted.addresses.size).toBe(1);
           if (sameAddress) {
+            // The same address pinned to two keys is a real conflict.
+            expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+            const rejected = results.filter((result) => result.status === "rejected");
+            expect(rejected).toHaveLength(1);
+            expect(rejected[0]?.reason).toBeInstanceOf(PinStoreCASConflictError);
+            expect(String(rejected[0]?.reason)).toMatch(/changed since it was read/);
+            expect(persisted.pins.size).toBe(1);
+            expect(persisted.addresses.size).toBe(1);
             expect([aliceDID, bobDID]).toContain(persisted.addresses.get(aliceAddress));
           } else {
-            const persistedAddresses = [...persisted.addresses.keys()];
-            expect(persistedAddresses.some((address) => address === aliceAddress || address === bobAddress)).toBe(true);
+            // Different addresses commute: the later writer applies its pin
+            // on top of the earlier one's, and both are kept.
+            expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2);
+            expect(persisted.pins.size).toBe(2);
+            expect(persisted.addresses.get(aliceAddress)).toBe(aliceDID);
+            expect(persisted.addresses.get(bobAddress)).toBe(bobDID);
           }
         } finally {
           await writeFile(releasePath, "release\n", "utf-8").catch(() => {});

@@ -30,7 +30,7 @@ to refresh it.
 - `--human-domain string Namespace of the selected human ID`
 - `--identity-home string Use this absolute credential directory (contains signing.key or grant.yaml; usually <workspace>/.aw, not its parent)`
 - `--json Output as JSON`
-- `--server-name string Override the server host or name for this command`
+- `--server-name string Server label for workspace commands; service URL for auth and admission`
 - `--trace Trace redacted HTTP requests and responses to stderr`
 
 ## Errors under `--json`
@@ -107,6 +107,7 @@ Flags:
 Attach an email address to your CLI-created account
 
 Flags:
+- `--controller-claim-file string Controller-signed claim artifact from aw id team claim-human-request (member credential still required)`
 - `--email string Email address to attach to the current CLI-created account`
 - `-h, --help help for claim-human`
 - `--mock-url string Override the bootstrap base URL for local development`
@@ -127,9 +128,10 @@ team-architecture flows:
 By default, init creates or updates the clearly marked aweb section in
 AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
 
-With a team API key, another dashboard-created agent or an aw team invite joins
-this same team. Without a key, creating a new account/team in a fresh directory
-creates a separate team; use aw team invite / aw team join to join this one.
+A supplied AWEB_API_KEY, including a workspace key returned by CLI signup,
+joins the team selected by the service. An aw team invite can also join it.
+Creating a new account/team in a fresh directory creates a separate team.
+Use aw team invite / aw team join to add a member to that team.
 
 The channel plugin or host wake broker is the preferred notification path.
 --setup-hooks explicitly enables a Claude Code chat-only polling fallback:
@@ -138,6 +140,9 @@ After confirming channel/broker delivery, use --remove-notify-hook on its own
 for backed-up removal of exact aw notify PostToolUse entries from the current
 directory's and, inside a git repo, the repository root's .claude/settings.json.
 Init and upgrades never remove them implicitly.
+
+Use --join-from to create a child in a fresh directory from a selected native
+creator workspace.
 
 Flags:
 - `--admission-team-id string Add an agent through host human admission for this explicit team ID`
@@ -168,6 +173,8 @@ Flags:
 - `--setup-channel Set up Claude Code aweb-channel plugin for real-time coordination`
 - `--setup-hooks Enable Claude Code chat-only polling after tool calls (explicit fallback; no mail or idle wake-ups)`
 - `--team string Name of the team --new-team creates on a local (localhost) awid registry (default: default)`
+- `--token-file string Read the join invitation from this private file instead of --invite`
+- `--token-stdin Read one join invitation from stdin through EOF (max 65536 bytes)`
 - `--url string Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
 - `--username string Hosted username to create`
 - `--workspace-key string OATS canonical format-1 workspace key for --workspace-team`
@@ -240,6 +247,8 @@ Flags:
 Legacy convenience for existing users: create a sibling git worktree and initialize a new coordination workspace in it.
 
 New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.
+
+If the service cannot report the team for AWEB_API_KEY, creation uses the current workspace's existing authority.
 
 Flags:
 - `-h, --help help for add-worktree`
@@ -424,6 +433,7 @@ Subcommands:
 - `parent` Request and import your own certificate from a parent
 - `proof` Export a message signed by your human key with its saved evidence
 - `register` Register the current global identity at the configured registry
+- `registry-trust` Trust an operator-selected registry recorded in this identity home
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
 - `revoke` Revoke a registered identity's ID-tree authority
@@ -1173,6 +1183,15 @@ Register the current global identity at the configured registry
 Flags:
 - `-h, --help help for register`
 
+## `id registry-trust`
+
+### `id registry-trust`
+
+Allow aw to reach an existing stored registry origin over private networks or HTTP. Only run this for an origin you operate or trust. The command does not change the selected registry.
+
+Flags:
+- `-h, --help help for registry-trust`
+
 ## `id request`
 
 ### `id request`
@@ -1303,6 +1322,7 @@ Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Protocol/admin: add a member by signing a team certificate
 - `check-invite` Inspect a saved invite and check its exact attempted certificate online
+- `claim-human-request` Sign a prospective ownership claim with a local team controller key
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Create a hosted sibling team or a customer-controlled AWID team
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
@@ -1400,6 +1420,23 @@ Inspect a saved invite and check its exact attempted certificate online
 Flags:
 - `-h, --help help for check-invite`
 - `--invite-id string Saved local invite_id to inspect`
+
+## `id team claim-human-request`
+
+### `id team claim-human-request`
+
+Write a controller claim JSON artifact to stdout. No member credential is created.
+Cloud checks the registry's current controller before accepting ownership.
+Submit this file from an existing member home with aw claim-human --controller-claim-file <file>.
+The artifact is valid for five minutes; regenerate it if it expires.
+
+Flags:
+- `--email string Prospective owner's email`
+- `-h, --help help for claim-human-request`
+- `--namespace string Namespace domain`
+- `--team string Team name`
+- `--timestamp string RFC3339 timestamp (defaults to now; five-minute window)`
+- `--username string Prospective owner's username`
 
 ## `id team cleanup-cloud`
 
@@ -2073,6 +2110,12 @@ Flags:
 
 Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.
 
+Creation authority comes from the creator's native signing workspace, never its stored workspace API key. A supplied person's setup key takes the API path. A supplied workspace key uses the signing workspace for the requested team. Older servers and unknown api_key_kind values keep the existing API path.
+
+Using this workspace's signed invitation; the supplied agent API key is not creating the child.
+
+This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>.
+
 Flags:
 - `--attach Attach or switch to the tmux session after --start launch (default true)`
 - `--blueprint string Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)`
@@ -2119,6 +2162,8 @@ Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.
 With --org, create a hosted team using human CLI authorization and return an invite.
 This explicit mode creates no local identity or profile; accept the invite separately.
 
+In a fresh directory, a supplied AWEB_API_KEY uses the service's workspace bootstrap.
+
 Flags:
 - `--agent stringArray Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]`
 - `--blueprint string With --agent/--profile, default public Library blueprint for profile-only selectors; without agents, materialize all profiles in a local blueprint directory`
@@ -2145,7 +2190,13 @@ Flags:
 
 ### `team admin extend`
 
-Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY in a workspace with an active team uses that team as an assertion against the API key's team; explicit --api-key bypasses the workspace assertion.
+Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. A person's setup key (explicit --api-key or AWEB_API_KEY) takes the API path; a workspace key selects signed creation instead. With no current creator, exactly one discovered agent workspace is selected and named; several candidates require choosing a workspace or its --identity-home.
+
+Creation authority comes from the creator's native signing workspace, never its stored workspace API key. A supplied person's setup key takes the API path. A supplied workspace key uses the signing workspace for the requested team. Older servers and unknown api_key_kind values keep the existing API path.
+
+Using this workspace's signed invitation; the supplied agent API key is not creating the child.
+
+This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>.
 
 Flags:
 - `--api-key string Team API key for extending a team (overrides AWEB_API_KEY)`
@@ -2367,6 +2418,8 @@ team certificate, registers a new certificate, and records the controller-author
 transition. When a real local home has lost signing.key, --generate-new-key creates
 and retains a replacement key without overwriting an existing one. Hosted teams require
 the pending AC owner/admin integration or operator support.
+
+The new key will not have the old key's mail or chat conversations.
 
 Flags:
 - `--aweb-url string Aweb service URL override`
@@ -2816,7 +2869,7 @@ Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted wait extension; fails closed if encryption keys are missing`
 - `-h, --help help for extend-wait`
-- `--plaintext Send explicit server-readable plaintext wait extension (currently the default)`
+- `--plaintext Send explicit server-readable plaintext wait extension (by default it inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)`
 
 ## `chat history`
 
@@ -2882,7 +2935,7 @@ Flags:
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send`
 - `--leave Leave the conversation after sending`
-- `--plaintext Send explicit server-readable plaintext chat (currently the default)`
+- `--plaintext Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)`
 - `--session-id string Existing chat session id`
 
 ## `chat send-and-leave`
@@ -2904,7 +2957,7 @@ Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send-and-leave`
-- `--plaintext Send explicit server-readable plaintext chat (currently the default)`
+- `--plaintext Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)`
 - `--start-conversation Start a new conversation instead of continuing an existing one`
 
 ## `chat send-and-wait`
@@ -2926,7 +2979,7 @@ Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send-and-wait`
-- `--plaintext Send explicit server-readable plaintext chat (currently the default)`
+- `--plaintext Send explicit server-readable plaintext chat (the default for a new conversation; a continuation inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)`
 - `--start-conversation Start conversation (5min default wait)`
 - `--wait int Seconds to wait for reply (default 120)`
 
@@ -3470,7 +3523,7 @@ Flags:
 - `--conversation-id string Existing mail conversation to continue (no recipient or --subject)`
 - `--e2ee Send E2E encrypted mail; fails closed if encryption keys are missing`
 - `-h, --help help for send`
-- `--plaintext Send explicit server-readable plaintext mail (currently the default)`
+- `--plaintext Send explicit server-readable plaintext mail (the default for a new conversation; --conversation-id inherits its conversation's encryption, and is plaintext, with a notice, when that cannot be read or this identity cannot encrypt)`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Title of the new thread (required with a recipient)`
 - `--to string Recipient name within the active team, or a routable address`

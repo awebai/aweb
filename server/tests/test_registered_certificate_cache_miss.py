@@ -149,7 +149,7 @@ async def test_revoked_stays_refused_without_miss_refresh(world):
     world.clock[0] += 121
     await world.registry.get_team_revocations("acme.com", "backend")
     error = await _refused(world, "cert-revoked")
-    assert (error.status_code, error.detail) == (401, "revoked")
+    assert (error.status_code, error.detail["code"]) == (401, "certificate_revoked")
     assert world.list_reads == 0
 
 
@@ -241,7 +241,7 @@ async def test_key_rotation_and_list_miss_cannot_bypass_current_revocation(world
     world.registered.append("cert-new")
     world.revoked.append("cert-new")
     error = await _refused(world, "cert-new", signer=(new, new_did))
-    assert (error.status_code, error.detail) == (401, "revoked")
+    assert (error.status_code, error.detail["code"]) == (401, "certificate_revoked")
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/awebai/aw/canonicaljson"
@@ -33,7 +32,7 @@ func RegisterIdentity(
 	stableID string,
 	signingKey ed25519.PrivateKey,
 ) error {
-	registryBaseURL, err := canonicalServerOrigin(registryBaseURL)
+	registryBaseURL, err := CanonicalRegistryServerOrigin(registryBaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid registry URL: %w", err)
 	}
@@ -45,18 +44,6 @@ func RegisterIdentity(
 		return nil
 	}
 	return err
-}
-
-func canonicalRegistryServerOrigin(raw string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimRight(parsed.Path, "/") == "/api" {
-		parsed.Path = ""
-		parsed.RawPath = ""
-	}
-	return canonicalServerOrigin(parsed.String())
 }
 
 func stableIdentityStateHash(stableID string, did string) string {

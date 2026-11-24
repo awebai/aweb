@@ -469,14 +469,28 @@ func TestRotateKeyUnderProductionRateLimitsReadsRecordsInPages(t *testing.T) {
 	}
 
 	// The production limiter is on: per-record reads, two per member, would not fit.
-	limited := false
-	for attempt := 0; attempt < 61 && !limited; attempt++ {
+	requireAttestationReadLimit(t, http.StatusOK, func() error {
 		_, err := f.registry.GetMemberCustodyRecord(context.Background(), f.registryURL, f.domain, f.team, "bulk-00")
+		return err
+	})
+}
+
+func requireAttestationReadLimit(t *testing.T, expectedStatus int, read func() error) {
+	t.Helper()
+	const limit = 60
+	for request := 1; request <= limit+1; request++ {
+		err := read()
 		code, _ := registryStatusCode(err)
-		limited = code == http.StatusTooManyRequests
-	}
-	if !limited {
-		t.Fatal("61 per-record reads were not rate limited; the fixture is not running the production buckets")
+		if err == nil {
+			code = http.StatusOK
+		}
+		want := expectedStatus
+		if request == limit+1 {
+			want = http.StatusTooManyRequests
+		}
+		if code != want {
+			t.Fatalf("attestation read %d in one production window: status %d, want %d (error: %v)", request, code, want, err)
+		}
 	}
 }
 
@@ -501,19 +515,13 @@ func TestRateLimitedFixturesCountIndependently(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	read := func(registryURL string) int {
+	read := func(registryURL string) error {
 		_, err := registry.GetTeamCustodianRecord(context.Background(), registryURL, "independent.example", "ops", "none")
-		code, _ := registryStatusCode(err)
-		return code
+		return err
 	}
-	limited := false
-	for attempt := 0; attempt < 61 && !limited; attempt++ {
-		limited = read(first) == http.StatusTooManyRequests
-	}
-	if !limited {
-		t.Fatal("61 reads did not exhaust the first fixture's attestation_record_get window")
-	}
-	if code := read(second); code == http.StatusTooManyRequests {
-		t.Fatal("the second fixture is limited by the first one's reads: the fixtures share a limiter")
+	requireAttestationReadLimit(t, http.StatusNotFound, func() error { return read(first) })
+	err := read(second)
+	if code, _ := registryStatusCode(err); code != http.StatusNotFound {
+		t.Fatalf("the untouched fixture returned status %d, want 404: %v", code, err)
 	}
 }

@@ -30,8 +30,7 @@ var contactsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		printOutput(resp, formatContactsList)
-		return nil
+		return printOutput(resp, formatContactsList)
 	},
 }
 
@@ -54,8 +53,7 @@ var contactsAddCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		printOutput(resp, formatContactAdd)
-		return nil
+		return printOutput(resp, formatContactAdd)
 	},
 }
 
@@ -95,11 +93,10 @@ var contactsRemoveCmd = &cobra.Command{
 			return err
 		}
 		if jsonFlag {
-			printJSON(resp)
-		} else {
-			fmt.Fprintf(commandStdout, "Removed contact %s\n", address)
+			return printJSON(resp)
 		}
-		return nil
+		_, err = fmt.Fprintf(commandStdout, "Removed contact %s\n", address)
+		return err
 	},
 }
 

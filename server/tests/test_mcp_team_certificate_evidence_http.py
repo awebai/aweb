@@ -20,6 +20,8 @@ from aweb.mcp.server import create_mcp_app
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _signed_identity_headers, _signed_team_headers
 
+__all__ = ["privacy_app"]
+
 
 TEAM_TOOL_REFUSAL = {
     "error": "This tool requires team context. Use a team certificate."

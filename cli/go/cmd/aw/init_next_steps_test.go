@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -21,7 +20,7 @@ func initNextStepCommands(steps []initNextStep) string {
 // command and why, the same list in text and --json.
 func TestInitNextStepsFitThePathTaken(t *testing.T) {
 	const wd = "/work/alice"
-	hosted := initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}
+	hosted := initResult{Path: initPathNewTeam, ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}
 	for _, tc := range []struct {
 		name   string
 		result initResult
@@ -54,7 +53,7 @@ func TestInitNextStepsFitThePathTaken(t *testing.T) {
 		},
 		{
 			name:   "self-hosted team",
-			result: initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"},
+			result: initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://localhost:8000"},
 			want:   []string{"aw init --join-from /work/alice --name <name>"},
 			absent: []string{"aw claim-human", "aweb.ai/aida"},
 		},
@@ -67,7 +66,7 @@ func TestInitNextStepsFitThePathTaken(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result := tc.result
-			steps := initNextSteps(&result, wd, false, false)
+			steps := initNextStepsAfter(&result, wd, initSetupDone{DocsInjected: false, ChannelSetUp: false})
 			commands := initNextStepCommands(steps)
 			for _, step := range steps {
 				if strings.TrimSpace(step.Command) == "" || strings.TrimSpace(step.Why) == "" {
@@ -85,7 +84,7 @@ func TestInitNextStepsFitThePathTaken(t *testing.T) {
 				}
 			}
 			// The text lists the same steps.
-			text := strings.Join(initNextStepLines(steps), "\n")
+			text := strings.Join(initStepLines(steps, true), "\n")
 			for _, step := range steps {
 				if !strings.Contains(text, step.Command) || !strings.Contains(text, step.Why) {
 					t.Fatalf("text does not list %+v:\n%s", step, text)
@@ -97,14 +96,14 @@ func TestInitNextStepsFitThePathTaken(t *testing.T) {
 
 // Docs injection and channel setup that already happened are not suggested.
 func TestInitNextStepsOmitWhatInitAlreadyDid(t *testing.T) {
-	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
-	commands := initNextStepCommands(initNextSteps(&result, "/work/alice", true, true))
+	result := initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	commands := initNextStepCommands(initNextStepsAfter(&result, "/work/alice", initSetupDone{DocsInjected: true, ChannelSetUp: true}))
 	for _, absent := range []string{"aw init --inject-docs", "aw init --setup-channel"} {
 		if strings.Contains(commands, absent) {
 			t.Fatalf("unexpected %q in:\n%s", absent, commands)
 		}
 	}
-	commands = initNextStepCommands(initNextSteps(&result, "/work/alice", false, false))
+	commands = initNextStepCommands(initNextStepsAfter(&result, "/work/alice", initSetupDone{DocsInjected: false, ChannelSetUp: false}))
 	for _, want := range []string{"aw init --inject-docs", "aw init --setup-channel"} {
 		if !strings.Contains(commands, want) {
 			t.Fatalf("missing %q in:\n%s", want, commands)
@@ -153,19 +152,13 @@ func TestInitJSONOnTheSelfHostedPathPrintsItsNextSteps(t *testing.T) {
 	cmd.ResetFlagsForTest()
 	cmd.Command.SetIn(strings.NewReader(""))
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	realStdout := os.Stdout
-	os.Stdout = writer
+	var err error
 	dir := t.TempDir()
-	withTestWorkingDir(t, dir, func() {
-		err = runInit(&cmd.Command, nil)
+	raw := captureStdout(t, func() {
+		withTestWorkingDir(t, dir, func() {
+			err = runInit(&cmd.Command, nil)
+		})
 	})
-	os.Stdout = realStdout
-	writer.Close()
-	raw, _ := io.ReadAll(reader)
 	if err != nil {
 		t.Fatalf("init: %v\n%s", err, raw)
 	}
@@ -173,7 +166,7 @@ func TestInitJSONOnTheSelfHostedPathPrintsItsNextSteps(t *testing.T) {
 		NextSteps []initNextStep `json:"next_steps"`
 		Guide     string         `json:"guide"`
 	}
-	if err := json.Unmarshal(raw, &out); err != nil {
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		t.Fatalf("not one JSON document: %v\n%s", err, raw)
 	}
 	commands := initNextStepCommands(out.NextSteps)
@@ -187,7 +180,7 @@ func TestInitJSONOnTheSelfHostedPathPrintsItsNextSteps(t *testing.T) {
 func TestInitNextStepsStartWithAServerCheck(t *testing.T) {
 	for _, path := range []initPath{initPathNewTeam, initPathAPIKey, initPathJoined, initPathReconnect} {
 		result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000", Path: path}
-		steps := initNextSteps(&result, t.TempDir(), true, true)
+		steps := initNextStepsAfter(&result, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: true})
 		if len(steps) == 0 || steps[0].Command != "aw workspace status" {
 			t.Fatalf("path %q does not start with the server check: %+v", path, steps)
 		}
@@ -198,7 +191,7 @@ func TestInitNextStepsStartWithAServerCheck(t *testing.T) {
 // aw team list, which lists only this agent's own memberships.
 func TestInitNextStepsJoinedPointToTheTeamNotTeamList(t *testing.T) {
 	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000", Path: initPathJoined}
-	commands := initNextStepCommands(initNextSteps(&result, t.TempDir(), true, true))
+	commands := initNextStepCommands(initNextStepsAfter(&result, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: true}))
 	if strings.Contains(commands, "aw team list") {
 		t.Fatalf("joined steps point to aw team list:\n%s", commands)
 	}
@@ -207,14 +200,14 @@ func TestInitNextStepsJoinedPointToTheTeamNotTeamList(t *testing.T) {
 // Only hosted onboarding creates a separate account; on a self-hosted
 // stack the step only says how to add an agent to this team.
 func TestInitNextStepsSelfHostedDoNotClaimASeparateAccount(t *testing.T) {
-	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
-	for _, step := range initNextSteps(&result, t.TempDir(), true, true) {
+	result := initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	for _, step := range initNextStepsAfter(&result, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: true}) {
 		if strings.Contains(step.Why, "account") || strings.Contains(step.Why, "separate team") {
 			t.Fatalf("self-hosted step claims hosted behaviour: %+v", step)
 		}
 	}
-	hosted := initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}
-	text := strings.Join(initNextStepLines(initNextSteps(&hosted, t.TempDir(), true, true)), "\n")
+	hosted := initResult{Path: initPathNewTeam, ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}
+	text := strings.Join(initStepLines(initNextStepsAfter(&hosted, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: true}), true), "\n")
 	if !strings.Contains(text, "creates a separate account and team instead") || strings.Contains(text, "cannot message") {
 		t.Fatalf("hosted steps do not say init elsewhere creates a separate account and team, or claim it cannot be reached:\n%s", text)
 	}
@@ -222,16 +215,16 @@ func TestInitNextStepsSelfHostedDoNotClaimASeparateAccount(t *testing.T) {
 
 // add-worktree is offered only inside a git worktree.
 func TestInitNextStepsOfferWorktreesOnlyInAGitRepo(t *testing.T) {
-	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	result := initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
 	plain := t.TempDir()
-	if commands := initNextStepCommands(initNextSteps(&result, plain, true, true)); strings.Contains(commands, "aw workspace add-worktree") {
+	if commands := initNextStepCommands(initNextStepsAfter(&result, plain, initSetupDone{DocsInjected: true, ChannelSetUp: true})); strings.Contains(commands, "aw workspace add-worktree") {
 		t.Fatalf("worktree step outside a git repo:\n%s", commands)
 	}
 	repo := t.TempDir()
 	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}
-	if commands := initNextStepCommands(initNextSteps(&result, repo, true, true)); !strings.Contains(commands, "aw workspace add-worktree <role>") {
+	if commands := initNextStepCommands(initNextStepsAfter(&result, repo, initSetupDone{DocsInjected: true, ChannelSetUp: true})); !strings.Contains(commands, "aw workspace add-worktree <role>") {
 		t.Fatalf("no worktree step inside a git repo:\n%s", commands)
 	}
 }
@@ -239,8 +232,8 @@ func TestInitNextStepsOfferWorktreesOnlyInAGitRepo(t *testing.T) {
 // aw init --setup-channel installs the Claude Code plugin, so the manual
 // install is not a second step; Pi is named once.
 func TestInitNextStepsNameEachChannelPathOnce(t *testing.T) {
-	result := initResult{ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
-	text := strings.Join(initNextStepLines(initNextSteps(&result, t.TempDir(), true, false)), "\n")
+	result := initResult{Path: initPathNewTeam, ServerName: "localhost", ExportBaseURL: "http://localhost:8000"}
+	text := strings.Join(initStepLines(initNextStepsAfter(&result, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: false}), true), "\n")
 	if !strings.Contains(text, "aw init --setup-channel") || strings.Contains(text, "claude plugin install") {
 		t.Fatalf("channel install listed twice:\n%s", text)
 	}
@@ -365,5 +358,24 @@ func TestInitDefaultSetupReportsFailedDocsInjection(t *testing.T) {
 	})
 	if done.DocsInjected {
 		t.Fatal("failed docs injection reported as done")
+	}
+}
+
+func TestInitNextStepsRequireAnExplicitCreationOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		result  *initResult
+		created bool
+	}{
+		{name: "missing result"},
+		{name: "unset path", result: &initResult{ServerName: "aweb.ai", ExportBaseURL: "https://app.aweb.ai"}},
+		{name: "created team", result: &initResult{ServerName: "aweb.ai", ExportBaseURL: "https://app.aweb.ai", Path: initPathNewTeam}, created: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commands := initNextStepCommands(initNextStepsAfter(tc.result, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: true}))
+			if strings.Contains(commands, "aw init --join-from") != tc.created {
+				t.Fatalf("creation guidance without its outcome: %s", commands)
+			}
+		})
 	}
 }

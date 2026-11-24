@@ -14,9 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 class _ScopedRegistry(CachedRegistryClient):
-    def _id_status_cache_key(self, request):
+    def _id_status_cache_key(self, request, *, registry_url=None):
         # A DNS/controller generation change cannot reuse another authority's tree.
-        return self._authority_scope + super()._id_status_cache_key(request)
+        return self._authority_scope + super()._id_status_cache_key(
+            request, registry_url=registry_url
+        )
 
 
 @asynccontextmanager
@@ -33,15 +35,21 @@ async def received_registry_client(activation, token, did_key, redis):
           AND c.authoritative_read_completed_at <= clock_timestamp()
           AND c.authoritative_read_completed_at >= clock_timestamp() - INTERVAL '60 seconds'
         """,
-        token.canonical_address, token.did_aw, did_key,
-        token.checkpoint_revision, token.cohort_generation,
+        token.canonical_address,
+        token.did_aw,
+        did_key,
+        token.checkpoint_revision,
+        token.cohort_generation,
     )
     if row is None:
         raise FederationAuthorityError("federation_authority_cas_conflict")
     authority = RegistryAuthority(
-        selection=row["authority_selection"], authority_name=row["authority_name"],
-        controller_did=row["controller_did"], inherited=row["inherited"],
-        registry_explicit=row["registry_explicit"], registry_origin=row["registry_origin"],
+        selection=row["authority_selection"],
+        authority_name=row["authority_name"],
+        controller_did=row["controller_did"],
+        inherited=row["inherited"],
+        registry_explicit=row["registry_explicit"],
+        registry_origin=row["registry_origin"],
     )
     # Reuse strict resolver address admission, including its isolated-test policy.
     try:
@@ -58,22 +66,38 @@ async def received_registry_client(activation, token, did_key, redis):
     async def verify_domain(requested):
         # ID-tree namespace is independent of the sender's address alias. Its
         # authority must be discovered independently, without another HTTP client.
-        tree_authority = authority if requested == domain else await activation._discover_registry_authority(requested)
-        if (tree_authority.selection != "dns" or not tree_authority.controller_did
-                or tree_authority.registry_origin != authority.registry_origin):
+        tree_authority = (
+            authority
+            if requested == domain
+            else await activation._discover_registry_authority(requested)
+        )
+        if (
+            tree_authority.selection != "dns"
+            or not tree_authority.controller_did
+            or tree_authority.registry_origin != authority.registry_origin
+        ):
             raise FederationAuthorityError("sender_registry_unavailable")
         return DomainAuthority(
-            controller_did=tree_authority.controller_did, registry_url=tree_authority.registry_origin,
-            dns_name=tree_authority.authority_name, inherited=tree_authority.inherited,
+            controller_did=tree_authority.controller_did,
+            registry_url=tree_authority.registry_origin,
+            dns_name=tree_authority.authority_name,
+            inherited=tree_authority.inherited,
             registry_explicit=tree_authority.registry_explicit,
         )
 
     client = _ScopedRegistry(
-        registry_url=authority.registry_origin, redis_client=redis,
-        transport=PinnedTransport(authority.registry_origin, approved_ips, activation.resolver.ssl_context),
+        registry_url=authority.registry_origin,
+        redis_client=redis,
+        transport=PinnedTransport(
+            authority.registry_origin, approved_ips, activation.resolver.ssl_context
+        ),
         domain_verifier=verify_domain,
     )
-    object.__setattr__(client, "_authority_scope", f"federation:{authority.registry_origin}:{row['authority_statement_digest']}:{token.cohort_generation}:")
+    object.__setattr__(
+        client,
+        "_authority_scope",
+        f"federation:{authority.registry_origin}:{row['authority_statement_digest']}:{token.cohort_generation}:",
+    )
     try:
         yield client
     finally:

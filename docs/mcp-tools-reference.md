@@ -13,7 +13,7 @@ This reference is generated from the live OSS MCP registration in
 Run `make regenerate-mcp-tools-reference` after changing registration, parameters,
 or descriptions. `make test-mcp-tools-reference` checks freshness and proves that
 unclassified or removed tools fail closed. For the canonical contract, see the
-MCP section of [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
+MCP section of [`aweb-sot.md`](aweb-sot.md).
 
 ## Transport and Auth
 
@@ -21,7 +21,7 @@ MCP section of [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
 - With the default `streamable_http_path="/"`, clients use `/mcp/`.
 - The transport is Streamable HTTP via FastMCP with `stateless_http=True`.
 - The canonical auth contract lives in the MCP and Authentication sections of
-  [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md); this reference does not
+  [`aweb-sot.md`](aweb-sot.md); this reference does not
   restate request headers or the signature envelope.
 - All tools require authenticated identity context.
 - Identity, mail, chat, and contact operations can run without team context
@@ -123,26 +123,34 @@ MCP section of [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
 | `remove_contact` | `contact_id` | Remove a saved contact. |
 | `read_contact_messages` | `contact_id`, `channel="mail"`, `limit=50` | Read hosted mail or chat messages exchanged with a saved contact. Encrypted E2E mail content is returned as metadata only; read it in a local aw client. |
 
-## Legacy Compatibility Aliases
+## Compatibility Names
 
-The OSS server still registers these older names so clients with cached tool
-lists do not fail with "Unknown tool." New clients should use the canonical
-names above. Their parameters and descriptions below also come from the live
-registration.
+These names were advertised by released servers and remain callable by MCP
+clients retaining those tool lists. Use the canonical names above for fresh
+configurations. The serving call_tool entry counts attempts, including refused
+calls, in aweb_mcp_compatibility_tool_calls_total(tool). Hosts exposing MCP
+through their own wrapper call the same native observer before their checks.
+No tool arguments or identities are recorded.
+
+Removal is a separate release decision after the observation covers native and
+hosted entries and the deployed observation shows zero calls for 30 consecutive days. Source searches
+alone do not establish zero external cached-client use. See the per-name
+replacement and evidence table in [MCP compatibility](mcp-compatibility.md).
+Parameters and descriptions below come from live registration.
 
 | Tool | Parameters | Registered description |
 | --- | --- | --- |
-| `check_inbox` | `unread_only=True`, `limit=50`, `include_bodies=True` | Legacy compatibility alias for check_mail. Prefer check_mail. It marks returned unread messages read before returning. The hosted service decrypts managed encrypted mail for this MCP session; it is readable by that service. |
-| `chat_send` | `message=""`, `to_alias=""`, `to_did=""`, `to_address=""`, `session_id=""`, `wait=False`, `wait_seconds=120`, `leaving=False`, `hang_on=False`, `plaintext=False` | Legacy compatibility alias for send_chat. Prefer send_chat. |
-| `chat_pending` | none | Legacy compatibility alias for check_chats. Prefer check_chats. |
-| `chat_history` | `session_id`, `unread_only=False`, `limit=50` | Legacy compatibility alias for read_chat. Prefer read_chat. |
-| `chat_read` | `session_id`, `up_to_message_id=None`, `message_ids=None` | Legacy compatibility alias for mark_chat_read. Accepts up_to_message_id, message_ids, or both; message_ids takes precedence. |
-| `contacts_list` | none | Legacy compatibility alias for list_contacts. Prefer list_contacts. |
-| `contacts_add` | `contact_address`, `label=""` | Legacy compatibility alias for add_contact. Prefer add_contact. |
-| `contacts_remove` | `contact_id` | Legacy compatibility alias for remove_contact. Prefer remove_contact. |
-| `add_contact_by_email` | `email`, `label=""` | Legacy compatibility alias for email contact requests. |
-| `send_message_to_contact` | `contact_id`, `message`, `subject=""`, `channel="mail"`, `priority="normal"`, `wait=False`, `wait_seconds=120` | Legacy compatibility alias for hosted server-readable mail or chat to a saved contact. This hosted MCP tool is not E2E; use local aw clients for E2E messaging. |
-| `read_messages_from_contact` | `contact_id`, `channel="mail"`, `limit=50` | Legacy compatibility alias for read_contact_messages. Prefer read_contact_messages. Hosted MCP cannot decrypt E2E contents. |
+| `check_inbox` | `unread_only=True`, `limit=50`, `include_bodies=True` | Compatibility alias for check_mail. Prefer check_mail. It marks returned unread messages read before returning. The hosted service decrypts managed encrypted mail for this MCP session; it is readable by that service. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
+| `chat_send` | `message=""`, `to_alias=""`, `to_did=""`, `to_address=""`, `session_id=""`, `wait=False`, `wait_seconds=120`, `leaving=False`, `hang_on=False`, `plaintext=False` | Compatibility alias for send_chat. Prefer send_chat. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
+| `chat_pending` | none | Compatibility alias for check_chats. Prefer check_chats. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
+| `chat_history` | `session_id`, `unread_only=False`, `limit=50` | Compatibility alias for read_chat. Prefer read_chat. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
+| `chat_read` | `session_id`, `up_to_message_id=None`, `message_ids=None` | Compatibility alias for mark_chat_read. Accepts up_to_message_id, message_ids, or both; message_ids takes precedence. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
+| `contacts_list` | none | Compatibility alias for list_contacts. Prefer list_contacts. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
+| `contacts_add` | `contact_address`, `label=""` | Compatibility alias for add_contact. Prefer add_contact. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
+| `contacts_remove` | `contact_id` | Compatibility alias for remove_contact. Prefer remove_contact. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
+| `add_contact_by_email` | `email`, `label=""` | Compatibility alias for email contact requests. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
+| `send_message_to_contact` | `contact_id`, `message`, `subject=""`, `channel="mail"`, `priority="normal"`, `wait=False`, `wait_seconds=120` | Compatibility alias for hosted server-readable mail or chat to a saved contact. This hosted MCP tool is not E2E; use local aw clients for E2E messaging. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
+| `read_messages_from_contact` | `contact_id`, `channel="mail"`, `limit=50` | Compatibility alias for read_contact_messages. Prefer read_contact_messages. Hosted MCP cannot decrypt E2E contents. Retained for cached MCP clients; removal is considered in the release after deployed native and hosted measurement shows zero calls for 30 consecutive days. |
 
 ## Deployment-Specific Composition
 
@@ -156,7 +164,7 @@ operator owns their documentation.
 - Tool auth resolves caller context through
   [`server/src/aweb/mcp/auth.py`](https://github.com/awebai/aweb/blob/main/server/src/aweb/mcp/auth.py);
   the canonical contract remains
-  [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
+  [`aweb-sot.md`](aweb-sot.md).
 - To add an OSS MCP tool, implement behavior under
   [`server/src/aweb/mcp/tools/`](https://github.com/awebai/aweb/tree/main/server/src/aweb/mcp/tools),
   register it in

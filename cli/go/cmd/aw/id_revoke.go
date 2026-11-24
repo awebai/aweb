@@ -54,8 +54,7 @@ func runIDRevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatIDRevoke)
-	return nil
+	return printOutput(out, formatIDRevoke)
 }
 
 // executeIDRevoke revokes target with the selected signer, against the
