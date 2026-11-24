@@ -73,11 +73,11 @@ async def require_valid_stream_grant(
     request: Request, db, identity: StreamIdentity, *, use_admitted_member: bool = False,
 ) -> None:
     """Check before constructing StreamingResponse, while HTTP errors are legal."""
-    admitted = admitted_member_projection(request, identity) if use_admitted_member else None
-    if admitted is None:
-        reason = await grant_terminal_reason(request, db, identity)
-    else:
-        reason = await _certificate_terminal_reason(request, identity, admitted)
+    if use_admitted_member and admitted_member_projection(request, identity) is not None:
+        # Ingress already admitted this exact credential in this request.
+        # The stream's later checks read current standing independently.
+        return
+    reason = await grant_terminal_reason(request, db, identity)
     if reason:
         raise HTTPException(status_code=403, detail=GRANT_TERMINAL_DETAILS[reason])
 

@@ -439,12 +439,14 @@ async def test_certificate_stream_rechecks_its_original_authority_on_grant_caden
 
 
 @pytest.mark.asyncio
-async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, monkeypatch):
+@pytest.mark.parametrize("change", ["rotation", "revocation"])
+async def test_an_open_certificate_event_stream_reuses_admission_and_rechecks(pinning, monkeypatch, change):
     from datetime import datetime, timedelta, timezone
 
     from aweb import grant_streams
     from aweb.connection_scope import request_memo
     from aweb.routes import events
+    from awid.team_certificate import decode_team_certificate
 
     env = pinning
     actor = await _admit(env, "eventstreamoriginal")
@@ -473,12 +475,21 @@ async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, mo
         assert response.status_code == 200
         lines = response.aiter_lines()
         assert await _next_event(lines) == {"agent_id": str(actor.id), "team_id": TEAM}
-        await _change_key(env)
+        if change == "rotation":
+            await _change_key(env)
+        else:
+            name, domain = TEAM.split(":", 1)
+            await application_registry_client(env.app.state).revoke_team_certificate(
+                domain, name, team_controller_signing_key=env.team_sk,
+                certificate_id=decode_team_certificate(actor.certificate)["certificate_id"],
+            )
         terminal = await _next_event(lines)
         assert terminal["type"] == "team_membership_not_current", terminal
         async with asyncio.timeout(5):
             assert [line async for line in lines if line.startswith("data: ")] == []
-    assert True in standing_checks
+    assert not any(standing_checks)
+    if change == "revocation":
+        assert standing_checks
     assert member_reads and not any(member_reads)
 
 
