@@ -3,8 +3,7 @@
 AWID's real routes run on their own real database; the aweb app runs this
 server's real routes, verifier and writers on the test database. A client
 reaches aweb only through team-server discovery: the team's
-``aweb.team-server/1`` record, signed by its team key and stored in AWID
-(``tests.naapp_discovery`` gives the naapp runtime's discovery client).
+``aweb.team-server/1`` record, signed by its team key and stored in AWID.
 
 Each service is reached through an in-process ASGI transport that records the
 requests it carries. A test may set ``fault`` to change a response after the
