@@ -507,7 +507,15 @@ async def read_certificate_standings(
     remaining = selected - result.keys()
     if not remaining:
         return result
-    mode = mode if mode is not None else configured_registration_mode()
+    if mode is None:
+        mode = configured_registration_mode()
+        if mode is RegistrationMode.NOT_REQUIRED and registrations is None:
+            decision = RegistrationDecision(mode=mode, state=RegistrationState.NOT_OBSERVED)
+            result.update({
+                cid: CertificateStanding(CertificateStandingState.ACTIVE, registration=decision)
+                for cid in remaining
+            })
+            return result
     snapshot = registrations if registrations is not None else await observe_certificate_registrations(
         registry_client=registry_client, team_id=team_id, mode=mode,
     )

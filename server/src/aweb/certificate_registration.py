@@ -28,6 +28,7 @@ class RegistrationMode(StrEnum):
 
 
 class RegistrationState(StrEnum):
+    NOT_OBSERVED = "not_observed"
     REGISTERED = "registered"
     UNREGISTERED = "unregistered"
     UNAVAILABLE = "unavailable"

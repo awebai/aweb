@@ -2256,13 +2256,11 @@ the replacement claim, including when the task stays `in_progress`.
 
 ### Staged certificate-registration observations
 
-While registration enforcement is off, successful artifact and revocation
-checks still evaluate registration and record the would-refuse observation.
-This deliberate measurement supports the decision to enable enforcement; an
-off-mode observation is not a promise of no existence read. The read uses the
-existing SDK active-certificate view after revocation checks, without a new
-cache. An unavailable observation remains unknown and cannot turn an otherwise
-valid off-mode operation into a refusal. Enforcing mode retains its complete
+While configured registration enforcement is off, standing records registration
+as `not_observed` after the revocation check. Explicit registration observations
+can still measure would-refuse facts using the SDK's active-certificate view.
+An unavailable observation remains unknown and cannot turn an otherwise valid
+off-mode operation into a refusal. Enforcing mode retains its complete
 registration-list and signature-verified miss-refresh owners. AWID's
 `evaluate_team_certificate_standing` applies the same acquired revocation and
 registration facts to the server, registry SDK and checked artifact path. This
