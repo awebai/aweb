@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import ssl
+import sys
 from dataclasses import asdict
 from uuid import uuid4
 
@@ -451,12 +452,15 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 "published": unpublished,
             }
         if args.action == "outage":
-            # The shell starts this process while PostgreSQL is healthy, then
-            # stops the database during the barrier delay. The already-running
-            # worker therefore exercises the repository's stable fail-closed
-            # mapping rather than container bootstrap failure.
+            # The shell starts this process while PostgreSQL is healthy. Once
+            # the pool is open the worker says so on stderr; the shell then
+            # stops the database and releases it with a line on stdin. The
+            # already-running worker therefore exercises the repository's
+            # stable fail-closed mapping rather than container bootstrap failure.
             await db.fetch_value("SELECT 1")
-            await asyncio.sleep(args.delay)
+            print("outage-ready", file=sys.stderr, flush=True)
+            if (await asyncio.to_thread(sys.stdin.readline)).strip() != "outage-release":
+                raise RuntimeError("the harness never released the outage read")
             try:
                 await repository.get_checkpoint(os.environ["HARNESS_DID_AW"])
             except FederationAuthorityError as exc:
@@ -509,7 +513,6 @@ def main() -> int:
     parser.add_argument("--generation", type=int, default=1)
     parser.add_argument("--variant", default="winner")
     parser.add_argument("--burst", type=int, default=5)
-    parser.add_argument("--delay", type=float, default=3.0)
     parser.add_argument("--barrier", default="default")
     parser.add_argument("--role", default="worker")
     parser.add_argument("--claim", choices=("correct", "wrong"), default="correct")
