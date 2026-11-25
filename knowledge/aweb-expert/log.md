@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-25
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-naapp-folio-links (naapp deploy target, egress DNS boundary, source-switch pre-check).
+* **Creation**: decisions [naapp deploys move forward only](/aweb-expert/decisions/naapp-deploys-move-forward-only.md) and [one DNS boundary per naapp](/aweb-expert/decisions/one-dns-boundary-per-naapp.md).
+* **Creation**: lesson [pre-check an image source change by what runs](/aweb-expert/lessons/precheck-an-image-source-change-by-what-runs.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
