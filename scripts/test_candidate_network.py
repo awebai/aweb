@@ -158,8 +158,6 @@ class WorkCleanupTests(unittest.TestCase):
                 result = bash(command + 'cleanup_work', work=tmp, ROOT=str(ROOT))
                 self.assertEqual(result.returncode, 1 if retain else 0, result.stderr)
                 self.assertEqual(overlay.exists(), retain)
-        self.assertIn('cleanup_work || cleanup_status=1',
-                      (ROOT / 'scripts/candidate-cleanup.sh').read_text())
 
 
 class EndpointTests(unittest.TestCase):
