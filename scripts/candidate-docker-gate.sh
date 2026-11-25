@@ -380,8 +380,9 @@ docker network create --label "aweb.candidate-gate=$resource_label" "$owned_netw
 
 # Each stage runs in its own lane: its own runner, workspace volume, Postgres
 # and Redis. Lanes share only the Docker daemon, this run's label and bind
-# root (mktemp paths), and the builder; artifacts alone prunes its cache, so it
-# has its own builder. Static runs first and alone. A stage writes its summary
+# root (mktemp paths), and the run's builder, whose cache they share. Nothing
+# prunes it while lanes build: cleanup removes it, with its cache, after the
+# last lane ends. Static runs first and alone. A stage writes its summary
 # rows to its own file; this wrapper, the one writer of summary.tsv and of the
 # recorder's stream, merges them when the stage ends.
 start_lane_services() {
@@ -469,17 +470,6 @@ for package in "${naapp_packages[@]}"; do
   # These are container ports; no host socket is allocated or published.
   naapp_e2e_allocations+="$package $gate_run_id-naapp-${package##*/} 8010 5432"$'\n'
 done
-artifacts_builder="$builder_name-artifacts"
-if [[ " $pending " == *" artifacts "* ]]; then
-  printf 'builder\t%s\n' "$artifacts_builder" >> "$LOG_DIR/owned-resources.tsv"
-  BUILDX_CONFIG="$buildx_config" docker buildx create \
-    --name "$artifacts_builder" --driver docker-container \
-    "unix:///var/run/docker.sock" --bootstrap >/dev/null \
-    || refuse "could not provision the artifacts stage's builder"
-  docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$builder_memory_swap" --pids-limit "$builder_pids" \
-    "buildx_buildkit_${artifacts_builder}0" >/dev/null \
-    || refuse "could not apply candidate builder resource limits"
-fi
 for lane in $pending; do
   start_lane_services "$lane"
   seed_lane_workspace "$lane"
@@ -490,7 +480,6 @@ done
 run_lane() {
   local lane="$1" name="$runner_name-$1" builder="$builder_name" lane_status=0
   local pg="$owned_network-$1-postgres" redis="$owned_network-$1-redis"
-  [[ "$lane" != artifacts ]] || builder="$artifacts_builder"
   printf 'runner\t%s\n' "$name" >> "$LOG_DIR/owned-resources.tsv"
   docker run --rm --init \
     --name "$name" \

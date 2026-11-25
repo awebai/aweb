@@ -151,7 +151,6 @@ artifacts() {
   run _candidate-artifact-pi
   run _candidate-artifact-skills
   run _candidate-artifact-a2a-image
-  run_step prune-builder prune_builder
 }
 integration() {
   prepare_node
@@ -171,14 +170,6 @@ integration() {
   run test-npm-exact-publish
   run test-pypi-exact-publish
   run test-oci-exact-publish
-}
-
-prune_builder() {
-  if [[ -z "${BUILDX_BUILDER:-}" ]]; then
-    echo 'BUILDX_BUILDER is required' >&2
-    return 2
-  fi
-  docker buildx prune --all --force --keep-storage=10GB --builder "$BUILDX_BUILDER"
 }
 
 prepare_node() {

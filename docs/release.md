@@ -133,8 +133,9 @@ the requested annotated tags locally on the exact tested SHA.
 After static, every pending stage runs at once, each in its own lane: its own
 runner, its own workspace volume seeded from the same clean clone, and its own
 PostgreSQL and Redis. Lanes share the Docker daemon, the run's resource label
-and bind root (mktemp paths only), and the run's builder; artifacts has its own
-builder because it prunes its cache. No stage reads what another writes:
+and bind root (mktemp paths only), and the run's builder and its cache. Nothing
+prunes the builder while lanes build; cleanup removes it, with its cache, after
+the last lane ends. No stage reads what another writes:
 integration builds its own CLI in its own workspace, as it does when artifacts
 is reused. The first red stage stops the others. A stopped stage is reported
 STOPPED and records no stage row; target rows and stage rows already written
@@ -225,8 +226,8 @@ checkout or dependency-cache tree is mounted. The wrapper records nested
 builders and Compose projects before creation, and cleanup runs on success,
 failure, SIGINT, and SIGTERM. It removes only run-owned resources, verifies
 absence, and removes the temporary root and buildx configuration. It never
-prunes or restarts shared Docker. The suite's existing 10GB prune applies only
-to its own builder during the run; that builder is removed at the end.
+prunes or restarts shared Docker. The run's own builder is removed, with its
+cache, at the end.
 
 Evidence stays in a directory created for the invocation under
 `/tmp/aweb-candidate-gate-<SHA>-<run-id>/` by default. A caller with its own

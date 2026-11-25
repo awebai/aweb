@@ -191,6 +191,28 @@ class CompleteGateVerdictTests(unittest.TestCase):
             self.assertEqual(stages, {"checks"})
             self.assertIn("static\tPASSED", (nested / "summary.tsv").read_text())
 
+    def test_no_stage_prunes_the_builder_the_lanes_share(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            calls = root / "docker-calls"
+            for name, command in {
+                "make": "exit 0\n",
+                "docker": f'printf "%s\\n" "$*" >> {calls}\n',
+            }.items():
+                tool = root / name
+                tool.write_text("#!/bin/sh\n" + command)
+                tool.chmod(0o700)
+            env = dict(
+                os.environ,
+                PATH=f"{root}{os.pathsep}{os.environ['PATH']}",
+                CANDIDATE_LOG_DIR=str(root),
+                BUILDX_BUILDER="the-run-builder",
+            )
+            result = run(ROOT, "bash", "scripts/candidate-suite.sh", "artifacts", env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("prune", calls.read_text() if calls.exists() else "")
+            self.assertNotIn("prune-builder", (root / "summary.tsv").read_text())
+
     def test_an_unknown_unit_suite_is_refused(self):
         result, rows = self.suite("--isolated-suite test-nothing")
         self.assertEqual(result.returncode, 2)
@@ -367,6 +389,7 @@ test-server:
 test-naapp:
 \t@test "$(NAAPP_PACKAGES)" = proof/first
 _candidate-artifact-server:
+\t@echo "$$BUILDX_BUILDER" > "$$CANDIDATE_LOG_DIR/builder-artifacts"
 \t@docker build -f candidate-gate/proof.Dockerfile -t "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" candidate-gate
 \t@docker run --rm "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" sh -c 'test "$$(echo 42)" = 42'
 \t@test "$$(cat .lane-setup.log)" = "$$(printf 'node\\ncli')"
@@ -375,6 +398,7 @@ cli-e2e:
 \t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml up -d --wait postgres; \
 \t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml exec -T postgres pg_isready -U aweb
 freshness:
+\t@echo "$$BUILDX_BUILDER" > "$$CANDIDATE_LOG_DIR/builder-integration"
 \t@test "$$(redis-cli -u "$$REDIS_URL" PING)" = PONG
 naapp-e2e-packages:
 \t@printf '%s\\n' proof/first proof/second
@@ -437,7 +461,20 @@ candidate-gate:
         # Exercise the real gate allocation/runner environment and Library's
         # actual Compose Postgres service while its old host port is occupied.
         with held_library_default():
-            invoke("missing-only", "make", "candidate-gate")
+            output = invoke("missing-only", "make", "candidate-gate")
+        # Artifacts and integration build with the run's one builder.
+        run_logs = Path(re.findall(r"logs: (\S+)", output)[-1])
+        builders = {
+            (run_logs / f"builder-{lane}").read_text().strip()
+            for lane in ("artifacts", "integration")
+        }
+        owned = [
+            line
+            for line in (run_logs / "owned-resources.tsv").read_text().splitlines()
+            if line.startswith("builder\t")
+        ]
+        if len(builders) != 1 or len(owned) != 1 or owned[0].split("\t")[1] not in builders:
+            raise AssertionError(f"lanes must share the run's one builder: {builders} {owned}")
         rows = ledger.read_text().splitlines()
         assert {row[1] for row in stage_rows(rows)} == set(STAGES.split())
         assert all(row[2] == "passed" for row in stage_rows(rows))
