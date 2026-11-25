@@ -301,21 +301,30 @@ run_candidate() {
             [(r[1], r[2]) for r in temporary_ledger[0]],
             [("checks/check-python-static", "passed"), ("checks", "passed")],
         )
-        self.assertEqual([(r[1], r[2]) for r in rows], [(r[1], r[2]) for r in temporary_ledger[0]])
+        self.assertEqual(
+            [(r[1], r[2]) for r in rows], [(r[1], r[2]) for r in temporary_ledger[0]]
+        )
         self.assertEqual(Path(rows[1][5]).read_text(), "real completed checks\n")
         gate = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
         lookup = gate[gate.index("recorded() {") : gate.index("run_candidate() {")]
         result = subprocess.run(
             ["bash", "-ec", lookup + "\nprintf '%s\\n' \"$pending\"; exit 99"],
-            env=dict(os.environ, TREE="tree", KEY="tree-inputs",
-                     LEDGER=str(logs.parent / "ledger.tsv"),
-                     CANDIDATE_STAGES="static checks user-paths unit artifacts integration",
-                     REQUESTED="checks artifacts integration"),
-            capture_output=True, text=True,
+            env=dict(
+                os.environ,
+                TREE="tree",
+                KEY="tree-inputs",
+                LEDGER=str(logs.parent / "ledger.tsv"),
+                CANDIDATE_STAGES="static checks user-paths unit artifacts integration",
+                REQUESTED="checks artifacts integration",
+            ),
+            capture_output=True,
+            text=True,
         )
         self.assertEqual(result.returncode, 99, result.stderr)
         self.assertIn("already passed checks", result.stdout)
-        self.assertTrue(result.stdout.endswith("artifacts integration\n"), result.stdout)
+        self.assertTrue(
+            result.stdout.endswith("artifacts integration\n"), result.stdout
+        )
 
     def test_stages_recorded_as_they_pass_are_recorded_once(self):
         code, rows, logs, output = self.invoke(status=0, stage_verdicts="complete")
@@ -338,7 +347,9 @@ run_candidate() {
                 entries = [(r[1], r[2]) for r in rows]
                 self.assertIn(("checks/check-python-static", "failed"), entries)
                 self.assertNotIn(("checks", "passed"), entries)
-                self.assertEqual(entries.count(("checks/check-python-static", "failed")), 1)
+                self.assertEqual(
+                    entries.count(("checks/check-python-static", "failed")), 1
+                )
 
     def test_real_term_without_cleanup_blocks_reuse(self):
         code, rows, logs, output = self.invoke(signal_number=signal.SIGTERM)
@@ -389,7 +400,9 @@ run_candidate() {
                 self.assertEqual(code, status, output)
                 by_entry = {row[1]: row for row in rows}
                 self.assertEqual(by_entry["artifacts"][2], "passed")
-                self.assertEqual(by_entry["checks/check-product-table-writes"][2], "failed")
+                self.assertEqual(
+                    by_entry["checks/check-product-table-writes"][2], "failed"
+                )
                 self.assertEqual(by_entry["artifacts/build"][2], "passed")
                 skipped = by_entry["integration/e2e-naapp"]
                 self.assertEqual(skipped[2], "skipped")

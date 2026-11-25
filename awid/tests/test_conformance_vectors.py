@@ -29,7 +29,10 @@ def test_awid_service_uses_the_same_conformance_vectors_as_aweb() -> None:
     for case in message_vectors:
         payload = canonical_payload(case["message"])
         assert payload.decode("utf-8") == case["canonical_payload"]
-        assert sign_message(bytes.fromhex(case["signing_seed_hex"]), payload) == case["signature_b64"]
+        assert (
+            sign_message(bytes.fromhex(case["signing_seed_hex"]), payload)
+            == case["signature_b64"]
+        )
 
     stable_vectors = _load_json("stable-id-v1.json")
     for case in stable_vectors:
@@ -55,7 +58,9 @@ def test_awid_service_uses_the_same_conformance_vectors_as_aweb() -> None:
         assert payload.decode("utf-8") == entry["canonical_entry_payload"]
         assert hashlib.sha256(payload).hexdigest() == entry["entry_hash"]
         authorized_by = entry["entry_payload"]["authorized_by"]
-        assert sign_message(seed_by_did[authorized_by], payload) == entry["signature_b64"]
+        assert (
+            sign_message(seed_by_did[authorized_by], payload) == entry["signature_b64"]
+        )
         verify_did_key_signature(
             did_key=authorized_by,
             payload=payload,
@@ -83,9 +88,15 @@ def test_awid_service_uses_the_same_conformance_vectors_as_aweb() -> None:
                 }
             )
             assert payload.decode("utf-8") == link["canonical_payload"]
-            assert sign_message(bytes.fromhex(link["old_seed_hex"]), payload) == link["signature_b64"]
+            assert (
+                sign_message(bytes.fromhex(link["old_seed_hex"]), payload)
+                == link["signature_b64"]
+            )
 
     dns_vectors = _load_json("dns-txt-v1.json")
     for case in dns_vectors:
         assert awid_txt_name(case["domain"]) == case["dns_name"]
-        assert awid_txt_value(case["controller_did"], case["registry_url"]) == case["dns_value"]
+        assert (
+            awid_txt_value(case["controller_did"], case["registry_url"])
+            == case["dns_value"]
+        )

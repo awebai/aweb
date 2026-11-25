@@ -77,7 +77,11 @@ async def _seed(db) -> dict[str, set]:
 
         # Consumed 31 and 29 days ago, and one sent 60 days ago that its
         # target has not received.
-        for consumed_at, is_dead in ((_ago(31), True), (_ago(29), False), (None, False)):
+        for consumed_at, is_dead in (
+            (_ago(31), True),
+            (_ago(29), False),
+            (None, False),
+        ):
             signal_id = uuid4()
             await db.execute(
                 """
@@ -96,7 +100,11 @@ async def _seed(db) -> dict[str, set]:
             if is_dead:
                 dead["control_signals"].add(signal_id)
 
-        for delivered_at, is_dead in ((_ago(31), True), (_ago(29), False), (None, False)):
+        for delivered_at, is_dead in (
+            (_ago(31), True),
+            (_ago(29), False),
+            (None, False),
+        ):
             outbox_id = uuid4()
             await db.execute(
                 """
@@ -115,7 +123,11 @@ async def _seed(db) -> dict[str, set]:
             if is_dead:
                 dead["lifecycle_side_effect_outbox"].add(outbox_id)
 
-        for delivered_at, is_dead in ((_ago(31), True), (_ago(29), False), (None, False)):
+        for delivered_at, is_dead in (
+            (_ago(31), True),
+            (_ago(29), False),
+            (None, False),
+        ):
             outbox_id = uuid4()
             message_id = uuid4()
             await db.execute(
@@ -242,7 +254,9 @@ async def test_dry_run_counts_dead_rows_and_deletes_nothing(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_apply_deletes_dead_rows_past_the_age_in_every_team_and_nothing_else(aweb_cloud_db):
+async def test_apply_deletes_dead_rows_past_the_age_in_every_team_and_nothing_else(
+    aweb_cloud_db,
+):
     db = aweb_cloud_db.aweb_db
     dead = await _seed(db)
     keys_before = await _primary_keys(db)
@@ -261,7 +275,9 @@ async def test_apply_deletes_dead_rows_past_the_age_in_every_team_and_nothing_el
 
     second = await delete_dead_rows(db, apply=True)
 
-    assert second == _report({table: set() for table in RULE_TABLES}, apply=True, deleted=True)
+    assert second == _report(
+        {table: set() for table in RULE_TABLES}, apply=True, deleted=True
+    )
     assert await _primary_keys(db) == keys_after
 
 
@@ -272,27 +288,45 @@ async def test_quiet_team_keeps_its_tasks_mail_and_chat(aweb_cloud_db):
 
     await delete_dead_rows(db, apply=True)
 
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.teams}} WHERE team_id = $1", QUIET
-    ) == 1
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL", QUIET
-    ) == 1
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.tasks}} WHERE team_id = $1 AND deleted_at IS NULL", QUIET
-    ) == 1
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.messages}} WHERE team_id = $1 AND read_at IS NULL", QUIET
-    ) == 1
-    assert await db.fetch_value(
-        """
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.teams}} WHERE team_id = $1", QUIET
+        )
+        == 1
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.agents}} WHERE team_id = $1 AND deleted_at IS NULL",
+            QUIET,
+        )
+        == 1
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.tasks}} WHERE team_id = $1 AND deleted_at IS NULL",
+            QUIET,
+        )
+        == 1
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.messages}} WHERE team_id = $1 AND read_at IS NULL",
+            QUIET,
+        )
+        == 1
+    )
+    assert (
+        await db.fetch_value(
+            """
         SELECT COUNT(*)
         FROM {{tables.chat_messages}} m
         JOIN {{tables.chat_sessions}} s ON s.session_id = m.session_id
         WHERE s.team_id = $1
         """,
-        QUIET,
-    ) == 1
+            QUIET,
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -326,7 +360,9 @@ async def test_apply_deletes_every_dead_row_in_batches(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_each_rule_selects_its_dead_rows_through_an_index_on_the_age_column(aweb_cloud_db):
+async def test_each_rule_selects_its_dead_rows_through_an_index_on_the_age_column(
+    aweb_cloud_db,
+):
     db = aweb_cloud_db.aweb_db
     indexes = {
         "app_events": "idx_app_events_created",
@@ -379,10 +415,14 @@ async def test_cli_reports_by_default_and_deletes_with_apply(test_db_factory):
 
         async def run_cli(*args: str) -> dict:
             process = await asyncio.create_subprocess_exec(
-                sys.executable, "-c", "from aweb.cli import app; app()",
-                "delete-dead-rows", *args,
+                sys.executable,
+                "-c",
+                "from aweb.cli import app; app()",
+                "delete-dead-rows",
+                *args,
                 env={**os.environ, "AWEB_DATABASE_URL": base.config.get_dsn()},
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), 20)
             assert process.returncode == 0, stderr.decode()

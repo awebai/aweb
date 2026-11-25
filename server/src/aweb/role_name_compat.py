@@ -16,7 +16,9 @@ def normalize_optional_role_name(value: Optional[str]) -> Optional[str]:
     return normalize_role(value)
 
 
-def resolve_role_name_aliases(*, role: Optional[str], role_name: Optional[str]) -> Optional[str]:
+def resolve_role_name_aliases(
+    *, role: Optional[str], role_name: Optional[str]
+) -> Optional[str]:
     """Resolve old/new selector aliases into one canonical value."""
     if role is not None and role_name is not None and role != role_name:
         raise ValueError("role and role_name must match when both are provided")

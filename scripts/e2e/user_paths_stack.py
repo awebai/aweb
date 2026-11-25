@@ -809,7 +809,12 @@ def main():
                     (EVIDENCE / "baseline-runtime.txt").write_text(actual)
                 if CANDIDATE_BIN:
                     version = compose(
-                        "exec", "-T", "cli", "/work/candidate-aw", "version", capture=True
+                        "exec",
+                        "-T",
+                        "cli",
+                        "/work/candidate-aw",
+                        "version",
+                        capture=True,
                     ).stdout
                     assert os.environ["USER_PATHS_CANDIDATE_SHA"] in version, version
                     (EVIDENCE / "candidate-version.txt").write_text(version)
@@ -832,7 +837,9 @@ def main():
                         else []
                     )
                     try:
-                        baseline_args = ["--baseline-chat-only"] if BASELINE_READY else []
+                        baseline_args = (
+                            ["--baseline-chat-only"] if BASELINE_READY else []
+                        )
                         if CANDIDATE_BIN:
                             baseline_args = ["--local-chat-direction", lane]
                         compose(

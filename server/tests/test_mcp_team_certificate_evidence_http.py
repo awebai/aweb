@@ -37,7 +37,9 @@ TEAM_TOOLS = (
 @pytest.mark.asyncio
 @pytest.mark.parametrize("projection", ["pre_017", "unregistered_certificate"])
 async def test_identity_only_mcp_cannot_use_projection_as_team_evidence(
-    privacy_app, monkeypatch, projection,
+    privacy_app,
+    monkeypatch,
+    projection,
 ):
     env = privacy_app
     alice, bob = env.actors["alice"], env.actors["bob"]
@@ -46,38 +48,55 @@ async def test_identity_only_mcp_cannot_use_projection_as_team_evidence(
     certificate_id = None if projection == "pre_017" else "privacy-alice"
     await env.db.execute(
         "UPDATE {{tables.agents}} SET certificate_id=$1 WHERE agent_id=$2",
-        certificate_id, alice.id,
+        certificate_id,
+        alice.id,
     )
-    assert await env.registry_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.team_certificates}} WHERE certificate_id=$1",
-        "privacy-alice",
-    ) == 0
+    assert (
+        await env.registry_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.team_certificates}} WHERE certificate_id=$1",
+            "privacy-alice",
+        )
+        == 0
+    )
 
     origin = str(env.client.base_url).rstrip("/")
     registry = env.app.state.awid_registry_client
     mcp = create_mcp_app(
-        db_infra=env.infra, redis=env.redis,
-        registry_client=registry, public_origin=origin,
+        db_infra=env.infra,
+        redis=env.redis,
+        registry_client=registry,
+        public_origin=origin,
     )
     env.app.mount("/certificate-evidence-mcp", mcp)
     await mcp.startup()
     try:
+
         async def call(tool, *, certificate=False, **arguments):
-            body = json.dumps({
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": tool, "arguments": arguments},
-            }).encode()
+            body = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": tool, "arguments": arguments},
+                }
+            ).encode()
             auth = (
                 _signed_team_headers(
-                    alice.sk, alice.did, TEAM, alice.certificate, body,
+                    alice.sk,
+                    alice.did,
+                    TEAM,
+                    alice.certificate,
+                    body,
                 )
                 if certificate
                 else _signed_identity_headers(alice.sk, alice.did, "", body)
             )
             response = await env.client.post(
-                "/certificate-evidence-mcp/", content=body,
+                "/certificate-evidence-mcp/",
+                content=body,
                 headers={
-                    **auth, "Content-Type": "application/json",
+                    **auth,
+                    "Content-Type": "application/json",
                     "Accept": "application/json, text/event-stream",
                 },
             )
@@ -97,17 +116,26 @@ async def test_identity_only_mcp_cannot_use_projection_as_team_evidence(
 
         # Populate real coordination state with a certificate-bearing request.
         task = await call(
-            "task_create", certificate=True, title="Certificate-only task",
+            "task_create",
+            certificate=True,
+            title="Certificate-only task",
         )
         assert "error" not in task, task
         task_id = UUID(task["task_id"])
-        assert await env.db.fetch_value(
-            "SELECT title FROM {{tables.tasks}} WHERE task_id=$1", task_id,
-        ) == "Certificate-only task"
+        assert (
+            await env.db.fetch_value(
+                "SELECT title FROM {{tables.tasks}} WHERE task_id=$1",
+                task_id,
+            )
+            == "Certificate-only task"
+        )
         http_certificate = await env.client.get(
             "/v1/tasks",
             headers=_signed_team_headers(
-                alice.sk, alice.did, TEAM, alice.certificate,
+                alice.sk,
+                alice.did,
+                TEAM,
+                alice.certificate,
             ),
         )
         assert http_certificate.status_code == 200, http_certificate.text
@@ -119,7 +147,8 @@ async def test_identity_only_mcp_cannot_use_projection_as_team_evidence(
         # initial state before exercising identity-only requests.
         await env.db.execute(
             "UPDATE {{tables.agents}} SET certificate_id=$1 WHERE agent_id=$2",
-            certificate_id, alice.id,
+            certificate_id,
+            alice.id,
         )
 
         # Identity-only MCP must still perform real identity-scoped messaging.
@@ -130,7 +159,8 @@ async def test_identity_only_mcp_cannot_use_projection_as_team_evidence(
             UUID(sent["message_id"]),
         )
         assert dict(delivered) == {
-            "from_did": alice.did, "to_did": bob.did,
+            "from_did": alice.did,
+            "to_did": bob.did,
             "body": "Identity messaging",
         }
         inbox = await call("check_mail")
@@ -146,7 +176,8 @@ async def test_identity_only_mcp_cannot_use_projection_as_team_evidence(
 
 @pytest.mark.asyncio
 async def test_trusted_proxy_mcp_keeps_team_tools_without_certificate(
-    privacy_app, monkeypatch,
+    privacy_app,
+    monkeypatch,
 ):
     env = privacy_app
     alice = env.actors["alice"]
@@ -159,35 +190,46 @@ async def test_trusted_proxy_mcp_keeps_team_tools_without_certificate(
         "X-User-ID": user_id,
         "X-AWEB-Actor-ID": str(alice.id),
         "X-AWEB-Auth": build_internal_auth_header_value(
-            secret=secret, team_id=TEAM, principal_type="u",
-            principal_id=user_id, actor_id=str(alice.id),
+            secret=secret,
+            team_id=TEAM,
+            principal_type="u",
+            principal_id=user_id,
+            actor_id=str(alice.id),
         ),
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
     mcp = create_mcp_app(
-        db_infra=env.infra, redis=env.redis,
+        db_infra=env.infra,
+        redis=env.redis,
         registry_client=env.app.state.awid_registry_client,
         public_origin=str(env.client.base_url).rstrip("/"),
     )
     env.app.mount("/proxy-evidence-mcp", mcp)
     await mcp.startup()
     try:
-        body = json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": {
-                "name": "task_create",
-                "arguments": {"title": "Trusted proxy task"},
-            },
-        }).encode()
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "task_create",
+                    "arguments": {"title": "Trusted proxy task"},
+                },
+            }
+        ).encode()
         invalid = await env.client.post(
-            "/proxy-evidence-mcp/", content=body,
+            "/proxy-evidence-mcp/",
+            content=body,
             headers={**headers, "X-AWEB-Auth": headers["X-AWEB-Auth"] + "bad"},
         )
         assert invalid.status_code == 401, invalid.text
 
         response = await env.client.post(
-            "/proxy-evidence-mcp/", content=body, headers=headers,
+            "/proxy-evidence-mcp/",
+            content=body,
+            headers=headers,
         )
         assert response.status_code == 200, response.text
         result = response.json()
@@ -196,9 +238,12 @@ async def test_trusted_proxy_mcp_keeps_team_tools_without_certificate(
         assert not tool_result.get("isError"), tool_result
         task = json.loads(tool_result["content"][0]["text"])
         assert "error" not in task, task
-        assert await env.db.fetch_value(
-            "SELECT title FROM {{tables.tasks}} WHERE task_id=$1",
-            UUID(task["task_id"]),
-        ) == "Trusted proxy task"
+        assert (
+            await env.db.fetch_value(
+                "SELECT title FROM {{tables.tasks}} WHERE task_id=$1",
+                UUID(task["task_id"]),
+            )
+            == "Trusted proxy task"
+        )
     finally:
         await mcp.shutdown()

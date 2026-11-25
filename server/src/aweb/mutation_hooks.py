@@ -89,7 +89,9 @@ def _event_subject(ctx: dict) -> str:
     return str(ctx.get("subject", "") or "")
 
 
-async def _enrich_identity_context(db_infra: "DatabaseInfrastructure", context: dict) -> dict:
+async def _enrich_identity_context(
+    db_infra: "DatabaseInfrastructure", context: dict
+) -> dict:
     ctx = dict(context)
     identity_fields = (
         ("actor_agent_id", "actor_did", "actor_did_aw"),
@@ -128,7 +130,9 @@ async def _enrich_identity_context(db_infra: "DatabaseInfrastructure", context: 
     return ctx
 
 
-async def _enrich_workspace_context(db_infra: "DatabaseInfrastructure", context: dict) -> dict:
+async def _enrich_workspace_context(
+    db_infra: "DatabaseInfrastructure", context: dict
+) -> dict:
     ctx = dict(context)
     workspace_fields = (
         ("actor_workspace_id", "actor_agent_id", "team_id"),
@@ -178,7 +182,9 @@ async def _enrich_workspace_context(db_infra: "DatabaseInfrastructure", context:
     return ctx
 
 
-def create_mutation_handler(redis: Redis, db_infra: DatabaseInfrastructure) -> MutationCallback:
+def create_mutation_handler(
+    redis: Redis, db_infra: DatabaseInfrastructure
+) -> MutationCallback:
     """Create an on_mutation callback that publishes SSE events.
 
     The returned async callable matches aweb's hook signature:
@@ -223,7 +229,11 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfrastructure) -> M
                     redis, db_infra, context, status_changed=status_changed
                 )
             except Exception:
-                logger.error("Failed to publish task claim changes for %s", event_type, exc_info=True)
+                logger.error(
+                    "Failed to publish task claim changes for %s",
+                    event_type,
+                    exc_info=True,
+                )
                 failures.append(MutationDeliveryStage.TASK_STATUS_CASCADE)
 
         if event_type == MutationEventType.TASK_DELETED:
@@ -232,7 +242,9 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfrastructure) -> M
                     redis, db_infra, context, team_id=context.get("team_id")
                 )
             except Exception:
-                logger.error("Failed to publish task.deleted claim releases", exc_info=True)
+                logger.error(
+                    "Failed to publish task.deleted claim releases", exc_info=True
+                )
                 failures.append(MutationDeliveryStage.PUBLICATION)
 
         try:
@@ -337,7 +349,11 @@ async def _cascade_agent_deleted(
 
 
 async def _announce_task_claim_changes(
-    redis: Redis, db_infra: "DatabaseInfrastructure", context: dict, *, status_changed: bool
+    redis: Redis,
+    db_infra: "DatabaseInfrastructure",
+    context: dict,
+    *,
+    status_changed: bool,
 ) -> None:
     """Announce committed releases before a replacement claim."""
     actor_workspace_id = context.get("actor_workspace_id", "").strip()

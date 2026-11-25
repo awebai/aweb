@@ -143,7 +143,9 @@ async def _global_member(env, alias="dave"):
         sk, _, did = _make_keypair()
         env.actors[alias] = SimpleNamespace(sk=sk, did=did)
     member = env.actors[alias]
-    registered = await env.app.state.awid_registry_client.register_did(member.did, member.sk)
+    registered = await env.app.state.awid_registry_client.register_did(
+        member.did, member.sk
+    )
     member.did_aw = registered.did_aw
     member.certificate = _encode_certificate(
         _make_certificate(
@@ -346,7 +348,9 @@ async def test_failing_redis_is_unavailable_and_the_failure_is_logged(
     assert response.json()["detail"].startswith("publishing_unavailable: ")
     # Maintenance can report the same Redis outage through its own loggers.
     records = [
-        record for record in caplog.records if record.name == "aweb.routes.agent_activity"
+        record
+        for record in caplog.records
+        if record.name == "aweb.routes.agent_activity"
     ]
     assert [record.getMessage() for record in records] == [
         f"Activity rate limit failed for {env.actors['alice'].id}"
@@ -552,7 +556,9 @@ async def _subscribed(env, actor):
 
 
 @pytest.mark.asyncio
-async def test_global_activity_uses_canonical_participation_and_nullable_projection(privacy_app):
+async def test_global_activity_uses_canonical_participation_and_nullable_projection(
+    privacy_app,
+):
     env = privacy_app
     member = await _global_member(env)
     admitted = await _team_request(env, "dave", "GET", "/v1/agents/me/inbound-mode")
@@ -578,7 +584,9 @@ async def test_global_activity_uses_canonical_participation_and_nullable_project
 
 
 @pytest.mark.asyncio
-async def test_global_activity_refuses_a_key_only_session_after_member_reconnect(privacy_app):
+async def test_global_activity_refuses_a_key_only_session_after_member_reconnect(
+    privacy_app,
+):
     env = privacy_app
     sk, _, did = _make_keypair()
     env.actors["dave"] = SimpleNamespace(

@@ -94,7 +94,9 @@ class _WakeScope:
     wakes: dict[str, set[str]] = field(default_factory=dict)
 
 
-_current_scope: ContextVar[_WakeScope | None] = ContextVar("agent_wake_scope", default=None)
+_current_scope: ContextVar[_WakeScope | None] = ContextVar(
+    "agent_wake_scope", default=None
+)
 
 
 def record_agent_wake(key: str, kind: str) -> None:
@@ -105,7 +107,11 @@ def record_agent_wake(key: str, kind: str) -> None:
         return
     scope = _current_scope.get()
     if scope is None:
-        logger.warning("Agent wake %s (%s) recorded outside a wake scope; it is not published", key, kind)
+        logger.warning(
+            "Agent wake %s (%s) recorded outside a wake scope; it is not published",
+            key,
+            kind,
+        )
         return
     scope.wakes.setdefault(key, set()).add(kind)
 
@@ -179,7 +185,9 @@ class AgentWakePublisher:
             return
         pending, self._pending = self._pending, {}
         try:
-            await asyncio.wait_for(send_agent_wakes(self._redis, pending), SHUTDOWN_FLUSH_SECONDS)
+            await asyncio.wait_for(
+                send_agent_wakes(self._redis, pending), SHUTDOWN_FLUSH_SECONDS
+            )
         except Exception:
             logger.warning(
                 "%d agent wake keys unpublished at shutdown; their streams see the "
@@ -231,13 +239,17 @@ async def send_agent_wakes(redis, wakes: Mapping[str, Iterable[str]]) -> None:
     await pipe.execute()
 
 
-async def read_wake_marks(redis, keys: Iterable[str]) -> dict[tuple[str, str], str | None]:
+async def read_wake_marks(
+    redis, keys: Iterable[str]
+) -> dict[tuple[str, str], str | None]:
     """Return the change counter of every (key, kind) the keys can wake.
 
     One MGET. A missing counter reads as None; callers compare by inequality,
     so an expired or flushed counter can only cause an extra snapshot.
     """
-    marks = [(key, kind) for key in dict.fromkeys(keys) for kind in wake_kinds_for_key(key)]
+    marks = [
+        (key, kind) for key in dict.fromkeys(keys) for kind in wake_kinds_for_key(key)
+    ]
     if not marks:
         return {}
     values = await redis.mget([wake_mark(key, kind) for key, kind in marks])
@@ -361,7 +373,9 @@ class AgentWakeHub:
                 self._requests.put_nowait(("unsubscribe", released))
 
     async def _run(self) -> None:
-        backoff = ReconnectBackoff(initial_delay=0.5, maximum_delay=HUB_RECONNECT_MAX_SECONDS)
+        backoff = ReconnectBackoff(
+            initial_delay=0.5, maximum_delay=HUB_RECONNECT_MAX_SECONDS
+        )
         connected_before = False
         while True:
             pubsub = self._redis.pubsub()
@@ -427,7 +441,9 @@ class AgentWakeHub:
             if message is None:
                 continue
             kind = _text(message.get("type"))
-            if kind == "pong" or (kind == "message" and _text(message.get("data")) == "PONG"):
+            if kind == "pong" or (
+                kind == "message" and _text(message.get("data")) == "PONG"
+            ):
                 last_pong = loop.time()
                 continue
             channel = _text(message.get("channel"))

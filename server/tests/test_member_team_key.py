@@ -39,7 +39,9 @@ from test_team_key_pinning import (
 
 __all__ = ["pinning"]
 
-MIGRATIONS = Path(__file__).resolve().parents[1] / "src" / "aweb" / "migrations" / "aweb"
+MIGRATIONS = (
+    Path(__file__).resolve().parents[1] / "src" / "aweb" / "migrations" / "aweb"
+)
 
 
 def _certificate(team_sk, team_did, member, certificate_id):
@@ -174,11 +176,15 @@ async def test_a_request_under_a_new_key_records_it_even_with_the_same_certifica
     env = pinning
     member = _new_member("sameid")
     assert (
-        await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "same-id"))
+        await _connect(
+            env, member, _certificate(env.team_sk, env.team_did, member, "same-id")
+        )
     ).status_code == 200
     next_sk, next_did = await _change_key(env)
 
-    roster = await _roster(env, member, _certificate(next_sk, next_did, member, "same-id"))
+    roster = await _roster(
+        env, member, _certificate(next_sk, next_did, member, "same-id")
+    )
 
     assert roster.status_code == 200, roster.text
     row = await _row(env, member)
@@ -195,7 +201,9 @@ async def test_the_fill_records_the_pin_for_every_existing_member_and_they_keep_
     env = pinning
     member = _new_member("existing")
     assert (
-        await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "existing-1"))
+        await _connect(
+            env, member, _certificate(env.team_sk, env.team_did, member, "existing-1")
+        )
     ).status_code == 200
     alice = env.actors["alice"]
     without_certificate = (alice.sk, alice.did, "alice")
@@ -259,7 +267,9 @@ async def test_identity_only_membership_ends_with_the_key_and_returns_with_a_new
     env = pinning
     member = _new_member("identity")
     assert (
-        await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "identity-1"))
+        await _connect(
+            env, member, _certificate(env.team_sk, env.team_did, member, "identity-1")
+        )
     ).status_code == 200
     assert (await _identity_membership(env, member))["team_id"] == TEAM
 
@@ -267,7 +277,9 @@ async def test_identity_only_membership_ends_with_the_key_and_returns_with_a_new
     assert (await _identity_membership(env, member))["team_id"] is None
 
     assert (
-        await _connect(env, member, _certificate(next_sk, next_did, member, "identity-2"))
+        await _connect(
+            env, member, _certificate(next_sk, next_did, member, "identity-2")
+        )
     ).status_code == 200
     assert (await _identity_membership(env, member))["team_id"] == TEAM
 
@@ -284,10 +296,15 @@ async def test_a_grant_ends_with_its_issuing_certificate_and_does_not_return(pin
     next_sk, next_did = await _change_key(env)
     refused = await _use_grant(env, grant)
     assert refused.status_code == 403, refused.text
-    assert refused.json()["detail"] == 'grant issuing certificate revoked. This grant was issued from a certificate that is no longer current. Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS.'
+    assert (
+        refused.json()["detail"]
+        == "grant issuing certificate revoked. This grant was issued from a certificate that is no longer current. Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
+    )
 
     assert (
-        await _connect(env, member, _certificate(next_sk, next_did, member, "granter-2"))
+        await _connect(
+            env, member, _certificate(next_sk, next_did, member, "granter-2")
+        )
     ).status_code == 200
     assert (await _use_grant(env, grant)).status_code == 403
     assert (
@@ -327,12 +344,16 @@ async def test_sender_membership_is_inactive_under_a_superseded_key(pinning):
     env = pinning
     member = _new_member("sender")
     assert (
-        await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "sender-1"))
+        await _connect(
+            env, member, _certificate(env.team_sk, env.team_did, member, "sender-1")
+        )
     ).status_code == 200
     agent_id = str((await _row(env, member))["agent_id"])
     rows = [{"team_id": TEAM, "from_agent_id": agent_id}]
     request = Request({"type": "http", "app": env.app, "headers": []})
-    assert (await sender_memberships(request, env.infra, rows))[(TEAM, agent_id)].state == "active"
+    assert (await sender_memberships(request, env.infra, rows))[
+        (TEAM, agent_id)
+    ].state == "active"
 
     await _change_key(env)
 
@@ -375,7 +396,9 @@ async def test_same_team_delivery_needs_the_sender_under_the_current_key(pinning
     recipient = _new_member("teamrecipient")
     for member, cert_id in ((sender, "teamsender-1"), (recipient, "teamrecipient-1")):
         assert (
-            await _connect(env, member, _certificate(env.team_sk, env.team_did, member, cert_id))
+            await _connect(
+                env, member, _certificate(env.team_sk, env.team_did, member, cert_id)
+            )
         ).status_code == 200
 
     async def same_team():
@@ -432,7 +455,9 @@ async def test_a_member_without_a_certificate_on_file_is_a_member_until_the_key_
     assert (await _identity_membership(env, member))["team_id"] is None
 
     assert (
-        await _connect(env, member, _certificate(next_sk, next_did, member, "alice-after"))
+        await _connect(
+            env, member, _certificate(next_sk, next_did, member, "alice-after")
+        )
     ).status_code == 200
     assert (await _identity_membership(env, member))["team_id"] == TEAM
 

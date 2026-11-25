@@ -68,5 +68,6 @@ class UvCacheTests(unittest.TestCase):
             self.assertEqual(len(problems), 3, problems)
             self.assertTrue(any("Makefile:2:" in problem for problem in problems))
 
+
 if __name__ == "__main__":
     unittest.main()

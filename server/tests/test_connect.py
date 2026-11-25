@@ -15,6 +15,7 @@ from awid.did import did_from_public_key
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_keypair():
     sk = SigningKey.generate()
     pk = bytes(sk.verify_key)
@@ -233,65 +234,141 @@ class TestConnect:
 
 
 @pytest.mark.asyncio
-async def test_planned_connect_uses_exact_ids_and_rejects_changed_replay_atomically(aweb_cloud_db):
+async def test_planned_connect_uses_exact_ids_and_rejects_changed_replay_atomically(
+    aweb_cloud_db,
+):
     """Retained creation IDs constrain allocation and never replace existing rows."""
-    from aweb.routes.connect import PlannedIdentityConflict, PlannedIdentityIds, connect_agent
+    from aweb.routes.connect import (
+        PlannedIdentityConflict,
+        PlannedIdentityIds,
+        connect_agent,
+    )
 
     db = aweb_cloud_db.aweb_db
     _, _, team_key = _make_keypair()
     _, _, member_key = _make_keypair()
     planned = PlannedIdentityIds(agent_id=uuid.uuid4(), workspace_id=uuid.uuid4())
     arguments = dict(
-        db=db, cert_info={"team_id": "planned:example.com", "did_key": member_key,
-                          "alias": "planned", "identity_scope": "local"},
-        team_did_key=team_key, hostname="original", workspace_path="", repo_origin="",
-        role="", human_name="", agent_type="agent",
+        db=db,
+        cert_info={
+            "team_id": "planned:example.com",
+            "did_key": member_key,
+            "alias": "planned",
+            "identity_scope": "local",
+        },
+        team_did_key=team_key,
+        hostname="original",
+        workspace_path="",
+        repo_origin="",
+        role="",
+        human_name="",
+        agent_type="agent",
     )
     result = await connect_agent(**arguments, planned_ids=planned)
     assert result["agent_id"] == str(planned.agent_id)
     assert result["workspace_id"] == str(planned.workspace_id)
     assert await connect_agent(**arguments, planned_ids=planned) == result
     assert await connect_agent(**arguments) == result
-    before_agents = await db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
-    before_workspaces = await db.fetch_all("SELECT * FROM {{tables.workspaces}} ORDER BY workspace_id")
+    before_agents = await db.fetch_all(
+        "SELECT * FROM {{tables.agents}} ORDER BY agent_id"
+    )
+    before_workspaces = await db.fetch_all(
+        "SELECT * FROM {{tables.workspaces}} ORDER BY workspace_id"
+    )
     for changed in (
         PlannedIdentityIds(agent_id=uuid.uuid4(), workspace_id=planned.workspace_id),
         PlannedIdentityIds(agent_id=planned.agent_id, workspace_id=uuid.uuid4()),
     ):
         with pytest.raises(PlannedIdentityConflict) as refused:
-            await connect_agent(**{**arguments, "hostname": "must roll back", "human_name": "must roll back"},
-                                planned_ids=changed)
+            await connect_agent(
+                **{
+                    **arguments,
+                    "hostname": "must roll back",
+                    "human_name": "must roll back",
+                },
+                planned_ids=changed,
+            )
         assert refused.value.status_code == 409
         assert refused.value.detail == {
             "code": "planned_identity_conflict",
             "message": "Reload the retained creation request and use its exact agent and workspace IDs.",
         }
-        assert await db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id") == before_agents
-        assert await db.fetch_all("SELECT * FROM {{tables.workspaces}} ORDER BY workspace_id") == before_workspaces
+        assert (
+            await db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+            == before_agents
+        )
+        assert (
+            await db.fetch_all(
+                "SELECT * FROM {{tables.workspaces}} ORDER BY workspace_id"
+            )
+            == before_workspaces
+        )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("collision", ["agent", "workspace"])
-async def test_planned_connect_refuses_cross_identity_uuid_collision(aweb_cloud_db, collision):
+async def test_planned_connect_refuses_cross_identity_uuid_collision(
+    aweb_cloud_db, collision
+):
     """A retained UUID cannot take another member's resources, even in another team."""
-    from aweb.routes.connect import PlannedIdentityConflict, PlannedIdentityIds, connect_agent
+    from aweb.routes.connect import (
+        PlannedIdentityConflict,
+        PlannedIdentityIds,
+        connect_agent,
+    )
 
     db = aweb_cloud_db.aweb_db
     _, _, team_key = _make_keypair()
     _, _, first_key = _make_keypair()
     _, _, second_key = _make_keypair()
-    arguments = dict(db=db, team_did_key=team_key, hostname="", workspace_path="", repo_origin="",
-                     role="", human_name="", agent_type="agent")
-    first = await connect_agent(**arguments, cert_info={"team_id": "first:example.com", "alias": "first", "did_key": first_key})
+    arguments = dict(
+        db=db,
+        team_did_key=team_key,
+        hostname="",
+        workspace_path="",
+        repo_origin="",
+        role="",
+        human_name="",
+        agent_type="agent",
+    )
+    first = await connect_agent(
+        **arguments,
+        cert_info={
+            "team_id": "first:example.com",
+            "alias": "first",
+            "did_key": first_key,
+        },
+    )
     planned = PlannedIdentityIds(
         agent_id=uuid.UUID(first["agent_id"]) if collision == "agent" else uuid.uuid4(),
-        workspace_id=uuid.UUID(first["workspace_id"]) if collision == "workspace" else uuid.uuid4(),
+        workspace_id=uuid.UUID(first["workspace_id"])
+        if collision == "workspace"
+        else uuid.uuid4(),
     )
-    before_agents = await db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
-    before_workspaces = await db.fetch_all("SELECT * FROM {{tables.workspaces}} ORDER BY workspace_id")
+    before_agents = await db.fetch_all(
+        "SELECT * FROM {{tables.agents}} ORDER BY agent_id"
+    )
+    before_workspaces = await db.fetch_all(
+        "SELECT * FROM {{tables.workspaces}} ORDER BY workspace_id"
+    )
     with pytest.raises(PlannedIdentityConflict):
-        await connect_agent(**arguments, planned_ids=planned,
-                            cert_info={"team_id": "second:example.com", "alias": "second", "did_key": second_key})
-    assert await db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id") == before_agents
-    assert await db.fetch_all("SELECT * FROM {{tables.workspaces}} ORDER BY workspace_id") == before_workspaces
-    assert not await db.fetch_value("SELECT EXISTS(SELECT 1 FROM {{tables.teams}} WHERE team_id='second:example.com')")
+        await connect_agent(
+            **arguments,
+            planned_ids=planned,
+            cert_info={
+                "team_id": "second:example.com",
+                "alias": "second",
+                "did_key": second_key,
+            },
+        )
+    assert (
+        await db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
+        == before_agents
+    )
+    assert (
+        await db.fetch_all("SELECT * FROM {{tables.workspaces}} ORDER BY workspace_id")
+        == before_workspaces
+    )
+    assert not await db.fetch_value(
+        "SELECT EXISTS(SELECT 1 FROM {{tables.teams}} WHERE team_id='second:example.com')"
+    )

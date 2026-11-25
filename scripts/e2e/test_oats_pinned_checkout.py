@@ -28,7 +28,14 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
             pin_file = root / "pin.json"
             init_fixture_repo(upstream)
             run_fixture(
-                ["git", "-C", str(upstream), "config", "user.email", "test@example.invalid"],
+                [
+                    "git",
+                    "-C",
+                    str(upstream),
+                    "config",
+                    "user.email",
+                    "test@example.invalid",
+                ],
                 check=True,
             )
             run_fixture(
@@ -37,10 +44,17 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
             )
             tracked = upstream / "tracked.txt"
             tracked.write_text("reviewed\n", encoding="utf-8")
-            run_fixture(["git", "-C", str(upstream), "add", "tracked.txt", ".gitignore"], check=True)
-            run_fixture(["git", "-C", str(upstream), "commit", "-qm", "pin"], check=True)
+            run_fixture(
+                ["git", "-C", str(upstream), "add", "tracked.txt", ".gitignore"],
+                check=True,
+            )
+            run_fixture(
+                ["git", "-C", str(upstream), "commit", "-qm", "pin"], check=True
+            )
             commit = subprocess.check_output(
-                ["git", "-C", str(upstream), "rev-parse", "HEAD"], text=True, env=fixture_env()
+                ["git", "-C", str(upstream), "rev-parse", "HEAD"],
+                text=True,
+                env=fixture_env(),
             ).strip()
             pin_file.write_text(
                 json.dumps({"repository": str(upstream), "commit": commit}) + "\n",
@@ -55,28 +69,30 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
                 "--target",
                 str(target),
             ]
-            first = run_fixture(
-                command, cwd=REPO_ROOT, capture_output=True, text=True
-            )
+            first = run_fixture(command, cwd=REPO_ROOT, capture_output=True, text=True)
             self.assertEqual(first.returncode, 0, first.stderr)
             (target / "tracked.txt").write_text("uncommitted\n", encoding="utf-8")
             (target / "untracked.txt").write_text("uncommitted\n", encoding="utf-8")
 
-            second = run_fixture(
-                command, cwd=REPO_ROOT, capture_output=True, text=True
-            )
+            second = run_fixture(command, cwd=REPO_ROOT, capture_output=True, text=True)
             self.assertEqual(second.returncode, 0, second.stderr)
-            self.assertEqual((target / "tracked.txt").read_text(encoding="utf-8"), "reviewed\n")
+            self.assertEqual(
+                (target / "tracked.txt").read_text(encoding="utf-8"), "reviewed\n"
+            )
             self.assertFalse((target / "untracked.txt").exists())
             self.assertEqual(
                 subprocess.check_output(
-                    ["git", "-C", str(target), "rev-parse", "HEAD"], text=True, env=fixture_env()
+                    ["git", "-C", str(target), "rev-parse", "HEAD"],
+                    text=True,
+                    env=fixture_env(),
                 ).strip(),
                 commit,
             )
             self.assertEqual(
                 subprocess.check_output(
-                    ["git", "-C", str(target), "status", "--porcelain"], text=True, env=fixture_env()
+                    ["git", "-C", str(target), "status", "--porcelain"],
+                    text=True,
+                    env=fixture_env(),
                 ),
                 "",
             )
@@ -85,7 +101,10 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
         cases = (
             ("symlink", "refusing symlinked OATS cache"),
             ("missing-marker", "refusing to reset unowned directory"),
-            ("different-marker-repository", "cache marker names a different repository"),
+            (
+                "different-marker-repository",
+                "cache marker names a different repository",
+            ),
             ("wrong-origin", "origin is"),
         )
         for case, expected_error in cases:
@@ -116,7 +135,12 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
                     if case == "wrong-origin":
                         run_fixture(
                             [
-                                "git", "-C", str(target), "remote", "add", "origin",
+                                "git",
+                                "-C",
+                                str(target),
+                                "remote",
+                                "add",
+                                "origin",
                                 str(root / "wrong-upstream"),
                             ],
                             check=True,
@@ -124,16 +148,23 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
 
                 sentinel.write_text("keep me\n", encoding="utf-8")
                 pin_file.write_text(
-                    json.dumps({
-                        "repository": expected_repository,
-                        "commit": "1" * 40,
-                    }) + "\n",
+                    json.dumps(
+                        {
+                            "repository": expected_repository,
+                            "commit": "1" * 40,
+                        }
+                    )
+                    + "\n",
                     encoding="utf-8",
                 )
                 result = run_fixture(
                     [
-                        "node", str(PREPARE_SCRIPT), "--pin-file", str(pin_file),
-                        "--target", str(target),
+                        "node",
+                        str(PREPARE_SCRIPT),
+                        "--pin-file",
+                        str(pin_file),
+                        "--target",
+                        str(target),
                     ],
                     cwd=REPO_ROOT,
                     capture_output=True,
@@ -165,6 +196,7 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
             )
             self.assertIn("explicit OATS_TEST_ROOT override", result.stderr)
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
+
 
 if __name__ == "__main__":
     unittest.main()

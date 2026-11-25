@@ -6,7 +6,10 @@ from collections import OrderedDict
 from typing import Any
 
 from aweb.agent_wake import agent_wake_publisher
-from aweb.application_state import RegistryClientUnavailable, application_registry_client
+from aweb.application_state import (
+    RegistryClientUnavailable,
+    application_registry_client,
+)
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import identity_binding_cache
 from aweb.identity_scope import normalize_identity_scope
@@ -94,5 +97,7 @@ def mcp_messaging_runtime(
 def registry_delivery_origin(resolution) -> str:
     delivery = getattr(resolution, "delivery", None)
     return str(
-        getattr(resolution, "delivery_origin", None) or getattr(delivery, "origin", "") or ""
+        getattr(resolution, "delivery_origin", None)
+        or getattr(delivery, "origin", "")
+        or ""
     ).strip()

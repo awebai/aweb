@@ -31,7 +31,9 @@ class MailSuccessionScope:
     identity_threads: tuple[tuple[tuple[str, ...], tuple[UUID, ...]], ...] = ()
 
 
-async def load_mail_succession_scope(db, *, viewer_dids: list[str]) -> MailSuccessionScope:
+async def load_mail_succession_scope(
+    db, *, viewer_dids: list[str]
+) -> MailSuccessionScope:
     """Snapshot thread-local mail attribution once when opening a stream.
 
     This is read evidence, never a current identity binding or a wake address.
@@ -101,13 +103,17 @@ async def succeed_local_human_participant_on(
         or any(r["agent_type"] != "human" or r["deleted_at"] is None for r in old_rows)
         or any(str(r.get("address") or "").strip() for r in old_rows)
     ):
-        raise ValidationError("Succession requires an unaddressed retired local human identity")
+        raise ValidationError(
+            "Succession requires an unaddressed retired local human identity"
+        )
     old_keys = {r.get("did_key") for r in old_rows}
     if len(old_keys) != 1 or not str(next(iter(old_keys)) or "").startswith("did:key:"):
         raise ValidationError("Predecessor key evidence is ambiguous")
     old_key = next(iter(old_keys))
     stable_ids = {
-        r["did_aw"] for r in old_rows if r.get("did_aw") and r.get("did_aw_verified_key") == old_key
+        r["did_aw"]
+        for r in old_rows
+        if r.get("did_aw") and r.get("did_aw_verified_key") == old_key
     }
     if len(stable_ids) > 1:
         raise ValidationError("Predecessor stable identity evidence is ambiguous")
@@ -136,15 +142,20 @@ async def succeed_local_human_participant_on(
         )
         or len({r.get("did_key") for r in successors}) != 1
     ):
-        raise ValidationError("Succession requires an unambiguous live human successor binding")
+        raise ValidationError(
+            "Succession requires an unambiguous live human successor binding"
+        )
     mapping = await tx.fetch_one(
         "SELECT * FROM {{tables.local_human_successions}} WHERE predecessor_did=$1",
         predecessor_did,
     )
     if mapping and (
-        mapping["successor_did"] != successor_did or mapping["predecessor_did_key"] != old_key
+        mapping["successor_did"] != successor_did
+        or mapping["predecessor_did_key"] != old_key
     ):
-        raise ConflictError("Human succession is already recorded for another identity binding")
+        raise ConflictError(
+            "Human succession is already recorded for another identity binding"
+        )
     threads = await tx.fetch_all(
         """SELECT c.conversation_id,c.team_id FROM {{tables.conversations}} c
            WHERE c.conversation_type='mail' AND EXISTS (
@@ -163,10 +174,14 @@ async def succeed_local_human_participant_on(
         )
         if any(
             r.get("delivery_origin")
-            or str(r.get("transport_hint") or "").startswith(("federation:", "federated:"))
+            or str(r.get("transport_hint") or "").startswith(
+                ("federation:", "federated:")
+            )
             for r in rows
         ):
-            raise ValidationError("Human succession cannot change a thread with a foreign route")
+            raise ValidationError(
+                "Human succession cannot change a thread with a foreign route"
+            )
         participants[thread["conversation_id"]] = rows
     if not mapping:
         await tx.execute(
@@ -219,9 +234,13 @@ async def succeed_local_human_participant_on(
             successor.get("address"),
             successor["did_key"],
             min(r["joined_at"] for r in merged),
-            "initiator" if any(r["role"] == "initiator" for r in merged) else "participant",
+            "initiator"
+            if any(r["role"] == "initiator" for r in merged)
+            else "participant",
         )
-    return SuccessionResult(mapping_created=mapping is None, conversations_updated=len(threads))
+    return SuccessionResult(
+        mapping_created=mapping is None, conversations_updated=len(threads)
+    )
 
 
 async def predecessor_target_for_mail(

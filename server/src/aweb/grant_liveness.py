@@ -21,7 +21,9 @@ def grant_liveness_expiry(grant: GrantContext) -> datetime:
     # Presence is ephemeral even when delegation is not. Do not write the
     # storage sentinel as a heartbeat deadline after its calendar horizon.
     if grant.never_expires:
-        return datetime.now(timezone.utc) + timedelta(seconds=DEFAULT_GRANT_LIVENESS_TTL_SECONDS)
+        return datetime.now(timezone.utc) + timedelta(
+            seconds=DEFAULT_GRANT_LIVENESS_TTL_SECONDS
+        )
     return grant.expires_at
 
 
@@ -42,7 +44,9 @@ async def cleanup_expired_grant_liveness(
     try:
         return int(status.removeprefix("DELETE "))
     except ValueError as exc:
-        raise ValueError("Grant liveness cleanup returned an invalid DELETE count") from exc
+        raise ValueError(
+            "Grant liveness cleanup returned an invalid DELETE count"
+        ) from exc
 
 
 _GRANT_CANDIDATE_FIELDS = (
@@ -66,7 +70,9 @@ _GRANT_CANDIDATE_FIELDS = (
 )
 
 
-def _grant_liveness_candidates_sql(*, workspace_predicate: str, ttl_seconds_parameter: str) -> str:
+def _grant_liveness_candidates_sql(
+    *, workspace_predicate: str, ttl_seconds_parameter: str
+) -> str:
     """One eligibility query for direct reads and workspace-statement composition."""
     return f"""
         SELECT l.workspace_id, l.grant_id, l.subject_agent_id, l.alias,
@@ -91,7 +97,9 @@ def _grant_liveness_candidates_sql(*, workspace_predicate: str, ttl_seconds_para
     """
 
 
-def workspace_grant_liveness_join_sql(*, workspace: str, ttl_seconds_parameter: str) -> str:
+def workspace_grant_liveness_join_sql(
+    *, workspace: str, ttl_seconds_parameter: str
+) -> str:
     """Join every eligible candidate, retaining native values and distinct column names.
 
     The caller selects grant_liveness.* and orders candidates by the projected
@@ -105,9 +113,7 @@ def workspace_grant_liveness_join_sql(*, workspace: str, ttl_seconds_parameter: 
         workspace_predicate=f"l.workspace_id = {workspace}.workspace_id",
         ttl_seconds_parameter=ttl_seconds_parameter,
     )
-    return (
-        f"LEFT JOIN LATERAL (SELECT {columns} FROM ({candidates}) candidate) grant_liveness ON TRUE"
-    )
+    return f"LEFT JOIN LATERAL (SELECT {columns} FROM ({candidates}) candidate) grant_liveness ON TRUE"
 
 
 async def valid_grant_liveness_from_workspace_rows(
@@ -124,7 +130,10 @@ async def valid_grant_liveness_from_workspace_rows(
         if row["grant_liveness_grant_id"] is not None
     ]
     return await _valid_grant_liveness_candidates(
-        candidates, registry_client=registry_client, request=request, failure_policy=failure_policy
+        candidates,
+        registry_client=registry_client,
+        request=request,
+        failure_policy=failure_policy,
     )
 
 
@@ -159,7 +168,10 @@ async def valid_grant_liveness_by_workspace(
         ttl_seconds,
     )
     return await _valid_grant_liveness_candidates(
-        rows, registry_client=registry_client, request=request, failure_policy=failure_policy
+        rows,
+        registry_client=registry_client,
+        request=request,
+        failure_policy=failure_policy,
     )
 
 

@@ -108,7 +108,10 @@ async def test_library_verifier_and_owned_plain_sdk_preserve_real_h2_admission(
     async with runtime.lifespan(FastAPI()):
         # The caller-owned client is used when the caller injects it.
         before = await runtime.check_human_member(
-            TEAM, principal=identity, certificate=member.certificate(), identity_client=caller_client
+            TEAM,
+            principal=identity,
+            certificate=member.certificate(),
+            identity_client=caller_client,
         )
         owned = runtime.registry_client()
         assert owned is not caller_client and owned._domain_verifier is verifier

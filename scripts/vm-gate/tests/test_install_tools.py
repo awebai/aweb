@@ -54,5 +54,6 @@ class InstallToolsTests(unittest.TestCase):
                 install(plan)
             replace.assert_not_called()
 
+
 if __name__ == "__main__":
     unittest.main()

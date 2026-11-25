@@ -33,8 +33,12 @@ class SourceInventoryTests(unittest.TestCase):
     def test_sql_table_extraction_rejects_unsupported_literal_declaration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             migrations = Path(tmp)
-            (migrations / "001.sql").write_text("CREATE TABLE literal_table (id INTEGER);\n")
-            with self.assertRaisesRegex(ValueError, "unsupported table declaration.*001.sql"):
+            (migrations / "001.sql").write_text(
+                "CREATE TABLE literal_table (id INTEGER);\n"
+            )
+            with self.assertRaisesRegex(
+                ValueError, "unsupported table declaration.*001.sql"
+            ):
                 inventories.extract_sql_tables(migrations)
 
     def test_retired_schema_cleanup_does_not_change_component_inventory(self) -> None:
@@ -53,7 +57,9 @@ class SourceInventoryTests(unittest.TestCase):
             (migrations / "002.sql").write_text(
                 "EXECUTE format('DROP TABLE IF EXISTS %I.%I', legacy_schema, 'live');\n"
             )
-            with self.assertRaisesRegex(ValueError, "dynamic cleanup targets component table"):
+            with self.assertRaisesRegex(
+                ValueError, "dynamic cleanup targets component table"
+            ):
                 inventories.extract_sql_tables(migrations)
 
     def test_router_extraction_follows_application_mount_order(self) -> None:
@@ -66,20 +72,28 @@ class SourceInventoryTests(unittest.TestCase):
                 ")\n"
                 "app.mount('/mcp', mcp_app)\n"
             )
-            self.assertEqual(inventories.extract_fastapi_routers(source), ["alpha", "beta"])
+            self.assertEqual(
+                inventories.extract_fastapi_routers(source), ["alpha", "beta"]
+            )
 
     def test_router_extraction_rejects_dynamic_router_expression(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "api.py"
             source.write_text("app.include_router(build_router())\n")
-            with self.assertRaisesRegex(ValueError, "unsupported app.include_router.*line 1"):
+            with self.assertRaisesRegex(
+                ValueError, "unsupported app.include_router.*line 1"
+            ):
                 inventories.extract_fastapi_routers(source)
 
     def test_router_extraction_rejects_alias_receiver(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "api.py"
-            source.write_text("mounted_app = app\nmounted_app.include_router(beta_router)\n")
-            with self.assertRaisesRegex(ValueError, "unsupported include_router receiver.*line 2"):
+            source.write_text(
+                "mounted_app = app\nmounted_app.include_router(beta_router)\n"
+            )
+            with self.assertRaisesRegex(
+                ValueError, "unsupported include_router receiver.*line 2"
+            ):
                 inventories.extract_fastapi_routers(source)
 
     def test_cache_fact_extraction_evaluates_source_constants(self) -> None:
@@ -106,15 +120,25 @@ class SourceInventoryTests(unittest.TestCase):
             migration = root / "server/src/aweb/migrations/aweb/002_extra.sql"
             migration.write_text("CREATE TABLE {{tables.beta}} ();\n")
             errors = inventories.check_repository(root)
-            self.assertTrue(any("aweb-tables" in error and "beta" in error for error in errors), errors)
+            self.assertTrue(
+                any("aweb-tables" in error and "beta" in error for error in errors),
+                errors,
+            )
 
-    def test_negative_control_rejects_kit_table_addition_without_doc_update(self) -> None:
+    def test_negative_control_rejects_kit_table_addition_without_doc_update(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self._fixture_root(Path(tmp))
             migration = root / "naapp-lib/src/aweb_naapp/hooks/migrations/002_extra.sql"
             migration.write_text("CREATE TABLE {{tables.kappa}} ();\n")
             errors = inventories.check_repository(root)
-            self.assertTrue(any("aweb-kit-tables" in error and "kappa" in error for error in errors), errors)
+            self.assertTrue(
+                any(
+                    "aweb-kit-tables" in error and "kappa" in error for error in errors
+                ),
+                errors,
+            )
 
     def test_negative_control_rejects_router_addition_without_doc_update(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,16 +146,24 @@ class SourceInventoryTests(unittest.TestCase):
             source = root / "server/src/aweb/api.py"
             source.write_text(source.read_text() + "app.include_router(beta_router)\n")
             errors = inventories.check_repository(root)
-            self.assertTrue(any("aweb-routers" in error and "beta" in error for error in errors), errors)
+            self.assertTrue(
+                any("aweb-routers" in error and "beta" in error for error in errors),
+                errors,
+            )
 
     def test_negative_control_rejects_stale_documented_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self._fixture_root(Path(tmp))
             doc = root / "docs/awid-sot.md"
-            doc.write_text(doc.read_text().replace("- `omega`", "- `omega`\n- `deleted_table`"))
+            doc.write_text(
+                doc.read_text().replace("- `omega`", "- `omega`\n- `deleted_table`")
+            )
             errors = inventories.check_repository(root)
             self.assertTrue(
-                any("awid-tables" in error and "deleted_table" in error for error in errors),
+                any(
+                    "awid-tables" in error and "deleted_table" in error
+                    for error in errors
+                ),
                 errors,
             )
 
@@ -141,7 +173,10 @@ class SourceInventoryTests(unittest.TestCase):
             source = root / "awid/src/awid/registry.py"
             source.write_text(source.read_text().replace("10 * 60", "11 * 60", 1))
             errors = inventories.check_repository(root)
-            self.assertTrue(any("aweb-awid-cache" in error and "660" in error for error in errors), errors)
+            self.assertTrue(
+                any("aweb-awid-cache" in error and "660" in error for error in errors),
+                errors,
+            )
 
     @staticmethod
     def _fixture_root(root: Path) -> Path:
@@ -158,7 +193,9 @@ class SourceInventoryTests(unittest.TestCase):
         (root / "server/src/aweb/migrations/aweb/001.sql").write_text(
             "CREATE TABLE IF NOT EXISTS {{tables.alpha}} ();\n"
         )
-        (root / "server/src/aweb/api.py").write_text("app.include_router(alpha_router)\n")
+        (root / "server/src/aweb/api.py").write_text(
+            "app.include_router(alpha_router)\n"
+        )
         (root / "awid/src/awid_service/migrations/001.sql").write_text(
             "CREATE TABLE IF NOT EXISTS {{tables.omega}} ();\n"
         )

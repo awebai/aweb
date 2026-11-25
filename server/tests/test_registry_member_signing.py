@@ -1,4 +1,5 @@
 """A server's ordinary member key can read only its configured private teams."""
+
 import asyncio
 import base64
 import os
@@ -36,7 +37,11 @@ REVOCATION_PAGE = 200
 def configure_member(monkeypatch, tmp_path):
     key, public = generate_keypair()
     # awid.SaveSigningKey emits a PEM-wrapped 32-byte seed, not PKCS8.
-    pem = b"-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(key) + b"\n-----END ED25519 PRIVATE KEY-----\n"
+    pem = (
+        b"-----BEGIN ED25519 PRIVATE KEY-----\n"
+        + base64.b64encode(key)
+        + b"\n-----END ED25519 PRIVATE KEY-----\n"
+    )
     key_path = tmp_path / "server.pem"
     key_path.write_bytes(pem)
     config = tmp_path / "members.json"
@@ -68,18 +73,37 @@ class PrivateTeam:
 
     async def issue(self, member_did: str, alias: str) -> dict:
         name, domain = self.team_id.split(":", 1)
-        cert = _make_certificate(bytes(self.key), self.did, member_did, team_id=self.team_id,
-            alias=alias, identity_scope="local", certificate_id=str(uuid4()))
-        await self.owner.register_team_certificate(domain, name,
-            team_controller_signing_key=bytes(self.key), certificate_id=cert["certificate_id"],
-            member_did_key=member_did, member_did_aw=None, member_address=None,
-            alias=alias, identity_scope="local", certificate=_encode_certificate(cert))
+        cert = _make_certificate(
+            bytes(self.key),
+            self.did,
+            member_did,
+            team_id=self.team_id,
+            alias=alias,
+            identity_scope="local",
+            certificate_id=str(uuid4()),
+        )
+        await self.owner.register_team_certificate(
+            domain,
+            name,
+            team_controller_signing_key=bytes(self.key),
+            certificate_id=cert["certificate_id"],
+            member_did_key=member_did,
+            member_did_aw=None,
+            member_address=None,
+            alias=alias,
+            identity_scope="local",
+            certificate=_encode_certificate(cert),
+        )
         return cert
 
     async def revoke(self, cert: dict) -> None:
         name, domain = self.team_id.split(":", 1)
-        await self.owner.revoke_team_certificate(domain, name,
-            team_controller_signing_key=bytes(self.key), certificate_id=cert["certificate_id"])
+        await self.owner.revoke_team_certificate(
+            domain,
+            name,
+            team_controller_signing_key=bytes(self.key),
+            certificate_id=cert["certificate_id"],
+        )
 
 
 async def add_private_team(real_stack, team_id: str) -> PrivateTeam:
@@ -98,7 +122,9 @@ async def private_team(real_stack, monkeypatch, tmp_path):
     monkeypatch.setenv("AWID_REGISTRY_URL", REGISTRY_URL)
     server_cert = await team.issue(server_did, "server")
     try:
-        yield SimpleNamespace(team=team, server_key=key, server_did=server_did, server_cert=server_cert)
+        yield SimpleNamespace(
+            team=team, server_key=key, server_did=server_did, server_cert=server_cert
+        )
     finally:
         await team.owner.aclose()
 
@@ -107,35 +133,51 @@ def assert_signed_by(request: httpx.Request, did: str) -> None:
     assert "x-awid-service-token" not in request.headers
     scheme, signer, signature = request.headers["authorization"].split()
     assert (scheme, signer) == ("DIDKey", did)
-    verify_did_key_signature(did_key=signer, signature_b64=signature,
-        payload=f"{request.headers['x-aweb-timestamp']}\nGET\n{request.url.path}".encode())
+    verify_did_key_signature(
+        did_key=signer,
+        signature_b64=signature,
+        payload=f"{request.headers['x-aweb-timestamp']}\nGET\n{request.url.path}".encode(),
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cached", [False, True])
-async def test_server_without_service_token_signs_all_private_and_fresh_reads(real_stack, private_team, redis, cached):
+async def test_server_without_service_token_signs_all_private_and_fresh_reads(
+    real_stack, private_team, redis, cached
+):
     team = private_team.team
     # A second revocation page: the client must sign the cursor read as well.
     revoked = []
     for index in range(REVOCATION_PAGE + 1):
-        cert = await team.issue(did_from_public_key(generate_keypair()[1]), f"former-{index}")
+        cert = await team.issue(
+            did_from_public_key(generate_keypair()[1]), f"former-{index}"
+        )
         await team.revoke(cert)
         revoked.append(cert["certificate_id"])
-    client = _build_awid_registry_client(create_app(), redis=redis if cached else None, transport=real_stack.awid)
+    client = _build_awid_registry_client(
+        create_app(), redis=redis if cached else None, transport=real_stack.awid
+    )
     calls = real_stack.awid.calls
     first_read = len(calls)
     try:
         assert (await client.get_team(DOMAIN, TEAM)).team_did_key == team.did
         assert await client.get_team_public_key(DOMAIN, TEAM) == team.did
         assert await client.get_team_revocations(DOMAIN, TEAM) == set(revoked)
-        assert [c.certificate_id for c in await client.list_team_certificates(DOMAIN, TEAM)] == [private_team.server_cert["certificate_id"]]
+        assert [
+            c.certificate_id for c in await client.list_team_certificates(DOMAIN, TEAM)
+        ] == [private_team.server_cert["certificate_id"]]
         # app_tasks and hook_bindings require these fresh methods.
         assert (await client.get_team_fresh(DOMAIN, TEAM)).team_did_key == team.did
         assert await client.get_team_public_key_fresh(DOMAIN, TEAM) == team.did
         assert await client.get_team_revocations_fresh(DOMAIN, TEAM) == set(revoked)
-        assert [c.certificate_id for c in await client.list_team_certificates_fresh(DOMAIN, TEAM)] == [private_team.server_cert["certificate_id"]]
+        assert [
+            c.certificate_id
+            for c in await client.list_team_certificates_fresh(DOMAIN, TEAM)
+        ] == [private_team.server_cert["certificate_id"]]
         # No server caller uses member lookup yet; the same existing read gate applies.
-        assert (await client._request_json("GET", BASE + "/members/server"))["alias"] == "server"
+        assert (await client._request_json("GET", BASE + "/members/server"))[
+            "alias"
+        ] == "server"
         for request in calls[first_read:]:
             assert_signed_by(request, private_team.server_did)
         assert sum("cursor=" in str(request.url) for request in calls[first_read:]) == 2
@@ -152,13 +194,18 @@ async def test_signing_is_scoped_to_team_read_paths_and_configured_registry(real
     other_key, other_public = generate_keypair()
     await team.issue(did_from_public_key(public), "reader")
     await other.issue(did_from_public_key(other_public), "reader")
-    client = RegistryClient(REGISTRY_URL, member_signing_keys={TEAM_ID: key, OTHER_TEAM_ID: other_key},
-        transport=real_stack.awid)
+    client = RegistryClient(
+        REGISTRY_URL,
+        member_signing_keys={TEAM_ID: key, OTHER_TEAM_ID: other_key},
+        transport=real_stack.awid,
+    )
     calls = real_stack.awid.calls
     try:
         assert (await client._request_json("GET", BASE))["team_did_key"] == team.did
         assert_signed_by(calls[-1], did_from_public_key(public))
-        assert (await client._request_json("GET", f"/v1/namespaces/{DOMAIN}/teams/other"))["team_did_key"] == other.did
+        assert (
+            await client._request_json("GET", f"/v1/namespaces/{DOMAIN}/teams/other")
+        )["team_did_key"] == other.did
         assert_signed_by(calls[-1], did_from_public_key(other_public))
         for method, path, origin, status in [
             ("GET", BASE, "https://foreign.example", 403),
@@ -174,7 +221,9 @@ async def test_signing_is_scoped_to_team_read_paths_and_configured_registry(real
             assert refused.value.status_code == status
         # Explicit caller authority must never be silently replaced.
         with pytest.raises(RegistryError) as refused:
-            await client._request_json("GET", BASE, headers={"Authorization": "DIDKey explicit signature"})
+            await client._request_json(
+                "GET", BASE, headers={"Authorization": "DIDKey explicit signature"}
+            )
         assert calls[-1].headers["authorization"] == "DIDKey explicit signature"
         assert refused.value.status_code == 401
     finally:
@@ -183,12 +232,24 @@ async def test_signing_is_scoped_to_team_read_paths_and_configured_registry(real
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["get_team_public_key", "get_team_revocations", "get_team", "list_team_certificates"])
+@pytest.mark.parametrize(
+    "method",
+    [
+        "get_team_public_key",
+        "get_team_revocations",
+        "get_team",
+        "list_team_certificates",
+    ],
+)
 @pytest.mark.parametrize("refusal", ["revoked", "unauthenticated"])
-async def test_revoked_reader_cannot_reuse_cache_after_refusal(real_stack, private_team, redis, monkeypatch, method, refusal):
+async def test_revoked_reader_cannot_reuse_cache_after_refusal(
+    real_stack, private_team, redis, monkeypatch, method, refusal
+):
     now = [1000]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: now[0])
-    client = _build_awid_registry_client(create_app(), redis=redis, transport=real_stack.awid)
+    client = _build_awid_registry_client(
+        create_app(), redis=redis, transport=real_stack.awid
+    )
     try:
         read = getattr(client, method)
         warm = await read(DOMAIN, TEAM)
@@ -201,7 +262,9 @@ async def test_revoked_reader_cannot_reuse_cache_after_refusal(real_stack, priva
             status = 403
         else:
             # The registry no longer accepts the reader's signature.
-            real_stack.awid.fault = lambda request, response: httpx.Response(401, json={"detail": "invalid signature"})
+            real_stack.awid.fault = lambda request, response: httpx.Response(
+                401, json={"detail": "invalid signature"}
+            )
             status = 401
         now[0] += 601 if method in ("get_team", "list_team_certificates") else 61
         # A stale-while-revalidate read returns the cached answer while its refresh runs, or is refused.
@@ -223,19 +286,46 @@ async def test_revoked_reader_cannot_reuse_cache_after_refusal(real_stack, priva
 async def test_member_cache_is_not_reused_by_another_reader(redis):
     key, _ = generate_keypair()
     other, _ = generate_keypair()
-    clients = [CachedRegistryClient("https://api.awid.ai", redis, member_signing_keys=keys)
-        for keys in ({TEAM_ID: key}, {TEAM_ID: other}, {OTHER_TEAM_ID: key}, {})]
+    clients = [
+        CachedRegistryClient("https://api.awid.ai", redis, member_signing_keys=keys)
+        for keys in ({TEAM_ID: key}, {TEAM_ID: other}, {OTHER_TEAM_ID: key}, {})
+    ]
     try:
-        for name in ("_team_metadata_cache_key", "_team_public_key_cache_key", "_team_revocations_cache_key", "_team_certificates_cache_key"):
-            kwargs = {"active_only": True} if name == "_team_certificates_cache_key" else {}
-            assert len({getattr(client, name)(DOMAIN, TEAM, **kwargs) for client in clients}) == 4
+        for name in (
+            "_team_metadata_cache_key",
+            "_team_public_key_cache_key",
+            "_team_revocations_cache_key",
+            "_team_certificates_cache_key",
+        ):
+            kwargs = (
+                {"active_only": True} if name == "_team_certificates_cache_key" else {}
+            )
+            assert (
+                len(
+                    {
+                        getattr(client, name)(DOMAIN, TEAM, **kwargs)
+                        for client in clients
+                    }
+                )
+                == 4
+            )
     finally:
         for client in clients:
             await client.aclose()
 
 
-@pytest.mark.parametrize("contents", ["{}", "[]", '{"bad-team-id":"missing.pem"}', '{"engineering:example.com":"missing.pem"}'])
-def test_invalid_member_configuration_refused_at_startup(monkeypatch, tmp_path, contents):
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "{}",
+        "[]",
+        '{"bad-team-id":"missing.pem"}',
+        '{"engineering:example.com":"missing.pem"}',
+    ],
+)
+def test_invalid_member_configuration_refused_at_startup(
+    monkeypatch, tmp_path, contents
+):
     _, _, config = configure_member(monkeypatch, tmp_path)
     config.write_text(contents)
     with pytest.raises(ValueError, match="AWID_MEMBER_KEYS_FILE"):
@@ -251,7 +341,9 @@ def test_group_writable_member_key_file_refused_at_startup(monkeypatch, tmp_path
         get_settings()
 
 
-def test_member_key_path_that_is_not_a_regular_file_refused_at_startup(monkeypatch, tmp_path):
+def test_member_key_path_that_is_not_a_regular_file_refused_at_startup(
+    monkeypatch, tmp_path
+):
     from aweb.config import get_settings
 
     _, _, config = configure_member(monkeypatch, tmp_path)
@@ -263,7 +355,9 @@ def test_member_key_path_that_is_not_a_regular_file_refused_at_startup(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_real_private_team_verification_revocation_and_recovery(real_stack, private_team, redis, monkeypatch):
+async def test_real_private_team_verification_revocation_and_recovery(
+    real_stack, private_team, redis, monkeypatch
+):
     """Real AWID gates + aweb's member, app-task and hook authority consumers."""
     import hashlib
     from datetime import datetime, timedelta, timezone
@@ -287,35 +381,75 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
     member_cert = await team.issue(member_did, "alice")
     now = [1000]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: now[0])
-    client = _build_awid_registry_client(create_app(), redis=redis, transport=real_stack.awid)
-    hosted = RegistryClient(REGISTRY_URL, service_token=real_stack.service_token, transport=real_stack.awid)
+    client = _build_awid_registry_client(
+        create_app(), redis=redis, transport=real_stack.awid
+    )
+    hosted = RegistryClient(
+        REGISTRY_URL, service_token=real_stack.service_token, transport=real_stack.awid
+    )
     unsigned = RegistryClient(REGISTRY_URL, transport=real_stack.awid)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    envelope = compact_team_auth_payload(team_id=TEAM_ID, timestamp=timestamp, body_sha256=hashlib.sha256(b"").hexdigest())
+    envelope = compact_team_auth_payload(
+        team_id=TEAM_ID,
+        timestamp=timestamp,
+        body_sha256=hashlib.sha256(b"").hexdigest(),
+    )
     headers = {
         "Authorization": f"DIDKey {member_did} {sign_message(member_key, envelope)}",
         "X-AWEB-Timestamp": timestamp,
         "X-AWID-Team-Certificate": _encode_certificate(member_cert),
     }
-    request = Request({"type": "http", "method": "GET", "path": "/v1/tasks", "query_string": b"",
-        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
-        "app": SimpleNamespace(state=SimpleNamespace(
-            awid_registry_client=client, public_origin="",
-            db=SimpleNamespace(get_manager=lambda _name: real_stack.aweb_db),
-        ))})
-    authorization = {"payload": {"team_id": TEAM_ID, "certificate_id": member_cert["certificate_id"], "actor_did_key": member_did},
-        "certificate": _encode_certificate(member_cert)}
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/v1/tasks",
+            "query_string": b"",
+            "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(
+                    awid_registry_client=client,
+                    public_origin="",
+                    db=SimpleNamespace(get_manager=lambda _name: real_stack.aweb_db),
+                )
+            ),
+        }
+    )
+    authorization = {
+        "payload": {
+            "team_id": TEAM_ID,
+            "certificate_id": member_cert["certificate_id"],
+            "actor_did_key": member_did,
+        },
+        "certificate": _encode_certificate(member_cert),
+    }
     moment = datetime.now(timezone.utc)
     act = {
-        "v": 1, "type": "aweb.owner-act", "team_id": TEAM_ID, "team_key_did": team_did,
-        "aud": "https://aweb.example", "act": "hook-binding.activate",
+        "v": 1,
+        "type": "aweb.owner-act",
+        "team_id": TEAM_ID,
+        "team_key_did": team_did,
+        "aud": "https://aweb.example",
+        "act": "hook-binding.activate",
         "issued_at": moment.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "expires_at": (moment + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "nonce": uuid4().hex,
-        "subject": hook_binding_subject(binding_id=str(uuid4()), installation_id=str(uuid4()), generation=1,
-            app_id="logs", origin="https://logs.example", digest="sha256:" + "a"*64,
-            kind="registration", catalog_id="aweb.hooks", catalog_version=1,
-            hook="post-command-hook", tool="audit", method="POST", path="/hooks/audit", scopes=[]),
+        "subject": hook_binding_subject(
+            binding_id=str(uuid4()),
+            installation_id=str(uuid4()),
+            generation=1,
+            app_id="logs",
+            origin="https://logs.example",
+            digest="sha256:" + "a" * 64,
+            kind="registration",
+            catalog_id="aweb.hooks",
+            catalog_version=1,
+            hook="post-command-hook",
+            tool="audit",
+            method="POST",
+            path="/hooks/audit",
+            scopes=[],
+        ),
     }
     signing = owner_act_signing_bytes(act)
 
@@ -332,10 +466,18 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
         with pytest.raises(RegistryError) as denied:
             await unsigned.get_team(DOMAIN, TEAM)
         assert denied.value.status_code == 403
-        assert (await verify_request_certificate(request, aweb_infra))["alias"] == "alice"
-        assert (await verify_authorization_certificate(request, authorization))[0]["alias"] == "alice"
-        await verifier.prepare(signing, sign_message(bytes(team_key), signing), team_id=TEAM_ID)
-        assert (await client._request_json("GET", BASE + "/members/alice"))["alias"] == "alice"
+        assert (await verify_request_certificate(request, aweb_infra))[
+            "alias"
+        ] == "alice"
+        assert (await verify_authorization_certificate(request, authorization))[0][
+            "alias"
+        ] == "alice"
+        await verifier.prepare(
+            signing, sign_message(bytes(team_key), signing), team_id=TEAM_ID
+        )
+        assert (await client._request_json("GET", BASE + "/members/alice"))[
+            "alias"
+        ] == "alice"
         assert (await hosted.get_team(DOMAIN, TEAM)).team_did_key == team_did
         await team.revoke(server_cert)
         # Fresh app and hook reads refuse immediately, even with warm caches.
@@ -343,7 +485,9 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
             await verify_authorization_certificate(request, authorization)
         assert app_denied.value.status_code == 503
         with pytest.raises(OwnerActTeamKeyUnavailable):
-            await verifier.prepare(signing, sign_message(bytes(team_key), signing), team_id=TEAM_ID)
+            await verifier.prepare(
+                signing, sign_message(bytes(team_key), signing), team_id=TEAM_ID
+            )
         now[0] += 61
         with pytest.raises(HTTPException) as auth_denied:
             await verify_request_certificate(request, aweb_infra)
@@ -351,23 +495,33 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
         assert (await hosted.get_team(DOMAIN, TEAM)).team_did_key == team_did
         # Existing controller issuance restores access; no new recovery protocol.
         await team.issue(server_did, "server")
-        assert (await verify_request_certificate(request, aweb_infra))["alias"] == "alice"
+        assert (await verify_request_certificate(request, aweb_infra))[
+            "alias"
+        ] == "alice"
     finally:
         for registry in (client, hosted, unsigned):
             await registry.aclose()
 
 
 @pytest.mark.asyncio
-async def test_hosted_token_takes_precedence_and_stays_home_scoped(real_stack, private_team, monkeypatch):
+async def test_hosted_token_takes_precedence_and_stays_home_scoped(
+    real_stack, private_team, monkeypatch
+):
     monkeypatch.setenv("AWID_SERVICE_TOKEN", real_stack.service_token)
     calls = real_stack.awid.calls
-    client = _build_awid_registry_client(create_app(), redis=None, transport=real_stack.awid)
+    client = _build_awid_registry_client(
+        create_app(), redis=None, transport=real_stack.awid
+    )
     try:
-        assert (await client._request_json("GET", BASE))["team_did_key"] == private_team.team.did
+        assert (await client._request_json("GET", BASE))[
+            "team_did_key"
+        ] == private_team.team.did
         assert calls[-1].headers["x-awid-service-token"] == real_stack.service_token
         assert "authorization" not in calls[-1].headers
         with pytest.raises(RegistryError) as refused:
-            await client._request_json("GET", BASE, registry_url="https://elsewhere.example")
+            await client._request_json(
+                "GET", BASE, registry_url="https://elsewhere.example"
+            )
         assert refused.value.status_code == 403
         assert "authorization" not in calls[-1].headers
         assert "x-awid-service-token" not in calls[-1].headers
@@ -376,7 +530,10 @@ async def test_hosted_token_takes_precedence_and_stays_home_scoped(real_stack, p
 
 
 def test_relative_member_key_paths_and_non_ed25519_refusal(monkeypatch, tmp_path):
-    from cryptography.hazmat.primitives.asymmetric.ec import generate_private_key, SECP256R1
+    from cryptography.hazmat.primitives.asymmetric.ec import (
+        generate_private_key,
+        SECP256R1,
+    )
     from aweb.config import get_settings
 
     key, _, config = configure_member(monkeypatch, tmp_path)
@@ -385,14 +542,19 @@ def test_relative_member_key_paths_and_non_ed25519_refusal(monkeypatch, tmp_path
     assert settings.awid_member_signing_keys == {TEAM_ID: key}
     assert repr(key) not in repr(settings)
     wrong_key = generate_private_key(SECP256R1()).private_bytes(
-        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
     (tmp_path / "server.pem").write_bytes(wrong_key)
     with pytest.raises(ValueError, match="AWID_MEMBER_KEYS_FILE"):
         get_settings()
 
 
 @pytest.mark.asyncio
-async def test_server_loads_key_emitted_by_existing_cli(aw_cli_binary, monkeypatch, tmp_path):
+async def test_server_loads_key_emitted_by_existing_cli(
+    aw_cli_binary, monkeypatch, tmp_path
+):
     from aweb.config import get_settings
     from awid.signing import sign_message
 
@@ -400,10 +562,26 @@ async def test_server_loads_key_emitted_by_existing_cli(aw_cli_binary, monkeypat
     identity.mkdir()
     env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
     # Local preparation does not register an identity or contact a service.
-    result = subprocess.run([
-        str(aw_cli_binary), "--identity-home", str(identity), "id", "team", "request",
-        "--create-local-key", "--team", TEAM_ID, "--name", "server",
-    ], env=env, cwd=tmp_path, text=True, capture_output=True, timeout=30)
+    result = subprocess.run(
+        [
+            str(aw_cli_binary),
+            "--identity-home",
+            str(identity),
+            "id",
+            "team",
+            "request",
+            "--create-local-key",
+            "--team",
+            TEAM_ID,
+            "--name",
+            "server",
+        ],
+        env=env,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
     assert result.returncode == 0, result.stderr
     key_path = identity / "signing.key"
     assert key_path.read_bytes().startswith(b"-----BEGIN ED25519 PRIVATE KEY-----")
@@ -414,19 +592,31 @@ async def test_server_loads_key_emitted_by_existing_cli(aw_cli_binary, monkeypat
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
     seed = get_settings().awid_member_signing_keys[TEAM_ID]
     from nacl.signing import SigningKey
+
     did = did_from_public_key(bytes(SigningKey(seed).verify_key))
     assert did in result.stdout
     payload = b"existing CLI key signs through the shared primitive"
-    verify_did_key_signature(did_key=did, signature_b64=sign_message(seed, payload), payload=payload)
+    verify_did_key_signature(
+        did_key=did, signature_b64=sign_message(seed, payload), payload=payload
+    )
 
 
-@pytest.mark.parametrize("pem", [
-    b"not a PEM file",
-    b"-----BEGIN PRIVATE KEY-----\n" + base64.b64encode(bytes(32)) + b"\n-----END PRIVATE KEY-----",
-    b"-----BEGIN ED25519 PRIVATE KEY-----\n!!not-base64!!\n-----END ED25519 PRIVATE KEY-----",
-    b"-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(bytes(31)) + b"\n-----END ED25519 PRIVATE KEY-----",
-    b"-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(bytes(64)) + b"\n-----END ED25519 PRIVATE KEY-----",
-])
+@pytest.mark.parametrize(
+    "pem",
+    [
+        b"not a PEM file",
+        b"-----BEGIN PRIVATE KEY-----\n"
+        + base64.b64encode(bytes(32))
+        + b"\n-----END PRIVATE KEY-----",
+        b"-----BEGIN ED25519 PRIVATE KEY-----\n!!not-base64!!\n-----END ED25519 PRIVATE KEY-----",
+        b"-----BEGIN ED25519 PRIVATE KEY-----\n"
+        + base64.b64encode(bytes(31))
+        + b"\n-----END ED25519 PRIVATE KEY-----",
+        b"-----BEGIN ED25519 PRIVATE KEY-----\n"
+        + base64.b64encode(bytes(64))
+        + b"\n-----END ED25519 PRIVATE KEY-----",
+    ],
+)
 def test_shared_member_key_loader_refuses_wrong_format(pem):
     from awid.signing import load_signing_key_pem
 

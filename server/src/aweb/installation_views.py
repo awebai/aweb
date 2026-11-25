@@ -12,7 +12,9 @@ def _changes(before, after):
     return {
         "added": sorted(after.keys() - before.keys()),
         "removed": sorted(before.keys() - after.keys()),
-        "changed": sorted(key for key in before.keys() & after.keys() if before[key] != after[key]),
+        "changed": sorted(
+            key for key in before.keys() & after.keys() if before[key] != after[key]
+        ),
     }
 
 
@@ -30,14 +32,29 @@ def semantic_diff(before: Manifest | None, after: Manifest) -> dict:
     """Compare identifiers and interpreted authority, rather than array order."""
     old = before.view() if before else {}
     new = after.view()
-    old_tools = {name: _semantic(tool) for name, tool in before.tools_by_name().items()} if before else {}
+    old_tools = (
+        {name: _semantic(tool) for name, tool in before.tools_by_name().items()}
+        if before
+        else {}
+    )
     new_tools = {name: _semantic(tool) for name, tool in after.tools_by_name().items()}
+
     def endpoints(tools):
-        return {name: {key: tool.get(key) for key in ("method", "path")} for name, tool in tools.items()}
-    old_scopes, new_scopes = set(old.get("install_scopes", [])), set(new["install_scopes"])
+        return {
+            name: {key: tool.get(key) for key in ("method", "path")}
+            for name, tool in tools.items()
+        }
+
+    old_scopes, new_scopes = (
+        set(old.get("install_scopes", [])),
+        set(new["install_scopes"]),
+    )
     result = {
         "available": before is not None,
-        "requested_scopes": {"added": sorted(new_scopes - old_scopes), "removed": sorted(old_scopes - new_scopes)},
+        "requested_scopes": {
+            "added": sorted(new_scopes - old_scopes),
+            "removed": sorted(old_scopes - new_scopes),
+        },
         "tools": _changes(old_tools, new_tools),
         "endpoints": _changes(endpoints(old_tools), endpoints(new_tools)),
     }
@@ -46,13 +63,18 @@ def semantic_diff(before: Manifest | None, after: Manifest) -> dict:
             {item[identifier]: _semantic(item) for item in old.get(field, [])},
             {item[identifier]: _semantic(item) for item in new[field]},
         )
-    result["origin_changed"] = before is not None and before.document["app"]["origin"] != after.document["app"]["origin"]
+    result["origin_changed"] = (
+        before is not None
+        and before.document["app"]["origin"] != after.document["app"]["origin"]
+    )
     return result
 
 
 async def pinned_manifest_on(tx, *, team_id, app_id):
     data = await tx.fetch_value(
-        "SELECT manifest_bytes FROM {{tables.team_app_installs}} WHERE team_id=$1 AND app_id=$2", team_id, app_id,
+        "SELECT manifest_bytes FROM {{tables.team_app_installs}} WHERE team_id=$1 AND app_id=$2",
+        team_id,
+        app_id,
     )
     if data is None:
         return None
@@ -75,8 +97,14 @@ async def installation_view_on(tx, *, team_id, app_id):
         record,
         manifest=manifest.document if manifest else None,
         resolved=manifest.view() if manifest else None,
-        hook_bindings=[asdict(binding) for binding in bindings
-                       if binding.installation_id == record["installation_id"] and binding.generation == record["generation"]],
-        lifecycle={"declarations": manifest.view()["lifecycle"] if manifest else None,
-                   "report": {"available": False}},
+        hook_bindings=[
+            asdict(binding)
+            for binding in bindings
+            if binding.installation_id == record["installation_id"]
+            and binding.generation == record["generation"]
+        ],
+        lifecycle={
+            "declarations": manifest.view()["lifecycle"] if manifest else None,
+            "report": {"available": False},
+        },
     )

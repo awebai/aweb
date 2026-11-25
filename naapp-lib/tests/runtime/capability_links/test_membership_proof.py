@@ -127,7 +127,11 @@ async def test_real_link_lock_wait_cannot_extend_proof_expiry(db, authority, ope
     from .test_lifecycle import action_body
 
     caller = await holder(db, authority)
-    proof = replace(await proof_for_link(db, caller.link_id), checked_at=seconds_to_ns(10), fresh_until=seconds_to_ns(70))
+    proof = replace(
+        await proof_for_link(db, caller.link_id),
+        checked_at=seconds_to_ns(10),
+        fresh_until=seconds_to_ns(70),
+    )
     clock_value = [seconds_to_ns(40)]
     clock_reads = []
     backend = asyncio.Future()
@@ -193,7 +197,11 @@ async def test_freshness_boundary_accepts_original_expiry_without_refresh(db, au
     from .conftest import proof_for_link
 
     caller = await holder(db, authority)
-    proof = replace(await proof_for_link(db, caller.link_id), checked_at=seconds_to_ns(10), fresh_until=seconds_to_ns(70))
+    proof = replace(
+        await proof_for_link(db, caller.link_id),
+        checked_at=seconds_to_ns(10),
+        fresh_until=seconds_to_ns(70),
+    )
     observed = []
 
     async def local(tx, *, creator, proof):

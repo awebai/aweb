@@ -137,7 +137,7 @@ print(json.dumps({'pg_port':DEFAULT_TEST_CONFIG.port,'redis':test_agent_wake.RED
     def test_unit_default_uses_selected_host_profile_and_portable_override(self):
         gate = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
         launch = gate[gate.index("docker run --rm --init \\") :]
-        launch = launch[: launch.index('  2>&1 | ')]
+        launch = launch[: launch.index("  2>&1 | ")]
         capture = (
             "docker() { "
             + shlex.quote(sys.executable)
@@ -187,6 +187,7 @@ print(json.dumps({'pg_port':DEFAULT_TEST_CONFIG.port,'redis':test_agent_wake.RED
                 "--command bash scripts/candidate-suite.sh --isolated-suites",
                 result.stdout,
             )
+
 
 if __name__ == "__main__":
     unittest.main()

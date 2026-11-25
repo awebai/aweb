@@ -42,6 +42,10 @@ def final_version(version: str) -> str | None:
 
 
 def valid_version(path: str, value: object) -> bool:
-    return isinstance(value, str) and re.fullmatch(
-        PYTHON_VERSION if path.endswith(".toml") else NPM_VERSION, value
-    ) is not None
+    return (
+        isinstance(value, str)
+        and re.fullmatch(
+            PYTHON_VERSION if path.endswith(".toml") else NPM_VERSION, value
+        )
+        is not None
+    )

@@ -15,7 +15,11 @@ from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, model_validator
 
 from aweb.audit import OperatorAuditRoute, audit_success
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
 
 from ...db import DatabaseInfra, get_db_infra
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
@@ -24,7 +28,9 @@ from ..team_documents import activate_team_document, serialized_team_document
 
 logger = logging.getLogger(__name__)
 
-roles_router = APIRouter(prefix="/v1/roles", tags=["roles"], route_class=OperatorAuditRoute)
+roles_router = APIRouter(
+    prefix="/v1/roles", tags=["roles"], route_class=OperatorAuditRoute
+)
 router = roles_router
 
 DEFAULT_TEAM_ROLES_BUNDLE: Dict[str, Any] = get_default_bundle()
@@ -38,7 +44,9 @@ def _resolve_alias_pair(
     legacy_name: str,
 ) -> Optional[str]:
     if canonical is not None and legacy is not None and canonical != legacy:
-        raise ValueError(f"{canonical_name} and {legacy_name} must match when both are provided")
+        raise ValueError(
+            f"{canonical_name} and {legacy_name} must match when both are provided"
+        )
     return canonical if canonical is not None else legacy
 
 
@@ -49,7 +57,9 @@ def _resolve_selected_role_name(
 ) -> Optional[str]:
     normalized_role = normalize_optional_role_name(role)
     normalized_role_name = normalize_optional_role_name(role_name)
-    return resolve_role_name_aliases(role=normalized_role, role_name=normalized_role_name)
+    return resolve_role_name_aliases(
+        role=normalized_role, role_name=normalized_role_name
+    )
 
 
 class TeamRolesBundle(BaseModel):
@@ -122,9 +132,7 @@ async def get_active_team_roles(
             raise
         # A concurrent bootstrap already created the version -- read it
         logger.info("Concurrent bootstrap for team %s, retrying read", team_id)
-        return await get_active_team_roles(
-            db, team_id, bootstrap_if_missing=False
-        )
+        return await get_active_team_roles(db, team_id, bootstrap_if_missing=False)
     await activate_team_roles(
         db,
         team_id=team_id,
@@ -446,7 +454,9 @@ async def get_active_team_roles_endpoint(
 @roles_router.get("/history")
 async def list_team_roles_history(
     request: Request,
-    limit: int = Query(20, ge=1, le=100, description="Max number of versions to return"),
+    limit: int = Query(
+        20, ge=1, le=100, description="Max number of versions to return"
+    ),
     db: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> TeamRolesHistoryResponse:

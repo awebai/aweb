@@ -72,9 +72,13 @@ async def test_sender_membership_uses_registered_certificate_requirement(
         labels = {"enforcement": mode.value, "outcome": "would_refuse"}
         metric = "aweb_certificate_registration_observations_total"
         before = REGISTRY.get_sample_value(metric, labels) or 0
-        shown = await _v2_request(env, "bob", "GET", f"/v1/messages/{sent.json()['message_id']}")
+        shown = await _v2_request(
+            env, "bob", "GET", f"/v1/messages/{sent.json()['message_id']}"
+        )
         assert shown.status_code == 200, shown.text
-        expected = "inactive" if requirement is RegistrationRequirement.ENFORCE else "active"
+        expected = (
+            "inactive" if requirement is RegistrationRequirement.ENFORCE else "active"
+        )
         assert shown.json()["sender_membership"]["state"] == expected
         assert (REGISTRY.get_sample_value(metric, labels) or 0) == before + int(
             requirement is RegistrationRequirement.ENFORCE

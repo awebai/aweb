@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Container-free controls for the host published-port property."""
+
 import importlib.util
 import io
 import json
@@ -13,14 +14,24 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
-    "boundaries", ROOT / "scripts/e2e/test_candidate_gate_docker_boundaries.py")
+    "boundaries", ROOT / "scripts/e2e/test_candidate_gate_docker_boundaries.py"
+)
 boundaries = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boundaries)
 
 
 class PublishedPortPropertyTests(unittest.TestCase):
-    def exercise(self, outcome, *, stolen=False, lost=False, stopped=False,
-                 startup_error=None, persistent=False, later_error=None):
+    def exercise(
+        self,
+        outcome,
+        *,
+        stolen=False,
+        lost=False,
+        stopped=False,
+        startup_error=None,
+        persistent=False,
+        later_error=None,
+    ):
         containers = {}
         removed = []
         responses = []
@@ -37,7 +48,11 @@ class PublishedPortPropertyTests(unittest.TestCase):
                     responses.append(response)
                 if not original and outcome in ("refused", "unrelated-error"):
                     code = 1
-                    err = "port is already allocated" if outcome == "refused" else "image not found"
+                    err = (
+                        "port is already allocated"
+                        if outcome == "refused"
+                        else "image not found"
+                    )
                 out = name
             elif args[1] == "port":
                 out = "127.0.0.1:32768\n"
@@ -52,10 +67,18 @@ class PublishedPortPropertyTests(unittest.TestCase):
                         bindings = []
                     if original and lost and len(containers) > 1:
                         bindings = []
-                    out = json.dumps([{
-                        "State": {"Running": not (original and stopped and len(containers) > 1)},
-                        "NetworkSettings": {"Ports": {"80/tcp": bindings}},
-                    }])
+                    out = json.dumps(
+                        [
+                            {
+                                "State": {
+                                    "Running": not (
+                                        original and stopped and len(containers) > 1
+                                    )
+                                },
+                                "NetworkSettings": {"Ports": {"80/tcp": bindings}},
+                            }
+                        ]
+                    )
             elif args[1] == "rm":
                 removed.append(args[-1])
             elif args[1:3] == ("container", "inspect"):
@@ -73,20 +96,29 @@ class PublishedPortPropertyTests(unittest.TestCase):
                 raise startup_error
             if later_error is not None and len(containers) > 1 and requests == 2:
                 raise later_error
-            return "competitor\n" if stolen and len(containers) > 1 else responses[0] + "\n"
+            return (
+                "competitor\n"
+                if stolen and len(containers) > 1
+                else responses[0] + "\n"
+            )
 
         boundary = boundaries.HostPublishedPortTests(
-            "test_docker_assigned_published_port_is_reserved_by_its_service")
+            "test_docker_assigned_published_port_is_reserved_by_its_service"
+        )
         try:
-            with patch.object(boundaries, "run", side_effect=docker), \
-                    patch.object(boundaries, "read_published_response", side_effect=http), \
-                    patch("sys.stdout", new_callable=io.StringIO), \
-                    patch.dict(boundaries.os.environ, {}, clear=True):
+            with (
+                patch.object(boundaries, "run", side_effect=docker),
+                patch.object(boundaries, "read_published_response", side_effect=http),
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch.dict(boundaries.os.environ, {}, clear=True),
+            ):
                 boundary.test_docker_assigned_published_port_is_reserved_by_its_service()
         finally:
             expected = set(containers)
-            expected.update(name.replace("aweb-publish-original-", "aweb-publish-competitor-", 1)
-                            for name in containers)
+            expected.update(
+                name.replace("aweb-publish-original-", "aweb-publish-competitor-", 1)
+                for name in containers
+            )
             self.assertEqual(set(removed), expected)
 
     def test_refused_competitor_and_success_without_mapping_are_valid(self):
@@ -96,7 +128,10 @@ class PublishedPortPropertyTests(unittest.TestCase):
 
     def test_binding_the_taken_port_or_serving_competitor_response_fails(self):
         for outcome, stolen in (("mapped", False), ("unmapped", True)):
-            with self.subTest(outcome=outcome, stolen=stolen), self.assertRaises(AssertionError):
+            with (
+                self.subTest(outcome=outcome, stolen=stolen),
+                self.assertRaises(AssertionError),
+            ):
                 self.exercise(outcome, stolen=stolen)
 
     def test_lost_mapping_stopped_owner_and_unrelated_failure_are_not_valid(self):
@@ -113,12 +148,21 @@ class PublishedPortPropertyTests(unittest.TestCase):
 
     def test_persistent_startup_disconnect_still_fails_at_the_original_deadline(self):
         for error in (RemoteDisconnected, ConnectionResetError, ConnectionRefusedError):
-            with self.subTest(error=error), \
-                    patch.object(boundaries, "wait_for_published_port", return_value="32768"), \
-                    patch.object(boundaries.time, "monotonic", side_effect=[0, 9, 10]), \
-                    patch.object(boundaries.time, "sleep") as sleep:
-                with self.assertRaisesRegex(AssertionError, "original host publication never became reachable: startup"):
-                    self.exercise("refused", startup_error=error("startup"), persistent=True)
+            with (
+                self.subTest(error=error),
+                patch.object(
+                    boundaries, "wait_for_published_port", return_value="32768"
+                ),
+                patch.object(boundaries.time, "monotonic", side_effect=[0, 9, 10]),
+                patch.object(boundaries.time, "sleep") as sleep,
+            ):
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    "original host publication never became reachable: startup",
+                ):
+                    self.exercise(
+                        "refused", startup_error=error("startup"), persistent=True
+                    )
                 sleep.assert_called_once_with(0.1)
 
     def test_disconnect_after_readiness_is_not_retried(self):
@@ -130,23 +174,51 @@ class PublishedPortPropertyTests(unittest.TestCase):
 class HostPublishedPortWiringTests(unittest.TestCase):
     def test_host_result_survives_until_runner_including_failure(self):
         source = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
-        start = source.index('# The published socket belongs to the Docker host')
-        block = source[start:source.index('\nfi', start) + 3]
-        for pending, code in (("checks integration", 7), ("checks", 0), ("integration", 7)):
-            with self.subTest(pending=pending, code=code), tempfile.TemporaryDirectory() as tmp:
+        start = source.index("# The published socket belongs to the Docker host")
+        block = source[start : source.index("\nfi", start) + 3]
+        for pending, code in (
+            ("checks integration", 7),
+            ("checks", 0),
+            ("integration", 7),
+        ):
+            with (
+                self.subTest(pending=pending, code=code),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
                 root = Path(tmp)
                 python = root / "python3"
-                python.write_text('#!/bin/sh\nprintf "host proof %s\\n" "$*"\nexit "$PROBE_EXIT"\n')
+                python.write_text(
+                    '#!/bin/sh\nprintf "host proof %s\\n" "$*"\nexit "$PROBE_EXIT"\n'
+                )
                 python.chmod(0o755)
-                env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
-                           pending=pending, resource_label="test-label", checkout="/exact checkout",
-                           LOG_DIR=tmp, PROBE_EXIT=str(code))
-                result = subprocess.run(["bash", "-c", 'set -eu\n' + block + '\necho runner-reached "$host_port_status"'],
-                                        env=env, text=True, capture_output=True, timeout=5)
+                env = dict(
+                    os.environ,
+                    PATH=str(root) + os.pathsep + os.environ["PATH"],
+                    pending=pending,
+                    resource_label="test-label",
+                    checkout="/exact checkout",
+                    LOG_DIR=tmp,
+                    PROBE_EXIT=str(code),
+                )
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        "set -eu\n"
+                        + block
+                        + '\necho runner-reached "$host_port_status"',
+                    ],
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                )
                 if pending.startswith("checks"):
                     evidence = (root / "host-published-port.log").read_text()
-                    self.assertIn('/exact checkout/scripts/e2e/test_candidate_gate_docker_boundaries.py',
-                                  evidence)
+                    self.assertIn(
+                        "/exact checkout/scripts/e2e/test_candidate_gate_docker_boundaries.py",
+                        evidence,
+                    )
                     self.assertEqual(result.returncode, 0)
                     self.assertIn(f"runner-reached {code}", result.stdout)
                 else:

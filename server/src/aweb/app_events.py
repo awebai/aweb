@@ -111,7 +111,9 @@ async def emit_app_event(
         local_event_type=local_type,
     )
     if installed_event is None:
-        raise ForbiddenError("App is not installed for this team or event is not declared")
+        raise ForbiddenError(
+            "App is not installed for this team or event is not declared"
+        )
     intent = normalize_delivery_intent(
         producer_delivery_intent,
         default=installed_event.get("default_delivery_intent") or "ambient",
@@ -163,7 +165,9 @@ async def emit_app_event(
     )
 
 
-async def default_delivery_intent_for_subscription(db, *, team_id: str, event_type: str) -> str:
+async def default_delivery_intent_for_subscription(
+    db, *, team_id: str, event_type: str
+) -> str:
     app_id, local_type = normalize_app_event_type(event_type)
     row = await get_installed_app_event_type(
         db,
@@ -188,7 +192,9 @@ async def upsert_app_event_subscription(
     team_id = validate_team_id(team_id)
     app_id, local_type = normalize_app_event_type(event_type)
     full_event_type = f"{app_id}/{local_type}"
-    default_intent = await default_delivery_intent_for_subscription(db, team_id=team_id, event_type=full_event_type)
+    default_intent = await default_delivery_intent_for_subscription(
+        db, team_id=team_id, event_type=full_event_type
+    )
     intent = normalize_delivery_intent(delivery_intent, default=default_intent)
     row = await db.fetch_one(
         """
@@ -212,7 +218,9 @@ async def upsert_app_event_subscription(
     return _subscription_from_row(row)
 
 
-async def list_app_event_subscriptions(db, *, team_id: str, agent_id: str) -> list[AppEventSubscription]:
+async def list_app_event_subscriptions(
+    db, *, team_id: str, agent_id: str
+) -> list[AppEventSubscription]:
     rows = await db.fetch_all(
         """
         SELECT subscription_id, team_id, agent_id, event_type, resource_ref,
@@ -227,7 +235,9 @@ async def list_app_event_subscriptions(db, *, team_id: str, agent_id: str) -> li
     return [_subscription_from_row(row) for row in rows]
 
 
-async def delete_app_event_subscription(db, *, team_id: str, agent_id: str, subscription_id: str) -> bool:
+async def delete_app_event_subscription(
+    db, *, team_id: str, agent_id: str, subscription_id: str
+) -> bool:
     result = await db.fetch_one(
         """
         DELETE FROM {{tables.app_event_subscriptions}}
@@ -263,7 +273,9 @@ async def current_app_events_for_agent(
     agent_id: str,
     since: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    since = since or (datetime.now(timezone.utc) - timedelta(seconds=APP_EVENT_LOOKBACK_SECONDS))
+    since = since or (
+        datetime.now(timezone.utc) - timedelta(seconds=APP_EVENT_LOOKBACK_SECONDS)
+    )
     rows = await db.fetch_all(
         """
         WITH matches AS (

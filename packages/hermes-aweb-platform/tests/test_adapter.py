@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
-HERMES = Path(os.environ.get("HERMES_AGENT_SOURCE", HERE.parents[4] / "other" / "hermes-agent"))
+HERMES = Path(
+    os.environ.get("HERMES_AGENT_SOURCE", HERE.parents[4] / "other" / "hermes-agent")
+)
 sys.path.insert(0, str(HERMES))
 
 if "yaml" not in sys.modules:
@@ -26,17 +28,21 @@ assert spec.loader is not None
 spec.loader.exec_module(adapter_mod)
 
 # Platform("aweb") is accepted only after the plugin registry knows the name.
-platform_registry.register(PlatformEntry(
-    name="aweb",
-    label="Aweb",
-    adapter_factory=lambda cfg: None,
-    check_fn=lambda: True,
-))
+platform_registry.register(
+    PlatformEntry(
+        name="aweb",
+        label="Aweb",
+        adapter_factory=lambda cfg: None,
+        check_fn=lambda: True,
+    )
+)
 
 
 class FakeAwebAdapter(adapter_mod.AwebAdapter):
     def __init__(self):
-        super().__init__(PlatformConfig(extra={"aw_bin": "aw", "workdir": str(HERE.parents[1])}))
+        super().__init__(
+            PlatformConfig(extra={"aw_bin": "aw", "workdir": str(HERE.parents[1])})
+        )
         self.commands = []
         self.delivered = []
         self.payloads = {}
@@ -46,23 +52,31 @@ class FakeAwebAdapter(adapter_mod.AwebAdapter):
         self.commands.append(args)
         key = args[:3]
         if key == ("mail", "show", "--message-id"):
-            return {"messages": [{
-                "message_id": args[3],
-                "conversation_id": "conv-1",
-                "from_address": "team.example/alice",
-                "subject": "Review",
-                "body": "please review",
-                "created_at": "2026-05-27T00:00:00Z",
-            }]}
+            return {
+                "messages": [
+                    {
+                        "message_id": args[3],
+                        "conversation_id": "conv-1",
+                        "from_address": "team.example/alice",
+                        "subject": "Review",
+                        "body": "please review",
+                        "created_at": "2026-05-27T00:00:00Z",
+                    }
+                ]
+            }
         if key == ("chat", "history", "--session-id"):
-            return {"messages": [{
-                "message_id": "chat-1",
-                "conversation_id": "sess-1",
-                "from_agent": "alice",
-                "from_address": "team.example/alice",
-                "body": "ping",
-                "timestamp": "2026-05-27T00:00:00Z",
-            }]}
+            return {
+                "messages": [
+                    {
+                        "message_id": "chat-1",
+                        "conversation_id": "sess-1",
+                        "from_agent": "alice",
+                        "from_address": "team.example/alice",
+                        "body": "ping",
+                        "timestamp": "2026-05-27T00:00:00Z",
+                    }
+                ]
+            }
         if args[:2] == ("mail", "reply"):
             return {"message_id": "reply-1"}
         if args[:2] == ("mail", "ack"):
@@ -70,7 +84,10 @@ class FakeAwebAdapter(adapter_mod.AwebAdapter):
         if args[:2] == ("chat", "send"):
             return {"message_id": "reply-chat-1", "delivered": True}
         if args[:2] == ("chat", "send-and-leave"):
-            return {"session_id": "sess-1", "events": [{"message_id": "legacy-reply-chat-1"}]}
+            return {
+                "session_id": "sess-1",
+                "events": [{"message_id": "legacy-reply-chat-1"}],
+            }
         if args[:2] == ("chat", "read"):
             return {"success": True, "messages_marked": 1}
         return {}
@@ -82,17 +99,19 @@ class FakeAwebAdapter(adapter_mod.AwebAdapter):
 class AwebAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_mail_event_fetches_body_and_records_reply_route(self):
         adapter = FakeAwebAdapter()
-        await adapter._dispatch_mail_event({
-            "type": "actionable_mail",
-            "message_id": "mail-1",
-            "conversation_id": "conv-1",
-            "from_address": "team.example/alice",
-        })
+        await adapter._dispatch_mail_event(
+            {
+                "type": "actionable_mail",
+                "message_id": "mail-1",
+                "conversation_id": "conv-1",
+                "from_address": "team.example/alice",
+            }
+        )
 
         for _ in range(50):
             if adapter.delivered:
                 break
-            await asyncio.sleep(.01)
+            await asyncio.sleep(0.01)
         self.assertEqual(len(adapter.delivered), 1)
         event = adapter.delivered[0]
         self.assertEqual(event.source.chat_id, "mail:conv-1")
@@ -116,12 +135,20 @@ class AwebAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.success, result.error)
         send_cmd = adapter.commands[0]
-        self.assertEqual(send_cmd[:6], ("chat", "send", "--session-id", "sess-1", "--plaintext", "--body-file"))
+        self.assertEqual(
+            send_cmd[:6],
+            ("chat", "send", "--session-id", "sess-1", "--plaintext", "--body-file"),
+        )
         self.assertNotIn("pong", send_cmd)
         self.assertIn("hermes-aweb-", Path(send_cmd[6]).name, send_cmd)
-        self.assertFalse(Path(send_cmd[6]).exists(), "temporary chat body file should be removed")
+        self.assertFalse(
+            Path(send_cmd[6]).exists(), "temporary chat body file should be removed"
+        )
         self.assertEqual(send_cmd[7:], ("--leave",))
-        self.assertEqual(adapter.commands[1], ("chat", "read", "--session-id", "sess-1", "--message-id", "chat-1"))
+        self.assertEqual(
+            adapter.commands[1],
+            ("chat", "read", "--session-id", "sess-1", "--message-id", "chat-1"),
+        )
 
 
 if __name__ == "__main__":

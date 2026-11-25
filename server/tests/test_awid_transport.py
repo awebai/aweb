@@ -41,10 +41,15 @@ async def awid(shared_test_pool, monkeypatch):
     ) as redis:
         infra = AwidDatabaseInfra(schema="transport_registry")
         await infra.initialize(shared_pool=shared_test_pool)
-        registry_app = create_registry_app(db_infra=infra, redis=redis, rate_limiter=NoOpRateLimiter())
+        registry_app = create_registry_app(
+            db_infra=infra, redis=redis, rate_limiter=NoOpRateLimiter()
+        )
         async with registry_app.router.lifespan_context(registry_app):
             yield SimpleNamespace(
-                app=registry_app, db=infra.get_manager(), redis=redis, transport=ServiceTransport(registry_app)
+                app=registry_app,
+                db=infra.get_manager(),
+                redis=redis,
+                transport=ServiceTransport(registry_app),
             )
 
 
@@ -56,7 +61,9 @@ async def db_infra(shared_test_pool) -> DatabaseInfra:
 
 
 @pytest.mark.asyncio
-async def test_a_library_mode_server_reaches_awid_through_the_given_transport(awid, db_infra) -> None:
+async def test_a_library_mode_server_reaches_awid_through_the_given_transport(
+    awid, db_infra
+) -> None:
     team_name = f"transport-{uuid4().hex[:12]}"
     await awid.db.execute(
         "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) "
@@ -68,18 +75,25 @@ async def test_a_library_mode_server_reaches_awid_through_the_given_transport(aw
         assert [request.url.path for request in awid.transport.calls] == ["/health"]
         team = await app.state.awid_registry_client.get_team("example.test", team_name)
     assert team is not None and team.team_did_key == "did:key:z6MkTransportTeam"
-    assert awid.transport.calls[-1].url.path == f"/v1/namespaces/example.test/teams/{team_name}"
+    assert (
+        awid.transport.calls[-1].url.path
+        == f"/v1/namespaces/example.test/teams/{team_name}"
+    )
 
 
 @pytest.mark.asyncio
-async def test_a_library_mode_server_does_not_start_when_its_awid_is_down(awid, db_infra) -> None:
+async def test_a_library_mode_server_does_not_start_when_its_awid_is_down(
+    awid, db_infra
+) -> None:
     awid.transport.down = True
     app = create_app(db_infra=db_infra, redis=awid.redis, awid_transport=awid.transport)
     with pytest.raises(EmbeddingStartupError) as refused:
         async with app.router.lifespan_context(app):
             pass
     assert refused.value.stage is ResourceStartupStage.REGISTRY
-    assert str(refused.value).endswith("Check this resource and restart native startup before serving traffic.")
+    assert str(refused.value).endswith(
+        "Check this resource and restart native startup before serving traffic."
+    )
     assert "Failed to reach AWID registry" in str(refused.value.__cause__)
     assert [request.url.path for request in awid.transport.calls] == ["/health"]
 
@@ -99,7 +113,9 @@ async def test_a_library_mode_server_starts_when_its_awid_answers_with_a_failed_
     app = create_app(db_infra=db_infra, redis=awid.redis, awid_transport=awid.transport)
     async with app.router.lifespan_context(app):
         assert [request.url.path for request in awid.transport.calls] == ["/health"]
-    async with httpx.AsyncClient(transport=awid.transport, base_url="http://registry.test") as http:
+    async with httpx.AsyncClient(
+        transport=awid.transport, base_url="http://registry.test"
+    ) as http:
         assert (await http.get("/health")).status_code == 503
 
 
@@ -107,13 +123,17 @@ async def test_a_library_mode_server_starts_when_its_awid_answers_with_a_failed_
 async def test_a_library_mode_server_does_not_start_on_a_503_that_is_not_a_health_report(
     awid, db_infra
 ) -> None:
-    awid.transport.fault = lambda request, response: httpx.Response(503, json={"detail": "no backend"})
+    awid.transport.fault = lambda request, response: httpx.Response(
+        503, json={"detail": "no backend"}
+    )
     app = create_app(db_infra=db_infra, redis=awid.redis, awid_transport=awid.transport)
     with pytest.raises(EmbeddingStartupError) as refused:
         async with app.router.lifespan_context(app):
             pass
     assert refused.value.stage is ResourceStartupStage.REGISTRY
-    assert str(refused.value).endswith("Check this resource and restart native startup before serving traffic.")
+    assert str(refused.value).endswith(
+        "Check this resource and restart native startup before serving traffic."
+    )
     assert "Failed to reach AWID registry" in str(refused.value.__cause__)
 
 

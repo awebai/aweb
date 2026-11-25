@@ -30,7 +30,9 @@ async def _message_frames(stream):
 
 
 @pytest.mark.asyncio
-async def test_message_posted_between_the_200_and_stream_setup_is_delivered(privacy_app, monkeypatch):  # noqa: F811
+async def test_message_posted_between_the_200_and_stream_setup_is_delivered(
+    privacy_app, monkeypatch
+):  # noqa: F811
     env = privacy_app
     session_id = (await _open_chat(env, message="before the stream"))["session_id"]
     setup_reached = asyncio.Event()
@@ -46,15 +48,24 @@ async def test_message_posted_between_the_200_and_stream_setup_is_delivered(priv
     bob = env.actors["bob"]
     deadline = (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat()
     async with env.client.stream(
-        "GET", f"/v1/chat/sessions/{session_id}/stream", params={"deadline": deadline},
-        headers=_signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate), timeout=None,
+        "GET",
+        f"/v1/chat/sessions/{session_id}/stream",
+        params={"deadline": deadline},
+        headers=_signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate),
+        timeout=None,
     ) as stream:
         assert stream.status_code == 200
         async with asyncio.timeout(5):
             await setup_reached.wait()
-        posted = await _request(env, "alice", "POST", f"/v1/chat/sessions/{session_id}/messages", {
-            "body": "posted after the 200",
-        })
+        posted = await _request(
+            env,
+            "alice",
+            "POST",
+            f"/v1/chat/sessions/{session_id}/messages",
+            {
+                "body": "posted after the 200",
+            },
+        )
         assert posted.status_code == 200, posted.text
         release_setup.set()
         async with asyncio.timeout(6):

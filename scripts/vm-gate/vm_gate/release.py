@@ -71,7 +71,14 @@ def cloud_main(repo, cloud_sha):
     """Refuse before boot unless the release commit sits directly on real main."""
     if not SHA.fullmatch(cloud_sha):
         raise Refused("--cloud-sha must be a full commit SHA")
-    git(repo, "fetch", "--quiet", "--no-tags", "origin", "+refs/heads/main:refs/remotes/origin/main")
+    git(
+        repo,
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "origin",
+        "+refs/heads/main:refs/remotes/origin/main",
+    )
     real_main = git(repo, "rev-parse", "refs/remotes/origin/main^{commit}")
     parent = git(repo, "rev-parse", cloud_sha + "^{commit}^")
     if parent != real_main:
@@ -88,7 +95,9 @@ def cloud_bundle(repo, cloud_sha, out):
     with tempfile.TemporaryDirectory() as scratch:
         borrowed = Path(scratch) / "borrowed.git"
         git(scratch, "init", "--quiet", "--bare", str(borrowed))
-        (borrowed / "objects/info/alternates").write_text(str(common / "objects") + "\n")
+        (borrowed / "objects/info/alternates").write_text(
+            str(common / "objects") + "\n"
+        )
         git(borrowed, "update-ref", "refs/heads/main", cloud_sha)
         git(borrowed, "bundle", "create", str(out), "refs/heads/main")
         git(borrowed, "bundle", "verify", str(out))
@@ -169,15 +178,33 @@ def hermes_key(path):
         raise Refused("operator config requires hermes_key_file for the Cloud journeys")
     path = Path(path)
     info = path.lstat()
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise Refused("hermes_key_file must be a regular file owned by this user, mode 0600")
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o077
+    ):
+        raise Refused(
+            "hermes_key_file must be a regular file owned by this user, mode 0600"
+        )
     return path
 
 
-def guest_script(*, cloud_sha, bundle_sha256, archive_sha256, image, member,
-                 lock_source_sha, aweb, files,
-                 remote=REMOTE, logs=LOGS, home="/home/gateuser",
-                 key=GUEST_KEY, files_dir=GUEST_FILES):
+def guest_script(
+    *,
+    cloud_sha,
+    bundle_sha256,
+    archive_sha256,
+    image,
+    member,
+    lock_source_sha,
+    aweb,
+    files,
+    remote=REMOTE,
+    logs=LOGS,
+    home="/home/gateuser",
+    key=GUEST_KEY,
+    files_dir=GUEST_FILES,
+):
     """Both suites in parallel; each writes its exit and output under release/."""
     release = logs + "/release"
     cloud_env = [
@@ -196,7 +223,14 @@ def guest_script(*, cloud_sha, bundle_sha256, archive_sha256, image, member,
             f"AC_CANDIDATE_AWEB_WHEELS_SOURCE_SHA={aweb}",
         ]
     exports = "export " + " ".join(Q(e) for e in cloud_env)
-    projects = sorted({AWEB_PROJECTS[p] for name in files for p in AWEB_PROJECTS if name.startswith(p)})
+    projects = sorted(
+        {
+            AWEB_PROJECTS[p]
+            for name in files
+            for p in AWEB_PROJECTS
+            if name.startswith(p)
+        }
+    )
     rebuild = "\n".join(
         f"  uv build --quiet --wheel --sdist --out-dir {Q(release + '/aweb/rebuilt')} {Q(project)} || exit 1"
         for project in projects
@@ -206,43 +240,43 @@ def guest_script(*, cloud_sha, bundle_sha256, archive_sha256, image, member,
         aweb_suite = f"""
 (
   set -u
-  cd {Q(remote + '/source')}
+  cd {Q(remote + "/source")}
   test "$(git rev-parse HEAD)" = {Q(aweb)} || exit 70
-  make candidate-gate > {Q(release + '/aweb/gate-output.log')} 2>&1
-  printf '%s\\n' "$?" > {Q(release + '/aweb/exit')}
-  mkdir -p {Q(release + '/aweb/rebuilt')}
+  make candidate-gate > {Q(release + "/aweb/gate-output.log")} 2>&1
+  printf '%s\\n' "$?" > {Q(release + "/aweb/exit")}
+  mkdir -p {Q(release + "/aweb/rebuilt")}
 {rebuild}
-  python3 -c 'import hashlib, json, pathlib, sys; d = pathlib.Path(sys.argv[1]); print(json.dumps({{p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(d.iterdir())}}, sort_keys=True))' {Q(release + '/aweb/rebuilt')} > {Q(release + '/aweb/rebuilt.json')}
-) > {Q(release + '/aweb/suite.log')} 2>&1 &
+  python3 -c 'import hashlib, json, pathlib, sys; d = pathlib.Path(sys.argv[1]); print(json.dumps({{p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(d.iterdir())}}, sort_keys=True))' {Q(release + "/aweb/rebuilt")} > {Q(release + "/aweb/rebuilt.json")}
+) > {Q(release + "/aweb/suite.log")} 2>&1 &
 aweb_suite=$!
 """
     return f"""set -u
-mkdir -p {Q(release + '/aweb')} {Q(release + '/cloud/empty-docker-config')}
-chmod 0700 {Q(release + '/cloud/empty-docker-config')}
-echo {Q(bundle_sha256 + '  ' + remote + '/cloud.bundle')} | sha256sum -c - || exit 70
-echo {Q(archive_sha256 + '  ' + remote + '/cloud-image.tar')} | sha256sum -c - || exit 70
+mkdir -p {Q(release + "/aweb")} {Q(release + "/cloud/empty-docker-config")}
+chmod 0700 {Q(release + "/cloud/empty-docker-config")}
+echo {Q(bundle_sha256 + "  " + remote + "/cloud.bundle")} | sha256sum -c - || exit 70
+echo {Q(archive_sha256 + "  " + remote + "/cloud-image.tar")} | sha256sum -c - || exit 70
 cd {Q(home)}
 rm -rf cloud-origin cloud-source
 git init --quiet --bare cloud-origin || exit 70
-git --git-dir=cloud-origin fetch --quiet {Q(remote + '/cloud.bundle')} refs/heads/main:refs/heads/main || exit 70
+git --git-dir=cloud-origin fetch --quiet {Q(remote + "/cloud.bundle")} refs/heads/main:refs/heads/main || exit 70
 git --git-dir=cloud-origin symbolic-ref HEAD refs/heads/main || exit 70
 git clone --quiet cloud-origin cloud-source || exit 70
 test "$(git -C cloud-source rev-parse HEAD)" = {Q(cloud_sha)} || exit 70
 {aweb_suite}
 (
-  cd {Q(home + '/cloud-source')}
+  cd {Q(home + "/cloud-source")}
   git config user.name 'aweb release gate'
   git config user.email 'release-gate@localhost'
   {exports}
-  make release-gate > {Q(release + '/cloud/gate-output.log')} 2>&1
-  printf '%s\\n' "$?" > {Q(release + '/cloud/exit')}
+  make release-gate > {Q(release + "/cloud/gate-output.log")} 2>&1
+  printf '%s\\n' "$?" > {Q(release + "/cloud/exit")}
 ) &
 cloud_suite=$!
 wait "$cloud_suite"
-{'wait "$aweb_suite"' if aweb else ''}
+{'wait "$aweb_suite"' if aweb else ""}
 status=0
-test "$(cat {Q(release + '/cloud/exit')} 2>/dev/null)" = 0 || status=1
-{f'test "$(cat {Q(release + "/aweb/exit")} 2>/dev/null)" = 0 || status=1' if aweb else ''}
+test "$(cat {Q(release + "/cloud/exit")} 2>/dev/null)" = 0 || status=1
+{f'test "$(cat {Q(release + "/aweb/exit")} 2>/dev/null)" = 0 || status=1' if aweb else ""}
 exit "$status"
 """
 
@@ -258,14 +292,22 @@ class ReleaseExecutor(Executor):
         super().prepare(server, timeout)
         self.upload(self.release["bundle"], REMOTE + "/cloud.bundle", mode="0444")
         self.upload(self.release["archive"], REMOTE + "/cloud-image.tar", mode="0444")
-        self.run(f"install -d -m 0755 -o root -g root {GUEST_FILES}", "release-files-directory")
+        self.run(
+            f"install -d -m 0755 -o root -g root {GUEST_FILES}",
+            "release-files-directory",
+        )
         for path in self.release["files"]:
             self.upload(path, GUEST_FILES + "/" + Path(path).name, mode="0444")
         self.run(
             f"install -d -o root -g gateuser -m 0710 {GUEST_KEY_DIRECTORY}",
             "hermes-directory",
         )
-        self.upload(self.release["hermes_key"], GUEST_KEY, owner="gateuser:gateuser", mode="0600")
+        self.upload(
+            self.release["hermes_key"],
+            GUEST_KEY,
+            owner="gateuser:gateuser",
+            mode="0600",
+        )
 
     def collect(self, server, timeout):
         self.deadline = time.monotonic() + timeout
@@ -283,8 +325,21 @@ def suite_record(evidence, suite):
     }
 
 
-def receipt(*, machine, platform, run_id, result, cloud_sha, image, main, files,
-            aweb, launcher_sha, timeout, directory):
+def receipt(
+    *,
+    machine,
+    platform,
+    run_id,
+    result,
+    cloud_sha,
+    image,
+    main,
+    files,
+    aweb,
+    launcher_sha,
+    timeout,
+    directory,
+):
     """The one record make release reads: both suites, both inputs, the main check."""
     evidence = Path(directory) / "evidence"
     cloud = {
@@ -313,13 +368,16 @@ def receipt(*, machine, platform, run_id, result, cloud_sha, image, main, files,
     }
     if aweb:
         rebuilt_path = evidence / "var/log/vm-gate/release/aweb/rebuilt.json"
-        rebuilt = json.loads(rebuilt_path.read_text()) if rebuilt_path.exists() else None
+        rebuilt = (
+            json.loads(rebuilt_path.read_text()) if rebuilt_path.exists() else None
+        )
         record["aweb"] = {
             "sha": aweb,
             "command": "make candidate-gate",
             "rebuilt_files": (
                 {name: rebuilt[name] for name in files if name in rebuilt}
-                if rebuilt is not None else None
+                if rebuilt is not None
+                else None
             ),
             "ledger_rows_imported": result.get("ledger_rows_imported"),
             **suite_record(evidence, "aweb"),

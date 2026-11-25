@@ -47,7 +47,9 @@ def test_decode_logo_uses_same_raster_validator() -> None:
         "text/html",
     ],
 )
-def test_decode_image_asset_rejects_svg_parameterized_and_non_image_content_types(content_type: str) -> None:
+def test_decode_image_asset_rejects_svg_parameterized_and_non_image_content_types(
+    content_type: str,
+) -> None:
     with pytest.raises(HTTPException) as raised:
         _decode_image_asset(_logo(content_type, _SVG_WITH_SCRIPT), label="Image")
 

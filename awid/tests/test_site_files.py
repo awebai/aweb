@@ -19,7 +19,13 @@ def _site_html() -> str:
 def test_hugo_site_serves_and_links_llms_txt() -> None:
     llms = (ROOT / "site" / "static" / "llms.txt").read_text(encoding="utf-8")
     assert llms.startswith("# awid.ai")
-    for fact in ("_awid.acme.com", "registry=", "NAAPP", "aw init --new-account", "GET /v1/did/{did_aw}/key"):
+    for fact in (
+        "_awid.acme.com",
+        "registry=",
+        "NAAPP",
+        "aw init --new-account",
+        "GET /v1/did/{did_aw}/key",
+    ):
         assert fact in llms
     html = _site_html()
     assert '<link rel="alternate" type="text/markdown" href="/llms.txt"' in html

@@ -16,8 +16,11 @@ ROOT = Path(__file__).resolve().parents[2]
 ARCHIVE = Path(__file__).parent / "fixtures" / "retired_lock_migrations"
 MODULES = {
     "awid": (ROOT / "awid/src/awid_service/migrations", "awid-service", 15),
-    "hooks": (ROOT / "naapp-lib/src/aweb_naapp/hooks/migrations", "aweb_naapp_hooks", 2),
-
+    "hooks": (
+        ROOT / "naapp-lib/src/aweb_naapp/hooks/migrations",
+        "aweb_naapp_hooks",
+        2,
+    ),
 }
 
 
@@ -66,18 +69,26 @@ async def seed(db, module: str, *, retired: bool) -> None:
 
 async def assert_cleanup_and_preserved_authority(db, module: str) -> None:
     assert not await db.fetch_value("SELECT to_regclass('team_protection') IS NOT NULL")
-    assert not await db.fetch_value("SELECT to_regclass('protected_effect_receipts') IS NOT NULL")
+    assert not await db.fetch_value(
+        "SELECT to_regclass('protected_effect_receipts') IS NOT NULL"
+    )
     if module == "awid":
-        assert await db.fetch_value(
-            "SELECT team_did_key FROM {{tables.teams}} WHERE name='ordinary'"
-        ) == "did:key:ordinary"
+        assert (
+            await db.fetch_value(
+                "SELECT team_did_key FROM {{tables.teams}} WHERE name='ordinary'"
+            )
+            == "did:key:ordinary"
+        )
         # The separate, released attestation feature is not the lock.
         for table in ("team_custodians", "member_custody", "member_person"):
             assert await db.fetch_value("SELECT to_regclass($1) IS NOT NULL", table)
     elif module == "hooks":
-        assert await db.fetch_value(
-            "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope='app'"
-        ) == "used-once"
+        assert (
+            await db.fetch_value(
+                "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope='app'"
+            )
+            == "used-once"
+        )
 
 
 @pytest.mark.asyncio
@@ -88,7 +99,9 @@ async def test_old_applied_files_can_be_absent_while_cleanup_preserves_live_data
     db = await test_db_factory.create_db(suffix="retired_" + module, schema=module)
     _, module_name, _ = MODULES[module]
     old = stage(module, tmp_path / "rc", old=True)
-    old_runner = AsyncMigrationManager(db, migrations_path=str(old), module_name=module_name)
+    old_runner = AsyncMigrationManager(
+        db, migrations_path=str(old), module_name=module_name
+    )
     await old_runner.apply_pending_migrations()
     original = await old_runner.get_applied_migrations()
     retired = {p.name for p in (ARCHIVE / module).glob("*.sql")}
@@ -97,7 +110,9 @@ async def test_old_applied_files_can_be_absent_while_cleanup_preserves_live_data
 
     current = stage(module, tmp_path / "current", old=False)
     assert not retired.intersection(p.name for p in current.glob("*.sql"))
-    runner = AsyncMigrationManager(db, migrations_path=str(current), module_name=module_name)
+    runner = AsyncMigrationManager(
+        db, migrations_path=str(current), module_name=module_name
+    )
     # Real pgdbm must accept missing applied files, not treat them as modified.
     await runner.apply_pending_migrations()
     await assert_cleanup_and_preserved_authority(db, module)
@@ -109,11 +124,15 @@ async def test_old_applied_files_can_be_absent_while_cleanup_preserves_live_data
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("module", MODULES)
-async def test_cleanup_is_also_safe_for_a_fresh_database(test_db_factory, tmp_path, module):
+async def test_cleanup_is_also_safe_for_a_fresh_database(
+    test_db_factory, tmp_path, module
+):
     db = await test_db_factory.create_db(suffix="fresh_" + module, schema=module)
     _, module_name, _ = MODULES[module]
     current = stage(module, tmp_path / "current", old=False)
-    runner = AsyncMigrationManager(db, migrations_path=str(current), module_name=module_name)
+    runner = AsyncMigrationManager(
+        db, migrations_path=str(current), module_name=module_name
+    )
     await runner.apply_pending_migrations()
     await seed(db, module, retired=False)
     await assert_cleanup_and_preserved_authority(db, module)

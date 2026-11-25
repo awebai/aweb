@@ -112,11 +112,15 @@ async def _verify_identity_grant_row(
 ) -> tuple[dict, GrantContext]:
     auth = (request.headers.get("Authorization") or "").strip()
     if not auth.startswith(GRANT_AUTH_PREFIX):
-        raise HTTPException(status_code=401, detail="Missing identity grant Authorization header")
+        raise HTTPException(
+            status_code=401, detail="Missing identity grant Authorization header"
+        )
     rest = auth[len(GRANT_AUTH_PREFIX) :].strip()
     parts = rest.split()
     if len(parts) != 2:
-        raise HTTPException(status_code=401, detail="Malformed identity grant Authorization header")
+        raise HTTPException(
+            status_code=401, detail="Malformed identity grant Authorization header"
+        )
     did_key, signature_b64 = parts
 
     grant_id = (request.headers.get("X-AWEB-Grant-ID") or "").strip()
@@ -198,7 +202,9 @@ async def _verify_identity_grant_row(
         if required_scope is _USE_PATH_SCOPE
         else required_scope
     )
-    scopes = tuple(str(scope).strip() for scope in (row["scopes"] or []) if str(scope).strip())
+    scopes = tuple(
+        str(scope).strip() for scope in (row["scopes"] or []) if str(scope).strip()
+    )
     if required != GRANT_SCOPE_ANY and required is not None and required not in scopes:
         raise HTTPException(status_code=403, detail=_OUT_OF_SCOPE_DETAIL)
 
@@ -254,7 +260,8 @@ async def _require_request_grant_validity(request: Request, row) -> str:
     if state is GrantValidityState.ISSUER_UNREGISTERED:
         raise HTTPException(
             status_code=403,
-            detail="grant issuing certificate not registered. " + GRANT_ISSUER_RECOVERY_DETAIL,
+            detail="grant issuing certificate not registered. "
+            + GRANT_ISSUER_RECOVERY_DETAIL,
         )
     return str(row.get("issued_by_certificate_id") or "").strip()
 
@@ -279,7 +286,9 @@ async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
 async def verify_identity_grant_team_identity(
     request: Request, db, *, required_scope: str
 ) -> TeamIdentity:
-    row, grant = await _verify_identity_grant_row(request, db, required_scope=required_scope)
+    row, grant = await _verify_identity_grant_row(
+        request, db, required_scope=required_scope
+    )
     return TeamIdentity(
         team_id=row["team_id"],
         alias=row["alias"],

@@ -275,12 +275,25 @@ OSS_SERVICE_SOURCES = ("server/src", "awid/src", "naapp")
 
 def oss_served_endpoints(root: Path) -> set[str]:
     out = subprocess.run(
-        ["git", "-C", str(root), "grep", "-rh", "-o", "-E",
-         r"/(api/)?v1/[a-zA-Z0-9/_{}.\-]*", "--", *OSS_SERVICE_SOURCES],
-        check=False, capture_output=True, text=True,
+        [
+            "git",
+            "-C",
+            str(root),
+            "grep",
+            "-rh",
+            "-o",
+            "-E",
+            r"/(api/)?v1/[a-zA-Z0-9/_{}.\-]*",
+            "--",
+            *OSS_SERVICE_SOURCES,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
     )
     return {
-        s.replace("/api/v1/", "/v1/") for s in out.stdout.split()
+        s.replace("/api/v1/", "/v1/")
+        for s in out.stdout.split()
         if len(s.replace("/api/v1/", "/v1/")) > len("/v1/")
     }
 
@@ -288,8 +301,7 @@ def oss_served_endpoints(root: Path) -> set[str]:
 def is_oss_route(endpoint: str, served: set[str]) -> bool:
     core = endpoint.replace("/api/v1/", "/v1/").rstrip("/")
     return any(
-        core == s.rstrip("/") or core.startswith(s.rstrip("/") + "/")
-        for s in served
+        core == s.rstrip("/") or core.startswith(s.rstrip("/") + "/") for s in served
     )
 
 
@@ -309,9 +321,13 @@ def normalized_endpoint(raw: str) -> str | None:
 
 def cli_source_files(files: list[str]) -> list[str]:
     return [
-        f for f in files
-        if f.startswith("cli/go/") and f.endswith(".go")
-        and "_test" not in f and "/testdata/" not in f and "/conformance/" not in f
+        f
+        for f in files
+        if f.startswith("cli/go/")
+        and f.endswith(".go")
+        and "_test" not in f
+        and "/testdata/" not in f
+        and "/conformance/" not in f
     ]
 
 
@@ -404,7 +420,9 @@ def find_private_documents(root: Path, files: list[str]) -> list[str]:
                 )
         for name in PRIVATE_TRANSITION_PATH_NAMES:
             if name.casefold() in lowered_rel:
-                failures.append(f"tracked path {rel} retains private transition document name")
+                failures.append(
+                    f"tracked path {rel} retains private transition document name"
+                )
 
         path = root / rel
         if not path.is_file():
@@ -416,21 +434,27 @@ def find_private_documents(root: Path, files: list[str]) -> list[str]:
         lowered = raw.decode("utf-8", errors="replace").casefold()
         for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
             if token.casefold() in lowered:
-                failures.append(f"{rel} retains private managed-gateway token {token!r}")
+                failures.append(
+                    f"{rel} retains private managed-gateway token {token!r}"
+                )
         text = decodable_text(path)
         if text is None:
             continue
         lowered = text.casefold()
         for name in PRIVATE_TRANSITION_PATH_NAMES:
             if name.casefold() in lowered:
-                failures.append(f"tracked file {rel} references private transition document name")
+                failures.append(
+                    f"tracked file {rel} references private transition document name"
+                )
         for label, terms in PRIVATE_TRANSITION_CONTENT_RULES:
             if all(term.casefold() in lowered for term in terms):
                 failures.append(f"{rel} retains {label}")
         if rel.startswith("docs/") and rel.endswith(".md"):
             for reference in PRIVATE_DOC_REFERENCES:
                 if reference in text:
-                    failures.append(f"{rel} references a private repository: {reference!r}")
+                    failures.append(
+                        f"{rel} references a private repository: {reference!r}"
+                    )
 
     for rel in PRIVATE_TRANSITION_PATHS:
         if (root / rel).exists():
@@ -546,7 +570,7 @@ def self_test(root: Path) -> int:
         # location allowlist.
         write(
             "cli/go/cmd/aw/elsewhere.go",
-            'type InventedAccountResponse struct {\n'
+            "type InventedAccountResponse struct {\n"
             '\tOrgID string `json:"org_id"`\n}\n',
         )
         failures = check(tmp)
@@ -563,7 +587,9 @@ def self_test(root: Path) -> int:
             'type CliSignupResponse struct {\n\tOrgID string `json:"org_id"`\n}\n',
         )
         if failures := check(tmp):
-            print(f"self-test failed: baselined schema rejected after moving: {failures[0]}")
+            print(
+                f"self-test failed: baselined schema rejected after moving: {failures[0]}"
+            )
             return 1
         write(
             "cli/go/cmd/aw/moved.go",
@@ -631,7 +657,9 @@ def self_test(root: Path) -> int:
         # bytes are not read as text.
         transition_fixtures = {
             "private database inventory": (
-                "Cross-boundary " + "foreign keys\naweb_" + "cloud rows\naweb_"
+                "Cross-boundary "
+                + "foreign keys\naweb_"
+                + "cloud rows\naweb_"
                 + "overlay changes\n",
                 "skills/transition-evidence/SKILL.md",
             ),
@@ -652,11 +680,14 @@ def self_test(root: Path) -> int:
                 "server/tests/fixtures/self-test-baseline.txt",
             ),
             "private personnel approval flow": (
-                "Credentialed " + "human operator\nReviewer reviews this plan before execution\n",
+                "Credentialed "
+                + "human operator\nReviewer reviews this plan before execution\n",
                 "cli/go/npm/self-test-approval.js",
             ),
         }
-        if set(transition_fixtures) != {label for label, _ in PRIVATE_TRANSITION_CONTENT_RULES}:
+        if set(transition_fixtures) != {
+            label for label, _ in PRIVATE_TRANSITION_CONTENT_RULES
+        }:
             print("self-test failed: every private transition rule needs a fixture")
             return 1
 
@@ -667,7 +698,9 @@ def self_test(root: Path) -> int:
             (tmp / rel).unlink()
             subprocess.run(["git", "-C", str(tmp), "add", "-A"], check=True)
 
-        for index, (label, (content, surface)) in enumerate(transition_fixtures.items()):
+        for index, (label, (content, surface)) in enumerate(
+            transition_fixtures.items()
+        ):
             for rel in (f"docs/private-transition-{index}.md", surface):
                 write(rel, content)
                 if not rejects(f"{rel} retains {label}"):
@@ -683,20 +716,28 @@ def self_test(root: Path) -> int:
                 (tmp / rel).write_bytes(raw_bytes)
                 subprocess.run(["git", "-C", str(tmp), "add", rel], check=True)
                 if rejects(f"{rel} retains"):
-                    print(f"self-test failed: binary or undecodable {label} was read as text")
+                    print(
+                        f"self-test failed: binary or undecodable {label} was read as text"
+                    )
                     return 1
             remove(rel)
 
         for index, name in enumerate(PRIVATE_TRANSITION_PATH_NAMES):
             rel = f"reviewer/{name}-{index}.md"
             write(rel, "generic: true\n")
-            if not rejects(f"tracked path {rel} retains private transition document name"):
-                print(f"self-test failed: private transition name was not rejected: {rel}")
+            if not rejects(
+                f"tracked path {rel} retains private transition document name"
+            ):
+                print(
+                    f"self-test failed: private transition name was not rejected: {rel}"
+                )
                 return 1
             remove(rel)
             rel = f"reviewer/private-transition-consumer-{index}.txt"
             write(rel, f"docs/archive/{name}.md\n")
-            if not rejects(f"tracked file {rel} references private transition document name"):
+            if not rejects(
+                f"tracked file {rel} references private transition document name"
+            ):
                 print(f"self-test failed: a reference to {name} was not rejected")
                 return 1
             remove(rel)
@@ -705,7 +746,9 @@ def self_test(root: Path) -> int:
             for rel in ("README.md", f"cli/go/a2a/surface-{index}.go"):
                 write(rel, f"generic\n{token}\n")
                 if not rejects(f"{rel} retains private managed-gateway token"):
-                    print(f"self-test failed: managed-gateway token {token!r} was not rejected in {rel}")
+                    print(
+                        f"self-test failed: managed-gateway token {token!r} was not rejected in {rel}"
+                    )
                     return 1
                 remove(rel)
         for rel in (
@@ -715,14 +758,25 @@ def self_test(root: Path) -> int:
         ):
             write(rel, "generic: true\n")
             if not rejects(f"tracked path {rel} retains private managed-gateway name"):
-                print(f"self-test failed: private managed-gateway path was not rejected: {rel}")
+                print(
+                    f"self-test failed: private managed-gateway path was not rejected: {rel}"
+                )
                 return 1
             remove(rel)
 
         for rel, expected in (
-            *((rel, "removed private transition path returned") for rel in PRIVATE_TRANSITION_PATHS),
-            *((rel, "removed private managed-gateway path returned") for rel in REMOVED_PRIVATE_PATHS),
-            *((rel, "removed company-strategy path returned") for rel in REMOVED_STRATEGY_PATHS),
+            *(
+                (rel, "removed private transition path returned")
+                for rel in PRIVATE_TRANSITION_PATHS
+            ),
+            *(
+                (rel, "removed private managed-gateway path returned")
+                for rel in REMOVED_PRIVATE_PATHS
+            ),
+            *(
+                (rel, "removed company-strategy path returned")
+                for rel in REMOVED_STRATEGY_PATHS
+            ),
         ):
             # Existence is enough: an untracked file in its old place still fails.
             (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -736,7 +790,9 @@ def self_test(root: Path) -> int:
             rel = "docs/linking.md"
             write(rel, f"[private]({reference}/x.md)\n")
             if not rejects(f"{rel} references a private repository"):
-                print(f"self-test failed: a docs link to {reference!r} was not rejected")
+                print(
+                    f"self-test failed: a docs link to {reference!r} was not rejected"
+                )
                 return 1
             remove(rel)
 
@@ -753,7 +809,9 @@ def self_test(root: Path) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", default=Path(__file__).resolve().parents[1], type=Path)
+    parser.add_argument(
+        "--root", default=Path(__file__).resolve().parents[1], type=Path
+    )
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--derive", action="store_true")
     args = parser.parse_args()
@@ -774,7 +832,9 @@ def main() -> int:
             "instead — that makes this gate stricter."
         )
         return 1
-    print("public repository carries no private infrastructure outside the frozen baseline")
+    print(
+        "public repository carries no private infrastructure outside the frozen baseline"
+    )
     return 0
 
 

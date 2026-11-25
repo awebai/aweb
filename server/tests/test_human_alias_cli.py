@@ -26,7 +26,11 @@ __all__ = ["privacy_app"]
 )
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 async def test_cli_first_contact_human_alias_with_signed_key(
-    privacy_app, tmp_path, global_human, inbound_mode, kind  # noqa: F811
+    privacy_app,
+    tmp_path,
+    global_human,
+    inbound_mode,
+    kind,  # noqa: F811
 ):
     env = privacy_app
     async with _local_sender_mail(
@@ -54,7 +58,8 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         )
         active = await env.db.fetch_all(
             "SELECT assertion_canonical FROM {{tables.agent_encryption_keys}} "
-            "WHERE agent_id=$1 AND revoked_at IS NULL", actor.id,
+            "WHERE agent_id=$1 AND revoked_at IS NULL",
+            actor.id,
         )
         assert len(active) == 1
         previous = json.loads(active[0]["assertion_canonical"])
@@ -82,10 +87,17 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             )
 
         async def assert_no_delivery():
-            for table in ("messages", "conversations", "chat_messages", "chat_sessions"):
-                assert (await env.db.fetch_one(
-                    "SELECT count(*) AS n FROM {{tables." + table + "}}"
-                ))["n"] == 0
+            for table in (
+                "messages",
+                "conversations",
+                "chat_messages",
+                "chat_sessions",
+            ):
+                assert (
+                    await env.db.fetch_one(
+                        "SELECT count(*) AS n FROM {{tables." + table + "}}"
+                    )
+                )["n"] == 0
 
         before = await privacy_state()
         assert not before[0]  # No saved contact supplies first-contact authority.
@@ -109,9 +121,19 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         await asyncio.wait_for(refused.communicate(), 30)
         assert refused.returncode != 0
         refused_chat = await asyncio.create_subprocess_exec(
-            str(binary), "--team", TEAM, "chat", "send-and-leave", "alice",
-            "--start-conversation", "--e2ee", "--body-file", str(body_file),
-            cwd=cwd, env=child_env, stdout=asyncio.subprocess.PIPE,
+            str(binary),
+            "--team",
+            TEAM,
+            "chat",
+            "send-and-leave",
+            "alice",
+            "--start-conversation",
+            "--e2ee",
+            "--body-file",
+            str(body_file),
+            cwd=cwd,
+            env=child_env,
+            stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         await asyncio.wait_for(refused_chat.communicate(), 30)
@@ -130,7 +152,8 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         assert published.json()["encryption_key"]["custody"] == "hosted_custodial"
         current = await env.db.fetch_all(
             "SELECT encryption_key_id, assertion_custody FROM {{tables.agent_encryption_keys}} "
-            "WHERE agent_id=$1 AND revoked_at IS NULL", actor.id,
+            "WHERE agent_id=$1 AND revoked_at IS NULL",
+            actor.id,
         )
         assert len(current) == 1
         assert current[0]["encryption_key_id"] == previous["encryption_key_id"]
@@ -140,15 +163,30 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             headers=messaging_actor_headers(env.actors["bob"].registered),
         )
         assert selected.status_code == 200, selected.text
-        assert selected.json()["encryption_key"]["encryption_key_id"] == previous["encryption_key_id"]
+        assert (
+            selected.json()["encryption_key"]["encryption_key_id"]
+            == previous["encryption_key_id"]
+        )
         assert selected.json()["encryption_key"]["custody"] == "hosted_custodial"
         if kind == "chat":
             # D8: an authoritative person is reached by mail, even with a
             # usable key and valid same-team admission. No session is created.
             process = await asyncio.create_subprocess_exec(
-                str(binary), "--team", TEAM, "--json", "chat", "send-and-leave",
-                "alice", "--start-conversation", "--plaintext", "--body-file", str(body_file),
-                cwd=cwd, env=child_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                str(binary),
+                "--team",
+                TEAM,
+                "--json",
+                "chat",
+                "send-and-leave",
+                "alice",
+                "--start-conversation",
+                "--plaintext",
+                "--body-file",
+                str(body_file),
+                cwd=cwd,
+                env=child_env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
             assert process.returncode == 1, (stdout, stderr)
@@ -169,14 +207,24 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         assert not before[0]
         if inbound_mode == "contacts_only":
             command = (
-                ["mail", "send", "--to", "alice", "--subject", "Hello"] if kind == "mail" else
-                ["chat", "send-and-leave", "alice", "--start-conversation"]
+                ["mail", "send", "--to", "alice", "--subject", "Hello"]
+                if kind == "mail"
+                else ["chat", "send-and-leave", "alice", "--start-conversation"]
             )
             # An explicit end-to-end send is refused and delivers nothing.
             explicit = await asyncio.create_subprocess_exec(
-                str(binary), "--team", TEAM, "--json", *command, "--e2ee",
-                "--body-file", str(body_file), cwd=cwd, env=child_env,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                str(binary),
+                "--team",
+                TEAM,
+                "--json",
+                *command,
+                "--e2ee",
+                "--body-file",
+                str(body_file),
+                cwd=cwd,
+                env=child_env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             explicit_out, _ = await asyncio.wait_for(explicit.communicate(), 30)
             assert explicit.returncode == 1, explicit_out.decode()
@@ -186,9 +234,17 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             # the consent check, and contacts_only refuses it: a published key
             # is capability, not consent.
             denied = await asyncio.create_subprocess_exec(
-                str(binary), "--team", TEAM, "--json", *command,
-                "--body-file", str(body_file), cwd=cwd, env=child_env,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                str(binary),
+                "--team",
+                TEAM,
+                "--json",
+                *command,
+                "--body-file",
+                str(body_file),
+                cwd=cwd,
+                env=child_env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             denied_out, _ = await asyncio.wait_for(denied.communicate(), 30)
             assert denied.returncode == 1, denied_out.decode()
@@ -200,25 +256,44 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         # aweb's hosted service holds the human's key, so an explicit
         # end-to-end send to her is refused before any request.
         command = (
-            ["mail", "send", "--to", "alice", "--subject", "Hello"] if kind == "mail" else
-            ["chat", "send-and-leave", "alice", "--start-conversation"]
+            ["mail", "send", "--to", "alice", "--subject", "Hello"]
+            if kind == "mail"
+            else ["chat", "send-and-leave", "alice", "--start-conversation"]
         )
         explicit = await asyncio.create_subprocess_exec(
-            str(binary), "--team", TEAM, "--json", *command, "--e2ee",
-            "--body-file", str(body_file), cwd=cwd, env=child_env,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            str(binary),
+            "--team",
+            TEAM,
+            "--json",
+            *command,
+            "--e2ee",
+            "--body-file",
+            str(body_file),
+            cwd=cwd,
+            env=child_env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         explicit_out, _ = await asyncio.wait_for(explicit.communicate(), 30)
         assert explicit.returncode == 1, explicit_out.decode()
-        assert json.loads(explicit_out)["error"]["code"] == "recipient_custodial_no_e2ee"
+        assert (
+            json.loads(explicit_out)["error"]["code"] == "recipient_custodial_no_e2ee"
+        )
         await assert_no_delivery()
         assert await privacy_state() == before
 
         # The ordinary send reaches her, server-readable.
         try:
             sent = await _cli(
-                binary, cwd, child_env, "--team", TEAM, "--json", *command,
-                "--body-file", str(body_file),
+                binary,
+                cwd,
+                child_env,
+                "--team",
+                TEAM,
+                "--json",
+                *command,
+                "--body-file",
+                str(body_file),
             )
         finally:
             assert await privacy_state() == before
@@ -229,7 +304,6 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         assert stored["to_did"] == (row["did_aw"] or actor.did)
         assert stored["content_mode"] != "encrypted_v2"
         assert stored["body"] == body_file.read_text()
-
 
         # With a native messaging service configured on the same TCP server, a
         # participant lookup refuses a stale local key projection.
@@ -282,7 +356,9 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         )
         provider = HostAuthority(env.db, binding)
         service = NativeMessagingService(
-            env.infra, authority=provider, service=binding,
+            env.infra,
+            authority=provider,
+            service=binding,
             registry_client=application_registry_client(env.app.state),
         )
         env.app.state.human_channels_service = service
@@ -308,7 +384,10 @@ async def test_cli_first_contact_human_alias_with_signed_key(
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 @pytest.mark.parametrize("registry_failure", ["mismatch", "unavailable"])
 async def test_cli_human_alias_requires_independent_global_key(
-    privacy_app, tmp_path, kind, registry_failure  # noqa: F811
+    privacy_app,
+    tmp_path,
+    kind,
+    registry_failure,  # noqa: F811
 ):
     import socket
 
@@ -316,7 +395,12 @@ async def test_cli_human_alias_requires_independent_global_key(
 
     env = privacy_app
     async with _local_sender_mail(env, tmp_path, False, False, False, human=True) as (
-        _, _, binary, cwd, child_env, _,
+        _,
+        _,
+        binary,
+        cwd,
+        child_env,
+        _,
     ):
         await env.db.execute("DELETE FROM {{tables.conversations}}")
         await env.db.execute("DELETE FROM {{tables.messages}}")
@@ -326,9 +410,12 @@ async def test_cli_human_alias_requires_independent_global_key(
         )
         _, public = generate_x25519_keypair()
         assertion = build_encryption_key_assertion(
-            signing_key=actor.sk, identity_did=actor.did,
-            identity_stable_id=row["did_aw"], encryption_public_key=public,
-            custody="self", now=datetime.now(UTC),
+            signing_key=actor.sk,
+            identity_did=actor.did,
+            identity_stable_id=row["did_aw"],
+            encryption_public_key=public,
+            custody="self",
+            now=datetime.now(UTC),
         )
         await _insert_agent_encryption_assertion(
             env.db, agent_id=actor.id, team_id=TEAM, assertion=assertion
@@ -336,9 +423,12 @@ async def test_cli_human_alias_requires_independent_global_key(
         attacker_sk, _, attacker_did = _make_keypair()
         _, attacker_public = generate_x25519_keypair()
         forged_assertion = build_encryption_key_assertion(
-            signing_key=attacker_sk, identity_did=attacker_did,
-            identity_stable_id=row["did_aw"], encryption_public_key=attacker_public,
-            custody="self", now=datetime.now(UTC),
+            signing_key=attacker_sk,
+            identity_did=attacker_did,
+            identity_stable_id=row["did_aw"],
+            encryption_public_key=attacker_public,
+            custody="self",
+            now=datetime.now(UTC),
         )
         upstream = env.app.middleware_stack
         participant_reads = []
@@ -347,7 +437,10 @@ async def test_cli_human_alias_requires_independent_global_key(
         async def untrusted_participant_response(scope, receive, send):
             # Deliberately corrupt this HTTP trust boundary; all discovery,
             # registry, authorization and persistence underneath remain real.
-            if scope["type"] == "http" and scope["path"] == "/v1/messaging/participants/alice":
+            if (
+                scope["type"] == "http"
+                and scope["path"] == "/v1/messaging/participants/alice"
+            ):
                 events = []
 
                 async def capture(event):
@@ -357,20 +450,38 @@ async def test_cli_human_alias_requires_independent_global_key(
                 start = next(e for e in events if e["type"] == "http.response.start")
                 assert start["status"] == 200
                 participant_reads.append(scope["path"])
-                payload = json.loads(b"".join(
-                    e.get("body", b"") for e in events if e["type"] == "http.response.body"
-                ))
+                payload = json.loads(
+                    b"".join(
+                        e.get("body", b"")
+                        for e in events
+                        if e["type"] == "http.response.body"
+                    )
+                )
                 if registry_failure == "mismatch":
-                    payload.update(did_key=attacker_did, encryption_key=forged_assertion)
+                    payload.update(
+                        did_key=attacker_did, encryption_key=forged_assertion
+                    )
                 body = json.dumps(payload).encode()
-                start = {**start, "headers": [
-                    (k, v) for k, v in start["headers"] if k.lower() != b"content-length"
-                ] + [(b"content-length", str(len(body)).encode())]}
+                start = {
+                    **start,
+                    "headers": [
+                        (k, v)
+                        for k, v in start["headers"]
+                        if k.lower() != b"content-length"
+                    ]
+                    + [(b"content-length", str(len(body)).encode())],
+                }
                 await send(start)
                 await send({"type": "http.response.body", "body": body})
                 return
-            if scope["type"] == "http" and scope["method"] == "POST" and scope["path"] in (
-                "/v1/messages", "/v1/chat/sessions",
+            if (
+                scope["type"] == "http"
+                and scope["method"] == "POST"
+                and scope["path"]
+                in (
+                    "/v1/messages",
+                    "/v1/chat/sessions",
+                )
             ):
                 send_attempts.append(scope["path"])
             await upstream(scope, receive, send)
@@ -378,22 +489,33 @@ async def test_cli_human_alias_requires_independent_global_key(
         body_file = tmp_path / "global-human-key.txt"
         body_file.write_text("Only the registry-authorized human may decrypt this")
         command = (
-            ["mail", "send", "--to", "alice", "--subject", "Hello"] if kind == "mail" else
-            ["chat", "send-and-leave", "alice", "--start-conversation"]
+            ["mail", "send", "--to", "alice", "--subject", "Hello"]
+            if kind == "mail"
+            else ["chat", "send-and-leave", "alice", "--start-conversation"]
         )
         # A bound, non-listening socket makes the CLI registry unreachable;
         # the real server's registry client keeps its original configuration.
         with socket.socket() as unavailable:
             unavailable.bind(("127.0.0.1", 0))
             if registry_failure == "unavailable":
-                child_env = {**child_env, "AWID_REGISTRY_URL":
-                             f"http://127.0.0.1:{unavailable.getsockname()[1]}"}
+                child_env = {
+                    **child_env,
+                    "AWID_REGISTRY_URL": f"http://127.0.0.1:{unavailable.getsockname()[1]}",
+                }
             env.app.middleware_stack = untrusted_participant_response
             try:
                 process = await asyncio.create_subprocess_exec(
-                    str(binary), "--team", TEAM, *command, "--e2ee",
-                    "--body-file", str(body_file), cwd=cwd, env=child_env,
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    str(binary),
+                    "--team",
+                    TEAM,
+                    *command,
+                    "--e2ee",
+                    "--body-file",
+                    str(body_file),
+                    cwd=cwd,
+                    env=child_env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
                 await asyncio.wait_for(process.communicate(), 30)
             finally:
@@ -405,6 +527,8 @@ async def test_cli_human_alias_requires_independent_global_key(
         assert send_attempts == []
         assert process.returncode != 0
         for table in ("messages", "conversations", "chat_messages", "chat_sessions"):
-            assert (await env.db.fetch_one(
-                "SELECT count(*) AS n FROM {{tables." + table + "}}"
-            ))["n"] == 0
+            assert (
+                await env.db.fetch_one(
+                    "SELECT count(*) AS n FROM {{tables." + table + "}}"
+                )
+            )["n"] == 0

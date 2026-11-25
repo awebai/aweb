@@ -84,19 +84,46 @@ def validate_cloud_config(host, image, seed, directory):
         raise Refused("Merak cloud-init validator requires an immutable image ID")
     user_data = "#cloud-config\n" + json.dumps(seed)
     check = "umask 077; cat > /tmp/user-data; cloud-init --version; cloud-init schema --config-file /tmp/user-data"
-    argv = ["docker", "run", "--rm", "-i", "--pull=never", "--read-only",
-            "--network=none", "--cap-drop=ALL", "--security-opt=no-new-privileges",
-            "--tmpfs", "/tmp:mode=0700", "--entrypoint", "/bin/sh", image, "-ec", check]
+    argv = [
+        "docker",
+        "run",
+        "--rm",
+        "-i",
+        "--pull=never",
+        "--read-only",
+        "--network=none",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--tmpfs",
+        "/tmp:mode=0700",
+        "--entrypoint",
+        "/bin/sh",
+        image,
+        "-ec",
+        check,
+    ]
     result = subprocess.run(
-        [*host_ssh(), host, shlex.join(argv)], input=user_data, text=True,
-        capture_output=True, env=child_environment(), timeout=60,
+        [*host_ssh(), host, shlex.join(argv)],
+        input=user_data,
+        text=True,
+        capture_output=True,
+        env=child_environment(),
+        timeout=60,
     )
     # A schema diagnostic can quote supplied host key material. Only retain the verdict.
-    proof = {"validator_image": image, "user_data_sha256": hashlib.sha256(user_data.encode()).hexdigest(),
-             "exit": result.returncode, "valid": result.returncode == 0}
-    (directory / "cloud-config-schema.json").write_text(json.dumps(proof, indent=2) + "\n")
+    proof = {
+        "validator_image": image,
+        "user_data_sha256": hashlib.sha256(user_data.encode()).hexdigest(),
+        "exit": result.returncode,
+        "valid": result.returncode == 0,
+    }
+    (directory / "cloud-config-schema.json").write_text(
+        json.dumps(proof, indent=2) + "\n"
+    )
     if result.returncode:
-        raise Refused("Merak cloud-init schema refused the user-data before guest allocation")
+        raise Refused(
+            "Merak cloud-init schema refused the user-data before guest allocation"
+        )
 
 
 def run_guest(runtime, remote):
@@ -131,9 +158,16 @@ def run_guest(runtime, remote):
             "package_update": False,
             "package_upgrade": False,
             "bootcmd": [
-                ["systemctl", "mask", "--runtime", "apt-daily.timer",
-                 "apt-daily-upgrade.timer", "apt-daily.service",
-                 "apt-daily-upgrade.service", "unattended-upgrades.service"],
+                [
+                    "systemctl",
+                    "mask",
+                    "--runtime",
+                    "apt-daily.timer",
+                    "apt-daily-upgrade.timer",
+                    "apt-daily.service",
+                    "apt-daily-upgrade.service",
+                    "unattended-upgrades.service",
+                ],
                 ["systemctl", "stop", "apt-daily.timer", "apt-daily-upgrade.timer"],
             ],
             "disable_root": False,
@@ -246,7 +280,11 @@ def run_guest(runtime, remote):
                 # Re-read the persisted host receipt over an independent pinned connection.
                 try:
                     rc = subprocess.run(
-                        [*host_ssh(), host, command + " --reconcile " + shlex.quote(run)],
+                        [
+                            *host_ssh(),
+                            host,
+                            command + " --reconcile " + shlex.quote(run),
+                        ],
                         env=child_environment(),
                         text=True,
                         capture_output=True,
@@ -267,7 +305,9 @@ def run_guest(runtime, remote):
                             "Merak closure lacks admitted container ID"
                         )
                     network = summary.get("admission", {}).get("network_id")
-                    if network and network not in closure.get("removed_network_ids", []):
+                    if network and network not in closure.get(
+                        "removed_network_ids", []
+                    ):
                         raise Infrastructure("Merak closure lacks admitted network ID")
                     if closure.get("egress", {}).get("present") is not False:
                         raise Infrastructure("Merak closure lacks firewall removal")

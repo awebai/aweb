@@ -82,7 +82,12 @@ def _actor_dids() -> list[str]:
 
 
 def _signed_timestamp(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        dt.astimezone(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _signed_from(auth) -> str:
@@ -95,7 +100,9 @@ def _signed_from(auth) -> str:
     )
 
 
-def _recipient_signed_fields(rows: list[dict], *, named_alias: str = "") -> tuple[str, str, str]:
+def _recipient_signed_fields(
+    rows: list[dict], *, named_alias: str = ""
+) -> tuple[str, str, str]:
     """What a hosted identity signs about its recipients: ``to``, and for a
     single recipient its current key and its stable identity.
 
@@ -321,7 +328,9 @@ async def _wait_for_replies(
                             ),
                             "body": content["body"],
                             "attachments": content.get("attachments", []),
-                            "attachments_available": content.get("attachments_available", False),
+                            "attachments_available": content.get(
+                                "attachments_available", False
+                            ),
                             "decryptable": content["decryptable"],
                             "content_notice": content["content_notice"],
                             "hang_on": is_hang_on,
@@ -405,17 +414,25 @@ async def chat_send(
     aweb_db = db_infra.get_manager("aweb")
     hosted_handle_address = to_alias.strip().startswith("@")
     normalized_alias = normalize_hosted_handle_reference(to_alias, require_agent=True)
-    if hosted_handle_address and normalized_alias != to_alias.strip() and "/" in normalized_alias:
+    if (
+        hosted_handle_address
+        and normalized_alias != to_alias.strip()
+        and "/" in normalized_alias
+    ):
         to_address = normalized_alias
         to_alias = ""
     else:
         to_address = normalize_hosted_handle_reference(to_address, require_agent=True)
 
     recipient_modes = (
-        int(bool(to_alias.strip())) + int(bool(to_did.strip())) + int(bool(to_address.strip()))
+        int(bool(to_alias.strip()))
+        + int(bool(to_did.strip()))
+        + int(bool(to_address.strip()))
     )
     if not session_id and recipient_modes != 1:
-        return json.dumps({"error": "Provide exactly one of to_alias, to_did, or to_address"})
+        return json.dumps(
+            {"error": "Provide exactly one of to_alias, to_did, or to_address"}
+        )
     if session_id and recipient_modes != 0:
         return json.dumps({"error": "Provide session_id or a recipient, not both"})
 
@@ -472,7 +489,9 @@ async def chat_send(
 
         recipient_rows = target.recipients
         continues_session = target.session_id is not None
-        federated = any(row.get("external") or row.get("delivery_origin") for row in recipient_rows)
+        federated = any(
+            row.get("external") or row.get("delivery_origin") for row in recipient_rows
+        )
         sid = target.session_id or target.shared_session_id or uuid_mod.uuid4()
         # sender_attested_at is signed sender intent; send_in_session assigns
         # independent server receipt time for ordering, so they may disagree.
@@ -480,7 +499,9 @@ async def chat_send(
         pre_message_id = uuid_mod.uuid4()
         signed_fields = _signed_chat_fields(
             auth,
-            signed_from=sender_address if federated and sender_address else _signed_from(auth),
+            signed_from=sender_address
+            if federated and sender_address
+            else _signed_from(auth),
             recipient_rows=recipient_rows,
             named_alias=named_alias,
             message=message,
@@ -500,7 +521,9 @@ async def chat_send(
                     encryptor=hosted_encryptor,
                     message_type="chat",
                     payload=signed_fields,
-                    recipients=[_chat_recipient_for_encryptor(row) for row in recipient_rows],
+                    recipients=[
+                        _chat_recipient_for_encryptor(row) for row in recipient_rows
+                    ],
                 )
             except HostedMessageEncryptionError as exc:
                 return json.dumps({"error": str(exc)})
@@ -518,13 +541,19 @@ async def chat_send(
         sent_fields = dict(
             hang_on=hang_on,
             wait_seconds=wait_seconds if wait else None,
-            content_mode=encrypted.content_mode if encrypted is not None else ContentMode.PLAINTEXT,
+            content_mode=encrypted.content_mode
+            if encrypted is not None
+            else ContentMode.PLAINTEXT,
             message_version=encrypted.message_version if encrypted is not None else 1,
-            encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
+            encrypted_envelope=encrypted.encrypted_envelope
+            if encrypted is not None
+            else None,
             leaving=leaving,
             message_id=str(pre_message_id),
             timestamp=_signed_timestamp(sender_attested_at),
-            from_did=signed.from_did if signed else (auth.did_key or "").strip() or None,
+            from_did=signed.from_did
+            if signed
+            else (auth.did_key or "").strip() or None,
             signature=signed.signature if signed else None,
             signed_payload=signed.signed_payload if signed else None,
         )
@@ -592,7 +621,9 @@ async def chat_pending(
     auth = get_auth()
     actor_dids = _actor_dids()
     actor_agent = await resolve_actor_agent(db_infra, actor_dids, team_id=auth.team_id)
-    actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
+    actor_agent_id = auth.agent_id or (
+        str(actor_agent["agent_id"]) if actor_agent else None
+    )
 
     conversations_by_session: dict[str, dict] = {}
     for actor_did in actor_dids:
@@ -609,7 +640,8 @@ async def chat_pending(
             auth=auth,
             hosted_decryptor=hosted_decryptor,
             row={
-                "content_mode": row.get("last_message_content_mode") or ContentMode.PLAINTEXT,
+                "content_mode": row.get("last_message_content_mode")
+                or ContentMode.PLAINTEXT,
                 "message_version": row.get("last_message_version") or 1,
                 "encrypted_envelope": row.get("last_encrypted_envelope"),
                 "body": row.get("last_message") or "",
@@ -629,7 +661,9 @@ async def chat_pending(
             "last_message_content_notice": row.get("last_message_content_notice"),
             "last_from": row["last_from"],
             "unread_count": row["unread_count"],
-            "last_activity": row["last_activity"].isoformat() if row["last_activity"] else "",
+            "last_activity": row["last_activity"].isoformat()
+            if row["last_activity"]
+            else "",
         }
         for row in conversations
     ]
@@ -694,7 +728,9 @@ async def chat_history(
                 "from_did": msg.get("from_did"),
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
-                **verified_signed_recipient_fields({**msg, "conversation_id": str(session_uuid)}),
+                **verified_signed_recipient_fields(
+                    {**msg, "conversation_id": str(session_uuid)}
+                ),
                 "body": content["body"],
                 "attachments": content.get("attachments", []),
                 "attachments_available": content.get("attachments_available", False),
@@ -744,7 +780,9 @@ async def chat_read(
         if not message_ids:
             return json.dumps({"error": "message_ids is required"})
         try:
-            normalized_message_ids = [str(UUID(message_id.strip())) for message_id in message_ids]
+            normalized_message_ids = [
+                str(UUID(message_id.strip())) for message_id in message_ids
+            ]
         except (ValueError, TypeError, AttributeError):
             return json.dumps({"error": "Invalid message_id format"})
     elif normalized_watermark is None:

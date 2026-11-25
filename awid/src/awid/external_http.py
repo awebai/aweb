@@ -44,7 +44,9 @@ class PinnedRegistryHTTP:
             try:
                 canonical = str(ipaddress.ip_address(value))
             except ValueError as exc:
-                raise FederationAuthorityError("sender_registry_origin_forbidden") from exc
+                raise FederationAuthorityError(
+                    "sender_registry_origin_forbidden"
+                ) from exc
             if canonical not in canonical_ips:
                 canonical_ips.append(canonical)
         if self.selected_ip is None:
@@ -53,7 +55,9 @@ class PinnedRegistryHTTP:
             try:
                 self.selected_ip = str(ipaddress.ip_address(self.selected_ip))
             except ValueError as exc:
-                raise FederationAuthorityError("sender_registry_origin_forbidden") from exc
+                raise FederationAuthorityError(
+                    "sender_registry_origin_forbidden"
+                ) from exc
             if self.selected_ip not in canonical_ips:
                 raise FederationAuthorityError("sender_registry_origin_forbidden")
         self.approved_ips = tuple(canonical_ips)
@@ -127,9 +131,13 @@ class PinnedRegistryHTTP:
                         key.decode("ascii").lower(): value.decode("latin-1")
                         for key, value in response.headers
                     }
-                    encoding = response_headers.get("content-encoding", "").strip().lower()
+                    encoding = (
+                        response_headers.get("content-encoding", "").strip().lower()
+                    )
                     if encoding not in {"", "identity"}:
-                        raise FederationAuthorityError("sender_registry_protocol_invalid")
+                        raise FederationAuthorityError(
+                            "sender_registry_protocol_invalid"
+                        )
                     limit = (
                         self.max_response_bytes
                         if 200 <= response.status < 300
@@ -139,19 +147,30 @@ class PinnedRegistryHTTP:
                     if length is not None:
                         try:
                             if int(length) > limit:
-                                raise FederationAuthorityError("sender_identity_evidence_too_large")
+                                raise FederationAuthorityError(
+                                    "sender_identity_evidence_too_large"
+                                )
                         except ValueError as exc:
-                            raise FederationAuthorityError("sender_registry_protocol_invalid") from exc
+                            raise FederationAuthorityError(
+                                "sender_registry_protocol_invalid"
+                            ) from exc
                     body = bytearray()
                     async for chunk in response.aiter_stream():
                         if len(body) + len(chunk) > limit:
-                            raise FederationAuthorityError("sender_identity_evidence_too_large")
+                            raise FederationAuthorityError(
+                                "sender_identity_evidence_too_large"
+                            )
                         body.extend(chunk)
                 finally:
                     await response.aclose()
         except FederationAuthorityError:
             raise
-        except (httpcore.ConnectTimeout, httpcore.ReadTimeout, httpcore.WriteTimeout, TimeoutError) as exc:
+        except (
+            httpcore.ConnectTimeout,
+            httpcore.ReadTimeout,
+            httpcore.WriteTimeout,
+            TimeoutError,
+        ) as exc:
             raise FederationAuthorityError("sender_registry_unavailable") from exc
         except (httpcore.ConnectError, httpcore.NetworkError) as exc:
             if _contains_tls_error(exc):

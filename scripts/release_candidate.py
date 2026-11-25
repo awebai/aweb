@@ -86,11 +86,15 @@ def validate_tags(root: Path, tags: list[str]) -> tuple[str, dict[str, str]]:
                 f"{tag} does not match {manifest} version {manifest_version(root, manifest)}"
             )
         if run(root, "git", "tag", "--list", tag):
-            raise CandidateRefusal(f"local tag {tag} already exists; tags are never moved")
+            raise CandidateRefusal(
+                f"local tag {tag} already exists; tags are never moved"
+            )
     return source_sha, versions
 
 
-def create_candidate(root: Path, tags: list[str], *, stage_aw_final: bool = False) -> str:
+def create_candidate(
+    root: Path, tags: list[str], *, stage_aw_final: bool = False
+) -> str:
     run(root, "git", "fetch", "--quiet", "origin", "main", "+refs/tags/*:refs/tags/*")
     source_sha, versions = validate_tags(root, tags)
     if stage_aw_final and ("aw-v" not in versions or "-rc." in versions["aw-v"]):
@@ -107,7 +111,13 @@ def create_candidate(root: Path, tags: list[str], *, stage_aw_final: bool = Fals
     # machine, so the machine's runner owns the deadline and stops the gate
     # with TERM, which lets it clean up and record the stages that passed. A
     # timeout here would SIGKILL it and lose both.
-    run(root, "scripts/candidate-docker-gate.sh", capture=False, env=environment, bounded=False)
+    run(
+        root,
+        "scripts/candidate-docker-gate.sh",
+        capture=False,
+        env=environment,
+        bounded=False,
+    )
     if run(root, "git", "rev-parse", "HEAD") != source_sha:
         raise CandidateRefusal("checkout HEAD changed while the Docker gate ran")
     if run(root, "git", "status", "--porcelain", "--untracked-files=all"):
@@ -128,11 +138,19 @@ def create_candidate(root: Path, tags: list[str], *, stage_aw_final: bool = Fals
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage-aw-final", action="store_true", help="publish final aw on next until explicit post-deploy promotion")
+    parser.add_argument(
+        "--stage-aw-final",
+        action="store_true",
+        help="publish final aw on next until explicit post-deploy promotion",
+    )
     parser.add_argument("tags", nargs="+")
     arguments = parser.parse_args(argv)
     try:
-        create_candidate(Path.cwd().resolve(), arguments.tags, stage_aw_final=arguments.stage_aw_final)
+        create_candidate(
+            Path.cwd().resolve(),
+            arguments.tags,
+            stage_aw_final=arguments.stage_aw_final,
+        )
     except (
         CandidateRefusal,
         OSError,

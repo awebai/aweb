@@ -695,7 +695,9 @@ def run_suites(
         else:
             target = "test-server" if item is Suite.SERVER else "test-awid"
             command = [
-                "make", target, f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
+                "make",
+                target,
+                f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
             ]
         options = [
             *arguments,

@@ -60,7 +60,7 @@ WITH candidates AS (
     ) latest ON TRUE
     WHERE ($7::text IS NULL OR $7::text = 'chat') AND own.did = ($1::text[])[1]
       AND (($2::text IS NULL AND $3::text IS NULL) OR EXISTS (
-          SELECT 1 FROM ({_chat_participants('own.session_id')}) peer
+          SELECT 1 FROM ({_chat_participants("own.session_id")}) peer
           WHERE peer.did = $2::text OR peer.address = $3::text
       ))
 ), boundary AS MATERIALIZED (
@@ -89,12 +89,12 @@ LEFT JOIN LATERAL (
     -- subject and 100-character preview separately through message IDs.
     WITH history AS MATERIALIZED (
         SELECT m.message_id, m.created_at, m.from_alias, m.from_did, m.to_alias, m.to_did,
-               m.read_at, {incoming_mail_sql('$1')} AS incoming
+               m.read_at, {incoming_mail_sql("$1")} AS incoming
         FROM {{{{tables.messages}}}} m
         WHERE p.kind = 'mail' AND m.conversation_id = p.row_id
         UNION ALL
         SELECT m.message_id, m.created_at, m.from_alias, m.from_did, m.to_alias, m.to_did,
-               m.read_at, {incoming_mail_sql('$1')} AS incoming
+               m.read_at, {incoming_mail_sql("$1")} AS incoming
         FROM {{{{tables.messages}}}} m
         WHERE p.kind = 'legacy' AND m.message_id = p.row_id
     )
@@ -158,7 +158,7 @@ LEFT JOIN LATERAL (
                array_agg(cp.alias ORDER BY cp.alias, cp.did) AS participants,
                array_agg(cp.did ORDER BY cp.alias, cp.did) AS participant_dids,
                array_agg(cp.address ORDER BY cp.alias, cp.did) AS participant_addresses
-        FROM ({_chat_participants('p.row_id')}) cp
+        FROM ({_chat_participants("p.row_id")}) cp
     ) labels
     WHERE p.kind = 'chat' AND own.session_id = p.row_id AND own.did = ($1::text[])[1]
 ) chat ON p.kind = 'chat'

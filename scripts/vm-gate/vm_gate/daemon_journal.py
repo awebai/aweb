@@ -10,9 +10,15 @@ from pathlib import Path
 
 SPOOL = Path("/opt/vm-gate/daemon-journal")
 UNITS = (
-    "docker.service", "containerd.service", "dbus.service", "dbus-broker.service",
-    "apt-daily.timer", "apt-daily-upgrade.timer", "apt-daily.service",
-    "apt-daily-upgrade.service", "unattended-upgrades.service",
+    "docker.service",
+    "containerd.service",
+    "dbus.service",
+    "dbus-broker.service",
+    "apt-daily.timer",
+    "apt-daily-upgrade.timer",
+    "apt-daily.service",
+    "apt-daily-upgrade.service",
+    "unattended-upgrades.service",
 )
 
 
@@ -47,7 +53,12 @@ def drain(directory, *, finish=False):
         # It includes daemon re-exec and transient-scope events between restarts.
         command.append("_PID=1")
         for unit in UNITS:
-            for field in ("_SYSTEMD_UNIT", "UNIT", "OBJECT_SYSTEMD_UNIT", "COREDUMP_UNIT"):
+            for field in (
+                "_SYSTEMD_UNIT",
+                "UNIT",
+                "OBJECT_SYSTEMD_UNIT",
+                "COREDUMP_UNIT",
+            ):
                 command.extend(["+", f"{field}={unit}"])
         with (
             (directory / "daemon.log").open("ab") as log,

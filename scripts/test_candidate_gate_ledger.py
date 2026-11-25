@@ -97,8 +97,12 @@ class CompleteGateVerdictTests(unittest.TestCase):
 
     def test_every_stage_and_independent_target_reports_after_failures(self):
         result, rows = self.suite(
-            STAGES, "check-product-table-writes", "e2e-user-paths",
-            "_candidate-node-deps", "build", "_candidate-artifact-server",
+            STAGES,
+            "check-product-table-writes",
+            "e2e-user-paths",
+            "_candidate-node-deps",
+            "build",
+            "_candidate-artifact-server",
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(rows.get("static"), "PASSED", result.stdout)
@@ -193,7 +197,10 @@ def verify_same_tree_commit_cache(
     checked(repo, "git", "add", str(ceilings.relative_to(repo)))
     checked(repo, "git", "commit", "-qm", "reviewed ceilings on main")
     checked(
-        repo, "git", "update-ref", "refs/remotes/origin/main",
+        repo,
+        "git",
+        "update-ref",
+        "refs/remotes/origin/main",
         checked(repo, "git", "rev-parse", "HEAD"),
     )
     checked(repo, "git", "checkout", "-q", "--detach", candidate)
@@ -357,9 +364,13 @@ candidate-gate:
         assert all(row[2] == "passed" for row in stage_rows(rows))
         unit_target = [row.split("\t") for row in rows if "\tunit/test-server\t" in row]
         if len(unit_target) != 1 or unit_target[0][2] != "passed":
-            raise AssertionError(f"missing passed isolated test-server row: {unit_target}")
+            raise AssertionError(
+                f"missing passed isolated test-server row: {unit_target}"
+            )
         if "candidate: test-server PASSED" not in Path(unit_target[0][5]).read_text():
-            raise AssertionError(f"isolated test-server log missing evidence: {unit_target}")
+            raise AssertionError(
+                f"isolated test-server log missing evidence: {unit_target}"
+            )
         assert "no stages run" in invoke("same-tree-direct", *gate)
         rows = verify_same_tree_commit_cache(
             repo=repo,
@@ -407,12 +418,16 @@ candidate-gate:
             'echo cli >> "$$CANDIDATE_LOG_DIR/setup.log"',
             'echo cli >> "$$CANDIDATE_LOG_DIR/setup.log"; exit 23',
         )
-        failing_recipes = failing_recipes.replace("test-server:\n\t@true", "test-server:\n\t@exit 23")
+        failing_recipes = failing_recipes.replace(
+            "test-server:\n\t@true", "test-server:\n\t@exit 23"
+        )
         (repo / "Makefile").write_text(failing_recipes)
         checked(repo, "git", "commit", "-qam", "independent failures in one invocation")
         invoke("failed-tree", *gate, stages=STAGES, success=False)
         before = ledger.read_text()
-        failed_rows = [row.split("\t") for row in before.splitlines()[len(changed_rows) :]]
+        failed_rows = [
+            row.split("\t") for row in before.splitlines()[len(changed_rows) :]
+        ]
         verdicts = {row[1]: row[2] for row in failed_rows}
         for entry, verdict in {
             "static": "passed",
@@ -437,7 +452,9 @@ candidate-gate:
         if "build FAILED" not in skipped[9]:
             raise AssertionError(f"skip has no build failure detail: {skipped}")
         refused = invoke("refused-tree", *gate, stages="integration", success=False)
-        failure_lines = [line for line in refused.splitlines() if "already FAILED" in line]
+        failure_lines = [
+            line for line in refused.splitlines() if "already FAILED" in line
+        ]
         expected_failures = [
             (stage, log)
             for _, stage, result, _, _, log, *_ in failed_rows
@@ -449,7 +466,9 @@ candidate-gate:
             if not line.endswith(f"already FAILED {stage} (log {log})."):
                 raise AssertionError(f"failed stage or log omitted: {refused}")
         if "GATE_RERUN_REASON" not in refused:
-            raise AssertionError(f"infrastructure recovery instructions omitted: {refused}")
+            raise AssertionError(
+                f"infrastructure recovery instructions omitted: {refused}"
+            )
         assert ledger.read_text() == before
         # Every executed gate has real cleanup evidence; successful stage rows
         # retain their own logs after later invocations reuse/replace run roots.
@@ -469,23 +488,30 @@ candidate-gate:
         # A failed static stage stops the run: no later stage starts or is
         # recorded, the static failure is, and the tree is refused until fixed.
         checks_line = f"{' '.join(SOURCE_CHECKS)}:\n"
-        static_failure = recipes.replace(
-            checks_line,
-            f"{' '.join(t for t in SOURCE_CHECKS if t != 'check-private-boundary')}:\n",
-        ) + "check-private-boundary:\n\t@exit 23\n"
+        static_failure = (
+            recipes.replace(
+                checks_line,
+                f"{' '.join(t for t in SOURCE_CHECKS if t != 'check-private-boundary')}:\n",
+            )
+            + "check-private-boundary:\n\t@exit 23\n"
+        )
         assert recipes.count(checks_line) == 1 and static_failure != recipes
         (repo / "Makefile").write_text(static_failure)
         checked(repo, "git", "commit", "-qam", "static failure")
         before_static = ledger.read_text().splitlines()
         output = invoke("static-failed-tree", *gate, stages=STAGES, success=False)
         static_rows = [
-            row.split("\t") for row in ledger.read_text().splitlines()[len(before_static) :]
+            row.split("\t")
+            for row in ledger.read_text().splitlines()[len(before_static) :]
         ]
         recorded_stages = {row[1].split("/")[0] for row in static_rows}
         if recorded_stages != {"static"}:
             raise AssertionError(f"only static may be recorded: {static_rows}")
         verdicts = {row[1]: row[2] for row in static_rows}
-        if verdicts.get("static") != "failed" or verdicts.get("static/check-private-boundary") != "failed":
+        if (
+            verdicts.get("static") != "failed"
+            or verdicts.get("static/check-private-boundary") != "failed"
+        ):
             raise AssertionError(f"static failure not recorded: {static_rows}")
         for stage in STAGES.split()[1:]:
             if f"candidate: {stage} NOT-RUN" not in output:

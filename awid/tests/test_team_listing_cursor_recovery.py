@@ -93,13 +93,17 @@ async def test_team_listing_cursor_pages_a_populated_registry(controller_app):
             "team_uuid": "{" + cursor["team_uuid"].upper() + "}",
         }
     )
-    middle = await env.client.get(path, params={"limit": 1, "cursor": alternative_cursor})
+    middle = await env.client.get(
+        path, params={"limit": 1, "cursor": alternative_cursor}
+    )
     assert middle.status_code == 200, middle.text
     page = middle.json()
     assert page["teams"] == expected[1:2]
     assert page["has_more"] is True
 
-    last = await env.client.get(path, params={"limit": 1, "cursor": page["next_cursor"]})
+    last = await env.client.get(
+        path, params={"limit": 1, "cursor": page["next_cursor"]}
+    )
     assert last.status_code == 200, last.text
     assert last.json() == {
         "teams": expected[2:],
@@ -111,7 +115,10 @@ async def test_team_listing_cursor_pages_a_populated_registry(controller_app):
         params={
             "limit": 1,
             "cursor": encode_cursor(
-                {"created_at": expected[-1]["created_at"], "team_uuid": str(ids[expected[-1]["name"]])}
+                {
+                    "created_at": expected[-1]["created_at"],
+                    "team_uuid": str(ids[expected[-1]["name"]]),
+                }
             ),
         },
     )

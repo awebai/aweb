@@ -291,7 +291,9 @@ async def test_a_checkpoint_waiting_on_an_epoch_move_witnesses_the_new_epoch(
     assert (checkpoint.chain_epoch, checkpoint.team_seq) == (2, 0)
 
 
-async def _checkpoint_seqs(db: AsyncDatabaseManager, team_id: str = TEAM_ID) -> list[tuple[int, int]]:
+async def _checkpoint_seqs(
+    db: AsyncDatabaseManager, team_id: str = TEAM_ID
+) -> list[tuple[int, int]]:
     rows = await db.fetch_all(
         "SELECT chain_epoch, team_seq FROM {{tables.chain_checkpoints}}"
         " WHERE team_id = $1 ORDER BY position",
@@ -371,8 +373,13 @@ async def test_caller_transaction_rolls_back_its_effect_and_chain_append(
         async with db.transaction() as tx:
             await tx.execute("INSERT INTO {{tables.caller_effects}} VALUES (1)")
             result = await append_on(
-                tx, SIGNER, event=event, signing_bytes=signing, signature=signature,
-                key_evidence=_evidence(signing), received_at=START,
+                tx,
+                SIGNER,
+                event=event,
+                signing_bytes=signing,
+                signature=signature,
+                key_evidence=_evidence(signing),
+                received_at=START,
             )
             assert isinstance(result, Appended) and not result.duplicate
             assert await tx.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 1
@@ -391,12 +398,22 @@ async def test_caller_transaction_commits_the_original_receipt_for_later_redeliv
     async with db.transaction() as tx:
         await tx.execute("INSERT INTO {{tables.caller_effects}} VALUES (1)")
         first = await append_on(
-            tx, SIGNER, event=event, signing_bytes=signing, signature=signature,
-            key_evidence=_evidence(signing), received_at=START,
+            tx,
+            SIGNER,
+            event=event,
+            signing_bytes=signing,
+            signature=signature,
+            key_evidence=_evidence(signing),
+            received_at=START,
         )
     delivered = await append(
-        db, SIGNER, event=event, signing_bytes=signing, signature=signature,
-        key_evidence=_evidence(signing), received_at=START + timedelta(seconds=1),
+        db,
+        SIGNER,
+        event=event,
+        signing_bytes=signing,
+        signature=signature,
+        key_evidence=_evidence(signing),
+        received_at=START + timedelta(seconds=1),
     )
     assert isinstance(first, Appended) and isinstance(delivered, Appended)
     assert not first.duplicate and delivered.duplicate and delivered.receipt == first.receipt
@@ -412,14 +429,25 @@ async def test_verify_reports_conflicts_in_this_team_epoch_without_returning_ref
     await _append(db, team_id=OTHER_TEAM)
     report = await verify_epoch(db, TEAM_ID, 1, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS)
     assert report["intact"] is True
-    conflict, = report["conflicts"]
+    (conflict,) = report["conflicts"]
     assert conflict["event_id"] == event_id
     assert conflict["team_seq"] == 1
     assert conflict["kind"] == "event_conflict"
-    assert set(conflict) == {"fault_id", "event_id", "team_seq", "kind", "refused_sha256", "recorded_at"}
-    assert (await verify_epoch(db, OTHER_TEAM, 1, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS))["conflicts"] == []
+    assert set(conflict) == {
+        "fault_id",
+        "event_id",
+        "team_seq",
+        "kind",
+        "refused_sha256",
+        "recorded_at",
+    }
+    assert (
+        await verify_epoch(db, OTHER_TEAM, 1, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS)
+    )["conflicts"] == []
     await open_next_epoch(db, SIGNER, TEAM_ID, at=START + timedelta(hours=1))
-    assert (await verify_epoch(db, TEAM_ID, 2, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS))["conflicts"] == []
+    assert (await verify_epoch(db, TEAM_ID, 2, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS))[
+        "conflicts"
+    ] == []
 
 
 async def test_duplicate_keeps_each_admitted_binding_context_but_the_original_receipt(db):
@@ -427,15 +455,28 @@ async def test_duplicate_keeps_each_admitted_binding_context_but_the_original_re
     event = hook_envelope.verify(signing, signature, team_id=TEAM_ID)
     receipts = []
     for binding_id in ("first", "second", "second"):
-        evidence = {**_evidence(signing), "admissions": [{"registration": {"binding_id": binding_id}}]}
-        result = await append(db, SIGNER, event=event, signing_bytes=signing, signature=signature,
-                              key_evidence=evidence, received_at=START)
+        evidence = {
+            **_evidence(signing),
+            "admissions": [{"registration": {"binding_id": binding_id}}],
+        }
+        result = await append(
+            db,
+            SIGNER,
+            event=event,
+            signing_bytes=signing,
+            signature=signature,
+            key_evidence=evidence,
+            received_at=START,
+        )
         assert isinstance(result, Appended)
         receipts.append(result.receipt)
     assert receipts[0] == receipts[1] == receipts[2]
     _, events = await load_epoch(db, TEAM_ID, 1)
-    stored, = events
-    assert [a["registration"]["binding_id"] for a in stored.key_evidence["admissions"]] == ["first", "second"]
+    (stored,) = events
+    assert [a["registration"]["binding_id"] for a in stored.key_evidence["admissions"]] == [
+        "first",
+        "second",
+    ]
 
 
 async def _report(db: AsyncDatabaseManager) -> dict:

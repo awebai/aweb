@@ -27,17 +27,27 @@ async def test_total_unread_is_distinct_scoped_historical_and_read_only(mail_ser
         cid,
         env.pilot_stable,
     )
-    await db.execute("UPDATE {{tables.messages}} SET read_at=now() WHERE body='already read'")
-    headers = _signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, b"")
+    await db.execute(
+        "UPDATE {{tables.messages}} SET read_at=now() WHERE body='already read'"
+    )
+    headers = _signed_identity_headers(
+        env.pilot_key, env.pilot_did, env.pilot_stable, b""
+    )
     before = [
-        dict(r) for r in await db.fetch_all("SELECT * FROM {{tables.messages}} ORDER BY message_id")
+        dict(r)
+        for r in await db.fetch_all(
+            "SELECT * FROM {{tables.messages}} ORDER BY message_id"
+        )
     ]
     count = await env.client.get("/v1/messages/unread-count", headers=headers)
     assert count.status_code == 200, count.text
     assert count.json() == {"unread_count": 2}
     peers = await env.client.get(
         "/v1/conversations/unread-counts",
-        params=[("participant_did", env.human_stable), ("participant_did", "did:aw:third")],
+        params=[
+            ("participant_did", env.human_stable),
+            ("participant_did", "did:aw:third"),
+        ],
         headers=headers,
     )
     assert sum(row["unread_count"] for row in peers.json()["counts"]) == 3
@@ -45,9 +55,14 @@ async def test_total_unread_is_distinct_scoped_historical_and_read_only(mail_ser
     outsider = await env.client.get(
         "/v1/messages/unread-count", headers=_signed_identity_headers(key, did, "", b"")
     )
-    assert outsider.status_code == 200 and outsider.json() == {"unread_count": 0}, outsider.text
+    assert outsider.status_code == 200 and outsider.json() == {"unread_count": 0}, (
+        outsider.text
+    )
     assert [
-        dict(r) for r in await db.fetch_all("SELECT * FROM {{tables.messages}} ORDER BY message_id")
+        dict(r)
+        for r in await db.fetch_all(
+            "SELECT * FROM {{tables.messages}} ORDER BY message_id"
+        )
     ] == before
     ack = await env.client.post(f"/v1/messages/{mids[0]}/ack", headers=headers)
     assert ack.status_code == 200, ack.text

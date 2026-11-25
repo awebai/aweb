@@ -320,7 +320,9 @@ def test_agents_table_declares_agent_type_inline():
 
 
 @pytest.mark.asyncio
-async def test_contacts_only_forward_migration_preserves_legacy_rows(shared_test_pool, tmp_path):
+async def test_contacts_only_forward_migration_preserves_legacy_rows(
+    shared_test_pool, tmp_path
+):
     from tests.product_migration_support import stage_aweb_upgrade
 
     async with stage_aweb_upgrade(

@@ -9,7 +9,12 @@ from uuid import UUID
 
 from pgdbm import TransactionManager
 
-from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
+from aweb.service_errors import (
+    ForbiddenError,
+    NotFoundError,
+    ServiceError,
+    ValidationError,
+)
 from aweb.identity_metadata import native_participant_reference
 from aweb.human_channels.contract import ContractError
 from aweb.human_channels.participants import require_native_participant_input
@@ -79,7 +84,9 @@ def _normalize_did(value: str, *, field_name: str = "did") -> str:
     return did
 
 
-def _participant_from(value: ConversationParticipant | dict[str, Any]) -> ConversationParticipant:
+def _participant_from(
+    value: ConversationParticipant | dict[str, Any],
+) -> ConversationParticipant:
     if isinstance(value, ConversationParticipant):
         return value
     try:
@@ -98,7 +105,11 @@ def _participant_from(value: ConversationParticipant | dict[str, Any]) -> Conver
     )
 
 
-def _participant_record(value: ConversationParticipant | dict[str, Any], *, role: ParticipantRole | None = None):
+def _participant_record(
+    value: ConversationParticipant | dict[str, Any],
+    *,
+    role: ParticipantRole | None = None,
+):
     participant = _participant_from(value)
     did = _normalize_did(participant.did)
     participant_role = role or _normalize_role(participant.role)
@@ -115,7 +126,9 @@ def _participant_record(value: ConversationParticipant | dict[str, Any], *, role
     }
 
 
-def _dedupe_participants(participants: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+def _dedupe_participants(
+    participants: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
     for participant in participants:
         existing = records.get(participant["did"])
@@ -124,7 +137,9 @@ def _dedupe_participants(participants: Iterable[dict[str, Any]]) -> list[dict[st
     return list(records.values())
 
 
-def _expires_at(now: datetime, ttl: timedelta | None, expires_at: datetime | None) -> datetime | None:
+def _expires_at(
+    now: datetime, ttl: timedelta | None, expires_at: datetime | None
+) -> datetime | None:
     if expires_at is not None:
         return expires_at
     if ttl is None:
@@ -170,7 +185,9 @@ async def _get_active_conversation(
 ) -> dict[str, Any]:
     effective_now = now or _now_utc()
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
-    conversation = await get_conversation(db, conversation_id=conversation_uuid, now=effective_now)
+    conversation = await get_conversation(
+        db, conversation_id=conversation_uuid, now=effective_now
+    )
     if conversation is None:
         raise NotFoundError()
     if conversation["status"] == "closed":
@@ -258,7 +275,10 @@ async def create_conversation(
         initiator_record = {**initiator_record, "did": creator_did}
 
     participant_records = _dedupe_participants(
-        [initiator_record, *[_participant_record(item, role="participant") for item in recipients]]
+        [
+            initiator_record,
+            *[_participant_record(item, role="participant") for item in recipients],
+        ]
     )
     if len(participant_records) < 1:
         raise ValidationError("Conversation requires at least one participant")
@@ -269,7 +289,7 @@ async def create_conversation(
     # Inside a caller's transaction the caller's commit makes this atomic;
     # a savepoint would only add two round trips.
     in_transaction = isinstance(aweb_db, TransactionManager)
-    async with (nullcontext(aweb_db) if in_transaction else aweb_db.transaction()) as tx:
+    async with nullcontext(aweb_db) if in_transaction else aweb_db.transaction() as tx:
         participant_rows = await tx.fetch_all(
             """
             WITH conversation AS (
@@ -326,12 +346,17 @@ async def create_conversation(
             raise ServiceError("Failed to create conversation")
 
     conversation = _conversation_dict(dict(participant_rows[0]))
-    conversation["participants"] = [_participant_dict(dict(participant)) for participant in participant_rows]
+    conversation["participants"] = [
+        _participant_dict(dict(participant)) for participant in participant_rows
+    ]
     return conversation
 
 
 async def get_conversation(
-    db, *, conversation_id: str | UUID, now: datetime | None = None,
+    db,
+    *,
+    conversation_id: str | UUID,
+    now: datetime | None = None,
 ) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
@@ -361,7 +386,9 @@ async def get_conversation(
     return None if not row else _conversation_dict(dict(row))
 
 
-async def list_conversation_participants(db, *, conversation_id: str | UUID) -> list[dict[str, Any]]:
+async def list_conversation_participants(
+    db, *, conversation_id: str | UUID
+) -> list[dict[str, Any]]:
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """

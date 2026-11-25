@@ -29,7 +29,13 @@ from aweb.agent_wake import (
     wake_mark,
 )
 from tests.redis_fault_proxy import RedisFaultProxy
-from test_agent_wake_latency import _open_chat, _quiet, _send_mail, agent_stream, wake_app  # noqa: F401
+from test_agent_wake_latency import (
+    _open_chat,
+    _quiet,
+    _send_mail,
+    agent_stream,
+    wake_app,
+)  # noqa: F401
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_team_room import metadata as room_metadata, post_payload as room_post_payload
 
@@ -46,7 +52,10 @@ async def _insert_unread_mail(env, recipient="bob"):
             (message_id, from_did, to_did, from_alias, to_alias, subject, body)
         VALUES ($1, $2, $3, 'alice', $4, 'unannounced', 'body')
         """,
-        message_id, env.actors["alice"].did, env.actors[recipient].did, recipient,
+        message_id,
+        env.actors["alice"].did,
+        env.actors[recipient].did,
+        recipient,
     )
     return str(message_id)
 
@@ -60,7 +69,9 @@ async def proxy():
 
 
 @pytest.mark.asyncio
-async def test_lost_publication_is_recovered_by_the_counter_reconcile(privacy_app, monkeypatch):  # noqa: F811
+async def test_lost_publication_is_recovered_by_the_counter_reconcile(
+    privacy_app, monkeypatch
+):  # noqa: F811
     env = privacy_app
     hub = AgentWakeHub(env.redis)
     await hub.start()
@@ -73,7 +84,10 @@ async def test_lost_publication_is_recovered_by_the_counter_reconcile(privacy_ap
             await env.redis.incr(wake_mark(did_wake_key(env.actors["bob"].did), "mail"))
             started = time.monotonic()
             event = await next_event(events_routes.EVENTS_RECONCILE_INTERVAL + 1.0)
-            assert time.monotonic() - started <= events_routes.EVENTS_RECONCILE_INTERVAL + 1.0
+            assert (
+                time.monotonic() - started
+                <= events_routes.EVENTS_RECONCILE_INTERVAL + 1.0
+            )
     finally:
         await hub.close()
     assert event["type"] == "actionable_mail"
@@ -81,7 +95,9 @@ async def test_lost_publication_is_recovered_by_the_counter_reconcile(privacy_ap
 
 
 @pytest.mark.asyncio
-async def test_reconcile_without_a_moved_counter_reads_nothing(privacy_app, monkeypatch):  # noqa: F811
+async def test_reconcile_without_a_moved_counter_reads_nothing(
+    privacy_app, monkeypatch
+):  # noqa: F811
     env = privacy_app
     monkeypatch.setattr(events_routes, "EVENTS_RECONCILE_INTERVAL", 0.2)
     hub = AgentWakeHub(env.redis)
@@ -98,10 +114,14 @@ async def test_reconcile_without_a_moved_counter_reads_nothing(privacy_app, monk
 
 
 @pytest.mark.asyncio
-async def test_subscriber_reconnect_resyncs_streams_at_once(privacy_app, proxy, monkeypatch):  # noqa: F811
+async def test_subscriber_reconnect_resyncs_streams_at_once(
+    privacy_app, proxy, monkeypatch
+):  # noqa: F811
     env = privacy_app
     monkeypatch.setattr(events_routes, "EVENTS_RECONCILE_INTERVAL", 3600.0)
-    monkeypatch.setattr(events_routes, "random", SimpleNamespace(uniform=lambda low, high: high))
+    monkeypatch.setattr(
+        events_routes, "random", SimpleNamespace(uniform=lambda low, high: high)
+    )
     link = Redis.from_url(proxy.url, decode_responses=True, socket_connect_timeout=1)
     hub = AgentWakeHub(link)
     await hub.start()
@@ -123,9 +143,13 @@ async def test_subscriber_reconnect_resyncs_streams_at_once(privacy_app, proxy, 
 
 
 @pytest.mark.asyncio
-async def test_publisher_fault_is_delivered_once_redis_takes_the_wake(wake_app, proxy, caplog):  # noqa: F811
+async def test_publisher_fault_is_delivered_once_redis_takes_the_wake(
+    wake_app, proxy, caplog
+):  # noqa: F811
     env = wake_app
-    faulty = Redis.from_url(proxy.url, decode_responses=True, socket_timeout=1, socket_connect_timeout=1)
+    faulty = Redis.from_url(
+        proxy.url, decode_responses=True, socket_timeout=1, socket_connect_timeout=1
+    )
     publisher = AgentWakePublisher(faulty)
     env.app.state.agent_wake_publisher = publisher
     try:
@@ -145,7 +169,8 @@ async def test_publisher_fault_is_delivered_once_redis_takes_the_wake(wake_app, 
         await faulty.aclose()
     assert event["message_id"] == sent["message_id"]
     assert any(
-        r.getMessage().startswith("Agent wake publication failed; retrying") for r in caplog.records
+        r.getMessage().startswith("Agent wake publication failed; retrying")
+        for r in caplog.records
     )
 
 
@@ -166,17 +191,26 @@ async def _insert_unread_chat(env, recipient="bob"):
     alice, bob = env.actors["alice"], env.actors[recipient]
     await env.db.execute(
         "INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by) VALUES ($1, $2, $3)",
-        session_id, TEAM, alice.did,
+        session_id,
+        TEAM,
+        alice.did,
     )
     await env.db.execute(
         """INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
         VALUES ($1, $2, $3, 'alice'), ($1, $4, $5, $6)""",
-        session_id, alice.did, alice.id, bob.did, bob.id, recipient,
+        session_id,
+        alice.did,
+        alice.id,
+        bob.did,
+        bob.id,
+        recipient,
     )
     await env.db.execute(
         """INSERT INTO {{tables.chat_messages}} (message_id, session_id, from_did, from_alias, body)
         VALUES ($1, $2, $3, 'alice', 'unannounced chat')""",
-        message_id, session_id, alice.did,
+        message_id,
+        session_id,
+        alice.did,
     )
     return str(session_id)
 
@@ -208,7 +242,9 @@ async def test_a_wake_for_one_kind_also_reads_kinds_whose_counter_moved(wake_app
             await _send_mail(env)
         else:
             await _open_chat(env)
-        seen = await _events_until(next_event, {"actionable_mail", "actionable_chat"}, 2.0)
+        seen = await _events_until(
+            next_event, {"actionable_mail", "actionable_chat"}, 2.0
+        )
     if lost == "chat":
         assert seen["actionable_chat"]["session_id"] == unannounced
     else:
@@ -220,7 +256,9 @@ async def _insert_control_signals(env, count, recipient="bob"):
         await env.db.execute(
             """INSERT INTO {{tables.control_signals}} (team_id, target_agent_id, from_agent_id, signal_type)
             VALUES ($1, $2, $3, 'pause')""",
-            TEAM, env.actors[recipient].id, env.actors["alice"].id,
+            TEAM,
+            env.actors[recipient].id,
+            env.actors["alice"].id,
         )
 
 
@@ -239,10 +277,13 @@ async def test_more_control_signals_than_one_batch_are_all_delivered(wake_app): 
         woken = [await next_event(2.0) for _ in range(11)]
         assert {event["type"] for event in woken} == {"control_pause"}
         await _quiet(next_event)
-    assert await env.db.fetch_val(
-        "SELECT count(*) FROM {{tables.control_signals}} WHERE target_agent_id=$1 AND consumed_at IS NULL",
-        env.actors["bob"].id,
-    ) == 0
+    assert (
+        await env.db.fetch_val(
+            "SELECT count(*) FROM {{tables.control_signals}} WHERE target_agent_id=$1 AND consumed_at IS NULL",
+            env.actors["bob"].id,
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -257,8 +298,14 @@ async def test_room_notices_wait_out_unavailable_authority_on_the_same_stream(wa
     room = await room_metadata(env)
     alice = env.actors["alice"]
     author = TeamIdentity(
-        team_id=TEAM, alias="alice", did_key=alice.did, did_aw="", address="",
-        identity_scope="local", agent_id=str(alice.id), certificate_id="privacy-alice",
+        team_id=TEAM,
+        alias="alice",
+        did_key=alice.did,
+        did_aw="",
+        address="",
+        identity_scope="local",
+        agent_id=str(alice.id),
+        certificate_id="privacy-alice",
     )
     reachable = env.app.state.awid_registry_client
     transport = ServiceTransport(env.registry_app)
@@ -270,7 +317,9 @@ async def test_room_notices_wait_out_unavailable_authority_on_the_same_stream(wa
             transport.down = True
             with agent_wake_scope(env.app.state.agent_wake_publisher):
                 posted = await post_room_message(
-                    env.infra, author, RoomPost.model_validate(room_post_payload(env, room)),
+                    env.infra,
+                    author,
+                    RoomPost.model_validate(room_post_payload(env, room)),
                 )
             # Unavailable authority emits nothing ...
             await _quiet(next_event, seconds=1.5)

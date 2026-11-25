@@ -12,7 +12,9 @@ async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
     """Show the active or requested team instructions version."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     aweb_db = db_infra.get_manager("aweb")
 
     if team_instructions_id:
@@ -42,7 +44,9 @@ async def instructions_show(db_infra, *, team_instructions_id: str = "") -> str:
             }
         )
 
-    version = await get_active_team_instructions(aweb_db, auth.team_id, bootstrap_if_missing=True)
+    version = await get_active_team_instructions(
+        aweb_db, auth.team_id, bootstrap_if_missing=True
+    )
     if version is None:
         return json.dumps({"error": "Team instructions not found"})
     updated_at = version.updated_at or version.created_at
@@ -63,7 +67,9 @@ async def instructions_history(db_infra, *, limit: int = 20) -> str:
     """List recent team instructions versions for the authenticated team."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     aweb_db = db_infra.get_manager("aweb")
     limit = max(1, min(int(limit), 100))
 

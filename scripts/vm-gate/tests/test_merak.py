@@ -91,8 +91,14 @@ class MerakTests(unittest.TestCase):
                     merak_host.remove_guest(job)
             self.assertTrue(job.is_dir())
             with (
-                patch.object(merak_host, "docker", side_effect=["abcd", "", "", "", "", "network", "", ""]),
-                patch.object(merak_host, "firewall", return_value={"present": False}) as firewall,
+                patch.object(
+                    merak_host,
+                    "docker",
+                    side_effect=["abcd", "", "", "", "", "network", "", ""],
+                ),
+                patch.object(
+                    merak_host, "firewall", return_value={"present": False}
+                ) as firewall,
             ):
                 receipt = merak_host.remove_guest(job)
             firewall.assert_called_once_with("remove", run)

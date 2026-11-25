@@ -78,7 +78,9 @@ async def test_app_credential_page_completes_real_webauthn_and_returns_to_the_te
         handoff_page_router(
             store=store,
             limiter=LoginLimiter(
-                handoff_db, client_identity=ClientIdentity(), limit=30,
+                handoff_db,
+                client_identity=ClientIdentity(),
+                limit=30,
                 window=timedelta(minutes=1),
             ),
         )
@@ -93,14 +95,22 @@ async def test_app_credential_page_completes_real_webauthn_and_returns_to_the_te
 
     tls = make_certificates(tmp_path, ["localhost"], ["127.0.0.1"])
     servers = [
-        uvicorn.Server(uvicorn.Config(
-            app, lifespan="off", log_level="error", ws="none",
-            ssl_certfile=str(tls.cert_file), ssl_keyfile=str(tls.key_file),
-        )),
+        uvicorn.Server(
+            uvicorn.Config(
+                app,
+                lifespan="off",
+                log_level="error",
+                ws="none",
+                ssl_certfile=str(tls.cert_file),
+                ssl_keyfile=str(tls.key_file),
+            )
+        ),
         uvicorn.Server(uvicorn.Config(callback, lifespan="off", log_level="error", ws="none")),
     ]
-    tasks = [asyncio.create_task(server.serve(sockets=[listener]))
-             for server, listener in zip(servers, sockets, strict=True)]
+    tasks = [
+        asyncio.create_task(server.serve(sockets=[listener]))
+        for server, listener in zip(servers, sockets, strict=True)
+    ]
     try:
         async with asyncio.timeout(10):
             while not all(server.started for server in servers):
@@ -115,20 +125,31 @@ async def test_app_credential_page_completes_real_webauthn_and_returns_to_the_te
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 cdp = await context.new_cdp_session(page)
                 await cdp.send("WebAuthn.enable")
-                device = await cdp.send("WebAuthn.addVirtualAuthenticator", {"options": {
-                    "protocol": "ctap2", "transport": "internal", "hasResidentKey": True,
-                    "hasUserVerification": True, "isUserVerified": True,
-                    "automaticPresenceSimulation": True,
-                }})
+                device = await cdp.send(
+                    "WebAuthn.addVirtualAuthenticator",
+                    {
+                        "options": {
+                            "protocol": "ctap2",
+                            "transport": "internal",
+                            "hasResidentKey": True,
+                            "hasUserVerification": True,
+                            "isUserVerified": True,
+                            "automaticPresenceSimulation": True,
+                        }
+                    },
+                )
                 await page.goto(f"{origin}/handoff/{created['handoff_id']}")
                 await expect(page.locator("body")).to_have_attribute("data-handoff-state", "ready")
                 await page.locator("#handoff-action").click()
                 await page.wait_for_url(redirect + "?**")
                 assert returned[0]["handoff_id"] == created["handoff_id"]
                 assert len(returned[0]["code"]) == 43
-                credentials = await cdp.send("WebAuthn.getCredentials", {
-                    "authenticatorId": device["authenticatorId"],
-                })
+                credentials = await cdp.send(
+                    "WebAuthn.getCredentials",
+                    {
+                        "authenticatorId": device["authenticatorId"],
+                    },
+                )
                 assert len(credentials["credentials"]) == 1
                 assert errors == []
             finally:

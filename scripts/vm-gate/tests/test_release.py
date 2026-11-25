@@ -57,7 +57,9 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         super().setUp()
         self.manifest = self.root / "manifest.json"
         self.manifest.write_text(
-            json.dumps({"observed": self.observed, "commands": hashes(), "dpkg": "fixture=1"})
+            json.dumps(
+                {"observed": self.observed, "commands": hashes(), "dpkg": "fixture=1"}
+            )
         )
         self.key = self.root / "hermes-key"
         self.key.write_text("test-only")
@@ -66,22 +68,35 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         self.files.mkdir()
         (self.files / "aweb-1.27.54-py3-none-any.whl").write_bytes(b"wheel")
         self.config = self.root / "operator.json"
-        self.config.write_text(json.dumps({
-            "repo": str(self.repo),
-            "state_root": str(self.root / "state"),
-            "ledger": str(self.root / "state/ledger.tsv"),
-            "snapshot_manifest": str(self.manifest),
-            "token_file": str(self.root / "no-token"),
-            "owner": "seat",
-            "location": "location",
-            "snapshot_id": 1,
-            "hermes_key_file": str(self.key),
-            "merak": {"manifest": str(self.manifest), "platform": "linux/amd64",
-                      "release_timeout_seconds": 9000},
-            "hetzner": {"platform": "linux/amd64", "server_type": "ccx43",
-                        "release_timeout_seconds": 10800},
-            "antares": {"platform": "linux/arm64", "release_timeout_seconds": 9000},
-        }))
+        self.config.write_text(
+            json.dumps(
+                {
+                    "repo": str(self.repo),
+                    "state_root": str(self.root / "state"),
+                    "ledger": str(self.root / "state/ledger.tsv"),
+                    "snapshot_manifest": str(self.manifest),
+                    "token_file": str(self.root / "no-token"),
+                    "owner": "seat",
+                    "location": "location",
+                    "snapshot_id": 1,
+                    "hermes_key_file": str(self.key),
+                    "merak": {
+                        "manifest": str(self.manifest),
+                        "platform": "linux/amd64",
+                        "release_timeout_seconds": 9000,
+                    },
+                    "hetzner": {
+                        "platform": "linux/amd64",
+                        "server_type": "ccx43",
+                        "release_timeout_seconds": 10800,
+                    },
+                    "antares": {
+                        "platform": "linux/arm64",
+                        "release_timeout_seconds": 9000,
+                    },
+                }
+            )
+        )
         self.receipt = self.root / "gate-receipt.json"
         self.calls = []
         uid = patch("os.geteuid", return_value=501)
@@ -93,16 +108,28 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         raise AssertionError("no machine may start for a refused release")
 
     def invoke(self, machine="merak", *extra):
-        code = main([
-            "--config", str(self.config), "release",
-            "--machine", machine,
-            "--cloud-repo", str(self.cloud),
-            "--cloud-sha", self.cloud_sha,
-            "--cloud-image", "ghcr.io/awebai/ac@sha256:" + "a" * 64,
-            "--receipt", str(self.receipt),
-            "--aweb-lock-source-sha", self.sha,
-            *extra,
-        ], factory=self.factory, out=io.StringIO())
+        code = main(
+            [
+                "--config",
+                str(self.config),
+                "release",
+                "--machine",
+                machine,
+                "--cloud-repo",
+                str(self.cloud),
+                "--cloud-sha",
+                self.cloud_sha,
+                "--cloud-image",
+                "ghcr.io/awebai/ac@sha256:" + "a" * 64,
+                "--receipt",
+                str(self.receipt),
+                "--aweb-lock-source-sha",
+                self.sha,
+                *extra,
+            ],
+            factory=self.factory,
+            out=io.StringIO(),
+        )
         return code, json.loads(self.receipt.read_text())
 
     def test_moved_main_refuses_before_boot_with_a_receipt(self):
@@ -116,7 +143,10 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         self.assertEqual(self.calls, [])
 
     def test_an_arm64_machine_or_an_undeclared_one_is_refused(self):
-        for machine, reason in (("antares", "linux/arm64"), ("elsewhere", "no platform")):
+        for machine, reason in (
+            ("antares", "linux/arm64"),
+            ("elsewhere", "no platform"),
+        ):
             with self.subTest(machine=machine):
                 code, receipt = self.invoke(machine)
                 self.assertEqual(code, 2)
@@ -126,8 +156,12 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
     def admitted(self, machine):
         def image_archive(image, platform, run_id, out):
             out.write_bytes(b"image")
-            return {"image": image, "member": "sha256:" + "b" * 64,
-                    "config": "sha256:" + "d" * 64, "archive_sha256": "0" * 64}
+            return {
+                "image": image,
+                "member": "sha256:" + "b" * 64,
+                "config": "sha256:" + "d" * 64,
+                "archive_sha256": "0" * 64,
+            }
 
         class Runtime:
             def run(self):
@@ -142,13 +176,19 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
             return self.invoke(machine)
 
     def test_an_amd64_machine_from_config_is_admitted_on_its_backend(self):
-        for machine, server_type, timeout in (("hetzner", "ccx43", 10800), ("merak", None, 9000)):
+        for machine, server_type, timeout in (
+            ("hetzner", "ccx43", 10800),
+            ("merak", None, 9000),
+        ):
             with self.subTest(machine=machine):
                 self.calls.clear()
                 code, receipt = self.admitted(machine)
                 self.assertEqual(len(self.calls), 1, receipt)
                 args = self.calls[0]["args"]
-                self.assertEqual((args.target, args.type, args.timeout), (machine, server_type, timeout))
+                self.assertEqual(
+                    (args.target, args.type, args.timeout),
+                    (machine, server_type, timeout),
+                )
                 self.assertEqual(receipt["machine"], machine)
                 self.assertEqual(receipt["machine_platform"], "linux/amd64")
                 self.assertEqual(receipt["timeout_seconds"], timeout)
@@ -235,7 +275,9 @@ class GuestScript(CloudFixture, unittest.TestCase):
             d.mkdir()
         git(self.root, "clone", "--quiet", str(self.repo), str(self.remote / "source"))
         git(self.remote / "source", "checkout", "--quiet", self.sha)
-        self.bundle = release.cloud_bundle(self.cloud, self.cloud_sha, self.remote / "cloud.bundle")
+        self.bundle = release.cloud_bundle(
+            self.cloud, self.cloud_sha, self.remote / "cloud.bundle"
+        )
         (self.remote / "cloud-image.tar").write_bytes(b"image")
         self.archive = hashlib.sha256(b"image").hexdigest()
         for name, text in (("make", STUB_MAKE), ("uv", STUB_UV)):
@@ -244,11 +286,19 @@ class GuestScript(CloudFixture, unittest.TestCase):
 
     def run_script(self, files, aweb=True, **env):
         script = release.guest_script(
-            cloud_sha=self.cloud_sha, bundle_sha256=self.bundle, archive_sha256=self.archive,
-            image="ghcr.io/awebai/ac@sha256:" + "a" * 64, member="sha256:" + "b" * 64,
-            lock_source_sha=self.sha, aweb=self.sha if aweb else None, files=files,
-            remote=str(self.remote), logs=str(self.logs), home=str(self.home),
-            key="/run/key", files_dir="/opt/files",
+            cloud_sha=self.cloud_sha,
+            bundle_sha256=self.bundle,
+            archive_sha256=self.archive,
+            image="ghcr.io/awebai/ac@sha256:" + "a" * 64,
+            member="sha256:" + "b" * 64,
+            lock_source_sha=self.sha,
+            aweb=self.sha if aweb else None,
+            files=files,
+            remote=str(self.remote),
+            logs=str(self.logs),
+            home=str(self.home),
+            key="/run/key",
+            files_dir="/opt/files",
         )
         environment = {
             "PATH": f"{self.stubs}:{os.environ['PATH']}",
@@ -258,11 +308,15 @@ class GuestScript(CloudFixture, unittest.TestCase):
             "GIT_CONFIG_GLOBAL": "/dev/null",
             **env,
         }
-        return subprocess.run(["bash", "-c", script], env=environment, capture_output=True, text=True)
+        return subprocess.run(
+            ["bash", "-c", script], env=environment, capture_output=True, text=True
+        )
 
     def suite_env(self, target):
         return dict(
-            line.split("=", 1) for line in (self.record / f"{target}.env").read_text().splitlines() if "=" in line
+            line.split("=", 1)
+            for line in (self.record / f"{target}.env").read_text().splitlines()
+            if "=" in line
         )
 
     def test_both_suites_run_each_with_its_own_inputs(self):
@@ -271,14 +325,28 @@ class GuestScript(CloudFixture, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         cloud = self.suite_env("release-gate")
         aweb = self.suite_env("candidate-gate")
-        self.assertEqual((self.record / "release-gate.pwd").read_text().strip(), str(self.home / "cloud-source"))
-        self.assertEqual(git(self.home / "cloud-source", "rev-parse", "HEAD"), self.cloud_sha)
-        self.assertEqual(git(self.home / "cloud-source", "rev-parse", "origin/main"), self.cloud_sha)
+        self.assertEqual(
+            (self.record / "release-gate.pwd").read_text().strip(),
+            str(self.home / "cloud-source"),
+        )
+        self.assertEqual(
+            git(self.home / "cloud-source", "rev-parse", "HEAD"), self.cloud_sha
+        )
+        self.assertEqual(
+            git(self.home / "cloud-source", "rev-parse", "origin/main"), self.cloud_sha
+        )
         # Cloud's gate keeps its own ledger; aweb's gate writes the canonical one.
-        self.assertEqual(cloud["AWEB_GATE_LEDGER"], str(self.logs / "release/cloud/ledger.tsv"))
+        self.assertEqual(
+            cloud["AWEB_GATE_LEDGER"], str(self.logs / "release/cloud/ledger.tsv")
+        )
         self.assertEqual(aweb["AWEB_GATE_LEDGER"], str(self.root / "aweb-ledger.tsv"))
-        self.assertEqual(cloud["AC_CANDIDATE_RELEASE_IMAGE_MEMBER"], "sha256:" + "b" * 64)
-        self.assertEqual(cloud["AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE"], str(self.remote / "cloud-image.tar"))
+        self.assertEqual(
+            cloud["AC_CANDIDATE_RELEASE_IMAGE_MEMBER"], "sha256:" + "b" * 64
+        )
+        self.assertEqual(
+            cloud["AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE"],
+            str(self.remote / "cloud-image.tar"),
+        )
         self.assertEqual(cloud["AC_CANDIDATE_AWEB_WHEELS"], "/opt/files")
         self.assertEqual(cloud["AC_CANDIDATE_AWEB_WHEELS_SOURCE_SHA"], self.sha)
         self.assertEqual(cloud["AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE"], "/run/key")
@@ -289,12 +357,19 @@ class GuestScript(CloudFixture, unittest.TestCase):
             self.assertEqual((self.logs / f"release/{suite}/exit").read_text(), "0\n")
 
     def test_a_red_suite_makes_the_job_red_and_both_exits_are_kept(self):
-        for env, cloud_exit, aweb_exit in (({"CLOUD_EXIT": "3"}, "3", "0"), ({"AWEB_EXIT": "2"}, "0", "2")):
+        for env, cloud_exit, aweb_exit in (
+            ({"CLOUD_EXIT": "3"}, "3", "0"),
+            ({"AWEB_EXIT": "2"}, "0", "2"),
+        ):
             with self.subTest(env=env):
                 result = self.run_script({"aweb-1.27.54-py3-none-any.whl": "x"}, **env)
                 self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertEqual((self.logs / "release/cloud/exit").read_text(), cloud_exit + "\n")
-                self.assertEqual((self.logs / "release/aweb/exit").read_text(), aweb_exit + "\n")
+                self.assertEqual(
+                    (self.logs / "release/cloud/exit").read_text(), cloud_exit + "\n"
+                )
+                self.assertEqual(
+                    (self.logs / "release/aweb/exit").read_text(), aweb_exit + "\n"
+                )
 
     def test_a_cloud_only_release_runs_no_aweb_suite(self):
         result = self.run_script({}, aweb=False)
@@ -325,27 +400,40 @@ class Receipt(unittest.TestCase):
 
     def record(self, directory, files, result=None):
         return release.receipt(
-            machine="merak", platform="linux/amd64", run_id="vm-1",
-            result=result or {"exit": 0, "infrastructure": None, "ledger_rows_imported": 9},
+            machine="merak",
+            platform="linux/amd64",
+            run_id="vm-1",
+            result=result
+            or {"exit": 0, "infrastructure": None, "ledger_rows_imported": 9},
             cloud_sha="c" * 40,
-            image={"image": "ghcr.io/awebai/ac@sha256:" + "a" * 64, "member": "sha256:" + "b" * 64,
-                   "config": "sha256:" + "d" * 64},
+            image={
+                "image": "ghcr.io/awebai/ac@sha256:" + "a" * 64,
+                "member": "sha256:" + "b" * 64,
+                "config": "sha256:" + "d" * 64,
+            },
             main={"real_main": {"ac": "e" * 40}, "ac_parent_of_c": "e" * 40},
-            files=files, aweb="f" * 40 if files else None, launcher_sha="1" * 40,
-            timeout=9000, directory=directory,
+            files=files,
+            aweb="f" * 40 if files else None,
+            launcher_sha="1" * 40,
+            timeout=9000,
+            directory=directory,
         )
 
     def test_green_needs_both_suites_and_the_same_rebuilt_files(self):
         files = {"aweb-1.27.54-py3-none-any.whl": "9" * 64}
         with tempfile.TemporaryDirectory() as directory:
             self.evidence(directory, "cloud", 0)
-            self.evidence(directory, "aweb", 0, {**files, "aweb-1.27.54.tar.gz": "8" * 64})
+            self.evidence(
+                directory, "aweb", 0, {**files, "aweb-1.27.54.tar.gz": "8" * 64}
+            )
             record = self.record(directory, files)
             self.assertEqual(release.exit_code(record), 0)
             self.assertEqual(record["aweb"]["rebuilt_files"], files)
             self.assertEqual(record["cloud"]["config"], "sha256:" + "d" * 64)
             self.assertEqual(record["real_main"], {"ac": "e" * 40})
-            self.evidence(directory, "aweb", 0, {"aweb-1.27.54-py3-none-any.whl": "7" * 64})
+            self.evidence(
+                directory, "aweb", 0, {"aweb-1.27.54-py3-none-any.whl": "7" * 64}
+            )
             self.assertEqual(release.exit_code(self.record(directory, files)), 1)
 
     def test_a_missing_suite_exit_is_infrastructure_and_a_red_suite_is_red(self):
@@ -354,8 +442,14 @@ class Receipt(unittest.TestCase):
             self.assertEqual(release.exit_code(self.record(directory, {})), 70)
             self.evidence(directory, "cloud", 4)
             self.assertEqual(release.exit_code(self.record(directory, {})), 1)
-            infrastructure = {"exit": 70, "infrastructure": "infrastructure", "error": "lost"}
-            self.assertEqual(release.exit_code(self.record(directory, {}, infrastructure)), 70)
+            infrastructure = {
+                "exit": 70,
+                "infrastructure": "infrastructure",
+                "error": "lost",
+            }
+            self.assertEqual(
+                release.exit_code(self.record(directory, {}, infrastructure)), 70
+            )
 
 
 if __name__ == "__main__":

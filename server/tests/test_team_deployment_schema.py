@@ -43,7 +43,9 @@ def test_the_schema_is_a_schema_and_accepts_the_example():
         (("unknown",), {}),
     ],
 )
-def test_a_tag_only_image_a_plain_origin_and_any_key_it_does_not_define_are_refused(path, value):
+def test_a_tag_only_image_a_plain_origin_and_any_key_it_does_not_define_are_refused(
+    path, value
+):
     assert refused(changed(path, value))
 
 
@@ -61,7 +63,10 @@ def test_every_section_refuses_keys_it_does_not_define():
 
 def test_the_registry_route_is_local_or_external_and_external_by_default():
     # The default registry is the public one, which the deployment does not run.
-    assert SCHEMA["properties"]["team"]["properties"]["registryRoute"]["default"] == "external"
+    assert (
+        SCHEMA["properties"]["team"]["properties"]["registryRoute"]["default"]
+        == "external"
+    )
     for route in ("local", "external"):
         assert not refused(changed(("team", "registryRoute"), route))
     for route in ("public", "", True):

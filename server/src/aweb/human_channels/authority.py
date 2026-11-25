@@ -87,7 +87,10 @@ async def lock_native_actors(
             raise ContractError("forbidden", CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
         row = projection.verified_identity()
         current = NativeMessagingSubject(
-            row["did_aw"] or row["did_key"], row["did_key"], str(row["agent_id"]), row["team_id"]
+            row["did_aw"] or row["did_key"],
+            row["did_key"],
+            str(row["agent_id"]),
+            row["team_id"],
         )
         if (current.principal, current.signing_key_id, current.team_id) != (
             subject.principal,

@@ -52,7 +52,9 @@ class PreCommitHook(unittest.TestCase):
         (self.root / "cli/go/fixture.go").write_text(UNFORMATTED_GO)
         result = self.commit("scripts/fixture.py", "cli/go/fixture.go")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(git(self.root, "show", "HEAD:scripts/fixture.py").stdout, FORMATTED_PY)
+        self.assertEqual(
+            git(self.root, "show", "HEAD:scripts/fixture.py").stdout, FORMATTED_PY
+        )
         self.assertEqual(
             git(self.root, "show", "HEAD:cli/go/fixture.go").stdout,
             "package fixture\n\nfunc F() int { return 1 }\n",

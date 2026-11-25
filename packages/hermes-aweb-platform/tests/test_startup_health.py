@@ -1,4 +1,5 @@
 """Real Hermes lifecycle, controlled child stream; no server or identity fixture."""
+
 import asyncio
 import importlib.util
 import os
@@ -16,16 +17,25 @@ from gateway.config import Platform, PlatformConfig
 from gateway.platform_registry import PlatformEntry, platform_registry
 from gateway.run_adapters import GatewayAdapterLifecycleMixin
 
-spec = importlib.util.spec_from_file_location("startup_adapter", Path(__file__).resolve().parents[1] / "adapter.py")
+spec = importlib.util.spec_from_file_location(
+    "startup_adapter", Path(__file__).resolve().parents[1] / "adapter.py"
+)
 adapter_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(adapter_module)
-platform_registry.register(PlatformEntry(name="aweb", label="Aweb", adapter_factory=lambda cfg: None, check_fn=lambda: True))
+platform_registry.register(
+    PlatformEntry(
+        name="aweb",
+        label="Aweb",
+        adapter_factory=lambda cfg: None,
+        check_fn=lambda: True,
+    )
+)
 
 
 async def until(predicate):
     async with asyncio.timeout(3):
         while not predicate():
-            await asyncio.sleep(.01)
+            await asyncio.sleep(0.01)
 
 
 class StartupHealthTests(unittest.IsolatedAsyncioTestCase):
@@ -36,7 +46,9 @@ class StartupHealthTests(unittest.IsolatedAsyncioTestCase):
         self.frames = self.root / "frames"
         self.frames.touch()
         self.child = self.root / "aw-unit-stream"
-        self.child.write_text(f"#!{sys.executable}\n" + '''import pathlib, sys, time
+        self.child.write_text(
+            f"#!{sys.executable}\n"
+            + """import pathlib, sys, time
 root = pathlib.Path.cwd()
 (root / "ready").touch()
 with (root / "frames").open() as source:
@@ -47,12 +59,18 @@ with (root / "frames").open() as source:
             sys.stdout.flush()
         else:
             time.sleep(.005)
-''')
+"""
+        )
         self.child.chmod(0o700)
-        self.env = patch.dict(os.environ, {"HERMES_HOME": str(self.root / "profile"), "AWEB_ALLOW_TEAM": "false"})
+        self.env = patch.dict(
+            os.environ,
+            {"HERMES_HOME": str(self.root / "profile"), "AWEB_ALLOW_TEAM": "false"},
+        )
         self.env.start()
         self.addCleanup(self.env.stop)
-        self.adapter = adapter_module.AwebAdapter(PlatformConfig(extra={"workdir": str(self.root), "aw_bin": str(self.child)}))
+        self.adapter = adapter_module.AwebAdapter(
+            PlatformConfig(extra={"workdir": str(self.root), "aw_bin": str(self.child)})
+        )
         self.adapter._write_runtime_status_safe = lambda *a, **k: None
         self.addAsyncCleanup(self.adapter.disconnect)
         self.lifecycle = GatewayAdapterLifecycleMixin()
@@ -63,7 +81,11 @@ with (root / "frames").open() as source:
 
     async def connect_snapshot(self, reconnect=False):
         connected = await self.lifecycle._connect_adapter_with_timeout(
-            self.adapter, Platform("aweb"), is_reconnect=reconnect, initial=not reconnect)
+            self.adapter,
+            Platform("aweb"),
+            is_reconnect=reconnect,
+            initial=not reconnect,
+        )
         return connected, self.adapter.send_path_degraded
 
     async def test_connected_and_heartbeat_prove_health_before_return(self):
@@ -94,12 +116,19 @@ with (root / "frames").open() as source:
         self.frame('{"type":"heartbeat"}')
         await until(lambda: not self.adapter.send_path_degraded)
 
-    async def test_nonproof_frames_and_reconnect_diagnostic_do_not_admit_stale_health(self):
+    async def test_nonproof_frames_and_reconnect_diagnostic_do_not_admit_stale_health(
+        self,
+    ):
         # Internal constant patch accelerates the same deadline; no operator knob.
-        with patch.object(adapter_module, "CONNECT_TIMEOUT", .15, create=True):
+        with patch.object(adapter_module, "CONNECT_TIMEOUT", 0.15, create=True):
             operation = asyncio.create_task(self.connect_snapshot())
             await until(lambda: self.adapter._proc is not None)
-            for line in ('not json', '{"type":"unknown"}', '{"type":"actionable_chat"}', '{"type":"error"}'):
+            for line in (
+                "not json",
+                '{"type":"unknown"}',
+                '{"type":"actionable_chat"}',
+                '{"type":"error"}',
+            ):
                 self.frame(line)
             connected, degraded = await operation
             self.assertTrue(connected)
@@ -131,21 +160,24 @@ with (root / "frames").open() as source:
         operation = asyncio.create_task(self.connect_snapshot())
         await until(lambda: self.adapter._proc is not None)
         await self.adapter.disconnect()
-        connected, _ = await asyncio.wait_for(operation, .5)
+        connected, _ = await asyncio.wait_for(operation, 0.5)
         self.assertFalse(connected)
 
     async def test_disconnect_during_team_lookup_invalidates_pending_start(self):
         self.adapter._allow_team = True
         entered, release = asyncio.Event(), asyncio.Event()
         starts = []
+
         async def lookup(*args):
             entered.set()
             await release.wait()
             return {"selected_team": "demo:example.test"}
+
         async def stream():
             starts.append(True)
             self.adapter._stream_health(True)
             await asyncio.Event().wait()
+
         self.adapter._run_aw_json = lookup
         self.adapter._run_event_stream = stream
         operation = asyncio.create_task(self.adapter.connect())
@@ -163,12 +195,15 @@ with (root / "frames").open() as source:
 
     async def test_lookup_cleanup_spends_original_five_second_budget(self):
         self.adapter._allow_team = True
-        self.child.write_text(f"#!{sys.executable}\n" + '''import os, pathlib, signal, time
+        self.child.write_text(
+            f"#!{sys.executable}\n"
+            + """import os, pathlib, signal, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 pathlib.Path("query-pid").write_text(str(os.getpid()))
 while True:
     time.sleep(.01)
-''')
+"""
+        )
         self.child.chmod(0o700)
         started = asyncio.get_running_loop().time()
         self.assertFalse(await self.adapter.connect())
@@ -178,4 +213,8 @@ while True:
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
         self.assertGreaterEqual(elapsed, 4.9)
-        self.assertLess(elapsed, 5.8, "lookup termination added a fresh grace after the connect budget")
+        self.assertLess(
+            elapsed,
+            5.8,
+            "lookup termination added a fresh grace after the connect budget",
+        )

@@ -20,8 +20,12 @@ from pathlib import Path
 import pexpect
 
 
-def docker(*args: str, timeout: int = 120, input: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["docker", *args], text=True, capture_output=True, timeout=timeout, input=input, check=False)
+def docker(
+    *args: str, timeout: int = 120, input: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["docker", *args], text=True, capture_output=True, timeout=timeout, input=input, check=False
+    )
 
 
 # AWID's did_key limit (awid/ratelimit.py _BUCKET_DEFAULTS): 60 reads a minute
@@ -32,13 +36,9 @@ DID_KEY_LIMIT, DID_KEY_WINDOW = 60, 60
 LEAST_THROTTLED_SECONDS = 20
 
 
-
-
-
-
 def first_json(text: str):
     """The first JSON value in a command's output; Docker may print hints after it."""
-    return json.JSONDecoder().raw_decode(text[text.index("{"):])[0]
+    return json.JSONDecoder().raw_decode(text[text.index("{") :])[0]
 
 
 def aw(container: str, *args: str, env: dict[str, str] | None = None) -> dict:
@@ -89,7 +89,11 @@ class Holder:
         # -i: without it docker exec attaches no stdin and the unlock reads no
         # password. The other daemons get /dev/null, so only the unlock reads it.
         started = docker(
-            "exec", "-i", container, "sh", "-c",
+            "exec",
+            "-i",
+            container,
+            "sh",
+            "-c",
             "umask 077 && mkdir -p /tmp/holder-keyring /tmp/holder-runtime "
             "&& dbus-daemon --session --fork --address=" + self.bus + " </dev/null "
             "&& " + keyring + " gnome-keyring-daemon --unlock --components=secrets "
@@ -111,14 +115,27 @@ class Holder:
         """aw on the holder's terminal: docker exec -it gives it a real PTY."""
         return pexpect.spawn(
             "docker",
-            ["exec", "-it", f"--env=DBUS_SESSION_BUS_ADDRESS={self.bus}", self.container, "aw", *args],
-            encoding="utf-8", timeout=180, echo=False,
+            [
+                "exec",
+                "-it",
+                f"--env=DBUS_SESSION_BUS_ADDRESS={self.bus}",
+                self.container,
+                "aw",
+                *args,
+            ],
+            encoding="utf-8",
+            timeout=180,
+            echo=False,
         )
 
     def answer_passphrases(self, child: pexpect.spawn, *, until: str | None = None) -> str:
         """Type the passphrase at each prompt, never logging it; return the output."""
         seen = []
-        patterns = [r"Choose a passphrase[^\r\n]*: ", r"Type the passphrase again: ", r"Passphrase for that human key: "]
+        patterns = [
+            r"Choose a passphrase[^\r\n]*: ",
+            r"Type the passphrase again: ",
+            r"Passphrase for that human key: ",
+        ]
         if until:
             patterns.append(until)
         patterns.append(pexpect.EOF)
@@ -166,19 +183,24 @@ def select_hook_bindings(listed: dict[str, list[dict]]) -> dict[tuple[str, str, 
     for app, rows in listed.items():
         installs = {(r["installation_id"], r["generation"], r["digest"]) for r in rows}
         if len(installs) != 1:
-            raise SystemExit(f"FAILED: {app}'s hook bindings are not one installation, generation and manifest: "
-                             f"{sorted(map(str, installs))}")
+            raise SystemExit(
+                f"FAILED: {app}'s hook bindings are not one installation, generation and manifest: "
+                f"{sorted(map(str, installs))}"
+            )
     selected = {}
     for app, kind, hook in REQUIRED_HOOK_BINDINGS:
         matches = [b for b in listed.get(app, []) if (b["kind"], b["hook"]) == (kind, hook)]
         if len(matches) != 1:
-            raise SystemExit(f"FAILED: {app} lists {len(matches)} {kind} bindings for {hook}, not one")
+            raise SystemExit(
+                f"FAILED: {app} lists {len(matches)} {kind} bindings for {hook}, not one"
+            )
         selected[(app, kind, hook)] = matches[0]
     return selected
 
 
-def hooks_ready_at(listed: list[dict], selected: list[dict],
-                   margin: datetime.timedelta = HOOK_READINESS_MARGIN) -> datetime.datetime:
+def hooks_ready_at(
+    listed: list[dict], selected: list[dict], margin: datetime.timedelta = HOOK_READINESS_MARGIN
+) -> datetime.datetime:
     """When the selected bindings are in effect: the latest of their
     active_from, plus the margin. A selected binding that is not active, has
     no active_from, or is no longer the installation, generation, manifest,
@@ -189,18 +211,40 @@ def hooks_ready_at(listed: list[dict], selected: list[dict],
         binding_id = chosen["binding_id"]
         binding = by_id.get(binding_id)
         if binding is None or binding.get("state") != "active" or not binding.get("active_from"):
-            raise SystemExit(f"FAILED: hook binding {binding_id} is not active with an active_from: {binding}")
+            raise SystemExit(
+                f"FAILED: hook binding {binding_id} is not active with an active_from: {binding}"
+            )
         if any(binding.get(field) != chosen[field] for field in HOOK_BINDING_IDENTITY):
-            raise SystemExit(f"FAILED: hook binding {binding_id} is no longer the one selected: {binding}")
-        starts.append(datetime.datetime.fromisoformat(binding["active_from"].replace("Z", "+00:00")))
+            raise SystemExit(
+                f"FAILED: hook binding {binding_id} is no longer the one selected: {binding}"
+            )
+        starts.append(
+            datetime.datetime.fromisoformat(binding["active_from"].replace("Z", "+00:00"))
+        )
     return max(starts) + margin
 
 
-def designate_command(app_id: str, role: str, principal: str, credential: str, contact: str) -> list[str]:
+def designate_command(
+    app_id: str, role: str, principal: str, credential: str, contact: str
+) -> list[str]:
     """The owner's designation of a holding of an app role. A role that
     declares a notice contact, as secrets.owner does, takes the holder's."""
-    return ["aw", "app", "role", "designate", app_id, "--role", role, "--principal", principal,
-            "--credential", credential, "--notice-contact", contact, "--yes"]
+    return [
+        "aw",
+        "app",
+        "role",
+        "designate",
+        app_id,
+        "--role",
+        role,
+        "--principal",
+        principal,
+        "--credential",
+        credential,
+        "--notice-contact",
+        contact,
+        "--yes",
+    ]
 
 
 # The prefix of the bytes a team's controller key signs for an owner act
@@ -225,7 +269,7 @@ def owner_act_document(signing: bytes) -> dict:
     canonical JSON."""
     if not signing.startswith(OWNER_ACT_PREFIX):
         raise SystemExit("FAILED: the signing bytes are not an owner act's")
-    return json.loads(signing[len(OWNER_ACT_PREFIX):])
+    return json.loads(signing[len(OWNER_ACT_PREFIX) :])
 
 
 def signed_act(signing: str) -> SignedAct:
@@ -238,8 +282,12 @@ def signed_act(signing: str) -> SignedAct:
     except ValueError as error:
         raise SystemExit(f"FAILED: the signing bytes are not standard base64: {error}") from None
     act = owner_act_document(decoded)
-    return SignedAct(nonce=act["nonce"], sha256=hashlib.sha256(decoded).hexdigest(), act=act["act"],
-                     expires_at=act["expires_at"])
+    return SignedAct(
+        nonce=act["nonce"],
+        sha256=hashlib.sha256(decoded).hexdigest(),
+        act=act["act"],
+        expires_at=act["expires_at"],
+    )
 
 
 def assert_one_effect(baseline: dict, first: dict, replay: dict, act: SignedAct) -> None:
@@ -250,29 +298,53 @@ def assert_one_effect(baseline: dict, first: dict, replay: dict, act: SignedAct)
     B3 subject, superseded, usable keys), the configuration revision, the
     counts of owner-act nonce rows and narrowing-authority rows for the
     installation, and the rows for this act's nonce and H."""
-    assert baseline["assignments"] == 1 and not baseline["holding"]["ended"], f"baseline: not before the effect {baseline}"
-    assert not baseline["nonce_rows"] and not baseline["authority_rows"], f"baseline: this act already applied {baseline}"
+    assert baseline["assignments"] == 1 and not baseline["holding"]["ended"], (
+        f"baseline: not before the effect {baseline}"
+    )
+    assert not baseline["nonce_rows"] and not baseline["authority_rows"], (
+        f"baseline: this act already applied {baseline}"
+    )
     expected_rows = ([{"nonce": act.nonce, "act_sha256": act.sha256}], 1)
     assert first["assignments"] == 0, f"first application: still assigned {first}"
     holding = first["holding"]
-    assert holding["ended"] and holding["superseded"] and holding["usable_keys"] == 0, f"first application: {holding}"
-    assert holding["subject"] == baseline["holding"]["subject"], f"first application: another holder {holding}"
-    assert first["revision"] == baseline["revision"] + 1, f"first application: revision {first['revision']}"
-    assert first["nonces"] == baseline["nonces"] + 1, f"first application: nonce rows {first['nonces']}"
-    assert (first["nonce_rows"], len(first["nonce_rows"])) == expected_rows, f"first application: {first['nonce_rows']}"
-    assert first["authorities"] == baseline["authorities"] + 1, f"first application: authorities {first['authorities']}"
+    assert holding["ended"] and holding["superseded"] and holding["usable_keys"] == 0, (
+        f"first application: {holding}"
+    )
+    assert holding["subject"] == baseline["holding"]["subject"], (
+        f"first application: another holder {holding}"
+    )
+    assert first["revision"] == baseline["revision"] + 1, (
+        f"first application: revision {first['revision']}"
+    )
+    assert first["nonces"] == baseline["nonces"] + 1, (
+        f"first application: nonce rows {first['nonces']}"
+    )
+    assert (first["nonce_rows"], len(first["nonce_rows"])) == expected_rows, (
+        f"first application: {first['nonce_rows']}"
+    )
+    assert first["authorities"] == baseline["authorities"] + 1, (
+        f"first application: authorities {first['authorities']}"
+    )
     rows = first["authority_rows"]
     assert len(rows) == 1, f"first application: authority rows {rows}"
     row = rows[0]
     assert (row["subject"], row["authority"], row["commitment"], row["signing_sha256"]) == (
-        holding["subject"], "owner_act", act.sha256, act.sha256), f"first application: {row}"
-    assert row["event_id"] and row["act"] in (None, "role.revoked") and row["event_act_sha256"] in (None, act.sha256), (
-        f"first application: governance event {row}")
+        holding["subject"],
+        "owner_act",
+        act.sha256,
+        act.sha256,
+    ), f"first application: {row}"
+    assert (
+        row["event_id"]
+        and row["act"] in (None, "role.revoked")
+        and row["event_act_sha256"] in (None, act.sha256)
+    ), f"first application: governance event {row}"
     # The replay: every record as the first delivery left it.
     for key in ("assignments", "holding", "revision", "nonces", "nonce_rows", "authorities"):
         assert replay[key] == first[key], f"replay: {key} changed {first[key]} -> {replay[key]}"
     assert [(r["event_id"], r["commitment"]) for r in replay["authority_rows"]] == [
-        (r["event_id"], r["commitment"]) for r in rows], f"replay: authority rows {replay['authority_rows']}"
+        (r["event_id"], r["commitment"]) for r in rows
+    ], f"replay: authority rows {replay['authority_rows']}"
 
 
 @dataclass(frozen=True)
@@ -292,8 +364,23 @@ def read_only_psql(user: str, database: str, select: str) -> list[str]:
     """The psql arguments that run one SELECT, as `user`, in a repeatable-read,
     read-only transaction and print only its rows: separate commands in one
     session."""
-    return ["psql", "-U", user, "-d", database, "-At", "-q", "-v", "ON_ERROR_STOP=1",
-            "-c", "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY", "-c", select, "-c", "COMMIT"]
+    return [
+        "psql",
+        "-U",
+        user,
+        "-d",
+        database,
+        "-At",
+        "-q",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+        "-c",
+        select,
+        "-c",
+        "COMMIT",
+    ]
 
 
 SNAPSHOT_LITERAL = re.compile(r"[A-Za-z0-9:._@/+=-]+")
@@ -315,8 +402,15 @@ def sql_schema(name: str) -> str:
     return name
 
 
-def receiver_snapshot(query: Callable[[str], str], holding: Holding, nonce: str, subject: str | None = None,
-                      act_sha256: str | None = None, *, schema: str) -> dict:
+def receiver_snapshot(
+    query: Callable[[str], str],
+    holding: Holding,
+    nonce: str,
+    subject: str | None = None,
+    act_sha256: str | None = None,
+    *,
+    schema: str,
+) -> dict:
     """The app's own records of one holding, read in one repeatable-read,
     read-only transaction: the scoped role assignments; the holding (its B3
     subject, whether it ended, whether that subject is superseded, its usable
@@ -327,11 +421,18 @@ def receiver_snapshot(query: Callable[[str], str], holding: Holding, nonce: str,
     one SELECT against the app's database, as read_only_psql wraps it, and
     returns its one output line."""
     s = sql_schema(schema)
-    team, role, principal = sql_literal(holding.team_id), sql_literal(holding.role), sql_literal(holding.principal)
+    team, role, principal = (
+        sql_literal(holding.team_id),
+        sql_literal(holding.role),
+        sql_literal(holding.principal),
+    )
     installation, app = sql_literal(holding.installation_id), sql_literal(holding.app_id)
     generation = sql_literal(holding.generation)
-    which = ("h.ended_in IS NULL AND p.superseded_at IS NULL" if subject is None
-             else f"p.subject = {sql_literal(subject)}")
+    which = (
+        "h.ended_in IS NULL AND p.superseded_at IS NULL"
+        if subject is None
+        else f"p.subject = {sql_literal(subject)}"
+    )
     commitment = sql_literal(act_sha256) if act_sha256 else "NULL"
     text = query(
         "SELECT json_build_object("
@@ -363,11 +464,14 @@ def receiver_snapshot(query: Callable[[str], str], holding: Holding, nonce: str,
         f" FROM {s}.credential_narrowing_authority a LEFT JOIN {s}.outbox_events e USING (event_id)"
         f" WHERE a.app_id = {app} AND a.team_id = {team} AND a.installation_id = {installation}"
         f" AND a.generation = {generation}::bigint AND a.authority = 'owner_act' AND a.commitment = {commitment})"
-        ")")
+        ")"
+    )
     snapshot = json.loads(text)
     holdings = snapshot.pop("holdings")
     if len(holdings) != 1:
-        raise SystemExit(f"FAILED: the app holds {len(holdings)} holdings for {holding} (subject {subject}), not one")
+        raise SystemExit(
+            f"FAILED: the app holds {len(holdings)} holdings for {holding} (subject {subject}), not one"
+        )
     snapshot["holding"] = holdings[0]
     return snapshot
 
@@ -381,8 +485,12 @@ def credential_sha256(credential: dict) -> str:
     """A human credential's credential_sha256 (docs/owner-act-delivery.md, "The
     credential"): the SHA-256 of its prefix and the canonical JSON of its id,
     public key and relying party."""
-    canonical = json.dumps({field: credential[field] for field in ("credential_id", "public_key", "rp_id")},
-                           separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+    canonical = json.dumps(
+        {field: credential[field] for field in ("credential_id", "public_key", "rp_id")},
+        separators=(",", ":"),
+        sort_keys=True,
+        ensure_ascii=False,
+    )
     return hashlib.sha256(HUMAN_CREDENTIAL_PREFIX + canonical.encode()).hexdigest()
 
 
@@ -408,12 +516,18 @@ def designation_snapshot(query: Callable[[str], str], holding: Holding, *, schem
     rows whose act is one of those authorizations' commitments. The signing
     bytes themselves are not kept."""
     s = sql_schema(schema)
-    team, role, principal = sql_literal(holding.team_id), sql_literal(holding.role), sql_literal(holding.principal)
+    team, role, principal = (
+        sql_literal(holding.team_id),
+        sql_literal(holding.role),
+        sql_literal(holding.principal),
+    )
     installation, app = sql_literal(holding.installation_id), sql_literal(holding.app_id)
     generation = sql_literal(holding.generation)
-    authorized = (f" FROM {s}.credential_authorizations WHERE app_id = {app} AND team_id = {team}"
-                  f" AND installation_id = {installation} AND generation = {generation}::bigint AND role = {role}"
-                  f" AND principal = {principal}")
+    authorized = (
+        f" FROM {s}.credential_authorizations WHERE app_id = {app} AND team_id = {team}"
+        f" AND installation_id = {installation} AND generation = {generation}::bigint AND role = {role}"
+        f" AND principal = {principal}"
+    )
     text = query(
         "SELECT json_build_object("
         f"'assignments', (SELECT count(*) FROM {s}.role_assignments WHERE team_id = {team} AND role = {role}"
@@ -434,7 +548,8 @@ def designation_snapshot(query: Callable[[str], str], holding: Holding, *, schem
         "'nonce_rows', (SELECT coalesce(json_agg(json_build_object('nonce', nonce, 'act_sha256', act_sha256)),"
         f" '[]'::json) FROM {s}.owner_act_nonces WHERE scope = {app} AND team_id = {team}"
         f" AND act_sha256 IN (SELECT commitment{authorized}))"
-        ")")
+        ")"
+    )
     snapshot = json.loads(text)
     for row in snapshot["authorization_rows"]:
         signing = row.pop("signing_hex")
@@ -449,38 +564,63 @@ def assert_designated(baseline: dict, after: dict, designation: Designation) -> 
     kind, team, audience, app, installation, role, principal, credential and
     contact) and to exactly one nonce row with that act's nonce and H."""
     holding = designation.holding
-    assert baseline["assignments"] == 0 and not baseline["holdings"], f"baseline: already held {baseline}"
-    assert not baseline["authorization_rows"] and not baseline["nonce_rows"], f"baseline: already designated {baseline}"
+    assert baseline["assignments"] == 0 and not baseline["holdings"], (
+        f"baseline: already held {baseline}"
+    )
+    assert not baseline["authorization_rows"] and not baseline["nonce_rows"], (
+        f"baseline: already designated {baseline}"
+    )
     contact_sha256 = hashlib.sha256(designation.contact.encode()).hexdigest()
     assert after["assignments"] == 1, f"designation: assignments {after['assignments']}"
     assert len(after["holdings"]) == 1, f"designation: holdings {after['holdings']}"
     (held,) = after["holdings"]
     assert held["contact"] == designation.contact, f"designation: contact {held}"
     for key in ("revision", "nonces", "authorizations"):
-        assert after[key] == baseline[key] + 1, f"designation: {key} {baseline[key]} -> {after[key]}"
+        assert after[key] == baseline[key] + 1, (
+            f"designation: {key} {baseline[key]} -> {after[key]}"
+        )
     rows = after["authorization_rows"]
-    assert len(rows) == 1 and rows[0]["subject"] == held["subject"], f"designation: authorizations {rows}"
+    assert len(rows) == 1 and rows[0]["subject"] == held["subject"], (
+        f"designation: authorizations {rows}"
+    )
     (row,) = rows
-    assert (row["authority"], row["principal"], row["notice_contact_sha256"], row["credential_sha256"]) == (
-        "owner_act", holding.principal, contact_sha256, designation.credential_sha256), f"designation: {row}"
+    assert (
+        row["authority"],
+        row["principal"],
+        row["notice_contact_sha256"],
+        row["credential_sha256"],
+    ) == ("owner_act", holding.principal, contact_sha256, designation.credential_sha256), (
+        f"designation: {row}"
+    )
     assert row["commitment"] == row["signing_sha256"], f"designation: the commitment is not H {row}"
     document = row["document"] or {}
-    expected = {"act": "human-role.designate", "team_id": holding.team_id, "aud": designation.audience,
-                "subject": {"app_id": holding.app_id, "installation_id": holding.installation_id,
-                            "role": holding.role, "principal": holding.principal,
-                            "credential_sha256": designation.credential_sha256,
-                            "notice_contact_sha256": contact_sha256}}
+    expected = {
+        "act": "human-role.designate",
+        "team_id": holding.team_id,
+        "aud": designation.audience,
+        "subject": {
+            "app_id": holding.app_id,
+            "installation_id": holding.installation_id,
+            "role": holding.role,
+            "principal": holding.principal,
+            "credential_sha256": designation.credential_sha256,
+            "notice_contact_sha256": contact_sha256,
+        },
+    }
     signed = {key: document.get(key) for key in expected}
     assert signed == expected, f"designation: the signed act is not the one meant {signed}"
     assert after["nonce_rows"] == [{"nonce": document["nonce"], "act_sha256": row["commitment"]}], (
-        f"designation: nonce rows {after['nonce_rows']}")
+        f"designation: nonce rows {after['nonce_rows']}"
+    )
 
 
 def assert_unchanged(after: dict, duplicate: dict) -> None:
     """A refused duplicate designation left every scoped record as the
     designation left it."""
     for key in after:
-        assert duplicate[key] == after[key], f"duplicate: {key} changed {after[key]} -> {duplicate[key]}"
+        assert duplicate[key] == after[key], (
+            f"duplicate: {key} changed {after[key]} -> {duplicate[key]}"
+        )
 
 
 class FrontChange:
@@ -497,8 +637,15 @@ class FrontChange:
 
     what = "change"
 
-    def __init__(self, rendered: Path, host: str, method: str, path: str, upstream: str,
-                 reload: Callable[[], None]):
+    def __init__(
+        self,
+        rendered: Path,
+        host: str,
+        method: str,
+        path: str,
+        upstream: str,
+        reload: Callable[[], None],
+    ):
         self.rendered, self.host, self.method, self.path = rendered, host, method, path
         self.upstream, self.reload = upstream, reload
         self.replaced: str | None = None
@@ -508,12 +655,16 @@ class FrontChange:
 
     def __enter__(self):
         if self.replaced is not None:
-            raise SystemExit(f"FAILED: the {self.what} for {self.method} {self.path} on {self.host} is already in effect")
+            raise SystemExit(
+                f"FAILED: the {self.what} for {self.method} {self.path} on {self.host} is already in effect"
+            )
         current = self.rendered.read_text()
         site = f"{self.host}:443 {{\n"
         if current.count(site) != 1:
-            raise SystemExit(f"FAILED: the front holds {current.count(site)} sites for {self.host}, not one;"
-                             f" no {self.what} for {self.method} {self.path}")
+            raise SystemExit(
+                f"FAILED: the front holds {current.count(site)} sites for {self.host}, not one;"
+                f" no {self.what} for {self.method} {self.path}"
+            )
         self.rendered.write_text(self.change(current, site))
         try:
             self.reload()
@@ -522,9 +673,11 @@ class FrontChange:
             try:
                 self.reload()
             except BaseException as restoring:
-                raise SystemExit(f"FAILED: the front did not reload the {self.what} for {self.method} {self.path} on"
-                                 f" {self.host}, and its reload of the original text, written back, failed too"
-                                 f" ({restoring!r}): the running front is uncertain") from failure
+                raise SystemExit(
+                    f"FAILED: the front did not reload the {self.what} for {self.method} {self.path} on"
+                    f" {self.host}, and its reload of the original text, written back, failed too"
+                    f" ({restoring!r}): the running front is uncertain"
+                ) from failure
             raise
         self.replaced = current
         return self
@@ -549,7 +702,9 @@ class AnswerDrop(FrontChange):
             site,
             f"{site}  @dropped {{\n    method {self.method}\n    path {self.path}\n  }}\n"
             f"  reverse_proxy @dropped {self.upstream} {{\n    @answered status 2xx\n"
-            "    handle_response @answered {\n      abort\n    }\n  }\n", 1)
+            "    handle_response @answered {\n      abort\n    }\n  }\n",
+            1,
+        )
 
 
 # The loopback port of the front's witness listener.
@@ -577,17 +732,22 @@ class AnswerWitness(FrontChange):
     def change(self, current: str, site: str) -> str:
         inner = f"http://:{ANSWER_WITNESS_PORT} {{\n"
         if inner in current:
-            raise SystemExit(f"FAILED: the front already serves {inner.strip()}; no witness for {self.method} {self.path}")
+            raise SystemExit(
+                f"FAILED: the front already serves {inner.strip()}; no witness for {self.method} {self.path}"
+            )
         routed = current.replace(
             site,
             f"{site}  @witnessed {{\n    method {self.method}\n    path {self.path}\n  }}\n"
-            f"  reverse_proxy @witnessed {self.listener}\n", 1)
+            f"  reverse_proxy @witnessed {self.listener}\n",
+            1,
+        )
         return routed + (
             f"{inner}  bind 127.0.0.1\n  log {self.logger} {{\n    output stdout\n"
             "    format filter {\n      wrap json\n      fields {\n        request>headers delete\n"
             "        request>tls delete\n        request>remote_ip delete\n        request>remote_port delete\n"
             "        request>client_ip delete\n        resp_headers delete\n        user_id delete\n      }\n    }\n"
-            f"  }}\n  reverse_proxy {self.upstream}\n}}\n")
+            f"  }}\n  reverse_proxy {self.upstream}\n}}\n"
+        )
 
     def answers(self, log: str) -> list[int]:
         """The upstream's statuses for `method` `path` on `host`, in the order
@@ -595,13 +755,20 @@ class AnswerWitness(FrontChange):
         statuses = []
         for line in log.splitlines():
             try:
-                entry = json.loads(line[line.index("{"):]) if "{" in line else None
+                entry = json.loads(line[line.index("{") :]) if "{" in line else None
             except json.JSONDecodeError:
                 continue
-            if not isinstance(entry, dict) or entry.get("logger") != f"http.log.access.{self.logger}":
+            if (
+                not isinstance(entry, dict)
+                or entry.get("logger") != f"http.log.access.{self.logger}"
+            ):
                 continue
             request = entry.get("request", {})
-            if (request.get("method"), request.get("host"), request.get("uri")) == (self.method, self.host, self.path):
+            if (request.get("method"), request.get("host"), request.get("uri")) == (
+                self.method,
+                self.host,
+                self.path,
+            ):
                 statuses.append(entry["status"])
         return statuses
 
@@ -640,7 +807,6 @@ class Site:
         return f"{self.team}:{self.domain}"
 
 
-
 @dataclass(frozen=True)
 class Founded:
     """The namespace, its root human (the approver) and the team, and the
@@ -659,7 +825,16 @@ def found_team(site: Site, holder: Holder) -> Founded:
     requester there, beside H's human key; connect_requester connects it to
     aweb once aweb serves the team."""
     machine = holder.container
-    prepared = aw(machine, "id", "namespace", "prepare-controller", "--domain", site.domain, "--registry", site.registry)
+    prepared = aw(
+        machine,
+        "id",
+        "namespace",
+        "prepare-controller",
+        "--domain",
+        site.domain,
+        "--registry",
+        site.registry,
+    )
     site.publish_controller(prepared["controller_did"])
     await_awid_txt(machine, site.domain, prepared["controller_did"])
     child = holder.spawn("--json", "id", "human", "init", "--domain", site.domain, "--as-root")
@@ -668,12 +843,49 @@ def found_team(site: Site, holder: Holder) -> Founded:
     assert child.exitstatus == 0, output
     human = first_json(output)
     approver = human["id"]
-    aw(machine, "id", "team", "create", "--name", site.team, "--namespace", site.domain, "--registry", site.registry)
-    created = aw(machine, "id", "create", "--name", "owner", "--domain", site.domain, "--root-parent",
-                 "--registry", site.registry)
-    invite = aw(machine, "id", "team", "invite", "--team", site.team, "--namespace", site.domain, "--member-global")
+    aw(
+        machine,
+        "id",
+        "team",
+        "create",
+        "--name",
+        site.team,
+        "--namespace",
+        site.domain,
+        "--registry",
+        site.registry,
+    )
+    created = aw(
+        machine,
+        "id",
+        "create",
+        "--name",
+        "owner",
+        "--domain",
+        site.domain,
+        "--root-parent",
+        "--registry",
+        site.registry,
+    )
+    invite = aw(
+        machine,
+        "id",
+        "team",
+        "invite",
+        "--team",
+        site.team,
+        "--namespace",
+        site.domain,
+        "--member-global",
+    )
     aw(machine, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
-    return Founded(prepared["controller_did"], approver, human["did_key"], created["did_aw"], created["did_key"])
+    return Founded(
+        prepared["controller_did"],
+        approver,
+        human["did_key"],
+        created["did_aw"],
+        created["did_key"],
+    )
 
 
 def connect_requester(site: Site, holder: Holder) -> None:
@@ -685,10 +897,32 @@ def publish_team_server(machine: str, team: str, domain: str, aweb: str, registr
     """The owner, on the machine holding the team's key, publishes the team's
     coordination server at the registry, signed by that key; installed apps
     read it there to reach aweb."""
-    aw(machine, "id", "team", "set-server", "--team", team, "--namespace", domain, "--url", aweb,
-       "--registry", registry)
-    published = aw(machine, "id", "team", "show-server", "--team", team, "--namespace", domain,
-                   "--registry", registry)
+    aw(
+        machine,
+        "id",
+        "team",
+        "set-server",
+        "--team",
+        team,
+        "--namespace",
+        domain,
+        "--url",
+        aweb,
+        "--registry",
+        registry,
+    )
+    published = aw(
+        machine,
+        "id",
+        "team",
+        "show-server",
+        "--team",
+        team,
+        "--namespace",
+        domain,
+        "--registry",
+        registry,
+    )
     assert published.get("server_url", "").rstrip("/") == aweb, published
     return published
 
@@ -714,26 +948,47 @@ def activate_hooks(machine: str, apps: dict[str, str]) -> dict:
     name in REQUIRED_HOOK_BINDINGS."""
 
     def bindings() -> dict[str, list[dict]]:
-        return {app: aw(machine, "hooks", "bindings", app_id)["bindings"] for app, app_id in apps.items()}
+        return {
+            app: aw(machine, "hooks", "bindings", app_id)["bindings"]
+            for app, app_id in apps.items()
+        }
 
     selected = select_hook_bindings(bindings())
     for (app, _, _), row in selected.items():
-        activated = docker("exec", machine, "aw", "hooks", "activate", apps[app], row["binding_id"], "--yes",
-                           timeout=300)
+        activated = docker(
+            "exec",
+            machine,
+            "aw",
+            "hooks",
+            "activate",
+            apps[app],
+            row["binding_id"],
+            "--yes",
+            timeout=300,
+        )
         assert activated.returncode == 0, activated.stdout + activated.stderr
     after = [row for rows in bindings().values() for row in rows]
     ready = hooks_ready_at(after, list(selected.values()))
     wait = (ready - datetime.datetime.now(datetime.UTC)).total_seconds()
     if wait > HOOK_READINESS_DEADLINE.total_seconds():
-        raise SystemExit(f"FAILED: the hook bindings are in effect only at {ready.isoformat()}, past the deadline")
+        raise SystemExit(
+            f"FAILED: the hook bindings are in effect only at {ready.isoformat()}, past the deadline"
+        )
     if wait > 0:
         time.sleep(wait)
     chosen = {row["binding_id"] for row in selected.values()}
-    pending = sorted(f"{row['app_id']}/{row['kind']}/{row['hook']}" for row in after
-                     if row["binding_id"] not in chosen)
+    pending = sorted(
+        f"{row['app_id']}/{row['kind']}/{row['hook']}"
+        for row in after
+        if row["binding_id"] not in chosen
+    )
     assert all(row["state"] == "pending" for row in after if row["binding_id"] not in chosen), after
-    active = {f"{app}/{kind}/{hook}": {field: row[field] for field in HOOK_BINDING_IDENTITY + ("binding_id",)}
-              for (app, kind, hook), row in selected.items()}
+    active = {
+        f"{app}/{kind}/{hook}": {
+            field: row[field] for field in HOOK_BINDING_IDENTITY + ("binding_id",)
+        }
+        for (app, kind, hook), row in selected.items()
+    }
     return {"active": active, "left_pending": pending, "ready_at": ready.isoformat()}
 
 
@@ -741,18 +996,32 @@ def secrets_holding(site: Site, hooks: dict, principal: str) -> Holding:
     """The principal's holding of the app role, named by the Secrets
     installation and generation whose bindings were activated."""
     binding = hooks["active"]["secrets/production/post-governance-hook"]
-    return Holding(app_id=site.app_id, installation_id=binding["installation_id"], generation=binding["generation"],
-                   team_id=site.team_id, role=site.role, principal=principal)
+    return Holding(
+        app_id=site.app_id,
+        installation_id=binding["installation_id"],
+        generation=binding["generation"],
+        team_id=site.team_id,
+        role=site.role,
+        principal=principal,
+    )
 
 
 def holding_of(site: Site, principal: str) -> tuple[str, str]:
     """The principal's holdings of the app role, and its current notice
     contact, in the app's own tables."""
-    schema, role, who = sql_schema(site.secrets_schema), sql_literal(site.role), sql_literal(principal)
-    held = site.secrets_query(f"SELECT count(*) FROM {schema}.role_assignments WHERE role = {role}"
-                              f" AND principal_did = {who}")
-    contact = site.secrets_query(f"SELECT contact FROM {schema}.passkey_approvers WHERE principal = {who}"
-                                 " AND superseded_at IS NULL")
+    schema, role, who = (
+        sql_schema(site.secrets_schema),
+        sql_literal(site.role),
+        sql_literal(principal),
+    )
+    held = site.secrets_query(
+        f"SELECT count(*) FROM {schema}.role_assignments WHERE role = {role}"
+        f" AND principal_did = {who}"
+    )
+    contact = site.secrets_query(
+        f"SELECT contact FROM {schema}.passkey_approvers WHERE principal = {who}"
+        " AND superseded_at IS NULL"
+    )
     return held, contact
 
 
@@ -770,32 +1039,78 @@ def designate_holding(site: Site, holder: Holder, founded: Founded) -> dict:
     # aw binds a holder only if its team certificate names its did:aw
     # (verifyHolderEvidence), and a did:aw on a member certificate is a
     # global identity's.
-    added = aw(machine, "id", "team", "add-member", "--team", site.team, "--namespace", site.domain,
-               "--did", founded.approver_did_key, "--did-aw", human, "--name", "approver", "--global")
+    added = aw(
+        machine,
+        "id",
+        "team",
+        "add-member",
+        "--team",
+        site.team,
+        "--namespace",
+        site.domain,
+        "--did",
+        founded.approver_did_key,
+        "--did-aw",
+        human,
+        "--name",
+        "approver",
+        "--global",
+    )
 
     def as_human(*args: str, until: str | None = None) -> tuple[pexpect.spawn, str]:
         child = holder.act(human, *args)
         return child, holder.answer_passphrases(child, until=until)
 
-    for args in (("--json", "id", "team", "fetch-cert", "--namespace", site.domain, "--team", site.team, "--cert-id",
-                  added["certificate_id"], "--registry", site.registry),
-                 # The human's own connection to the team's aweb: the
-                 # requester's does not serve this separate identity.
-                 ("--json", "init", "--url", site.aweb, "--human-name", "approver")):
+    for args in (
+        (
+            "--json",
+            "id",
+            "team",
+            "fetch-cert",
+            "--namespace",
+            site.domain,
+            "--team",
+            site.team,
+            "--cert-id",
+            added["certificate_id"],
+            "--registry",
+            site.registry,
+        ),
+        # The human's own connection to the team's aweb: the
+        # requester's does not serve this separate identity.
+        ("--json", "init", "--url", site.aweb, "--human-name", "approver"),
+    ):
         child, output = as_human(*args)
         child.close()
         assert child.exitstatus == 0, output
     # The app is already installed on this machine: the owner installed it
     # here, in the same aw plugin directory. aw takes no --human install.
     export = f"{site.mounted}/holder/app-export.json"
-    child, output = as_human("app", "credential", "register", site.app_id, "--role", site.role, "--out", export,
-                             until=r"Open this page to continue: (\S+)")
+    child, output = as_human(
+        "app",
+        "credential",
+        "register",
+        site.app_id,
+        "--role",
+        site.role,
+        "--out",
+        export,
+        until=r"Open this page to continue: (\S+)",
+    )
     linked = re.search(r"Open this page to continue: (\S+)", output)
     if not linked:
         child.close()
-        raise SystemExit(f"FAILED: the holder's credential registration showed no page (exit {child.exitstatus}):\n{output}")
-    report = site.chromium(machine, "credential", "--url", linked.group(1), "--device",
-                           f"{site.mounted}/holder-app-device.json")
+        raise SystemExit(
+            f"FAILED: the holder's credential registration showed no page (exit {child.exitstatus}):\n{output}"
+        )
+    report = site.chromium(
+        machine,
+        "credential",
+        "--url",
+        linked.group(1),
+        "--device",
+        f"{site.mounted}/holder-app-device.json",
+    )
     assert report["states"] == ["ready", "navigated"] and report["credentials"] == 1, report
     child.expect(pexpect.EOF)
     rest = child.before
@@ -808,8 +1123,9 @@ def designate_holding(site: Site, holder: Holder, founded: Founded) -> dict:
     # Before the hook bindings are in effect, the act's governance event has
     # no audit target: the app refuses it, and nothing is held.
     early = docker("exec", machine, *command, timeout=300)
-    assert early.returncode != 0 and "503 release_context_unavailable" in early.stdout + early.stderr, (
-        early.stdout + early.stderr)
+    assert (
+        early.returncode != 0 and "503 release_context_unavailable" in early.stdout + early.stderr
+    ), early.stdout + early.stderr
     assert holding_of(site, human) == ("0", ""), holding_of(site, human)
     hooks = activate_hooks(machine, hook_app_ids(site))
     # The owner signs only for that exact credential: aw shows its fingerprint.
@@ -820,5 +1136,11 @@ def designate_holding(site: Site, holder: Holder, founded: Founded) -> dict:
     held, contact = holding_of(site, human)
     assert held == "1", held
     assert contact == site.contact, contact
-    return {"role": site.role, "principal": human, "fingerprint": fingerprint, "contact": contact,
-            "refused_before_activation": "503 release_context_unavailable", "hooks": hooks}
+    return {
+        "role": site.role,
+        "principal": human,
+        "fingerprint": fingerprint,
+        "contact": contact,
+        "refused_before_activation": "503 release_context_unavailable",
+        "hooks": hooks,
+    }

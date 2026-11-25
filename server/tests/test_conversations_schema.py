@@ -20,7 +20,9 @@ async def _insert_team(aweb_db, team_id: str = "backend:acme.com"):
     )
 
 
-async def _insert_agent(aweb_db, *, team_id: str, alias: str, did_aw: str, address: str):
+async def _insert_agent(
+    aweb_db, *, team_id: str, alias: str, did_aw: str, address: str
+):
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
@@ -46,7 +48,9 @@ async def test_conversation_schema_tables_columns_and_indexes_exist(aweb_cloud_d
           AND table_name IN ('conversations', 'conversation_participants', 'messages')
         """
     )
-    columns = {(row["table_name"], row["column_name"]): row["is_nullable"] for row in rows}
+    columns = {
+        (row["table_name"], row["column_name"]): row["is_nullable"] for row in rows
+    }
 
     assert columns[("conversations", "conversation_id")] == "NO"
     assert columns[("conversations", "conversation_type")] == "NO"
@@ -74,7 +78,10 @@ async def test_conversation_schema_tables_columns_and_indexes_exist(aweb_cloud_d
           )
         """
     )
-    defaults = {(row["table_name"], row["column_name"]): row["column_default"] for row in default_rows}
+    defaults = {
+        (row["table_name"], row["column_name"]): row["column_default"]
+        for row in default_rows
+    }
     assert defaults[("conversations", "created_by_did")] is None
     assert defaults[("conversation_participants", "alias")] is None
 
@@ -118,7 +125,9 @@ async def test_conversation_schema_tables_columns_and_indexes_exist(aweb_cloud_d
 
 
 @pytest.mark.asyncio
-async def test_conversation_schema_supports_participants_and_message_links(aweb_cloud_db):
+async def test_conversation_schema_supports_participants_and_message_links(
+    aweb_cloud_db,
+):
     await _insert_team(aweb_cloud_db.aweb_db)
     alice_agent_id = await _insert_agent(
         aweb_cloud_db.aweb_db,
@@ -228,7 +237,9 @@ async def test_conversation_schema_supports_participants_and_message_links(aweb_
 
 
 @pytest.mark.asyncio
-async def test_conversation_schema_enforces_lifecycle_and_participant_invariants(aweb_cloud_db):
+async def test_conversation_schema_enforces_lifecycle_and_participant_invariants(
+    aweb_cloud_db,
+):
     await _insert_team(aweb_cloud_db.aweb_db)
 
     with pytest.raises(QueryError) as check_error:
@@ -276,7 +287,9 @@ async def test_conversation_schema_enforces_lifecycle_and_participant_invariants
 
 
 @pytest.mark.asyncio
-async def test_conversation_schema_enforces_identity_defaults_and_reachability(aweb_cloud_db):
+async def test_conversation_schema_enforces_identity_defaults_and_reachability(
+    aweb_cloud_db,
+):
     await _insert_team(aweb_cloud_db.aweb_db)
 
     with pytest.raises(QueryError) as missing_creator:
@@ -347,7 +360,9 @@ async def test_conversation_schema_enforces_identity_defaults_and_reachability(a
 
 
 @pytest.mark.asyncio
-async def test_conversation_updated_at_trigger_runs_when_update_omits_updated_at(aweb_cloud_db):
+async def test_conversation_updated_at_trigger_runs_when_update_omits_updated_at(
+    aweb_cloud_db,
+):
     await _insert_team(aweb_cloud_db.aweb_db)
     conversation = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -378,7 +393,9 @@ async def test_conversation_updated_at_trigger_runs_when_update_omits_updated_at
 
 
 @pytest.mark.asyncio
-async def test_conversation_updated_at_trigger_preserves_explicit_updated_at(aweb_cloud_db):
+async def test_conversation_updated_at_trigger_preserves_explicit_updated_at(
+    aweb_cloud_db,
+):
     await _insert_team(aweb_cloud_db.aweb_db)
     conversation = await aweb_cloud_db.aweb_db.fetch_one(
         """

@@ -18,7 +18,9 @@ class MCPReferenceGeneratorTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.tools = asyncio.run(generator.load_registered_tools())
 
-    def test_hosted_sends_disclose_that_managed_encryption_is_not_end_to_end(self) -> None:
+    def test_hosted_sends_disclose_that_managed_encryption_is_not_end_to_end(
+        self,
+    ) -> None:
         rendered = generator.render_reference(self.tools)
         for name in ("send_mail", "send_chat"):
             with self.subTest(tool=name):
@@ -59,7 +61,9 @@ class MCPReferenceGeneratorTests(unittest.TestCase):
 
             with (
                 mock.patch.object(generator, "OUTPUT", output),
-                mock.patch.object(sys, "argv", ["regenerate_mcp_reference.py", "--check"]),
+                mock.patch.object(
+                    sys, "argv", ["regenerate_mcp_reference.py", "--check"]
+                ),
                 redirect_stdout(stdout),
                 redirect_stderr(stderr),
             ):

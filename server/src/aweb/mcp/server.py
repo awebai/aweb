@@ -89,7 +89,11 @@ class ManagedMCPApp:
     @property
     def is_running(self) -> bool:
         """Whether this resource has an active serving task."""
-        return self._started.is_set() and self._runner_task is not None and not self._runner_task.done()
+        return (
+            self._started.is_set()
+            and self._runner_task is not None
+            and not self._runner_task.done()
+        )
 
     async def startup(self) -> None:
         """Start the mounted MCP session manager and wait until it can serve."""
@@ -154,8 +158,12 @@ def register_tools(
     Federated mail and chat are delivered through the federation authority's
     transport unless the host passes one.
     """
-    federation_mail_transport = delivery_transport(federation_authority, federation_mail_transport)
-    federation_chat_transport = delivery_transport(federation_authority, federation_chat_transport)
+    federation_mail_transport = delivery_transport(
+        federation_authority, federation_mail_transport
+    )
+    federation_chat_transport = delivery_transport(
+        federation_authority, federation_chat_transport
+    )
 
     dependencies = ToolDependencies(
         db_infra=db_infra,
@@ -180,6 +188,7 @@ def register_tools(
     work.register_tools(mcp, dependencies)
     workspace.register_tools(mcp, dependencies)
     contacts.register_tools(mcp, dependencies)
+
 
 class _NudgingFastMCP(FastMCP):
     def __init__(self, *args, db_infra, **kwargs):
@@ -257,4 +266,7 @@ def create_mcp_app(
     # mounted sub-applications do not receive lifespan events from FastAPI.
     # Wrap the app so the parent can start/stop the session manager explicitly.
     inner = mcp.streamable_http_app()
-    return ManagedMCPApp(MCPAuthMiddleware(inner, db_infra, proxy_verification=proxy_configuration), mcp.session_manager)
+    return ManagedMCPApp(
+        MCPAuthMiddleware(inner, db_infra, proxy_verification=proxy_configuration),
+        mcp.session_manager,
+    )

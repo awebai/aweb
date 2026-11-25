@@ -97,7 +97,6 @@ class RunnerCleanup(unittest.TestCase):
         self.assertIn("candidate gate cleanup FAILED", result.stderr + result.stdout)
         self.assertIn("cleanup-failure\trunner still present", manifest)
 
-
     def test_retained_work_directory_fails_and_names_itself(self):
         result, manifest = self.cleanup(retain_work=True)
         self.assertNotEqual(result.returncode, 0, result.stdout)

@@ -328,9 +328,7 @@ async def test_contacts_only_real_delivery(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raw_did", [True, False])
-async def test_unmarked_global_recipient_keeps_strict_policy(
-    privacy_app, raw_did
-):
+async def test_unmarked_global_recipient_keeps_strict_policy(privacy_app, raw_did):
     from aweb.messaging.messages import resolve_agent_by_did
 
     env = privacy_app

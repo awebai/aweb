@@ -37,9 +37,9 @@ type ScreenController struct {
 	historyIndex  int
 	historyDraft  string
 	desiredColumn int
-	pasting      bool
-	lastWasCR    bool
-	pendingBytes []byte
+	pasting       bool
+	lastWasCR     bool
+	pendingBytes  []byte
 
 	events chan ControlEvent
 	doneCh chan error

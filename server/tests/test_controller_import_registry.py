@@ -55,9 +55,14 @@ async def registered_import_team(stack):
         ("revoked-certificate", "revoked"),
     ):
         _, encoded = issue_team_certificate(
-            team_id="import:local", team_signing_key=controller,
-            member_did_key=did_key_from_signing_key(member if alias == "live" else bytes([84]) * 32),
-            alias=alias, identity_scope="local", certificate_id=certificate_id,
+            team_id="import:local",
+            team_signing_key=controller,
+            member_did_key=did_key_from_signing_key(
+                member if alias == "live" else bytes([84]) * 32
+            ),
+            alias=alias,
+            identity_scope="local",
+            certificate_id=certificate_id,
         )
         await sdk.register_team_certificate(
             "local",
@@ -114,7 +119,9 @@ async def test_owner_snapshot_retains_revoked_planning_but_only_live_admission(
             controller_signature=sign_message(controller, request.signing_bytes()),
         )
     assert proof.request is request
-    assert proof.controller_signature == sign_message(controller, request.signing_bytes())
+    assert proof.controller_signature == sign_message(
+        controller, request.signing_bytes()
+    )
     assert proof.request.organization_id == "organization-1"
     assert proof.request.team_id is None
     assert proof.team.team_id == "import:local"
@@ -226,7 +233,9 @@ async def test_invalid_roster_is_a_nonretryable_import_refusal(
 
     def corrupt_issued_time(http_request, http_response):
         nonlocal bad_response_seen
-        if http_request.method != "GET" or not http_request.url.path.endswith("/certificates"):
+        if http_request.method != "GET" or not http_request.url.path.endswith(
+            "/certificates"
+        ):
             return None
         assert http_response.status_code == 200
         body = http_response.json()
@@ -255,8 +264,10 @@ async def test_invalid_roster_is_a_nonretryable_import_refusal(
         }
     }
     records = [
-        record for record in caplog.records
-        if record.name == "aweb.team_control_error_transport" and record.levelno == logging.ERROR
+        record
+        for record in caplog.records
+        if record.name == "aweb.team_control_error_transport"
+        and record.levelno == logging.ERROR
     ]
     assert len(records) == 1
     assert records[0].exc_info is not None

@@ -28,7 +28,12 @@ def serialized_team_document(document: dict[str, Any]) -> str:
 
 
 async def activate_team_document(
-    db, *, table: str, lock_name: str, team_id: str, document_id: str,
+    db,
+    *,
+    table: str,
+    lock_name: str,
+    team_id: str,
+    document_id: str,
 ) -> None:
     """Activate the team's version ``document_id`` in ``table`` and deactivate the rest.
 
@@ -37,7 +42,9 @@ async def activate_team_document(
     share. The change is one transaction, nested when ``db`` is already one,
     so a failure leaves the previous version active.
     """
-    target = await db.fetch_one(f"SELECT id, team_id FROM {table} WHERE id = $1", document_id)
+    target = await db.fetch_one(
+        f"SELECT id, team_id FROM {table} WHERE id = $1", document_id
+    )
     if not target or target["team_id"] != team_id:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
@@ -52,4 +59,6 @@ async def activate_team_document(
             f"UPDATE {table} SET is_active = false WHERE team_id = $1 AND is_active = true",
             team_id,
         )
-        await tx.execute(f"UPDATE {table} SET is_active = true WHERE id = $1", document_id)
+        await tx.execute(
+            f"UPDATE {table} SET is_active = true WHERE id = $1", document_id
+        )

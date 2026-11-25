@@ -22,7 +22,9 @@ from fastapi import FastAPI, Request
 from aweb_naapp.runtime.team_auth import AWIDTeamCache, authenticate_request
 
 VECTORS = json.loads(
-    (Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json").read_text()
+    (
+        Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json"
+    ).read_text()
 )
 ORIGIN = "https://app.example.com"
 REGISTRY = "https://registry.example.com"
@@ -37,17 +39,28 @@ def _registry(case: dict) -> httpx.MockTransport:
             certificate_id = request.url.path.rsplit("/", 2)[-2]
             if certificate_id not in case["registered_certificate_ids"]:
                 return httpx.Response(404)
-            return httpx.Response(200, json=legacy_certificate_status(
-                VECTORS["team_id"], certificate_id, team_did_key=case["team_did_key"],
-                revoked_at="2026-11-02T00:00:00Z" if certificate_id in revoked else None))
+            return httpx.Response(
+                200,
+                json=legacy_certificate_status(
+                    VECTORS["team_id"],
+                    certificate_id,
+                    team_did_key=case["team_did_key"],
+                    revoked_at="2026-11-02T00:00:00Z" if certificate_id in revoked else None,
+                ),
+            )
         if request.url.path.endswith("/certificates"):
             page = [
-                {"certificate_id": certificate_id, "revoked_at": "2026-11-02T00:00:00Z" if certificate_id in revoked else None}
+                {
+                    "certificate_id": certificate_id,
+                    "revoked_at": "2026-11-02T00:00:00Z" if certificate_id in revoked else None,
+                }
                 for certificate_id in case["registered_certificate_ids"]
             ]
             return httpx.Response(200, json={"certificates": page, "has_more": False})
         name, domain = VECTORS["team_id"].split(":", 1)
-        return httpx.Response(200, json=legacy_team_response(domain, name, team_did_key=case["team_did_key"]))
+        return httpx.Response(
+            200, json=legacy_team_response(domain, name, team_did_key=case["team_did_key"])
+        )
 
     return httpx.MockTransport(answer)
 
@@ -88,13 +101,19 @@ async def test_the_runtime_verifier_answers_each_case_as_recorded(case: dict) ->
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
         response = await client.get("/", headers=_headers(case))
-    answered = {200: "accepted", 401: "refused"}.get(response.status_code, f"status {response.status_code}")
+    answered = {200: "accepted", 401: "refused"}.get(
+        response.status_code, f"status {response.status_code}"
+    )
     assert answered == case["today"]["naapp_runtime"], response.text
     expected = case["expected"]
     if expected is None:
         assert response.status_code == 200, response.text
     else:
-        detail = expected["reason"] if "field" not in expected else f"{expected['reason']}: {expected['field']}"
+        detail = (
+            expected["reason"]
+            if "field" not in expected
+            else f"{expected['reason']}: {expected['field']}"
+        )
         assert (response.status_code, response.json()["detail"]) == (401, detail)
 
 

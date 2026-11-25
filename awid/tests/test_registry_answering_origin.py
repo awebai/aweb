@@ -71,7 +71,9 @@ def response_for(family: TeamRead, *, label: str) -> bytes:
             "created_at": "2026-01-01T00:00:00Z",
         }
         value = (
-            address if family is TeamRead.ADDRESS else {"addresses": [address], "has_more": False}
+            address
+            if family is TeamRead.ADDRESS
+            else {"addresses": [address], "has_more": False}
         )
     elif family in (TeamRead.METADATA, TeamRead.KEY):
         value = {
@@ -101,7 +103,9 @@ def response_for(family: TeamRead, *, label: str) -> bytes:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("family", list(TeamRead))
-async def test_team_evidence_is_partitioned_by_the_answering_registry(peer_factory, family):
+async def test_team_evidence_is_partitioned_by_the_answering_registry(
+    peer_factory, family
+):
     first, fallback = peer_factory(), peer_factory()
     first.response = response_for(family, label="authority-a")
     fallback.response = response_for(family, label="fallback-b")
@@ -121,7 +125,11 @@ async def test_team_evidence_is_partitioned_by_the_answering_registry(peer_facto
     )
     try:
         answer_a = await team_read(client, family)
-        a_entries = {key: value for key, value in redis.values.items() if ":registry_cache:" in key}
+        a_entries = {
+            key: value
+            for key, value in redis.values.items()
+            if ":registry_cache:" in key
+        }
         selected = fallback.origin
         answer_b = await team_read(client, family)
         assert answer_b != answer_a
@@ -130,7 +138,9 @@ async def test_team_evidence_is_partitioned_by_the_answering_registry(peer_facto
         assert await team_read(client, family) == answer_a
         assert len(first.requests) == len(fallback.requests) == 1
         assert len(routes) == 3  # One pinned selection per read, including a miss.
-        assert any(fallback.origin in key for key in redis.values if ":registry_cache:" in key)
+        assert any(
+            fallback.origin in key for key in redis.values if ":registry_cache:" in key
+        )
     finally:
         await client.aclose()
 
@@ -158,24 +168,35 @@ async def test_status_refresh_records_its_origin_and_fresh_hits_do_no_discovery(
         domain_registry_resolver=resolve,
     )
     try:
-        assert (await client.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)).status == {
-            "registry": "a"
+        assert (
+            await client.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)
+        ).status == {"registry": "a"}
+        a_entries = {
+            key: value
+            for key, value in redis.values.items()
+            if ":registry_cache:" in key
         }
-        a_entries = {key: value for key, value in redis.values.items() if ":registry_cache:" in key}
         selected = fallback.origin
         # A fresh hit retains the recorded origin; no discovery or HTTP work.
         clock[0] += 60
-        assert (await client.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)).status == {
-            "registry": "a"
-        }
-        assert len(routes) == len(registry_audience_dns.queries) == len(first.requests) == 1
+        assert (
+            await client.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)
+        ).status == {"registry": "a"}
+        assert (
+            len(routes)
+            == len(registry_audience_dns.queries)
+            == len(first.requests)
+            == 1
+        )
         assert fallback.requests == []
         clock[0] += 1
-        assert (await client.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)).status == {
-            "registry": "b"
-        }
+        assert (
+            await client.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)
+        ).status == {"registry": "b"}
         assert all(redis.values[key] == value for key, value in a_entries.items())
-        assert any(fallback.origin in key for key in redis.values if ":registry_cache:" in key)
+        assert any(
+            fallback.origin in key for key in redis.values if ":registry_cache:" in key
+        )
         assert len(routes) == len(registry_audience_dns.queries) == 2
         assert len(first.requests) == len(fallback.requests) == 1
     finally:
@@ -206,13 +227,19 @@ async def test_failed_txt_lookup_does_not_overwrite_the_other_registrys_evidence
         transport=httpx.AsyncHTTPTransport(trust_env=False),
     )
     try:
-        assert await client.get_team_revocations("example.com", "engineering") == {"revoked-on-a"}
+        assert await client.get_team_revocations("example.com", "engineering") == {
+            "revoked-on-a"
+        }
         a_entries = dict(redis.values)
         registry_audience_dns.answer = AuthorityAnswer.UNAVAILABLE
-        assert await client.get_team_revocations("example.com", "engineering") == {"revoked-on-b"}
+        assert await client.get_team_revocations("example.com", "engineering") == {
+            "revoked-on-b"
+        }
         assert all(redis.values[key] == value for key, value in a_entries.items())
         registry_audience_dns.answer = AuthorityAnswer.OVERRIDE
-        assert await client.get_team_revocations("example.com", "engineering") == {"revoked-on-a"}
+        assert await client.get_team_revocations("example.com", "engineering") == {
+            "revoked-on-a"
+        }
         assert len(first.requests) == len(fallback.requests) == 1
         assert len(registry_audience_dns.queries) == 3
     finally:
@@ -222,21 +249,31 @@ async def test_failed_txt_lookup_does_not_overwrite_the_other_registrys_evidence
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("suffix", ["", "/"], ids=["canonical", "trailing-slash"])
-async def test_team_metadata_write_invalidates_the_same_canonical_origin(peer_factory, suffix):
+async def test_team_metadata_write_invalidates_the_same_canonical_origin(
+    peer_factory, suffix
+):
     first = peer_factory()
     seed, public = generate_keypair()
-    value = json.loads(response_for(TeamRead.METADATA, label=did_from_public_key(public)))
+    value = json.loads(
+        response_for(TeamRead.METADATA, label=did_from_public_key(public))
+    )
     value["visibility"] = "private"
     first.response = json.dumps(value).encode()
     client = CachedRegistryClient(first.origin + suffix, FakeRedis())
     try:
-        assert (await client.get_team("example.com", "engineering")).visibility == "private"
+        assert (
+            await client.get_team("example.com", "engineering")
+        ).visibility == "private"
         value["visibility"] = "public"
         first.response = json.dumps(value).encode()
         assert (
-            await client.set_team_visibility("example.com", "engineering", "public", seed)
+            await client.set_team_visibility(
+                "example.com", "engineering", "public", seed
+            )
         ).visibility == "public"
-        assert (await client.get_team("example.com", "engineering")).visibility == "public"
+        assert (
+            await client.get_team("example.com", "engineering")
+        ).visibility == "public"
         assert [request[0] for request in first.requests] == ["GET", "POST", "GET"]
     finally:
         await client.aclose()
@@ -254,14 +291,17 @@ async def test_id_write_fences_other_clients_using_the_same_canonical_origin(
 
     first = peer_factory()
     first.response = b'{"registry":"before-write"}'
-    first.replies[("POST", REGISTER_PATH)] = (200, json.dumps(EXAMPLE["response"]).encode())
+    first.replies[("POST", REGISTER_PATH)] = (
+        200,
+        json.dumps(EXAMPLE["response"]).encode(),
+    )
     redis = ClockedRedis([1_000_000], [0])
     reader = CachedRegistryClient(first.origin, redis)
     writer = CachedRegistryClient(first.origin + suffix, redis)
     try:
-        assert (await reader.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)).status == {
-            "registry": "before-write"
-        }
+        assert (
+            await reader.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)
+        ).status == {"registry": "before-write"}
         first.response = b'{"registry":"after-write"}'
         await writer.register_id_certificate(
             _bundle("alice", "bob"),
@@ -269,9 +309,9 @@ async def test_id_write_fences_other_clients_using_the_same_canonical_origin(
             expected_head=None,
             invitation_id=None,
         )
-        assert (await reader.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)).status == {
-            "registry": "after-write"
-        }
+        assert (
+            await reader.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)
+        ).status == {"registry": "after-write"}
         assert len(registry_audience_dns.queries) == 2
     finally:
         await reader.aclose()

@@ -1,4 +1,5 @@
 """Evidence has one inclusive 60-second freshness boundary at acquisition."""
+
 import math
 
 import pytest

@@ -114,7 +114,8 @@ class DeliveryReport:
 
     def to_json(self) -> dict[str, Any]:
         return {
-            "scope": "observed_internal_only", "gaps": list(self.gaps),
+            "scope": "observed_internal_only",
+            "gaps": list(self.gaps),
             "sequence_conflicts": list(self.sequence_conflicts),
             "unassessed": list(self.unassessed),
         }
@@ -140,8 +141,9 @@ def verify_deliveries(genesis: Genesis, events: Sequence[StoredEvent]) -> Delive
             uncertain_origins.add((stored.link.hook, stored.link.producer_origin))
             unassessed.append({"team_seq": stored.link.team_seq, "reason": reason or "purged"})
             continue
-        event = hook_envelope.verify(stored.content.signing_bytes, stored.content.signature,
-                                     team_id=genesis.team_id)
+        event = hook_envelope.verify(
+            stored.content.signing_bytes, stored.content.signature, team_id=genesis.team_id
+        )
         if event.producer_kind == "client":
             continue
         identity = _producer_identity(event)
@@ -159,18 +161,30 @@ def verify_deliveries(genesis: Genesis, events: Sequence[StoredEvent]) -> Delive
                     break
         if not contexts:
             uncertain_identities.add(identity_key)
-            unassessed.append({"team_seq": stored.link.team_seq,
-                               "reason": "binding_evidence_unavailable"})
+            unassessed.append(
+                {"team_seq": stored.link.team_seq, "reason": "binding_evidence_unavailable"}
+            )
             continue
         if identity_key not in identity_sequences:
-            identity_sequences[identity_key] = ({"team_id": event.team_id, "catalog": event.fields["catalog"],
-                                                "hook": event.hook, "producer": identity}, {})
-        identity_sequences[identity_key][1].setdefault(event.fields["producer"]["seq"], set()).add(event.event_id)
+            identity_sequences[identity_key] = (
+                {
+                    "team_id": event.team_id,
+                    "catalog": event.fields["catalog"],
+                    "hook": event.hook,
+                    "producer": identity,
+                },
+                {},
+            )
+        identity_sequences[identity_key][1].setdefault(event.fields["producer"]["seq"], set()).add(
+            event.event_id
+        )
         for interval_key, context in contexts:
             group_key = json.dumps([identity_key, interval_key])
             if group_key not in groups:
                 groups[group_key] = (context, {})
-            groups[group_key][1].setdefault(event.fields["producer"]["seq"], set()).add(event.event_id)
+            groups[group_key][1].setdefault(event.fields["producer"]["seq"], set()).add(
+                event.event_id
+            )
 
     gaps: list[dict[str, Any]] = []
     conflicts: list[dict[str, Any]] = []
@@ -178,14 +192,21 @@ def verify_deliveries(genesis: Genesis, events: Sequence[StoredEvent]) -> Delive
         identity_key = json.loads(group_key)[0]
         identity = context["producer"]
         origin = identity["origin"]
-        uncertain = (identity_key in uncertain_identities
-                     or (context["hook"], origin) in uncertain_origins)
+        uncertain = (
+            identity_key in uncertain_identities or (context["hook"], origin) in uncertain_origins
+        )
         seqs = sorted(observed)
         if not uncertain:
             for before, after in zip(seqs, seqs[1:], strict=False):
                 if after > before + 1:
-                    gaps.append({**context, "from": before + 1, "to": after - 1,
-                                 "classification": "unexplained"})
+                    gaps.append(
+                        {
+                            **context,
+                            "from": before + 1,
+                            "to": after - 1,
+                            "classification": "unexplained",
+                        }
+                    )
     for _, (context, observed) in sorted(identity_sequences.items()):
         for seq, event_ids in sorted(observed.items()):
             if len(event_ids) > 1:
@@ -202,7 +223,9 @@ def _producer_identity(event: hook_envelope.Envelope) -> dict[str, Any]:
 
 
 def _observation(
-    genesis: Genesis, event: hook_envelope.Envelope, admission: Any,
+    genesis: Genesis,
+    event: hook_envelope.Envelope,
+    admission: Any,
 ) -> tuple[str, dict[str, Any]]:
     if not isinstance(admission, dict):
         raise ValueError("missing admission")
@@ -224,8 +247,11 @@ def _observation(
         if canonical_server_origin(admission["server_url"]) != event.fields["producer"]["origin"]:
             raise ValueError("unanchored core origin")
     context = {
-        "team_id": event.team_id, "catalog": event.fields["catalog"], "hook": event.hook,
-        "producer": _producer_identity(event), "registration_id": registration["binding_id"],
+        "team_id": event.team_id,
+        "catalog": event.fields["catalog"],
+        "hook": event.hook,
+        "producer": _producer_identity(event),
+        "registration_id": registration["binding_id"],
         "production_id": production_id,
     }
     return json.dumps(interval, sort_keys=True), context
@@ -234,18 +260,41 @@ def _observation(
 def _interval(event: hook_envelope.Envelope, binding: Any, kind: str) -> dict[str, Any]:
     if not isinstance(binding, dict):
         raise ValueError("missing binding")
-    if (binding["team_id"], binding["kind"], binding["state"], binding["catalog_id"],
-        binding["catalog_version"], binding["hook"]) != (
-        event.team_id, kind, "active", event.fields["catalog"]["id"],
-        event.fields["catalog"]["version"], event.hook,
+    if (
+        binding["team_id"],
+        binding["kind"],
+        binding["state"],
+        binding["catalog_id"],
+        binding["catalog_version"],
+        binding["hook"],
+    ) != (
+        event.team_id,
+        kind,
+        "active",
+        event.fields["catalog"]["id"],
+        event.fields["catalog"]["version"],
+        event.hook,
     ):
         raise ValueError("another binding scope")
     active = datetime.strptime(binding["active_from"], "%Y-%m-%dT%H:%M:%S.%fZ")
     occurred = datetime.strptime(event.fields["occurred_at"], "%Y-%m-%dT%H:%M:%S.%fZ")
-    if occurred < active or binding.get("revoked_at") is not None or binding.get("ended_by") is not None:
+    if (
+        occurred < active
+        or binding.get("revoked_at") is not None
+        or binding.get("ended_by") is not None
+    ):
         raise ValueError("outside active interval")
-    names = ("binding_id", "app_id", "origin", "installation_id", "generation", "digest",
-             "method", "path", "active_from")
+    names = (
+        "binding_id",
+        "app_id",
+        "origin",
+        "installation_id",
+        "generation",
+        "digest",
+        "method",
+        "path",
+        "active_from",
+    )
     return {name: binding[name] for name in names}
 
 

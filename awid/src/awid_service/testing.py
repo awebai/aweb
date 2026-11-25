@@ -57,7 +57,9 @@ ResponseFault = Callable[[httpx.Request, httpx.Response], httpx.Response | None]
 
 
 async def fixture_domain_authority(
-    overrides: Mapping[Callable[..., Any], Callable[[], DomainVerifier | Awaitable[DomainVerifier]]],
+    overrides: Mapping[
+        Callable[..., Any], Callable[[], DomainVerifier | Awaitable[DomainVerifier]]
+    ],
     domain: str,
 ) -> DomainAuthority:
     """Resolve the fixture's DNS override outside FastAPI dependency injection."""
@@ -160,7 +162,9 @@ class Registry:
         default_factory=dict, repr=False
     )
 
-    _registry_client: RegistryClient | None = field(default=None, init=False, repr=False)
+    _registry_client: RegistryClient | None = field(
+        default=None, init=False, repr=False
+    )
 
     async def ensure_namespace(
         self,
@@ -188,6 +192,7 @@ class Registry:
             key, _ = generate_keypair()
         self._namespace_keys[domain] = key
         if get_domain_verifier not in self.app.dependency_overrides:
+
             async def get_namespace_verifier() -> DomainVerifier:
                 return self.namespace_authority
 
@@ -225,7 +230,9 @@ class Registry:
         name, domain = team_id.split(":", 1)
         controller = await self.ensure_namespace(
             domain=domain,
-            controller=bytes(namespace_controller) if namespace_controller is not None else None,
+            controller=bytes(namespace_controller)
+            if namespace_controller is not None
+            else None,
         )
         await self._client().register_team(
             domain=domain,
@@ -255,7 +262,9 @@ class Registry:
         namespace controller (registered for the domain if it has none), so
         AWID keeps the act a pinned server checks against DNS (dns_naming)."""
         name, domain = team_id.split(":", 1)
-        namespace_key = await self.ensure_namespace(domain=domain, controller=bytes(controller))
+        namespace_key = await self.ensure_namespace(
+            domain=domain, controller=bytes(controller)
+        )
         await self._client().rotate_team_key(
             domain,
             name,
@@ -263,7 +272,9 @@ class Registry:
             namespace_controller_signing_key=namespace_key,
         )
 
-    async def add_certificate(self, cert: dict[str, Any], *, team_key: SigningKey) -> None:
+    async def add_certificate(
+        self, cert: dict[str, Any], *, team_key: SigningKey
+    ) -> None:
         """Register the signed membership through AWID, per docs/identity.md:97-100."""
         name, domain = cert["team_id"].split(":", 1)
         await self._client().register_team_certificate(
@@ -330,7 +341,9 @@ class Registry:
                 else AttestationOperation.PERSON
             )
             claims = {"team_name": name, "certificate_id": record["certificate_id"]}
-            resource = "custody" if operation is AttestationOperation.CUSTODY else "person"
+            resource = (
+                "custody" if operation is AttestationOperation.CUSTODY else "person"
+            )
             path = f"{prefix}/certificates/{record['certificate_id']}/{resource}"
         else:
             raise ValueError(
@@ -352,7 +365,9 @@ class Registry:
         headers = {
             "Content-Type": "application/json",
             "X-AWEB-Timestamp": timestamp,
-            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii"),
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload)
+            .rstrip(b"=")
+            .decode("ascii"),
             "Authorization": f"DIDKey {_did_key(team_key)} {sign_message(bytes(team_key), payload)}",
         }
         async with httpx.AsyncClient(
@@ -434,7 +449,9 @@ class Registry:
         async with httpx.AsyncClient(
             transport=self.transport, base_url=self.registry_url
         ) as client:
-            response = await client.put(f"/v1/namespaces/{domain}/teams/{name}/server", json=body)
+            response = await client.put(
+                f"/v1/namespaces/{domain}/teams/{name}/server", json=body
+            )
         response.raise_for_status()
 
 
@@ -482,7 +499,9 @@ async def running_registry(
         # Its public origin, which covering controller signatures name. After
         # mount_registry, which reads AWID_PUBLIC_ORIGINS from the environment.
         app.state.awid_public_origins = (REGISTRY_URL,)
-        registry = Registry(app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app))
+        registry = Registry(
+            app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app)
+        )
         yield registry
     finally:
         try:

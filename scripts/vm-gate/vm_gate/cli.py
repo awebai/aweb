@@ -78,7 +78,9 @@ def release_job(args, *, factory=None, out=None):
         if not args.config:
             raise Refused("external --config or VM_GATE_CONFIG is required")
         if (args.aweb_sha is None) != (args.files is None):
-            raise Refused("--aweb-sha and --files go together: the files are that commit's build")
+            raise Refused(
+                "--aweb-sha and --files go together: the files are that commit's build"
+            )
         launcher = Path(__file__).resolve().parents[3]
         config = load(args.config, launcher)
         repo = Path(config.get("repo") or launcher).resolve()
@@ -87,7 +89,9 @@ def release_job(args, *, factory=None, out=None):
         machine = config[args.machine]
         timeout = machine.get("release_timeout_seconds")
         if type(timeout) is not int or timeout <= 0:
-            raise Refused(f"operator config needs {args.machine}.release_timeout_seconds")
+            raise Refused(
+                f"operator config needs {args.machine}.release_timeout_seconds"
+            )
         files = release.built_files(args.files)
         key = release.hermes_key(config.get("hermes_key_file"))
         cloud_repo = Path(args.cloud_repo).resolve()
@@ -97,15 +101,22 @@ def release_job(args, *, factory=None, out=None):
         directory.mkdir(parents=True, mode=0o700)
         target = SimpleNamespace(
             target=args.machine,
-            type=machine.get("server_type", "ccx43") if args.machine == "hetzner" else None,
-            stages=None, timeout=timeout, intent="branch",
+            type=machine.get("server_type", "ccx43")
+            if args.machine == "hetzner"
+            else None,
+            stages=None,
+            timeout=timeout,
+            intent="branch",
         )
         select_target(target, config)
         select_manifest(config, target.target)
         source_sha = args.aweb_sha or args.aweb_lock_source_sha
         source = prepare(
-            repo, source_sha, directory,
-            observed=config["manifest"]["observed"], intent="branch",
+            repo,
+            source_sha,
+            directory,
+            observed=config["manifest"]["observed"],
+            intent="branch",
             lock_root=config["state_root"],
         )
         config["repo"] = str(repo)
@@ -114,10 +125,14 @@ def release_job(args, *, factory=None, out=None):
         archive = directory / "cloud-image.tar"
         image = release.image_archive(args.cloud_image, platform, run_id, archive)
         command = release.guest_script(
-            cloud_sha=args.cloud_sha, bundle_sha256=bundle_sha256,
-            archive_sha256=image["archive_sha256"], image=args.cloud_image,
-            member=image["member"], lock_source_sha=args.aweb_lock_source_sha,
-            aweb=args.aweb_sha, files=files,
+            cloud_sha=args.cloud_sha,
+            bundle_sha256=bundle_sha256,
+            archive_sha256=image["archive_sha256"],
+            image=args.cloud_image,
+            member=image["member"],
+            lock_source_sha=args.aweb_lock_source_sha,
+            aweb=args.aweb_sha,
+            files=files,
         )
         executor = partial(
             release.ReleaseExecutor,
@@ -129,19 +144,30 @@ def release_job(args, *, factory=None, out=None):
             },
         )
         runtime = (factory or default_factory)(
-            config=config, directory=directory, source=source, command=command,
-            args=target, run_id=run_id, executor_factory=executor,
+            config=config,
+            directory=directory,
+            source=source,
+            command=command,
+            args=target,
+            run_id=run_id,
+            executor_factory=executor,
         )
         with handling():
             result = runtime.run()
         archive.unlink(missing_ok=True)
         record = release.receipt(
-            machine=args.machine, platform=platform, run_id=run_id, result=result,
-            cloud_sha=args.cloud_sha, image=image,
+            machine=args.machine,
+            platform=platform,
+            run_id=run_id,
+            result=result,
+            cloud_sha=args.cloud_sha,
+            image=image,
             main={k: record[k] for k in ("real_main", "ac_parent_of_c")},
-            files=files, aweb=args.aweb_sha,
+            files=files,
+            aweb=args.aweb_sha,
             launcher_sha=git(launcher, "rev-parse", "HEAD").stdout.strip(),
-            timeout=timeout, directory=directory,
+            timeout=timeout,
+            directory=directory,
         )
     except (Refused, Infrastructure) as exc:
         record["vm_gate"].update(

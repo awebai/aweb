@@ -128,5 +128,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 )
                 self.assertEqual(record["status"], "unavailable")
 
+
 if __name__ == "__main__":
     unittest.main()

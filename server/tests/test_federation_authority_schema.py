@@ -10,7 +10,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.asyncio
-async def test_authority_schema_keys_checkpoint_by_did_and_cohort_by_address(aweb_cloud_db) -> None:
+async def test_authority_schema_keys_checkpoint_by_did_and_cohort_by_address(
+    aweb_cloud_db,
+) -> None:
     db = aweb_cloud_db.aweb_db
     checkpoint_pk = await db.fetch_all(
         """
@@ -48,7 +50,9 @@ async def test_authority_schema_keys_checkpoint_by_did_and_cohort_by_address(awe
 
 
 @pytest.mark.asyncio
-async def test_cohort_schema_contains_every_immutable_vector_field(aweb_cloud_db) -> None:
+async def test_cohort_schema_contains_every_immutable_vector_field(
+    aweb_cloud_db,
+) -> None:
     vector = json.loads(
         (_ROOT / "docs" / "vectors" / "federation-authority-state-v1.json").read_text()
     )
@@ -122,7 +126,9 @@ def test_mandatory_mutation_ownership_is_exhaustive() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fence_counter_is_restrict_referenced_and_not_expiry_state(aweb_cloud_db) -> None:
+async def test_fence_counter_is_restrict_referenced_and_not_expiry_state(
+    aweb_cloud_db,
+) -> None:
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT confdeltype

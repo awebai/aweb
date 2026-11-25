@@ -14,7 +14,9 @@ def _valid_handle_namespace(namespace: str) -> bool:
     )
 
 
-def normalize_hosted_handle_reference(value: str, *, require_agent: bool = False) -> str:
+def normalize_hosted_handle_reference(
+    value: str, *, require_agent: bool = False
+) -> str:
     """Normalize consumer @handle references to canonical aweb.ai addresses.
 
     ``@jane/c3po`` is the public shorthand for ``jane.aweb.ai/c3po``.

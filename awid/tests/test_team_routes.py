@@ -26,7 +26,12 @@ async def _register_namespace(client, signing_key, controller_did, domain):
 
 async def _register_identity(client, signing_key, did_key):
     did_aw = stable_id_from_did_key(did_key)
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
     proof = sign_message(
         signing_key,
@@ -61,9 +66,13 @@ async def _register_identity(client, signing_key, did_key):
     return did_aw
 
 
-async def _register_member_address(client, ns_key, ns_did, domain, name, member_key, member_did_key):
+async def _register_member_address(
+    client, ns_key, ns_did, domain, name, member_key, member_did_key
+):
     did_aw = await _register_identity(client, member_key, member_did_key)
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name=name)
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name=name
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
         json={
@@ -79,9 +88,18 @@ async def _register_member_address(client, ns_key, ns_did, domain, name, member_
 
 
 def _bad_signature_headers(signing_key, header_did, *, domain, operation, **extra):
-    headers = _sign(signing_key, header_did, domain=domain, operation=operation, **extra)
-    payload = {"domain": domain, "operation": operation, **extra, "timestamp": headers["X-AWEB-Timestamp"]}
-    headers["Authorization"] = f"DIDKey {header_did} {sign_message(signing_key, canonical_json_bytes(payload))}"
+    headers = _sign(
+        signing_key, header_did, domain=domain, operation=operation, **extra
+    )
+    payload = {
+        "domain": domain,
+        "operation": operation,
+        **extra,
+        "timestamp": headers["X-AWEB-Timestamp"],
+    }
+    headers["Authorization"] = (
+        f"DIDKey {header_did} {sign_message(signing_key, canonical_json_bytes(payload))}"
+    )
     return headers
 
 
@@ -98,10 +116,20 @@ async def test_create_team(client, controller_identity):
     _, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
 
-    headers = _sign(signing_key, controller_did, domain="acme.com", operation="create_team", name="backend")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="acme.com",
+        operation="create_team",
+        name="backend",
+    )
     resp = await client.post(
         "/v1/namespaces/acme.com/teams",
-        json={"name": "backend", "display_name": "Backend Team", "team_did_key": team_did_key},
+        json={
+            "name": "backend",
+            "display_name": "Backend Team",
+            "team_did_key": team_did_key,
+        },
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
@@ -123,14 +151,26 @@ async def test_create_team_duplicate_returns_409(client, controller_identity):
     _, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
 
-    headers = _sign(signing_key, controller_did, domain="dup.com", operation="create_team", name="ops")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="dup.com",
+        operation="create_team",
+        name="ops",
+    )
     await client.post(
         "/v1/namespaces/dup.com/teams",
         json={"name": "ops", "team_did_key": team_did_key},
         headers=headers,
     )
 
-    headers = _sign(signing_key, controller_did, domain="dup.com", operation="create_team", name="ops")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="dup.com",
+        operation="create_team",
+        name="ops",
+    )
     resp = await client.post(
         "/v1/namespaces/dup.com/teams",
         json={"name": "ops", "team_did_key": team_did_key},
@@ -150,7 +190,9 @@ async def test_create_team_wrong_key_returns_403(client, controller_identity):
     _, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
 
-    headers = _sign(wrong_key, wrong_did, domain="auth.com", operation="create_team", name="x")
+    headers = _sign(
+        wrong_key, wrong_did, domain="auth.com", operation="create_team", name="x"
+    )
     resp = await client.post(
         "/v1/namespaces/auth.com/teams",
         json={"name": "x", "team_did_key": team_did_key},
@@ -160,13 +202,21 @@ async def test_create_team_wrong_key_returns_403(client, controller_identity):
 
 
 @pytest.mark.asyncio
-async def test_create_team_nonexistent_namespace_returns_404(client, controller_identity):
+async def test_create_team_nonexistent_namespace_returns_404(
+    client, controller_identity
+):
     signing_key, controller_did = controller_identity
 
     _, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
 
-    headers = _sign(signing_key, controller_did, domain="noexist.com", operation="create_team", name="x")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="noexist.com",
+        operation="create_team",
+        name="x",
+    )
     resp = await client.post(
         "/v1/namespaces/noexist.com/teams",
         json={"name": "x", "team_did_key": team_did_key},
@@ -197,11 +247,21 @@ async def test_list_teams(client, controller_identity):
 
     for name in ["alpha", "beta"]:
         _, pub = generate_keypair()
-        headers = _sign(signing_key, controller_did, domain="list.com", operation="create_team", name=name)
+        headers = _sign(
+            signing_key,
+            controller_did,
+            domain="list.com",
+            operation="create_team",
+            name=name,
+        )
         await client.post(
             "/v1/namespaces/list.com/teams",
             # Public: anonymous enumeration only lists public teams.
-            json={"name": name, "team_did_key": did_from_public_key(pub), "visibility": "public"},
+            json={
+                "name": name,
+                "team_did_key": did_from_public_key(pub),
+                "visibility": "public",
+            },
             headers=headers,
         )
 
@@ -235,7 +295,13 @@ async def test_get_team(client, controller_identity):
 
     _, pub = generate_keypair()
     team_did_key = did_from_public_key(pub)
-    headers = _sign(signing_key, controller_did, domain="get.com", operation="create_team", name="infra")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="get.com",
+        operation="create_team",
+        name="infra",
+    )
     await client.post(
         "/v1/namespaces/get.com/teams",
         # Public: this test reads the team anonymously; the private-team read
@@ -260,7 +326,13 @@ async def test_get_team_member_by_alias(client, controller_identity):
 
     team_key, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
-    headers = _sign(signing_key, controller_did, domain="members.com", operation="create_team", name="backend")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="members.com",
+        operation="create_team",
+        name="backend",
+    )
     resp = await client.post(
         "/v1/namespaces/members.com/teams",
         # Public: the member resolve below is anonymous.
@@ -272,7 +344,13 @@ async def test_get_team_member_by_alias(client, controller_identity):
     member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
     member_did_aw = await _register_member_address(
-        client, signing_key, controller_did, "members.com", "alice", member_key, member_did_key,
+        client,
+        signing_key,
+        controller_did,
+        "members.com",
+        "alice",
+        member_key,
+        member_did_key,
     )
     headers = _sign(
         team_key,
@@ -292,9 +370,13 @@ async def test_get_team_member_by_alias(client, controller_identity):
             "alias": "alice",
             "identity_scope": "global",
             "certificate": _signed_certificate_blob(
-                team_key, certificate_id="cert-1", team_id="backend:members.com",
-                team_did_key=team_did_key, member_did_key=member_did_key,
-                member_did_aw=member_did_aw, member_address="members.com/alice",
+                team_key,
+                certificate_id="cert-1",
+                team_id="backend:members.com",
+                team_did_key=team_did_key,
+                member_did_key=member_did_key,
+                member_did_aw=member_did_aw,
+                member_address="members.com/alice",
                 alias="alice",
             ),
         },
@@ -315,13 +397,21 @@ async def test_get_team_member_by_alias(client, controller_identity):
 
 
 @pytest.mark.asyncio
-async def test_register_certificate_rejects_duplicate_active_alias(client, controller_identity):
+async def test_register_certificate_rejects_duplicate_active_alias(
+    client, controller_identity
+):
     signing_key, controller_did = controller_identity
     await _register_namespace(client, signing_key, controller_did, "dupalias.com")
 
     team_key, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
-    headers = _sign(signing_key, controller_did, domain="dupalias.com", operation="create_team", name="backend")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="dupalias.com",
+        operation="create_team",
+        name="backend",
+    )
     resp = await client.post(
         "/v1/namespaces/dupalias.com/teams",
         json={"name": "backend", "team_did_key": team_did_key},
@@ -346,8 +436,11 @@ async def test_register_certificate_rejects_duplicate_active_alias(client, contr
             "alias": "alice",
             "identity_scope": "global",
             "certificate": _signed_certificate_blob(
-                team_key, certificate_id="cert-1", team_id="backend:dupalias.com",
-                team_did_key=team_did_key, member_did_key=did_from_public_key(member1_pub),
+                team_key,
+                certificate_id="cert-1",
+                team_id="backend:dupalias.com",
+                team_did_key=team_did_key,
+                member_did_key=did_from_public_key(member1_pub),
                 alias="alice",
             ),
         },
@@ -372,8 +465,11 @@ async def test_register_certificate_rejects_duplicate_active_alias(client, contr
             "alias": "alice",
             "identity_scope": "global",
             "certificate": _signed_certificate_blob(
-                team_key, certificate_id="cert-2", team_id="backend:dupalias.com",
-                team_did_key=team_did_key, member_did_key=did_from_public_key(member2_pub),
+                team_key,
+                certificate_id="cert-2",
+                team_id="backend:dupalias.com",
+                team_did_key=team_did_key,
+                member_did_key=did_from_public_key(member2_pub),
                 alias="alice",
             ),
         },
@@ -392,7 +488,13 @@ async def test_create_team_accepts_public_visibility(client, controller_identity
 
     _, pub = generate_keypair()
     team_did_key = did_from_public_key(pub)
-    headers = _sign(signing_key, controller_did, domain="public.com", operation="create_team", name="showcase")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="public.com",
+        operation="create_team",
+        name="showcase",
+    )
     resp = await client.post(
         "/v1/namespaces/public.com/teams",
         json={"name": "showcase", "team_did_key": team_did_key, "visibility": "public"},
@@ -422,7 +524,13 @@ async def test_get_team_read_only_availability_contract(client, controller_ident
     assert resp.status_code == 404
 
     _, pub = generate_keypair()
-    headers = _sign(signing_key, controller_did, domain="avail.com", operation="create_team", name="default")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="avail.com",
+        operation="create_team",
+        name="default",
+    )
     resp = await client.post(
         "/v1/namespaces/avail.com/teams",
         json={"name": "default", "team_did_key": did_from_public_key(pub)},
@@ -438,8 +546,16 @@ async def test_get_team_read_only_availability_contract(client, controller_ident
     assert resp.status_code == 403, resp.text
     assert resp.json()["detail"]["code"] == "team_private"
 
-    headers = _sign(signing_key, controller_did, domain="avail.com", operation="delete_team", team_name="default")
-    resp = await client.delete("/v1/namespaces/avail.com/teams/default", headers=headers)
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="avail.com",
+        operation="delete_team",
+        team_name="default",
+    )
+    resp = await client.delete(
+        "/v1/namespaces/avail.com/teams/default", headers=headers
+    )
     assert resp.status_code == 200, resp.text
 
     # Deleted teams no longer block the availability check, matching create semantics.
@@ -448,7 +564,9 @@ async def test_get_team_read_only_availability_contract(client, controller_ident
 
 
 @pytest.mark.asyncio
-async def test_get_team_availability_contract_rejects_invalid_slug(client, controller_identity):
+async def test_get_team_availability_contract_rejects_invalid_slug(
+    client, controller_identity
+):
     signing_key, controller_did = controller_identity
     await _register_namespace(client, signing_key, controller_did, "badslug.com")
 
@@ -468,14 +586,26 @@ async def test_delete_team(client, controller_identity):
     await _register_namespace(client, signing_key, controller_did, "del.com")
 
     _, pub = generate_keypair()
-    headers = _sign(signing_key, controller_did, domain="del.com", operation="create_team", name="old")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="del.com",
+        operation="create_team",
+        name="old",
+    )
     await client.post(
         "/v1/namespaces/del.com/teams",
         json={"name": "old", "team_did_key": did_from_public_key(pub)},
         headers=headers,
     )
 
-    headers = _sign(signing_key, controller_did, domain="del.com", operation="delete_team", team_name="old")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="del.com",
+        operation="delete_team",
+        team_name="old",
+    )
     resp = await client.delete("/v1/namespaces/del.com/teams/old", headers=headers)
     assert resp.status_code == 200
 
@@ -490,7 +620,13 @@ async def test_delete_team_wrong_key_returns_403(client, controller_identity):
     await _register_namespace(client, signing_key, controller_did, "delfail.com")
 
     _, pub = generate_keypair()
-    headers = _sign(signing_key, controller_did, domain="delfail.com", operation="create_team", name="x")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="delfail.com",
+        operation="create_team",
+        name="x",
+    )
     await client.post(
         "/v1/namespaces/delfail.com/teams",
         json={"name": "x", "team_did_key": did_from_public_key(pub)},
@@ -499,7 +635,13 @@ async def test_delete_team_wrong_key_returns_403(client, controller_identity):
 
     wrong_key, wrong_pub = generate_keypair()
     wrong_did = did_from_public_key(wrong_pub)
-    headers = _sign(wrong_key, wrong_did, domain="delfail.com", operation="delete_team", team_name="x")
+    headers = _sign(
+        wrong_key,
+        wrong_did,
+        domain="delfail.com",
+        operation="delete_team",
+        team_name="x",
+    )
     resp = await client.delete("/v1/namespaces/delfail.com/teams/x", headers=headers)
     assert resp.status_code == 403
 
@@ -518,19 +660,33 @@ async def test_delete_team_not_found(client, controller_identity):
     signing_key, controller_did = controller_identity
     await _register_namespace(client, signing_key, controller_did, "delnf.com")
 
-    headers = _sign(signing_key, controller_did, domain="delnf.com", operation="delete_team", team_name="nope")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="delnf.com",
+        operation="delete_team",
+        team_name="nope",
+    )
     resp = await client.delete("/v1/namespaces/delnf.com/teams/nope", headers=headers)
     assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_delete_team_with_active_certificates_returns_409(client, controller_identity):
+async def test_delete_team_with_active_certificates_returns_409(
+    client, controller_identity
+):
     signing_key, controller_did = controller_identity
     await _register_namespace(client, signing_key, controller_did, "delactive.com")
 
     team_key, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
-    headers = _sign(signing_key, controller_did, domain="delactive.com", operation="create_team", name="ops")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="delactive.com",
+        operation="create_team",
+        name="ops",
+    )
     resp = await client.post(
         "/v1/namespaces/delactive.com/teams",
         json={"name": "ops", "team_did_key": team_did_key},
@@ -540,9 +696,12 @@ async def test_delete_team_with_active_certificates_returns_409(client, controll
 
     _, member_pub = generate_keypair()
     headers = _sign(
-        team_key, team_did_key,
-        domain="delactive.com", operation="register_certificate",
-        team_name="ops", certificate_id="cert-active-1",
+        team_key,
+        team_did_key,
+        domain="delactive.com",
+        operation="register_certificate",
+        team_name="ops",
+        certificate_id="cert-active-1",
     )
     resp = await client.post(
         "/v1/namespaces/delactive.com/teams/ops/certificates",
@@ -551,8 +710,11 @@ async def test_delete_team_with_active_certificates_returns_409(client, controll
             "member_did_key": did_from_public_key(member_pub),
             "alias": "bot",
             "certificate": _signed_certificate_blob(
-                team_key, certificate_id="cert-active-1", team_id="ops:delactive.com",
-                team_did_key=team_did_key, member_did_key=did_from_public_key(member_pub),
+                team_key,
+                certificate_id="cert-active-1",
+                team_id="ops:delactive.com",
+                team_did_key=team_did_key,
+                member_did_key=did_from_public_key(member_pub),
                 alias="bot",
             ),
         },
@@ -560,8 +722,16 @@ async def test_delete_team_with_active_certificates_returns_409(client, controll
     )
     assert resp.status_code == 200, resp.text
 
-    headers = _sign(signing_key, controller_did, domain="delactive.com", operation="delete_team", team_name="ops")
-    resp = await client.delete("/v1/namespaces/delactive.com/teams/ops", headers=headers)
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="delactive.com",
+        operation="delete_team",
+        team_name="ops",
+    )
+    resp = await client.delete(
+        "/v1/namespaces/delactive.com/teams/ops", headers=headers
+    )
     assert resp.status_code == 409
 
 
@@ -572,7 +742,13 @@ async def test_delete_team_bad_signature_returns_401(client, controller_identity
     await _register_namespace(client, signing_key, controller_did, "delbadsig.com")
 
     _, pub = generate_keypair()
-    headers = _sign(signing_key, controller_did, domain="delbadsig.com", operation="create_team", name="ops")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="delbadsig.com",
+        operation="create_team",
+        name="ops",
+    )
     resp = await client.post(
         "/v1/namespaces/delbadsig.com/teams",
         json={"name": "ops", "team_did_key": did_from_public_key(pub)},
@@ -581,9 +757,15 @@ async def test_delete_team_bad_signature_returns_401(client, controller_identity
     assert resp.status_code == 200, resp.text
 
     headers = _bad_signature_headers(
-        wrong_key, controller_did, domain="delbadsig.com", operation="delete_team", team_name="ops",
+        wrong_key,
+        controller_did,
+        domain="delbadsig.com",
+        operation="delete_team",
+        team_name="ops",
     )
-    resp = await client.delete("/v1/namespaces/delbadsig.com/teams/ops", headers=headers)
+    resp = await client.delete(
+        "/v1/namespaces/delbadsig.com/teams/ops", headers=headers
+    )
     assert resp.status_code == 401
 
 
@@ -593,7 +775,13 @@ async def test_delete_team_wrong_operation_returns_401(client, controller_identi
     await _register_namespace(client, signing_key, controller_did, "delwrongop.com")
 
     _, pub = generate_keypair()
-    headers = _sign(signing_key, controller_did, domain="delwrongop.com", operation="create_team", name="ops")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="delwrongop.com",
+        operation="create_team",
+        name="ops",
+    )
     resp = await client.post(
         "/v1/namespaces/delwrongop.com/teams",
         json={"name": "ops", "team_did_key": did_from_public_key(pub)},
@@ -601,8 +789,16 @@ async def test_delete_team_wrong_operation_returns_401(client, controller_identi
     )
     assert resp.status_code == 200, resp.text
 
-    headers = _sign(signing_key, controller_did, domain="delwrongop.com", operation="delete", team_name="ops")
-    resp = await client.delete("/v1/namespaces/delwrongop.com/teams/ops", headers=headers)
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="delwrongop.com",
+        operation="delete",
+        team_name="ops",
+    )
+    resp = await client.delete(
+        "/v1/namespaces/delwrongop.com/teams/ops", headers=headers
+    )
     assert resp.status_code == 401
 
 
@@ -618,7 +814,13 @@ async def test_rotate_team_key(client, controller_identity):
 
     _, pub = generate_keypair()
     old_did_key = did_from_public_key(pub)
-    headers = _sign(signing_key, controller_did, domain="rot.com", operation="create_team", name="svc")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="rot.com",
+        operation="create_team",
+        name="svc",
+    )
     await client.post(
         "/v1/namespaces/rot.com/teams",
         # Public: the post-rotate confirmation read below is anonymous.
@@ -629,9 +831,12 @@ async def test_rotate_team_key(client, controller_identity):
     _, new_pub = generate_keypair()
     new_did_key = did_from_public_key(new_pub)
     headers = _sign(
-        signing_key, controller_did,
-        domain="rot.com", operation="rotate_team_key",
-        name="svc", new_team_did_key=new_did_key,
+        signing_key,
+        controller_did,
+        domain="rot.com",
+        operation="rotate_team_key",
+        name="svc",
+        new_team_did_key=new_did_key,
     )
     resp = await client.post(
         "/v1/namespaces/rot.com/teams/svc/rotate",
@@ -649,12 +854,20 @@ async def test_rotate_team_key(client, controller_identity):
 
 
 @pytest.mark.asyncio
-async def test_rotate_team_key_wrong_controller_returns_403(client, controller_identity):
+async def test_rotate_team_key_wrong_controller_returns_403(
+    client, controller_identity
+):
     signing_key, controller_did = controller_identity
     await _register_namespace(client, signing_key, controller_did, "rotfail.com")
 
     _, pub = generate_keypair()
-    headers = _sign(signing_key, controller_did, domain="rotfail.com", operation="create_team", name="x")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="rotfail.com",
+        operation="create_team",
+        name="x",
+    )
     await client.post(
         "/v1/namespaces/rotfail.com/teams",
         json={"name": "x", "team_did_key": did_from_public_key(pub)},
@@ -665,7 +878,14 @@ async def test_rotate_team_key_wrong_controller_returns_403(client, controller_i
     wrong_did = did_from_public_key(wrong_pub)
     _, new_pub = generate_keypair()
     new_did_key = did_from_public_key(new_pub)
-    headers = _sign(wrong_key, wrong_did, domain="rotfail.com", operation="rotate_team_key", name="x", new_team_did_key=new_did_key)
+    headers = _sign(
+        wrong_key,
+        wrong_did,
+        domain="rotfail.com",
+        operation="rotate_team_key",
+        name="x",
+        new_team_did_key=new_did_key,
+    )
     resp = await client.post(
         "/v1/namespaces/rotfail.com/teams/x/rotate",
         json={"new_team_did_key": new_did_key},
@@ -695,9 +915,12 @@ async def test_rotate_team_key_not_found(client, controller_identity):
     _, new_pub = generate_keypair()
     new_did_key = did_from_public_key(new_pub)
     headers = _sign(
-        signing_key, controller_did,
-        domain="rotnf.com", operation="rotate_team_key",
-        name="nope", new_team_did_key=new_did_key,
+        signing_key,
+        controller_did,
+        domain="rotnf.com",
+        operation="rotate_team_key",
+        name="nope",
+        new_team_did_key=new_did_key,
     )
     resp = await client.post(
         "/v1/namespaces/rotnf.com/teams/nope/rotate",
@@ -714,7 +937,13 @@ async def test_rotate_same_key_reports_no_invalidation(client, controller_identi
 
     _, pub = generate_keypair()
     team_did_key = did_from_public_key(pub)
-    headers = _sign(signing_key, controller_did, domain="same.com", operation="create_team", name="x")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="same.com",
+        operation="create_team",
+        name="x",
+    )
     await client.post(
         "/v1/namespaces/same.com/teams",
         json={"name": "x", "team_did_key": team_did_key},
@@ -722,9 +951,12 @@ async def test_rotate_same_key_reports_no_invalidation(client, controller_identi
     )
 
     headers = _sign(
-        signing_key, controller_did,
-        domain="same.com", operation="rotate_team_key",
-        name="x", new_team_did_key=team_did_key,
+        signing_key,
+        controller_did,
+        domain="same.com",
+        operation="rotate_team_key",
+        name="x",
+        new_team_did_key=team_did_key,
     )
     resp = await client.post(
         "/v1/namespaces/same.com/teams/x/rotate",
@@ -747,7 +979,13 @@ async def test_set_team_visibility_updates_get_response(client, controller_ident
 
     team_key, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
-    headers = _sign(signing_key, controller_did, domain="vis.com", operation="create_team", name="backend")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="vis.com",
+        operation="create_team",
+        name="backend",
+    )
     resp = await client.post(
         "/v1/namespaces/vis.com/teams",
         json={"name": "backend", "team_did_key": team_did_key},
@@ -757,9 +995,12 @@ async def test_set_team_visibility_updates_get_response(client, controller_ident
     assert resp.json()["visibility"] == "private"
 
     headers = _sign(
-        team_key, team_did_key,
-        domain="vis.com", operation="set_team_visibility",
-        team_name="backend", visibility="public",
+        team_key,
+        team_did_key,
+        domain="vis.com",
+        operation="set_team_visibility",
+        team_name="backend",
+        visibility="public",
     )
     resp = await client.post(
         "/v1/namespaces/vis.com/teams/backend/visibility",
@@ -781,7 +1022,13 @@ async def test_set_team_visibility_is_idempotent(client, controller_identity):
 
     team_key, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
-    headers = _sign(signing_key, controller_did, domain="idempotent.com", operation="create_team", name="backend")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="idempotent.com",
+        operation="create_team",
+        name="backend",
+    )
     resp = await client.post(
         "/v1/namespaces/idempotent.com/teams",
         json={"name": "backend", "team_did_key": team_did_key, "visibility": "public"},
@@ -790,9 +1037,12 @@ async def test_set_team_visibility_is_idempotent(client, controller_identity):
     assert resp.status_code == 200, resp.text
 
     headers = _sign(
-        team_key, team_did_key,
-        domain="idempotent.com", operation="set_team_visibility",
-        team_name="backend", visibility="public",
+        team_key,
+        team_did_key,
+        domain="idempotent.com",
+        operation="set_team_visibility",
+        team_name="backend",
+        visibility="public",
     )
     resp = await client.post(
         "/v1/namespaces/idempotent.com/teams/backend/visibility",
@@ -804,13 +1054,21 @@ async def test_set_team_visibility_is_idempotent(client, controller_identity):
 
 
 @pytest.mark.asyncio
-async def test_set_team_visibility_wrong_signer_returns_403(client, controller_identity):
+async def test_set_team_visibility_wrong_signer_returns_403(
+    client, controller_identity
+):
     signing_key, controller_did = controller_identity
     await _register_namespace(client, signing_key, controller_did, "visfail.com")
 
     _, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
-    headers = _sign(signing_key, controller_did, domain="visfail.com", operation="create_team", name="backend")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain="visfail.com",
+        operation="create_team",
+        name="backend",
+    )
     resp = await client.post(
         "/v1/namespaces/visfail.com/teams",
         json={"name": "backend", "team_did_key": team_did_key},
@@ -821,9 +1079,12 @@ async def test_set_team_visibility_wrong_signer_returns_403(client, controller_i
     wrong_key, wrong_pub = generate_keypair()
     wrong_did = did_from_public_key(wrong_pub)
     headers = _sign(
-        wrong_key, wrong_did,
-        domain="visfail.com", operation="set_team_visibility",
-        team_name="backend", visibility="public",
+        wrong_key,
+        wrong_did,
+        domain="visfail.com",
+        operation="set_team_visibility",
+        team_name="backend",
+        visibility="public",
     )
     resp = await client.post(
         "/v1/namespaces/visfail.com/teams/backend/visibility",

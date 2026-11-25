@@ -12,7 +12,9 @@ app = typer.Typer(help="awid.ai registry service CLI")
 def serve(
     host: str | None = typer.Option(None, help="Host interface to bind"),
     port: int | None = typer.Option(None, help="Port to bind"),
-    reload: bool | None = typer.Option(None, help="Enable auto-reload (development only)"),
+    reload: bool | None = typer.Option(
+        None, help="Enable auto-reload (development only)"
+    ),
     log_level: str | None = typer.Option(None, help="Log level for the server"),
 ) -> None:
     settings = get_settings()

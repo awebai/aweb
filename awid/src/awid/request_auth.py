@@ -32,7 +32,9 @@ class TeamAuthEnvelope:
     payload: dict[str, Any]
 
 
-def compact_team_auth_payload(*, team_id: str, timestamp: str, body_sha256: str) -> bytes:
+def compact_team_auth_payload(
+    *, team_id: str, timestamp: str, body_sha256: str
+) -> bytes:
     return canonical_json_bytes(
         {
             "body_sha256": body_sha256,
@@ -64,11 +66,17 @@ def raw_request_target(request: Request) -> str:
     elif raw_path_value:
         path = str(raw_path_value)
     else:
-        path = quote(str(request.scope.get("path") or request.url.path or "/"), safe="/%")
+        path = quote(
+            str(request.scope.get("path") or request.url.path or "/"), safe="/%"
+        )
 
     root_path = str(request.scope.get("root_path") or "")
     encoded_root = quote(root_path.rstrip("/"), safe="/%")
-    if encoded_root and path != encoded_root and not path.startswith(encoded_root + "/"):
+    if (
+        encoded_root
+        and path != encoded_root
+        and not path.startswith(encoded_root + "/")
+    ):
         path = encoded_root + (path if path.startswith("/") else f"/{path}")
 
     if not path.startswith("/"):
@@ -140,7 +148,9 @@ def _request_auth_signature_payload(
     allowed_audiences: Iterable[str],
     profile: RequestAuthProfile = RequestAuthProfile.SERVER_COMPATIBILITY,
 ) -> TeamAuthEnvelope:
-    signed_payload_header = str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()
+    signed_payload_header = str(
+        request.headers.get("X-AWEB-Signed-Payload") or ""
+    ).strip()
     if not signed_payload_header:
         if profile is RequestAuthProfile.NAAPP_V2:
             raise ValueError("missing X-AWEB-Signed-Payload header")
@@ -232,5 +242,7 @@ def team_auth_request_headers(
     return {
         "Authorization": f"DIDKey {did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
         "X-AWEB-Timestamp": timestamp,
-        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii"),
+        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload)
+        .rstrip(b"=")
+        .decode("ascii"),
     }

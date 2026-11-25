@@ -122,7 +122,9 @@ def registry_dependency_refusal(exc: Exception, *, operation: str) -> DeliveryRe
     # Keep upstream exception/body text out of the delivery log.
     status_code, detail = classify_awid_dependency_error(exc, operation=operation)
     logger.log(
-        logging.ERROR if status_code == HTTPStatus.INTERNAL_SERVER_ERROR else logging.WARNING,
+        logging.ERROR
+        if status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+        else logging.WARNING,
         "delivery_registry_dependency_failed failure_type=%s status=%d",
         type(exc).__name__,
         status_code,
@@ -138,7 +140,8 @@ def signed_chat_payload_refusal(*, detail: str) -> DeliveryRefusal:
     """
     return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-        detail=detail.rstrip(".") + ". Check the chat fields and sign the message again.",
+        detail=detail.rstrip(".")
+        + ". Check the chat fields and sign the message again.",
     )
 
 

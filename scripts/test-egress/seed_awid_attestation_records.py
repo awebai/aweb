@@ -15,6 +15,7 @@ certificate_register limit allows it to register.
 Environment: AWID_DATABASE_URL and AWID_DB_SCHEMA, from awid_fixture.py's
 second stdout line. Run with the awid project's environment.
 """
+
 import asyncio
 import json
 import os
@@ -44,7 +45,8 @@ async def seed(payload: dict) -> None:
     try:
         team_uuid = await conn.fetchval(
             f"SELECT team_uuid FROM {schema}.teams WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
-            payload["domain"], payload["name"],
+            payload["domain"],
+            payload["name"],
         )
         if team_uuid is None:
             raise SystemExit("team not found")
@@ -52,18 +54,33 @@ async def seed(payload: dict) -> None:
             await conn.execute(
                 f"INSERT INTO {schema}.team_certificates (team_uuid, certificate_id, member_did_key, alias, identity_scope)"
                 " VALUES ($1, $2, $3, $4, 'local')",
-                team_uuid, certificate["certificate_id"], certificate["member_did_key"], certificate["alias"],
+                team_uuid,
+                certificate["certificate_id"],
+                certificate["member_did_key"],
+                certificate["alias"],
             )
         for entry in payload.get("records") or []:
             kind, record = entry["kind"], entry["record"]
             columns = KEY_COLUMNS[kind]
-            names = ", ".join(("team_uuid", *columns, "record_json", "signature", "team_did_key", "issued_at"))
+            names = ", ".join(
+                (
+                    "team_uuid",
+                    *columns,
+                    "record_json",
+                    "signature",
+                    "team_did_key",
+                    "issued_at",
+                )
+            )
             values = ", ".join(f"${index}" for index in range(1, len(columns) + 6))
             await conn.execute(
                 f"INSERT INTO {schema}.{kind} ({names}) VALUES ({values})",
-                team_uuid, *(record[column] for column in columns),
-                canonical_json_bytes(record).decode("utf-8"), entry["signature"],
-                record["team_did_key"], issued_at(record["issued_at"]),
+                team_uuid,
+                *(record[column] for column in columns),
+                canonical_json_bytes(record).decode("utf-8"),
+                entry["signature"],
+                record["team_did_key"],
+                issued_at(record["issued_at"]),
             )
     finally:
         await conn.close()

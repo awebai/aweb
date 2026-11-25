@@ -84,7 +84,9 @@ def promised_doc_slugs(root: Path) -> dict[str, set[str]]:
 
 def tracked_markdown(root: Path) -> list[str]:
     out = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z", "*.md"], check=False, capture_output=True
+        ["git", "-C", str(root), "ls-files", "-z", "*.md"],
+        check=False,
+        capture_output=True,
     )
     if out.returncode != 0:
         raise SystemExit("cannot derive tracked Markdown with git ls-files")
@@ -201,8 +203,7 @@ def self_test(root: Path) -> int:
         # scanned as part of the tracked corpus — the gate found that self-match
         # on its own first run.
         site = "https://aweb.ai/" + "docs/"
-        write("docs/urls.md",
-              f"see {site}real.md and {site}real/ and {site}real.md.\n")
+        write("docs/urls.md", f"see {site}real.md and {site}real/ and {site}real.md.\n")
         failures, _ = check(tmp)
         if failures:
             print(f"self-test failed: a valid promised URL was rejected: {failures[0]}")
@@ -215,16 +216,20 @@ def self_test(root: Path) -> int:
         (tmp / "docs/urls.md").unlink()
         subprocess.run(["git", "-C", str(tmp), "add", "-A"], check=True)
 
-    print("self-test passed: valid relative links accepted; sibling, subdirectory and "
-          "parent dangling links each rejected; anchors and absolute URLs handled; "
-          "code spans and fenced blocks shown rather than followed, without "
-          "swallowing a real link after a closed fence")
+    print(
+        "self-test passed: valid relative links accepted; sibling, subdirectory and "
+        "parent dangling links each rejected; anchors and absolute URLs handled; "
+        "code spans and fenced blocks shown rather than followed, without "
+        "swallowing a real link after a closed fence"
+    )
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", default=Path(__file__).resolve().parents[1], type=Path)
+    parser.add_argument(
+        "--root", default=Path(__file__).resolve().parents[1], type=Path
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 

@@ -16,7 +16,9 @@ __all__ = ["route_pair"]
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])
-async def test_exact_attachment_retry_obeys_public_contacts_only_policy(route_pair, kind):
+async def test_exact_attachment_retry_obeys_public_contacts_only_policy(
+    route_pair, kind
+):
     node = route_pair.source
     sender, recipient = node.local, node.global_actor
     for actor in (sender, recipient):
@@ -33,12 +35,20 @@ async def test_exact_attachment_retry_obeys_public_contacts_only_policy(route_pa
     if kind == "mail":
         assert wire["to_did"] == recipient.did
         assert "to_stable_id" not in wire
-    path = "/v1/messages" if kind == "mail" else f"/v1/chat/sessions/{conversation_id}/messages"
+    path = (
+        "/v1/messages"
+        if kind == "mail"
+        else f"/v1/chat/sessions/{conversation_id}/messages"
+    )
     accepted = await _request(env, "alice", "POST", path, wire)
     assert accepted.status_code == 200, accepted.text
-    before = await node.db.fetch_value("SELECT sum(binds) FROM {{tables.attachment_test_storage}}")
+    before = await node.db.fetch_value(
+        "SELECT sum(binds) FROM {{tables.attachment_test_storage}}"
+    )
     table = "messages" if kind == "mail" else "chat_messages"
-    rows_before = await node.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
+    rows_before = await node.db.fetch_value(
+        f"SELECT count(*) FROM {{{{tables.{table}}}}}"
+    )
     raw = json.dumps({"inbound_mode": "contacts_only"}).encode()
     changed = await node.client.patch(
         "/v1/agents/me/inbound-mode",
@@ -62,16 +72,23 @@ async def test_exact_attachment_retry_obeys_public_contacts_only_policy(route_pa
         "Recipient only accepts messages from exact active contacts. Ask the recipient to add your exact address as a contact or check their inbound policy."
     )
     assert (
-        await node.db.fetch_value("SELECT sum(binds) FROM {{tables.attachment_test_storage}}")
+        await node.db.fetch_value(
+            "SELECT sum(binds) FROM {{tables.attachment_test_storage}}"
+        )
         == before
         == 1
     )
 
-    assert await node.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == rows_before
+    assert (
+        await node.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
+        == rows_before
+    )
 
 
 @pytest.mark.asyncio
-async def test_accepted_key_only_attachment_retry_keeps_its_protected_recipient(route_pair):
+async def test_accepted_key_only_attachment_retry_keeps_its_protected_recipient(
+    route_pair,
+):
     from aweb.e2ee_messages import encrypt_e2ee_message
 
     node = route_pair.source
@@ -121,5 +138,8 @@ async def test_accepted_key_only_attachment_retry_keeps_its_protected_recipient(
         )
     assert await node.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 1
     assert (
-        await node.db.fetch_value("SELECT sum(binds) FROM {{tables.attachment_test_storage}}") == 1
+        await node.db.fetch_value(
+            "SELECT sum(binds) FROM {{tables.attachment_test_storage}}"
+        )
+        == 1
     )

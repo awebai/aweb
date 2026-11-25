@@ -16,7 +16,9 @@ from awid.team_certificate import decode_team_certificate
 from aweb_naapp.runtime.team_auth import AWIDMemberCredential, AWIDTeamCache
 
 VECTORS = json.loads(
-    (Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json").read_text()
+    (
+        Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json"
+    ).read_text()
 )
 REGISTRY = "https://registry.example.com"
 CASES = {case["name"]: case for case in VECTORS["cases"]}
@@ -40,7 +42,10 @@ def _cache(case: dict) -> AWIDTeamCache:
             return httpx.Response(200, json=response)
         if request.url.path.endswith("/certificates"):
             page = [
-                {"certificate_id": certificate_id, "revoked_at": "2026-11-02T00:00:00Z" if certificate_id in revoked else None}
+                {
+                    "certificate_id": certificate_id,
+                    "revoked_at": "2026-11-02T00:00:00Z" if certificate_id in revoked else None,
+                }
                 for certificate_id in case["registered_certificate_ids"]
             ]
             return httpx.Response(200, json={"certificates": page, "has_more": False})

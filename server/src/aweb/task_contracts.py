@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as ModelError
-from aweb_naapp.runtime.task_requests import TaskRequestRefused, parse_json, validate_task
+from aweb_naapp.runtime.task_requests import (
+    TaskRequestRefused,
+    parse_json,
+    validate_task,
+)
 
 from aweb.service_errors import ValidationError
 
@@ -19,6 +23,7 @@ ProposalDigest = Annotated[str, Field(strict=True, pattern=r"^sha256:[0-9a-f]{64
 def strict_json_bytes(raw: bytes):
     try:
         value = parse_json(raw)
+
         def unicode_scalars(item):
             if type(item) is int and abs(item) > 2**53 - 1:
                 raise ValueError("unsafe integer")
@@ -31,6 +36,7 @@ def strict_json_bytes(raw: bytes):
             elif isinstance(item, list):
                 for child in item:
                     unicode_scalars(child)
+
         unicode_scalars(value)
         return value
     except (ValueError, UnicodeError, RecursionError) as exc:

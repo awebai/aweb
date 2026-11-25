@@ -26,26 +26,47 @@ def rotate_path(domain: str) -> str:
     return f"/v1/namespaces/{domain}/rotate"
 
 
-def register_body(signed_leaf: dict[str, Any], *, expected_head: str | None, invitation_id: str | None) -> bytes:
+def register_body(
+    signed_leaf: dict[str, Any], *, expected_head: str | None, invitation_id: str | None
+) -> bytes:
     """The registration body for ``signed_leaf``, the certificate and its signature."""
     return canonical_json_bytes(
-        {"certificate": signed_leaf, "expected_head": expected_head, "invitation_id": invitation_id}
+        {
+            "certificate": signed_leaf,
+            "expected_head": expected_head,
+            "invitation_id": invitation_id,
+        }
     )
 
 
-def revoke_body(domain: str, id: str, *, expected_head: str | None, effective_from: str | None) -> bytes:
+def revoke_body(
+    domain: str, id: str, *, expected_head: str | None, effective_from: str | None
+) -> bytes:
     return canonical_json_bytes(
-        {"domain": domain, "id": id, "expected_head": expected_head, "effective_from": effective_from}
+        {
+            "domain": domain,
+            "id": id,
+            "expected_head": expected_head,
+            "effective_from": effective_from,
+        }
     )
 
 
-def rotate_claims(*, from_seq: int, previous_did_key: str, new_did_key: str) -> dict[str, Any]:
+def rotate_claims(
+    *, from_seq: int, previous_did_key: str, new_did_key: str
+) -> dict[str, Any]:
     """The rotation claims, carried in both the body and the covering payload."""
-    return {"from_seq": from_seq, "previous_did_key": previous_did_key, "new_did_key": new_did_key}
+    return {
+        "from_seq": from_seq,
+        "previous_did_key": previous_did_key,
+        "new_did_key": new_did_key,
+    }
 
 
 def rotate_body(domain: str, claims: dict[str, Any]) -> bytes:
-    return canonical_json_bytes({"domain": domain, "operation": ROTATE_OPERATION, **claims})
+    return canonical_json_bytes(
+        {"domain": domain, "operation": ROTATE_OPERATION, **claims}
+    )
 
 
 def covering_payload(
@@ -64,15 +85,17 @@ def covering_payload(
 
     ``aud`` is the canonical origin of the registry the request is sent to.
     """
-    return canonical_json_bytes({
-        **(claims or {}),
-        "v": 2,
-        "type": CONTROLLER_REQUEST_TYPE,
-        "aud": aud,
-        "method": method.upper(),
-        "path": path,
-        "body_sha256": hashlib.sha256(body).hexdigest(),
-        "timestamp": timestamp,
-        "domain": domain,
-        "operation": operation,
-    })
+    return canonical_json_bytes(
+        {
+            **(claims or {}),
+            "v": 2,
+            "type": CONTROLLER_REQUEST_TYPE,
+            "aud": aud,
+            "method": method.upper(),
+            "path": path,
+            "body_sha256": hashlib.sha256(body).hexdigest(),
+            "timestamp": timestamp,
+            "domain": domain,
+            "operation": operation,
+        }
+    )

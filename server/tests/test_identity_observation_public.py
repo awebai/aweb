@@ -48,13 +48,17 @@ async def test_public_and_server_observation_share_exact_registry_binding(privac
         binding = await observe_identity_binding(
             client, did_key=actor.did, did_aw=registered.did_aw
         )
-        adapted = await server_observe(client, did_key=actor.did, did_aw=registered.did_aw)
+        adapted = await server_observe(
+            client, did_key=actor.did, did_aw=registered.did_aw
+        )
         assert isinstance(binding, IdentityBinding)
         assert binding == adapted
         assert binding.did_key == actor.did and binding.did_aw == registered.did_aw
         assert binding.fresh_observation
         with pytest.raises(IdentityObservationRefused) as public_error:
-            await observe_identity_binding(client, did_key=other.did, did_aw=registered.did_aw)
+            await observe_identity_binding(
+                client, did_key=other.did, did_aw=registered.did_aw
+            )
         with pytest.raises(IdentityBindingError) as server_error:
             await server_observe(client, did_key=other.did, did_aw=registered.did_aw)
         assert public_error.value.code == "identity_binding_mismatch"
@@ -72,7 +76,9 @@ async def test_public_unavailability_keeps_the_existing_server_503():
     from awid.registry import RegistryClient
 
     # An endpoint owned by this test, then actually stopped: no registry stub.
-    listener = await asyncio.start_server(lambda reader, writer: writer.close(), "127.0.0.1", 0)
+    listener = await asyncio.start_server(
+        lambda reader, writer: writer.close(), "127.0.0.1", 0
+    )
     port = listener.sockets[0].getsockname()[1]
     listener.close()
     await listener.wait_closed()

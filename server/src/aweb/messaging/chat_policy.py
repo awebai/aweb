@@ -27,7 +27,9 @@ class HumanChatRefused(ValidationError):
         else:
             description = "This chat includes a person"
         target = self.recipients[0] if self.recipients else "<their alias>"
-        super().__init__(f"{description}; aweb reaches people by mail: aw mail send --to {target}")
+        super().__init__(
+            f"{description}; aweb reaches people by mail: aw mail send --to {target}"
+        )
 
     def body(self, *, correlation_id: str | None = None) -> dict:
         return dict(
@@ -68,14 +70,17 @@ async def require_agent_chat(
     manager = db.get_manager("aweb")
     humans = []
     for row in recipients:
-        did = str(row.get("did_aw") or row.get("did") or row.get("did_key") or "").strip()
+        did = str(
+            row.get("did_aw") or row.get("did") or row.get("did_key") or ""
+        ).strip()
         if not did:
             continue
         if locked_policy_rows is not None and did in locked_policy_rows:
             # These rows include raw DID claims. Only the verified projection
             # of a stable DID or the literal key can establish human kind.
             human = any(
-                is_verified_human(policy) and did in (policy.get("did_aw"), policy.get("did_key"))
+                is_verified_human(policy)
+                and did in (policy.get("did_aw"), policy.get("did_key"))
                 for policy in locked_policy_rows[did]
             )
         else:

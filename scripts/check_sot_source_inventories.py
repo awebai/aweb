@@ -51,7 +51,9 @@ def extract_sql_tables(migrations_dir: Path) -> list[str]:
             )
         for table in retired:
             if table in tables:
-                raise ValueError(f"dynamic cleanup targets component table {table} in {migration}")
+                raise ValueError(
+                    f"dynamic cleanup targets component table {table} in {migration}"
+                )
         for operation, table in events:
             if operation.upper() == "CREATE":
                 if table not in tables:
@@ -68,7 +70,9 @@ def extract_fastapi_routers(api_source: Path) -> list[str]:
         if not isinstance(node, ast.Call):
             continue
         function = node.func
-        is_include_router = isinstance(function, ast.Attribute) and function.attr == "include_router"
+        is_include_router = (
+            isinstance(function, ast.Attribute) and function.attr == "include_router"
+        )
         if not is_include_router:
             continue
         if not isinstance(function.value, ast.Name) or function.value.id != "app":
@@ -77,7 +81,9 @@ def extract_fastapi_routers(api_source: Path) -> list[str]:
                 f"line {node.lineno}: {ast.unparse(function.value)}"
             )
         if not node.args:
-            raise ValueError(f"unsupported app.include_router call at line {node.lineno}: missing router")
+            raise ValueError(
+                f"unsupported app.include_router call at line {node.lineno}: missing router"
+            )
         router = node.args[0]
         if not isinstance(router, ast.Name) or not router.id.endswith("_router"):
             raise ValueError(
@@ -134,12 +140,17 @@ def render_inventory(name: str, values: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _documented_inventory(document: Path, name: str) -> tuple[list[str] | None, str | None]:
+def _documented_inventory(
+    document: Path, name: str
+) -> tuple[list[str] | None, str | None]:
     text = document.read_text()
     start = f"<!-- BEGIN SOURCE INVENTORY: {name} -->"
     end = f"<!-- END SOURCE INVENTORY: {name} -->"
     if text.count(start) != 1 or text.count(end) != 1:
-        return None, f"{document}: inventory {name!r} must have exactly one start and end marker"
+        return (
+            None,
+            f"{document}: inventory {name!r} must have exactly one start and end marker",
+        )
     body = text.split(start, 1)[1].split(end, 1)[0]
     values: list[str] = []
     for line in body.splitlines():

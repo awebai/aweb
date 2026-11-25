@@ -83,7 +83,9 @@ def test_document_bound_present_links_are_isolated_pinned_revocable_and_sanitize
     assert "version_number" not in public.text
     assert "created_by" not in public.text
 
-    _append_version(folio, team_a, slug="pitch", body="# Updated\n\nSecond version", tmp_path=tmp_path)
+    _append_version(
+        folio, team_a, slug="pitch", body="# Updated\n\nSecond version", tmp_path=tmp_path
+    )
     still_pinned = httpx.get(minted["url"], timeout=10.0)
     assert still_pinned.status_code == 200, still_pinned.text
     assert "Original" in still_pinned.text

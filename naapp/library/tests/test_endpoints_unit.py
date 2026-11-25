@@ -223,7 +223,11 @@ class _ShelfImportDB:
         if "FROM {{tables.shelf_profiles}}" in sql:
             return self.shelf_row
         if "FROM {{tables.blueprints}}" in sql:
-            return {"owner_team": "default:atext.aweb.ai", "version": "0.1.0", "digest": "sha256:blueprintdigest"}
+            return {
+                "owner_team": "default:atext.aweb.ai",
+                "version": "0.1.0",
+                "digest": "sha256:blueprintdigest",
+            }
         if "FROM {{tables.blueprint_profiles}}" in sql:
             s = self._source
             return {
@@ -234,7 +238,9 @@ class _ShelfImportDB:
                 "mission": s.mission,
                 "accepted_work": s.accepted_work,
                 "runtime_assumptions": s.runtime_assumptions,
-                "memory_policy": json.dumps(s.memory_policy) if s.memory_policy is not None else None,
+                "memory_policy": json.dumps(s.memory_policy)
+                if s.memory_policy is not None
+                else None,
                 "expected_apps": s.expected_apps,
                 "event_subscriptions": json.dumps(s.event_subscriptions),
                 "approval_required": s.approval_required,
@@ -305,7 +311,9 @@ class _BlueprintProfileDB:
                 "mission": s.mission,
                 "accepted_work": s.accepted_work,
                 "runtime_assumptions": s.runtime_assumptions,
-                "memory_policy": json.dumps(s.memory_policy) if s.memory_policy is not None else None,
+                "memory_policy": json.dumps(s.memory_policy)
+                if s.memory_policy is not None
+                else None,
                 "expected_apps": s.expected_apps,
                 "event_subscriptions": json.dumps(s.event_subscriptions),
                 "approval_required": s.approval_required,
@@ -330,7 +338,9 @@ async def test_get_blueprint_profile_surfaces_profile_runtime_hints_from_bluepri
         ],
     )
 
-    result = await get_blueprint_profile(db, blueprint_ref="aweb.engineering", profile_ref=profile_ref)
+    result = await get_blueprint_profile(
+        db, blueprint_ref="aweb.engineering", profile_ref=profile_ref
+    )
 
     assert result["profile_ref"] == profile_ref
     assert result["runtime_hints"] == runtime_hints
@@ -374,12 +384,22 @@ async def test_publish_profile_rejects_ambiguous_target() -> None:
         new_blueprint=NewBlueprintTarget(blueprint_ref="my-team.starter", name="Starter"),
     )
     with pytest.raises(HTTPException) as excinfo:
-        await publish_profile(object(), principal=SimpleNamespace(team_id="t"), profile_ref="coordinator", request=both)
+        await publish_profile(
+            object(),
+            principal=SimpleNamespace(team_id="t"),
+            profile_ref="coordinator",
+            request=both,
+        )
     assert excinfo.value.status_code == 422
 
     neither = ProfilePublishRequest(blueprint_version="1.0.0")
     with pytest.raises(HTTPException) as excinfo:
-        await publish_profile(object(), principal=SimpleNamespace(team_id="t"), profile_ref="coordinator", request=neither)
+        await publish_profile(
+            object(),
+            principal=SimpleNamespace(team_id="t"),
+            profile_ref="coordinator",
+            request=neither,
+        )
     assert excinfo.value.status_code == 422
 
 
@@ -441,7 +461,9 @@ async def test_list_shelf_flags_update_available_only_when_blueprint_moved_on() 
 
 
 def test_empty_profile_invariant_is_what_library_honors() -> None:
-    invariant = json.loads((_FIXTURE / "expected" / "empty-profile-invariant.json").read_text(encoding="utf-8"))
+    invariant = json.loads(
+        (_FIXTURE / "expected" / "empty-profile-invariant.json").read_text(encoding="utf-8")
+    )
     assert invariant["schema"] == "aweb.blueprint.empty-profile-invariant.v1"
     # Library is optional: a team and its agents exist without any Library state.
     assert invariant["team_create"]["must_succeed_without_library"] is True

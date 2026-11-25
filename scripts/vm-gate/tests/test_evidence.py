@@ -48,11 +48,17 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue((Path(self.tmp.name) / "unpacked" / other).exists())
         self.assertEqual(
             result["targets"],
-            [{
-                "stage": "unit", "target": "test-server", "status": "FAILED",
-                "seconds": 22.0, "summary": main, "log": "test-egress/suite.log",
-                "detail": "exit 2",
-            }],
+            [
+                {
+                    "stage": "unit",
+                    "target": "test-server",
+                    "status": "FAILED",
+                    "seconds": 22.0,
+                    "summary": main,
+                    "log": "test-egress/suite.log",
+                    "detail": "exit 2",
+                }
+            ],
         )
 
     def test_reused_stage_is_explicit_with_no_fabricated_duration(self):

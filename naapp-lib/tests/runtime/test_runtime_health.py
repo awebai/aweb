@@ -33,7 +33,8 @@ class ExampleSettings(NaappSettings):
 def _runtime(tmp_path: Path, database_url: str) -> NaappRuntime:
     manifest_path = tmp_path / "aweb-app.json"
     write_manifest_file(
-        manifest_path, {"manifest_version": 1, "app": {"id": "example", "origin": ORIGIN}, "tools": []}
+        manifest_path,
+        {"manifest_version": 1, "app": {"id": "example", "origin": ORIGIN}, "tools": []},
     )
     migrations = tmp_path / "migrations"
     migrations.mkdir()
@@ -58,7 +59,9 @@ async def _results(runtime: NaappRuntime) -> dict[str, tuple[bool, dict]]:
     }
 
 
-async def test_the_database_and_an_empty_outbox_are_healthy(tmp_path: Path, database_url: str) -> None:
+async def test_the_database_and_an_empty_outbox_are_healthy(
+    tmp_path: Path, database_url: str
+) -> None:
     runtime = _runtime(tmp_path, database_url)
     app = FastAPI(lifespan=runtime.lifespan)
     async with app.router.lifespan_context(app):
@@ -118,9 +121,7 @@ async def test_the_probes_follow_the_database(
     runtime = _runtime(tmp_path, database_url)
     app = FastAPI(lifespan=runtime.lifespan)
     health.mount_health(app, runtime.settings, checks=runtime.health_checks())
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url=ORIGIN
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
         async with app.router.lifespan_context(app):
             for path in ("/live", "/ready", "/health"):
                 assert (await client.get(path)).status_code == 200, path

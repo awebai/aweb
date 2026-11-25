@@ -45,7 +45,9 @@ async def test_health_and_ops_health_expose_registry_state(client, fake_redis):
     health = await client.get("/health")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
-    assert health.json()["checks"]["redis"] == health.json()["checks"]["database"] == "ok"
+    assert (
+        health.json()["checks"]["redis"] == health.json()["checks"]["database"] == "ok"
+    )
     assert health.json()["checks"]["schema"] == "awid"
 
     ops = await client.get("/ops/health")
@@ -96,7 +98,9 @@ async def test_health_answers_503_and_hides_backend_exception_details(
     )
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as test_client:
             response = await test_client.get("/health")
             ops = await test_client.get("/ops/health")
             ready = await test_client.get("/ready")
@@ -135,7 +139,9 @@ async def test_did_routes_use_redis_rate_limiter(client, fake_redis):
 
 
 @pytest.mark.asyncio
-async def test_namespace_and_address_read_routes_use_redis_rate_limiter(client, fake_redis):
+async def test_namespace_and_address_read_routes_use_redis_rate_limiter(
+    client, fake_redis
+):
     fake_redis.eval_calls.clear()
 
     namespace_resp = await client.get("/v1/namespaces")
@@ -160,7 +166,9 @@ async def test_trusted_service_token_uses_constant_time_comparison_for_reads_and
         compared.append((expected, presented))
         return expected == presented
 
-    monkeypatch.setattr(ratelimit_module.secrets, "compare_digest", constant_time_compare)
+    monkeypatch.setattr(
+        ratelimit_module.secrets, "compare_digest", constant_time_compare
+    )
     app = create_app(db_infra=awid_db_infra, redis=fake_redis)
     app.dependency_overrides[get_domain_verifier] = lambda: fake_domain_verifier
 
@@ -170,12 +178,18 @@ async def test_trusted_service_token_uses_constant_time_comparison_for_reads_and
 
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
-            key_response = await test_client.get(f"/v1/did/{missing_did_aw}/key", headers=headers)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as test_client:
+            key_response = await test_client.get(
+                f"/v1/did/{missing_did_aw}/key", headers=headers
+            )
             addresses_response = await test_client.get(
                 f"/v1/did/{missing_did_aw}/addresses", headers=headers
             )
-            namespace_response = await test_client.get("/v1/namespaces", headers=headers)
+            namespace_response = await test_client.get(
+                "/v1/namespaces", headers=headers
+            )
             write_response = await test_client.post("/v1/did", json={}, headers=headers)
 
     assert key_response.status_code == 404
@@ -190,7 +204,9 @@ async def test_trusted_service_token_uses_constant_time_comparison_for_reads_and
 async def test_wrong_trusted_service_token_falls_back_and_emits_metric_signal(
     awid_db_infra, fake_redis, fake_domain_verifier, monkeypatch, capsys
 ):
-    monkeypatch.setenv("AWID_SERVICE_TOKEN", "trusted-service-token-with-at-least-32-bytes")
+    monkeypatch.setenv(
+        "AWID_SERVICE_TOKEN", "trusted-service-token-with-at-least-32-bytes"
+    )
     app = create_app(db_infra=awid_db_infra, redis=fake_redis)
     app.dependency_overrides[get_domain_verifier] = lambda: fake_domain_verifier
 
@@ -204,10 +220,14 @@ async def test_wrong_trusted_service_token_falls_back_and_emits_metric_signal(
     try:
         async with app.router.lifespan_context(app):
             transport = ASGITransport(app=app)
-            async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+            async with AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as test_client:
                 response = await test_client.get(
                     f"/v1/did/{missing_did_aw}/key",
-                    headers={"X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes"},
+                    headers={
+                        "X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes"
+                    },
                 )
     finally:
         rate_logger.removeHandler(handler)
@@ -219,13 +239,19 @@ async def test_wrong_trusted_service_token_falls_back_and_emits_metric_signal(
 
 
 @pytest.mark.asyncio
-async def test_standalone_registry_configures_stdout_and_logs_rejected_service_token(test_db_factory, monkeypatch, capsys):
+async def test_standalone_registry_configures_stdout_and_logs_rejected_service_token(
+    test_db_factory, monkeypatch, capsys
+):
     db = await test_db_factory.create_db(suffix="standalone_stdout")
     monkeypatch.setenv("AWID_DATABASE_URL", db.config.get_dsn())
-    monkeypatch.setenv("AWID_REDIS_URL", os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"))
+    monkeypatch.setenv(
+        "AWID_REDIS_URL", os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+    )
     monkeypatch.setenv("AWID_LOG_LEVEL", "info")
     monkeypatch.setenv("AWID_LOG_JSON", "false")
-    monkeypatch.setenv("AWID_SERVICE_TOKEN", "trusted-service-token-with-at-least-32-bytes")
+    monkeypatch.setenv(
+        "AWID_SERVICE_TOKEN", "trusted-service-token-with-at-least-32-bytes"
+    )
     app = create_app()  # No injected dependencies: enter the real standalone lifespan.
     root = logging.getLogger()
     handlers, level = root.handlers[:], root.level
@@ -233,19 +259,25 @@ async def test_standalone_registry_configures_stdout_and_logs_rejected_service_t
         async with app.router.lifespan_context(app):
             assert root.level == logging.INFO
             transport = ASGITransport(app=app, client=("192.0.2.91", 12345))
-            async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
                 assert (await client.get("/health")).status_code == 200
                 _, public_key = generate_keypair()
                 did = stable_id_from_did_key(did_from_public_key(public_key))
                 response = await client.get(
                     f"/v1/did/{did}/key",
-                    headers={"X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes"},
+                    headers={
+                        "X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes"
+                    },
                 )
                 assert response.status_code == 404
     finally:
         # Restore the test process only AFTER observing real standalone startup;
         # no handler is installed by the test to satisfy its stdout assertions.
-        standalone_handlers = [handler for handler in root.handlers if handler not in handlers]
+        standalone_handlers = [
+            handler for handler in root.handlers if handler not in handlers
+        ]
         root.handlers[:] = handlers
         root.setLevel(level)
         for handler in standalone_handlers:
@@ -267,10 +299,14 @@ async def test_awid_rate_limit_disabled_uses_noop_limiter(
 
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as test_client:
             health = await test_client.get("/health")
             namespace = await test_client.get("/v1/namespaces")
-            address = await test_client.get("/v1/namespaces/example.com/addresses/alice")
+            address = await test_client.get(
+                "/v1/namespaces/example.com/addresses/alice"
+            )
 
     assert health.status_code == 200
     assert health.json()["checks"]["rate_limiter"] == "NoOpRateLimiter"
@@ -280,9 +316,16 @@ async def test_awid_rate_limit_disabled_uses_noop_limiter(
 
 
 @pytest.mark.asyncio
-async def test_namespace_mutation_routes_use_overridden_domain_verifier(client, controller_identity):
+async def test_namespace_mutation_routes_use_overridden_domain_verifier(
+    client, controller_identity
+):
     signing_key, controller_did = controller_identity
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     payload = canonical_json_bytes(
         {
             "domain": "example.com",
@@ -321,7 +364,9 @@ async def test_trusted_service_token_bypasses_revocation_list_limit(
 
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as test_client:
             fake_redis.eval_calls.clear()
             with_token = await test_client.get(
                 "/v1/namespaces/acme.com/teams/ops/revocations", headers=headers
@@ -329,7 +374,9 @@ async def test_trusted_service_token_bypasses_revocation_list_limit(
             assert with_token.status_code == 404  # team absent; the route ran
             assert fake_redis.eval_calls == []
 
-            anonymous = await test_client.get("/v1/namespaces/acme.com/teams/ops/revocations")
+            anonymous = await test_client.get(
+                "/v1/namespaces/acme.com/teams/ops/revocations"
+            )
             assert anonymous.status_code == 404
             rate_keys = [call[0][2] for call in fake_redis.eval_calls]
             assert any(":revocation_list:" in key for key in rate_keys)
@@ -352,8 +399,16 @@ _READ_LIMIT_ROUTES = [
     ("team_get", "/v1/namespaces/example.com/teams/ops", 404),
     ("certificate_list", "/v1/namespaces/example.com/teams/ops/certificates", 404),
     ("team_member_get", "/v1/namespaces/example.com/teams/ops/members/alice", 404),
-    ("certificate_fetch", "/v1/namespaces/example.com/teams/ops/certificates/missing", 401),
-    ("certificate_status", "/v1/namespaces/example.com/teams/ops/certificates/missing/status", 404),
+    (
+        "certificate_fetch",
+        "/v1/namespaces/example.com/teams/ops/certificates/missing",
+        401,
+    ),
+    (
+        "certificate_status",
+        "/v1/namespaces/example.com/teams/ops/certificates/missing/status",
+        404,
+    ),
     ("revocation_list", "/v1/namespaces/example.com/teams/ops/revocations", 404),
 ]
 
@@ -387,7 +442,9 @@ def _assert_limited(response):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bucket,path,status", _READ_LIMIT_ROUTES, ids=[r[0] for r in _READ_LIMIT_ROUTES])
+@pytest.mark.parametrize(
+    "bucket,path,status", _READ_LIMIT_ROUTES, ids=[r[0] for r in _READ_LIMIT_ROUTES]
+)
 async def test_every_read_bucket_trusted_exemption(
     client, fake_redis, monkeypatch, caplog, bucket, path, status
 ):
@@ -422,7 +479,10 @@ async def test_every_read_bucket_trusted_exemption(
     assert "awid_service_credential_rejected" not in caplog.text
     _assert_limited(await client.get(path, headers={"X-AWID-Service-Token": wrong}))
     rejected = caplog.text
-    assert f"event=awid_service_credential_rejected metric=awid_service_credential_rejected value=1 bucket={bucket}" in rejected
+    assert (
+        f"event=awid_service_credential_rejected metric=awid_service_credential_rejected value=1 bucket={bucket}"
+        in rejected
+    )
     assert token not in rejected and wrong not in rejected
     caplog.clear()
 
@@ -437,8 +497,14 @@ async def test_every_read_bucket_trusted_exemption(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bucket,method,path", _SERVICE_WRITE_LIMIT_ROUTES, ids=[r[0] for r in _SERVICE_WRITE_LIMIT_ROUTES])
-async def test_cloud_write_ip_exemption_keeps_route_validation(client, fake_redis, monkeypatch, caplog, bucket, method, path):
+@pytest.mark.parametrize(
+    "bucket,method,path",
+    _SERVICE_WRITE_LIMIT_ROUTES,
+    ids=[r[0] for r in _SERVICE_WRITE_LIMIT_ROUTES],
+)
+async def test_cloud_write_ip_exemption_keeps_route_validation(
+    client, fake_redis, monkeypatch, caplog, bucket, method, path
+):
     token = "trusted-service-token-with-at-least-32-bytes"
     wrong = "wrong-service-token-with-at-least-32-bytes"
     app = client._transport.app
@@ -449,18 +515,31 @@ async def test_cloud_write_ip_exemption_keeps_route_validation(client, fake_redi
     responses = [await client.request(method, path, json={}) for _ in range(60)]
     expected = responses[0]
     assert expected.status_code in (400, 401, 404, 422), expected.text
-    assert all(r.status_code == expected.status_code and r.json() == expected.json() for r in responses)
+    assert all(
+        r.status_code == expected.status_code and r.json() == expected.json()
+        for r in responses
+    )
     _assert_limited(await client.request(method, path, json={}))
     assert len(fake_redis.eval_calls) == 61
     for _ in range(61):
-        response = await client.request(method, path, json={}, headers={"X-AWID-Service-Token": token})
+        response = await client.request(
+            method, path, json={}, headers={"X-AWID-Service-Token": token}
+        )
         assert response.status_code == expected.status_code, response.text
         assert response.json() == expected.json()
     assert len(fake_redis.eval_calls) == 61
     _assert_limited(await client.request(method, path, json={}))
-    _assert_limited(await client.request(method, path, json={}, headers={"X-AWID-Service-Token": wrong}))
+    _assert_limited(
+        await client.request(
+            method, path, json={}, headers={"X-AWID-Service-Token": wrong}
+        )
+    )
     monkeypatch.setattr(app.state, "awid_service_token", None)
-    _assert_limited(await client.request(method, path, json={}, headers={"X-AWID-Service-Token": token}))
+    _assert_limited(
+        await client.request(
+            method, path, json={}, headers={"X-AWID-Service-Token": token}
+        )
+    )
     assert token not in caplog.text and wrong not in caplog.text
 
 
@@ -484,7 +563,9 @@ def _new_registration():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["did_register", "namespace_register", "self", "hosted_custodial"])
+@pytest.mark.parametrize(
+    "operation", ["did_register", "namespace_register", "self", "hosted_custodial"]
+)
 @pytest.mark.parametrize("credential", ["valid", "missing", "wrong", "unconfigured"])
 async def test_service_provisioning_keeps_public_hourly_limits(
     client, controller_identity, monkeypatch, operation, credential
@@ -493,12 +574,20 @@ async def test_service_provisioning_keeps_public_hourly_limits(
     # limiter at the published 10/h and 30/h boundaries, from one client IP.
     token = "trusted-service-token-with-at-least-32-bytes"
     app = client._transport.app
-    monkeypatch.setattr(app.state, "awid_service_token", None if credential == "unconfigured" else token)
+    monkeypatch.setattr(
+        app.state, "awid_service_token", None if credential == "unconfigured" else token
+    )
     monkeypatch.setattr(app.state, "rate_limiter", MemoryFixedWindowRateLimiter())
     monkeypatch.setattr(ratelimit_module.time, "time", lambda: 1800000000.0)
-    headers = {} if credential == "missing" else {
-        "X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes" if credential == "wrong" else token
-    }
+    headers = (
+        {}
+        if credential == "missing"
+        else {
+            "X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes"
+            if credential == "wrong"
+            else token
+        }
+    )
     limit = 10 if operation in ("did_register", "namespace_register") else 30
 
     if limit == 30:
@@ -516,13 +605,22 @@ async def test_service_provisioning_keeps_public_hourly_limits(
             controller_key, controller_did = controller_identity
             body = {"domain": f"customer-{attempt}.example.com"}
             timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            signature = sign_message(controller_key, canonical_json_bytes({
-                "domain": body["domain"], "operation": "register", "timestamp": timestamp,
-            }))
-            request_headers.update({
-                "Authorization": f"DIDKey {controller_did} {signature}",
-                "X-AWEB-Timestamp": timestamp,
-            })
+            signature = sign_message(
+                controller_key,
+                canonical_json_bytes(
+                    {
+                        "domain": body["domain"],
+                        "operation": "register",
+                        "timestamp": timestamp,
+                    }
+                ),
+            )
+            request_headers.update(
+                {
+                    "Authorization": f"DIDKey {controller_did} {signature}",
+                    "X-AWEB-Timestamp": timestamp,
+                }
+            )
             path = "/v1/namespaces"
         else:
             body = build_encryption_key_assertion(
@@ -539,7 +637,9 @@ async def test_service_provisioning_keeps_public_hourly_limits(
                 assert "X-RateLimit-Limit" not in response.headers
             elif credential != "valid":
                 assert response.headers["X-RateLimit-Limit"] == str(limit)
-                assert response.headers["X-RateLimit-Remaining"] == str(limit - attempt - 1)
+                assert response.headers["X-RateLimit-Remaining"] == str(
+                    limit - attempt - 1
+                )
         else:
             _assert_limited(response)
             assert response.headers["X-RateLimit-Limit"] == str(limit)
@@ -566,7 +666,9 @@ async def test_service_provisioning_keeps_public_hourly_limits(
 
 
 @pytest.mark.asyncio
-async def test_service_provisioning_token_does_not_authorize_writes(client, monkeypatch):
+async def test_service_provisioning_token_does_not_authorize_writes(
+    client, monkeypatch
+):
     token = "trusted-service-token-with-at-least-32-bytes"
     monkeypatch.setattr(client._transport.app.state, "awid_service_token", token)
     headers = {"X-AWID-Service-Token": token}
@@ -575,7 +677,9 @@ async def test_service_provisioning_token_does_not_authorize_writes(client, monk
     response = await client.post("/v1/did", json=invalid, headers=headers)
     assert response.status_code == 401
     assert response.json()["detail"] == "invalid proof"
-    response = await client.post("/v1/namespaces", json={"domain": "example.com"}, headers=headers)
+    response = await client.post(
+        "/v1/namespaces", json={"domain": "example.com"}, headers=headers
+    )
     assert response.status_code == 401
 
     signing_key, registration = _new_registration()
@@ -583,26 +687,39 @@ async def test_service_provisioning_token_does_not_authorize_writes(client, monk
     assert response.status_code == 200, response.text
     for custody in ("self", "hosted_custodial"):
         body = build_encryption_key_assertion(
-            signing_key=signing_key, identity_did=registration["new_did_key"],
-            identity_stable_id=registration["did_aw"], encryption_public_key=b"\x01" * 32,
+            signing_key=signing_key,
+            identity_did=registration["new_did_key"],
+            identity_stable_id=registration["did_aw"],
+            encryption_public_key=b"\x01" * 32,
             custody=custody,
         )
         body["signature"] = "invalid"
-        response = await client.post(f"/v1/did/{registration['did_aw']}/encryption-key", json=body, headers=headers)
+        response = await client.post(
+            f"/v1/did/{registration['did_aw']}/encryption-key",
+            json=body,
+            headers=headers,
+        )
         assert response.status_code == 422
         assert "invalid signature" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_service_exemption_telemetry_is_aggregated_per_bucket(client, fake_redis, monkeypatch, caplog):
+async def test_service_exemption_telemetry_is_aggregated_per_bucket(
+    client, fake_redis, monkeypatch, caplog
+):
     caplog.set_level(logging.INFO, logger="awid.ratelimit")
     token = "trusted-service-token-with-at-least-32-bytes"
     monkeypatch.setattr(client._transport.app.state, "awid_service_token", token)
     path = _missing_did_path("/v1/did/{did}")
     caplog.clear()
-    for bucket, suffix, count, status in (("did_key", "key", 9, 404), ("did_addresses", "addresses", 3, 200)):
+    for bucket, suffix, count, status in (
+        ("did_key", "key", 9, 404),
+        ("did_addresses", "addresses", 3, 200),
+    ):
         for n in range(1, count + 1):
-            response = await client.get(f"{path}/{suffix}", headers={"X-AWID-Service-Token": token})
+            response = await client.get(
+                f"{path}/{suffix}", headers={"X-AWID-Service-Token": token}
+            )
             assert response.status_code == status
             events = [
                 record.getMessage()
@@ -611,9 +728,15 @@ async def test_service_exemption_telemetry_is_aggregated_per_bucket(client, fake
             ]
             caplog.clear()
             expected = (
-                [f"event=awid_service_exempt metric=awid_service_exempt value={n} bucket={bucket}"]
-                if n in (1, 2, 4, 8) else []
+                [
+                    f"event=awid_service_exempt metric=awid_service_exempt value={n} bucket={bucket}"
+                ]
+                if n in (1, 2, 4, 8)
+                else []
             )
             assert events == expected
-            assert all(token not in event and "testserver" not in event and path not in event for event in events)
+            assert all(
+                token not in event and "testserver" not in event and path not in event
+                for event in events
+            )
     assert fake_redis.eval_calls == []

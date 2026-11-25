@@ -41,7 +41,10 @@ def read_id_chain_header(request: Request) -> dict[str, Any] | None:
 
 
 async def _observe_optional_chain(
-    request: Request, client, binding: IdentityBinding, bundle: dict[str, Any] | None,
+    request: Request,
+    client,
+    binding: IdentityBinding,
+    bundle: dict[str, Any] | None,
     deadline: float | None,
 ):
     registry_url = getattr(client, "registry_url", None)
@@ -63,7 +66,11 @@ async def _observe_optional_chain(
         attempted = key
         return await read_evidence(bundle, subject, domain=domain)
 
-    reader = SimpleNamespace(id_chain_evidence=read_status) if callable(read_evidence) else client
+    reader = (
+        SimpleNamespace(id_chain_evidence=read_status)
+        if callable(read_evidence)
+        else client
+    )
     try:
         async with asyncio.timeout_at(deadline):
             observation = await observe_identity_kind(reader, binding, bundle)
@@ -81,8 +88,12 @@ async def _observe_optional_chain(
 
 
 async def authenticate_id_chain(
-    request: Request, binding: IdentityBinding, *, registry_client=None,
-    allow_unavailable: bool = False, deadline: float | None = None,
+    request: Request,
+    binding: IdentityBinding,
+    *,
+    registry_client=None,
+    allow_unavailable: bool = False,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Use only the already-verified subject and its fresh enrollment carrier.
 
@@ -100,7 +111,9 @@ async def authenticate_id_chain(
             else application_registry_client(request.app.state)
         )
         if allow_unavailable:
-            observation = await _observe_optional_chain(request, client, binding, bundle, deadline)
+            observation = await _observe_optional_chain(
+                request, client, binding, bundle, deadline
+            )
         else:
             observation = await observe_identity_kind(client, binding, bundle)
         request.state.identity_kind = observation
@@ -112,10 +125,14 @@ async def authenticate_id_chain(
         request.state.identity_kind = None
         request.state.id_chain = None
         return result
-    if request_disposition(result, subject=subject, original_auth_passed=True) == "refuse":
+    if (
+        request_disposition(result, subject=subject, original_auth_passed=True)
+        == "refuse"
+    ):
         logger.warning("ID-tree request refused: %s", result["reason"])
         raise HTTPException(
-            status_code=503 if result["outcome"] == "unavailable" else 403, detail=result["reason"]
+            status_code=503 if result["outcome"] == "unavailable" else 403,
+            detail=result["reason"],
         )
     request.state.id_chain = bundle
     return result

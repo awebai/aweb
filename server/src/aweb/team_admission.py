@@ -6,7 +6,10 @@ from awid.team_ids import parse_team_id
 
 
 async def admit_team(
-    *, db: AsyncDatabaseManager | TransactionManager, team_id: str, team_did_key: str,
+    *,
+    db: AsyncDatabaseManager | TransactionManager,
+    team_id: str,
+    team_did_key: str,
 ) -> bool:
     """Persist already-authorized first admission, returning whether inserted.
 
@@ -18,11 +21,16 @@ async def admit_team(
     try:
         namespace, name = parse_team_id(team_id)
     except ValueError as exc:
-        raise ValueError("Invalid team ID. Use a canonical <team>:<namespace> team ID, then retry.") from exc
+        raise ValueError(
+            "Invalid team ID. Use a canonical <team>:<namespace> team ID, then retry."
+        ) from exc
     inserted = await db.fetch_value(
         """INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (team_id) DO NOTHING RETURNING team_id""",
-        team_id, namespace, name, team_did_key,
+        team_id,
+        namespace,
+        name,
+        team_did_key,
     )
     return inserted is not None

@@ -112,7 +112,8 @@ class UserPathsAdmission(unittest.TestCase):
         self.assertEqual(len(full["passed_agent_cases"]), 66)
         self.assertEqual(len(full["known_issue_budget"]), 4)
         self.assertEqual(
-            {row["task"] for row in full["known_issue_budget"]}, {"aweb-actw", "aweb-adje.15"}
+            {row["task"] for row in full["known_issue_budget"]},
+            {"aweb-actw", "aweb-adje.15"},
         )
         self.assertEqual(full["known_issues"], [])
         self.assertEqual(
@@ -415,11 +416,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     ["-un", "-u"],
                 )
                 self.assertTrue(
-                    list(
-                        (repo / "scripts/__pycache__").glob(
-                            "fetch_released_aw.*.pyc"
-                        )
-                    )
+                    list((repo / "scripts/__pycache__").glob("fetch_released_aw.*.pyc"))
                 )
                 self.assertEqual(
                     git("status", "--porcelain", "--untracked-files=all"), ""
@@ -431,8 +428,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 receipt = json.loads((root / "snapshot.json").read_text())
                 # The frozen input names its source: a registry gitHead here.
                 expected = (
-                    json.dumps(dict(metadata, source="gitHead"), sort_keys=True)
-                    + "\n"
+                    json.dumps(dict(metadata, source="gitHead"), sort_keys=True) + "\n"
                 ).encode()
                 digest = hashlib.sha256(expected).hexdigest()
                 self.assertEqual(receipt["body"].encode(), expected)
@@ -479,7 +475,12 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     text=True,
                 ).stdout.strip()
                 reviewed_main = git(
-                    "commit-tree", reviewed_tree, "-p", next_main, "-m", "reviewed ceilings"
+                    "commit-tree",
+                    reviewed_tree,
+                    "-p",
+                    next_main,
+                    "-m",
+                    "reviewed ceilings",
                 )
                 git("update-ref", "refs/remotes/origin/main", reviewed_main)
                 invoke("checks")
@@ -501,7 +502,10 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 self.assertEqual(len(owned_runs), 4)
                 for run in owned_runs:
                     run_id = (run / "run-id").read_text().strip()
-                    self.assertEqual(run.name, f"aweb-candidate-gate-{git('rev-parse', 'HEAD')}-{run_id}")
+                    self.assertEqual(
+                        run.name,
+                        f"aweb-candidate-gate-{git('rev-parse', 'HEAD')}-{run_id}",
+                    )
                     self.assertTrue((run / "owned-resources.tsv").is_file())
         finally:
             server.shutdown()
@@ -516,12 +520,16 @@ class ExactMessageAssertions(unittest.TestCase):
         diagnostic = "Expected contacts_only; server stored team_and_contacts"
         for kind in ("mail", "chat"):
             case = f"released/contacts-only/{kind}"
-            outcome = dict(case=case, status="FAILED", error=diagnostic, assertion=diagnostic)
+            outcome = dict(
+                case=case, status="FAILED", error=diagnostic, assertion=diagnostic
+            )
             with self.subTest(case=case):
                 classified = result_model.classify_outcome(outcome, "1.36.40")
                 self.assertEqual(classified["status"], "KNOWN_ISSUE")
                 self.assertEqual(classified["observed_status"], "FAILED")
-                self.assertEqual(result_model.classify_outcome(classified, "1.36.40"), classified)
+                self.assertEqual(
+                    result_model.classify_outcome(classified, "1.36.40"), classified
+                )
                 for changed, version in (
                     (outcome, "1.36.39"),
                     (outcome, "1.36.41"),
@@ -533,9 +541,14 @@ class ExactMessageAssertions(unittest.TestCase):
                     ({**outcome, "assertion": "routing failed"}, "1.36.40"),
                     (dict(case=case, status="PASSED"), "1.36.40"),
                 ):
-                    self.assertEqual(result_model.classify_outcome(changed, version)["status"], "FAILED")
+                    self.assertEqual(
+                        result_model.classify_outcome(changed, version)["status"],
+                        "FAILED",
+                    )
                 self.assertEqual(
-                    result_model.classify_outcome(dict(case=case, status="PASSED"), "1.36.41")["status"],
+                    result_model.classify_outcome(
+                        dict(case=case, status="PASSED"), "1.36.41"
+                    )["status"],
                     "PASSED",
                 )
 
@@ -552,21 +565,26 @@ class ExactMessageAssertions(unittest.TestCase):
         lane = paths.Lane.__new__(paths.Lane)
         lane.name, lane.version = "released", "1.36.40"
         lane.failures, lane.outcomes, lane.actors = [], [], {}
-        lane.command = Mock(side_effect=[
-            {"inbound_mode": "contacts_only"},
-            {"inbound_mode": "team_and_contacts"},
-            {"inbound_mode": "open"},
-        ])
+        lane.command = Mock(
+            side_effect=[
+                {"inbound_mode": "contacts_only"},
+                {"inbound_mode": "team_and_contacts"},
+                {"inbound_mode": "open"},
+            ]
+        )
         lane.refused = Mock()
         lane.run_case("released/contacts-only/mail", lambda: lane.contacts_only("mail"))
         self.assertEqual(lane.outcomes[0]["observed_status"], "FAILED")
         self.assertEqual(lane.outcomes[0]["status"], "KNOWN_ISSUE")
         self.assertEqual(lane.failures, [])
-        self.assertEqual(lane.command.call_args_list, [
-            call("g2", "inbound-mode", "contacts-only"),
-            call("g2", "inbound-mode"),
-            call("g2", "inbound-mode", "open"),
-        ])
+        self.assertEqual(
+            lane.command.call_args_list,
+            [
+                call("g2", "inbound-mode", "contacts-only"),
+                call("g2", "inbound-mode"),
+                call("g2", "inbound-mode", "open"),
+            ],
+        )
         lane.refused.assert_not_called()
 
     def exercise(self, kind, encrypted, mutate=None):

@@ -43,7 +43,9 @@ def validate_delivery_origin(value: str | None) -> str | None:
     if _is_localhost_origin(canonical):
         if is_development and parsed.scheme == "http":
             return canonical
-        raise ValueError("delivery_origin must not target localhost outside development")
+        raise ValueError(
+            "delivery_origin must not target localhost outside development"
+        )
 
     try:
         ipaddress.ip_address(host)

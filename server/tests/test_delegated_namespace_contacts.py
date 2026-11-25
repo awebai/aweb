@@ -131,7 +131,9 @@ async def test_delegated_namespace_authority(
                 await self.inner.aclose()
 
         def http_factory(origin, *args):
-            assert origin == registry_origin, "test must never contact a public registry"
+            assert origin == registry_origin, (
+                "test must never contact a public registry"
+            )
             return WitnessFault(real_factory(origin, *args))
 
         resolver.http_factory = http_factory
@@ -151,7 +153,9 @@ async def test_delegated_namespace_authority(
                     delivery_origin="https://sender.example.test",
                 )
                 if accepted:
-                    authorized = await activation.authorize(claim, source_ip="127.0.0.1")
+                    authorized = await activation.authorize(
+                        claim, source_ip="127.0.0.1"
+                    )
                     assert authorized.canonical_address == address
                     assert authorized.token.did_aw == target_did
                 else:
@@ -197,7 +201,9 @@ async def test_delegated_namespace_authority(
                     )
                 )
                 (home / "certificate.json").write_text(json.dumps(cert))
-                membership = dict(team_id=TEAM, alias="bob", cert_path="certificate.json")
+                membership = dict(
+                    team_id=TEAM, alias="bob", cert_path="certificate.json"
+                )
                 (home / "teams.yaml").write_text(
                     json.dumps(dict(active_team=TEAM, memberships=[membership]))
                 )
@@ -205,7 +211,9 @@ async def test_delegated_namespace_authority(
                     json.dumps(
                         dict(
                             aweb_url=str(env.client.base_url),
-                            memberships=[dict(membership, workspace_id=str(actor.workspace))],
+                            memberships=[
+                                dict(membership, workspace_id=str(actor.workspace))
+                            ],
                         )
                     )
                 )

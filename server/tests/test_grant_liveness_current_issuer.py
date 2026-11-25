@@ -47,7 +47,9 @@ class PresenceGrant:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("issuer", list(IssuerReacceptance))
-async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(pinning, issuer):
+async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
+    pinning, issuer
+):
     # docs/identity.md:807-811: delegation ends with its issuing certificate;
     # reconnecting the same identity does not resurrect an older delegation.
     env = pinning

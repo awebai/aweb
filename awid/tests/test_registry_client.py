@@ -25,9 +25,9 @@ from awid.registry import (
 )
 
 
-
 async def _unused_domain_registry_resolver(domain: str) -> str:
     raise AssertionError("field-forwarding fixtures are never called")
+
 
 def test_registry_http_bound_values_are_pinned():
     assert MAX_REGISTRY_RESPONSE_BYTES == 10 * 1024 * 1024
@@ -129,11 +129,14 @@ async def test_registry_client_forces_identity_encoding_over_caller_header(
         transport=MockTransport(handler),
     )
     try:
-        assert await registry._request_json(
-            "GET",
-            "/health",
-            headers={header_name: "gzip"},
-        ) == {}
+        assert (
+            await registry._request_json(
+                "GET",
+                "/health",
+                headers={header_name: "gzip"},
+            )
+            == {}
+        )
     finally:
         await registry.aclose()
     assert seen == ["identity"]
@@ -204,14 +207,19 @@ async def test_registry_client_enforces_overall_deadline_on_slow_body():
     registry = RegistryClient(
         registry_url="http://registry.test",
         timeout_seconds=0.01,
-        transport=MockTransport(lambda _request: Response(200, stream=SlowResponseStream())),
+        transport=MockTransport(
+            lambda _request: Response(200, stream=SlowResponseStream())
+        ),
     )
     try:
         with pytest.raises(RegistryError) as unavailable:
             await registry.health()
     finally:
         await registry.aclose()
-    assert (unavailable.value.status_code, unavailable.value.code) == (503, "unavailable")
+    assert (unavailable.value.status_code, unavailable.value.code) == (
+        503,
+        "unavailable",
+    )
     assert type(unavailable.value.__cause__) is TimeoutError
 
 
@@ -247,19 +255,28 @@ def _broken_body(request: httpx.Request) -> Response:
         lambda registry: registry.health(),
         lambda registry: registry.resolve_key("did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"),
         lambda registry: registry.get_namespace("example.com"),
-        lambda registry: registry.fetch_id_certificate_status("example.com", {"v": 1, "domain": "example.com", "ids": []}),
+        lambda registry: registry.fetch_id_certificate_status(
+            "example.com", {"v": 1, "domain": "example.com", "ids": []}
+        ),
     ],
     ids=["health", "resolve_key", "get_namespace", "id_status"],
 )
 @pytest.mark.asyncio
-async def test_a_transport_failure_is_a_registry_error_saying_the_registry_is_unavailable(handler, cause, call):
-    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
+async def test_a_transport_failure_is_a_registry_error_saying_the_registry_is_unavailable(
+    handler, cause, call
+):
+    registry = RegistryClient(
+        registry_url="http://registry.test", transport=MockTransport(handler)
+    )
     try:
         with pytest.raises(RegistryError) as unavailable:
             await call(registry)
     finally:
         await registry.aclose()
-    assert (unavailable.value.status_code, unavailable.value.code) == (503, "unavailable")
+    assert (unavailable.value.status_code, unavailable.value.code) == (
+        503,
+        "unavailable",
+    )
     assert unavailable.value.detail == f"AWID registry unavailable ({cause.__name__})"
     assert type(unavailable.value.__cause__) is cause
 
@@ -291,7 +308,9 @@ async def test_registry_client_explicitly_disables_redirects(monkeypatch):
     ("extra_bytes", "should_succeed"),
     [(0, True), (1, False)],
 )
-async def test_registry_client_enforces_response_limit(extra_bytes: int, should_succeed: bool):
+async def test_registry_client_enforces_response_limit(
+    extra_bytes: int, should_succeed: bool
+):
     content = b"{}" + b" " * (MAX_REGISTRY_RESPONSE_BYTES - 2 + extra_bytes)
     registry = RegistryClient(
         registry_url="http://registry.test",
@@ -335,10 +354,14 @@ async def test_registry_client_requires_one_json_document(
     ("body_size", "should_succeed"),
     [(64 * 1024, True), (64 * 1024 + 1, False)],
 )
-async def test_registry_client_enforces_error_limit(body_size: int, should_succeed: bool):
+async def test_registry_client_enforces_error_limit(
+    body_size: int, should_succeed: bool
+):
     registry = RegistryClient(
         registry_url="http://registry.test",
-        transport=MockTransport(lambda _request: Response(500, content=b"x" * body_size)),
+        transport=MockTransport(
+            lambda _request: Response(500, content=b"x" * body_size)
+        ),
     )
     try:
         with pytest.raises(RegistryError) as caught:
@@ -377,7 +400,9 @@ class FakeRedis:
     async def get(self, key: str) -> str | None:
         return self.values.get(key)
 
-    async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False) -> bool | None:
+    async def set(
+        self, key: str, value: str, ex: int | None = None, nx: bool = False
+    ) -> bool | None:
         if nx and key in self.values:
             return None
         self.values[key] = value
@@ -516,7 +541,9 @@ async def test_registry_client_revoke_team_certificate_uses_public_method_contra
         await registry.aclose()
 
     assert seen["method"] == "POST"
-    assert seen["path"] == "/v1/namespaces/example.com/teams/backend/certificates/revoke"
+    assert (
+        seen["path"] == "/v1/namespaces/example.com/teams/backend/certificates/revoke"
+    )
     assert str(seen["auth"]).startswith("DIDKey ")
     assert seen["timestamp"]
     assert seen["payload"] == {"certificate_id": "cert-1"}
@@ -536,7 +563,12 @@ async def test_registry_client_list_team_certificates_sends_active_only_false():
         transport=MockTransport(handler),
     )
     try:
-        assert await registry.list_team_certificates("example.com", "backend", active_only=False) == []
+        assert (
+            await registry.list_team_certificates(
+                "example.com", "backend", active_only=False
+            )
+            == []
+        )
     finally:
         await registry.aclose()
 
@@ -749,8 +781,12 @@ async def test_cached_registry_client_can_invalidate_team_certificate_reads():
         transport=MockTransport(lambda _request: Response(500)),
     )
     signing_key, _ = generate_keypair()
-    active_key = registry._team_certificates_cache_key("example.com", "backend", active_only=True)
-    all_key = registry._team_certificates_cache_key("example.com", "backend", active_only=False)
+    active_key = registry._team_certificates_cache_key(
+        "example.com", "backend", active_only=True
+    )
+    all_key = registry._team_certificates_cache_key(
+        "example.com", "backend", active_only=False
+    )
     signed_key = registry._team_certificates_cache_key(
         "example.com",
         "backend",
@@ -762,7 +798,9 @@ async def test_cached_registry_client_can_invalidate_team_certificate_reads():
         "backend",
         active_only=False,
     )
-    generation_key = registry._team_certificates_generation_key("example.com", "backend")
+    generation_key = registry._team_certificates_generation_key(
+        "example.com", "backend"
+    )
     active_key, all_key, signed_key, anonymous_key = [
         await registry._generation_cache_key(key, generation_key)
         for key in (active_key, all_key, signed_key, anonymous_key)
@@ -934,7 +972,9 @@ DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS = {
     "transport": MockTransport(lambda _request: Response(500)),
     "base_url": "http://named-base.test",
     "domain_registry_resolver": _unused_domain_registry_resolver,
-    "registry_origin_context": OriginContext("development", True, "http://named-listener.test"),
+    "registry_origin_context": OriginContext(
+        "development", True, "http://named-listener.test"
+    ),
     "service_token": "distinguishable-service-token-of-sufficient-length",
     "member_signing_keys": {"engineering:example.com": bytes(range(32))},
 }
@@ -947,9 +987,7 @@ async def test_cached_registry_client_forwards_every_field_it_names():
     steers against it: when a newly added field makes parity fail, adding the
     NAME is the minimum edit that turns it green, and the forwarding is a second
     edit nothing then checks."""
-    fields = {
-        field.name for field in dataclasses.fields(RegistryClient) if field.init
-    }
+    fields = {field.name for field in dataclasses.fields(RegistryClient) if field.init}
     assert fields == set(DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS), (
         "give every RegistryClient field a distinguishable value here, or this "
         "test silently stops covering the ones it does not name"
@@ -970,12 +1008,27 @@ async def test_cached_registry_client_forwards_every_field_it_names():
 async def test_get_team_revocations_pages_until_complete():
     """aweb-abfo: the client must not read one page as the complete set."""
     pages = [
-        {"revocations": [{"certificate_id": "c1", "revoked_at": "2026-01-01T00:00:00+00:00"}],
-         "has_more": True, "next_cursor": "cur-1"},
-        {"revocations": [{"certificate_id": "c2", "revoked_at": "2026-01-01T00:00:00+00:00"}],
-         "has_more": True, "next_cursor": "cur-2"},
-        {"revocations": [{"certificate_id": "c3", "revoked_at": "2026-01-02T00:00:00+00:00"}],
-         "has_more": False, "next_cursor": None},
+        {
+            "revocations": [
+                {"certificate_id": "c1", "revoked_at": "2026-01-01T00:00:00+00:00"}
+            ],
+            "has_more": True,
+            "next_cursor": "cur-1",
+        },
+        {
+            "revocations": [
+                {"certificate_id": "c2", "revoked_at": "2026-01-01T00:00:00+00:00"}
+            ],
+            "has_more": True,
+            "next_cursor": "cur-2",
+        },
+        {
+            "revocations": [
+                {"certificate_id": "c3", "revoked_at": "2026-01-02T00:00:00+00:00"}
+            ],
+            "has_more": False,
+            "next_cursor": None,
+        },
     ]
     requests: list[str] = []
 
@@ -988,7 +1041,9 @@ async def test_get_team_revocations_pages_until_complete():
             return Response(200, json=pages[2])
         return Response(200, json=pages[0])
 
-    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
+    registry = RegistryClient(
+        registry_url="http://registry.test", transport=MockTransport(handler)
+    )
     try:
         revoked = await registry.get_team_revocations("acme.com", "ops")
     finally:
@@ -1001,12 +1056,20 @@ async def test_get_team_revocations_pages_until_complete():
 async def test_get_team_revocations_legacy_server_short_page_is_complete():
     """An old server sends no has_more; a page shorter than its hard limit is
     the whole set and must not trigger extra requests."""
-    def handler(request):
-        return Response(200, json={"revocations": [
-            {"certificate_id": "c1", "revoked_at": "2026-01-01T00:00:00+00:00"},
-        ]})
 
-    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
+    def handler(request):
+        return Response(
+            200,
+            json={
+                "revocations": [
+                    {"certificate_id": "c1", "revoked_at": "2026-01-01T00:00:00+00:00"},
+                ]
+            },
+        )
+
+    registry = RegistryClient(
+        registry_url="http://registry.test", transport=MockTransport(handler)
+    )
     try:
         revoked = await registry.get_team_revocations("acme.com", "ops")
     finally:
@@ -1018,27 +1081,32 @@ async def test_get_team_revocations_legacy_server_short_page_is_complete():
 async def test_get_team_revocations_legacy_server_full_page_pages_by_since():
     """An old server returning its full 1000-row page must be paged with
     `since` rather than read as complete."""
-    first_page = {"revocations": [
-        {"certificate_id": f"old-{i}", "revoked_at": "2026-01-01T00:00:00+00:00"}
-        for i in range(1000)
-    ]}
-    second_page = {"revocations": [
-        {"certificate_id": "new-1", "revoked_at": "2026-01-02T00:00:00+00:00"},
-    ]}
+    first_page = {
+        "revocations": [
+            {"certificate_id": f"old-{i}", "revoked_at": "2026-01-01T00:00:00+00:00"}
+            for i in range(1000)
+        ]
+    }
+    second_page = {
+        "revocations": [
+            {"certificate_id": "new-1", "revoked_at": "2026-01-02T00:00:00+00:00"},
+        ]
+    }
 
     def handler(request):
         if request.url.params.get("since"):
             return Response(200, json=second_page)
         return Response(200, json=first_page)
 
-    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
+    registry = RegistryClient(
+        registry_url="http://registry.test", transport=MockTransport(handler)
+    )
     try:
         revoked = await registry.get_team_revocations("acme.com", "ops")
     finally:
         await registry.aclose()
     assert len(revoked) == 1001
     assert "new-1" in revoked
-
 
 
 def _revocations_cache_payload(*, fetched_at: int, certificate_ids: list[str]) -> str:
@@ -1055,11 +1123,15 @@ def _revocations_cache_payload(*, fetched_at: int, certificate_ids: list[str]) -
     )
 
 
-def _failing_registry(redis: FakeRedis, *, detail: str = "registry down") -> CachedRegistryClient:
+def _failing_registry(
+    redis: FakeRedis, *, detail: str = "registry down"
+) -> CachedRegistryClient:
     return CachedRegistryClient(
         registry_url="http://registry.test",
         redis_client=redis,  # type: ignore[arg-type]
-        transport=MockTransport(lambda _request: Response(500, json={"detail": detail})),
+        transport=MockTransport(
+            lambda _request: Response(500, json={"detail": detail})
+        ),
     )
 
 
@@ -1165,7 +1237,9 @@ async def test_cached_revocations_stale_window_refresh_failure_is_loud(
 
 
 @pytest.mark.asyncio
-async def test_cached_revocations_refresh_failure_beyond_grace_fails_closed(monkeypatch):
+async def test_cached_revocations_refresh_failure_beyond_grace_fails_closed(
+    monkeypatch,
+):
     """Past 15 minutes of data age the last-known-good set must NOT be served:
     the fetch failure propagates so the enforcement path returns 503."""
     from awid.registry import _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
@@ -1481,7 +1555,9 @@ async def test_certificate_cache_retention_is_unchanged_by_refresh_logging():
     registry = CachedRegistryClient(
         registry_url="http://registry.test",
         redis_client=redis,  # type: ignore[arg-type]
-        transport=MockTransport(lambda _request: Response(200, json={"certificates": []})),
+        transport=MockTransport(
+            lambda _request: Response(200, json={"certificates": []})
+        ),
     )
     try:
         assert await registry.list_team_certificates("acme.com", "ops") == []

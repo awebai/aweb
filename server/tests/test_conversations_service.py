@@ -778,7 +778,9 @@ async def test_find_session_between_picks_newest_migrated_pair(
 
 
 @pytest.mark.asyncio
-async def test_migration_is_idempotent_before_chat_session_reuse(pre_chat_coverage_db, chat_coverage_upgrade):
+async def test_migration_is_idempotent_before_chat_session_reuse(
+    pre_chat_coverage_db, chat_coverage_upgrade
+):
 
     from aweb.messaging.chat import ensure_session
 

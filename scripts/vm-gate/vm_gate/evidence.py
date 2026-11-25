@@ -63,10 +63,14 @@ def collect_archive(archive, sha, destination):
                         "summary": item.name,
                     }
                     if target:
-                        targets.append({
-                            **row, "target": target, "log": fields[2],
-                            "detail": fields[4] if len(fields) > 4 else "",
-                        })
+                        targets.append(
+                            {
+                                **row,
+                                "target": target,
+                                "log": fields[2],
+                                "detail": fields[4] if len(fields) > 4 else "",
+                            }
+                        )
                     else:
                         stages.append(row)
     output = destination / "var/log/vm-gate/gate-output.log"

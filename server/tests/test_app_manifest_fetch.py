@@ -50,7 +50,10 @@ class Origin:
     guard: object
 
     def manifest(self, manifest_version=2, **app_changes):
-        vectors = Path(__file__).parents[2] / "test-vectors/app-manifests/app-manifest-v2-v1.json"
+        vectors = (
+            Path(__file__).parents[2]
+            / "test-vectors/app-manifests/app-manifest-v2-v1.json"
+        )
         doc = json.loads(vectors.read_bytes())["base_manifests"][f"v{manifest_version}"]
         doc["app"].update({"origin": self.url, **app_changes})
         # Deliberately non-canonical: exact fetched bytes must survive parsing.
@@ -58,18 +61,32 @@ class Origin:
 
     def publish(self, data):
         self.routes[VARIANT] = (200, data, [])
-        self.routes[CATALOG] = (200, json.dumps({
-            "catalog_version": 1, "app_id": "fixture", "variants": [
-                {"manifest_version": 1, "url": LEGACY, "digest": digest(self.manifest(1))},
-                {"manifest_version": 2, "url": VARIANT, "digest": digest(data)},
-            ],
-        }).encode(), [])
+        self.routes[CATALOG] = (
+            200,
+            json.dumps(
+                {
+                    "catalog_version": 1,
+                    "app_id": "fixture",
+                    "variants": [
+                        {
+                            "manifest_version": 1,
+                            "url": LEGACY,
+                            "digest": digest(self.manifest(1)),
+                        },
+                        {"manifest_version": 2, "url": VARIANT, "digest": digest(data)},
+                    ],
+                }
+            ).encode(),
+            [],
+        )
 
 
 @pytest_asyncio.fixture
 async def origin(tmp_path_factory):
     host = local_address()
-    certificates = make_certificates(tmp_path_factory.mktemp("manifest-origin"), [NAME], [host])
+    certificates = make_certificates(
+        tmp_path_factory.mktemp("manifest-origin"), [NAME], [host]
+    )
     dns = DnsServer(records={(NAME, "A"): [host]})
     routes = {}
 
@@ -84,26 +101,42 @@ async def origin(tmp_path_factory):
         return Egress(
             addresses=AddressPolicy(internal_destinations=policy),
             resolver=DnsResolver(nameservers=["127.0.0.1"], port=dns.port),
-            user_agent="manifest-test/1", ca_file=certificates.ca_file,
+            user_agent="manifest-test/1",
+            ca_file=certificates.ca_file,
         )
 
-    destination = parse_destination({
-        "host": NAME, "port": tls.port, "path": "/**", "methods": ["GET"],
-        "network": "internal", "cidr": f"{host}/32",
-    }, internal_destinations=InternalDestinations.ALLOWED)
+    destination = parse_destination(
+        {
+            "host": NAME,
+            "port": tls.port,
+            "path": "/**",
+            "methods": ["GET"],
+            "network": "internal",
+            "cidr": f"{host}/32",
+        },
+        internal_destinations=InternalDestinations.ALLOWED,
+    )
     try:
         yield Origin(
-            f"https://{NAME}:{tls.port}", tls,
-            ManifestFetcher(egress=guard(InternalDestinations.ALLOWED), destination=destination),
-            ManifestFetcher(egress=guard(InternalDestinations.DISABLED)), routes, dns,
-            host, guard,
+            f"https://{NAME}:{tls.port}",
+            tls,
+            ManifestFetcher(
+                egress=guard(InternalDestinations.ALLOWED), destination=destination
+            ),
+            ManifestFetcher(egress=guard(InternalDestinations.DISABLED)),
+            routes,
+            dns,
+            host,
+            guard,
         )
     finally:
         dns.close()
         await tls.close()
 
 
-async def test_selects_v2_and_preserves_exact_bytes_origin_and_shared_interpretation(origin):
+async def test_selects_v2_and_preserves_exact_bytes_origin_and_shared_interpretation(
+    origin,
+):
     data = origin.manifest()
     origin.publish(data)
     fetched = await origin.fetcher.fetch(origin.url)
@@ -115,7 +148,9 @@ async def test_selects_v2_and_preserves_exact_bytes_origin_and_shared_interpreta
     assert fetched.manifest.surface_tools
     assert [s.request_line.split(" ")[1] for s in origin.tls.seen] == [CATALOG, VARIANT]
     for seen in origin.tls.seen:
-        assert ("accept-encoding", "identity") in [(k.lower(), v) for k, v in seen.headers]
+        assert ("accept-encoding", "identity") in [
+            (k.lower(), v) for k, v in seen.headers
+        ]
 
 
 async def test_only_catalog_404_uses_legacy(origin):
@@ -177,7 +212,9 @@ async def test_truncated_bytes_are_never_accepted(origin, catalog):
     origin.routes[path] = (200, b" " * (bound + 1), [])
     with pytest.raises(ManifestFetchError) as refused:
         await origin.fetcher.fetch(origin.url)
-    assert refused.value.code == ("catalog_unavailable" if catalog else "variant_unavailable")
+    assert refused.value.code == (
+        "catalog_unavailable" if catalog else "variant_unavailable"
+    )
 
 
 async def test_default_public_policy_refuses_private_dns_before_connect(origin):
@@ -190,8 +227,12 @@ async def test_default_public_policy_refuses_private_dns_before_connect(origin):
 
 def operator_listed(origin, *origins, network=None):
     """A fetcher as the operator's settings build it: exact origins, one network."""
-    internal = AppInternalOrigins(frozenset(origins), network or ip_network(f"{origin.host}/32"))
-    return ManifestFetcher(egress=origin.guard(InternalDestinations.ALLOWED), internal=internal)
+    internal = AppInternalOrigins(
+        frozenset(origins), network or ip_network(f"{origin.host}/32")
+    )
+    return ManifestFetcher(
+        egress=origin.guard(InternalDestinations.ALLOWED), internal=internal
+    )
 
 
 async def test_an_operator_listed_origin_on_an_internal_address_is_fetched(origin):
@@ -226,15 +267,21 @@ async def test_http_origin_is_refused_before_any_request(origin):
     assert not origin.tls.seen
 
 
-VECTORS = Path(__file__).parents[2] / "test-vectors/app-manifests/app-manifest-v2-v1.json"
+VECTORS = (
+    Path(__file__).parents[2] / "test-vectors/app-manifests/app-manifest-v2-v1.json"
+)
 BAD_DID = next(
-    case for case in json.loads(VECTORS.read_bytes())["cases"] if case["name"] == "app_key_bad_did"
+    case
+    for case in json.loads(VECTORS.read_bytes())["cases"]
+    if case["name"] == "app_key_bad_did"
 )["mutations"][0]["value"]
 # The encoding of the identity point, a small-order Ed25519 key anyone can sign as.
 SMALL_ORDER_DID = did_from_public_key(b"\x01" + b"\x00" * 31)
 
 
-@pytest.mark.parametrize("did_key", [BAD_DID, SMALL_ORDER_DID], ids=["app_key_bad_did", "small-order"])
+@pytest.mark.parametrize(
+    "did_key", [BAD_DID, SMALL_ORDER_DID], ids=["app_key_bad_did", "small-order"]
+)
 async def test_a_v2_manifest_whose_key_is_no_ed25519_key_is_refused(origin, did_key):
     doc = json.loads(origin.manifest())
     doc["app_keys"][0]["did_key"] = did_key
@@ -244,8 +291,12 @@ async def test_a_v2_manifest_whose_key_is_no_ed25519_key_is_refused(origin, did_
     assert (refused.value.code, refused.value.status_code) == ("app_keys_invalid", 422)
 
 
-@pytest.mark.parametrize("did_key", [BAD_DID, SMALL_ORDER_DID], ids=["app_key_bad_did", "small-order"])
-async def test_a_v1_manifest_whose_emitter_key_is_no_ed25519_key_is_refused(origin, did_key):
+@pytest.mark.parametrize(
+    "did_key", [BAD_DID, SMALL_ORDER_DID], ids=["app_key_bad_did", "small-order"]
+)
+async def test_a_v1_manifest_whose_emitter_key_is_no_ed25519_key_is_refused(
+    origin, did_key
+):
     doc = json.loads(origin.manifest(1))
     doc["event_emitters"][0]["did_key"] = did_key
     origin.routes[LEGACY] = (200, json.dumps(doc).encode(), [])

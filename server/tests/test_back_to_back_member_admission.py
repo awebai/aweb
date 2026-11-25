@@ -35,7 +35,9 @@ async def test_back_to_back_admissions_are_visible_in_the_authenticated_roster(
             assert domain == "example.test"
             return DomainAuthority(env.namespace_did, origin, "_awid.example.test")
 
-        env.registry_app.dependency_overrides[get_domain_verifier] = lambda: namespace_authority
+        env.registry_app.dependency_overrides[get_domain_verifier] = lambda: (
+            namespace_authority
+        )
         name = "join-" + uuid4().hex[:12]
         team_id = name + ":example.test"
         await writer.register_team(
@@ -56,7 +58,10 @@ async def test_back_to_back_admissions_are_visible_in_the_authenticated_roster(
         ) as reader:
             env.app.state.awid_registry_client = reader
             assert (
-                await reader.list_team_certificates("example.test", name, active_only=False) == []
+                await reader.list_team_certificates(
+                    "example.test", name, active_only=False
+                )
+                == []
             )
 
             async def connect_after_miss_window(signing_key, did_key, header):
@@ -65,7 +70,9 @@ async def test_back_to_back_admissions_are_visible_in_the_authenticated_roster(
                     **_signed_team_headers(signing_key, did_key, team_id, header, body),
                     "Content-Type": "application/json",
                 }
-                response = await env.client.post("/v1/connect", content=body, headers=headers)
+                response = await env.client.post(
+                    "/v1/connect", content=body, headers=headers
+                )
                 if response.status_code == 503:
                     assert "Retry after five seconds" in response.text
                     assert not await env.db.fetch_value(
@@ -74,7 +81,9 @@ async def test_back_to_back_admissions_are_visible_in_the_authenticated_roster(
                         did_key,
                     )
                     await asyncio.sleep(5)
-                    response = await env.client.post("/v1/connect", content=body, headers=headers)
+                    response = await env.client.post(
+                        "/v1/connect", content=body, headers=headers
+                    )
                 return response
 
             expected_roster = []
@@ -103,7 +112,9 @@ async def test_back_to_back_admissions_are_visible_in_the_authenticated_roster(
                         identity_scope="local",
                         certificate=header,
                     )
-                    response = await connect_after_miss_window(signing_key, did_key, header)
+                    response = await connect_after_miss_window(
+                        signing_key, did_key, header
+                    )
                     assert response.status_code == 200, response.text
                     agent_id = response.json()["agent_id"]
                     expected_roster.append((alias, agent_id, did_key))

@@ -658,7 +658,10 @@ async def test_a_send_that_commits_then_fails_still_wakes_the_recipient(
 
     async def commit_then_fail(db, *, message, recipient, sender, registry_client):
         await commit_continuation(
-            db, message=message, recipient=recipient, sender=sender,
+            db,
+            message=message,
+            recipient=recipient,
+            sender=sender,
             registry_client=registry_client,
         )
         raise RuntimeError("failed after the message committed")

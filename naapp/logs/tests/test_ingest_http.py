@@ -63,7 +63,10 @@ async def _install(db, team_id, data):
     )
     async with db.transaction() as tx:
         return await install_verified_manifest_on(
-            tx, team_id=team_id, fetched=fetched, granted_scopes=[],
+            tx,
+            team_id=team_id,
+            fetched=fetched,
+            granted_scopes=[],
         )
 
 
@@ -81,8 +84,12 @@ class World:
     runtime: object = None
     ledger: object = None
 
-    def event(self, kind, *, event_id=None, payload=None, producer=None, occurred_at=None, hook=None):
-        signing, _ = signed_event(kind, team_id=self.member.team_id, event_id=event_id or str(uuid4()))
+    def event(
+        self, kind, *, event_id=None, payload=None, producer=None, occurred_at=None, hook=None
+    ):
+        signing, _ = signed_event(
+            kind, team_id=self.member.team_id, event_id=event_id or str(uuid4())
+        )
         fields = envelope.open_envelope(signing).fields
         at = occurred_at or self.now
         fields["occurred_at"] = fields["fired_at"] = at.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -106,16 +113,24 @@ class World:
         hook = envelope.open_envelope(signing).hook
         certificate = (
             base64.b64encode(json.dumps(self.member.certificate()).encode()).decode()
-            if kind == "client" else None
+            if kind == "client"
+            else None
         )
         return sign_delivery(
-            SEEDS[kind], "POST", target or ORIGIN + PATH,
-            binding_id or self.bindings[hook], signing, signature, certificate, self.now,
+            SEEDS[kind],
+            "POST",
+            target or ORIGIN + PATH,
+            binding_id or self.bindings[hook],
+            signing,
+            signature,
+            certificate,
+            self.now,
         )
 
     async def send(self, delivery, *, body=None, path=None):
         return await self.client.post(
-            path or delivery.path, headers=delivery.headers,
+            path or delivery.path,
+            headers=delivery.headers,
             content=delivery.body if body is None else body,
         )
 
@@ -127,18 +142,23 @@ async def customer_hosted_credential(coordination, member, directory) -> dict[st
     """Make ``member``'s team private and issue Logs its own member certificate,
     written as ``aw`` writes it: the files the credential setting names."""
     service = Member(
-        team_id=member.team_id, team_key=member.team_key,
-        certificate_id=SERVICE_CERTIFICATE_ID, alias="logs-service",
+        team_id=member.team_id,
+        team_key=member.team_key,
+        certificate_id=SERVICE_CERTIFICATE_ID,
+        alias="logs-service",
     )
     await coordination.registry.add_certificate(service.certificate(), team_key=service.team_key)
     name, domain = member.team_id.split(":", 1)
     await coordination.registry.db.execute(
-        "UPDATE {{tables.teams}} SET visibility = 'private' WHERE domain = $1 AND name = $2", domain, name,
+        "UPDATE {{tables.teams}} SET visibility = 'private' WHERE domain = $1 AND name = $2",
+        domain,
+        name,
     )
     directory.mkdir(parents=True, exist_ok=True)
     key = directory / "signing.key"
     key.write_text(
-        "-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(bytes(service.member_key)).decode()
+        "-----BEGIN ED25519 PRIVATE KEY-----\n"
+        + base64.b64encode(bytes(service.member_key)).decode()
         + "\n-----END ED25519 PRIVATE KEY-----\n"
     )
     key.chmod(0o600)
@@ -151,18 +171,29 @@ async def customer_hosted_credential(coordination, member, directory) -> dict[st
 async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, request):
     now = datetime.now(UTC).replace(microsecond=0)
     member = Member(
-        team_id=f"logs-{uuid4().hex[:12]}:ingest.example", certificate_id="c_41",
-        alias="bond", member_key=SigningKey(MEMBER_SEED),
+        team_id=f"logs-{uuid4().hex[:12]}:ingest.example",
+        certificate_id="c_41",
+        alias="bond",
+        member_key=SigningKey(MEMBER_SEED),
     )
     await coordination.add_member(member, namespace_controller=NAMESPACE_KEY)
     await coordination.publish_server(member)
     await coordination.connect(member)
     # Ingest runs with team-key pins enforced, the state the staged flag ends in.
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
-    monkeypatch.setenv("AWEB_HOOK_PRODUCER_KEYS", json.dumps([{
-        "kid": "hook-2026-10", "did_key": did_key(CORE_SEED),
-        "valid_from": "2026-01-01T00:00:00Z", "valid_until": None,
-    }]))
+    monkeypatch.setenv(
+        "AWEB_HOOK_PRODUCER_KEYS",
+        json.dumps(
+            [
+                {
+                    "kid": "hook-2026-10",
+                    "did_key": did_key(CORE_SEED),
+                    "valid_from": "2026-01-01T00:00:00Z",
+                    "valid_until": None,
+                }
+            ]
+        ),
+    )
     db = await test_db_factory.create_db(suffix="logs_http")
     ledger = await test_db_factory.create_db(suffix="logs_http_purge_ledger")
     server_db = coordination.server.db.get_manager("aweb")
@@ -171,50 +202,85 @@ async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, re
     if overrides.pop("customer_hosted", False):
         # A customer-hosted Logs: its team is private, and Logs holds an
         # ordinary member certificate of its own instead of the service token.
-        awid_authority = {"awid_member_credentials": {
-            member.team_id: await customer_hosted_credential(coordination, member, tmp_path / "aw"),
-        }}
+        awid_authority = {
+            "awid_member_credentials": {
+                member.team_id: await customer_hosted_credential(
+                    coordination, member, tmp_path / "aw"
+                ),
+            }
+        }
     settings = LogsSettings(
-        _env_file=None, database_url=db.config.get_dsn(), db_schema=db.schema,
+        _env_file=None,
+        database_url=db.config.get_dsn(),
+        db_schema=db.schema,
         purge_ledger_database_url=ledger.config.get_dsn(),
-        app_id=TEST_APP_ID, public_origin=ORIGIN, console_origin=CONSOLE,
-        awid_registry_url=REGISTRY_URL, **awid_authority,
+        app_id=TEST_APP_ID,
+        public_origin=ORIGIN,
+        console_origin=CONSOLE,
+        awid_registry_url=REGISTRY_URL,
+        **awid_authority,
         app_key_files=write_key_files(tmp_path),
         **{"client_events_per_minute": 1, **overrides},
     )
-    await _install(server_db, member.team_id, served_manifest(settings.app_key_files, origin=ORIGIN))
+    await _install(
+        server_db, member.team_id, served_manifest(settings.app_key_files, origin=ORIGIN)
+    )
     producer_manifest = {
         "manifest_version": 2,
         "app": {"id": APP_ID, "origin": SECRETS_ORIGIN, "version": "1.0.0"},
         "tools": [],
-        "app_keys": [{"kid": "hook-2026-10", "did_key": did_key(SECRETS_SEED),
-                      "purposes": ["hook-event"]}],
-        "hooks": {"registration_version": 1, "productions": [
-            {"catalog": {"id": "aweb.hooks", "version": 1}, "hook": hook}
-            for hook in ("post-secret-use-hook", "post-governance-hook")
-        ]},
+        "app_keys": [
+            {"kid": "hook-2026-10", "did_key": did_key(SECRETS_SEED), "purposes": ["hook-event"]}
+        ],
+        "hooks": {
+            "registration_version": 1,
+            "productions": [
+                {"catalog": {"id": "aweb.hooks", "version": 1}, "hook": hook}
+                for hook in ("post-secret-use-hook", "post-governance-hook")
+            ],
+        },
     }
     installation = await _install(server_db, member.team_id, json.dumps(producer_manifest).encode())
     await server_db.execute(
         "UPDATE {{tables.app_hook_bindings}} SET state='active', activated_at=$2::timestamptz - INTERVAL '60 seconds', "
         "active_from=$2, activation_act_sha256=$3 WHERE team_id=$1",
-        member.team_id, now - timedelta(minutes=1), "ab" * 32,
+        member.team_id,
+        now - timedelta(minutes=1),
+        "ab" * 32,
     )
-    bindings = {row["hook"]: str(row["binding_id"]) for row in await server_db.fetch_all(
-        "SELECT hook, binding_id FROM {{tables.app_hook_bindings}}"
-        " WHERE team_id=$1 AND app_id=$2 AND kind='registration'",
-        member.team_id, TEST_APP_ID,
-    )}
+    bindings = {
+        row["hook"]: str(row["binding_id"])
+        for row in await server_db.fetch_all(
+            "SELECT hook, binding_id FROM {{tables.app_hook_bindings}}"
+            " WHERE team_id=$1 AND app_id=$2 AND kind='registration'",
+            member.team_id,
+            TEST_APP_ID,
+        )
+    }
     service = create_app(
-        settings, email=no_mail(), awid_transport=coordination.registry.transport,
+        settings,
+        email=no_mail(),
+        awid_transport=coordination.registry.transport,
         awid_txt_resolver=dns_naming("ingest.example", NAMESPACE_KEY),
-        team_server_transport=coordination.server.transport, now=lambda: now,
+        team_server_transport=coordination.server.transport,
+        now=lambda: now,
     )
     async with service.api_app.router.lifespan_context(service.api_app):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=ORIGIN) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=service), base_url=ORIGIN
+        ) as client:
             yield World(
-                coordination, db, server_db, member, settings, installation, bindings, now, client,
-                service.api_app.state.runtime, ledger,
+                coordination,
+                db,
+                server_db,
+                member,
+                settings,
+                installation,
+                bindings,
+                now,
+                client,
+                service.api_app.state.runtime,
+                ledger,
             )
 
 
@@ -229,16 +295,29 @@ async def test_a_real_delivery_appends_reverifiable_content_and_a_signed_receipt
     assert response.status_code == 200, response.text
     ack = response.json()
     assert ack["disposition"] == "appended"
-    receipt = open_receipt(decode_base64url(ack["receipt"]["signing_bytes"], "receipt"), ack["receipt"]["signature"])
-    assert (receipt.event_id, receipt.team_id, receipt.team_seq) == (ack["event_id"], world.member.team_id, 1)
+    receipt = open_receipt(
+        decode_base64url(ack["receipt"]["signing_bytes"], "receipt"), ack["receipt"]["signature"]
+    )
+    assert (receipt.event_id, receipt.team_id, receipt.team_seq) == (
+        ack["event_id"],
+        world.member.team_id,
+        1,
+    )
     genesis, events = await load_epoch(world.db, world.member.team_id, 1)
-    assert verify_chain(genesis, events, receipt_keys=frozenset({receipt.did_key}), checkpoint_keys=frozenset()).intact
-    evidence = json.loads(await world.db.fetch_value(
-        "SELECT key_evidence FROM {{tables.chain_events}} WHERE team_id=$1", world.member.team_id,
-    ))
+    assert verify_chain(
+        genesis, events, receipt_keys=frozenset({receipt.did_key}), checkpoint_keys=frozenset()
+    ).intact
+    evidence = json.loads(
+        await world.db.fetch_value(
+            "SELECT key_evidence FROM {{tables.chain_events}} WHERE team_id=$1",
+            world.member.team_id,
+        )
+    )
     assert evidence["did_key"] == did_key(SEEDS[kind])
-    assert world.bindings[envelope.open_envelope(world.event(kind)[0]).hook] in evidence["binding_ids"]
-    admitted, = evidence["admissions"]
+    assert (
+        world.bindings[envelope.open_envelope(world.event(kind)[0]).hook] in evidence["binding_ids"]
+    )
+    (admitted,) = evidence["admissions"]
     registration = admitted["registration"]
     assert registration["state"] == "active"
     assert registration["origin"] == ORIGIN
@@ -253,7 +332,9 @@ async def test_a_real_delivery_appends_reverifiable_content_and_a_signed_receipt
         assert production["generation"] == world.installation["generation"]
         assert production["active_from"] is not None
     assert (evidence["installation_id"], evidence["generation"]) == (
-        (world.installation["installation_id"], world.installation["generation"]) if kind == "app" else (None, None)
+        (world.installation["installation_id"], world.installation["generation"])
+        if kind == "app"
+        else (None, None)
     )
 
 
@@ -277,9 +358,14 @@ async def test_transport_signs_the_external_raw_path_and_query(world):
 
 
 async def test_binding_precedes_producer_authority_and_schema(world):
-    response = await world.send(world.delivery("core", binding_id=str(uuid4()), payload={"unknown": "field"}))
+    response = await world.send(
+        world.delivery("core", binding_id=str(uuid4()), payload={"unknown": "field"})
+    )
     assert (response.status_code, _code(response)) == (403, "binding_required")
-    assert not any(call.url.path == "/v1/hooks/producer-keys" for call in world.coordination.server.transport.calls)
+    assert not any(
+        call.url.path == "/v1/hooks/producer-keys"
+        for call in world.coordination.server.transport.calls
+    )
 
 
 @pytest.mark.parametrize("state", ["pending", "revoked", "superseded"])
@@ -293,14 +379,19 @@ async def test_a_nonactive_registration_is_refused(world, state):
         "ended_by=CASE WHEN $3='pending' THEN NULL WHEN $3='revoked' THEN 'owner_act' ELSE 'generation' END, "
         "revocation_act_sha256=CASE WHEN $3='revoked' THEN $4 ELSE NULL END "
         "WHERE team_id=$1 AND app_id=$2",
-        world.member.team_id, TEST_APP_ID, state, "cd" * 32,
+        world.member.team_id,
+        TEST_APP_ID,
+        state,
+        "cd" * 32,
     )
     response = await world.send(world.delivery("core"))
     assert (response.status_code, _code(response)) == (403, "binding_required")
 
 
 async def test_an_event_before_the_registration_pad_is_refused(world):
-    response = await world.send(world.delivery("core", occurred_at=world.now - timedelta(minutes=2)))
+    response = await world.send(
+        world.delivery("core", occurred_at=world.now - timedelta(minutes=2))
+    )
     assert (response.status_code, _code(response)) == (403, "binding_required")
 
 
@@ -312,39 +403,65 @@ async def test_unavailable_binding_authority_is_retryable(world):
 
 
 async def test_a_core_key_cannot_assert_an_unanchored_origin(world):
-    response = await world.send(world.delivery("core", producer={"origin": "https://forged.example"}))
+    response = await world.send(
+        world.delivery("core", producer={"origin": "https://forged.example"})
+    )
     assert (response.status_code, _code(response)) == (403, "provenance_core_key")
-    assert not any(call.url.host == "forged.example" for call in world.coordination.server.transport.calls)
+    assert not any(
+        call.url.host == "forged.example" for call in world.coordination.server.transport.calls
+    )
 
 
 async def test_a_core_key_is_checked_at_the_events_occurrence(world, monkeypatch):
-    monkeypatch.setenv("AWEB_HOOK_PRODUCER_KEYS", json.dumps([{
-        "kid": "hook-2026-10", "did_key": did_key(CORE_SEED),
-        "valid_from": "2026-01-01T00:00:00Z",
-        "valid_until": (world.now - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }]))
+    monkeypatch.setenv(
+        "AWEB_HOOK_PRODUCER_KEYS",
+        json.dumps(
+            [
+                {
+                    "kid": "hook-2026-10",
+                    "did_key": did_key(CORE_SEED),
+                    "valid_from": "2026-01-01T00:00:00Z",
+                    "valid_until": (world.now - timedelta(seconds=1)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                }
+            ]
+        ),
+    )
     response = await world.send(world.delivery("core"))
     assert (response.status_code, _code(response)) == (403, "provenance_core_key")
 
 
 @pytest.mark.parametrize("seconds_since_retirement", [0, 60])
 async def test_a_retired_core_key_cannot_deliver_backdated_events(
-    world, monkeypatch, seconds_since_retirement,
+    world,
+    monkeypatch,
+    seconds_since_retirement,
 ):
     occurred_at = world.now - timedelta(minutes=90)
     await world.server_db.execute(
         "UPDATE {{tables.app_hook_bindings}} SET activated_at=$2, active_from=$3 "
         "WHERE team_id=$1 AND app_id=$4",
-        world.member.team_id, world.now - timedelta(hours=2, seconds=60),
-        world.now - timedelta(hours=2), TEST_APP_ID,
+        world.member.team_id,
+        world.now - timedelta(hours=2, seconds=60),
+        world.now - timedelta(hours=2),
+        TEST_APP_ID,
     )
-    monkeypatch.setenv("AWEB_HOOK_PRODUCER_KEYS", json.dumps([{
-        "kid": "hook-2026-10", "did_key": did_key(CORE_SEED),
-        "valid_from": (world.now - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "valid_until": (world.now - timedelta(seconds=seconds_since_retirement)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
+    monkeypatch.setenv(
+        "AWEB_HOOK_PRODUCER_KEYS",
+        json.dumps(
+            [
+                {
+                    "kid": "hook-2026-10",
+                    "did_key": did_key(CORE_SEED),
+                    "valid_from": (world.now - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "valid_until": (
+                        world.now - timedelta(seconds=seconds_since_retirement)
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+            ]
         ),
-    }]))
+    )
     # The event and active registration predate retirement; only its delivery
     # credential is signed now. No authority, verifier or storage is mocked.
     response = await world.send(world.delivery("core", occurred_at=occurred_at))
@@ -353,11 +470,18 @@ async def test_a_retired_core_key_cannot_deliver_backdated_events(
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
 
 
-@pytest.mark.parametrize("producer", [
-    {"installation_id": "10000000-0000-4000-8000-000000000000"},
-    {"generation": 99}, {"origin": "https://forged.example"}, {"kid": "unregistered"},
-])
-async def test_an_app_must_match_the_registered_installation_generation_origin_and_key(world, producer):
+@pytest.mark.parametrize(
+    "producer",
+    [
+        {"installation_id": "10000000-0000-4000-8000-000000000000"},
+        {"generation": 99},
+        {"origin": "https://forged.example"},
+        {"kid": "unregistered"},
+    ],
+)
+async def test_an_app_must_match_the_registered_installation_generation_origin_and_key(
+    world, producer
+):
     response = await world.send(world.delivery("app", producer=producer))
     assert (response.status_code, _code(response)) == (403, "provenance_app_production")
 
@@ -365,7 +489,8 @@ async def test_an_app_must_match_the_registered_installation_generation_origin_a
 async def test_an_app_production_without_a_hook_event_key_is_refused(world):
     await world.server_db.execute(
         "UPDATE {{tables.team_app_keys}} SET purposes=ARRAY['hook-delivery'] WHERE team_id=$1 AND app_id=$2",
-        world.member.team_id, APP_ID,
+        world.member.team_id,
+        APP_ID,
     )
     response = await world.send(world.delivery("app"))
     assert (response.status_code, _code(response)) == (403, "provenance_app_production")
@@ -389,7 +514,9 @@ async def test_client_certificate_verification_reads_the_controller_key_fresh(wo
     # the database's first-admission pin, including its fractional seconds.
     await asyncio.sleep(1)
     await world.coordination.registry.rotate_team_key_by_controller(
-        world.member.team_id, did_key(bytes(SigningKey.generate())), NAMESPACE_KEY,
+        world.member.team_id,
+        did_key(bytes(SigningKey.generate())),
+        NAMESPACE_KEY,
     )
     response = await world.send(world.delivery("client"))
     assert (response.status_code, _code(response)) == (401, "transport_certificate_invalid")
@@ -397,7 +524,9 @@ async def test_client_certificate_verification_reads_the_controller_key_fresh(wo
 
 async def test_a_registry_substituted_team_key_is_refused_by_name(world):
     assert (await world.send(world.delivery("client"))).status_code == 200
-    await world.coordination.registry.rotate_team_key(world.member.team_id, did_key(bytes(SigningKey.generate())))
+    await world.coordination.registry.rotate_team_key(
+        world.member.team_id, did_key(bytes(SigningKey.generate()))
+    )
     response = await world.send(world.delivery("client"))
     assert (response.status_code, _code(response)) == (401, "team_key_unverified")
 
@@ -414,7 +543,8 @@ async def test_a_customer_hosted_logs_reads_its_private_teams_key_with_its_own_c
     assert (await world.send(world.delivery("client"))).status_code == 200
     team_path = "/v1/namespaces/{}/teams/{}".format(*reversed(world.member.team_id.split(":", 1)))
     signed = [
-        r for r in world.coordination.registry.transport.calls
+        r
+        for r in world.coordination.registry.transport.calls
         if r.url.path == team_path and r.headers.get("Authorization", "").startswith("DIDKey ")
     ]
     assert signed
@@ -429,7 +559,9 @@ async def test_revoking_logs_own_certificate_stops_its_reads_of_the_private_team
 
 
 @pytest.mark.parametrize("world", [{"customer_hosted": True}], indirect=True)
-async def test_a_private_team_unreadable_at_the_certificate_read_is_refused_like_at_the_key_read(world):
+async def test_a_private_team_unreadable_at_the_certificate_read_is_refused_like_at_the_key_read(
+    world,
+):
     """The same condition gets the same code at either read: the key read
     succeeds, and the read of the team's certificates that follows finds the
     team unreadable."""
@@ -466,10 +598,14 @@ async def test_a_conflict_is_recorded_without_charging_quota_or_overwriting_cont
     event_id = str(uuid4())
     first = await world.send(world.delivery("client", event_id=event_id))
     payload = envelope.open_envelope(world.event("client")[0]).fields["payload"]
-    response = await world.send(world.delivery("client", event_id=event_id, payload={**payload, "flags": ["--quiet"]}))
+    response = await world.send(
+        world.delivery("client", event_id=event_id, payload={**payload, "flags": ["--quiet"]})
+    )
     assert first.status_code == 200
     assert (response.status_code, _code(response)) == (409, "event_conflict")
-    assert await world.db.fetch_value("SELECT kind FROM {{tables.chain_faults}}") == "event_conflict"
+    assert (
+        await world.db.fetch_value("SELECT kind FROM {{tables.chain_faults}}") == "event_conflict"
+    )
     assert await world.db.fetch_value("SELECT events FROM {{tables.client_ingest_usage}}") == 1
     assert await world.db.fetch_value("SELECT team_seq FROM {{tables.chain_heads}}") == 1
 
@@ -482,7 +618,9 @@ async def test_concurrent_client_appends_charge_and_append_atomically(world):
     assert await world.db.fetch_value("SELECT events FROM {{tables.client_ingest_usage}}") == 1
 
 
-@pytest.mark.parametrize("world", [{"client_events_per_minute": 30, "client_bytes_per_minute": 1}], indirect=True)
+@pytest.mark.parametrize(
+    "world", [{"client_events_per_minute": 30, "client_bytes_per_minute": 1}], indirect=True
+)
 async def test_client_byte_quota_rolls_back_the_entire_first_append(world):
     response = await world.send(world.delivery("client"))
     assert (response.status_code, _code(response)) == (429, "client_quota_exceeded")
@@ -491,7 +629,9 @@ async def test_client_byte_quota_rolls_back_the_entire_first_append(world):
 
 
 async def test_a_registration_for_another_hook_cannot_admit_the_delivery(world):
-    response = await world.send(world.delivery("core", binding_id=world.bindings["post-command-hook"]))
+    response = await world.send(
+        world.delivery("core", binding_id=world.bindings["post-command-hook"])
+    )
     assert (response.status_code, _code(response)) == (403, "binding_required")
 
 
@@ -503,18 +643,37 @@ async def test_a_member_team_auth_request_is_not_a_hook_delivery(world):
 
 
 async def test_backend_version_observation_uses_the_packaged_catalog(world):
-    response = await world.send(world.delivery("app", hook="post-governance-hook", payload={
-        "act": "resource.version_observed", "direction": "narrowing", "authority": "backend_observation",
-        "resource_type": "secret", "resource_ref": "sec_19ab42",
-        "before_ref": "sv_38b8149372e841309188c09c50e46104",
-        "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b", "reason_code": "external_version_changed",
-    }))
+    response = await world.send(
+        world.delivery(
+            "app",
+            hook="post-governance-hook",
+            payload={
+                "act": "resource.version_observed",
+                "direction": "narrowing",
+                "authority": "backend_observation",
+                "resource_type": "secret",
+                "resource_ref": "sec_19ab42",
+                "before_ref": "sv_38b8149372e841309188c09c50e46104",
+                "after_ref": "sv_6220f33627bf41049cef7a9ba04e7c9b",
+                "reason_code": "external_version_changed",
+            },
+        )
+    )
     assert response.status_code == 200, response.text
 
 
 async def test_invalid_observed_value_refusal_uses_the_packaged_catalog(world):
-    response = await world.send(world.delivery("app", payload={
-        "action": "refused", "op_kind": "broker", "secret_id": "sec_19ab42",
-        "secret_version": 4, "secret_backend": "onepassword", "refusal_code": "secret_value_invalid",
-    }))
+    response = await world.send(
+        world.delivery(
+            "app",
+            payload={
+                "action": "refused",
+                "op_kind": "broker",
+                "secret_id": "sec_19ab42",
+                "secret_version": 4,
+                "secret_backend": "onepassword",
+                "refusal_code": "secret_value_invalid",
+            },
+        )
+    )
     assert response.status_code == 200, response.text

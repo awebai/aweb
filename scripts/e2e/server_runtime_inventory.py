@@ -33,8 +33,7 @@ def main() -> None:
             )
         versions[name] = version
     distributions = [
-        {"name": name, "version": version}
-        for name, version in sorted(versions.items())
+        {"name": name, "version": version} for name, version in sorted(versions.items())
     ]
     preimage = {
         "constraints_sha256": constraints_digest,

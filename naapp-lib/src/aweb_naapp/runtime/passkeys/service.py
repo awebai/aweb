@@ -2108,8 +2108,7 @@ class Passkeys:
         except (ValueError, KeyError, TypeError):
             raise PasskeyProofUnavailable() from None
         expected = {
-            field: row[field]
-            for field in ("app_id", "team_id", "installation_id", "generation")
+            field: row[field] for field in ("app_id", "team_id", "installation_id", "generation")
         }
         if (
             proof.metadata["evidence_ref"] != evidence_ref

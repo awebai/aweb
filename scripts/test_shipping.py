@@ -46,29 +46,50 @@ def command(root: Path, *argv: str) -> str:
 class TagContractTest(unittest.TestCase):
     def test_gateway_failure_cleanup_preserves_stderr_before_removal(self):
         source = (ROOT / "scripts/e2e-a2a-gateway-docker.sh").read_text()
-        cleanup = source[source.index("cleanup() {"):source.index("\ntrap cleanup EXIT")]
+        cleanup = source[
+            source.index("cleanup() {") : source.index("\ntrap cleanup EXIT")
+        ]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime = root / "runtime"
             runtime.mkdir()
             calls = root / "docker-calls"
             docker = root / "docker"
-            docker.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$DOCKER_CALLS"\n'
-                              'case "$1" in\ninspect) echo running;;\n'
-                              'logs) echo gateway-stdout; echo gateway-stderr >&2;;\nesac\n')
+            docker.write_text(
+                '#!/bin/bash\nprintf "%s\\n" "$*" >> "$DOCKER_CALLS"\n'
+                'case "$1" in\ninspect) echo running;;\n'
+                "logs) echo gateway-stdout; echo gateway-stderr >&2;;\nesac\n"
+            )
             docker.chmod(0o755)
-            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
-                       DOCKER_CALLS=str(calls), TMP_ROOT=str(runtime),
-                       GATEWAY_CONTAINER="fixture-gateway", GATEWAY_IMAGE="fixture-image",
-                       PROJECT="fixture-project", ENV_FILE="fixture.env", COMPOSE_FILE="fixture.yml")
-            result = run_fixture(["bash", "-c", "set -euo pipefail\nfail=1; pass=0\n" + cleanup + "\ncleanup"],
-                                    env=env, text=True, capture_output=True)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                DOCKER_CALLS=str(calls),
+                TMP_ROOT=str(runtime),
+                GATEWAY_CONTAINER="fixture-gateway",
+                GATEWAY_IMAGE="fixture-image",
+                PROJECT="fixture-project",
+                ENV_FILE="fixture.env",
+                COMPOSE_FILE="fixture.yml",
+            )
+            result = run_fixture(
+                [
+                    "bash",
+                    "-c",
+                    "set -euo pipefail\nfail=1; pass=0\n" + cleanup + "\ncleanup",
+                ],
+                env=env,
+                text=True,
+                capture_output=True,
+            )
             self.assertEqual(result.returncode, 1)
             self.assertIn("gateway-stdout", result.stdout)
             self.assertIn("gateway-stderr", result.stdout)
             operations = calls.read_text().splitlines()
-            self.assertLess(operations.index("logs fixture-gateway"),
-                            operations.index("rm -f fixture-gateway"))
+            self.assertLess(
+                operations.index("logs fixture-gateway"),
+                operations.index("rm -f fixture-gateway"),
+            )
             self.assertFalse(runtime.exists())
 
     def test_federation_wheel_mode_accepts_rc_before_docker_build(self):
@@ -80,29 +101,55 @@ class TagContractTest(unittest.TestCase):
             bind.mkdir()
             binary = root / "docker"
             reached = root / "build-reached"
-            binary.write_text('#!/bin/bash\nif [[ "$1" == compose && " $* " == *" build "* ]]; then\n'
-                              '  echo build > "$BUILD_REACHED"; exit 86\nfi\nexit 0\n')
+            binary.write_text(
+                '#!/bin/bash\nif [[ "$1" == compose && " $* " == *" build "* ]]; then\n'
+                '  echo build > "$BUILD_REACHED"; exit 86\nfi\nexit 0\n'
+            )
             binary.chmod(0o755)
-            for version in ("1.27.34rc1", "1.27.34", "1.27.34rc0", "1.27.34rcbad", "1.27.34-rc.1"):
+            for version in (
+                "1.27.34rc1",
+                "1.27.34",
+                "1.27.34rc0",
+                "1.27.34rcbad",
+                "1.27.34-rc.1",
+            ):
                 with self.subTest(version=version):
                     wheel = root / f"aweb-{version}-py3-none-any.whl"
-                    wheel.write_bytes(b"validation-only fixture; Docker build is intercepted")
+                    wheel.write_bytes(
+                        b"validation-only fixture; Docker build is intercepted"
+                    )
                     reached.unlink(missing_ok=True)
-                    env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
-                               BUILD_REACHED=str(reached), AWEB_DOCKER_BIND_ROOT=str(bind),
-                               AWEB_FED_E2E_SERVER_MODE="wheel", AWEB_FED_E2E_KEEP="0",
-                               AWEB_FED_E2E_BUILD="1", AWEB_FED_E2E_MCP_VERSION="1.0.0")
+                    env = dict(
+                        os.environ,
+                        PATH=str(root) + os.pathsep + os.environ["PATH"],
+                        BUILD_REACHED=str(reached),
+                        AWEB_DOCKER_BIND_ROOT=str(bind),
+                        AWEB_FED_E2E_SERVER_MODE="wheel",
+                        AWEB_FED_E2E_KEEP="0",
+                        AWEB_FED_E2E_BUILD="1",
+                        AWEB_FED_E2E_MCP_VERSION="1.0.0",
+                    )
                     for side in ("ALPHA", "BETA"):
                         env[f"AWEB_{side}_WHEEL"] = str(wheel)
-                        env[f"AWEB_{side}_WHEEL_SHA256"] = hashlib.sha256(wheel.read_bytes()).hexdigest()
+                        env[f"AWEB_{side}_WHEEL_SHA256"] = hashlib.sha256(
+                            wheel.read_bytes()
+                        ).hexdigest()
                         env[f"AWEB_{side}_VERSION"] = version
-                    result = run_fixture(["bash", str(ROOT / "scripts/e2e-oss-federation.sh")],
-                                            env=env, text=True, capture_output=True)
+                    result = run_fixture(
+                        ["bash", str(ROOT / "scripts/e2e-oss-federation.sh")],
+                        env=env,
+                        text=True,
+                        capture_output=True,
+                    )
                     if version in ("1.27.34rc1", "1.27.34"):
                         self.assertTrue(reached.exists(), result.stdout + result.stderr)
-                        self.assertEqual(result.returncode, 86, result.stdout + result.stderr)
+                        self.assertEqual(
+                            result.returncode, 86, result.stdout + result.stderr
+                        )
                     else:
-                        self.assertFalse(reached.exists(), result.stdout + result.stderr)
+                        self.assertFalse(
+                            reached.exists(), result.stdout + result.stderr
+                        )
                         self.assertIn("wheel version", result.stderr)
                         self.assertNotEqual(result.returncode, 0)
 
@@ -111,8 +158,15 @@ class TagContractTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         command(root, "git", "tag", "server-v1.2.3")
         command(root, "git", "tag", "server-v99.0.0rc10")
-        self.assertEqual(command(root, sys.executable, str(ROOT / "scripts/next_tag_version.py"),
-                                 "server-v"), "1.2.4")
+        self.assertEqual(
+            command(
+                root,
+                sys.executable,
+                str(ROOT / "scripts/next_tag_version.py"),
+                "server-v",
+            ),
+            "1.2.4",
+        )
 
     def repository(self):
         temporary = tempfile.TemporaryDirectory()
@@ -141,12 +195,15 @@ class TagContractTest(unittest.TestCase):
         command(root, "git", "add", ".")
         # Build a real RC tree and its version-only final, rather than relying
         # on the now-refused final-without-RC path in neighboring tests.
-        manifests = [root / path for path in ("server/pyproject.toml", "awid/pyproject.toml")]
+        manifests = [
+            root / path for path in ("server/pyproject.toml", "awid/pyproject.toml")
+        ]
         stable = {path: path.read_text() for path in manifests}
         for path in manifests:
             value = stable[path]
             import re
-            path.write_text(re.sub(r'(version = "[^"]+)(")', r'\g<1>rc1\2', value))
+
+            path.write_text(re.sub(r'(version = "[^"]+)(")', r"\g<1>rc1\2", value))
         command(root, "git", "add", ".")
         command(root, "git", "commit", "-qm", "RC")
         for tag in ("server-v1.2.3rc1", "awid-service-v2.3.4rc1", "aw-v1.2.3-rc.1"):
@@ -193,10 +250,15 @@ class TagContractTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         manifest = root / "awid" / "pyproject.toml"
         import re
-        manifest.write_text(re.sub(r'version = "[^"]+"', 'version = "2.3.4rc2"', manifest.read_text()))
+
+        manifest.write_text(
+            re.sub(r'version = "[^"]+"', 'version = "2.3.4rc2"', manifest.read_text())
+        )
         command(root, "git", "commit", "-qam", "registry rc")
         command(root, "git", "tag", "awid-v2.3.4rc2")
-        self.assertEqual(PUBLISH.tag_identity(root, "awid-v2.3.4rc2")[:2], ("awid-v", "2.3.4rc2"))
+        self.assertEqual(
+            PUBLISH.tag_identity(root, "awid-v2.3.4rc2")[:2], ("awid-v", "2.3.4rc2")
+        )
         command(root, "git", "tag", "awid-v2.3.4rc3")
         with self.assertRaisesRegex(PUBLISH.PublishRefusal, "does not match"):
             PUBLISH.tag_identity(root, "awid-v2.3.4rc3")
@@ -208,7 +270,10 @@ class TagContractTest(unittest.TestCase):
             manifest = root / path / "pyproject.toml"
             value = manifest.read_text()
             import re
-            manifest.write_text(re.sub(r'version = "[^"]+"', f'version = "{version}"', value))
+
+            manifest.write_text(
+                re.sub(r'version = "[^"]+"', f'version = "{version}"', value)
+            )
         command(root, "git", "commit", "-qam", "RC versions")
         for tag in command(root, "git", "tag", "--list").splitlines():
             command(root, "git", "tag", "-d", tag)
@@ -217,15 +282,28 @@ class TagContractTest(unittest.TestCase):
         self.assertEqual(versions["server-v"], "1.2.3rc1")
         for tag in tags:
             command(root, "git", "tag", tag)
-            self.assertEqual(PUBLISH.tag_identity(root, tag)[1], VERSIONS.tag_parts(tag)[1])
+            self.assertEqual(
+                PUBLISH.tag_identity(root, tag)[1], VERSIONS.tag_parts(tag)[1]
+            )
         with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "does not match"):
             CANDIDATE.validate_tags(root, ["server-v1.2.3rc2"])
 
     def test_rc_spelling_and_positive_number_are_strict(self):
-        for tag in ("server-v1.2.3rc0", "server-v1.2.3rc01", "server-v1.2.3-rc.1",
-                    "aw-v1.2.3rc1", "aw-v1.2.3-rc.0", "aw-v1.2.3-rc.01",
-                    "server-v01.2.3rc1", "aw-v1.2.3-beta.1", "channel-v1.2.3-rc.1"):
-            with self.subTest(tag=tag), self.assertRaisesRegex(VERSIONS.VersionRefusal, "unsupported"):
+        for tag in (
+            "server-v1.2.3rc0",
+            "server-v1.2.3rc01",
+            "server-v1.2.3-rc.1",
+            "aw-v1.2.3rc1",
+            "aw-v1.2.3-rc.0",
+            "aw-v1.2.3-rc.01",
+            "server-v01.2.3rc1",
+            "aw-v1.2.3-beta.1",
+            "channel-v1.2.3-rc.1",
+        ):
+            with (
+                self.subTest(tag=tag),
+                self.assertRaisesRegex(VERSIONS.VersionRefusal, "unsupported"),
+            ):
                 VERSIONS.tag_parts(tag)
 
     def test_final_without_prior_rc_is_accepted_by_candidate_and_publisher(self):
@@ -234,14 +312,20 @@ class TagContractTest(unittest.TestCase):
             with self.subTest(tag=tag):
                 temporary, root = self.repository()
                 self.addCleanup(temporary.cleanup)
-                for rc_tag in command(root, "git", "tag", "--list", "*rc*").splitlines():
+                for rc_tag in command(
+                    root, "git", "tag", "--list", "*rc*"
+                ).splitlines():
                     command(root, "git", "tag", "-d", rc_tag)
                 with self.subTest(entry="candidate"):
                     _source, versions = CANDIDATE.validate_tags(root, [tag])
-                    self.assertEqual(versions[VERSIONS.tag_parts(tag)[0]], VERSIONS.tag_parts(tag)[1])
+                    self.assertEqual(
+                        versions[VERSIONS.tag_parts(tag)[0]], VERSIONS.tag_parts(tag)[1]
+                    )
                 command(root, "git", "tag", tag)
                 with self.subTest(entry="publisher"):
-                    self.assertEqual(PUBLISH.tag_identity(root, tag)[1], VERSIONS.tag_parts(tag)[1])
+                    self.assertEqual(
+                        PUBLISH.tag_identity(root, tag)[1], VERSIONS.tag_parts(tag)[1]
+                    )
 
     def test_pi_publisher_requires_its_declared_aw_floor_to_be_public(self):
         temporary, root = self.repository()
@@ -277,7 +361,9 @@ class TagContractTest(unittest.TestCase):
 def release_assets(directory: Path, normalized: str, version: str) -> dict[str, str]:
     """Write one sdist and one wheel shaped like uv's output; return name -> sha256."""
     directory.mkdir(parents=True, exist_ok=True)
-    metadata = f"Metadata-Version: 2.1\nName: {normalized}\nVersion: {version}\n".encode()
+    metadata = (
+        f"Metadata-Version: 2.1\nName: {normalized}\nVersion: {version}\n".encode()
+    )
     sdist = directory / f"{normalized}-{version}.tar.gz"
     with tarfile.open(sdist, "w:gz") as archive:
         info = tarfile.TarInfo(f"{normalized}-{version}/PKG-INFO")
@@ -286,11 +372,16 @@ def release_assets(directory: Path, normalized: str, version: str) -> dict[str, 
     wheel = directory / f"{normalized}-{version}-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr(f"{normalized}-{version}.dist-info/METADATA", metadata)
-    return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (wheel, sdist)}
+    return {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (wheel, sdist)
+    }
 
 
 def locked_message(tag: str, files: dict[str, str]) -> str:
-    return f"{tag}\n\n" + "".join(f"{digest}  {name}\n" for name, digest in files.items())
+    return f"{tag}\n\n" + "".join(
+        f"{digest}  {name}\n" for name, digest in files.items()
+    )
 
 
 class PypiLaneContractTest(unittest.TestCase):
@@ -301,7 +392,9 @@ class PypiLaneContractTest(unittest.TestCase):
         for prefix, package in PUBLISH.PYPI_PACKAGES.items():
             manifest = PUBLISH.MANIFESTS[prefix]
             self.assertEqual(CANDIDATE.MANIFESTS[prefix], manifest, prefix)
-            project = tomllib.loads((ROOT / manifest).read_text(encoding="utf-8"))["project"]
+            project = tomllib.loads((ROOT / manifest).read_text(encoding="utf-8"))[
+                "project"
+            ]
             self.assertEqual(project["name"], package, prefix)
 
     def setUp(self):
@@ -313,11 +406,20 @@ class PypiLaneContractTest(unittest.TestCase):
         self.scratch = Path(scratch.name)
         self.assets = self.scratch / "assets"
         self.locked = release_assets(self.assets, "aweb", "1.2.3")
-        command(self.root, "git", "tag", "-a", "server-v1.2.3", "-m",
-                locked_message("server-v1.2.3", self.locked))
+        command(
+            self.root,
+            "git",
+            "tag",
+            "-a",
+            "server-v1.2.3",
+            "-m",
+            locked_message("server-v1.2.3", self.locked),
+        )
 
     def verify(self):
-        PUBLISH.verify_release_assets(self.assets, PUBLISH.locked_files(self.root, "server-v1.2.3"))
+        PUBLISH.verify_release_assets(
+            self.assets, PUBLISH.locked_files(self.root, "server-v1.2.3")
+        )
 
     def test_assets_equal_to_the_tag_message_are_accepted(self):
         self.assertEqual(PUBLISH.locked_files(self.root, "server-v1.2.3"), self.locked)
@@ -326,17 +428,25 @@ class PypiLaneContractTest(unittest.TestCase):
     def test_an_asset_with_another_sha256_refuses(self):
         wheel = self.assets / "aweb-1.2.3-py3-none-any.whl"
         wheel.write_bytes(wheel.read_bytes() + b"rebuilt")
-        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "aweb-1.2.3-py3-none-any.whl.*sha256"):
+        with self.assertRaisesRegex(
+            PUBLISH.PublishRefusal, "aweb-1.2.3-py3-none-any.whl.*sha256"
+        ):
             self.verify()
 
     def test_an_extra_asset_refuses(self):
-        (self.assets / "aweb-1.2.3-py3-none-manylinux_2_17_x86_64.whl").write_bytes(b"unlocked")
-        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "not in the tag.*manylinux"):
+        (self.assets / "aweb-1.2.3-py3-none-manylinux_2_17_x86_64.whl").write_bytes(
+            b"unlocked"
+        )
+        with self.assertRaisesRegex(
+            PUBLISH.PublishRefusal, "not in the tag.*manylinux"
+        ):
             self.verify()
 
     def test_a_missing_asset_refuses(self):
         (self.assets / "aweb-1.2.3.tar.gz").unlink()
-        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "missing.*aweb-1.2.3.tar.gz"):
+        with self.assertRaisesRegex(
+            PUBLISH.PublishRefusal, "missing.*aweb-1.2.3.tar.gz"
+        ):
             self.verify()
 
     def test_a_tag_without_locked_files_refuses(self):
@@ -351,8 +461,15 @@ class PypiLaneContractTest(unittest.TestCase):
 
     def test_a_file_listed_twice_refuses(self):
         name, digest = next(iter(self.locked.items()))
-        command(self.root, "git", "tag", "-a", "awid-service-v2.3.4", "-m",
-                locked_message("x", self.locked) + f"{'0' * 64}  {name}\n")
+        command(
+            self.root,
+            "git",
+            "tag",
+            "-a",
+            "awid-service-v2.3.4",
+            "-m",
+            locked_message("x", self.locked) + f"{'0' * 64}  {name}\n",
+        )
         with self.assertRaisesRegex(PUBLISH.PublishRefusal, "more than once"):
             PUBLISH.locked_files(self.root, "awid-service-v2.3.4")
 
@@ -383,25 +500,43 @@ class PypiLaneContractTest(unittest.TestCase):
     def test_the_lane_uploads_exactly_the_locked_files_and_never_builds(self):
         uploaded, asked = self.uploads()
         PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
-        self.assertEqual(asked, ["https://pypi.org/pypi/awid-service/2.3.4/json",
-                                 "https://pypi.org/pypi/aweb/1.2.3/json"])
+        self.assertEqual(
+            asked,
+            [
+                "https://pypi.org/pypi/awid-service/2.3.4/json",
+                "https://pypi.org/pypi/aweb/1.2.3/json",
+            ],
+        )
         self.assertEqual(len(uploaded), 1)
         self.assertEqual(uploaded[0][:2], ("uv", "publish"))
-        self.assertEqual(sorted(Path(path).name for path in uploaded[0][2:]), sorted(self.locked))
+        self.assertEqual(
+            sorted(Path(path).name for path in uploaded[0][2:]), sorted(self.locked)
+        )
 
     def test_a_rerun_uploads_only_the_files_pypi_lacks(self):
         wheel = "aweb-1.2.3-py3-none-any.whl"
         uploaded, _asked = self.uploads(
-            (200, {"urls": [{"filename": wheel, "digests": {"sha256": self.locked[wheel]}}]})
+            (
+                200,
+                {
+                    "urls": [
+                        {"filename": wheel, "digests": {"sha256": self.locked[wheel]}}
+                    ]
+                },
+            )
         )
         PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
-        self.assertEqual([Path(path).name for path in uploaded[0][2:]], ["aweb-1.2.3.tar.gz"])
+        self.assertEqual(
+            [Path(path).name for path in uploaded[0][2:]], ["aweb-1.2.3.tar.gz"]
+        )
 
     def test_the_lane_refuses_without_a_pypi_token_before_upload(self):
         uploaded, _asked = self.uploads()
         with patch.dict(os.environ, {"UV_PUBLISH_TOKEN": ""}):
             with self.assertRaisesRegex(PUBLISH.PublishRefusal, "UV_PUBLISH_TOKEN"):
-                PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
+                PUBLISH.publish_pypi(
+                    self.root, "server-v1.2.3", self.source, self.assets
+                )
         self.assertEqual(uploaded, [])
 
     def test_a_wrong_asset_uploads_nothing(self):
@@ -415,14 +550,27 @@ class PypiLaneContractTest(unittest.TestCase):
         uploaded, _asked = self.uploads()
         other = self.scratch / "other"
         locked = release_assets(other, "awid_service", "2.3.4")
-        command(self.root, "git", "tag", "-a", "-f", "server-v1.2.3", "-m",
-                locked_message("server-v1.2.3", locked))
-        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "exactly one sdist and one wheel"):
+        command(
+            self.root,
+            "git",
+            "tag",
+            "-a",
+            "-f",
+            "server-v1.2.3",
+            "-m",
+            locked_message("server-v1.2.3", locked),
+        )
+        with self.assertRaisesRegex(
+            PUBLISH.PublishRefusal, "exactly one sdist and one wheel"
+        ):
             PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, other)
         self.assertEqual(uploaded, [])
 
     def test_the_pypi_lane_refuses_without_release_assets(self):
-        with patch.object(PUBLISH, "publish_pypi") as pypi, patch.object(PUBLISH, "publish_oci") as oci:
+        with (
+            patch.object(PUBLISH, "publish_pypi") as pypi,
+            patch.object(PUBLISH, "publish_oci") as oci,
+        ):
             with self.assertRaisesRegex(PUBLISH.PublishRefusal, "--assets"):
                 PUBLISH.publish(self.root, "server-v1.2.3", only="pypi")
             pypi.assert_not_called()
@@ -436,8 +584,13 @@ class PypiLaneContractTest(unittest.TestCase):
         self.assertNotIn("uv build", source)
         self.assertNotIn("id-token", source)
         self.assertIn('gh release download "$TAG" --dir "$ASSETS"', source)
-        self.assertIn('git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"', source)
-        self.assertIn('python3 scripts/publish_release.py --only pypi --assets "$ASSETS" "$TAG"', source)
+        self.assertIn(
+            'git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"', source
+        )
+        self.assertIn(
+            'python3 scripts/publish_release.py --only pypi --assets "$ASSETS" "$TAG"',
+            source,
+        )
 
 
 class CandidateGateDeadlineTest(unittest.TestCase):
@@ -455,11 +608,14 @@ class CandidateGateDeadlineTest(unittest.TestCase):
             command(root, "git", "add", ".")
             command(root, "git", "commit", "-qm", "candidate")
             command(root, "git", "remote", "add", "origin", ".")
-            with patch.object(CANDIDATE, "COMMAND_TIMEOUT_SECONDS", 1), \
-                    patch("sys.stdout", new_callable=io.StringIO):
+            with (
+                patch.object(CANDIDATE, "COMMAND_TIMEOUT_SECONDS", 1),
+                patch("sys.stdout", new_callable=io.StringIO),
+            ):
                 source_sha = CANDIDATE.create_candidate(root, ["aw-v1.2.3"])
             self.assertEqual(
-                command(root, "git", "rev-parse", "refs/tags/aw-v1.2.3^{commit}"), source_sha
+                command(root, "git", "rev-parse", "refs/tags/aw-v1.2.3^{commit}"),
+                source_sha,
             )
 
     def test_ordinary_commands_keep_their_bound(self):
@@ -492,34 +648,65 @@ class NpmRcContractTest(unittest.TestCase):
             command(root, "git", "commit", "-qam", "final")
             command(root, "git", "remote", "add", "origin", ".")
             result = run_fixture(
-                [sys.executable, str(ROOT / "scripts/release_candidate.py"),
-                 "--stage-aw-final", "aw-v1.2.3"],
-                cwd=root, capture_output=True, text=True,
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/release_candidate.py"),
+                    "--stage-aw-final",
+                    "aw-v1.2.3",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            message = command(root, "git", "tag", "-l", "aw-v1.2.3", "--format=%(contents)")
+            message = command(
+                root, "git", "tag", "-l", "aw-v1.2.3", "--format=%(contents)"
+            )
             self.assertIn("Npm-Publish-Channel: next", message)
 
     def test_exact_publisher_routes_staged_rc_to_next_and_final_to_latest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             npm = root / "npm"
-            npm.write_text('#!/bin/sh\nset -eu\n'
-                           'test "$NPM_CONFIG_UPDATE_NOTIFIER" = false\n'
-                           'test "$npm_config_update_notifier" = false\n'
-                           'printf "%s\\n" "$@" > "$CAPTURE_NPM"\n')
+            npm.write_text(
+                "#!/bin/sh\nset -eu\n"
+                'test "$NPM_CONFIG_UPDATE_NOTIFIER" = false\n'
+                'test "$npm_config_update_notifier" = false\n'
+                'printf "%s\\n" "$@" > "$CAPTURE_NPM"\n'
+            )
             npm.chmod(0o755)
-            environment = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"], "CAPTURE_NPM": str(root / "args"),
-                           "NPM_CONFIG_UPDATE_NOTIFIER": "true", "npm_config_update_notifier": "true"}
-            for version, expected, staged in (("1.2.3-rc.1", "next", False), ("1.2.3", "latest", False), ("1.2.3", "next", True)):
+            environment = {
+                **os.environ,
+                "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                "CAPTURE_NPM": str(root / "args"),
+                "NPM_CONFIG_UPDATE_NOTIFIER": "true",
+                "npm_config_update_notifier": "true",
+            }
+            for version, expected, staged in (
+                ("1.2.3-rc.1", "next", False),
+                ("1.2.3", "latest", False),
+                ("1.2.3", "next", True),
+            ):
                 archive = root / "staged.tgz"
                 raw = json.dumps({"name": "@awebai/aw", "version": version}).encode()
                 with tarfile.open(archive, "w:gz") as tar:
                     entry = tarfile.TarInfo("package/package.json")
                     entry.size = len(raw)
                     tar.addfile(entry, io.BytesIO(raw))
-                result = run_fixture(["bash", "scripts/npm-exact-publish.sh", "publish-exact", "--tgz", str(archive)] + (["--staged-final"] if staged else []),
-                                        cwd=ROOT, env=environment, text=True, capture_output=True)
+                result = run_fixture(
+                    [
+                        "bash",
+                        "scripts/npm-exact-publish.sh",
+                        "publish-exact",
+                        "--tgz",
+                        str(archive),
+                    ]
+                    + (["--staged-final"] if staged else []),
+                    cwd=ROOT,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 args = (root / "args").read_text().splitlines()
                 self.assertEqual(args[args.index("--tag") + 1], expected)
@@ -529,6 +716,7 @@ class NpmRcContractTest(unittest.TestCase):
         # Real publisher, npm and platform archives; uploads stay inside an
         # owned loopback registry, including the new exact readback boundary.
         from test_npm_readback import Registry
+
         with tempfile.TemporaryDirectory() as directory, Registry().serve() as registry:
             root = Path(directory)
             npm_root, artifacts = root / "npm", root / "artifacts"
@@ -536,28 +724,54 @@ class NpmRcContractTest(unittest.TestCase):
             artifacts.mkdir()
             init_fixture_repo(root)
             # A release checkout has a commit: the publisher records it as each package's gitHead.
-            command(root, "git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.test",
-                    "commit", "--allow-empty", "-qm", "source")
+            command(
+                root,
+                "git",
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "source",
+            )
             shutil.copyfile(ROOT / "cli/go/npm/publish.sh", npm_root / "publish.sh")
             shutil.copyfile(ROOT / "cli/go/npm/readback.py", npm_root / "readback.py")
             helper = ROOT / "cli/go/npm/publication.py"
             if helper.exists():
                 shutil.copyfile(helper, npm_root / helper.name)
-            platforms = {"linux_amd64": "linux-x64", "linux_arm64": "linux-arm64",
-                         "darwin_amd64": "darwin-x64", "darwin_arm64": "darwin-arm64",
-                         "windows_amd64": "windows-x64", "windows_arm64": "windows-arm64"}
-            for package in ["aw"] + ["aw-" + platform for platform in platforms.values()]:
+            platforms = {
+                "linux_amd64": "linux-x64",
+                "linux_arm64": "linux-arm64",
+                "darwin_amd64": "darwin-x64",
+                "darwin_arm64": "darwin-arm64",
+                "windows_amd64": "windows-x64",
+                "windows_arm64": "windows-arm64",
+            }
+            for package in ["aw"] + [
+                "aw-" + platform for platform in platforms.values()
+            ]:
                 (npm_root / package).mkdir()
-                shutil.copyfile(ROOT / "cli/go/npm" / package / "package.json", npm_root / package / "package.json")
+                shutil.copyfile(
+                    ROOT / "cli/go/npm" / package / "package.json",
+                    npm_root / package / "package.json",
+                )
             for platform in platforms:
                 windows = platform.startswith("windows")
-                binary_names = ["aw.exe", "aweb-a2a-gw.exe"] if windows else ["aw", "aweb-a2a-gw"]
+                binary_names = (
+                    ["aw.exe", "aweb-a2a-gw.exe"] if windows else ["aw", "aweb-a2a-gw"]
+                )
                 if windows:
-                    with zipfile.ZipFile(artifacts / (platform + ".zip"), "w") as archive:
+                    with zipfile.ZipFile(
+                        artifacts / (platform + ".zip"), "w"
+                    ) as archive:
                         for name in binary_names:
                             archive.writestr(name, "fixture binary")
                 else:
-                    with tarfile.open(artifacts / (platform + ".tar.gz"), "w:gz") as archive:
+                    with tarfile.open(
+                        artifacts / (platform + ".tar.gz"), "w:gz"
+                    ) as archive:
                         for name in binary_names:
                             data = b"fixture binary"
                             info = tarfile.TarInfo(name)
@@ -569,27 +783,45 @@ class NpmRcContractTest(unittest.TestCase):
                 # same existing publisher on the author's macOS host.
                 (root / "bin/sed").symlink_to(shutil.which("gsed") or "/usr/bin/sed")
             config = root / "npmrc"
-            config.write_text(f"registry={registry.url}\n//{registry.url.split('//')[1]}/:_authToken=disposable-fixture\n")
+            config.write_text(
+                f"registry={registry.url}\n//{registry.url.split('//')[1]}/:_authToken=disposable-fixture\n"
+            )
             origin = root / "origin.git"
             command(root, "git", "init", "--bare", "-q", str(origin))
             command(root, "git", "remote", "add", "origin", str(origin))
             for version, expected, staged in (
-                ("1.2.3-rc.1", "next", False), ("1.2.3", "latest", False),
-                ("1.2.3", "next", True), ("1.2.4", "next", "tag"),
-                ("1.2.5", "next", "checkout"), ("1.2.6", "latest", "ci-final"),
-                ("1.2.7-rc.1", "next", "ci-rc"), ("1.2.8", None, "ci-missing"),
+                ("1.2.3-rc.1", "next", False),
+                ("1.2.3", "latest", False),
+                ("1.2.3", "next", True),
+                ("1.2.4", "next", "tag"),
+                ("1.2.5", "next", "checkout"),
+                ("1.2.6", "latest", "ci-final"),
+                ("1.2.7-rc.1", "next", "ci-rc"),
+                ("1.2.8", None, "ci-missing"),
             ):
                 registry.published.clear()
-                environment = {k: v for k, v in os.environ.items() if not k.startswith(("NPM_", "npm_", "NODE_AUTH"))}
-                environment.update(PATH=str(root / "bin") + os.pathsep + os.environ["PATH"],
-                                   GITHUB_REF_NAME="v" + version, GITHUB_ACTIONS="false",
-                                   NPM_CONFIG_USERCONFIG=str(config), NPM_CONFIG_REGISTRY=registry.url)
+                environment = {
+                    k: v
+                    for k, v in os.environ.items()
+                    if not k.startswith(("NPM_", "npm_", "NODE_AUTH"))
+                }
+                environment.update(
+                    PATH=str(root / "bin") + os.pathsep + os.environ["PATH"],
+                    GITHUB_REF_NAME="v" + version,
+                    GITHUB_ACTIONS="false",
+                    NPM_CONFIG_USERCONFIG=str(config),
+                    NPM_CONFIG_REGISTRY=registry.url,
+                )
                 tag = "v" + version
                 if staged in ("tag", "checkout", "ci-final", "ci-rc"):
                     command(root, "git", "config", "user.name", "fixture")
                     command(root, "git", "config", "user.email", "fixture@example.test")
                     command(root, "git", "commit", "--allow-empty", "-qm", "fixture")
-                    marker = "\n\nNpm-Publish-Channel: next" if staged in ("tag", "checkout") else ""
+                    marker = (
+                        "\n\nNpm-Publish-Channel: next"
+                        if staged in ("tag", "checkout")
+                        else ""
+                    )
                     command(root, "git", "tag", "-a", tag, "-m", "release" + marker)
                 if staged in ("checkout", "ci-final", "ci-rc"):
                     command(root, "git", "push", "-q", "origin", "refs/tags/" + tag)
@@ -597,30 +829,66 @@ class NpmRcContractTest(unittest.TestCase):
                         # Actual checkout@v4 sequence from release run41529254431:
                         # its commit-specific fetch replaces the fetched annotation.
                         commit = command(root, "git", "rev-parse", tag + "^{commit}")
-                        command(root, "git", "fetch", "--force", "--no-tags", "origin",
-                                "+" + commit + ":refs/tags/" + tag)
-                        self.assertEqual(command(root, "git", "cat-file", "-t", "refs/tags/" + tag), "commit")
+                        command(
+                            root,
+                            "git",
+                            "fetch",
+                            "--force",
+                            "--no-tags",
+                            "origin",
+                            "+" + commit + ":refs/tags/" + tag,
+                        )
+                        self.assertEqual(
+                            command(root, "git", "cat-file", "-t", "refs/tags/" + tag),
+                            "commit",
+                        )
                 if staged in ("checkout", "ci-final", "ci-rc", "ci-missing"):
                     environment["GITHUB_ACTIONS"] = "true"
-                result = run_fixture(["bash", str(npm_root / "publish.sh")] + (["--staged-final"] if staged is True else []), env=environment,
-                                        text=True, capture_output=True)
+                result = run_fixture(
+                    ["bash", str(npm_root / "publish.sh")]
+                    + (["--staged-final"] if staged is True else []),
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                )
                 if staged == "ci-missing":
                     self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertEqual(registry.published, [], "missing CI tag reached npm")
+                    self.assertEqual(
+                        registry.published, [], "missing CI tag reached npm"
+                    )
                     continue
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(len(registry.published), 7)
-                self.assertTrue(all(tags == {expected: version} for _, _, tags in registry.published), registry.published)
+                self.assertTrue(
+                    all(
+                        tags == {expected: version} for _, _, tags in registry.published
+                    ),
+                    registry.published,
+                )
                 if staged == "checkout":
-                    self.assertEqual(command(root, "git", "cat-file", "-t", "refs/tags/" + tag), "tag")
+                    self.assertEqual(
+                        command(root, "git", "cat-file", "-t", "refs/tags/" + tag),
+                        "tag",
+                    )
                 wrapper = json.loads((npm_root / "aw/package.json").read_text())
-                self.assertEqual(set(wrapper["optionalDependencies"].values()), {version})
+                self.assertEqual(
+                    set(wrapper["optionalDependencies"].values()), {version}
+                )
 
     def test_upstream_tag_guard_accepts_only_final_or_aw_rc_spelling(self):
         workflow = (ROOT / ".github/workflows/aw-release.yml").read_text()
-        guard = next(line.strip() for line in workflow.splitlines() if '[[ "$version" =~' in line)
-        for version, accepted in (("1.2.3-rc.1", True), ("1.2.3", True), ("1.2.3rc1", False), ("1.2.3-rc.0", False)):
-            result = run_fixture(["bash", "-c", 'version="$1"\n' + guard, "guard", version])
+        guard = next(
+            line.strip() for line in workflow.splitlines() if '[[ "$version" =~' in line
+        )
+        for version, accepted in (
+            ("1.2.3-rc.1", True),
+            ("1.2.3", True),
+            ("1.2.3rc1", False),
+            ("1.2.3-rc.0", False),
+        ):
+            result = run_fixture(
+                ["bash", "-c", 'version="$1"\n' + guard, "guard", version]
+            )
             self.assertEqual(result.returncode == 0, accepted, version)
 
     def test_aw_workflow_checks_rc_and_final_tags_before_downstream_clone(self):
@@ -636,34 +904,56 @@ class NpmRcContractTest(unittest.TestCase):
                 command(root, "git", "config", "user.email", "test@example.com")
                 (root / "scripts").mkdir()
                 for script in ("release_versions.py", "publish_release.py"):
-                    shutil.copyfile(ROOT / "scripts" / script, root / "scripts" / script)
+                    shutil.copyfile(
+                        ROOT / "scripts" / script, root / "scripts" / script
+                    )
                 (root / "cli/go/npm/aw").mkdir(parents=True)
-                shutil.copyfile(ROOT / "cli/go/npm/publication.py", root / "cli/go/npm/publication.py")
+                shutil.copyfile(
+                    ROOT / "cli/go/npm/publication.py",
+                    root / "cli/go/npm/publication.py",
+                )
                 manifest = root / "cli/go/npm/aw/package.json"
-                manifest.write_text(json.dumps({"name": "@awebai/aw", "version": "1.36.48-rc.1"}))
+                manifest.write_text(
+                    json.dumps({"name": "@awebai/aw", "version": "1.36.48-rc.1"})
+                )
                 (root / "cli/go/implementation.go").write_text("package main\n")
                 command(root, "git", "add", ".")
                 command(root, "git", "commit", "-qm", "RC")
                 if case != "final-without-rc":
                     command(root, "git", "tag", "aw-v1.36.48-rc.1")
                 if case != "rc":
-                    manifest.write_text(json.dumps({"name": "@awebai/aw", "version": "1.36.48"}))
+                    manifest.write_text(
+                        json.dumps({"name": "@awebai/aw", "version": "1.36.48"})
+                    )
                     command(root, "git", "commit", "-qam", "final")
                     command(root, "git", "tag", "aw-v1.36.48")
                 side_effect = root / "downstream-side-effect"
                 with tempfile.TemporaryDirectory() as binaries:
                     spy = Path(binaries) / "git"
-                    spy.write_text('#!/bin/sh\nif [ "$1" = clone ]; then\n'
-                                   '  printf "clone\\n" > "$SIDE_EFFECT"\n  exit 86\nfi\n'
-                                   'exec "$REAL_GIT" "$@"\n')
+                    spy.write_text(
+                        '#!/bin/sh\nif [ "$1" = clone ]; then\n'
+                        '  printf "clone\\n" > "$SIDE_EFFECT"\n  exit 86\nfi\n'
+                        'exec "$REAL_GIT" "$@"\n'
+                    )
                     spy.chmod(0o755)
-                    environment = {**os.environ, "REAL_GIT": shutil.which("git"),
-                                   "PATH": binaries + os.pathsep + os.environ["PATH"],
-                                   "SIDE_EFFECT": str(side_effect), "RUNNER_TEMP": str(root / "runner"),
-                                   "AW_REPO_TOKEN": "test-boundary-not-a-secret",
-                                   "GITHUB_REF_NAME": "aw-v1.36.48-rc.1" if case == "rc" else "aw-v1.36.48"}
-                    result = run_fixture(["bash", "-c", shell], cwd=root, env=environment,
-                                            text=True, capture_output=True)
+                    environment = {
+                        **os.environ,
+                        "REAL_GIT": shutil.which("git"),
+                        "PATH": binaries + os.pathsep + os.environ["PATH"],
+                        "SIDE_EFFECT": str(side_effect),
+                        "RUNNER_TEMP": str(root / "runner"),
+                        "AW_REPO_TOKEN": "test-boundary-not-a-secret",
+                        "GITHUB_REF_NAME": "aw-v1.36.48-rc.1"
+                        if case == "rc"
+                        else "aw-v1.36.48",
+                    }
+                    result = run_fixture(
+                        ["bash", "-c", shell],
+                        cwd=root,
+                        env=environment,
+                        text=True,
+                        capture_output=True,
+                    )
                 # One gate qualifies the tagged tree; a final needs no prior RC.
                 self.assertEqual(result.returncode, 86, result.stderr)
                 self.assertEqual(side_effect.read_text(), "clone\n")
@@ -673,7 +963,11 @@ class NpmRcContractTest(unittest.TestCase):
         shell = textwrap.dedent(workflow.split("        run: |\n", 1)[1])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            upstream, seed, remote = root / "upstream", root / "seed", root / "remote.git"
+            upstream, seed, remote = (
+                root / "upstream",
+                root / "seed",
+                root / "remote.git",
+            )
             for repo in (upstream, seed):
                 repo.mkdir()
                 init_fixture_repo(repo)
@@ -687,8 +981,11 @@ class NpmRcContractTest(unittest.TestCase):
             (upstream / "scripts").mkdir()
             for name in ("publish_release.py", "release_versions.py"):
                 shutil.copyfile(ROOT / "scripts" / name, upstream / "scripts" / name)
-            shutil.copytree(ROOT / "cli/go/npm", upstream / "cli/go/npm",
-                            ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(
+                ROOT / "cli/go/npm",
+                upstream / "cli/go/npm",
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
             manifest = upstream / "cli/go/npm/aw/package.json"
             package = json.loads(manifest.read_text())
             package["version"] = "1.2.3-rc.1"
@@ -699,24 +996,52 @@ class NpmRcContractTest(unittest.TestCase):
             package["version"] = "1.2.3"
             manifest.write_text(json.dumps(package))
             command(upstream, "git", "commit", "-qam", "final")
-            command(upstream, "git", "tag", "-a", "aw-v1.2.3", "-m",
-                    "staged final\n\nNpm-Publish-Channel: next")
+            command(
+                upstream,
+                "git",
+                "tag",
+                "-a",
+                "aw-v1.2.3",
+                "-m",
+                "staged final\n\nNpm-Publish-Channel: next",
+            )
             binaries = root / "bin"
             binaries.mkdir()
             spy = binaries / "git"
-            spy.write_text('#!/usr/bin/env python3\nimport os,sys\nargs=sys.argv[1:]\n'
-                           'if args[0]=="clone": args=["clone","--branch","main",os.environ["OWN_REMOTE"],args[-1]]\n'
-                           'os.execv(os.environ["REAL_GIT"],[os.environ["REAL_GIT"],*args])\n')
+            spy.write_text(
+                "#!/usr/bin/env python3\nimport os,sys\nargs=sys.argv[1:]\n"
+                'if args[0]=="clone": args=["clone","--branch","main",os.environ["OWN_REMOTE"],args[-1]]\n'
+                'os.execv(os.environ["REAL_GIT"],[os.environ["REAL_GIT"],*args])\n'
+            )
             spy.chmod(0o755)
             (root / "runner").mkdir()
-            env = {**os.environ, "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
-                   "REAL_GIT": shutil.which("git"), "OWN_REMOTE": str(remote),
-                   "RUNNER_TEMP": str(root / "runner"), "GITHUB_REF_NAME": "aw-v1.2.3",
-                   "AW_REPO_TOKEN": "fixture-not-a-secret"}
-            result = run_fixture(["bash", "-c", shell], cwd=upstream, env=env,
-                                    text=True, capture_output=True)
+            env = {
+                **os.environ,
+                "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
+                "REAL_GIT": shutil.which("git"),
+                "OWN_REMOTE": str(remote),
+                "RUNNER_TEMP": str(root / "runner"),
+                "GITHUB_REF_NAME": "aw-v1.2.3",
+                "AW_REPO_TOKEN": "fixture-not-a-secret",
+            }
+            result = run_fixture(
+                ["bash", "-c", shell],
+                cwd=upstream,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            annotation = command(root, "git", "--git-dir", str(remote), "tag", "-l", "v1.2.3", "--format=%(contents)")
+            annotation = command(
+                root,
+                "git",
+                "--git-dir",
+                str(remote),
+                "tag",
+                "-l",
+                "v1.2.3",
+                "--format=%(contents)",
+            )
             self.assertIn("Npm-Publish-Channel: next", annotation)
             self.assertTrue((root / "runner/aw/.github/fixture").exists())
 
@@ -727,7 +1052,7 @@ class ReleaseStampContractTest(unittest.TestCase):
             fake_go = Path(directory) / "go"
             fake_go.write_text(
                 "#!/usr/bin/env bash\n"
-                "if [[ \"$1 $2\" == \"env GOVERSION\" ]]; then\n"
+                'if [[ "$1 $2" == "env GOVERSION" ]]; then\n'
                 "  printf 'go1.26.11\\n'\n"
                 "  exit 0\n"
                 "fi\n"
@@ -757,7 +1082,12 @@ class ReleaseStampContractTest(unittest.TestCase):
 class AppLaneRefusalTest(unittest.TestCase):
     """The apps release from their own repository; aweb opens and publishes none of their lanes."""
 
-    APP_TAGS = ("aweb-naapp-v0.1.0", "aweb-secrets-runner-v0.1.0", "secrets-v0.1.0", "logs-v0.1.0")
+    APP_TAGS = (
+        "aweb-naapp-v0.1.0",
+        "aweb-secrets-runner-v0.1.0",
+        "secrets-v0.1.0",
+        "logs-v0.1.0",
+    )
 
     def test_release_candidate_refuses_an_app_tag_before_gating(self):
         temporary, root = TagContractTest.repository(self)
@@ -774,10 +1104,14 @@ class AppLaneRefusalTest(unittest.TestCase):
             for tag in self.APP_TAGS:
                 with self.subTest(tag=tag):
                     commands.clear()
-                    with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "unsupported release tag"):
+                    with self.assertRaisesRegex(
+                        CANDIDATE.CandidateRefusal, "unsupported release tag"
+                    ):
                         CANDIDATE.create_candidate(root, ["server-v1.2.3", tag])
                     self.assertNotIn(("scripts/candidate-docker-gate.sh",), commands)
-                    self.assertEqual(command(root, "git", "tag", "--list", "server-v1.2.3"), "")
+                    self.assertEqual(
+                        command(root, "git", "tag", "--list", "server-v1.2.3"), ""
+                    )
 
     def test_the_publisher_refuses_an_app_tag(self):
         temporary, root = TagContractTest.repository(self)
@@ -785,13 +1119,20 @@ class AppLaneRefusalTest(unittest.TestCase):
         for tag in self.APP_TAGS:
             with self.subTest(tag=tag):
                 command(root, "git", "tag", "-a", tag, "-m", "app")
-                with self.assertRaisesRegex(PUBLISH.PublishRefusal, "unsupported release tag"):
+                with self.assertRaisesRegex(
+                    PUBLISH.PublishRefusal, "unsupported release tag"
+                ):
                     PUBLISH.publish(root, tag)
 
     def test_no_release_workflow_opens_an_app_lane(self):
         for workflow in (ROOT / ".github/workflows").glob("*.yml"):
             source = workflow.read_text()
-            for prefix in ("aweb-naapp-v", "aweb-secrets-runner-v", "secrets-v", "logs-v"):
+            for prefix in (
+                "aweb-naapp-v",
+                "aweb-secrets-runner-v",
+                "secrets-v",
+                "logs-v",
+            ):
                 with self.subTest(workflow=workflow.name, prefix=prefix):
                     self.assertIsNone(re.search(rf"(?<![\w-]){prefix}", source))
 

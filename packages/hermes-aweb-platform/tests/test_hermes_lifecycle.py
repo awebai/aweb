@@ -41,7 +41,9 @@ class HermesLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as root:
             # An absent workdir makes real adapter validation fail before any aw
             # subprocess starts. No gateway method or transport is substituted.
-            config = PlatformConfig(extra={"aw_bin": sys.executable, "workdir": str(Path(root) / "absent")})
+            config = PlatformConfig(
+                extra={"aw_bin": sys.executable, "workdir": str(Path(root) / "absent")}
+            )
             for reconnect in (False, True):
                 with self.subTest(is_reconnect=reconnect):
                     adapter = platform_registry.create_adapter("aweb", config)

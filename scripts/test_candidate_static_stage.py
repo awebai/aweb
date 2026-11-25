@@ -52,7 +52,9 @@ class StaticStageTests(unittest.TestCase):
     def static_targets(self):
         result, _, rows = self.exercise("static")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        targets = [row[0].split("/", 1)[1] for row in rows if row[0].startswith("static/")]
+        targets = [
+            row[0].split("/", 1)[1] for row in rows if row[0].startswith("static/")
+        ]
         self.assertTrue(targets)
         return targets
 

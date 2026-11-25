@@ -41,7 +41,9 @@ class WorkspaceActivity:
     last_seen_at: datetime | None
     presence: Mapping[str, str] | None
 
-    def is_newer_than(self, *, cutoff: datetime, reserved_at: datetime | None = None) -> bool:
+    def is_newer_than(
+        self, *, cutoff: datetime, reserved_at: datetime | None = None
+    ) -> bool:
         """Check observed activity, with a reservation fallback for lifecycle callers."""
         timestamp = self.last_seen_at if self.last_seen_at is not None else reserved_at
         return timestamp is not None and timestamp > cutoff
@@ -155,7 +157,8 @@ async def workspace_activity_by_id(
     workspace_ids = list(dict.fromkeys(workspace_ids))
     fields = (
         ("workspace_id", "team_id", "last_seen", *presence_display_fields)
-        if presence_display_fields is not None else None
+        if presence_display_fields is not None
+        else None
     )
     presences = (
         await list_agent_presences_by_workspace_ids(redis, workspace_ids, fields=fields)
@@ -163,7 +166,9 @@ async def workspace_activity_by_id(
         else []
     )
     presence_by_id = {
-        record["workspace_id"]: record for record in presences if record.get("workspace_id")
+        record["workspace_id"]: record
+        for record in presences
+        if record.get("workspace_id")
     }
     result = {}
     for row in rows:

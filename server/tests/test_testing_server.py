@@ -113,15 +113,24 @@ async def test_a_member_connects_through_the_servers_own_route(stack) -> None:
     team_sk, _, team_did = _make_keypair()
     member_sk, _, member_did = _make_keypair()
     await stack.registry.add_team(TEAM_ID, team_did)
-    cert = _make_certificate(team_sk, team_did, member_did, team_id=TEAM_ID, alias="alice")
+    cert = _make_certificate(
+        team_sk, team_did, member_did, team_id=TEAM_ID, alias="alice"
+    )
     body = json.dumps({"hostname": "test-host"}).encode()
-    headers = _signed_team_headers(member_sk, member_did, TEAM_ID, _encode_certificate(cert), body)
+    headers = _signed_team_headers(
+        member_sk, member_did, TEAM_ID, _encode_certificate(cert), body
+    )
     async with stack.server.client() as client:
         connected = await client.post(
-            "/v1/connect", content=body, headers={**headers, "Content-Type": "application/json"}
+            "/v1/connect",
+            content=body,
+            headers={**headers, "Content-Type": "application/json"},
         )
     assert connected.status_code == 200, connected.text
-    assert (connected.json()["team_id"], connected.json()["alias"]) == (TEAM_ID, "alice")
+    assert (connected.json()["team_id"], connected.json()["alias"]) == (
+        TEAM_ID,
+        "alice",
+    )
     assert f"/v1/namespaces/testing.example/teams/{TEAM_NAME}" in {
         request.url.path for request in stack.registry.transport.calls
     }

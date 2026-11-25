@@ -7,7 +7,11 @@ import pytest
 
 from awid.registry import RegistryClient
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app as privacy_app
-from test_messages_http import _encode_certificate, _make_certificate, _signed_team_headers
+from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
+    _signed_team_headers,
+)
 from test_team_room import admit_room_member
 
 __all__ = ["privacy_app"]
@@ -113,8 +117,12 @@ async def _warm_inbox_registration_cost(privacy_app, monkeypatch, history, *, en
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("history", [0, 2000])
-async def test_off_mode_warm_inboxes_never_read_registration_pages(privacy_app, monkeypatch, history):
-    counts = await _warm_inbox_registration_cost(privacy_app, monkeypatch, history, enforce=False)
+async def test_off_mode_warm_inboxes_never_read_registration_pages(
+    privacy_app, monkeypatch, history
+):
+    counts = await _warm_inbox_registration_cost(
+        privacy_app, monkeypatch, history, enforce=False
+    )
     assert counts["certificate_pages"] == 0, counts
 
 
@@ -137,8 +145,12 @@ class _RegistrationBudgetExceeded(AssertionError):
         ),
     ],
 )
-async def test_required_warm_inboxes_stay_within_registration_budget(privacy_app, monkeypatch, history):
-    counts = await _warm_inbox_registration_cost(privacy_app, monkeypatch, history, enforce=True)
+async def test_required_warm_inboxes_stay_within_registration_budget(
+    privacy_app, monkeypatch, history
+):
+    counts = await _warm_inbox_registration_cost(
+        privacy_app, monkeypatch, history, enforce=True
+    )
     assert counts["active_only_values"] in ([], ["false"]), counts
     if counts["certificate_pages"] > 10 or counts["cursor_pages"]:
         raise _RegistrationBudgetExceeded(counts)

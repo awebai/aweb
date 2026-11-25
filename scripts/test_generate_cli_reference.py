@@ -44,8 +44,14 @@ class CLIReferenceGeneratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "reference.md"
             result = subprocess.run(
-                [sys.executable, str(Path(__file__).with_name("generate_cli_reference.py")),
-                 "--binary", binary, "--output", str(output)],
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("generate_cli_reference.py")),
+                    "--binary",
+                    binary,
+                    "--output",
+                    str(output),
+                ],
                 env={
                     **os.environ,
                     "AWEB_IDENTITY_HOME": str(Path(temp_dir).resolve()),
@@ -59,7 +65,10 @@ class CLIReferenceGeneratorTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
                 output.read_bytes(),
-                (Path(__file__).resolve().parents[1] / "docs/cli-command-reference.md").read_bytes(),
+                (
+                    Path(__file__).resolve().parents[1]
+                    / "docs/cli-command-reference.md"
+                ).read_bytes(),
             )
             self.assertEqual(list(Path(temp_dir).iterdir()), [output])
 
@@ -69,7 +78,10 @@ class CLIReferenceGeneratorTests(unittest.TestCase):
         self.assertEqual(
             parsed["groups"],
             [
-                ("Identity & Teams", [("id", "Identity lifecycle"), ("team", "Manage teams")]),
+                (
+                    "Identity & Teams",
+                    [("id", "Identity lifecycle"), ("team", "Manage teams")],
+                ),
                 (
                     "Additional Commands",
                     [

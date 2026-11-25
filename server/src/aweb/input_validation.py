@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 
 BRANCH_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9/_.-]{0,254}$")
-CANONICAL_ORIGIN_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*(/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$")
+CANONICAL_ORIGIN_PATTERN = re.compile(
+    r"^[a-zA-Z0-9][a-zA-Z0-9._-]*(/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$"
+)
 ALIAS_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 HUMAN_NAME_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9 '\-]{0,63}$")
 

@@ -53,7 +53,11 @@ from aweb.inbound_modes import (
     normalize_inbound_mode,
     set_identity_inbound_mode,
 )
-from aweb.member_team_key import MemberProjection, current_member, read_member_projection
+from aweb.member_team_key import (
+    MemberProjection,
+    current_member,
+    read_member_projection,
+)
 from aweb.role_name_compat import (
     normalize_optional_role_name,
     resolve_role_name_aliases,
@@ -66,7 +70,11 @@ from aweb.team_auth_deps import (
     team_identity_with_grant_scope,
 )
 
-from ..presence import HostedHeartbeatPresence, refresh_agent_presence, update_agent_presence
+from ..presence import (
+    HostedHeartbeatPresence,
+    refresh_agent_presence,
+    update_agent_presence,
+)
 from aweb.config import get_presence_ttl_seconds
 from aweb.workspace_activity import (
     PresenceStatus,
@@ -682,13 +690,20 @@ async def heartbeat(
         and hosted.team_id == identity.team_id
     ):
         merged = await refresh_agent_presence(
-            redis, workspace_id=workspace_id, alias=identity.alias, team_id=identity.team_id,
-            ttl_seconds=ttl_seconds, projection=hosted.projection,
+            redis,
+            workspace_id=workspace_id,
+            alias=identity.alias,
+            team_id=identity.team_id,
+            ttl_seconds=ttl_seconds,
+            projection=hosted.projection,
         )
         last_seen = merged["last_seen"]
     else:
         last_seen = await update_agent_presence(
-            redis, workspace_id=workspace_id, alias=identity.alias, team_id=identity.team_id,
+            redis,
+            workspace_id=workspace_id,
+            alias=identity.alias,
+            team_id=identity.team_id,
             ttl_seconds=ttl_seconds,
         )
 
@@ -727,7 +742,9 @@ async def _load_current_agent_inbound_mode(
                 status_code=409, detail="Agent inbound policy is unavailable"
             ) from exc
     if inbound_mode not in INBOUND_MODES:
-        raise HTTPException(status_code=409, detail="Agent inbound policy is unavailable")
+        raise HTTPException(
+            status_code=409, detail="Agent inbound policy is unavailable"
+        )
     return AgentInboundModeResponse(
         agent_id=str(row["agent_id"]),
         team_id=str(row["team_id"]),

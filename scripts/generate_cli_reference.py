@@ -78,7 +78,11 @@ def markdown_prose(text: str) -> str:
         pieces = []
         position = 0
         for span in CODE_SPAN.finditer(paragraph):
-            pieces.append(HTML_LIKE.sub(lambda m: f"`{m.group(0)}`", paragraph[position:span.start()]))
+            pieces.append(
+                HTML_LIKE.sub(
+                    lambda m: f"`{m.group(0)}`", paragraph[position : span.start()]
+                )
+            )
             pieces.append(span.group(0))
             position = span.end()
         pieces.append(HTML_LIKE.sub(lambda m: f"`{m.group(0)}`", paragraph[position:]))

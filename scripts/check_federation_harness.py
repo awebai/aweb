@@ -226,12 +226,16 @@ def check(root: Path, overrides: Mapping[Path, bytes] | None = None) -> list[str
         if marker not in oss_stack:
             failures.append(f"OSS federation topology omits strict DNS guard: {marker}")
     if oss_stack.count('AWEB_FEDERATION_TEST: "1"') != 2:
-        failures.append("both OSS federation receivers must enable isolated test policy")
+        failures.append(
+            "both OSS federation receivers must enable isolated test policy"
+        )
     if any(
         oss_stack.count(f"# FEDERATION_DNS_IP_{receiver}") != 1
         for receiver in ("ALPHA", "BETA")
     ):
-        failures.append("both OSS federation receivers must use isolated authoritative DNS")
+        failures.append(
+            "both OSS federation receivers must use isolated authoritative DNS"
+        )
     for source_name, source in (("stack", stack), ("worker", worker)):
         if "/v1/federation/messages" in source or "/v1/federation/chat" in source:
             failures.append(f"{source_name} activates federation ingress")

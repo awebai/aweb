@@ -24,7 +24,9 @@ async def test_whoami_requires_auth_context(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_whoami_returns_agent_identity_with_stable_fields(aweb_cloud_db, monkeypatch):
+async def test_whoami_returns_agent_identity_with_stable_fields(
+    aweb_cloud_db, monkeypatch
+):
     team_id = "backend-stable:acme.com"
     did_key = "did:key:z6MkStable"
     agent_id = uuid4()
@@ -54,7 +56,8 @@ async def test_whoami_returns_agent_identity_with_stable_fields(aweb_cloud_db, m
     )
 
     await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", agent_id,
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        agent_id,
     )
     monkeypatch.setattr(
         identity_tools,
@@ -80,7 +83,9 @@ async def test_whoami_returns_agent_identity_with_stable_fields(aweb_cloud_db, m
 
 
 @pytest.mark.asyncio
-async def test_whoami_returns_empty_stable_fields_for_ephemeral_agent(aweb_cloud_db, monkeypatch):
+async def test_whoami_returns_empty_stable_fields_for_ephemeral_agent(
+    aweb_cloud_db, monkeypatch
+):
     team_id = "backend-ephemeral:acme.com"
     did_key = "did:key:z6MkEphemeral"
     agent_id = uuid4()
@@ -131,7 +136,9 @@ async def test_whoami_returns_empty_stable_fields_for_ephemeral_agent(aweb_cloud
 
 
 @pytest.mark.asyncio
-async def test_whoami_identity_only_auth_looks_up_by_did_key(aweb_cloud_db, monkeypatch):
+async def test_whoami_identity_only_auth_looks_up_by_did_key(
+    aweb_cloud_db, monkeypatch
+):
     did_key = "did:key:z6MkIdentityOnly"
 
     await aweb_cloud_db.aweb_db.execute(

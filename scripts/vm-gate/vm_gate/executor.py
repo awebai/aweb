@@ -355,7 +355,8 @@ exit "$status"
         # A failed final read leaves the previously spooled journal available.
         self.run(
             f"python3 {REMOTE}/operator/vm_gate/daemon_journal.py finish",
-            "daemon-journal-finish", check=False,
+            "daemon-journal-finish",
+            check=False,
         )
         ledger = self.config["ledger"]
         pack = f"""import tarfile,glob,shutil
