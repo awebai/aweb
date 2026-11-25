@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +83,8 @@ def consumer_paths(filename, worker):
         os.environ,
         {
             "PYTEST_XDIST_WORKER": worker,
+            # xdist sets the count beside each worker's identity.
+            "PYTEST_XDIST_WORKER_COUNT": "2",
             "PYTEST_XDIST_TESTRUNUID": "a" * 32,
         },
     ):
@@ -346,6 +349,35 @@ class RuntimeTrees(unittest.TestCase):
                 runtime.prepare_runtime_tree(top, root)
             self.assertEqual(sentinel.read_text(), "keep")
             self.assertEqual(runtime.runtime_repo(ROOT), ROOT)
+
+
+    def test_every_worker_of_the_planned_count_owns_its_tree(self):
+        uid = "a" * 32
+        for count in (2, 7, 11, 64):
+            for index in (0, count - 1):
+                environ = {
+                    "PYTEST_XDIST_WORKER": f"gw{index}",
+                    "PYTEST_XDIST_WORKER_COUNT": str(count),
+                    "PYTEST_XDIST_TESTRUNUID": uid,
+                }
+                with self.subTest(count=count, index=index), mock.patch.dict(
+                    os.environ, environ
+                ):
+                    self.assertEqual(
+                        runtime.runtime_repo(ROOT).name,
+                        f"aweb-server-runtime-{uid}-gw{index}",
+                    )
+        for worker, count in (("gw11", "11"), ("gw1", ""), ("gwx", "4"), ("gw0", "0")):
+            environ = {
+                "PYTEST_XDIST_WORKER": worker,
+                "PYTEST_XDIST_WORKER_COUNT": count,
+                "PYTEST_XDIST_TESTRUNUID": uid,
+            }
+            with self.subTest(worker=worker, count=count), mock.patch.dict(
+                os.environ, environ
+            ):
+                with self.assertRaisesRegex(RuntimeError, "owned xdist identity"):
+                    runtime.runtime_repo(ROOT)
 
 
 if __name__ == "__main__":

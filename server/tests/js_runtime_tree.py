@@ -22,8 +22,13 @@ def runtime_repo(source: Path) -> Path:
     if worker is None:
         return source
     uid = os.environ.get("PYTEST_XDIST_TESTRUNUID", "")
+    count = os.environ.get("PYTEST_XDIST_WORKER_COUNT", "")
+    index = re.fullmatch(r"gw([0-9]+)", worker)
+    # One tree per worker of the run's plan, whatever its size.
     if (
-        re.fullmatch(r"gw[0-6]", worker) is None
+        index is None
+        or re.fullmatch(r"[1-9][0-9]*", count) is None
+        or int(index.group(1)) >= int(count)
         or re.fullmatch(r"[0-9a-f]{32}", uid) is None
     ):
         raise RuntimeError("parallel runtime tree requires the owned xdist identity")
