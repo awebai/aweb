@@ -1,5 +1,11 @@
 # Knowledge log
 
+## 2026-11-24
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-cleanup-oss (test sweep: delegated classification and break-proofs), with backing notes agent-sweeps-overcall-restates.md, mutation-harness-for-break-proofs.md and checkers-adapt-to-product-code.md.
+* **Creation**: lesson [verify every delegated "restates a constant" call before deleting a test](/aweb-expert/lessons/verify-every-delegated-restates-call.md).
+* **Creation**: lesson [script break-proofs, and classify a mutation that stays green](/aweb-expert/lessons/script-break-proofs-and-classify-a-green-mutation.md), which refines [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md).
+* **Creation**: decision [a source-shape checker adapts to product code](/aweb-expert/decisions/a-checker-adapts-to-product-code.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
