@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-24
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-gate-dispatch (notes/gate-deadline-belongs-to-the-machine.md).
+* **Creation**: lesson [a gate's deadline belongs to the machine runner and arrives as TERM](/aweb-expert/lessons/a-gate-deadline-belongs-to-the-machine-runner.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
