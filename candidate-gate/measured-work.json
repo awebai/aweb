@@ -1,26 +1,32 @@
 {
-  "receipt": "vm-7b34f721a68d4c4faef631e677065e38",
-  "commit": "298865dcd8a0f51d76121fa144ab6c8112d8475e",
-  "measure": "elapsed seconds of each target in the receipt, multiplied by the worker processes it ran with (11 xdist workers for test-server and test-naapp-lib, 1 otherwise): an upper bound on its CPU-seconds, used as relative weights. The receipt has no per-container CPU accounting. A lane's work is the sum of its targets. Integration was stopped at 2209 s after unit's red; its figure sums the targets it completed, a lower bound.",
+  "measure": "CPU-seconds each lane and unit suite consumed: the cumulative usage_usec of every container's cpu.stat in the receipt's memory.jsonl samples, attributed to its lane by name (a lane's runner, its Postgres and Redis, the Compose and service containers it started) and to a unit suite by its isolated runner and the services in that runner's network namespace. Each lane's figure is from the latest receipt in which that lane completed. The run's shared builder (about 510 s) is not counted in any lane. Short-lived containers between samples are undercounted.",
+  "lane_receipts": {
+    "checks": "vm-7b34f721a68d4c4faef631e677065e38",
+    "user-paths": "vm-7b34f721a68d4c4faef631e677065e38",
+    "unit": "vm-7b34f721a68d4c4faef631e677065e38",
+    "artifacts": "vm-7b34f721a68d4c4faef631e677065e38",
+    "integration": "vm-3f1940bd1a7046ebb7fa38418ca81884"
+  },
+  "unit_suites_receipt": "vm-7b34f721a68d4c4faef631e677065e38",
   "lanes": {
-    "checks": 1115,
-    "user-paths": 174,
-    "unit": 25872,
-    "artifacts": 289,
-    "integration": 2107
+    "checks": 1431,
+    "user-paths": 275,
+    "unit": 11951,
+    "artifacts": 268,
+    "integration": 1310
   },
   "unit_suites": {
-    "test-server": 13981,
-    "test-awid": 690,
-    "test-naapp-lib": 7557,
-    "test-naapp-folio": 130,
-    "test-naapp-library": 104,
-    "test-naapp-secrets": 1381,
-    "test-naapp-logs": 508,
-    "test-cli": 1124,
-    "test-cli-auth-v2": 155,
-    "_candidate-unit-channel": 38,
-    "_candidate-unit-channel-core": 173,
+    "test-server": 5901,
+    "test-awid": 481,
+    "test-naapp-lib": 1676,
+    "test-naapp-folio": 69,
+    "test-naapp-library": 69,
+    "test-naapp-secrets": 1934,
+    "test-naapp-logs": 319,
+    "test-cli": 874,
+    "test-cli-auth-v2": 153,
+    "_candidate-unit-channel": 34,
+    "_candidate-unit-channel-core": 220,
     "_candidate-unit-pi": 31
   }
 }
