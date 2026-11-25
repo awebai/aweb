@@ -39,23 +39,9 @@ class ResolvedIdentityContract:
         return self.identity_scope == "global"
 
     @property
-    def can_have_address(self) -> bool:
-        return self.is_global
-
-    @property
     def lifetime(self) -> str:
         """Deprecated compatibility alias for older callers."""
         return "persistent" if self.is_global else "ephemeral"
-
-    @property
-    def is_ephemeral(self) -> bool:
-        """Deprecated compatibility alias for older callers."""
-        return self.is_local
-
-    @property
-    def is_persistent(self) -> bool:
-        """Deprecated compatibility alias for older callers."""
-        return self.is_global
 
 
 def resolve_identity_contract(
