@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-25
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-naapp-folio-links (naapp image smoke tests and environment-only settings).
+* **Creation**: lesson [an image no CI job starts is untested](/aweb-expert/lessons/an-image-no-ci-job-starts-is-untested.md).
+* **Creation**: decision [naapp apps read configuration from the environment only](/aweb-expert/decisions/naapp-apps-read-configuration-from-the-environment-only.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
