@@ -36,6 +36,13 @@ def parser():
     run.add_argument("--type", choices=["ccx33", "ccx43"])
     run.add_argument("--target", choices=["merak", "hetzner"])
     run.add_argument("--timeout", type=int, default=7200)
+    # A project receipt: one project's full gate for its release command.
+    run.add_argument("--project", choices=["aweb", "ac"])
+    run.add_argument("--machine")
+    run.add_argument("--receipt")
+    run.add_argument("--files")
+    run.add_argument("--image")
+    run.add_argument("--aweb-source")
     rel = sub.add_parser("release")
     rel.add_argument("--machine", required=True)
     rel.add_argument("--cloud-repo", required=True)
@@ -250,6 +257,14 @@ def main(argv=None, *, factory=None, out=None):
         args = parser().parse_args(argv)
         if args.action in ("release", "cloud-gate"):
             return release_job(args, factory=factory, out=out)
+        if args.action == "run" and (args.project or args.receipt):
+            if not (args.project and args.receipt):
+                raise Refused("--project and --receipt go together")
+            from .project import project_job
+
+            return project_job(args, factory=factory, out=out)
+        if args.action == "run" and (args.machine or args.files or args.image or args.aweb_source):
+            raise Refused("--machine, --files, --image and --aweb-source need --project")
         if not args.config:
             raise Refused("external --config or VM_GATE_CONFIG is required")
         if os.geteuid() == 0:
