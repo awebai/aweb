@@ -719,6 +719,17 @@ _candidate-artifact-a2a-image:
 cli-e2e:
 	COMPOSE_BAKE="$${LIBRARY_E2E_COMPOSE_BAKE:-}" $(MAKE) -C cli e2e
 
+# Turns on the repository's hooks: .githooks/pre-commit formats staged Python
+# and Go at every commit. Run once per clone.
+.PHONY: setup
+setup:
+	git config core.hooksPath .githooks
+
+# Commits unformatted files through the hook; fetches the locked ruff with uvx.
+.PHONY: test-commit-hook
+test-commit-hook:
+	python3 .githooks/test_pre_commit.py -v
+
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -rf server/dist/

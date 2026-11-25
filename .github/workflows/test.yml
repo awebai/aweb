@@ -70,6 +70,22 @@ jobs:
       - name: Check the private-infrastructure boundary
         run: make check-private-boundary
 
+  commit-hook:
+    name: Commit hook
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+      - name: Commit unformatted files through the pre-commit hook
+        run: make test-commit-hook
+
   test:
     name: Test suite
     needs: product-table-writes
