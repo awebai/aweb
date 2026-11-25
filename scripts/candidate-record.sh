@@ -59,6 +59,7 @@ record_stages_as_they_pass() {
   local line
   exec 3>>"$run_log"
   while IFS= read -r line || [[ -n "$line" ]]; do
+    printf '%s\n' "$line"
     printf '%s\n' "$line" >&3
     if [[ "$line" =~ ^candidate\ stage-verdict:\ ([a-z-]+)\ PASSED$ ]]; then
       record_passed_stage "${BASH_REMATCH[1]}" || printf 'gate: could not record %s as it passed\n' "${BASH_REMATCH[1]}" >&3
