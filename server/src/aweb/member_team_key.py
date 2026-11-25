@@ -192,7 +192,9 @@ async def read_member_projection(
     verified new certificate may reaccept a row under a new team key. It also
     returns deleted/inactive rows so actor resolvers can distinguish an absent
     actor from a refused one. Key selection requires its explicit team; agent
-    IDs are globally unique and can optionally be constrained by team.
+    IDs are globally unique and can optionally be constrained by team. A team
+    may hold archived rows beside the live row for one key: the live row is
+    returned, else the most recently created archived row.
     """
     if (did_key is None) == (agent_id is None) or (did_key is not None and not team_id):
         raise ValueError("Select a native member by team and did_key, or by agent_id")
@@ -225,6 +227,9 @@ def _member_projection_select(selector: str, read_lock: MemberReadLock) -> str:
         + join_sql
         + " WHERE "
         + selector
+        # A team keeps archived rows beside the one live row for the same
+        # key. Select the live row, else the most recent archived one.
+        + " ORDER BY (a.deleted_at IS NOT NULL), a.created_at DESC LIMIT 1"
         + lock_sql
     )
 

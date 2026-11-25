@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Certificate requests from a member that left a team and reconnected with
+  the same key are admitted again. Since server 1.27.51 the native member read
+  could return the archived row instead of the live one for that key and
+  refuse the request as not connected. The read now returns the live row, and
+  the most recent archived row only when no live one exists.
+
 - awid-service 0.5.42 remembers the result of the Ed25519 point check for
   public keys and certificate signatures it has already checked, which removes
   most of the processor time of identity-chain checks.
