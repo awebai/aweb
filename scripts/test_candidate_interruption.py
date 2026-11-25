@@ -85,6 +85,10 @@ run_candidate() {
   printf 'candidate stage-verdict: checks PASSED\\n'
   sleep 30
  fi
+ if [[ "$STAGE_VERDICTS" == target-failed ]]; then
+  printf 'checks/check-python-static\\tFAILED\\tchecks.log\\t1s\\texit 1\\n' >> "$LOG_DIR/summary.tsv"
+  printf 'candidate stage-verdict: checks PASSED\\n'
+ fi
  if [[ "$STAGE_VERDICTS" == complete ]]; then
   printf 'candidate stage-verdict: checks PASSED\\ncandidate stage-verdict: artifacts PASSED\\n'
   printf 'candidate stage-verdict: integration PASSED\\n'
@@ -318,6 +322,11 @@ run_candidate() {
             sorted(entries),
             [("artifacts", "passed"), ("checks", "passed"), ("integration", "passed")],
         )
+
+    def test_failed_target_of_a_stage_recorded_as_it_passed_fails_the_run(self):
+        code, rows, logs, output = self.invoke(status=0, stage_verdicts="target-failed")
+        self.assertEqual(code, 1, output)
+        self.assertIn(("checks/check-python-static", "failed"), [(r[1], r[2]) for r in rows])
 
     def test_real_term_without_cleanup_blocks_reuse(self):
         code, rows, logs, output = self.invoke(signal_number=signal.SIGTERM)
