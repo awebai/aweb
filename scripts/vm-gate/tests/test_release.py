@@ -267,10 +267,16 @@ class CloudBundle(CloudFixture, unittest.TestCase):
         digest = release.cloud_bundle(self.cloud, self.cloud_sha, bundle)
         self.assertEqual(digest, hashlib.sha256(bundle.read_bytes()).hexdigest())
         self.assertEqual(git(self.cloud, "for-each-ref"), refs)
-        clone = self.root / "from-bundle"
-        git(self.root, "clone", "--quiet", str(bundle), str(clone))
-        self.assertEqual(git(clone, "rev-parse", "HEAD"), self.cloud_sha)
-        self.assertEqual(git(clone, "rev-parse", "origin/main"), self.cloud_sha)
+        # The guest's way in: fetch the bundle's main into a fresh origin. A
+        # bundle carries no HEAD, so git before 2.40 cannot clone one directly.
+        self.assertEqual(
+            git(self.root, "bundle", "list-heads", str(bundle)),
+            f"{self.cloud_sha} refs/heads/main",
+        )
+        origin = self.root / "origin.git"
+        git(self.root, "init", "--quiet", "--bare", str(origin))
+        git(origin, "fetch", "--quiet", str(bundle), "refs/heads/main:refs/heads/main")
+        self.assertEqual(git(origin, "rev-parse", "main"), self.cloud_sha)
 
 
 def write_archive(path, architecture):
