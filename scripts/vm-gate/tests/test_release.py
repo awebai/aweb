@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from vm_gate import budget, release
+from vm_gate.errors import Refused
 from vm_gate.cli import main
 from test_config import hashes
 from test_source import GitFixture, git
@@ -439,12 +440,18 @@ class GuestScript(CloudFixture, unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         cloud = self.suite_env("release-gate")
         aweb = self.suite_env("candidate-gate")
-        self.assertEqual((cloud["GATE_CPUS"], aweb["GATE_CPUS"]), ("6", "6"))
+        # The stub guest is 12 CPUs and 61440 MiB, divided by the measured work.
+        expected = budget.release_split(12, 61440, release.gate_weights())
         self.assertEqual(
-            (cloud["GATE_MEMORY_MIB"], aweb["GATE_MEMORY_MIB"]), ("30720", "30720")
+            (cloud["GATE_CPUS"], aweb["GATE_CPUS"]),
+            (str(expected["cloud"]["cpus"]), str(expected["aweb"]["cpus"])),
+        )
+        self.assertEqual(
+            (cloud["GATE_MEMORY_MIB"], aweb["GATE_MEMORY_MIB"]),
+            (str(expected["cloud"]["memory_mib"]), str(expected["aweb"]["memory_mib"])),
         )
         recorded = json.loads((self.logs / "release/split.json").read_text())
-        self.assertEqual(recorded["measured"], {"cpus": 12, "memory_mib": 61440})
+        self.assertEqual(recorded, expected)
 
     def test_a_cloud_only_release_gives_cloud_the_whole_guest(self):
         result = self.run_script({}, aweb=False)
@@ -632,14 +639,16 @@ class Budget(unittest.TestCase):
         return gate_budget.size(cpus, memory_mib), gate_budget.workers
 
     def test_every_cpu_is_used_and_nothing_is_oversubscribed(self):
+        measured = release.gate_weights()
         for cpus, memory_mib in SHAPES:
             for aweb in (True, False):
+                weights = measured if aweb else {"cloud": measured["cloud"]}
                 with self.subTest(cpus=cpus, memory_mib=memory_mib, aweb=aweb):
                     if aweb and cpus < 2:
                         with self.assertRaises(ValueError):
-                            budget.release_split(cpus, memory_mib, aweb)
+                            budget.release_split(cpus, memory_mib, weights)
                         continue
-                    shares = budget.release_split(cpus, memory_mib, aweb)
+                    shares = budget.release_split(cpus, memory_mib, weights)
                     self.assertEqual(
                         shares["measured"], {"cpus": cpus, "memory_mib": memory_mib}
                     )
@@ -647,6 +656,7 @@ class Budget(unittest.TestCase):
                     # The gates' shares are exactly the measured capacity.
                     self.assertEqual(sum(g["cpus"] for g in gates), cpus)
                     self.assertEqual(sum(g["memory_mib"] for g in gates), memory_mib)
+                    self.assertTrue(all(g["cpus"] >= 1 for g in gates))
                     for gate in gates:
                         sizes, workers = self.gate_sizes(gate["cpus"], gate["memory_mib"])
                         for cap in ("runner_cpus", "builder_cpus", "sibling_cpus"):
@@ -657,6 +667,25 @@ class Budget(unittest.TestCase):
                             self.assertLessEqual(
                                 workers.service_memory_mib(count), gate["memory_mib"] // 2
                             )
+
+    def test_the_split_follows_the_gates_measured_work(self):
+        weights = release.gate_weights()
+        self.assertEqual(weights["aweb"], sum(json.loads(
+            (Path(release.__file__).resolve().parents[3] / "candidate-gate/measured-work.json").read_text()
+        )["lanes"].values()))
+        heavy = budget.release_split(24, 98304, {"aweb": 1000, "cloud": 3000})
+        self.assertEqual((heavy["aweb"]["cpus"], heavy["cloud"]["cpus"]), (6, 18))
+        self.assertEqual(heavy["weights"], {"aweb": 1000, "cloud": 3000})
+        for bad in ({"aweb": 1}, {"cloud": 0}, {"cloud": 1, "other": 1}, {"cloud": 1.5}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                budget.release_split(12, 51642, bad)
+
+    def test_a_missing_cloud_figure_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "work.json"
+            path.write_text(json.dumps({"lanes": {"unit": 10}}))
+            with self.assertRaisesRegex(Refused, "Cloud"):
+                release.gate_weights(path)
 
     def test_an_override_is_input_and_a_missing_value_is_measured(self):
         with patch.object(budget, "measure", return_value=(12, 51642)):

@@ -28,5 +28,13 @@
     "_candidate-unit-channel": 34,
     "_candidate-unit-channel-core": 220,
     "_candidate-unit-pi": 31
+  },
+  "gates": {
+    "cloud": {
+      "cpu_seconds": 17003,
+      "receipt": "9c701861202d-run-20261114T003126Z-50488",
+      "commit": "15591632f0fab3f705b10570d02e856ca60f9372",
+      "measure": "an estimate, not a cgroup measurement: each target's elapsed seconds times its worker count (backend 1564 s x 8, frontend 385 s x 2, image 38 s, two-service 251 s, journey 1716 s x 2), from a full green Cloud gate on a 14-CPU Docker Desktop engine; it leaves out the stack services' own CPU. aweb's weight is the sum of this file's lanes, measured from cgroups."
+    }
   }
 }

@@ -39,25 +39,25 @@ def positive(cpus, memory_mib):
         raise ValueError("a budget needs at least 1 CPU and 1 MiB")
 
 
-def release_split(cpus, memory_mib, aweb=True):
+def release_split(cpus, memory_mib, weights):
     """The measured capacity divided between the release's gates.
 
-    With an aweb gate the capacity is halved, Cloud taking the odd CPU and
-    MiB; without one, Cloud has all of it. The shares sum to exactly the
-    capacity: nothing oversubscribed, nothing left idle.
+    weights holds each gate's measured CPU-seconds ("cloud", and "aweb" when
+    the release runs an aweb gate). CPUs and memory are both divided by the
+    lanes' rule (shares): in proportion to the weights, each gate at least 1,
+    summing to exactly the measurement.
     """
     positive(cpus, memory_mib)
-    measured = {"cpus": cpus, "memory_mib": memory_mib}
-    if not aweb:
-        return {"measured": measured, "cloud": dict(measured)}
-    if cpus < 2 or memory_mib < 2:
-        raise ValueError("two gates need at least 2 CPUs and 2 MiB")
-    aweb_cpus, aweb_memory = cpus // 2, memory_mib // 2
-    return {
-        "measured": measured,
-        "aweb": {"cpus": aweb_cpus, "memory_mib": aweb_memory},
-        "cloud": {"cpus": cpus - aweb_cpus, "memory_mib": memory_mib - aweb_memory},
-    }
+    if set(weights) not in ({"cloud"}, {"cloud", "aweb"}):
+        raise ValueError("a release splits between cloud and, optionally, aweb")
+    if any(type(w) is not int or w < 1 for w in weights.values()):
+        raise ValueError("gate weights must be positive whole CPU-seconds")
+    cpu_shares = shares(cpus, weights)
+    memory_shares = shares(memory_mib, weights)
+    split = {"measured": {"cpus": cpus, "memory_mib": memory_mib}, "weights": dict(weights)}
+    for gate in weights:
+        split[gate] = {"cpus": cpu_shares[gate], "memory_mib": memory_shares[gate]}
+    return split
 
 
 def size(cpus, memory_mib, *, service_memory_mib, max_workers):
@@ -229,16 +229,27 @@ def budget_from(environ):
     return given["GATE_CPUS"], given["GATE_MEMORY_MIB"], source
 
 
-def write_split(path, aweb):
+def write_split(path, weights):
     """In the release job: measure, split, record, and print the shares."""
-    shares = release_split(*measure(), aweb)
+    shares = release_split(*measure(), weights)
     Path(path).write_text(json.dumps(shares, sort_keys=True) + "\n")
     gates = [shares["cloud"], shares.get("aweb", {"cpus": 0, "memory_mib": 0})]
     print(" ".join(str(gate[key]) for gate in gates for key in ("cpus", "memory_mib")))
 
 
+def parse_weights(arguments):
+    """GATE=CPU-SECONDS arguments, as the dispatcher passes the measured weights."""
+    weights = {}
+    for argument in arguments:
+        gate, _, value = argument.partition("=")
+        if gate not in ("cloud", "aweb") or gate in weights or not re.fullmatch(r"[1-9][0-9]*", value):
+            raise ValueError(f"invalid gate weight {argument!r}")
+        weights[gate] = int(value)
+    return weights
+
+
 if __name__ == "__main__":
-    if len(sys.argv) == 4 and sys.argv[1] == "split" and sys.argv[3] in ("aweb", "cloud-only"):
-        write_split(sys.argv[2], sys.argv[3] == "aweb")
+    if len(sys.argv) >= 4 and sys.argv[1] == "split":
+        write_split(sys.argv[2], parse_weights(sys.argv[3:]))
     else:
-        raise SystemExit("usage: python3 -m vm_gate.budget split PATH aweb|cloud-only")
+        raise SystemExit("usage: python3 -m vm_gate.budget split PATH cloud=N [aweb=N]")

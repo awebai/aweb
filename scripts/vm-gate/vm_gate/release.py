@@ -202,6 +202,20 @@ def hermes_key(path):
     return path
 
 
+def gate_weights(path=None):
+    """Each gate's measured CPU-seconds, from candidate-gate/measured-work.json.
+
+    aweb's weight is the sum of its lanes there; Cloud's is the figure that
+    file names by its receipt.
+    """
+    path = path or Path(__file__).resolve().parents[3] / "candidate-gate/measured-work.json"
+    work = json.loads(Path(path).read_text())
+    cloud = work.get("gates", {}).get("cloud", {}).get("cpu_seconds")
+    if type(cloud) is not int or cloud < 1:
+        raise Refused("measured-work.json names no measured Cloud gate CPU-seconds")
+    return {"aweb": sum(work["lanes"].values()), "cloud": cloud}
+
+
 def guest_script(
     *,
     cloud_sha,
@@ -217,8 +231,16 @@ def guest_script(
     home="/home/gateuser",
     key=GUEST_KEY,
     files_dir=GUEST_FILES,
+    weights=None,
 ):
-    """Both suites in parallel; each writes its exit and output under release/."""
+    """Both suites in parallel; each writes its exit and output under release/.
+
+    weights are the gates' measured CPU-seconds (gate_weights); the guest
+    divides its own measured capacity by them.
+    """
+    weights = weights or gate_weights()
+    if not aweb:
+        weights = {"cloud": weights["cloud"]}
     release = logs + "/release"
     cloud_env = [
         f"AWEB_GATE_LEDGER={release}/cloud/ledger.tsv",
@@ -271,7 +293,7 @@ aweb_suite=$!
 mkdir -p {Q(release + "/aweb")} {Q(release + "/cloud/empty-docker-config")}
 {{ uname -m; docker info --format '{{{{.Architecture}}}}'; }} > {Q(release + "/host-architecture")} 2>/dev/null
 chmod 0700 {Q(release + "/cloud/empty-docker-config")}
-read -r cloud_cpus cloud_memory aweb_cpus aweb_memory < <(python3 -m vm_gate.budget split {Q(release + "/split.json")} {"aweb" if aweb else "cloud-only"}) || exit 70
+read -r cloud_cpus cloud_memory aweb_cpus aweb_memory < <(python3 -m vm_gate.budget split {Q(release + "/split.json")} {" ".join(Q(f"{gate}={weight}") for gate, weight in sorted(weights.items()))}) || exit 70
 test -n "$cloud_cpus" || exit 70
 echo {Q(bundle_sha256 + "  " + remote + "/cloud.bundle")} | sha256sum -c - || exit 70
 echo {Q(archive_sha256 + "  " + remote + "/cloud-image.tar")} | sha256sum -c - || exit 70
