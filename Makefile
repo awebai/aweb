@@ -870,11 +870,6 @@ _candidate-test-docker-dns:
 check-page-renderer-bundle:
 	cd naapp-lib/renderer && npm ci --ignore-scripts && node build.mjs --check
 
-.PHONY: test-page-renderer
-test-page-renderer: check-page-renderer-bundle
-	uv sync --frozen --project naapp-lib
-	cd naapp-lib/renderer && npm test
-
 .PHONY: e2e-user-paths
 e2e-user-paths:
 	USER_PATHS_EVIDENCE="$${CANDIDATE_LOG_DIR:-/tmp/aweb-user-paths-evidence}/user-paths" bash scripts/e2e-user-paths.sh

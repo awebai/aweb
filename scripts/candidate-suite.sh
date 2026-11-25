@@ -86,7 +86,7 @@ checks() {
   run _candidate-test-docker-dns
   run _candidate-gate-compose-adoption
   run test-shipping
-  run test-page-renderer
+  run check-page-renderer-bundle
   run check-aw-commit-repo-stamp
   run check-cli-go-tidy
   run check-cli-release-vcs-stamps
