@@ -33,6 +33,32 @@ test("passive terminal cleanup retains its socket root on child failure", () => 
   }
 });
 
+test("passive terminal cleanup waits for the panes the stopped server leaves running", () => {
+  // kill-server returns before the panes exit. A pane's shell that writes its
+  // history as it exits must not race the root's removal.
+  const root = mkdtempSync("/tmp/kpw-");
+  try {
+    const marker = join(root, "pane-exited");
+    // The pane is not the test's child, as a real pane is the server's.
+    const pane = spawnSync("/bin/sh", ["-c", `nohup ${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+      `process.on("SIGHUP", () => setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker)}, "history"); process.exit(0); }, 300));setInterval(() => {}, 1000)`,
+    )} >/dev/null 2>&1 & echo $!`], { encoding: "utf8" });
+    const pid = Number(pane.stdout.trim());
+    assert.ok(Number.isInteger(pid) && pid > 0, "the pane started");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    const tmuxBinary = join(root, "tmux.mjs");
+    writeFileSync(tmuxBinary, `#!${process.execPath}
+const args = process.argv.slice(2).join(" ");
+if (args.includes("list-panes")) { process.stdout.write("${pid}\\n"); process.exit(0); }
+if (args.includes("kill-server")) { process.kill(${pid}, "SIGHUP"); process.exit(0); }
+process.exit(1);
+`, { mode: 0o700 });
+    cleanupPassiveTerminal({ root, tmuxBinary, env: { PATH: process.env.PATH } });
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, "cleanup returns only after the pane has exited");
+    assert.equal(existsSync(root), false, "the root is removed after the pane's last write");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("the wake probe keeps its socket root when its owned tmux cleanup fails", () => {
   // The real probe, failing early, tears down through its own finally block.
   const gateStaged = "/opt/user-paths/released-oats";
