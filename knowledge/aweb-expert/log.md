@@ -1,5 +1,12 @@
 # Knowledge log
 
+## 2026-11-24
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-naapp-folio-links (naapp CI and test-evidence lessons).
+* **Creation**: lesson [Playwright fetches the base commit on pull-request runs](/aweb-expert/lessons/playwright-fetches-the-base-commit-on-pull-request-runs.md).
+* **Creation**: decision [tests assert behaviour, not product wording](/aweb-expert/decisions/tests-assert-behaviour-not-product-wording.md).
+* **Update**: [a test result belongs to the bytes that ran](/aweb-expert/lessons/a-test-result-belongs-to-the-bytes-that-ran.md) gains pull-request runs that test the head merged with a moving main.
+* **Update**: [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md) gains a planted, predicted first CI run for tests that cannot run locally.
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.

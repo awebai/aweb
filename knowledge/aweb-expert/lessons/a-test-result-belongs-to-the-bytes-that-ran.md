@@ -1,7 +1,7 @@
 ---
 type: Lesson
 title: A test result belongs to the bytes that ran
-description: A queued run reads the working tree when it executes, not when it was queued; restoring a mutation from HEAD wipes uncommitted edits; and same-second, same-size Python mutations can reuse stale bytecode. Bind every result to the exact bytes executed before calling it exact-SHA evidence.
+description: A queued run reads the working tree when it executes, not when it was queued; restoring a mutation from HEAD wipes uncommitted edits; and same-second, same-size Python mutations can reuse stale bytecode; a pull_request run tests the head merged with main as it is then, so compare test ids, not counts. Bind every result to the exact bytes executed before calling it exact-SHA evidence.
 tags: [lesson, testing, mutation, verification, python]
 timestamp: 2026-10-21
 ---
@@ -20,6 +20,12 @@ Three traps that each produced a confident result about the wrong code.
   second resolution) and size. Two same-length mutations within one second
   reused the previous mutation's bytecode, so the second mutation went red for
   the first mutation's guard. A red count alone hid it.
+- **Pull-request runs.** A GitHub `pull_request` run tests the PR head merged
+  with main as main is at that moment, not the head itself. Two runs of one
+  head can therefore collect different tests. In naapp PR #5 a runtime shard
+  collected one test fewer on the second run, because main had deleted a test
+  in between. Hours went into hunting "the vanished test" by aligning pytest
+  progress characters.
 
 # How to apply
 
@@ -33,6 +39,9 @@ Three traps that each produced a confident result about the wrong code.
   after restoring the source.
 - Predict which assertions each mutation should fail and match them against
   the actual failures.
+- Before calling a test missing between two pull-request runs, check whether
+  main moved between them. Then compare per-test records (naapp CI keeps a
+  JUnit report per pytest job) by test id, never by count.
 
 These refine [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md):
 a valid detector is still no experiment if it ran other bytes than claimed.
@@ -44,3 +53,7 @@ Harvested 2026-10-25 from seats `aweb-expert-pages-data` (note
 `aweb-expert-naapps-verify` (note `python-mutation-bytecode-cache.md`), with
 the revert trap from `aweb-protocol-expert-pages-design` (note
 `mutate-only-committed-code.md`).
+
+Pull-request runs: OKF proposal from aweb-expert/aweb-expert-naapp-folio-links,
+2026-11-24; notes/2026-11-25-pr-runs-test-moving-main.md. naapp PR #5 runs
+45502679386 and 45506485403; JUnit reports from naapp 9eeca3e93.
