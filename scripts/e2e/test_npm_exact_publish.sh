@@ -160,7 +160,7 @@ SKILLS="$(node "$ROOT/scripts/skill-packaging.mjs" list)"
 make_profile_fixture() {
   # $1 profile, then flags: --no-sentinel, --drop-skill <name>, --extra-skill <name>
   local profile="$1"; shift
-  local sentinel="$SENTINEL" drop='' extra='' plugin=coherent markers="$CHANNEL_MARKERS" unsafe_merge='' mcp_name='aweb-channel'
+  local sentinel="$SENTINEL" drop='' extra='' plugin=coherent markers="$CHANNEL_MARKERS" unsafe_merge='' mcp_name='aweb-channel' pi_skills=''
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-sentinel) sentinel=''; shift ;;
@@ -189,6 +189,7 @@ make_profile_fixture() {
         shift
         ;;
       --unsafe-decrypt-merge) unsafe_merge='Object.assign(msg, decrypted)'; shift ;;
+      --pi-skills) pi_skills="$2"; shift 2 ;;
     esac
   done
   rm -rf "$tmp/prof"; mkdir -p "$tmp/prof/dist"
@@ -224,6 +225,7 @@ make_profile_fixture() {
       pi_metadata='"pi": {"skills": ["./skills"]},'
       ;;
   esac
+  [[ -z "$pi_skills" ]] || pi_metadata="\"pi\": {\"skills\": $pi_skills},"
   if [[ "$profile" == "skills" ]]; then
     local s
     for s in $SKILLS $extra; do
@@ -282,6 +284,8 @@ profile_case "pi profile refuses missing local stream deadline" pi refuse "local
 profile_case "pi profile refuses missing inactivity watchdog" pi refuse "byte-inactivity watchdog" --drop-inactivity-watchdog
 profile_case "pi profile refuses missing settled backoff cleanup" pi refuse "backoff abort-listener cleanup" --drop-backoff-cleanup
 profile_case "skills profile accepts shipped set" skills ok ""
+profile_case "skills profile refuses hidden skills discovery" skills refuse "pi.skills" --pi-skills '[]'
+profile_case "pi profile refuses automatic skills discovery" pi refuse "pi.skills" --pi-skills '["./skills"]'
 profile_case "skills profile refuses missing tasks skill" skills refuse "skill set" --drop-skill aweb-tasks
 profile_case "channel profile refuses configure skill" channel refuse "skills" --extra-skill configure
 profile_case "skills profile refuses an extra skill dir" skills refuse "skill set" --extra-skill extra-skill
