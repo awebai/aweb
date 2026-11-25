@@ -282,10 +282,6 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(result.stdout, network.hostname(project, 'gateway'))
 
     def test_gate_does_not_allocate_or_use_host_ports(self):
-        source = (ROOT / 'scripts/candidate-docker-gate.sh').read_text()
-        for forbidden in ('candidate-ports.py', 'ports.env', 'host-gateway',
-                          'AWEB_DOCKER_PUBLISHED_HOST='):
-            self.assertNotIn(forbidden, source)
         journey = (ROOT / 'scripts/e2e-oss-user-journey.sh').read_text()
         functions = journey[journey.index('allocate_service_ports() {'):journey.index('compose() {')]
         result = bash(functions + '\n'

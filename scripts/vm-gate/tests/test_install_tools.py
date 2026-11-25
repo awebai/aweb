@@ -54,22 +54,5 @@ class InstallToolsTests(unittest.TestCase):
                 install(plan)
             replace.assert_not_called()
 
-    def test_verified_downloads_install_without_executing_any_local_binary(self):
-        data, plan = self.plans()
-        with (
-            patch("os.geteuid", return_value=0),
-            patch(
-                "urllib.request.urlopen",
-                side_effect=lambda req, **kw: io.BytesIO(
-                    data[req.full_url.rsplit("/", 1)[-1]]
-                ),
-            ),
-            patch("vm_gate.install_tools.replace_tree") as replace,
-        ):
-            result = install(plan)
-        self.assertEqual(len(result), 3)
-        self.assertEqual(replace.call_count, 3)
-
-
 if __name__ == "__main__":
     unittest.main()

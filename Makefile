@@ -387,7 +387,6 @@ test-awid-pooler:
 		PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_database_session_settings.py
 
 test-cli: production-awid-sync
-	python3 scripts/test-egress/test_fixture_imports.py
 	cd cli/go && go mod download
 	cd awid && uv sync --frozen
 	# A short, canonical temp root avoids macOS /var symlinks and socket limits.

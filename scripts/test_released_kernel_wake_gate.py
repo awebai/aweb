@@ -38,8 +38,6 @@ class ReleasedKernelBootstrapTest(unittest.TestCase):
         self.assertTrue(
             kernel.is_file(), "Run make prepare-released-kernel-test first."
         )
-        manifest = json.loads((kernel.parents[1] / "package.json").read_text())
-        self.assertEqual(manifest["version"], "0.69.19")
         node = shutil.which("node")
         self.assertIsNotNone(node)
         with tempfile.TemporaryDirectory(

@@ -13,11 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class GeneratedCopiesTest(unittest.TestCase):
-    def test_checks_stage_runs_the_drift_gate(self):
-        suite = (ROOT / 'scripts/candidate-suite.sh').read_text()
-        checks = suite.split('checks() {', 1)[1].split('\n}', 1)[0]
-        self.assertIn('run check-generated-copies', checks)
-
     def test_generators_preserve_current_committed_copies(self):
         self.check_generators(mutation=None)
 

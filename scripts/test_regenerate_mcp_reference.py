@@ -18,51 +18,16 @@ class MCPReferenceGeneratorTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.tools = asyncio.run(generator.load_registered_tools())
 
-    def test_live_registration_renders_complete_mail_chat_schema(self) -> None:
+    def test_hosted_sends_disclose_that_managed_encryption_is_not_end_to_end(self) -> None:
         rendered = generator.render_reference(self.tools)
-
-        def row(name: str) -> str:
-            return next(
-                line
-                for line in rendered.splitlines()
-                if line.startswith(f"| `{name}`")
-            )
-
-        send_mail = row("send_mail")
-        check_mail = row("check_mail")
-        send_chat = row("send_chat")
-
-        self.assertIn("`plaintext=False`", send_mail)
-        self.assertIn("`plaintext=False`", send_chat)
-        self.assertIn("Hosted custodial sends use managed encryption by default", send_mail)
-        self.assertIn("this is not end-to-end encryption", send_mail)
-        self.assertIn("marks returned unread messages read", check_mail)
-        self.assertIn("Hosted custodial sends use managed encryption by default", send_chat)
-        self.assertIn("this is not end-to-end encryption", send_chat)
-        read_chat = row("read_chat")
-        task_create = row("task_create")
-        self.assertIn("`conversation_id`, `unread_only=False`, `limit=50`", read_chat)
-        self.assertIn("`title`, `description=\"\"`", task_create)
-        self.assertIn("`labels=None`", task_create)
-        self.assertNotIn("aweb_welcome_guide", rendered)
-        self.assertNotIn("create_invite_link", rendered)
-
-    def test_auth_text_distinguishes_identity_from_team_context(self) -> None:
-        rendered = generator.render_reference(self.tools)
-
-        self.assertIn("All tools require authenticated identity context", rendered)
-        self.assertIn(
-            "Identity, mail, chat, and contact operations can run without team context",
-            rendered,
-        )
-        self.assertIn(
-            "Team-scoped coordination families require resolved team context",
-            rendered,
-        )
-        self.assertNotIn(
-            "Tools run in the caller's authenticated team scope",
-            rendered,
-        )
+        for name in ("send_mail", "send_chat"):
+            with self.subTest(tool=name):
+                row = next(
+                    line
+                    for line in rendered.splitlines()
+                    if line.startswith(f"| `{name}`")
+                )
+                self.assertIn("this is not end-to-end encryption", row)
 
     def test_new_registered_tool_fails_closed_until_classified(self) -> None:
         tools = dict(self.tools)

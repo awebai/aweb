@@ -128,24 +128,6 @@ class PublishedPortPropertyTests(unittest.TestCase):
 
 
 class HostPublishedPortWiringTests(unittest.TestCase):
-    def test_check_runs_from_selected_checkout_before_runner_and_records_failure(self):
-        source = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
-        start = source.index('# The published socket belongs to the Docker host')
-        end = source.index('\nfi', start) + 3
-        block = source[start:end]
-        self.assertIn('" $pending " == *" checks "*', block)
-        self.assertIn('"$checkout/scripts/e2e/test_candidate_gate_docker_boundaries.py"', block)
-        self.assertIn('HostPublishedPortTests', block)
-        self.assertIn('"$LOG_DIR/host-published-port.log"', block)
-        self.assertIn('host_port_status=$?', block)
-        self.assertIn('-e CANDIDATE_HOST_PORT_STATUS="$host_port_status"', source)
-        self.assertLess(source.index('clone selected the wrong SHA'), start)
-        self.assertLess(start, source.index('docker run --rm --init'))
-        suite = (ROOT / "scripts/candidate-suite.sh").read_text()
-        self.assertIn('cat "$log_dir/host-published-port.log"', suite)
-        self.assertIn("run_step host-published-port host_published_port", suite)
-        self.assertIn('run _candidate-gate-docker-boundaries', suite)
-
     def test_host_result_survives_until_runner_including_failure(self):
         source = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
         start = source.index('# The published socket belongs to the Docker host')

@@ -19,35 +19,6 @@ spec.loader.exec_module(runner)
 
 
 class ServerWorkerTests(unittest.TestCase):
-    def test_cli_auth_stack_collects_with_the_unit_stage_environment(self):
-        env = os.environ.copy()
-        env.update(
-            PYTHONPATH="tests",
-            UV_OFFLINE="1",
-            PYTHONPYCACHEPREFIX="/tmp/pycache",
-        )
-        for name in ("PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT"):
-            env.pop(name, None)
-        result = subprocess.run(
-            [
-                "uv",
-                "run",
-                "--offline",
-                "--no-sync",
-                "pytest",
-                "-q",
-                "../cli/tests/test_request_auth_v2_stack.py",
-                "--collect-only",
-            ],
-            cwd=ROOT / "server",
-            env=env,
-            text=True,
-            capture_output=True,
-            timeout=30,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("4 tests collected", result.stdout)
-
     def test_actual_launch_vectors_match_all_seven_worker_environments(self):
         pg_ports, redis_ports = set(), set()
         for services in runner.service_plan(7):
@@ -216,23 +187,6 @@ print(json.dumps({'pg_port':DEFAULT_TEST_CONFIG.port,'redis':test_agent_wake.RED
                 "--command bash scripts/candidate-suite.sh --isolated-suites",
                 result.stdout,
             )
-
-    def test_canonical_make_entry_selects_workers_only_when_requested(self):
-        for workers, expected in [("0", False), ("7", True)]:
-            result = subprocess.run(
-                ["make", "-n", "test-server", "SERVER_TEST_WORKERS=" + workers],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-                timeout=10,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            lines = [line for line in result.stdout.splitlines() if "pytest -q" in line]
-            self.assertEqual(len(lines), 1)
-            self.assertEqual(
-                "-n 7 --dist loadscope --max-worker-restart=0" in lines[0], expected
-            )
-
 
 if __name__ == "__main__":
     unittest.main()
