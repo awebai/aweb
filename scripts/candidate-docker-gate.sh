@@ -526,8 +526,9 @@ printf 'candidate gate PASSED at %s; logs: %s\n' \
 
 }
 
-# The child owns Docker cleanup. Its output reader survives group signals;
-# the lock holder waits for cleanup before recording reusable proof.
+# The child owns Docker cleanup. Its output reader survives group signals and
+# records each stage as it passes; the lock holder waits for cleanup before
+# recording the rest of the run's verdict.
 source "$ROOT/scripts/candidate-record.sh"
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"
@@ -540,7 +541,7 @@ if [[ -n "${AWEB_GATE_RUN_REGISTRY:-}" ]]; then
 fi
 trap 'candidate_interrupted 130 INT' INT
 trap 'candidate_interrupted 143 TERM' TERM
-(trap '' INT TERM; exec tee "$run_log") < "$output_pipe" &
+(trap '' INT TERM; record_stages_as_they_pass) < "$output_pipe" &
 candidate_writer=$!
 run_candidate > "$output_pipe" 2>&1 &
 candidate_job=$!

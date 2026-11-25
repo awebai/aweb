@@ -546,6 +546,35 @@ class CandidateBrowserImageContractTest(unittest.TestCase):
         self.assertIn("-e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright", runner)
 
 
+class CandidateGateDeadlineTest(unittest.TestCase):
+    def test_gate_that_outlasts_the_command_bound_still_tags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            init_fixture_repo(root)
+            command(root, "git", "config", "user.name", "fixture")
+            command(root, "git", "config", "user.email", "fixture@example.test")
+            (root / "scripts").mkdir()
+            gate = root / "scripts/candidate-docker-gate.sh"
+            # The Docker gate takes longer than the bound on ordinary commands.
+            gate.write_text("#!/bin/sh\nsleep 2\n")
+            gate.chmod(0o755)
+            command(root, "git", "add", ".")
+            command(root, "git", "commit", "-qm", "candidate")
+            command(root, "git", "remote", "add", "origin", ".")
+            with patch.object(CANDIDATE, "COMMAND_TIMEOUT_SECONDS", 1), \
+                    patch("sys.stdout", new_callable=io.StringIO):
+                source_sha = CANDIDATE.create_candidate(root, ["aw-v1.2.3"])
+            self.assertEqual(
+                command(root, "git", "rev-parse", "refs/tags/aw-v1.2.3^{commit}"), source_sha
+            )
+
+    def test_ordinary_commands_keep_their_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(CANDIDATE, "COMMAND_TIMEOUT_SECONDS", 1):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    CANDIDATE.run(Path(directory), "sleep", "3")
+
+
 class NpmRcContractTest(unittest.TestCase):
     def test_candidate_declares_staged_final_before_publication(self):
         with tempfile.TemporaryDirectory() as directory:

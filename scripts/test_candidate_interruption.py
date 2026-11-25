@@ -27,6 +27,7 @@ class CandidateInterruption(unittest.TestCase):
         during_cleanup="",
         parent_only=False,
         late_summary=False,
+        stage_verdicts="",
     ):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -53,7 +54,7 @@ run_candidate() {
    if [[ -n \"${fake_stage:-}\" ]]; then kill -TERM \"$fake_stage\" 2>/dev/null || true; wait \"$fake_stage\" || true; fi
    printf 'child cleanup started\\n'
    sleep .1
-   if [[ \"$LATE_SUMMARY\" == 1 ]]; then printf 'checks\\tPASSED\\tchecks.log\\t1s\\t\\nartifacts\\tPASSED\\tartifacts.log\\t2s\\t\\n' > \"$LOG_DIR/summary.tsv\"; fi
+   if [[ \"$LATE_SUMMARY\" == 1 ]]; then printf 'checks\\tPASSED\\tchecks.log\\t1s\\t\\nartifacts\\tPASSED\\tartifacts.log\\t2s\\t\\n' > \"$LOG_DIR/summary.tsv\"; printf 'candidate stage-verdict: artifacts PASSED\\n'; sleep .2; fi
    printf 'child cleanup finished\\n'
    touch "$LOG_DIR/child-cleaned"
    printf 'candidate gate cleanup PASSED\\n' | tee "$LOG_DIR/wrapper-verdict.log"
@@ -78,6 +79,15 @@ run_candidate() {
   printf 'checks\\tFAILED\\tchecks.log\\t1s\\nartifacts\\tPASSED\\tartifacts.log\\t2s\\n' > "$LOG_DIR/summary.tsv"
   printf 'checks/check-product-table-writes\\tFAILED\\tchecks.log\\t1s\\texit 23\\nartifacts/build\\tPASSED\\tartifacts.log\\t2s\\n' >> "$LOG_DIR/summary.tsv"
   printf 'integration/e2e-naapp\\tSKIPPED\\tintegration.log\\t0s\\tbuild FAILED\\n' >> "$LOG_DIR/summary.tsv"
+ fi
+ if [[ "$STAGE_VERDICTS" == kill ]]; then
+  printf 'checks\\tPASSED\\tchecks.log\\t1s\\t\\nchecks/check-python-static\\tPASSED\\tchecks.log\\t1s\\t\\n' > "$LOG_DIR/summary.tsv"
+  printf 'candidate stage-verdict: checks PASSED\\n'
+  sleep 30
+ fi
+ if [[ "$STAGE_VERDICTS" == complete ]]; then
+  printf 'candidate stage-verdict: checks PASSED\\ncandidate stage-verdict: artifacts PASSED\\n'
+  printf 'candidate stage-verdict: integration PASSED\\n'
  fi
  if [[ -n "$DURING_CLEANUP" ]]; then
   source "$ROOT/scripts/candidate-cleanup.sh"
@@ -135,6 +145,7 @@ run_candidate() {
             CLEANUP_CONTROL=str(int(cleanup_control)),
             DURING_CLEANUP=during_cleanup,
             LATE_SUMMARY=str(int(late_summary)),
+            STAGE_VERDICTS=stage_verdicts,
         )
         env.pop(
             "AWEB_GATE_RUN_REGISTRY", None
@@ -254,6 +265,59 @@ run_candidate() {
                 )
                 self.assertIn("run\tINTERRUPTED\t", (logs / "summary.tsv").read_text())
                 self.assertTrue(all(Path(r[5]).stat().st_size for r in rows))
+
+    def test_stage_is_recorded_when_it_passes_and_survives_a_kill(self):
+        temporary_ledger = []
+
+        def wait_for_row(ledger):
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                rows = [line.split("\t") for line in ledger.read_text().splitlines()]
+                if any(row[1] == "checks" for row in rows):
+                    return rows
+                time.sleep(0.01)
+            return []
+
+        original_popen = subprocess.Popen
+
+        def kill_after_record(*args, **kwargs):
+            process = original_popen(*args, **kwargs)
+            ledger = Path(kwargs["env"]["LEDGER"])
+            temporary_ledger.append(wait_for_row(ledger))
+            self.assertIsNone(process.poll(), "the gate ended before the kill")
+            os.killpg(process.pid, signal.SIGKILL)
+            return process
+
+        with patch("subprocess.Popen", kill_after_record):
+            code, rows, logs, output = self.invoke(status=0, stage_verdicts="kill")
+        self.assertEqual(code, -signal.SIGKILL, output)
+        self.assertEqual(
+            [(r[1], r[2]) for r in temporary_ledger[0]],
+            [("checks", "passed"), ("checks/check-python-static", "passed")],
+        )
+        self.assertEqual([(r[1], r[2]) for r in rows], [(r[1], r[2]) for r in temporary_ledger[0]])
+        self.assertEqual(Path(rows[0][5]).read_text(), "real completed checks\n")
+        gate = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
+        lookup = gate[gate.index("recorded() {") : gate.index("run_candidate() {")]
+        result = subprocess.run(
+            ["bash", "-ec", lookup + "\nprintf '%s\\n' \"$pending\"; exit 99"],
+            env=dict(os.environ, TREE="tree", KEY="tree-inputs",
+                     LEDGER=str(logs.parent / "ledger.tsv"),
+                     REQUESTED="checks artifacts integration"),
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 99, result.stderr)
+        self.assertIn("already passed checks", result.stdout)
+        self.assertTrue(result.stdout.endswith("artifacts integration\n"), result.stdout)
+
+    def test_stages_recorded_as_they_pass_are_recorded_once(self):
+        code, rows, logs, output = self.invoke(status=0, stage_verdicts="complete")
+        self.assertEqual(code, 0, output)
+        entries = [(r[1], r[2]) for r in rows]
+        self.assertEqual(
+            sorted(entries),
+            [("artifacts", "passed"), ("checks", "passed"), ("integration", "passed")],
+        )
 
     def test_real_term_without_cleanup_blocks_reuse(self):
         code, rows, logs, output = self.invoke(signal_number=signal.SIGTERM)
