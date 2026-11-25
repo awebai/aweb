@@ -31,10 +31,16 @@
   },
   "gates": {
     "cloud": {
-      "cpu_seconds": 17003,
-      "receipt": "9c701861202d-run-20261114T003126Z-50488",
-      "commit": "15591632f0fab3f705b10570d02e856ca60f9372",
-      "measure": "an estimate, not a cgroup measurement: each target's elapsed seconds times its worker count (backend 1564 s x 8, frontend 385 s x 2, image 38 s, two-service 251 s, journey 1716 s x 2), from a full green Cloud gate on a 14-CPU Docker Desktop engine; it leaves out the stack services' own CPU. aweb's weight is the sum of this file's lanes, measured from cgroups."
+      "cpu_seconds": 18789,
+      "receipt": "vm-2ca9671a36aa4d6aa741914d1568625e",
+      "commit": "ced2e2a39d1aecc361a51491040d9f98452d6e22",
+      "lanes": {
+        "backend+frontend": 15800,
+        "cloud-user-journey": 2681,
+        "two-service": 106,
+        "image": 201
+      },
+      "measure": "CPU-seconds from cgroups, as aweb's lanes: the cumulative usage_usec of every container's cpu.stat in the receipt's memory.jsonl, from a full green `vm-gate cloud-gate` on a 12-CPU merak guest. backend+frontend is their shared runner (13177) plus its Postgres and Redis (2623); cloud-user-journey is its stage runner, stack, Hermes containers and DNS sidecars; image includes the run's builder. Lane figures are rounded. aweb's weight is the sum of this file's lanes."
     }
   }
 }
