@@ -38,6 +38,31 @@ GUEST_KEY = GUEST_KEY_DIRECTORY + "/hermes-key"
 AWEB_PROJECTS = {"awid_service-": "awid", "aweb-": "server"}
 
 
+# What the operator's own git needs to reach a private origin: its config
+# (HOME), its SSH agent and its credential helpers (PATH).
+OPERATOR_GIT_VARIABLES = (
+    "HOME",
+    "PATH",
+    "SSH_AUTH_SOCK",
+    "SSH_AGENT_PID",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+)
+
+
+def operator_git_environment():
+    """The admission fetch's environment, on the controller only.
+
+    Every other git call, and everything in the guest, keeps the credential-free
+    child environment.
+    """
+    environment = child_environment()
+    environment.update(
+        {name: os.environ[name] for name in OPERATOR_GIT_VARIABLES if name in os.environ}
+    )
+    return environment
+
+
 def git(repo, *argv, env=None):
     result = subprocess.run(
         ["git", "-C", str(repo), *argv],
@@ -81,6 +106,7 @@ def cloud_main(repo, cloud_sha, gate=False):
         "--no-tags",
         "origin",
         "+refs/heads/main:refs/remotes/origin/main",
+        env=operator_git_environment(),
     )
     real_main = git(repo, "rev-parse", "refs/remotes/origin/main^{commit}")
     if gate:

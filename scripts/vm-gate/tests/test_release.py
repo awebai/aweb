@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from vm_gate import budget, release
-from vm_gate.errors import Refused
+from vm_gate.errors import Infrastructure, Refused
 from vm_gate.cli import main
 from test_config import hashes
 from test_source import GitFixture, git
@@ -344,6 +344,41 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         unrelated = commit(self.cloud, "unrelated")
         with self.assertRaisesRegex(Refused, "not over real main"):
             release.cloud_main(self.cloud, unrelated, gate=True)
+
+    def test_the_admission_fetch_uses_the_operators_git_environment(self):
+        # The origin is reachable only through the operator's own git config,
+        # as a private GitHub origin is reachable only through its agent.
+        home = self.root / "operator-home"
+        home.mkdir()
+        (home / ".gitconfig").write_text(
+            f'[url "{self.cloud_origin}"]\n\tinsteadOf = git@example.invalid:ac.git\n'
+        )
+        git(self.cloud, "remote", "set-url", "origin", "git@example.invalid:ac.git")
+        with patch.dict(os.environ, {"HOME": str(home), "SSH_AUTH_SOCK": "/agent.sock"}):
+            environment = release.operator_git_environment()
+            self.assertEqual(environment["HOME"], str(home))
+            self.assertEqual(environment["SSH_AUTH_SOCK"], "/agent.sock")
+            with self.assertRaises(Infrastructure):
+                release.git(self.cloud, "fetch", "--quiet", "origin", "main")
+            recorded = release.cloud_main(self.cloud, self.cloud_sha)
+        self.assertEqual(recorded["real_main"], {"ac": self.cloud_main})
+
+    def test_the_guest_environment_carries_no_operator_credentials(self):
+        with patch.dict(
+            os.environ, {"HOME": "/Users/operator", "SSH_AUTH_SOCK": "/agent.sock"}
+        ):
+            script = release.guest_script(
+                cloud_sha=self.cloud_sha,
+                bundle_sha256="0" * 64,
+                archive_sha256="1" * 64,
+                image="ghcr.io/awebai/ac@sha256:" + "a" * 64,
+                member="sha256:" + "b" * 64,
+                lock_source_sha=self.sha,
+                aweb=self.sha,
+                files={},
+            )
+        for marker in ("SSH_AUTH_SOCK", "/agent.sock", "/Users/operator", "insteadOf"):
+            self.assertNotIn(marker, script)
 
     def test_release_commit_on_real_main_records_main(self):
         self.assertEqual(

@@ -50,7 +50,14 @@ def collect_archive(archive, sha, destination):
                 budget = {}
                 for line in target.read_text().splitlines():
                     name, _, value = line.partition("\t")
-                    budget[name] = int(value) if value.isdigit() else value
+                    if name == "lane_cpus":
+                        # One row per lane: lane_cpus<TAB>lane<TAB>cpus.
+                        lane, _, cpus = value.partition("\t")
+                        budget.setdefault("lane_cpus", {})[lane] = (
+                            int(cpus) if cpus.isdigit() else cpus
+                        )
+                    else:
+                        budget[name] = int(value) if value.isdigit() else value
             if gate_run and rel.parts[2] == "summary.tsv":
                 summaries.append(item.name)
                 for line in target.read_text().splitlines():

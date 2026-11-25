@@ -71,7 +71,9 @@ class EvidenceTests(unittest.TestCase):
                     "unit\tSTOPPED\t-\t42s\tafter checks FAILED\n"
                 ),
                 run + "/budget.tsv": (
-                    "cpus\t12\nmemory_mib\t56000\nsource\tmachine\nserver_workers\t11\n"
+                    "cpus\t12\nmemory_mib\t56000\nsource\tcpus=measured,memory=measured\n"
+                    "lanes_concurrent\t1\nlane_cpus\tchecks\t1\nlane_cpus\tunit\t8\n"
+                    "lane_cpus\tintegration\t1\n"
                 ),
                 "tmp/aweb-candidate-gate-" + "b" * 40 + "-x/budget.tsv": "cpus\t1\n",
             }
@@ -79,7 +81,13 @@ class EvidenceTests(unittest.TestCase):
         result = collect_archive(archive, SHA, Path(self.tmp.name) / "out")
         self.assertEqual(
             result["budget"],
-            {"cpus": 12, "memory_mib": 56000, "source": "machine", "server_workers": 11},
+            {
+                "cpus": 12,
+                "memory_mib": 56000,
+                "source": "cpus=measured,memory=measured",
+                "lanes_concurrent": 1,
+                "lane_cpus": {"checks": 1, "unit": 8, "integration": 1},
+            },
         )
         stopped = [row for row in result["stages"] if row["stage"] == "unit"]
         self.assertEqual(stopped[0]["status"], "STOPPED")
