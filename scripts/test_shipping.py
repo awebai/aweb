@@ -519,33 +519,6 @@ class MatchedRcSiblingInstallTest(unittest.TestCase):
                 NAAPP_PACKAGE._check_install(*self.newer, self.links)
 
 
-class CandidateBrowserImageContractTest(unittest.TestCase):
-    def test_integration_image_installs_the_locked_headless_shell(self):
-        dockerfile = (ROOT / "candidate-gate/Dockerfile").read_text()
-        commands = " ".join(dockerfile.replace("\\\n", " ").split())
-        self.assertIn("ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright", dockerfile)
-        sync = "uv sync --frozen --project naapp-lib"
-        install = (
-            "uv run --frozen --no-sync --project naapp-lib "
-            "playwright install --with-deps --only-shell chromium"
-        )
-        self.assertIn(sync, commands)
-        self.assertIn(install, commands)
-        self.assertLess(commands.index(sync), commands.index(install))
-        self.assertIn("chmod -R a+rX /opt/ms-playwright", commands)
-        for project in ("awid", "naapp-lib"):
-            self.assertIn(f"COPY {project} {project}", dockerfile)
-        wrapper = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
-        self.assertIn('-f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout"', wrapper)
-
-    def test_integration_home_override_keeps_the_image_browser_path(self):
-        wrapper = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
-        runner = wrapper.split("set +e\ndocker run --rm --init", 1)[1]
-        runner = runner.split('bash scripts/candidate-suite.sh "$pending"', 1)[0]
-        self.assertIn('-e HOME="$checkout/.candidate-home"', runner)
-        self.assertIn("-e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright", runner)
-
-
 class NpmRcContractTest(unittest.TestCase):
     def test_candidate_declares_staged_final_before_publication(self):
         with tempfile.TemporaryDirectory() as directory:

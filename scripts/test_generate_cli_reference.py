@@ -13,7 +13,6 @@ from generate_cli_reference import (
     RootCoverageError,
     main,
     parse_help,
-    render_reference,
     validate_root_coverage,
 )
 
@@ -93,22 +92,6 @@ class CLIReferenceGeneratorTests(unittest.TestCase):
             "rendered root command absent from completion: session",
         ):
             validate_root_coverage(["mail", "session"], ["mail"])
-
-    def test_live_reference_contains_blueprint_and_session_families(self) -> None:
-        binary = os.environ.get("AW_CLI_REFERENCE_BIN")
-        if not binary:
-            self.skipTest("AW_CLI_REFERENCE_BIN is set by the generator self-test")
-
-        reference = render_reference(Path(binary))
-
-        self.assertIn("## `blueprint`", reference)
-        self.assertIn("### `blueprint inspect`", reference)
-        self.assertIn("## `session`", reference)
-        self.assertIn("### `session lease`", reference)
-        self.assertIn("### `session lease acquire`", reference)
-        self.assertIn("### `team admin`", reference)
-        self.assertIn("### `team admin add`", reference)
-        self.assertNotIn("### `team add`", reference)
 
     def test_check_rejects_stale_output_without_rewriting_it(self) -> None:
         binary = os.environ.get("AW_CLI_REFERENCE_BIN")

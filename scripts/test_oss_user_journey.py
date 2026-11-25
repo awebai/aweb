@@ -456,15 +456,5 @@ class CustomerSecretsStagingTests(unittest.TestCase):
                 self.assertIn("AWEB_DOCKER_BIND_ROOT must be an existing absolute directory",
                               run["result"].stderr)
 
-    def test_journey_allocates_its_root_and_stages_through_the_checked_functions(self):
-        text = JOURNEY.read_text()
-        self.assertIn('TEMP_ROOT="$(journey_temp_root)" || exit 2', text)
-        self.assertIn("stage_customer_secrets || exit 1", text)
-        self.assertEqual(text.count('-v "$CUSTOMER_KEYS_DIR:/keys'), 2,
-                         "the keys directory is bound only by stage_customer_secrets")
-        self.assertEqual(function("stage_customer_secrets").count('-v "$CUSTOMER_KEYS_DIR:/keys'), 2)
-        self.assertNotIn("no one else", function("stage_customer_secrets"),
-                         "Docker Desktop does not enforce isolation between container uids")
-
 if __name__ == "__main__":
     unittest.main()

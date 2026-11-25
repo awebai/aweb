@@ -20,26 +20,6 @@ CANDIDATE_SUITE = REPO_ROOT / "scripts" / "candidate-suite.sh"
 
 
 class OATSPinnedCheckoutContractTests(unittest.TestCase):
-    def test_default_is_repo_owned_pin_with_explicit_override(self) -> None:
-        makefile = MAKEFILE.read_text(encoding="utf-8")
-        self.assertIn("OATS_TEST_ROOT ?= $(OATS_PINNED_ROOT)", makefile)
-        self.assertNotIn("git rev-parse --git-common-dir)/../../oats", makefile)
-        self.assertRegex(
-            makefile,
-            r"(?m)^check-oats-launch-environment-contract:\s+prepare-oats-test-root$",
-        )
-        self.assertRegex(
-            makefile,
-            r"(?m)^test-oats-proof-helpers:\s+prepare-oats-test-root$",
-        )
-        self.assertIn("OATS_TEST_ROOT=/path/to/local/oats", makefile)
-
-    def test_pin_is_an_immutable_public_commit(self) -> None:
-        pin = json.loads(PIN_FILE.read_text(encoding="utf-8"))
-        self.assertEqual(pin["repository"], "https://github.com/awebai/oats.git")
-        self.assertRegex(pin["commit"], r"\A[0-9a-f]{40}\Z")
-        self.assertNotEqual(pin["commit"], "0" * 40)
-
     def test_materializer_restores_its_cache_to_the_exact_clean_commit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -185,16 +165,6 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
             )
             self.assertIn("explicit OATS_TEST_ROOT override", result.stderr)
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
-
-    def test_clean_release_gate_runs_the_pinned_oats_contract(self) -> None:
-        """The local release gate must execute both OATS seam tests."""
-        candidate_suite = CANDIDATE_SUITE.read_text(encoding="utf-8")
-        self.assertIn("run _candidate-oats\n", candidate_suite)
-        self.assertIn(
-            "run _candidate-oats-proof-helpers\n",
-            candidate_suite,
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

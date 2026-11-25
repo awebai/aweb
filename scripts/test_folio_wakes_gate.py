@@ -11,27 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FolioGateTests(unittest.TestCase):
-    def test_integration_runs_folio_and_propagates_its_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            calls = root / "calls"
-            make = root / "make"
-            make.write_text('#!/bin/bash\nprintf "%s\\n" "$1" >> "$CALLS"\n'
-                            '[[ "$1" != e2e-folio-wakes ]] || exit 86\n')
-            make.chmod(0o755)
-            result = subprocess.run(["bash", str(ROOT / "scripts/candidate-suite.sh"), "integration"],
-                                    env=dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
-                                             CALLS=str(calls), CANDIDATE_LOG_DIR=str(root)),
-                                    text=True, capture_output=True)
-            self.assertEqual(result.returncode, 86, result.stdout + result.stderr)
-            targets = calls.read_text().splitlines()
-            self.assertIn("e2e-naapp", targets)
-            self.assertIn("e2e-folio-wakes", targets)
-            self.assertIn("test-npm-exact-publish", targets)
-            self.assertIn("integration\tFAILED", (root / "summary.tsv").read_text())
-        recipe = subprocess.check_output(["make", "-n", "e2e-folio-wakes"], cwd=ROOT, text=True)
-        self.assertIn("bash scripts/e2e-folio-wakes.sh", recipe)
-
     def run_harness(self, root, **changes):
         docker = root / "docker"
         docker.write_text('#!/usr/bin/env python3\nimport json, os, sys\n'

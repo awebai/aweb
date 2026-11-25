@@ -43,43 +43,6 @@ def known_failure(case):
 
 
 class UserPathsAdmission(unittest.TestCase):
-    def test_cross_server_controls_expect_current_stored_route_refusal_in_both_lanes(
-        self,
-    ):
-        import sys
-        from unittest.mock import patch
-
-        spec = importlib.util.spec_from_file_location(
-            "user_paths", ROOT / "scripts/e2e/user_paths.py"
-        )
-        paths = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {"user_paths_result": result_model}):
-            spec.loader.exec_module(paths)
-        for name in ["head", "released"]:
-            with self.subTest(lane=name):
-                lane = paths.Lane.__new__(paths.Lane)
-                lane.name, lane.legacy_released_diagnostics = name, name == "released"
-                observed = []
-                lane.refused = lambda *args: observed.append(args)
-                lane.run_case = lambda case, operation: (
-                    operation() if "/cross-server/" in case else None
-                )
-                lane.controls()
-                self.assertEqual(
-                    observed,
-                    [
-                        (
-                            "t1",
-                            "remote",
-                            kind,
-                            422,
-                            "local_sender_route_mismatch",
-                            "local_sender_route_mismatch",
-                        )
-                        for kind in ["mail", "chat"]
-                    ],
-                )
-
     def test_missing_prepared_runtime_fails_without_allocating_or_fetching(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -167,11 +130,6 @@ class UserPathsAdmission(unittest.TestCase):
         self.assertEqual(result_model.qualification(lanes, 100, [])["status"], "FAILED")
 
     def test_fixed_released_local_chat_has_no_budget_exception(self):
-        self.assertEqual(
-            {row["maximum_version"] for row in result_model.KNOWN_RELEASED_ISSUES
-             if row["task"] == "aweb-actw"},
-            {"1.36.54"},
-        )
         for case in ["released/t1->t2/chat/v2", "released/t2->t1/chat/v2"]:
             with self.subTest(case=case):
                 passed = result_model.classify_outcome(

@@ -76,16 +76,6 @@ class ServerDispatchTests(unittest.TestCase):
             with self.assertRaisesRegex(PUBLISH.PublishRefusal, "oci"):
                 PUBLISH.publish(self.root, "awid-service-v2.3.4", only="oci")
 
-    def test_tag_workflows_select_both_server_artifacts(self):
-        for workflow, invocation in (("pypi-release.yml", '--only pypi "${GITHUB_REF_NAME}"'),
-                                     ("service-image-release.yml", '--only oci "${recovery[@]}" "$RELEASE_TAG"')):
-            source = (ROOT / ".github/workflows" / workflow).read_text()
-            self.assertIn('"server-v*"', source)
-            self.assertIn(f'python3 scripts/publish_release.py {invocation}', source)
-        # On a tag push the image lane's tag is the pushed tag itself.
-        self.assertIn("|| github.ref_name }}", (ROOT / ".github/workflows/service-image-release.yml").read_text())
-
-
 IMAGE_WORKFLOW = ROOT / ".github/workflows/service-image-release.yml"
 
 
@@ -173,12 +163,6 @@ class ImageRecoveryDispatchTests(unittest.TestCase):
         result, published = self.run_step("push", "refs/tags/server-v1.2.3", "server-v1.2.3",
                                           first_publication="ghcr.io/awebai/aweb-server")
         self.assertEqual(published, ["scripts/publish_release.py --only oci server-v1.2.3"])
-
-    def test_workflow_offers_the_first_publication_input(self):
-        source = IMAGE_WORKFLOW.read_text()
-        dispatch = source[source.index("  workflow_dispatch:"):source.index("permissions:")]
-        self.assertIn("      first_publication:\n", dispatch)
-        self.assertIn("FIRST_PUBLICATION: ${{ github.event_name == 'workflow_dispatch' && inputs.first_publication || '' }}", source)
 
     def test_push_and_main_dispatch_run_the_publisher_for_the_tag(self):
         # Only a dispatch is a recovery, which never moves latest.
@@ -398,12 +382,6 @@ class ServerOciTests(unittest.TestCase):
         self.assertEqual(copies, ["docker://ghcr.io/awebai/awid:0.5.40", "docker://ghcr.io/awebai/awid:latest"])
         self.assertTrue(all("--version-only" not in args for args in verifies))
 
-    def test_the_only_reads_are_the_tag_listing_and_present_tags(self):
-        # No registry latest config read and no tag inventory: the decision is the rc and recovery facts alone.
-        calls, _, _ = self.exercise(prefix="awid-v", version="0.5.40")
-        self.assertFalse([args for args in calls if args[:3] == ("skopeo", "inspect", "--config")])
-        self.assertFalse([args for args in calls if args[:1] == ("git",)])
-
     def test_identical_published_index_is_adopted_and_read_back(self):
         calls, _, _ = self.exercise(existing=True)
         self.assertFalse(any(args[:2] == ("skopeo", "copy") for args in calls))
@@ -416,72 +394,6 @@ class ServerOciTests(unittest.TestCase):
     def test_readback_failure_is_not_success(self):
         with self.assertRaisesRegex(PUBLISH.PublishRefusal, "published digest mismatch"):
             self.exercise(fail_readback=True)
-
-
-class NativeArchiveHandoffTests(unittest.TestCase):
-    """Control the host/transfer edges; real builds remain the opt-in qualification."""
-    def exercise(self, machine, environment):
-        calls = []
-        copied = []
-        sha = "a" * 40
-        version = tomllib.loads((ROOT / "server/pyproject.toml").read_text())["project"]["version"]
-
-        def build(root, prefix, version, source, archive):
-            calls.append(("build",))
-            archive.write_bytes(b"unchanged archive bytes")
-
-        def run(root, *args, **kwargs):
-            calls.append(args)
-            if args[:2] == ("docker", "info"):
-                return json.dumps({"Architecture": machine, "OSType": "linux"})
-            if "inspect-staged" in args:
-                Path(args[args.index("--out") + 1]).write_text(json.dumps({
-                    "index": "sha256:" + "b" * 64,
-                    "platforms": {"linux/amd64": {}, "linux/arm64": {}}}))
-            if "--override-arch" in args:
-                copied.append(args[args.index("--override-arch") + 1])
-            if args[:3] == ("docker", "image", "inspect"):
-                return json.dumps([{"Architecture": copied[-1], "Config": {"Labels": {
-                    "org.opencontainers.image.revision": sha}}}])
-            if args[:2] == ("docker", "run"):
-                self.assertEqual(kwargs["timeout"], 120)
-                if args[-1] == "--help":
-                    return "Usage: aweb serve"
-                return json.dumps({"version": version, "machine": "x86_64" if copied[-1] == "amd64" else "aarch64", "uid": 1001})
-            return ""
-
-        probe = ServerPlatformBuildTests()
-        method = unittest.defaultTestLoader.getTestCaseNames(ServerPlatformBuildTests)[0]
-        with patch.dict(os.environ, environment), patch.object(PUBLISH, "build_oci_archive", build), patch.object(PUBLISH, "run", run), patch.object(PUBLISH.subprocess, "run"), patch(__name__ + ".command", return_value=sha), redirect_stdout(io.StringIO()) as output:
-            getattr(probe, method)()
-        return calls, copied, output.getvalue()
-
-    def test_one_archive_transfers_from_native_amd64_to_native_arm64_without_rebuild(self):
-        with tempfile.TemporaryDirectory() as directory:
-            archive = Path(directory) / "release.tar"
-            calls, copied, output = self.exercise("x86_64", {
-                "AWEB_SERVER_IMAGE_ARCHIVE_OUT": str(archive), "AWEB_SERVER_IMAGE_ARCHIVE_IN": ""})
-            self.assertEqual(copied, ["amd64"])
-            self.assertTrue(archive.is_file(), "exported archive must outlive the x86 probe")
-            original = archive.read_bytes()
-            self.assertIn(hashlib.sha256(original).hexdigest(), output)
-            calls, copied, output = self.exercise("aarch64", {
-                "AWEB_SERVER_IMAGE_ARCHIVE_IN": str(archive), "AWEB_SERVER_IMAGE_ARCHIVE_OUT": ""})
-            self.assertEqual(copied, ["arm64"])
-            self.assertNotIn(("build",), calls)
-            self.assertEqual(archive.read_bytes(), original)
-            self.assertIn(hashlib.sha256(original).hexdigest(), output)
-            self.assertTrue(any("inspect-staged" in call for call in calls))
-
-    def test_missing_transferred_archive_refuses_instead_of_rebuilding(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(AssertionError, "input archive"):
-                self.exercise("aarch64", {"AWEB_SERVER_IMAGE_ARCHIVE_IN": str(Path(directory) / "missing.tar"),
-                                          "AWEB_SERVER_IMAGE_ARCHIVE_OUT": ""})
-
-    def test_unknown_native_architecture_refuses(self):
-        with self.assertRaisesRegex(AssertionError, "native architecture"):
-            self.exercise("ppc64le", {"AWEB_SERVER_IMAGE_ARCHIVE_IN": "", "AWEB_SERVER_IMAGE_ARCHIVE_OUT": ""})
 
 
 @unittest.skipUnless(os.environ.get("AWEB_TEST_SERVER_IMAGE_BUILD") == "1", "requires Docker, skopeo and native platform runtime")

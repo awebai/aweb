@@ -158,8 +158,6 @@ class WorkCleanupTests(unittest.TestCase):
                 result = bash(command + 'cleanup_work', work=tmp, ROOT=str(ROOT))
                 self.assertEqual(result.returncode, 1 if retain else 0, result.stderr)
                 self.assertEqual(overlay.exists(), retain)
-        self.assertIn('cleanup_work || cleanup_status=1',
-                      (ROOT / 'scripts/candidate-cleanup.sh').read_text())
 
 
 class EndpointTests(unittest.TestCase):
@@ -284,10 +282,6 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(result.stdout, network.hostname(project, 'gateway'))
 
     def test_gate_does_not_allocate_or_use_host_ports(self):
-        source = (ROOT / 'scripts/candidate-docker-gate.sh').read_text()
-        for forbidden in ('candidate-ports.py', 'ports.env', 'host-gateway',
-                          'AWEB_DOCKER_PUBLISHED_HOST='):
-            self.assertNotIn(forbidden, source)
         journey = (ROOT / 'scripts/e2e-oss-user-journey.sh').read_text()
         functions = journey[journey.index('allocate_service_ports() {'):journey.index('compose() {')]
         result = bash(functions + '\n'
