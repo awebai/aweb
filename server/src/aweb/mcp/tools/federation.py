@@ -13,7 +13,11 @@ from aweb.identity_scope import normalize_identity_scope
 from aweb.mcp.auth import AuthContext
 from aweb.federation.origins import application_public_origins
 from aweb.mcp.mutations import current_mutation_callback
-from aweb.messaging.runtime import MessagingRuntime, application_public_origin
+from aweb.messaging.runtime import (
+    MessagingRuntime,
+    application_public_origin,
+    first_contact_sender_policy,
+)
 
 
 def mcp_sender_budget_key(auth: AuthContext) -> str:
@@ -88,6 +92,7 @@ def mcp_messaging_runtime(
         identity_binding_cache=identity_binding_cache(state)
         if state is not None
         else OrderedDict(),
+        first_contact_sender_policy=first_contact_sender_policy(state),
     )
 
 

@@ -81,6 +81,7 @@ async def test_chat_context_matches_the_existing_callback(
         on_mutation=receive,
         agent_wake_publisher=None,
         identity_binding_cache=OrderedDict(),
+        first_contact_sender_policy=None,
     )
     session_id = UUID("00000000-0000-0000-0000-000000000001")
     message_id = UUID("00000000-0000-0000-0000-000000000002")

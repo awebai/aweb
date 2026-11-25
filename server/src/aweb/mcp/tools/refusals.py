@@ -99,7 +99,7 @@ def send_refusal(
                     "reason": DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value,
                 }
             )
-        return json.dumps({"error": exc.detail, "reason": exc.code.value})
+        return json.dumps({"error": exc.detail, "reason": exc.reason})
     if isinstance(exc, RecipientIdentityBindingError) and exc.code is IdentityBindingCode.MISMATCH:
         return json.dumps({"error": RECIPIENT_KEY_CHANGED, "reason": exc.code})
     if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):

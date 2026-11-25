@@ -59,7 +59,9 @@ async def service_error_handler(request: Request, exc: Exception) -> JSONRespons
             headers=exc.headers,
         )
     content = {"detail": exc.detail}
-    if isinstance(exc, (DeliveryPolicyRefused, RecipientAddressNotFound)):
+    if isinstance(exc, DeliveryPolicyRefused):
+        content["reason"] = exc.reason
+    elif isinstance(exc, RecipientAddressNotFound):
         content["reason"] = exc.code.value
     elif isinstance(exc, CurrentMembershipRefusal):
         content["reason"] = exc.reason

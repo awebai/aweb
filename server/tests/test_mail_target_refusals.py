@@ -51,6 +51,7 @@ async def test_mail_target_refuses_invalid_input_before_database_or_registry(
         on_mutation=None,
         agent_wake_publisher=None,
         identity_binding_cache=OrderedDict(),
+        first_contact_sender_policy=None,
     )
     with pytest.raises(DeliveryRefusal) as refused:
         await resolve_mail_target(

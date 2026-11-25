@@ -4,6 +4,8 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
+from http import HTTPStatus
+from typing import TYPE_CHECKING, Protocol
 
 from fastapi import HTTPException
 from aweb.application_state import RegistryClientUnavailable
@@ -17,10 +19,14 @@ from aweb.member_team_key import MemberReadLock, current_member_team_ids_for_ide
 from aweb.messaging.contacts import IdentityContactMatch, identity_contact_match
 from aweb.messaging.refusals import (
     CONTACT_REBIND_ACTION,
+    DeliveryRefusal,
     DeliveryRefusalCode,
     unreachable_address_refusal,
 )
 from aweb.service_errors import ForbiddenError
+
+if TYPE_CHECKING:
+    from aweb.auth_context import MessagingAuth
 
 logger = logging.getLogger(__name__)
 _POLICY_ACTION = (
@@ -45,13 +51,54 @@ class SenderRestriction:
     detail: str
 
 
+class FirstContactSenderPolicy(Protocol):
+    async def __call__(self, db, sender: "MessagingAuth") -> SenderRestriction | None:
+        """Return the host's restriction on ``sender``'s first contact, or None.
+
+        The policy belongs on ``app.state.first_contact_sender_policy`` of the
+        serving app. It is awaited in the send's own task, once per
+        first-contact send and never for a continuation, before any message
+        write. ``sender`` is the principal the send authenticated. A raised
+        exception refuses the send.
+        """
+        ...
+
+
+async def first_contact_sender_restriction(
+    db, sender: "MessagingAuth", policy: FirstContactSenderPolicy | None
+) -> SenderRestriction | None:
+    """Ask the host's policy about one first-contact send; refuse if it cannot answer."""
+    if policy is None:
+        return None
+    try:
+        restriction = await policy(db, sender)
+        if restriction is not None and not isinstance(restriction, SenderRestriction):
+            raise TypeError("First-contact sender policy returned an unknown answer")
+    except Exception as exc:
+        logger.warning(
+            "first_contact_sender_policy_unavailable failure_type=%s", type(exc).__name__
+        )
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+            detail="Sender policy is unavailable. Try again later.",
+            code=DeliveryRefusalCode.SENDER_POLICY_UNAVAILABLE,
+        ) from exc
+    return restriction
+
+
 @dataclass(frozen=True, kw_only=True)
 class DeliverySender:
-    """Authenticated identity facts; no caller-selected team grants admission."""
+    """Authenticated identity facts; no caller-selected team grants admission.
+
+    ``first_contact_restriction`` is set only on a first-contact send whose
+    host policy restricts the sender to recipients it already has a
+    relationship with.
+    """
 
     did: str
     address: str | None
     verified_dids: tuple[str, ...] = ()
+    first_contact_restriction: SenderRestriction | None = None
 
     def identity_dids(self) -> list[str]:
         return list(
@@ -70,9 +117,29 @@ class DeliveryPolicyRefused(ForbiddenError):
 
     def __init__(self, *, code: DeliveryRefusalCode, detail: str):
         self.code = code
+        self.reason = code.value
         self.status_code = 404 if code is DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING else 403
         logger.warning("delivery_policy_refused reason=%s", code.value)
         super().__init__(detail)
+
+
+class SenderRestrictionRefused(DeliveryPolicyRefused):
+    """The host restricted this sender's first contact; ``reason`` is the host's."""
+
+    def __init__(self, restriction: SenderRestriction):
+        super().__init__(code=DeliveryRefusalCode.SENDER_RESTRICTED, detail=restriction.detail)
+        self.reason = restriction.reason
+
+
+def refuse_restricted_first_contact_to_route(sender: DeliverySender) -> None:
+    """Refuse a restricted sender's first contact over an address route.
+
+    Address resolution marks a recipient as a route only when no identity
+    resident here holds the address, so none of its memberships or contacts
+    can be read here to admit the sender.
+    """
+    if sender.first_contact_restriction is not None:
+        raise SenderRestrictionRefused(sender.first_contact_restriction)
 
 
 def is_global_recipient(recipient: Mapping) -> bool:
@@ -131,12 +198,19 @@ async def authorize_delivery(
 
     Global contacts-only always applies to continuations. Local participants
     may continue a stored route. Otherwise only current team intersection or an
-    exact active identity contact authorizes a restricted recipient.
+    exact active identity contact authorizes a restricted recipient. A sender
+    carrying a first-contact restriction meets an open recipient as if it were
+    team_and_contacts, and is refused with the host's restriction.
     """
     global_recipient = is_global_recipient(recipient)
     mode = await recipient_inbound_mode(db, recipient) if global_recipient else None
+    restriction = sender.first_contact_restriction
     if mode is InboundMode.OPEN:
-        return
+        if restriction is None:
+            return
+        mode = InboundMode.TEAM_AND_CONTACTS
+    else:
+        restriction = None
     if not global_recipient and attempt is DeliveryAttempt.STORED_ROUTE:
         return
     membership_error = None
@@ -169,6 +243,8 @@ async def authorize_delivery(
             code=DeliveryRefusalCode.CONTACT_IDENTITY_BINDING_REQUIRED,
             detail=CONTACT_REBIND_ACTION,
         )
+    if restriction is not None:
+        raise SenderRestrictionRefused(restriction)
     if not global_recipient:
         # Preserve the published local-only 404 (federation-error-reference.md:40).
         # Missing identities retain their distinct released error code.

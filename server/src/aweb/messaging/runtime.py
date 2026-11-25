@@ -12,6 +12,7 @@ from starlette.datastructures import State
 if TYPE_CHECKING:
     from awid.registry import RegistryClient
     from aweb.federation.activation import FederationAuthorityActivation
+    from aweb.messaging.delivery_policy import FirstContactSenderPolicy
 
 from aweb.agent_wake import AgentWakePublisher, agent_wake_publisher
 from aweb.application_state import (
@@ -43,6 +44,7 @@ class MessagingRuntime:
     on_mutation: MutationCallback | None
     agent_wake_publisher: AgentWakePublisher | None
     identity_binding_cache: OrderedDict
+    first_contact_sender_policy: FirstContactSenderPolicy | None
 
 
 def messaging_runtime(app_state: State) -> MessagingRuntime:
@@ -56,6 +58,7 @@ def messaging_runtime(app_state: State) -> MessagingRuntime:
         registry_client = application_registry_client(app_state)
     except RegistryClientUnavailable:
         registry_client = None
+    sender_policy = first_contact_sender_policy(app_state)
     app_state = native_application_state(app_state)
     federation_authority = getattr(app_state, "federation_authority", None)
     return MessagingRuntime(
@@ -78,7 +81,18 @@ def messaging_runtime(app_state: State) -> MessagingRuntime:
         on_mutation=getattr(app_state, "on_mutation", None),
         agent_wake_publisher=agent_wake_publisher(app_state),
         identity_binding_cache=identity_binding_cache(app_state),
+        first_contact_sender_policy=sender_policy,
     )
+
+
+def first_contact_sender_policy(app_state: State | None) -> FirstContactSenderPolicy | None:
+    """The host's first-contact sender policy on the serving or native app state."""
+    if app_state is None:
+        return None
+    policy = getattr(app_state, "first_contact_sender_policy", None)
+    if policy is None:
+        policy = getattr(native_application_state(app_state), "first_contact_sender_policy", None)
+    return policy
 
 
 def application_public_origin(app_state: State | None) -> str:

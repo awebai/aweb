@@ -27,6 +27,8 @@ class DeliveryRefusalCode(StrEnum):
     CONVERSATION_EXISTS = "conversation_exists"
     RECIPIENT_IDENTITY_NOT_FOUND = "recipient_identity_not_found"
     REQUEST_INVALID = "request_invalid"
+    SENDER_RESTRICTED = "sender_restricted"
+    SENDER_POLICY_UNAVAILABLE = "sender_policy_unavailable"
 
 
 CONTACT_REBIND_ACTION = "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending."

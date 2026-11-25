@@ -100,7 +100,6 @@ from aweb.messaging.mail_routing import (
 )
 from aweb.messaging.messages import (
     admit_message_delivery,
-    authorize_message_delivery,
     get_agent_by_id,
 )
 from aweb.messaging.messages import (
@@ -124,7 +123,14 @@ from aweb.messaging.recipients import (
     resolve_address_recipient,
 )
 from aweb.messaging.runtime import MessagingRuntime
-from aweb.messaging.delivery_policy import DeliverySender, DeliveryPolicyRefused
+from aweb.messaging.delivery_policy import (
+    DeliveryAttempt,
+    DeliveryPolicyRefused,
+    DeliverySender,
+    authorize_delivery,
+    first_contact_sender_restriction,
+    refuse_restricted_first_contact_to_route,
+)
 from aweb.messaging.refusals import DeliveryRefusalCode
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.sender_address import sender_signature_address
@@ -1802,6 +1808,7 @@ async def _commit_new_local_mail(
     *,
     runtime: MessagingRuntime,
     auth: MessagingAuth,
+    sender: DeliverySender,
     target: MailTarget,
     payload: SendMessageRequest,
     encrypted_metadata: dict | None,
@@ -1822,13 +1829,12 @@ async def _commit_new_local_mail(
         send_db = TransactionInfra(db, tx)
         # Preflight protects replays; a new write rechecks under the transaction
         # that commits it, keeping membership/contact locks until delivery.
-        await authorize_message_delivery(
+        await authorize_delivery(
             send_db,
             registry_client=runtime.registry_client,
-            recipient_agent=recipient,
-            sender_did=sender_did,
-            sender_address=sender_address,
-            sender_verified_dids=auth_dids(auth),
+            recipient=recipient,
+            sender=sender,
+            attempt=DeliveryAttempt.FIRST_CONTACT,
         )
         # If an explicit recipient is present, conversation_id is a caller-chosen
         # initial id. Continuations use conversation_id without recipient fields.
@@ -1980,7 +1986,16 @@ async def _send_mail_to_resolved_target(
             conversation_id=payload.conversation_id,
         )
 
+    sender = DeliverySender(
+        did=sender_did,
+        address=sender_address,
+        verified_dids=tuple(auth_dids(auth)),
+        first_contact_restriction=await first_contact_sender_restriction(
+            db, auth, runtime.first_contact_sender_policy
+        ),
+    )
     if recipient.get("external"):
+        refuse_restricted_first_contact_to_route(sender)
         return await deliver_remote_mail_and_project_locally(
             runtime,
             payload,
@@ -1999,13 +2014,12 @@ async def _send_mail_to_resolved_target(
 
     try:
         if msg_uuid is not None or payload.content_mode == ContentMode.ENCRYPTED:
-            await authorize_message_delivery(
+            await authorize_delivery(
                 db,
                 registry_client=runtime.registry_client,
-                recipient_agent=recipient,
-                sender_did=sender_did,
-                sender_address=sender_address,
-                sender_verified_dids=auth_dids(auth),
+                recipient=recipient,
+                sender=sender,
+                attempt=DeliveryAttempt.FIRST_CONTACT,
             )
         encrypted_metadata = _validate_encrypted_payload(
             payload,
@@ -2033,6 +2047,7 @@ async def _send_mail_to_resolved_target(
                     db,
                     runtime=runtime,
                     auth=auth,
+                    sender=sender,
                     target=target,
                     payload=payload,
                     encrypted_metadata=encrypted_metadata,

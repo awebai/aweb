@@ -67,6 +67,8 @@ from aweb.messaging.delivery_policy import (
     DeliveryAttempt,
     DeliverySender,
     authorize_delivery,
+    first_contact_sender_restriction,
+    refuse_restricted_first_contact_to_route,
 )
 from aweb.event_types import MutationEventType
 from aweb.message_events import ChatMessageSentContext
@@ -1541,9 +1543,22 @@ async def send_chat(
         source=MessageInputSource.CHAT_SEND,
         content_mode=payload.content_mode,
     )
+    sender = DeliverySender(
+        did=(participant_dids(auth) or [""])[0],
+        address=_sender_address(auth),
+        verified_dids=tuple(auth_dids(auth)),
+        first_contact_restriction=await first_contact_sender_restriction(
+            db, auth, runtime.first_contact_sender_policy
+        )
+        if target.session_id is None
+        else None,
+    )
     if any(row.get("external") or _target_delivery_origin(row) for row in target.recipients):
+        refuse_restricted_first_contact_to_route(sender)
         return await _dispatch_chat(db, auth=auth, target=target, payload=payload, runtime=runtime)
-    return await _send_local_chat(db, auth=auth, target=target, payload=payload, runtime=runtime)
+    return await _send_local_chat(
+        db, auth=auth, sender=sender, target=target, payload=payload, runtime=runtime
+    )
 
 
 async def _dispatch_chat(
@@ -1564,7 +1579,7 @@ async def _dispatch_chat(
 
 
 async def _authorize_local_chat_commit(
-    db, *, auth: MessagingAuth, target: ChatTarget, runtime: MessagingRuntime
+    db, *, sender: DeliverySender, target: ChatTarget, runtime: MessagingRuntime
 ) -> None:
     """Hold native policy rows through the write, using the one delivery rule.
 
@@ -1577,11 +1592,6 @@ async def _authorize_local_chat_commit(
         DeliveryAttempt.STORED_ROUTE
         if target.session_id is not None
         else DeliveryAttempt.FIRST_CONTACT
-    )
-    sender = DeliverySender(
-        did=(participant_dids(auth) or [""])[0],
-        address=_sender_address(auth),
-        verified_dids=tuple(auth_dids(auth)),
     )
     policy_dids = [row.did or row.did_aw or row.did_key or "" for row in target.recipients]
     locked_policy_rows = {}
@@ -1612,6 +1622,7 @@ async def _send_local_chat(
     db,
     *,
     auth: MessagingAuth,
+    sender: DeliverySender,
     target: ChatTarget,
     payload: CreateSessionRequest | SendMessageRequest,
     runtime: MessagingRuntime,
@@ -1624,7 +1635,7 @@ async def _send_local_chat(
             async with db.get_manager("aweb").transaction() as tx:
                 send_db = TransactionInfra(db, tx)
                 await _authorize_local_chat_commit(
-                    send_db, auth=auth, target=target, runtime=runtime
+                    send_db, sender=sender, target=target, runtime=runtime
                 )
                 sent = await _dispatch_chat(
                     send_db,
@@ -1638,7 +1649,9 @@ async def _send_local_chat(
             raise
         async with db.get_manager("aweb").transaction() as tx:
             send_db = TransactionInfra(db, tx)
-            await _authorize_local_chat_commit(send_db, auth=auth, target=target, runtime=runtime)
+            await _authorize_local_chat_commit(
+                send_db, sender=sender, target=target, runtime=runtime
+            )
             stored = await _stored_exact_chat_send(
                 send_db,
                 payload,
