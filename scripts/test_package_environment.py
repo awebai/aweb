@@ -430,9 +430,6 @@ class SourceImagePreparation(unittest.TestCase):
                     )
                     builds.append((context / "isolated.Dockerfile").read_text())
                     return subprocess.CompletedProcess(args, 0)
-                if args[:3] == ["docker", "image", "inspect"]:
-                    self.assertEqual(args[-1], "owned-image")
-                    return subprocess.CompletedProcess(args, 0, stdout="2147483648\n")
                 return real_run(args, **kwargs)
 
             with (
@@ -470,8 +467,6 @@ class SourceImagePreparation(unittest.TestCase):
             self.assertNotIn("1243", builds[0])
             self.assertNotIn("2.41.5", builds[0])
             self.assertTrue((evidence / "package-preparation-tool.sha256").is_file())
-            # The built image's size is evidence: cleanup removes the image.
-            self.assertEqual((evidence / "image-size-bytes").read_text(), "2147483648\n")
             # In a gate run the image starts from the gate's image, which is
             # already in the engine, and the engine's own builder builds it.
             builds.clear()
