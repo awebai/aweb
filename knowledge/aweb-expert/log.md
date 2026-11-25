@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-24
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-withdrawn-address (task aweb-adwg).
+* **Creation**: lesson [a partial unique index guarantees one live row, not one row](/aweb-expert/lessons/a-partial-unique-index-guarantees-one-live-row.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
