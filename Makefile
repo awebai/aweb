@@ -165,6 +165,21 @@ test-shipping: test-scripts
 test-server-image-build:
 	AWEB_TEST_SERVER_IMAGE_BUILD=1 python3 scripts/test_server_image_publish.py ServerPlatformBuildTests -v
 
+# Installs merak's root-owned egress helper from this checkout's
+# merak_egress.py and checks the installed digest equals the file's. Any change
+# to that file needs this reinstall: guest admission requires the two digests
+# to match. Asks for the operator's sudo password on merak. The staged copy
+# stays at one fixed path on the host and is replaced by the next install.
+MERAK ?= merak
+.PHONY: merak-egress-install
+merak-egress-install:
+	@set -eu; want="$$(shasum -a 256 scripts/vm-gate/vm_gate/merak_egress.py | cut -d' ' -f1)"; \
+	scp -q scripts/vm-gate/vm_gate/merak_egress.py "$(MERAK):/tmp/aweb-merak-egress-install.py"; \
+	ssh -t "$(MERAK)" 'sudo /usr/bin/python3 -I /tmp/aweb-merak-egress-install.py install'; \
+	got="$$(ssh "$(MERAK)" sha256sum /usr/local/sbin/aweb-merak-egress | cut -d' ' -f1)"; \
+	test "$$got" = "$$want" || { echo "merak's egress helper is $$got, expected $$want" >&2; exit 1; }; \
+	echo "merak egress helper installed: $$want"
+
 .PHONY: test-vm-gate
 test-vm-gate:
 	PYTHONPATH=scripts/vm-gate uv run --no-project --python 3.12 --with-requirements scripts/vm-gate/requirements.txt python -m unittest discover -s scripts/vm-gate/tests -v

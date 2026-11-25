@@ -290,8 +290,12 @@ filesystem free space, peak allocated overlay bytes and the launcher's cgroup
 memory peak when readable. Use those figures with the native stage times and
 total elapsed time to assess capacity.
 
-A Merak host administrator installs the reviewed helper once with
-`sudo ./merak_egress.py install` from `scripts/vm-gate/vm_gate`. The installer
+A Merak host administrator installs the reviewed helper with
+`make merak-egress-install` from the repository root (`MERAK=<ssh host>`
+selects the host). It copies `merak_egress.py` to the host, runs
+`sudo ./merak_egress.py install` there and checks that the installed digest
+equals the file's. Any change to `merak_egress.py`, formatting included,
+needs this reinstall before the next Merak run. The installer
 checks the nftables policy in a fresh network namespace and validates the
 restricted sudo grant. The controller verifies the installed helper digest at
 admission. Each run creates its own IPv4 bridge and nftables table before
