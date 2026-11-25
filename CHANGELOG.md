@@ -4,8 +4,9 @@
 
 - After a timeout or unavailable response, optional identity-chain checks skip
   live status refreshes for that registry and domain for five seconds. Fresh
-  cached status and strict verification still apply. The server release
-  carrying this change requires `awid-service>=0.5.43`.
+  cached status and strict verification still apply. awid-service 0.5.43 and
+  server 1.27.54 carry this change; server 1.27.54 requires
+  `awid-service>=0.5.43`.
 
 - awid-service 0.5.42 remembers the result of the Ed25519 point check for
   public keys and certificate signatures it has already checked, which removes
