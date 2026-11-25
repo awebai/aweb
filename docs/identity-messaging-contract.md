@@ -100,6 +100,21 @@ inside the transaction that stores the session/message. Registry contact
 resolution and host callbacks run after that transaction commits; a refused
 native chat leaves no newly created session or conversation behind.
 
+A host may restrict a sender's first contact. The serving app's
+`app.state.first_contact_sender_policy` follows
+`aweb.messaging.delivery_policy.FirstContactSenderPolicy`: it receives the
+`MessagingAuth` the send authenticated and returns a `SenderRestriction`
+(`reason`, `detail`) or `None`. The server awaits it once per first-contact
+mail or chat send, in the send's own task and before any message write, and
+never for a reply on a stored conversation or session. For a restricted sender
+an `open` recipient is treated as `team_and_contacts`; a stricter recipient
+keeps its own rule and refusal. A recipient reached over an address route to
+another server is refused, because none of its memberships or contacts can be
+read here. The refusal is HTTP 403 with the host's `detail` and its `reason`
+(MCP: `error` and `reason`), with no message, conversation, session or
+outbox row and no mutation event. A policy that raises or returns anything
+else refuses the send with 503. With no policy installed, nothing changes.
+
 The modes are:
 
 - `open`: accept valid senders after address route and identity binding

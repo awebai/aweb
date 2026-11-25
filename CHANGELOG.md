@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A host can restrict a sender's first contact to recipients it already has a
+  relationship with by installing `app.state.first_contact_sender_policy`.
+  For a restricted sender, an `open` recipient is treated as
+  `team_and_contacts`, a first contact to another server is refused, and
+  replies in an existing conversation or session are unchanged. The refusal is
+  403 with the host's `reason` and `detail`. A policy that fails refuses the
+  send with 503. Without the policy, delivery is unchanged.
+
 - awid-service 0.5.42 remembers the result of the Ed25519 point check for
   public keys and certificate signatures it has already checked, which removes
   most of the processor time of identity-chain checks.

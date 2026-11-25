@@ -305,6 +305,10 @@ The `on_mutation` extension follows `aweb.hooks.MutationCallback`. Its
 positional call returns an awaitable of `MutationDeliveryOutcome | None`.
 The `attachment_backend` extension follows the
 `aweb.attachments.AttachmentBackend` protocol.
+The optional `first_contact_sender_policy` extension follows
+`aweb.messaging.delivery_policy.FirstContactSenderPolicy`; its delivery rule
+is in `docs/identity-messaging-contract.md`. The messaging runtime reads it
+from the serving app state, then from the native app state.
 
 ## Existing-member certificate replacement
 
