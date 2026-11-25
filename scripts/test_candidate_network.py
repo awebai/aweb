@@ -159,6 +159,22 @@ class WorkCleanupTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1 if retain else 0, result.stderr)
                 self.assertEqual(overlay.exists(), retain)
 
+    def test_cleanup_refuses_the_filesystem_root_and_the_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            checkout = Path(tmp) / 'checkout'
+            inside = checkout / 'aweb-candidate-work.inside'
+            inside.mkdir(parents=True)
+            removals = Path(tmp) / 'removals'
+            # rm only records, so a broken guard shows up here instead of deleting.
+            command = ('rm() { printf "%s\\n" "$*" >> "$REMOVALS"; }; '
+                       'source scripts/candidate-cleanup.sh; cleanup_work')
+            for work in ('/', str(checkout), str(inside)):
+                with self.subTest(work=work):
+                    result = bash(command, work=work, ROOT=str(checkout), REMOVALS=str(removals))
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertFalse(removals.exists(), removals.read_text() if removals.exists() else '')
+            self.assertTrue(inside.is_dir())
+
 
 class EndpointTests(unittest.TestCase):
     def test_caller_external_network_is_refused_before_docker(self):
