@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-25
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-apps-repo (naapp extraction from aweb, its CI and release lane).
+* **Creation**: lessons [a path-filtered extraction checks how each path arrived](/aweb-expert/lessons/path-filtered-extraction-checks-how-each-path-arrived.md), [a uv git pin brings its own tool.uv.sources](/aweb-expert/lessons/a-uv-git-pin-brings-its-own-sources.md), [copied test code carries its import-time side effects](/aweb-expert/lessons/copied-test-code-carries-its-import-side-effects.md), [CI evidence names the run that tested the commit](/aweb-expert/lessons/ci-evidence-names-the-run-that-tested-the-commit.md), [GHCR packages from a public repository are public](/aweb-expert/lessons/ghcr-packages-from-a-public-repository-are-public.md), [scripts outside every package need their own CI lint](/aweb-expert/lessons/scripts-outside-every-package-need-their-own-ci-lint.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
