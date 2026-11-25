@@ -272,7 +272,7 @@ def check_docker(*, environ: dict[str, str] | None = None) -> dict[str, str]:
         environ=dict(os.environ) if environ is None else environ
     )
     result = invoke(
-        ["bash", str(ROOT / "scripts/candidate-docker-gate.sh"), "--check-disk"],
+        ["bash", str(ROOT / "scripts/candidate-docker-gate.sh"), "--check-disk", "local-server"],
         env=selected,
     )
     if result.returncode:

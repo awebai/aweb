@@ -15,16 +15,25 @@ refuse() { printf 'candidate gate refused: %s\n' "$*" >&2; exit 2; }
 # 18.8, lane workspaces 5.9, containers 2.7. 60 GiB rounds it up.
 CRITICAL_FREE_GB=50
 GATE_RESERVE_GB=60
+# One local server run (make test-server-local: the server and registry suites,
+# Postgres and Redis on tmpfs) measured on a Mac: free space fell by at most
+# 1.34 GiB while 5800 server and 2656 registry tests passed. 2 GiB rounds it up.
+LOCAL_SERVER_RESERVE_GB=2
 wait_for_disk() {
-  local mode="${1:-wait}"
-  local floor="${AWEB_GATE_MIN_FREE_GB:-$CRITICAL_FREE_GB}" reserve="${AWEB_GATE_RESERVE_GB:-$GATE_RESERVE_GB}" path available
+  local mode="${1:-wait}" need="${2:-gate}" measured label
+  case "$need" in
+    gate) measured="$GATE_RESERVE_GB" label="gate reserve" ;;
+    local-server) measured="$LOCAL_SERVER_RESERVE_GB" label="local server reserve" ;;
+    *) refuse "unknown disk need: $need" ;;
+  esac
+  local floor="${AWEB_GATE_MIN_FREE_GB:-$CRITICAL_FREE_GB}" reserve="${AWEB_GATE_RESERVE_GB:-$measured}" path available
   [[ "$floor" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_MIN_FREE_GB must be a nonnegative integer"
   [[ "$reserve" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_RESERVE_GB must be a nonnegative integer"
   # An override may raise either value, never lower it.
   (( floor >= CRITICAL_FREE_GB )) \
     || refuse "AWEB_GATE_MIN_FREE_GB=$floor would lower the $CRITICAL_FREE_GB GiB critical floor"
-  (( reserve >= GATE_RESERVE_GB )) \
-    || refuse "AWEB_GATE_RESERVE_GB=$reserve would lower the measured $GATE_RESERVE_GB GiB gate reserve"
+  (( reserve >= measured )) \
+    || refuse "AWEB_GATE_RESERVE_GB=$reserve would lower the measured $measured GiB $label"
   path="$(docker info --format '{{.DockerRootDir}}')" || refuse "docker daemon is unavailable"
   if [[ "$(uname -s)" == Darwin ]]; then
     path="$(python3 - <<'PY'
@@ -49,19 +58,19 @@ PY
       return
     fi
     if [[ "$mode" == check ]]; then
-      refuse "$(awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" \
-        'BEGIN {printf "Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s gate reserve). Free space before retrying.", path, free / 1024 / 1024, floor + reserve, floor, reserve}')"
+      refuse "$(awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" -v label="$label" \
+        'BEGIN {printf "Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s %s). Free space before retrying.", path, free / 1024 / 1024, floor + reserve, floor, reserve, label}')"
     fi
-    awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" \
-      'BEGIN {printf "candidate gate waiting: Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s gate reserve); retrying in 60s\n", path, free / 1024 / 1024, floor + reserve, floor, reserve}'
+    awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" -v label="$label" \
+      'BEGIN {printf "candidate gate waiting: Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s %s); retrying in 60s\n", path, free / 1024 / 1024, floor + reserve, floor, reserve, label}'
     sleep 60
   done
 }
 
 # Release prerequisites refuse immediately rather than timing out inside a
 # nested self-test. Direct gates retain their operator-visible waiting mode.
-if [[ "${1:-}" == --check-disk && "$#" == 1 ]]; then
-  wait_for_disk check
+if [[ "${1:-}" == --check-disk && "$#" -le 2 ]]; then
+  wait_for_disk check "${2:-gate}"
   exit 0
 fi
 # The direct waiting probe uses the same floor and measurement.

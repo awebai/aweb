@@ -72,7 +72,7 @@ class CandidateDiskFloorTests(unittest.TestCase):
                 env["AWEB_GATE_MIN_FREE_GB"] = str(floor)
             if reserve is not None:
                 env["AWEB_GATE_RESERVE_GB"] = str(reserve)
-            command = ["bash", str(GATE), mode]
+            command = ["bash", str(GATE), *mode.split()]
             if release:
                 override = root / "override.mk"
                 override.write_text(
@@ -189,6 +189,20 @@ class CandidateDiskFloorTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("AWEB_GATE_RESERVE_GB", result.stderr)
             self.assertEqual(docker, "")
+
+    def test_a_local_server_run_needs_the_floor_and_one_suite_only(self):
+        result, docker, sleeps = self.invoke([52 * 1024**2], mode="--check-disk local-server")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result, _, _ = self.invoke([int(51.9 * 1024**2)], mode="--check-disk local-server")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("52 GiB (50 critical + 2 local server reserve)", result.stderr)
+        # The gate itself keeps its measured parallel peak.
+        result, _, _ = self.invoke([52 * 1024**2], mode="--check-disk")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("110 GiB (50 critical + 60 gate reserve)", result.stderr)
+        result, _, _ = self.invoke([500 * 1024**2], reserve=1, mode="--check-disk local-server")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("would lower", result.stderr)
 
     def test_desktop_measures_default_or_relocated_backing_filesystem(self):
         for relocated in (False, True):

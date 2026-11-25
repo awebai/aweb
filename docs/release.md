@@ -203,7 +203,9 @@ floor plus one gate's peak on Docker's backing host filesystem: a 50 GiB
 critical floor and a 60 GiB gate reserve, 110 GiB free in all. The reserve is
 the measured peak of a parallel gate (vm-3f1940bd: 53 GB of builder cache,
 images, lane workspaces and containers), rounded up. `AWEB_GATE_MIN_FREE_GB` and
-`AWEB_GATE_RESERVE_GB` may raise either value; a lower value is refused. Before any self-test or Docker test,
+`AWEB_GATE_RESERVE_GB` may raise either value; a lower value is refused. `make
+test-server-local` checks the same critical floor with its own measured need,
+2 GiB for one local server run (`--check-disk local-server`), so 52 GiB free. Before any self-test or Docker test,
 `make release-candidate` and `make candidate-gate` check this floor once and
 refuse with the measured free space and required floor when it is not met.
 They do not spend the ledger self-test's 900-second timeout waiting for disk.
