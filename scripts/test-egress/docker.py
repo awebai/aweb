@@ -41,8 +41,8 @@ def runner_memory_mib(server_workers=0):
     return RUNNER_MEMORY_MIB + WORKER_PROCESS_MIB * server_workers
 
 
-def runner_args(token, dns_ip, image, cpu_shares, server_workers=0, name="runner"):
-    """One suite runner, with its suite's cgroup weight (--cpu-shares); no CPU cap."""
+def runner_args(token, dns_ip, image, server_workers=0, name="runner"):
+    """One suite runner: its memory and pids bounded, its CPU Docker's default."""
     worker_env = (
         ["-e", f"AWEB_SERVER_TEST_WORKERS={server_workers}"] if server_workers else []
     )
@@ -64,8 +64,6 @@ def runner_args(token, dns_ip, image, cpu_shares, server_workers=0, name="runner
         "signer.example.com:127.0.0.1",
         "--name",
         f"{token}-{name}",
-        "--cpu-shares",
-        str(cpu_shares),
         "--memory",
         f"{runner_memory_mib(server_workers)}m",
         "--pids-limit",
@@ -89,7 +87,7 @@ def docker(*args):
     return subprocess.check_output(["docker", *args], text=True).strip()
 
 
-def postgres_args(runner, cpu_shares, port=5432, parallel=False):
+def postgres_args(runner, port=5432, parallel=False):
     # Disposable databases must not wait on the host disk's WAL fsync. Bound
     # both RAM and WAL growth, and prohibit swapping the tmpfs back to disk.
     # The first pair keeps the serial suites' cap; further workers are smaller.
@@ -104,8 +102,6 @@ def postgres_args(runner, cpu_shares, port=5432, parallel=False):
         "-d",
         "--network",
         "container:" + runner,
-        "--cpu-shares",
-        str(cpu_shares),
         "--memory",
         memory,
         "--memory-swap",
@@ -127,7 +123,7 @@ def postgres_args(runner, cpu_shares, port=5432, parallel=False):
     ]
 
 
-def redis_args(runner, cpu_shares, port=6379, parallel=False):
+def redis_args(runner, port=6379, parallel=False):
     primary = port == 6379
     memory = (
         f"{_worker_module.PRIMARY_REDIS_MIB}m"
@@ -152,8 +148,6 @@ def redis_args(runner, cpu_shares, port=6379, parallel=False):
         "-d",
         "--network",
         "container:" + runner,
-        "--cpu-shares",
-        str(cpu_shares),
         *limits,
         "redis:7",
         *command,
@@ -274,11 +268,6 @@ def unit_plan(suites, environ=os.environ):
     )
 
 
-def lane_cpu_shares():
-    """The weight of the lane this runs in (the gate passes it), else Docker's default."""
-    return int(os.environ.get("AWEB_CANDIDATE_SIBLING_CPU_SHARES", "1024"))
-
-
 def unit_requests(plan, suites):
     """How many of unit's workers each suite takes, and how many run at once.
 
@@ -287,7 +276,7 @@ def unit_requests(plan, suites):
     heaviest first, by measured CPU-seconds.
     """
     capacity = sum(plan["workers"].values()) + plan["serial_slots"]
-    ordered = sorted(suites, key=lambda suite: -plan["cpu_shares"][suite])
+    ordered = sorted(suites, key=lambda suite: -plan["cpu_seconds"][suite])
     return capacity, {suite: plan["workers"].get(suite, 1) for suite in ordered}
 
 
@@ -351,21 +340,21 @@ def main():
     return run_suite(args)
 
 
-def start_runner(token, dns_ip, image, cpu_shares, server_workers, name, pairs, evidence):
+def start_runner(token, dns_ip, image, server_workers, name, pairs, evidence):
     """One runner and its own Postgres and Redis pairs, in its own network
     namespace: every service a suite reaches on 127.0.0.1 belongs to it.
     Returns the runner, its service rows and every container it created."""
     containers = []
-    runner = docker(*runner_args(token, dns_ip, image, cpu_shares, server_workers, name))
+    runner = docker(*runner_args(token, dns_ip, image, server_workers, name))
     containers.append(runner)
     parallel = pairs > 1
     services = []
     try:
         for plan in service_plan(pairs if parallel else 0):
             port = plan["postgres_port"]
-            pg = docker(*postgres_args(runner, cpu_shares, port, parallel))
+            pg = docker(*postgres_args(runner, port, parallel))
             containers.append(pg)
-            redis = docker(*redis_args(runner, cpu_shares, plan["redis_port"], parallel))
+            redis = docker(*redis_args(runner, plan["redis_port"], parallel))
             containers.append(redis)
             wait_for_postgres(pg, port)
             storage = require_memory_postgres(pg, port)
@@ -454,15 +443,14 @@ def remove(containers):
 
 
 def run_isolated_suite(name, plan, args, token, dns_ip, image, evidence, owned):
-    """Runs one suite in its own runner, weighted by its measured work; returns its exit."""
+    """Runs one suite in its own runner; returns its exit."""
     directory = evidence / name
-    weight = plan["cpu_shares"][name]
     # One worker is a serial run; more are xdist workers with their own services.
     workers = plan["workers"].get(name, 1)
     xdist = workers if workers > 1 else 0
     started = time.monotonic()
     runner, _, containers = start_runner(
-        token, dns_ip, image, weight, xdist, name, xdist, directory
+        token, dns_ip, image, xdist, name, xdist, directory
     )
     owned.extend(containers)
     command_env = []
@@ -495,7 +483,7 @@ def run_isolated_suite(name, plan, args, token, dns_ip, image, evidence, owned):
         status = status or 1
     print(
         f"unit suite {name}: exit {status} in {time.monotonic() - started:.0f}s"
-        f" (weight {weight}, {workers} workers)",
+        f" ({workers} workers)",
         flush=True,
     )
     return status
@@ -542,7 +530,6 @@ def run_command(args, token, dns_ip, image, evidence, owned):
         token,
         dns_ip,
         image,
-        lane_cpu_shares(),
         args.server_workers,
         "runner",
         args.server_workers,
@@ -600,7 +587,8 @@ def run_suite(args):
     network = None
     try:
         if not args.image:
-            prepare_image(ROOT, evidence, image)
+            # In a gate run the suites' image starts from the gate's own image.
+            prepare_image(ROOT, evidence, image, base=os.environ.get("CANDIDATE_GATE_IMAGE"))
         # Pull service images before entering isolation.
         for service in ("postgres:17", "redis:7"):
             subprocess.run(

@@ -40,7 +40,7 @@ class MemoryTests(unittest.TestCase):
                     "Name": "/buildkit" if cid == self.ids[0] else "/runner",
                     "State": {"Pid": 100 + self.ids.index(cid)},
                     "Config": {"Image": "fixture", "Labels": {}},
-                    "HostConfig": {"CpuShares": 5901, "NanoCpus": 0},
+                    "HostConfig": {"NanoCpus": 0},
                 }
             ]
         )
@@ -58,10 +58,9 @@ class MemoryTests(unittest.TestCase):
         )
         self.assertEqual(peak["label"], "lower bound, 2 of 2 containers read")
 
-    def test_each_containers_cpu_weight_is_recorded(self):
-        # The weight docker was given and the one the kernel holds.
+    def test_each_containers_cpu_settings_are_recorded(self):
+        # The CPU cap docker was given and the weight the kernel holds.
         for row in self.capture()["containers"]:
-            self.assertEqual(row["host_config"]["CpuShares"], 5901)
             self.assertEqual(row["host_config"]["NanoCpus"], 0)
             self.assertEqual(row["cpu.weight"], "10")
 

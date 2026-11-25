@@ -37,13 +37,7 @@ def worker_memory(workers):
     return 3072 + (workers - 1) * 1408
 
 
-class Weights(unittest.TestCase):
-    def test_the_shares_are_the_measured_cpu_seconds_within_dockers_range(self):
-        self.assertEqual(budget.cpu_shares(15800), 15800)
-        self.assertEqual(budget.cpu_shares(11951.4), 11951)
-        self.assertEqual(budget.cpu_shares(1), 2)
-        self.assertEqual(budget.cpu_shares(10**6), 262144)
-
+class Workers(unittest.TestCase):
     def test_workers_are_the_rounded_share_and_at_least_one(self):
         for share, workers in [(0.07, 1), (0.5, 1), (1.49, 1), (1.5, 2), (4.21, 4), (18.89, 19)]:
             with self.subTest(share=share):
@@ -96,12 +90,10 @@ class Plan(unittest.TestCase):
                 self.assertEqual(unit["workers"]["test-naapp-lib"], naapp)
                 self.assertEqual(unit["serial_slots"], pool)
 
-    def test_every_lane_and_unit_suite_is_weighted_by_its_measured_work(self):
+    def test_the_plan_sets_no_cpu_weight(self):
         plan = self.plan(12, 51642)
-        for lane in LANES:
-            self.assertEqual(plan["lanes"][lane]["cpu_shares"], WORK["lanes"][lane])
-        unit = plan["unit"]
-        self.assertEqual(unit["cpu_shares"], WORK["unit_suites"])
+        self.assertNotIn("cpu_shares", json.dumps(plan))
+        self.assertEqual(plan["unit"]["cpu_seconds"], WORK["unit_suites"])
 
     def test_the_plan_predicts_no_times(self):
         plan = self.plan(4.83, 22618)

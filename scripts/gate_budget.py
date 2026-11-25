@@ -3,8 +3,8 @@
 
 GATE_CPUS and GATE_MEMORY_MIB are the gate's budget: a release passes its
 proportional share (CPUs may be fractional); a standalone gate measures the
-Docker engine it runs on. The plan caps no CPU: it gives each lane's
-containers their measured CPU-seconds as --cpu-shares, and sizes workers.
+Docker engine it runs on. The plan caps and weights no CPU; it sizes
+workers.
 GATE_LANES names the lanes that run after static (default: unit alone). The plan comes
 from scripts/vm-gate/vm_gate/budget.py, weighted by candidate-gate/
 measured-work.json. The budget sizes a run and is not a gate input: it stays
@@ -59,12 +59,9 @@ def main():
         ("GATE_CPUS", cpus),
         ("GATE_MEMORY_MIB", memory_mib),
         ("GATE_BUDGET_SOURCE", source),
-        # The run's builder serves unit's images, the largest part of its work.
-        ("GATE_BUILDER_CPU_SHARES", budget.cpu_shares(WORK["lanes"]["unit"])),
     ]
     for lane, lane_plan in sorted(run["lanes"].items()):
         name = lane.upper().replace("-", "_")
-        lines.append(("GATE_LANE_CPU_SHARES_" + name, lane_plan["cpu_shares"]))
         lines.append(("GATE_LANE_SHARE_" + name, lane_plan["cpus"]))
     if "unit" in run:
         lines += [

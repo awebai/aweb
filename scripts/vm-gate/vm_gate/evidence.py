@@ -60,7 +60,7 @@ def collect_archive(archive, sha, destination):
                 budget = {}
                 for line in target.read_text().splitlines():
                     name, _, value = line.partition("\t")
-                    if name in ("lane_cpu_shares", "lane_share"):
+                    if name == "lane_share":
                         # One row per lane: name<TAB>lane<TAB>number.
                         lane, _, number = value.partition("\t")
                         budget.setdefault(name, {})[lane] = budget_number(number)

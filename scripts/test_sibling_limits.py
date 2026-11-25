@@ -1,4 +1,4 @@
-"""Containers a lane's tests start carry the lane's weight and no CPU cap."""
+"""Containers a lane's tests start carry no CPU cap and no CPU weight: Docker's default."""
 
 import json
 import os
@@ -29,7 +29,6 @@ class SiblingWeights(unittest.TestCase):
             "PATH": os.environ["PATH"],
             "AWEB_CANDIDATE_REAL_DOCKER": str(real),
             "AWEB_CANDIDATE_RESOURCE_LABEL": "run-label",
-            "AWEB_CANDIDATE_SIBLING_CPU_SHARES": "1431",
             "AWEB_DOCKER_BIND_ROOT": str(self.tmp / "bind"),
         }
 
@@ -40,24 +39,26 @@ class SiblingWeights(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return [json.loads(line) for line in self.calls.read_text().splitlines()]
 
-    def test_a_sibling_run_or_create_carries_the_lanes_weight(self):
+    def test_a_sibling_run_or_create_carries_no_cpu_setting(self):
         for command in ("run", "create"):
             with self.subTest(command=command):
                 self.calls.unlink(missing_ok=True)
                 args = self.shim(command, "--rm", "postgres:17")[-1]
                 self.assertEqual(args[0], command)
-                self.assertEqual(args[args.index("--cpu-shares") + 1], "1431")
+                self.assertIn("--memory", args)
                 self.assertNotIn("--cpus", args)
+                self.assertNotIn("--cpu-shares", args)
 
-    def test_a_compose_service_carries_the_lanes_weight(self):
+    def test_a_compose_service_carries_no_cpu_setting(self):
         (self.tmp / "compose.yaml").write_text("services:\n  api:\n    image: x\n")
         calls = self.shim("compose", "up", "-d")
         final = calls[-1]
         overrides = [final[i + 1] for i, a in enumerate(final) if a == "-f" and "limits" in final[i + 1]]
         self.assertEqual(len(overrides), 1, final)
         text = Path(overrides[0]).read_text()
-        self.assertIn("cpu_shares: 1431", text)
+        self.assertIn("mem_limit:", text)
         self.assertNotIn("cpus:", text)
+        self.assertNotIn("cpu_shares:", text)
 
 
 if __name__ == "__main__":

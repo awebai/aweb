@@ -149,6 +149,7 @@ prepare-released-kernel-test:
 
 test-scripts: prepare-released-kernel-test
 	PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts -p 'test_*.py' -v
+	PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts/test-egress -p 'test_*.py' -v
 
 # Package configurations own rules; the root owner compares raw findings once.
 # AST-only test-state ceiling; no package preparation, services or network.

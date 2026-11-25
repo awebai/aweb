@@ -6,21 +6,9 @@ and no size is assumed; an operator override is optional input, never a
 default. Standard library only: a release guest runs this before either gate
 starts, and the aweb gate loads it by path.
 
-Nothing caps a container's CPU. Every container runs with --cpu-shares equal
-to the measured CPU-seconds of the lane or unit suite it belongs to
-(candidate-gate/measured-work.json; Cloud's gate passes its own measured
-CPU-seconds the same way, so the two compare). Docker converts the shares to
-the kernel's cgroup weight by its runtime's own rule, which the gate accepts.
-The kernel divides the CPUs among the containers that want them by those
-weights, and a lane that is idle or finished leaves its CPUs to the others.
-The engine's CPU count is the only bound.
-
-Weights are flat: every container is a sibling under the engine's cgroup (the
-systemd driver's system.slice on the release guest), so a lane competes with
-the sum of its busy containers' weights. Nesting them under one parent per
-lane would need a systemd slice whose weight only root can set, and Docker
-Desktop and native hosts use other drivers; the gate stays the same on every
-engine instead.
+Nothing caps a container's CPU and nothing weights it: every container runs
+at Docker's default, and the engine's CPU count is the only bound. What keeps
+the machine from being oversubscribed is how much each part runs at once.
 
 CPU counts size only how much a part runs at once. A part's workers are its
 proportional CPU share times the workers per busy CPU it showed in the
@@ -28,9 +16,8 @@ measured run (workers wait on databases and serial setup), rounded, at least
 1 (unit_plan): enough to keep its own share busy, and no more. That does not
 repeat vm-7b34f721, where every runner was capped at the whole budget and the
 two xdist suites ran 11 workers each beside the serial suites (about twice
-the CPUs, each worker building aw): each part is sized to its share, aw is
-built once, and under contention the weights still give each part its
-measured proportion.
+the CPUs, each worker building aw): each part is sized to its share, and aw
+is built once.
 """
 
 import json
@@ -62,15 +49,6 @@ def positive(cpus, memory_mib):
         raise ValueError("a budget is whole CPUs and MiB")
     if cpus < 1 or memory_mib < 1:
         raise ValueError("a budget needs at least 1 CPU and 1 MiB")
-
-
-# Docker's --cpu-shares range.
-CPU_SHARES_MIN, CPU_SHARES_MAX = 2, 262144
-
-
-def cpu_shares(cpu_seconds):
-    """A part's --cpu-shares: its measured CPU-seconds, within Docker's range."""
-    return min(CPU_SHARES_MAX, max(CPU_SHARES_MIN, int(cpu_seconds + 0.5)))
 
 
 def workers(share):
@@ -120,10 +98,9 @@ def plan(cpus, memory_mib, *, lanes, work, service_memory_mib, max_workers):
     """The run's CPU plan from its budget and the measured work.
 
     After static, every pending lane runs at once, whatever the machine's
-    size: weights share the CPUs, so no lane waits for another. Each lane's
-    containers carry its measured CPU-seconds as --cpu-shares. A lane other
-    than unit is one process. Unit's share is divided among its parallel
-    suites and one pool for the serial suites (unit_plan).
+    size, so no lane waits for another. A lane other than unit is one
+    process. Unit's share is divided among its parallel suites and one pool
+    for the serial suites (unit_plan).
     """
     if not cpus > 0 or type(memory_mib) is not int or memory_mib < 1:
         raise ValueError("a budget needs CPUs above 0 and at least 1 MiB")
@@ -132,7 +109,7 @@ def plan(cpus, memory_mib, *, lanes, work, service_memory_mib, max_workers):
     lane_cpus = proportional(cpus, measured)
     result = {
         "lanes": {
-            lane: {"cpu_shares": cpu_shares(measured[lane]), "cpus": round(lane_cpus[lane], 2)}
+            lane: {"cpus": round(lane_cpus[lane], 2)}
             for lane in lanes
         }
     }
@@ -194,7 +171,7 @@ def unit_plan(cpus, memory_mib, suites, *, runs, service_memory_mib, max_workers
         "serial_slots": slots,
         "workers": counts,
         "memory_bound": bound,
-        "cpu_shares": {suite: cpu_shares(suites[suite]) for suite in suites},
+        "cpu_seconds": dict(suites),
     }
 
 

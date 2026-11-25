@@ -171,7 +171,7 @@ read_budget() {
   local name value
   while IFS='=' read -r name value; do
     case "$name" in
-      GATE_CPUS|GATE_MEMORY_MIB|GATE_BUDGET_SOURCE|GATE_BUILDER_CPU_SHARES|GATE_UNIT_CPUS|GATE_UNIT_MEMORY_MIB|GATE_LANE_CPU_SHARES_[A-Z_]*|GATE_LANE_SHARE_[A-Z_]*)
+      GATE_CPUS|GATE_MEMORY_MIB|GATE_BUDGET_SOURCE|GATE_UNIT_CPUS|GATE_UNIT_MEMORY_MIB|GATE_LANE_SHARE_[A-Z_]*)
         [[ "$value" =~ ^[A-Za-z0-9=,._-]+$ ]] || refuse "unexpected gate budget value for $name"
         printf -v "$name" '%s' "$value" ;;
       *) refuse "unexpected gate budget output: $name" ;;
@@ -260,8 +260,8 @@ builder_name="$gate_run_id"
 buildx_config="$work/buildx"
 docker_bind_root="$work/docker-bind"
 # gate_setting assigned every limit above, from the budget or an override.
-# No container's CPU is capped: each carries its lane's measured CPU-seconds
-# as --cpu-shares (lane_cpu_shares), and the engine's CPUs are the bound.
+# No container's CPU is capped or weighted: every container runs at Docker's
+# default, and the engine's CPUs are the bound.
 runner_memory="$AWEB_CANDIDATE_RUNNER_MEMORY"
 runner_pids="$AWEB_CANDIDATE_RUNNER_PIDS"
 builder_memory="$AWEB_CANDIDATE_BUILDER_MEMORY"
@@ -290,21 +290,12 @@ printf '%s\n' "$SYNCHRONIZED_MAIN_SHA" > "$LOG_DIR/synchronized-main-sha"
 plan_assignments="$(GATE_LANES="${pending/static/}" GATE_CPUS="$GATE_CPUS" GATE_MEMORY_MIB="$GATE_MEMORY_MIB" \
   python3 "$ROOT/scripts/gate_budget.py")" || refuse "the gate's CPU plan is invalid"
 read_budget <<<"$plan_assignments"
-# A lane's cgroup weight. Static runs alone, before the others, with
-# Docker's default weight.
-lane_cpu_shares() {
-  local name
-  [[ "$1" != static ]] || { printf '1024\n'; return; }
-  name="GATE_LANE_CPU_SHARES_$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"
-  printf '%s\n' "${!name}"
-}
 {
-  printf 'cpus\t%s\nmemory_mib\t%s\nsource\t%s\nbuilder_cpu_shares\t%s\n' \
-    "$GATE_CPUS" "$GATE_MEMORY_MIB" "$GATE_BUDGET_SOURCE" "$GATE_BUILDER_CPU_SHARES"
+  printf 'cpus\t%s\nmemory_mib\t%s\nsource\t%s\n' \
+    "$GATE_CPUS" "$GATE_MEMORY_MIB" "$GATE_BUDGET_SOURCE"
   for lane in ${pending/static/}; do
     share="GATE_LANE_SHARE_$(printf '%s' "$lane" | tr 'a-z-' 'A-Z_')"
-    printf 'lane_cpu_shares\t%s\t%s\nlane_share\t%s\t%s\n' \
-      "$lane" "$(lane_cpu_shares "$lane")" "$lane" "${!share}"
+    printf 'lane_share\t%s\t%s\n' "$lane" "${!share}"
   done
 } > "$LOG_DIR/budget.tsv"
 source "$ROOT/scripts/candidate-cleanup.sh"
@@ -387,7 +378,7 @@ BUILDX_CONFIG="$buildx_config" docker buildx create \
   "unix:///var/run/docker.sock" --bootstrap >/dev/null \
   || refuse "could not provision the run-owned release builder"
 builder_container="buildx_buildkit_${builder_name}0"
-docker update --cpu-shares "$GATE_BUILDER_CPU_SHARES" --memory "$builder_memory" --memory-swap "$builder_memory_swap" --pids-limit "$builder_pids" \
+docker update --memory "$builder_memory" --memory-swap "$builder_memory_swap" --pids-limit "$builder_pids" \
   "$builder_container" >/dev/null \
   || refuse "could not apply candidate builder resource limits"
 
@@ -407,9 +398,9 @@ base_digest="$(docker image inspect "$base_ref" --format '{{join .RepoDigests ",
 locks_digest="$(git -C "$checkout" ls-files -s -- '*uv.lock' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())')"
 printf 'base\t%s\t%s\nlocks\t%s\n' "$base_ref" "$base_digest" "$locks_digest" > "$LOG_DIR/inputs.tsv"
 printf 'synchronized-main\t%s\n' "$SYNCHRONIZED_MAIN_SHA" >> "$LOG_DIR/inputs.tsv"
-printf 'runner\tcpu_shares=lane\tmemory=%s\tpids=%s\nbuilder\tcpu_shares=%s\tmemory=%s\tmemory_swap=%s\tpids=%s\nservice\tcpu_shares=lane\tmemory=%s\tpids=%s\nredis\tcpu_shares=lane\tmemory=%s\tpids=%s\nsibling\tcpu_shares=lane\tmemory=%s\tpids=%s\n' \
+printf 'runner\tmemory=%s\tpids=%s\nbuilder\tmemory=%s\tmemory_swap=%s\tpids=%s\nservice\tmemory=%s\tpids=%s\nredis\tmemory=%s\tpids=%s\nsibling\tmemory=%s\tpids=%s\n' \
   "$runner_memory" "$runner_pids" \
-  "$GATE_BUILDER_CPU_SHARES" "$builder_memory" "$builder_memory_swap" "$builder_pids" \
+  "$builder_memory" "$builder_memory_swap" "$builder_pids" \
   "$service_memory" "$service_pids" \
   "$redis_memory" "$redis_pids" \
   "$sibling_memory" "$sibling_pids" > "$LOG_DIR/resource-limits.tsv"
@@ -424,22 +415,21 @@ docker network create --label "aweb.candidate-gate=$resource_label" "$owned_netw
 # rows to its own file; this wrapper, the one writer of summary.tsv and of the
 # recorder's stream, merges them when the stage ends.
 start_lane_services() {
-  local lane="$1" pg redis container db ext_schema applied weight
-  weight="$(lane_cpu_shares "$lane")"
+  local lane="$1" pg redis container db ext_schema applied
   pg="$owned_network-$lane-postgres"
   redis="$owned_network-$lane-redis"
   docker volume create --label "aweb.candidate-gate=$resource_label" "$pg-data" >/dev/null
   docker volume create --label "aweb.candidate-gate=$resource_label" "$redis-data" >/dev/null
   pg_id="$(docker run --detach --network "$owned_network" --name "$pg" \
     --label "aweb.candidate-gate=$resource_label" \
-    --cpu-shares "$weight" --memory "$service_memory" --pids-limit "$service_pids" \
+    --memory "$service_memory" --pids-limit "$service_pids" \
     -v "$pg-data:/var/lib/postgresql/data" \
     --env POSTGRES_USER=postgres --env POSTGRES_PASSWORD=postgres --env POSTGRES_DB=postgres \
     --health-cmd 'pg_isready -U postgres -d postgres' \
     --health-interval 2s --health-timeout 5s --health-retries 45 postgres:17)"
   redis_id="$(docker run --detach --network "$owned_network" --name "$redis" \
     --label "aweb.candidate-gate=$resource_label" \
-    --cpu-shares "$weight" --memory "$redis_memory" --pids-limit "$redis_pids" \
+    --memory "$redis_memory" --pids-limit "$redis_pids" \
     -v "$redis-data:/data" \
     --health-cmd 'redis-cli ping' --health-interval 2s --health-timeout 5s --health-retries 45 redis:7)"
   for container in "$pg_id" "$redis_id"; do
@@ -487,7 +477,7 @@ seed_lane_workspace() {
   local lane="$1" seed="$seed_name-$1"
   docker volume create --label "aweb.candidate-gate=$resource_label" "$workspace_volume-$lane" >/dev/null
   docker create --name "$seed" --label "aweb.candidate-gate=$resource_label" \
-    --cpu-shares "$(lane_cpu_shares "$lane")" --memory "$runner_memory" --pids-limit "$runner_pids" \
+    --memory "$runner_memory" --pids-limit "$runner_pids" \
     -v "$workspace_volume-$lane:$work" "$IMAGE" chown -R "$(id -u):$(id -g)" "$work" >/dev/null
   docker cp "$work/." "$seed:$work"
   docker start --attach "$seed"
@@ -518,14 +508,11 @@ done
 # so it is written whatever the runner's exit.
 run_lane() {
   local lane="$1" name="$runner_name-$1" builder="$builder_name" lane_status=0
-  local pg="$owned_network-$1-postgres" redis="$owned_network-$1-redis" weight
-  # The runner and every container its tests start carry the lane's weight.
-  weight="$(lane_cpu_shares "$lane")"
+  local pg="$owned_network-$1-postgres" redis="$owned_network-$1-redis"
   printf 'runner\t%s\n' "$name" >> "$LOG_DIR/owned-resources.tsv"
   docker run --rm --init \
     --name "$name" \
     --label "aweb.candidate-gate=$resource_label" \
-    --cpu-shares "$weight" \
     --memory "$runner_memory" \
     --pids-limit "$runner_pids" \
     --network "$owned_network" \
@@ -538,7 +525,6 @@ run_lane() {
     -e AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" \
     -e GATE_CPUS="$GATE_CPUS" \
     -e GATE_MEMORY_MIB="$GATE_MEMORY_MIB" \
-    -e AWEB_CANDIDATE_SIBLING_CPU_SHARES="$weight" \
     -e GATE_UNIT_CPUS="${GATE_UNIT_CPUS:-}" \
     -e GATE_UNIT_MEMORY_MIB="${GATE_UNIT_MEMORY_MIB:-}" \
     -e AWEB_CANDIDATE_SIBLING_MEMORY="$sibling_memory" \
@@ -563,6 +549,7 @@ run_lane() {
     -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \
     -e BUILDX_CONFIG="$buildx_config" \
     -e BUILDX_BUILDER="$builder" \
+    -e CANDIDATE_GATE_IMAGE="$IMAGE" \
     -e UV_LINK_MODE=copy \
     -e GOCACHE=/tmp/go-build \
     -e GOMODCACHE="$go_mod_cache" \

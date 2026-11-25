@@ -880,7 +880,6 @@ class Budget(unittest.TestCase):
                     if not aweb:
                         continue
                     plan, workers = self.gate_plan(shares["aweb"]["cpus"], shares["aweb"]["memory_mib"])
-                    self.assertTrue(all("cpu_shares" in lane for lane in plan["lanes"].values()))
                     for suite, count in plan["unit"]["workers"].items():
                         if count > 1:
                             self.assertLessEqual(

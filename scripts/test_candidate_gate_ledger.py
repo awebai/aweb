@@ -530,7 +530,7 @@ candidate-gate:
             and version_rows[-1].split("\t")[0] != rows[-1].split("\t")[0]
         )
         # A budget smaller than the lanes caps nothing: every lane runs at
-        # once, each container weighted by its lane's measured CPU-seconds.
+        # once, every container at Docker's default CPU weight.
         # A docker shim on the wrapper's PATH records every Docker call.
         env["CLI_VERSION"] = "1.2.5"
         shim = evidence / "docker-shim"
@@ -551,25 +551,20 @@ candidate-gate:
             PATH=f"{shim}{os.pathsep}{env['PATH']}",
             AWEB_CANDIDATE_STAGES="checks user-paths unit",
         )
-        weighted = run(repo, *gate, env=small)
-        (evidence / "weighted-lanes.log").write_text(weighted.stdout + weighted.stderr)
-        assert weighted.returncode == 0, f"weighted-lanes: see {evidence}/weighted-lanes.log"
-        weighted_logs = Path(re.findall(r"logs: (\S+)", weighted.stdout + weighted.stderr)[-1])
-        budget_rows = (weighted_logs / "budget.tsv").read_text()
+        small_run = run(repo, *gate, env=small)
+        (evidence / "small-budget-lanes.log").write_text(small_run.stdout + small_run.stderr)
+        assert small_run.returncode == 0, f"small-budget-lanes: see {evidence}/small-budget-lanes.log"
+        small_logs = Path(re.findall(r"logs: (\S+)", small_run.stdout + small_run.stderr)[-1])
+        budget_rows = (small_logs / "budget.tsv").read_text()
         assert "lanes_concurrent" not in budget_rows, budget_rows
-        work = json.loads((ROOT / "candidate-gate/measured-work.json").read_text())
         recorded = {}
         for row in budget_rows.splitlines():
             field, *rest = row.split("\t")
             recorded[(field, *rest[:-1])] = rest[-1]
-
-        def lane_shares(lane):
-            return str(work["lanes"][lane])
-
         for lane in ("checks", "user-paths", "unit"):
-            assert recorded[("lane_cpu_shares", lane)] == lane_shares(lane), recorded
+            assert recorded[("lane_share", lane)], recorded
         argv = [json.loads(line) for line in calls.read_text().splitlines()]
-        capped = [args for args in argv if any(a == "--cpus" or a.startswith("--cpus=") for a in args)]
+        capped = [args for args in argv if any(a.startswith("--cpu") for a in args)]
         assert not capped, capped
         runners = {}
         for args in argv:
@@ -579,12 +574,6 @@ candidate-gate:
                     if container.endswith(f"-runner-{lane}"):
                         runners[lane] = args
         assert set(runners) == {"checks", "user-paths", "unit"}, sorted(runners)
-        for lane, args in runners.items():
-            assert args[args.index("--cpu-shares") + 1] == lane_shares(lane), (lane, args)
-        builder = [args for args in argv if args[:1] == ["update"]]
-        assert builder and all(
-            args[args.index("--cpu-shares") + 1] == lane_shares("unit") for args in builder
-        ), builder
         version_rows = ledger.read_text().splitlines()
         env["CLI_VERSION"] = "1.2.3"
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "7 * 6 == 42"))

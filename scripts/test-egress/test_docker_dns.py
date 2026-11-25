@@ -15,9 +15,16 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+# Set by --image and --evidence when run as a script.
+IMAGE = EVIDENCE = None
 
 
 class DockerDNS(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if IMAGE is None:
+            raise unittest.SkipTest("run as a script with --image and --evidence")
+
     def run_guard(self, child, *, collect_summary=False):
         evidence = EVIDENCE / self._testMethodName
         with tempfile.TemporaryDirectory(prefix="aw-dns-default-") as temp:

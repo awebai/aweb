@@ -46,13 +46,8 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(values["GATE_BUDGET_SOURCE"], "cpus=input,memory=input")
         # The release's aweb share on merak gives unit 4.83 x 9576 / 12660.
         self.assertEqual(values["GATE_UNIT_CPUS"], "3.65")
-        # Every lane's containers carry its measured CPU-seconds as --cpu-shares.
-        for lane, seconds in WORK["lanes"].items():
-            name = "GATE_LANE_CPU_SHARES_" + lane.upper().replace("-", "_")
-            self.assertEqual(values[name], str(seconds))
-        self.assertEqual(values["GATE_BUILDER_CPU_SHARES"], str(WORK["lanes"]["unit"]))
-        for removed in ("GATE_CPU_MAPPING", "GATE_LANE_CPU_WEIGHT_UNIT"):
-            self.assertNotIn(removed, values)
+        # No CPU setting is planned: every container runs at Docker's default.
+        self.assertFalse([n for n in values if "SHARES" in n or "WEIGHT" in n or "MAPPING" in n], values)
 
     def test_no_cpu_cap_is_planned(self):
         result = run_budget(GATE_CPUS="12", GATE_MEMORY_MIB="51642", GATE_LANES="unit checks")

@@ -72,9 +72,7 @@ class EvidenceTests(unittest.TestCase):
                 ),
                 run + "/budget.tsv": (
                     "cpus\t5.37\nmemory_mib\t22618\nsource\tcpus=input,memory=input\n"
-                    "builder_cpu_shares\t9576\n"
-                    "lane_cpu_shares\tchecks\t1333\nlane_share\tchecks\t0.5\n"
-                    "lane_cpu_shares\tunit\t9576\nlane_share\tunit\t4.21\n"
+                    "lane_share\tchecks\t0.5\nlane_share\tunit\t4.21\n"
                 ),
                 "tmp/aweb-candidate-gate-" + "b" * 40 + "-x/budget.tsv": "cpus\t1\n",
             }
@@ -86,8 +84,6 @@ class EvidenceTests(unittest.TestCase):
                 "cpus": 5.37,
                 "memory_mib": 22618,
                 "source": "cpus=input,memory=input",
-                "builder_cpu_shares": 9576,
-                "lane_cpu_shares": {"checks": 1333, "unit": 9576},
                 "lane_share": {"checks": 0.5, "unit": 4.21},
             },
         )
