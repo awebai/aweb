@@ -241,6 +241,9 @@ def require_memory_postgres(container, port=5432):
     return storage
 
 
+# Suites whose conftest binds each xdist worker to its own service pair
+# (server/tests/worker_services.py); they run with the budget's worker count.
+PARALLEL_SUITES = ("test-server", "test-naapp-lib")
 # The Secrets package's measured two-shard partition (scripts/secrets_shards.py)
 # runs on two owned service pairs whenever the budget allows parallel workers.
 SHARDED_SUITE = "test-naapp-secrets"
@@ -424,7 +427,7 @@ def remove(containers):
 
 def suite_services(name, server_workers):
     """(runner workers, service pairs, exec environment) for one suite."""
-    if name == "test-server":
+    if name in PARALLEL_SUITES:
         return server_workers, server_workers, []
     if name == SHARDED_SUITE and server_workers:
         shards = [

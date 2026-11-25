@@ -106,6 +106,12 @@ class ServerWorkerTests(unittest.TestCase):
             )
         )
 
+    def test_server_and_naapp_lib_get_the_budget_worker_plan(self):
+        for suite in ("test-server", "test-naapp-lib"):
+            self.assertEqual(runner.suite_services(suite, 11), (11, 11, []))
+            self.assertEqual(runner.suite_services(suite, 0), (0, 0, []))
+        self.assertEqual(runner.suite_services("test-awid", 11), (0, 0, []))
+
     def test_a_one_worker_or_oversized_plan_is_refused(self):
         for workers in (1, -1, runner._worker_module.MAX_WORKERS + 1):
             with self.subTest(workers=workers):
