@@ -140,3 +140,12 @@ def prepare_image(root, evidence, image, base=None):
             check=True,
             env=env,
         )
+    # The run's cleanup removes the image, so its size is kept as evidence.
+    size = subprocess.run(
+        ["docker", "image", "inspect", "--format", "{{.Size}}", image],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (evidence / "image-size-bytes").write_text(size + "\n")
+    print(f"unit image size: {size} bytes", flush=True)
