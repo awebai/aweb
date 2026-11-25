@@ -289,8 +289,10 @@ def _npm_publish_staged(root: Path, directory: str, package: str, profile: str, 
         if len(packages) != 1:
             raise PublishRefusal("npm staging did not contain exactly one package")
         archive = packages[0]
+        # Observe the registry npm publish and the readback use.
+        registry = os.environ.get("NPM_CONFIG_REGISTRY", "https://registry.npmjs.org").rstrip("/")
         status, observed = request_json(
-            f"https://registry.npmjs.org/{urllib.parse.quote(package, safe='')}/{version}"
+            f"{registry}/{urllib.parse.quote(package, safe='')}/{version}"
         )
         action = "publish"
         if status == 200:
