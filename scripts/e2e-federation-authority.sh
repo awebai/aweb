@@ -468,6 +468,7 @@ outage_deadline=$((SECONDS + 120))
 outage_ready=0
 while ((SECONDS < outage_deadline)) && IFS= read -r -t "$((outage_deadline - SECONDS))" -u 8 line; do
   if [[ "$line" == outage-ready ]]; then
+    printf '%s\n' "$line" >&2
     outage_ready=1
     break
   fi

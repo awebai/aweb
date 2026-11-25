@@ -53,7 +53,15 @@ export async function stopOwnedProcessTree(
       throw new Error(`owned process tree survived SIGKILL: ${JSON.stringify(observedMembers)}`);
     }
   }
-  await waitForLeaderObservation(leader, 1_000);
+  // A killed member stays in the group as a zombie until its parent reaps it;
+  // an orphaned descendant waits for init. The group is gone only once every
+  // member is reaped, and Node has then observed the leader's exit.
+  if (!await waitForProcessGroupReaped(expectedProcessGroupID, 10_000)) {
+    throw new Error(`owned process group ${expectedProcessGroupID} was not reaped within 10000ms`);
+  }
+  if (leader.exitCode === null && leader.signalCode === null) {
+    throw new Error(`owned process-tree leader ${leaderPID} was reaped but its exit was not observed`);
+  }
   if (escaped.length > 0) {
     throw new Error(
       `owned process tree escaped supervisor group before cleanup: ${JSON.stringify(escaped)}`,
@@ -142,10 +150,14 @@ async function waitForOwnedPIDsExit(
   return !hasSurvivor();
 }
 
-async function waitForLeaderObservation(leader: ChildProcess, timeoutMs: number): Promise<void> {
-  if (leader.exitCode !== null || leader.signalCode !== null) return;
-  await Promise.race([
-    new Promise<void>((resolve) => leader.once("exit", () => resolve())),
-    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
-  ]);
+async function waitForProcessGroupReaped(
+  processGroupID: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processGroupExists(processGroupID)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return !processGroupExists(processGroupID);
 }
