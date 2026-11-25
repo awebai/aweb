@@ -36,9 +36,10 @@ test("passive terminal cleanup retains its socket root on child failure", () => 
 test("passive terminal cleanup waits for the panes the stopped server leaves running", () => {
   // kill-server returns before the panes exit. A pane's shell that writes its
   // history as it exits must not race the root's removal.
-  const root = mkdtempSync("/tmp/kpw-");
+  const scratch = mkdtempSync("/tmp/kpw-");
+  const root = join(scratch, "root"), marker = join(scratch, "pane-last-write");
+  mkdirSync(root);
   try {
-    const marker = join(root, "pane-exited");
     // The pane is not the test's child, as a real pane is the server's.
     const pane = spawnSync("/bin/sh", ["-c", `nohup ${JSON.stringify(process.execPath)} -e ${JSON.stringify(
       `process.on("SIGHUP", () => setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker)}, "history"); process.exit(0); }, 300));setInterval(() => {}, 1000)`,
@@ -46,7 +47,7 @@ test("passive terminal cleanup waits for the panes the stopped server leaves run
     const pid = Number(pane.stdout.trim());
     assert.ok(Number.isInteger(pid) && pid > 0, "the pane started");
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
-    const tmuxBinary = join(root, "tmux.mjs");
+    const tmuxBinary = join(scratch, "tmux.mjs");
     writeFileSync(tmuxBinary, `#!${process.execPath}
 const args = process.argv.slice(2).join(" ");
 if (args.includes("list-panes")) { process.stdout.write("${pid}\\n"); process.exit(0); }
@@ -54,9 +55,38 @@ if (args.includes("kill-server")) { process.kill(${pid}, "SIGHUP"); process.exit
 process.exit(1);
 `, { mode: 0o700 });
     cleanupPassiveTerminal({ root, tmuxBinary, env: { PATH: process.env.PATH } });
-    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, "cleanup returns only after the pane has exited");
-    assert.equal(existsSync(root), false, "the root is removed after the pane's last write");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+    assert.equal(existsSync(marker), true, "cleanup returns only after the pane's last write");
+    assert.equal(existsSync(root), false, "the root is removed after the pane exits");
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
+});
+
+test("passive terminal cleanup counts an unreaped pane as exited", () => {
+  // Where nothing reaps orphans (a container whose PID 1 is not an init), a
+  // pane that has exited stays a zombie, which signal 0 still reaches.
+  const root = mkdtempSync("/tmp/kpz-");
+  const parentFile = join(root, "parent"), paneFile = join(root, "pane");
+  try {
+    spawnSync("/bin/sh", ["-c", `(sh -c '${JSON.stringify(process.execPath)} -e "setTimeout(() => process.exit(0), 100)" & echo $! > ${paneFile}; echo $$ > ${parentFile}; exec sleep 60') >/dev/null 2>&1 &`]);
+    const deadline = Date.now() + 10000;
+    while (!(existsSync(paneFile) && existsSync(parentFile)) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    const pid = Number(readFileSync(paneFile, "utf8").trim());
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+    assert.doesNotThrow(() => process.kill(pid, 0), "the exited pane is still a process: a zombie");
+    const tmuxBinary = join(root, "tmux.mjs");
+    writeFileSync(tmuxBinary, `#!${process.execPath}
+const args = process.argv.slice(2).join(" ");
+if (args.includes("list-panes")) { process.stdout.write("${pid}\\n"); process.exit(0); }
+process.exit(args.includes("kill-server") ? 0 : 1);
+`, { mode: 0o700 });
+    const started = Date.now();
+    cleanupPassiveTerminal({ root, tmuxBinary, env: { PATH: process.env.PATH } });
+    assert.ok(Date.now() - started < 5000, "cleanup did not wait for an exited pane");
+    assert.equal(existsSync(root), false, "the root is removed");
+  } finally {
+    const parent = existsSync(parentFile) ? Number(readFileSync(parentFile, "utf8").trim()) : 0;
+    if (parent > 0) { try { process.kill(parent, "SIGKILL"); } catch {} }
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the wake probe keeps its socket root when its owned tmux cleanup fails", () => {

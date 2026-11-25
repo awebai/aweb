@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import strictAssert from "node:assert/strict";
@@ -103,13 +103,22 @@ export function runKernelProbeCommand({ name, argv, cwd, env, timeout = 60000, o
 
 const PANE_EXIT_MS = 10000;
 
+// A zombie has exited: where nothing reaps orphans (a container whose PID 1 is
+// not an init), an exited pane stays one, and signal 0 still reaches it.
 function processRunning(pid) {
   try {
     process.kill(pid, 0);
-    return true;
   } catch (error) {
     return error.code !== "ESRCH";
   }
+  let state;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    state = stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3);
+  } catch {
+    state = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout?.trim().charAt(0);
+  }
+  return state !== "Z";
 }
 
 // Stops the owned tmux server, waits for its panes to exit, then removes root.
