@@ -253,8 +253,7 @@ def unit_plan(suites, environ=os.environ):
     """Unit's CPU share divided among its suites by their measured work.
 
     The share is GATE_UNIT_CPUS (and GATE_UNIT_MEMORY_MIB), which the gate
-    passes from its plan; standalone, the measured budget. The engine's
-    cpu.weight mapping is GATE_CPU_MAPPING from the gate, else probed here.
+    passes from its plan; standalone, the measured budget.
     """
     work = json.loads((ROOT / "candidate-gate/measured-work.json").read_text())
     missing = [suite for suite in suites if suite not in work["unit_suites"]]
@@ -270,7 +269,6 @@ def unit_plan(suites, environ=os.environ):
         memory_mib,
         {suite: work["unit_suites"][suite] for suite in suites},
         runs=work["unit_runs"],
-        mapping=environ.get("GATE_CPU_MAPPING") or _budget.probe_mapping(),
         service_memory_mib=_worker_module.service_memory_mib,
         max_workers=_worker_module.MAX_WORKERS,
     )

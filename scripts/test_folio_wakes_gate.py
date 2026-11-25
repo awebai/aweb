@@ -77,7 +77,8 @@ class FolioGateTests(unittest.TestCase):
             create = next(args for args in calls if args[:2] == ["buildx", "create"])
             builder = create[create.index("--name") + 1]
             self.assertIn(["buildx", "rm", builder], calls)
-            self.assertIn("memory=2g,cpu-period=100000,cpu-quota=200000", create)
+            self.assertIn("memory=2g", create)
+            self.assertFalse(any("cpu-quota" in arg or "cpu-period" in arg for arg in create), create)
         with tempfile.TemporaryDirectory() as directory:
             result, calls = self.run_harness(
                 Path(directory),

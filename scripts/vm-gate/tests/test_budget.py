@@ -38,33 +38,11 @@ def worker_memory(workers):
 
 
 class Weights(unittest.TestCase):
-    def test_the_target_weight_is_half_the_measured_cpu_seconds(self):
-        self.assertEqual(budget.cpu_weight(15800), 7900)
-        self.assertEqual(budget.cpu_weight(11951), 5976)
-        self.assertEqual(budget.cpu_weight(106), 53)
-        self.assertEqual(budget.cpu_weight(1), 1)
-        self.assertEqual(budget.cpu_weight(10**6), 10000)
-
-    def test_the_engines_mapping_is_named_by_its_probe(self):
-        self.assertEqual(budget.mapping_from_probe("100"), "runc-1.3")
-        self.assertEqual(budget.mapping_from_probe("39\n"), "linear")
-        for other in ("40", "1024", "", "x"):
-            with self.subTest(other=other), self.assertRaisesRegex(ValueError, "cpu.weight"):
-                budget.mapping_from_probe(other)
-
-    def test_each_mapping_matches_the_kernel_values(self):
-        # Measured with docker run --cpu-shares S on runc 1.5 (runc-1.3 curve).
-        for shares, weight in [(2, 1), (106, 18), (1024, 100), (2681, 215), (15800, 914), (262144, 10000)]:
-            self.assertEqual(budget.weight_of(shares, "runc-1.3"), weight)
-        self.assertEqual(budget.weight_of(1024, "linear"), 39)
-        self.assertEqual(budget.weight_of(262144, "linear"), 10000)
-
-    def test_the_shares_give_exactly_the_target_weight_in_either_mapping(self):
-        for mapping in budget.MAPPINGS:
-            for weight in range(1, 10001):
-                shares = budget.cpu_shares_for(weight, mapping)
-                self.assertTrue(2 <= shares <= 262144)
-                self.assertEqual(budget.weight_of(shares, mapping), weight, (mapping, weight))
+    def test_the_shares_are_the_measured_cpu_seconds_within_dockers_range(self):
+        self.assertEqual(budget.cpu_shares(15800), 15800)
+        self.assertEqual(budget.cpu_shares(11951.4), 11951)
+        self.assertEqual(budget.cpu_shares(1), 2)
+        self.assertEqual(budget.cpu_shares(10**6), 262144)
 
     def test_workers_are_the_rounded_share_and_at_least_one(self):
         for share, workers in [(0.07, 1), (0.5, 1), (1.49, 1), (1.5, 2), (4.21, 4), (18.89, 19)]:
@@ -85,13 +63,12 @@ class ReleaseSplit(unittest.TestCase):
 
 
 class Plan(unittest.TestCase):
-    def plan(self, cpus, memory_mib, lanes=LANES, mapping="runc-1.3"):
+    def plan(self, cpus, memory_mib, lanes=LANES):
         return budget.plan(
             cpus,
             memory_mib,
             lanes=lanes,
             work=WORK,
-            mapping=mapping,
             service_memory_mib=worker_memory,
             max_workers=64,
         )
@@ -119,38 +96,18 @@ class Plan(unittest.TestCase):
                 self.assertEqual(unit["workers"]["test-naapp-lib"], naapp)
                 self.assertEqual(unit["serial_slots"], pool)
 
-    def test_the_prediction_is_cpu_seconds_over_busy_cpus(self):
-        plan = self.plan(4.83, 22618)
-        unit = plan["unit"]
-        # test-server: 4872 CPU-s at 3 workers / 1.343 workers per busy CPU.
-        self.assertEqual(unit["predicted_seconds"]["test-server"], 2181)
-        # The serial pool's 3234 CPU-s at 2 slots / 1.151 workers per busy CPU.
-        self.assertEqual(unit["predicted_seconds"]["serial"], 1861)
-        self.assertEqual(plan["lanes"]["unit"]["predicted_seconds"], 733 + 2181)
-        self.assertEqual(plan["lanes"]["checks"]["predicted_seconds"], 1581)
-        # Under full contention a part gets no more than its CPU share:
-        # CPU-s / min(the CPUs its workers keep busy, its share).
-        self.assertEqual(unit["contended_seconds"]["test-server"], int(4872 / unit["exact_shares"]["test-server"] + 0.5))
-        self.assertEqual(plan["lanes"]["checks"]["contended_seconds"], int(1333 / plan["lanes"]["checks"]["exact_share"] + 0.5))
-        self.assertEqual(
-            plan["lanes"]["unit"]["contended_seconds"], 733 + max(unit["contended_seconds"].values())
-        )
-        # More slots than the work needs: the longest serial suite bounds it.
-        self.assertEqual(self.plan(12, 1_000_000)["unit"]["predicted_seconds"]["serial"], 1640)
-
     def test_every_lane_and_unit_suite_is_weighted_by_its_measured_work(self):
-        for mapping in budget.MAPPINGS:
-            plan = self.plan(12, 51642, mapping=mapping)
-            for lane in LANES:
-                weight = budget.cpu_weight(WORK["lanes"][lane])
-                self.assertEqual(plan["lanes"][lane]["cpu_weight"], weight)
-                self.assertEqual(budget.weight_of(plan["lanes"][lane]["cpu_shares"], mapping), weight)
-            unit = plan["unit"]
-            self.assertEqual(set(unit["cpu_shares"]), set(WORK["unit_suites"]))
-            for suite, shares in unit["cpu_shares"].items():
-                self.assertEqual(
-                    budget.weight_of(shares, mapping), budget.cpu_weight(WORK["unit_suites"][suite])
-                )
+        plan = self.plan(12, 51642)
+        for lane in LANES:
+            self.assertEqual(plan["lanes"][lane]["cpu_shares"], WORK["lanes"][lane])
+        unit = plan["unit"]
+        self.assertEqual(unit["cpu_shares"], WORK["unit_suites"])
+
+    def test_the_plan_predicts_no_times(self):
+        plan = self.plan(4.83, 22618)
+        text = json.dumps(plan)
+        for removed in ("predicted", "contended", "setup", "critical", "mapping"):
+            self.assertNotIn(removed, text)
 
     def test_workers_keep_each_share_busy_and_no_more(self):
         # Each part's workers, divided by its workers per busy CPU, is its

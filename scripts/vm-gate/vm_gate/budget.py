@@ -6,18 +6,14 @@ and no size is assumed; an operator override is optional input, never a
 default. Standard library only: a release guest runs this before either gate
 starts, and the aweb gate loads it by path.
 
-Nothing caps a container's CPU. Every container runs with a cgroup v2
-cpu.weight proportional to the measured CPU-seconds of the lane or unit suite
-it belongs to (candidate-gate/measured-work.json; Cloud's gate uses its own
-measured figures in the same unit and the same scale, cpu_weight()). The
-kernel divides the CPUs among the containers that want them in proportion to
-those weights, and a lane that is idle or finished leaves its CPUs to the
-others. The engine's CPU count is the only bound.
-
-Docker takes the weight as --cpu-shares, which the runtime converts to
-cpu.weight: linearly before runc 1.3, along a curve from runc 1.3 on. A gate
-probes its engine's conversion once (mapping_from_probe) and passes the
-shares whose cpu.weight is exactly the target (cpu_shares_for).
+Nothing caps a container's CPU. Every container runs with --cpu-shares equal
+to the measured CPU-seconds of the lane or unit suite it belongs to
+(candidate-gate/measured-work.json; Cloud's gate passes its own measured
+CPU-seconds the same way, so the two compare). Docker converts the shares to
+the kernel's cgroup weight by its runtime's own rule, which the gate accepts.
+The kernel divides the CPUs among the containers that want them by those
+weights, and a lane that is idle or finished leaves its CPUs to the others.
+The engine's CPU count is the only bound.
 
 Weights are flat: every container is a sibling under the engine's cgroup (the
 systemd driver's system.slice on the release guest), so a lane competes with
@@ -37,7 +33,6 @@ built once, and under contention the weights still give each part its
 measured proportion.
 """
 
-import functools
 import json
 import math
 import re
@@ -69,84 +64,13 @@ def positive(cpus, memory_mib):
         raise ValueError("a budget needs at least 1 CPU and 1 MiB")
 
 
-# Docker's --cpu-shares range and cgroup v2's cpu.weight range.
+# Docker's --cpu-shares range.
 CPU_SHARES_MIN, CPU_SHARES_MAX = 2, 262144
-CPU_WEIGHT_MAX = 10000
-# The probe: the cpu.weight a container given --cpu-shares 1024 holds.
-PROBE_SHARES = 1024
-MAPPINGS = ("linear", "runc-1.3")
 
 
-def cpu_weight(cpu_seconds):
-    """A part's target cpu.weight: half its measured CPU-seconds, in 1..10000.
-
-    One scale for every container on the engine, in both gates, so their
-    weights compare. Today's largest part, Cloud's runner (15800 CPU-s),
-    is 7900.
-    """
-    return min(CPU_WEIGHT_MAX, max(1, int(cpu_seconds / 2 + 0.5)))
-
-
-def weight_of(shares, mapping):
-    """The cpu.weight the runtime gives a container started with --cpu-shares."""
-    if mapping == "linear":
-        return 1 + (shares - 2) * 9999 // 262142
-    if mapping == "runc-1.3":
-        # runc's ConvertCPUSharesToCgroupV2Value from 1.3 on.
-        if shares <= CPU_SHARES_MIN:
-            return 1
-        if shares >= CPU_SHARES_MAX:
-            return CPU_WEIGHT_MAX
-        level = math.log2(shares)
-        return math.ceil(10 ** ((level * level + 125 * level) / 612 - 7 / 34))
-    raise ValueError(f"unknown cpu.weight mapping {mapping!r}")
-
-
-def mapping_from_probe(value):
-    """The engine's mapping, named by the cpu.weight its probe container held."""
-    for mapping in MAPPINGS:
-        if value.strip() == str(weight_of(PROBE_SHARES, mapping)):
-            return mapping
-    raise ValueError(
-        f"--cpu-shares {PROBE_SHARES} gave cpu.weight {value.strip()!r}, "
-        "which no known runtime mapping gives"
-    )
-
-
-def probe_mapping(image="postgres:17"):
-    """Name this engine's mapping by one probe container's cpu.weight."""
-    value = subprocess.run(
-        [
-            "docker", "run", "--rm", "--cpu-shares", str(PROBE_SHARES), "--memory", "64m",
-            "--entrypoint", "cat", image, "/sys/fs/cgroup/cpu.weight",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    ).stdout
-    return mapping_from_probe(value)
-
-
-@functools.lru_cache(maxsize=None)
-def cpu_shares_for(weight, mapping):
-    """The smallest --cpu-shares whose cpu.weight is the target, else the closest."""
-    low, high = CPU_SHARES_MIN, CPU_SHARES_MAX
-    while low < high:
-        middle = (low + high) // 2
-        if weight_of(middle, mapping) < weight:
-            low = middle + 1
-        else:
-            high = middle
-    if weight_of(low, mapping) != weight and low > CPU_SHARES_MIN:
-        below = low - 1
-        if weight - weight_of(below, mapping) < weight_of(low, mapping) - weight:
-            return below
-    return low
-
-
-def lane_shares(cpu_seconds, mapping):
-    return cpu_shares_for(cpu_weight(cpu_seconds), mapping)
+def cpu_shares(cpu_seconds):
+    """A part's --cpu-shares: its measured CPU-seconds, within Docker's range."""
+    return min(CPU_SHARES_MAX, max(CPU_SHARES_MIN, int(cpu_seconds + 0.5)))
 
 
 def workers(share):
@@ -192,70 +116,40 @@ def workers_per_busy_cpu(cpu_seconds, run):
     return worker_seconds / cpu_seconds
 
 
-def contended_seconds(cpu_seconds, ratio, count, share):
-    """A part's time when every part wants its share: no more CPUs than its share."""
-    return int(cpu_seconds / min(count / ratio, share) + 0.5)
-
-
-def predicted_seconds(cpu_seconds, ratio, count):
-    """A part's time: its CPU-seconds over the CPUs its workers keep busy, in whole seconds."""
-    return int(cpu_seconds * ratio / count + 0.5)
-
-
-def plan(cpus, memory_mib, *, lanes, work, mapping, service_memory_mib, max_workers):
+def plan(cpus, memory_mib, *, lanes, work, service_memory_mib, max_workers):
     """The run's CPU plan from its budget and the measured work.
 
     After static, every pending lane runs at once, whatever the machine's
     size: weights share the CPUs, so no lane waits for another. Each lane's
-    containers carry a weight proportional to its measured CPU-seconds, as
-    --cpu-shares under the engine's mapping. A lane other than unit is one
-    process. Unit's share is divided among its parallel suites and one pool
-    for the serial suites (unit_plan). Each lane's predicted time is its
-    CPU-seconds over the CPUs its workers keep busy; unit's adds its setup.
+    containers carry its measured CPU-seconds as --cpu-shares. A lane other
+    than unit is one process. Unit's share is divided among its parallel
+    suites and one pool for the serial suites (unit_plan).
     """
     if not cpus > 0 or type(memory_mib) is not int or memory_mib < 1:
         raise ValueError("a budget needs CPUs above 0 and at least 1 MiB")
     lanes = list(lanes)
     measured = {lane: work["lanes"][lane] for lane in lanes}
     lane_cpus = proportional(cpus, measured)
-    result = {"mapping": mapping, "lanes": {}}
-    for lane in lanes:
-        run = work["lane_runs"][lane]
-        entry = {
-            "cpu_weight": cpu_weight(measured[lane]),
-            "cpu_shares": lane_shares(measured[lane], mapping),
-            "cpus": round(lane_cpus[lane], 2),
+    result = {
+        "lanes": {
+            lane: {"cpu_shares": cpu_shares(measured[lane]), "cpus": round(lane_cpus[lane], 2)}
+            for lane in lanes
         }
-        if lane != "unit":
-            ratio = workers_per_busy_cpu(measured[lane], run)
-            entry.update(
-                workers=1,
-                workers_per_busy_cpu=round(ratio, 3),
-                predicted_seconds=predicted_seconds(measured[lane], ratio, 1),
-                exact_share=lane_cpus[lane],
-                contended_seconds=contended_seconds(measured[lane], ratio, 1, lane_cpus[lane]),
-            )
-        result["lanes"][lane] = entry
+    }
     if "unit" in lanes:
         unit = unit_plan(
             lane_cpus["unit"],
             memory_mib * measured["unit"] // sum(measured.values()),
             work["unit_suites"],
             runs=work["unit_runs"],
-            mapping=mapping,
             service_memory_mib=service_memory_mib,
             max_workers=max_workers,
         )
         result["unit"] = unit
-        setup = work["lane_runs"]["unit"]["setup_seconds"]
-        result["lanes"]["unit"].update(
-            predicted_seconds=setup + max(unit["predicted_seconds"].values()),
-            contended_seconds=setup + max(unit["contended_seconds"].values()),
-        )
     return result
 
 
-def unit_plan(cpus, memory_mib, suites, *, runs, mapping, service_memory_mib, max_workers):
+def unit_plan(cpus, memory_mib, suites, *, runs, service_memory_mib, max_workers):
     """Unit's share divided by its suites' measured CPU-seconds.
 
     Each part (a parallel suite, or the pool of serial suites) runs
@@ -292,19 +186,6 @@ def unit_plan(cpus, memory_mib, suites, *, runs, mapping, service_memory_mib, ma
     # to one slot would run them end to end, so it rounds up, at most one slot
     # (under one busy CPU) above its share.
     slots = max(1, math.ceil(share["serial"] * ratio["serial"])) if serial else 0
-    count = dict(counts, serial=slots)
-    predicted = {
-        part: predicted_seconds(weights[part], ratio[part], count[part]) for part in weights
-    }
-    contended = {
-        part: contended_seconds(weights[part], ratio[part], count[part], share[part])
-        for part in weights
-    }
-    if serial:
-        # The pool finishes no sooner than its longest suite.
-        longest = runs["serial"]["longest_suite_seconds"]
-        predicted["serial"] = max(predicted["serial"], longest)
-        contended["serial"] = max(contended["serial"], longest)
     return {
         "cpus": round(cpus, 2),
         "memory_mib": memory_mib,
@@ -313,10 +194,7 @@ def unit_plan(cpus, memory_mib, suites, *, runs, mapping, service_memory_mib, ma
         "serial_slots": slots,
         "workers": counts,
         "memory_bound": bound,
-        "predicted_seconds": predicted,
-        "contended_seconds": contended,
-        "exact_shares": share,
-        "cpu_shares": {suite: lane_shares(suites[suite], mapping) for suite in suites},
+        "cpu_shares": {suite: cpu_shares(suites[suite]) for suite in suites},
     }
 
 

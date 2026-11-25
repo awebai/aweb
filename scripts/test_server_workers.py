@@ -119,16 +119,11 @@ class ServerWorkerTests(unittest.TestCase):
         env = {
             "GATE_UNIT_CPUS": "3.65",
             "GATE_UNIT_MEMORY_MIB": "18000",
-            "GATE_CPU_MAPPING": "runc-1.3",
         }
         plan = runner.unit_plan(suites, env)
         self.assertEqual(plan["cpus"], 3.65)
-        budget = runner._budget
         for suite in suites:
-            self.assertEqual(
-                budget.weight_of(plan["cpu_shares"][suite], "runc-1.3"),
-                budget.cpu_weight(work["unit_suites"][suite]),
-            )
+            self.assertEqual(plan["cpu_shares"][suite], work["unit_suites"][suite])
         self.assertGreaterEqual(plan["workers"]["test-server"], 2)
         self.assertGreaterEqual(plan["serial_slots"], 1)
         with self.assertRaisesRegex(ValueError, "no measured work"):

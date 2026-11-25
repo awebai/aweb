@@ -171,7 +171,7 @@ read_budget() {
   local name value
   while IFS='=' read -r name value; do
     case "$name" in
-      GATE_CPUS|GATE_MEMORY_MIB|GATE_BUDGET_SOURCE|GATE_CPU_MAPPING|GATE_BUILDER_CPU_SHARES|GATE_UNIT_CPUS|GATE_UNIT_MEMORY_MIB|GATE_LANE_CPU_WEIGHT_[A-Z_]*|GATE_LANE_CPU_SHARES_[A-Z_]*|GATE_LANE_SHARE_[A-Z_]*)
+      GATE_CPUS|GATE_MEMORY_MIB|GATE_BUDGET_SOURCE|GATE_BUILDER_CPU_SHARES|GATE_UNIT_CPUS|GATE_UNIT_MEMORY_MIB|GATE_LANE_CPU_SHARES_[A-Z_]*|GATE_LANE_SHARE_[A-Z_]*)
         [[ "$value" =~ ^[A-Za-z0-9=,._-]+$ ]] || refuse "unexpected gate budget value for $name"
         printf -v "$name" '%s' "$value" ;;
       *) refuse "unexpected gate budget output: $name" ;;
@@ -260,9 +260,8 @@ builder_name="$gate_run_id"
 buildx_config="$work/buildx"
 docker_bind_root="$work/docker-bind"
 # gate_setting assigned every limit above, from the budget or an override.
-# No container's CPU is capped: each carries its lane's cgroup weight,
-# proportional to the lane's measured CPU-seconds (lane_cpu_shares), and the
-# engine's CPUs are the bound.
+# No container's CPU is capped: each carries its lane's measured CPU-seconds
+# as --cpu-shares (lane_cpu_shares), and the engine's CPUs are the bound.
 runner_memory="$AWEB_CANDIDATE_RUNNER_MEMORY"
 runner_pids="$AWEB_CANDIDATE_RUNNER_PIDS"
 builder_memory="$AWEB_CANDIDATE_BUILDER_MEMORY"
@@ -287,14 +286,9 @@ printf '%s\n' "$run_id" > "$LOG_DIR/run-id"
 printf '%s\n' "$SYNCHRONIZED_MAIN_SHA" > "$LOG_DIR/synchronized-main-sha"
 # The run's plan: every lane after static runs at once, its containers
 # weighted by its measured CPU-seconds (candidate-gate/measured-work.json);
-# the same budget, not measured again. The engine converts --cpu-shares to
-# cgroup v2 cpu.weight by its runtime's mapping; one probe container names it.
-cpu_weight_probe="$(docker run --rm --label "aweb.candidate-gate=$resource_label" \
-  --cpu-shares 1024 --memory 64m --entrypoint cat postgres:17 /sys/fs/cgroup/cpu.weight)" \
-  || refuse "could not probe the engine's cpu.weight mapping"
+# the same budget, not measured again.
 plan_assignments="$(GATE_LANES="${pending/static/}" GATE_CPUS="$GATE_CPUS" GATE_MEMORY_MIB="$GATE_MEMORY_MIB" \
-  GATE_CPU_WEIGHT_PROBE="$cpu_weight_probe" python3 "$ROOT/scripts/gate_budget.py")" \
-  || refuse "the gate's CPU plan is invalid"
+  python3 "$ROOT/scripts/gate_budget.py")" || refuse "the gate's CPU plan is invalid"
 read_budget <<<"$plan_assignments"
 # A lane's cgroup weight. Static runs alone, before the others, with
 # Docker's default weight.
@@ -305,13 +299,12 @@ lane_cpu_shares() {
   printf '%s\n' "${!name}"
 }
 {
-  printf 'cpus\t%s\nmemory_mib\t%s\nsource\t%s\ncpu_weight_probe\t%s\ncpu_mapping\t%s\nbuilder_cpu_shares\t%s\n' \
-    "$GATE_CPUS" "$GATE_MEMORY_MIB" "$GATE_BUDGET_SOURCE" "$cpu_weight_probe" "$GATE_CPU_MAPPING" "$GATE_BUILDER_CPU_SHARES"
+  printf 'cpus\t%s\nmemory_mib\t%s\nsource\t%s\nbuilder_cpu_shares\t%s\n' \
+    "$GATE_CPUS" "$GATE_MEMORY_MIB" "$GATE_BUDGET_SOURCE" "$GATE_BUILDER_CPU_SHARES"
   for lane in ${pending/static/}; do
-    name="$(printf '%s' "$lane" | tr 'a-z-' 'A-Z_')"
-    weight="GATE_LANE_CPU_WEIGHT_$name" share="GATE_LANE_SHARE_$name"
-    printf 'lane_cpu_weight\t%s\t%s\nlane_cpu_shares\t%s\t%s\nlane_share\t%s\t%s\n' \
-      "$lane" "${!weight}" "$lane" "$(lane_cpu_shares "$lane")" "$lane" "${!share}"
+    share="GATE_LANE_SHARE_$(printf '%s' "$lane" | tr 'a-z-' 'A-Z_')"
+    printf 'lane_cpu_shares\t%s\t%s\nlane_share\t%s\t%s\n' \
+      "$lane" "$(lane_cpu_shares "$lane")" "$lane" "${!share}"
   done
 } > "$LOG_DIR/budget.tsv"
 source "$ROOT/scripts/candidate-cleanup.sh"
@@ -546,7 +539,6 @@ run_lane() {
     -e GATE_CPUS="$GATE_CPUS" \
     -e GATE_MEMORY_MIB="$GATE_MEMORY_MIB" \
     -e AWEB_CANDIDATE_SIBLING_CPU_SHARES="$weight" \
-    -e GATE_CPU_MAPPING="$GATE_CPU_MAPPING" \
     -e GATE_UNIT_CPUS="${GATE_UNIT_CPUS:-}" \
     -e GATE_UNIT_MEMORY_MIB="${GATE_UNIT_MEMORY_MIB:-}" \
     -e AWEB_CANDIDATE_SIBLING_MEMORY="$sibling_memory" \

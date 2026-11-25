@@ -1,5 +1,5 @@
 {
-  "measure": "One green receipt, vm-cc7cf483e850489387faf6d878bc6312 (aweb 6a460770f9, 12-CPU merak guest, every lane at once). CPU-seconds: the cumulative usage_usec of every container's cpu.stat in its memory.jsonl, attributed to a lane by name (its runner, Postgres and Redis, and the containers it started) and to a unit suite by its isolated runner and the services in that runner's network namespace. The run's shared builder (509) and static (201) are in no lane; 60 CPU-s in one unlabelled sibling (aweb-cross-reg) are attributed to none. Short-lived containers between samples are undercounted. Workers and elapsed seconds are that run's: each lane other than unit ran one process; unit's suites ran in its plan (test-server 4 xdist workers, test-naapp-lib serial, the serial suites in a pool of 3 slots), after 733 s of setup (node deps, aw, and the suite image build). A part's workers per busy CPU is workers x elapsed / CPU-seconds (the pool's: its slot-seconds / CPU-seconds). The pool's longest suite, test-naapp-secrets at 1640 s, bounds how fast the pool can finish.",
+  "measure": "One green receipt, vm-cc7cf483e850489387faf6d878bc6312 (aweb 6a460770f9, 12-CPU merak guest, every lane at once). CPU-seconds: the cumulative usage_usec of every container's cpu.stat in its memory.jsonl, attributed to a lane by name (its runner, Postgres and Redis, and the containers it started) and to a unit suite by its isolated runner and the services in that runner's network namespace. The run's shared builder (509) and static (201) are in no lane; 60 CPU-s in one unlabelled sibling (aweb-cross-reg) are attributed to none. Short-lived containers between samples are undercounted. Workers and elapsed seconds are that run's: each lane other than unit ran one process; unit's suites ran in its plan (test-server 4 xdist workers, test-naapp-lib serial, the serial suites in a pool of 3 slots). A part's workers per busy CPU is workers x elapsed / CPU-seconds (the pool's: its slot-seconds / CPU-seconds).",
   "receipt": "vm-cc7cf483e850489387faf6d878bc6312",
   "lanes": {
     "checks": 1333,
@@ -18,7 +18,6 @@
       "elapsed_seconds": 147
     },
     "unit": {
-      "setup_seconds": 733,
       "elapsed_seconds": 2436
     },
     "artifacts": {
@@ -55,8 +54,7 @@
     },
     "serial": {
       "workers": 3,
-      "slot_seconds": 3721,
-      "longest_suite_seconds": 1640
+      "slot_seconds": 3721
     }
   },
   "gates": {

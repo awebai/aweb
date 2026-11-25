@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import errno
-import importlib.util
 import json
 import os
 import re
@@ -35,11 +34,6 @@ def held_library_default():
 
 
 ROOT = Path(__file__).resolve().parents[1]
-_budget_spec = importlib.util.spec_from_file_location(
-    "release_budget", ROOT / "scripts/vm-gate/vm_gate/budget.py"
-)
-budget = importlib.util.module_from_spec(_budget_spec)
-_budget_spec.loader.exec_module(budget)
 STAGES = "static checks user-paths unit artifacts integration"
 # The targets the fixture gives real recipes: the stage assertions below
 # use real tools and services, never a replacement runner.
@@ -568,14 +562,11 @@ candidate-gate:
         for row in budget_rows.splitlines():
             field, *rest = row.split("\t")
             recorded[(field, *rest[:-1])] = rest[-1]
-        mapping = budget.mapping_from_probe(recorded[("cpu_weight_probe",)])
-        assert recorded[("cpu_mapping",)] == mapping, recorded
 
         def lane_shares(lane):
-            return str(budget.lane_shares(work["lanes"][lane], mapping))
+            return str(work["lanes"][lane])
 
         for lane in ("checks", "user-paths", "unit"):
-            assert recorded[("lane_cpu_weight", lane)] == str(budget.cpu_weight(work["lanes"][lane]))
             assert recorded[("lane_cpu_shares", lane)] == lane_shares(lane), recorded
         argv = [json.loads(line) for line in calls.read_text().splitlines()]
         capped = [args for args in argv if any(a == "--cpus" or a.startswith("--cpus=") for a in args)]

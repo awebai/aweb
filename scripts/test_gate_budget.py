@@ -39,7 +39,6 @@ class BudgetTests(unittest.TestCase):
             GATE_CPUS="4.83",
             GATE_MEMORY_MIB="20333",
             GATE_LANES="checks user-paths unit artifacts integration",
-            GATE_CPU_WEIGHT_PROBE="100",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         values = dict(line.split("=", 1) for line in result.stdout.split())
@@ -47,36 +46,16 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(values["GATE_BUDGET_SOURCE"], "cpus=input,memory=input")
         # The release's aweb share on merak gives unit 4.83 x 9576 / 12660.
         self.assertEqual(values["GATE_UNIT_CPUS"], "3.65")
-        # Every lane's containers carry the shares whose cpu.weight, under
-        # the probed mapping, is half its measured CPU-seconds.
-        budget = gate_budget.budget
-        self.assertEqual(values["GATE_CPU_MAPPING"], "runc-1.3")
+        # Every lane's containers carry its measured CPU-seconds as --cpu-shares.
         for lane, seconds in WORK["lanes"].items():
-            name = lane.upper().replace("-", "_")
-            weight = budget.cpu_weight(seconds)
-            self.assertEqual(values["GATE_LANE_CPU_WEIGHT_" + name], str(weight))
-            shares = int(values["GATE_LANE_CPU_SHARES_" + name])
-            self.assertEqual(budget.weight_of(shares, "runc-1.3"), weight)
-        builder = int(values["GATE_BUILDER_CPU_SHARES"])
-        self.assertEqual(
-            budget.weight_of(builder, "runc-1.3"), budget.cpu_weight(WORK["lanes"]["unit"])
-        )
-
-    def test_without_a_probe_only_the_budget_is_given(self):
-        result = run_budget(GATE_CPUS="12", GATE_MEMORY_MIB="51642")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        names = {line.split("=", 1)[0] for line in result.stdout.split()}
-        self.assertEqual(names, {"GATE_CPUS", "GATE_MEMORY_MIB", "GATE_BUDGET_SOURCE"})
-
-    def test_an_unknown_mapping_is_refused(self):
-        refused = run_budget(GATE_CPUS="12", GATE_MEMORY_MIB="51642", GATE_CPU_WEIGHT_PROBE="40")
-        self.assertEqual(refused.returncode, 2)
-        self.assertIn("cpu.weight", refused.stderr)
+            name = "GATE_LANE_CPU_SHARES_" + lane.upper().replace("-", "_")
+            self.assertEqual(values[name], str(seconds))
+        self.assertEqual(values["GATE_BUILDER_CPU_SHARES"], str(WORK["lanes"]["unit"]))
+        for removed in ("GATE_CPU_MAPPING", "GATE_LANE_CPU_WEIGHT_UNIT"):
+            self.assertNotIn(removed, values)
 
     def test_no_cpu_cap_is_planned(self):
-        result = run_budget(
-            GATE_CPUS="12", GATE_MEMORY_MIB="51642", GATE_LANES="unit checks", GATE_CPU_WEIGHT_PROBE="39"
-        )
+        result = run_budget(GATE_CPUS="12", GATE_MEMORY_MIB="51642", GATE_LANES="unit checks")
         self.assertEqual(result.returncode, 0, result.stderr)
         names = {line.split("=", 1)[0] for line in result.stdout.split()}
         for cap in ("GATE_RUNNER_CPUS", "GATE_BUILDER_CPUS", "GATE_SIBLING_CPUS", "GATE_LANES_CONCURRENT"):

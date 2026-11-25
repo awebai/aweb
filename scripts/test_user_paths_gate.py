@@ -365,8 +365,6 @@ if args[0]=='run' and 'scripts/candidate-suite.sh' in args:
  # The fixture executes the actual stage script at the runner boundary.
  suite=args.index('scripts/candidate-suite.sh')
  sys.exit(subprocess.run(['bash',*args[suite:]],cwd=checkout,env=env).returncode)
-# The engine's cpu.weight probe reads as runc 1.3 and later.
-if args[0]=='run' and '/sys/fs/cgroup/cpu.weight' in args: print('100');sys.exit(0)
 if args[0]=='run': print('1000' if 'stat' in args else 'service');sys.exit(0)
 if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.exit(0)
 """)

@@ -72,9 +72,9 @@ class EvidenceTests(unittest.TestCase):
                 ),
                 run + "/budget.tsv": (
                     "cpus\t5.37\nmemory_mib\t22618\nsource\tcpus=input,memory=input\n"
-                    "cpu_weight_probe\t100\ncpu_mapping\trunc-1.3\nbuilder_cpu_shares\t118722\n"
-                    "lane_cpu_weight\tchecks\t716\nlane_cpu_shares\tchecks\t11530\nlane_share\tchecks\t0.5\n"
-                    "lane_cpu_weight\tunit\t5976\nlane_cpu_shares\tunit\t118722\nlane_share\tunit\t4.21\n"
+                    "builder_cpu_shares\t9576\n"
+                    "lane_cpu_shares\tchecks\t1333\nlane_share\tchecks\t0.5\n"
+                    "lane_cpu_shares\tunit\t9576\nlane_share\tunit\t4.21\n"
                 ),
                 "tmp/aweb-candidate-gate-" + "b" * 40 + "-x/budget.tsv": "cpus\t1\n",
             }
@@ -86,11 +86,8 @@ class EvidenceTests(unittest.TestCase):
                 "cpus": 5.37,
                 "memory_mib": 22618,
                 "source": "cpus=input,memory=input",
-                "cpu_weight_probe": 100,
-                "cpu_mapping": "runc-1.3",
-                "builder_cpu_shares": 118722,
-                "lane_cpu_weight": {"checks": 716, "unit": 5976},
-                "lane_cpu_shares": {"checks": 11530, "unit": 118722},
+                "builder_cpu_shares": 9576,
+                "lane_cpu_shares": {"checks": 1333, "unit": 9576},
                 "lane_share": {"checks": 0.5, "unit": 4.21},
             },
         )
