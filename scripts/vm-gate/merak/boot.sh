@@ -1,5 +1,5 @@
 set -eu
-# The guest's size comes from the operator configuration, via the host script.
+# The host script passes the guest's size: merak_host.guest_size, from the host's measured capacity.
 case "${VM_CPUS:-}" in ''|*[!0-9]*) echo "VM_CPUS must be a positive integer" >&2; exit 2;; esac
 case "${VM_MEMORY_MIB:-}" in ''|*[!0-9]*) echo "VM_MEMORY_MIB must be a positive integer" >&2; exit 2;; esac
 cd /job
