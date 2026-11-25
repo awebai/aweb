@@ -135,6 +135,7 @@ user-paths() {
 }
 unit() {
   prepare_node
+  run _candidate-unit-aw
   run _candidate-unit-suites
   if [[ -f "$log_dir/test-egress/summary.tsv" ]]; then
     cat "$log_dir/test-egress/summary.tsv" >> "$summary"

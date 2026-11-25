@@ -13,7 +13,11 @@ import json
 import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
+
+# The unit suites that run xdist workers on an owned service plan.
+PARALLEL_SUITES = ("test-server", "test-naapp-lib")
 
 
 def measure():
@@ -79,6 +83,130 @@ def size(cpus, memory_mib, *, service_memory_mib, max_workers):
         "sibling_cpus": cpus,
         "server_workers": workers,
     }
+
+
+def shares(total, weights):
+    """Whole CPUs for each party, in proportion to its weight.
+
+    Each party's proportional share is rounded down; a share below 1 is raised
+    to 1, taking that CPU from the share furthest above its proportion; CPUs
+    left go to the largest remainders. The shares sum to the total and none is
+    below 1. A total below the number of parties is refused.
+    """
+    names = sorted(weights)
+    if type(total) is not int or total < len(names):
+        raise ValueError(f"{total} CPUs cannot give {len(names)} parties a CPU each")
+    weight = sum(weights[n] for n in names)
+    raw = {
+        n: (total * weights[n] / weight if weight else total / len(names))
+        for n in names
+    }
+    result = {n: max(1, int(raw[n])) for n in names}
+    while sum(result.values()) > total:
+        over = max(
+            (n for n in names if result[n] > 1),
+            key=lambda n: (result[n] - raw[n], result[n], n),
+        )
+        result[over] -= 1
+    for n in sorted(names, key=lambda n: (-(raw[n] - result[n]), -weights[n], n)):
+        if sum(result.values()) == total:
+            break
+        result[n] += 1
+    return result
+
+
+def plan(cpus, memory_mib, *, lanes, work, service_memory_mib, max_workers):
+    """The run's CPU plan from its budget and the measured work.
+
+    After static, the pending lanes run at once with shares weighted by their
+    measured work; with fewer CPUs than lanes they run one at a time, each with
+    the budget. Unit's share is divided between its parallel suites and one
+    pool for the serial suites, by the same rule; with too few CPUs for that,
+    every suite may use the whole share, and the scheduler runs them one at a
+    time. A parallel suite's xdist workers are its slots, while their service
+    memory fits half of unit's part of the memory; one worker is serial.
+    """
+    positive(cpus, memory_mib)
+    lanes = list(lanes)
+    concurrent = cpus >= len(lanes)
+    lane_cpus = (
+        shares(cpus, {lane: work["lanes"][lane] for lane in lanes})
+        if concurrent
+        else {lane: cpus for lane in lanes}
+    )
+    result = {"concurrent": concurrent, "lanes": lane_cpus}
+    if "unit" in lanes:
+        result["unit"] = unit_plan(
+            lane_cpus["unit"],
+            memory_mib * lane_cpus["unit"] // cpus if concurrent else memory_mib,
+            work["unit_suites"],
+            service_memory_mib=service_memory_mib,
+            max_workers=max_workers,
+        )
+    return result
+
+
+def unit_plan(cpus, memory_mib, suites, *, service_memory_mib, max_workers):
+    parallel = [s for s in PARALLEL_SUITES if s in suites]
+    serial = [s for s in suites if s not in parallel]
+    weights = {s: suites[s] for s in parallel}
+    if serial:
+        weights["serial"] = sum(suites[s] for s in serial)
+    concurrent = cpus >= len(weights)
+    divided = shares(cpus, weights) if concurrent else {k: cpus for k in weights}
+    slots = {s: divided[s] for s in parallel}
+    slots.update({s: 1 for s in serial})
+    workers = {}
+    for suite in parallel:
+        count = 0
+        for candidate in range(2, min(slots[suite], max_workers) + 1):
+            if service_memory_mib(candidate) > memory_mib // 2:
+                break
+            count = candidate
+        workers[suite] = count
+    return {
+        "cpus": cpus,
+        "concurrent": concurrent,
+        "slots": slots,
+        "serial_slots": divided.get("serial", 0),
+        "workers": workers,
+    }
+
+
+def run_within(capacity, requests, work):
+    """Run work(name) for every name, at most `capacity` slots at once.
+
+    Larger requests start first. A name starts only when its slots are free,
+    so the running total never exceeds the capacity. Returns each name's result,
+    or the exception it raised.
+    """
+    if any(r < 1 or r > capacity for r in requests.values()):
+        raise ValueError(f"every request must be between 1 and {capacity} slots")
+    order = sorted(requests, key=lambda n: -requests[n])
+    free = [capacity]
+    results = {}
+    condition = threading.Condition()
+
+    def run(name):
+        try:
+            results[name] = work(name)
+        except Exception as error:  # noqa: BLE001 -- reported per name
+            results[name] = error
+        with condition:
+            free[0] += requests[name]
+            condition.notify_all()
+
+    threads = []
+    for name in order:
+        with condition:
+            condition.wait_for(lambda: free[0] >= requests[name])
+            free[0] -= requests[name]
+        thread = threading.Thread(target=run, args=(name,))
+        thread.start()
+        threads.append(thread)
+    for thread in threads:
+        thread.join()
+    return results
 
 
 def budget_from(environ):

@@ -346,6 +346,11 @@ test-server: production-awid-sync
 	cd server && uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
 		uv build --out-dir "$$build_dir"
+	@# Parallel workers use one aw by path: build it once unless one is given.
+	set -eu; aw_dir=$$(mktemp -d); trap 'rm -rf "$$aw_dir"' EXIT; \
+	if [ -z "$${AW_TEST_CLI_BINARY:-}" ] && [ "$(SERVER_TEST_WORKERS)" != 0 ]; then \
+		(cd cli/go && go build -o "$$aw_dir/aw" ./cmd/aw); export AW_TEST_CLI_BINARY="$$aw_dir/aw"; \
+	fi; \
 	cd server && UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q $(SERVER_PYTEST_PARALLEL)
 
 # The naapp packages the candidate gate covers. Each provides `make lint` and
@@ -611,11 +616,15 @@ test-candidate-ledger:
 	python3 scripts/test_candidate_make_environment.py
 	python3 scripts/test_candidate_gate_ledger.py
 
-# Every unit suite at once, each in its own isolated runner. The gate budget
-# (scripts/gate_budget.py) sizes the runners and the server's worker count.
+# The one aw the unit suites use. Workers take it by path and never build.
+_candidate-unit-aw:
+	@mkdir -p "$$CANDIDATE_LOG_DIR/unit-aw"
+	cd cli/go && go build -o "$$CANDIDATE_LOG_DIR/unit-aw/aw" ./cmd/aw
+
+# The unit suites, each in its own isolated runner, within unit's CPU share:
+# docker.py divides it by the measured work (candidate-gate/measured-work.json).
 _candidate-unit-suites:
-	@set -eu; eval "$$(python3 scripts/gate_budget.py)"; \
-	python3 scripts/test-egress/docker.py --cpus "$$GATE_RUNNER_CPUS" --server-workers "$$CANDIDATE_SERVER_WORKERS" \
+	python3 scripts/test-egress/docker.py --aw-binary "$$CANDIDATE_LOG_DIR/unit-aw/aw" \
 		--evidence "$$CANDIDATE_LOG_DIR/test-egress" --suites $$(bash scripts/candidate-suite.sh --list-unit-suites)
 
 # The gate's own ledger test runs first, on the host, so a gate change that

@@ -144,7 +144,18 @@ summary, merged when the lane ends.
 
 The gate is sized from its budget, `GATE_CPUS` and `GATE_MEMORY_MIB`, which
 default to the Docker engine's CPU count and memory (`scripts/gate_budget.py`).
-Every container CPU cap and the server's worker count derive from it. The
+One rule divides it (`scripts/vm-gate/vm_gate/budget.py`): whole CPUs in
+proportion to measured work, each share at least 1, summing to the budget. The
+weights are `candidate-gate/measured-work.json`, taken from a named receipt.
+After static, the pending lanes share the budget, and each lane's runner and
+sibling containers are capped at its share; with fewer CPUs than lanes they run
+one at a time, each with the budget. Unit's share is divided between the server
+suite, naapp-lib and a pool for the serial suites; a scheduler starts a suite
+only when its slots are free, so the running suites' caps never exceed the
+share. A parallel suite's xdist workers are its slots. The unit stage first
+builds aw once (`_candidate-unit-aw`, its own target row), and every suite uses
+that binary by path (`AW_TEST_CLI_BINARY`); a parallel server worker refuses to
+build its own. The
 budget sizes a run and is not a gate input: it is recorded in the run's
 `budget.tsv` and stays out of the ledger key.
 The release command puts no deadline on the gate. The machine that runs it
@@ -185,9 +196,9 @@ are reusable only if the wrapper records successful cleanup. A missing cleanup
 verdict is recorded as a cleanup failure. A run killed outright records no
 cleanup verdict, so the stages it recorded before the kill stay reusable.
 
-When the budget allows parallel server workers, the Secrets package uses two
-whole-module shards on two Postgres and Redis pairs owned by its isolated
-runner. The
+Given AWEB_SECRETS_SHARD_SERVICES, the Secrets package target runs two
+whole-module shards on two Postgres and Redis pairs. The candidate
+gate runs it unsharded, as one of the serial suites in unit's pool. The
 measured partition is in `candidate-gate/secrets-shards.json`. The static stage
 qualifies it by collecting tests without starting services. It reports modules
 missing from collection and collected modules missing from the manifest. The

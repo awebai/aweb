@@ -6,7 +6,6 @@ Evidence survives cleanup. No host credentials or identity directories are mount
 """
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import json
 import importlib.util
 import os
@@ -241,22 +240,41 @@ def require_memory_postgres(container, port=5432):
     return storage
 
 
-# Suites whose conftest binds each xdist worker to its own service pair
-# (server/tests/worker_services.py); they run with the budget's worker count.
-PARALLEL_SUITES = ("test-server", "test-naapp-lib")
-# The Secrets package's measured two-shard partition (scripts/secrets_shards.py)
-# runs on two owned service pairs whenever the budget allows parallel workers.
-SHARDED_SUITE = "test-naapp-secrets"
-SHARD_PAIRS = 2
+_budget_spec = importlib.util.spec_from_file_location(
+    "release_budget", ROOT / "scripts/vm-gate/vm_gate/budget.py"
+)
+_budget = importlib.util.module_from_spec(_budget_spec)
+_budget_spec.loader.exec_module(_budget)
+# Where each suite runner finds the one aw the unit stage built.
+RUNNER_AW = "/tmp/aw-cli/aw"
 
 
 def budget_cpus():
-    spec = importlib.util.spec_from_file_location(
-        "release_budget", ROOT / "scripts/vm-gate/vm_gate/budget.py"
+    return _budget.budget_from(os.environ)[0]
+
+
+def unit_plan(suites, environ=os.environ):
+    """Unit's CPU share divided among its suites by their measured work.
+
+    The share is GATE_UNIT_CPUS (and GATE_UNIT_MEMORY_MIB), which the gate
+    passes from its plan; standalone, the measured budget.
+    """
+    work = json.loads((ROOT / "candidate-gate/measured-work.json").read_text())
+    missing = [suite for suite in suites if suite not in work["unit_suites"]]
+    if missing:
+        raise ValueError(f"no measured work for unit suites {missing}")
+    if environ.get("GATE_UNIT_CPUS"):
+        cpus = int(environ["GATE_UNIT_CPUS"])
+        memory_mib = int(environ["GATE_UNIT_MEMORY_MIB"])
+    else:
+        cpus, memory_mib, _ = _budget.budget_from(environ)
+    return _budget.unit_plan(
+        cpus,
+        memory_mib,
+        {suite: work["unit_suites"][suite] for suite in suites},
+        service_memory_mib=_worker_module.service_memory_mib,
+        max_workers=_worker_module.MAX_WORKERS,
     )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.budget_from(os.environ)[0]
 
 
 def main():
@@ -278,6 +296,11 @@ def main():
         "--collect-summary",
         action="store_true",
         help="collect the command's candidate summary from the runner",
+    )
+    parser.add_argument(
+        "--aw-binary",
+        type=Path,
+        help="the one aw every suite runner uses (AW_TEST_CLI_BINARY)",
     )
     parser.add_argument(
         "--suites",
@@ -425,28 +448,20 @@ def remove(containers):
         )
 
 
-def suite_services(name, server_workers):
-    """(runner workers, service pairs, exec environment) for one suite."""
-    if name in PARALLEL_SUITES:
-        return server_workers, server_workers, []
-    if name == SHARDED_SUITE and server_workers:
-        shards = [
-            {key: plan[key] for key in ("postgres_port", "redis_port")}
-            for plan in service_plan(SHARD_PAIRS)
-        ]
-        return 0, SHARD_PAIRS, ["-e", "AWEB_SECRETS_SHARD_SERVICES=" + json.dumps(shards)]
-    return 0, 0, []
-
-
-def run_isolated_suite(name, args, token, dns_ip, image, evidence, owned):
-    """Runs one suite in its own runner; returns its exit status."""
+def run_isolated_suite(name, plan, args, token, dns_ip, image, evidence, owned):
+    """Runs one suite in its own runner, capped at its slots; returns its exit."""
     directory = evidence / name
-    workers, pairs, command_env = suite_services(name, args.server_workers)
+    slots, workers = plan["slots"][name], plan["workers"].get(name, 0)
     started = time.monotonic()
     runner, _, containers = start_runner(
-        token, dns_ip, image, args.cpus, workers, name, pairs, directory
+        token, dns_ip, image, slots, workers, name, workers, directory
     )
     owned.extend(containers)
+    command_env = []
+    if args.aw_binary:
+        docker("exec", "--user", "0", runner, "mkdir", "-p", str(Path(RUNNER_AW).parent))
+        docker("cp", str(args.aw_binary), f"{runner}:{RUNNER_AW}")
+        command_env = ["-e", f"AW_TEST_CLI_BINARY={RUNNER_AW}"]
     with (directory / "suite.log").open("w") as log:
         result = subprocess.run(
             [
@@ -471,27 +486,32 @@ def run_isolated_suite(name, args, token, dns_ip, image, evidence, owned):
         print(f"TEST SUMMARY COPY FAILED for {name}: {error}", flush=True)
         status = status or 1
     print(
-        f"unit suite {name}: exit {status} in {time.monotonic() - started:.0f}s",
+        f"unit suite {name}: exit {status} in {time.monotonic() - started:.0f}s"
+        f" ({slots} CPUs, {workers} workers)",
         flush=True,
     )
     return status
 
 
 def run_concurrent_suites(args, token, dns_ip, image, evidence, owned):
-    with ThreadPoolExecutor(max_workers=len(args.suites)) as pool:
-        futures = {
-            name: pool.submit(
-                run_isolated_suite, name, args, token, dns_ip, image, evidence, owned
-            )
-            for name in args.suites
-        }
+    """Every suite within unit's share: the running suites' caps never exceed it."""
+    plan = unit_plan(args.suites)
+    (evidence / "unit-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
+    print(f"unit plan: {json.dumps(plan, sort_keys=True)}", flush=True)
+    results = _budget.run_within(
+        plan["cpus"],
+        plan["slots"],
+        lambda name: run_isolated_suite(
+            name, plan, args, token, dns_ip, image, evidence, owned
+        ),
+    )
     status = 0
     with (evidence / "summary.tsv").open("w") as combined:
         for name in args.suites:
-            try:
-                result = futures[name].result()
-            except Exception as error:  # A suite that cannot start fails the stage.
-                print(f"unit suite {name}: could not run: {error!r}", flush=True)
+            result = results[name]
+            if isinstance(result, Exception):
+                # A suite that cannot start fails the stage.
+                print(f"unit suite {name}: could not run: {result!r}", flush=True)
                 result = 70
             summary = evidence / name / "summary.tsv"
             if summary.is_file():

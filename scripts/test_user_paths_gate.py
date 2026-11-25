@@ -258,6 +258,7 @@ class FrozenGateInput(unittest.TestCase):
                 for relative in (
                     "scripts/vm-gate/vm_gate/budget.py",
                     "server/tests/worker_services.py",
+                    "candidate-gate/measured-work.json",
                 ):
                     (repo / relative).parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(ROOT / relative, repo / relative)
@@ -277,7 +278,7 @@ class FrozenGateInput(unittest.TestCase):
                 (repo / "scripts/candidate-host-pressure.py").write_text(
                     'import pathlib,sys\nif sys.argv[1]=="capture": pathlib.Path(sys.argv[2]).write_text("{}")\n'
                 )
-                (repo / "candidate-gate").mkdir()
+                (repo / "candidate-gate").mkdir(exist_ok=True)
                 (repo / "candidate-gate/Dockerfile").write_text("FROM scratch\n")
                 (repo / "naapp/library/test-vectors/blueprints/team").mkdir(
                     parents=True

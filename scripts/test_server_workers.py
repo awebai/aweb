@@ -106,11 +106,21 @@ class ServerWorkerTests(unittest.TestCase):
             )
         )
 
-    def test_server_and_naapp_lib_get_the_budget_worker_plan(self):
+    def test_unit_share_is_divided_by_measured_work(self):
+        suites = [
+            "test-server", "test-awid", "test-naapp-lib", "test-naapp-secrets", "test-cli",
+        ]
+        env = {"GATE_UNIT_CPUS": "8", "GATE_UNIT_MEMORY_MIB": "34428"}
+        plan = runner.unit_plan(suites, env)
+        self.assertEqual(plan["cpus"], 8)
+        self.assertEqual(set(plan["slots"]), set(suites))
         for suite in ("test-server", "test-naapp-lib"):
-            self.assertEqual(runner.suite_services(suite, 11), (11, 11, []))
-            self.assertEqual(runner.suite_services(suite, 0), (0, 0, []))
-        self.assertEqual(runner.suite_services("test-awid", 11), (0, 0, []))
+            self.assertLessEqual(plan["workers"][suite], plan["slots"][suite])
+        parallel = plan["slots"]["test-server"] + plan["slots"]["test-naapp-lib"]
+        self.assertEqual(parallel + plan["serial_slots"], 8)
+        self.assertEqual(plan["slots"]["test-awid"], 1)
+        with self.assertRaisesRegex(ValueError, "no measured work"):
+            runner.unit_plan(["test-unmeasured"], env)
 
     def test_a_one_worker_or_oversized_plan_is_refused(self):
         for workers in (1, -1, runner._worker_module.MAX_WORKERS + 1):
@@ -170,8 +180,8 @@ print(json.dumps({'pg_port':DEFAULT_TEST_CONFIG.port,'redis':test_agent_wake.RED
                 self.assertEqual(data["redis"], f"redis://127.0.0.1:{6379 + index}/0")
                 self.assertEqual(data["env"], data["redis"])
 
-    def test_unit_stage_runs_every_suite_at_the_budget_size(self):
-        """The real unit recipe hands docker.py the budget's cap and workers."""
+    def test_unit_stage_hands_every_suite_the_one_aw(self):
+        """The real unit recipe gives docker.py the prebuilt aw and every suite."""
         with tempfile.TemporaryDirectory() as tmp:
             capture = Path(tmp) / "docker-py-argv.json"
             shim = Path(tmp) / "python3"
@@ -205,8 +215,8 @@ print(json.dumps({'pg_port':DEFAULT_TEST_CONFIG.port,'redis':test_agent_wake.RED
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             argv = json.loads(capture.read_text())
-        self.assertEqual(argv[argv.index("--cpus") + 1], "12")
-        self.assertEqual(argv[argv.index("--server-workers") + 1], "11")
+        self.assertEqual(argv[argv.index("--aw-binary") + 1], f"{tmp}/unit-aw/aw")
+        self.assertNotIn("--server-workers", argv)
         suites = argv[argv.index("--suites") + 1 :]
         self.assertEqual(suites[0], "test-server")
         self.assertIn("test-naapp-secrets", suites)

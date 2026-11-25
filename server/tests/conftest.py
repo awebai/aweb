@@ -137,6 +137,12 @@ def aw_cli_binary(tmp_path_factory):
     if configured:
         # Preserve the explicit artifact override used by release harnesses.
         return Path(configured)
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        # Every worker compiling aw at once starved the gate (vm-7b34f721).
+        raise RuntimeError(
+            "parallel server workers use one prebuilt aw: set AW_TEST_CLI_BINARY "
+            "(make test-server builds it once)"
+        )
     binary = tmp_path_factory.mktemp("aw-cli") / ("aw.exe" if os.name == "nt" else "aw")
     repo = Path(__file__).resolve().parents[2]
     started = time.monotonic()

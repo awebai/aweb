@@ -1,0 +1,26 @@
+{
+  "receipt": "vm-7b34f721a68d4c4faef631e677065e38",
+  "commit": "298865dcd8a0f51d76121fa144ab6c8112d8475e",
+  "measure": "elapsed seconds of each target in the receipt, multiplied by the worker processes it ran with (11 xdist workers for test-server and test-naapp-lib, 1 otherwise): an upper bound on its CPU-seconds, used as relative weights. The receipt has no per-container CPU accounting. A lane's work is the sum of its targets. Integration was stopped at 2209 s after unit's red; its figure sums the targets it completed, a lower bound.",
+  "lanes": {
+    "checks": 1115,
+    "user-paths": 174,
+    "unit": 25872,
+    "artifacts": 289,
+    "integration": 2107
+  },
+  "unit_suites": {
+    "test-server": 13981,
+    "test-awid": 690,
+    "test-naapp-lib": 7557,
+    "test-naapp-folio": 130,
+    "test-naapp-library": 104,
+    "test-naapp-secrets": 1381,
+    "test-naapp-logs": 508,
+    "test-cli": 1124,
+    "test-cli-auth-v2": 155,
+    "_candidate-unit-channel": 38,
+    "_candidate-unit-channel-core": 173,
+    "_candidate-unit-pi": 31
+  }
+}

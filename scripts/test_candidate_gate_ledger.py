@@ -360,6 +360,11 @@ def main() -> None:
             ROOT / "scripts/vm-gate/vm_gate/budget.py",
             repo / "scripts/vm-gate/vm_gate/budget.py",
         )
+        (repo / "candidate-gate").mkdir(exist_ok=True)
+        shutil.copy2(
+            ROOT / "candidate-gate/measured-work.json",
+            repo / "candidate-gate/measured-work.json",
+        )
         (repo / "server/tests").mkdir(parents=True)
         shutil.copy2(
             ROOT / "server/tests/worker_services.py",
@@ -523,6 +528,18 @@ candidate-gate:
             len(stage_rows(version_rows)) == len(stage_rows(rows)) + 1
             and version_rows[-1].split("\t")[0] != rows[-1].split("\t")[0]
         )
+        # Fewer CPUs than lanes: the lanes run one at a time, each with the
+        # budget, and the run still passes and records every stage.
+        env["CLI_VERSION"] = "1.2.5"
+        serial_env = dict(env, GATE_CPUS="2", GATE_MEMORY_MIB="8192")
+        serial = run(repo, *gate, env=dict(serial_env, AWEB_CANDIDATE_STAGES="checks user-paths unit"))
+        (evidence / "serial-lanes.log").write_text(serial.stdout + serial.stderr)
+        assert serial.returncode == 0, f"serial-lanes: see {evidence}/serial-lanes.log"
+        serial_logs = Path(re.findall(r"logs: (\S+)", serial.stdout + serial.stderr)[-1])
+        assert "lanes_concurrent\t0" in (serial_logs / "budget.tsv").read_text()
+        order = re.findall(r"^gate lane (\S+): exit 0", serial.stdout, flags=re.MULTILINE)
+        assert order == ["checks", "user-paths", "unit"], order
+        version_rows = ledger.read_text().splitlines()
         env["CLI_VERSION"] = "1.2.3"
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "7 * 6 == 42"))
         checked(repo, "git", "commit", "-qam", "changed tree")

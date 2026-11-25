@@ -73,7 +73,9 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(values["GATE_CPUS"], "6")
         self.assertEqual(values["GATE_MEMORY_MIB"], "20000")
         self.assertEqual(values["GATE_BUDGET_SOURCE"], "cpus=input,memory=input")
-        self.assertEqual(values["CANDIDATE_SERVER_WORKERS"], "5")
+        # Unit alone (the default lanes) has the whole budget.
+        self.assertEqual(values["GATE_UNIT_CPUS"], "6")
+        self.assertEqual(values["GATE_LANES_CONCURRENT"], "1")
         for bad in ("0", "two", "1.5"):
             env["GATE_CPUS"] = bad
             refused = subprocess.run(

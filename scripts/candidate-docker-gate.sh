@@ -167,15 +167,20 @@ gate_setting() {
 # The budget (GATE_CPUS, GATE_MEMORY_MIB, else the Docker engine's own size)
 # sizes the run. It is not a gate input: a pass at one size is the same pass at
 # another, so it stays out of the key and goes into the run's evidence.
+read_budget() {
+  local name value
+  while IFS='=' read -r name value; do
+    case "$name" in
+      GATE_CPUS|GATE_MEMORY_MIB|GATE_BUDGET_SOURCE|GATE_RUNNER_CPUS|GATE_BUILDER_CPUS|GATE_SIBLING_CPUS|GATE_LANES_CONCURRENT|GATE_UNIT_CPUS|GATE_UNIT_MEMORY_MIB|GATE_LANE_CPUS_[A-Z_]*)
+        [[ "$value" =~ ^[A-Za-z0-9=,._-]+$ ]] || refuse "unexpected gate budget value for $name"
+        printf -v "$name" '%s' "$value" ;;
+      *) refuse "unexpected gate budget output: $name" ;;
+    esac
+  done
+}
 budget_assignments="$(python3 "$ROOT/scripts/gate_budget.py")" \
   || refuse "the gate budget is invalid or unreadable"
-while IFS='=' read -r name value; do
-  case "$name" in
-    GATE_CPUS|GATE_MEMORY_MIB|GATE_BUDGET_SOURCE|GATE_RUNNER_CPUS|GATE_BUILDER_CPUS|GATE_SIBLING_CPUS|CANDIDATE_SERVER_WORKERS)
-      printf -v "$name" '%s' "$value" ;;
-    *) refuse "unexpected gate budget output: $name" ;;
-  esac
-done <<<"$budget_assignments"
+read_budget <<<"$budget_assignments"
 gate_setting AWEB_CANDIDATE_RUNNER_CPUS "$GATE_RUNNER_CPUS"
 gate_setting AWEB_CANDIDATE_RUNNER_MEMORY 8g
 gate_setting AWEB_CANDIDATE_RUNNER_PIDS 2048
@@ -287,8 +292,19 @@ suite_projects=(
 : > "$LOG_DIR/owned-resources.tsv"
 printf '%s\n' "$run_id" > "$LOG_DIR/run-id"
 printf '%s\n' "$SYNCHRONIZED_MAIN_SHA" > "$LOG_DIR/synchronized-main-sha"
-printf 'cpus\t%s\nmemory_mib\t%s\nsource\t%s\nserver_workers\t%s\n' \
-  "$GATE_CPUS" "$GATE_MEMORY_MIB" "$GATE_BUDGET_SOURCE" "$CANDIDATE_SERVER_WORKERS" > "$LOG_DIR/budget.tsv"
+# The run's plan: the lanes after static share the measured budget, weighted
+# by candidate-gate/measured-work.json; the same budget, not measured again.
+plan_assignments="$(GATE_LANES="${pending/static/}" GATE_CPUS="$GATE_CPUS" GATE_MEMORY_MIB="$GATE_MEMORY_MIB" \
+  python3 "$ROOT/scripts/gate_budget.py")" || refuse "the gate's CPU plan is invalid"
+read_budget <<<"$plan_assignments"
+{
+  printf 'cpus\t%s\nmemory_mib\t%s\nsource\t%s\nlanes_concurrent\t%s\n' \
+    "$GATE_CPUS" "$GATE_MEMORY_MIB" "$GATE_BUDGET_SOURCE" "$GATE_LANES_CONCURRENT"
+  for lane in ${pending/static/}; do
+    share="GATE_LANE_CPUS_$(printf '%s' "$lane" | tr 'a-z-' 'A-Z_')"
+    printf 'lane_cpus\t%s\t%s\n' "$lane" "${!share}"
+  done
+} > "$LOG_DIR/budget.tsv"
 source "$ROOT/scripts/candidate-cleanup.sh"
 trap 'cleanup "$?"' EXIT
 trap 'cleanup 130' INT
@@ -499,12 +515,18 @@ done
 # so it is written whatever the runner's exit.
 run_lane() {
   local lane="$1" name="$runner_name-$1" builder="$builder_name" lane_status=0
-  local pg="$owned_network-$1-postgres" redis="$owned_network-$1-redis"
+  local pg="$owned_network-$1-postgres" redis="$owned_network-$1-redis" cpus="$runner_cpus" share
+  # Static runs alone with the budget. Every other lane's runner and sibling
+  # containers are capped at the lane's share.
+  if [[ "$lane" != static ]]; then
+    share="GATE_LANE_CPUS_$(printf '%s' "$lane" | tr 'a-z-' 'A-Z_')"
+    cpus="${!share}"
+  fi
   printf 'runner\t%s\n' "$name" >> "$LOG_DIR/owned-resources.tsv"
   docker run --rm --init \
     --name "$name" \
     --label "aweb.candidate-gate=$resource_label" \
-    --cpus "$runner_cpus" \
+    --cpus "$cpus" \
     --memory "$runner_memory" \
     --pids-limit "$runner_pids" \
     --network "$owned_network" \
@@ -517,7 +539,9 @@ run_lane() {
     -e AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" \
     -e GATE_CPUS="$GATE_CPUS" \
     -e GATE_MEMORY_MIB="$GATE_MEMORY_MIB" \
-    -e AWEB_CANDIDATE_SIBLING_CPUS="$sibling_cpus" \
+    -e AWEB_CANDIDATE_SIBLING_CPUS="$cpus" \
+    -e GATE_UNIT_CPUS="${GATE_UNIT_CPUS:-}" \
+    -e GATE_UNIT_MEMORY_MIB="${GATE_UNIT_MEMORY_MIB:-}" \
     -e AWEB_CANDIDATE_SIBLING_MEMORY="$sibling_memory" \
     -e AWEB_CANDIDATE_SIBLING_PIDS="$sibling_pids" \
     -e DOCKER_BUILDKIT=1 \
@@ -620,9 +644,15 @@ if [[ " $pending " == *" static "* ]]; then
 fi
 lane_started=$SECONDS
 declare -A lane_ended=() lane_pid=()
+# With a share for every lane they all start now; with fewer CPUs than lanes,
+# one at a time, each with the budget, the next after the last passes.
+start_lane() {
+  run_lane "$1" &
+  lane_pid[$1]=$!
+}
 for lane in $lanes; do
-  run_lane "$lane" &
-  lane_pid[$lane]=$!
+  start_lane "$lane"
+  [[ "$GATE_LANES_CONCURRENT" == 1 ]] || break
 done
 first_red=""
 remaining="$(wc -w <<<"$lanes")"
@@ -630,6 +660,16 @@ while (( remaining > 0 )); do
   sleep 2
   for lane in $lanes; do
     [[ -z "${lane_ended[$lane]:-}" ]] || continue
+    if [[ -z "${lane_pid[$lane]:-}" ]]; then
+      # Not started: one at a time, after the last one passed.
+      [[ -n "$first_red" ]] || continue
+      lane_ended[$lane]=1
+      remaining=$(( remaining - 1 ))
+      printf 'candidate: %s STOPPED (after %s FAILED)\n' "$lane" "$first_red"
+      printf '%s\tSTOPPED\t-\t0s\tafter %s FAILED\n' "$lane" "$first_red" >> "$LOG_DIR/summary.tsv"
+      printf 'candidate stage-verdict: %s STOPPED\n' "$lane"
+      continue
+    fi
     # A lane process that died without its exit file is an infrastructure end.
     if [[ ! -f "$LOG_DIR/lanes/$lane.exit" ]] && ! kill -0 "${lane_pid[$lane]}" 2>/dev/null; then
       [[ -f "$LOG_DIR/lanes/$lane.exit" ]] || printf '70\n' > "$LOG_DIR/lanes/$lane.exit"
@@ -639,12 +679,20 @@ while (( remaining > 0 )); do
     remaining=$(( remaining - 1 ))
     if [[ -z "$first_red" ]]; then
       finish_lane "$lane" ""
+      if lane_passed "$lane" && [[ "$GATE_LANES_CONCURRENT" != 1 ]]; then
+        for next in $lanes; do
+          [[ -n "${lane_pid[$next]:-}" ]] && continue
+          lane_started=$SECONDS
+          start_lane "$next"
+          break
+        done
+      fi
       if ! lane_passed "$lane"; then
         # The first red stops every other lane: the run fails fast.
         first_red="$lane"
         status=1
         for other in $lanes; do
-          [[ -n "${lane_ended[$other]:-}" ]] || docker kill --signal TERM "$runner_name-$other" >/dev/null 2>&1 || true
+          [[ -n "${lane_ended[$other]:-}" || -z "${lane_pid[$other]:-}" ]] || docker kill --signal TERM "$runner_name-$other" >/dev/null 2>&1 || true
         done
         stop_deadline=$(( SECONDS + 120 ))
       fi
@@ -654,7 +702,7 @@ while (( remaining > 0 )); do
   done
   if [[ -n "$first_red" ]] && (( remaining > 0 && SECONDS > stop_deadline )); then
     for other in $lanes; do
-      [[ -n "${lane_ended[$other]:-}" ]] || docker kill --signal KILL "$runner_name-$other" >/dev/null 2>&1 || true
+      [[ -n "${lane_ended[$other]:-}" || -z "${lane_pid[$other]:-}" ]] || docker kill --signal KILL "$runner_name-$other" >/dev/null 2>&1 || true
     done
   fi
 done
