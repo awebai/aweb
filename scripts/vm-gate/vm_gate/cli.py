@@ -110,9 +110,9 @@ def release_job(args, *, factory=None, out=None):
             raise Refused(f"operator config needs {args.machine}.root for its jobs")
         gate_only = args.action == "cloud-gate"
         files = release.built_files(args.files)
-        key = None if gate_only else release.hermes_key(config.get("hermes_key_file"))
+        key = release.hermes_key(config.get("hermes_key_file"))
         cloud_repo = Path(args.cloud_repo).resolve()
-        record.update(release.cloud_main(cloud_repo, args.cloud_sha))
+        record.update(release.cloud_main(cloud_repo, args.cloud_sha, gate=gate_only))
         run_id = "vm-" + uuid.uuid4().hex
         directory = Path(config["state_root"]) / "runs" / run_id
         directory.mkdir(parents=True, mode=0o700)
@@ -152,7 +152,12 @@ def release_job(args, *, factory=None, out=None):
         )
         config["repo"] = str(repo)
         bundle = directory / "cloud.bundle"
-        bundle_sha256 = release.cloud_bundle(cloud_repo, args.cloud_sha, bundle)
+        bundle_sha256 = release.cloud_bundle(
+            cloud_repo,
+            args.cloud_sha,
+            bundle,
+            main=record["real_main"]["ac"] if gate_only else None,
+        )
         archive = None if gate_only else directory / "cloud-image.tar"
         image = (
             None if gate_only else release.image_archive(args.cloud_image, run_id, archive)
@@ -214,7 +219,11 @@ def release_job(args, *, factory=None, out=None):
             result=result,
             cloud_sha=args.cloud_sha,
             image=image,
-            main={k: record[k] for k in ("real_main", "ac_parent_of_c")},
+            main={
+                k: record[k]
+                for k in ("real_main", "ac_parent_of_c", "ac_main_is_ancestor_of_c")
+                if k in record
+            },
             files=files,
             aweb=args.aweb_sha,
             launcher_sha=git(launcher, "rev-parse", "HEAD").stdout.strip(),

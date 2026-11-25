@@ -44,6 +44,12 @@ class CloudFixture(GitFixture):
         # make release pins: the version commit C on top of real main.
         self.cloud_sha = commit(self.cloud, "version", "0.8.86")
 
+    def train_head(self):
+        """A train head several commits over main, as train C's is."""
+        for name in ("train-1", "train-2", "train-3"):
+            head = commit(self.cloud, name)
+        return head
+
     def move_main(self):
         other = self.root / "teammate"
         git(self.root, "clone", str(self.cloud_origin), str(other))
@@ -214,28 +220,35 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         def no_image(*args, **kwargs):
             raise AssertionError("a Cloud gate builds and ships no image")
 
-        def no_key(*args, **kwargs):
-            raise AssertionError("a Cloud gate needs no Hermes key")
-
+        key = self.root / "hermes.key"
         with patch.object(release, "image_archive", no_image), patch.object(
-            release, "hermes_key", no_key
+            release, "hermes_key", lambda path: key
         ):
             code, receipt = self.invoke_cloud_gate()
         self.assertEqual(len(self.calls), 1, receipt)
         run = self.calls[0]
-        self.assertIn("make gate ", run["command"])
+        self.assertIn("make gate GATE_STAGES=all ", run["command"])
+        self.assertIn("AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE", run["command"])
         self.assertNotIn("make release-gate", run["command"])
         self.assertNotIn("AC_CANDIDATE_RELEASE_IMAGE", run["command"])
         self.assertNotIn("cloud-image.tar", run["command"])
         self.assertIn("python3 -m vm_gate.budget split", run["command"])
         inputs = run["executor_factory"].keywords["release"]
         self.assertIsNone(inputs["archive"])
-        self.assertIsNone(inputs["hermes_key"])
+        self.assertEqual(inputs["hermes_key"], key)
         self.assertEqual(inputs["files"], [])
-        self.assertEqual(receipt["cloud"]["command"], "make gate")
+        self.assertEqual(receipt["cloud"]["command"], "make gate GATE_STAGES=all")
+        self.assertEqual(receipt["real_main"], {"ac": self.cloud_main})
         self.assertNotIn("image", receipt["cloud"])
         self.assertNotIn("aweb", receipt)
         self.assertEqual(receipt["cloud"]["sha"], self.cloud_sha)
+
+    def test_a_cloud_gate_without_a_hermes_key_refuses_before_boot(self):
+        self.key.unlink()
+        code, receipt = self.invoke_cloud_gate()
+        self.assertEqual(code, 2)
+        self.assertIn("hermes_key_file", receipt["vm_gate"]["error"])
+        self.assertEqual(self.calls, [])
 
     def test_a_cloud_gate_refuses_a_moved_main_like_a_release(self):
         moved = self.move_main()
@@ -312,6 +325,26 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("hermes_key_file", receipt["vm_gate"]["error"])
 
+    def test_a_gate_admits_a_train_head_over_real_main_and_bundles_both(self):
+        head = self.train_head()
+        with self.assertRaisesRegex(Refused, "Cloud main moved"):
+            release.cloud_main(self.cloud, head)
+        recorded = release.cloud_main(self.cloud, head, gate=True)
+        self.assertEqual(recorded["real_main"], {"ac": self.cloud_main})
+        out = self.root / "train.bundle"
+        release.cloud_bundle(self.cloud, head, out, main=self.cloud_main)
+        bare = self.root / "train-restore.git"
+        git(self.root, "init", "--quiet", "--bare", str(bare))
+        git(bare, "fetch", "--quiet", str(out), "refs/*:refs/*")
+        self.assertEqual(git(bare, "rev-parse", "refs/heads/main"), self.cloud_main)
+        self.assertEqual(git(bare, "rev-parse", "refs/heads/candidate"), head)
+
+    def test_a_gate_refuses_a_head_without_real_main_in_its_history(self):
+        git(self.cloud, "checkout", "--quiet", "--orphan", "unrelated")
+        unrelated = commit(self.cloud, "unrelated")
+        with self.assertRaisesRegex(Refused, "not over real main"):
+            release.cloud_main(self.cloud, unrelated, gate=True)
+
     def test_release_commit_on_real_main_records_main(self):
         self.assertEqual(
             release.cloud_main(self.cloud, self.cloud_sha),
@@ -371,6 +404,7 @@ STUB_MAKE = """#!/bin/bash
 target="$1"
 env | sort > "$STUB_RECORD/$target.env"
 pwd > "$STUB_RECORD/$target.pwd"
+printf '%s\n' "$@" > "$STUB_RECORD/$target.args"
 case "$target" in
   release-gate|gate) sleep "${CLOUD_SLEEP:-0}"; exit "${CLOUD_EXIT:-0}" ;;
   candidate-gate) exit "${AWEB_EXIT:-0}" ;;
@@ -541,11 +575,49 @@ class GuestScript(CloudFixture, unittest.TestCase):
         self.assertFalse((self.record / "release-gate.env").exists())
         self.assertFalse((self.record / "candidate-gate.env").exists())
         self.assertNotIn("AC_CANDIDATE_RELEASE_IMAGE", cloud)
-        self.assertNotIn("AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE", cloud)
+        self.assertEqual(cloud["AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE"], release.GUEST_KEY)
+        self.assertEqual((self.record / "gate.args").read_text().split(), ["gate", "GATE_STAGES=all"])
         self.assertEqual((cloud["GATE_CPUS"], cloud["GATE_MEMORY_MIB"]), ("12", "61440"))
         recorded = json.loads((self.logs / "release/split.json").read_text())
         self.assertEqual(recorded["cloud"], {"cpus": 12, "memory_mib": 61440})
         self.assertEqual((self.logs / "release/cloud/exit").read_text(), "0\n")
+
+    def test_a_cloud_gate_checks_the_train_head_out_over_real_main(self):
+        head = self.train_head()
+        bundle = release.cloud_bundle(
+            self.cloud, head, self.remote / "cloud.bundle", main=self.cloud_main
+        )
+        script = release.guest_script(
+            cloud_sha=head,
+            bundle_sha256=bundle,
+            archive_sha256=None,
+            image=None,
+            member=None,
+            lock_source_sha=None,
+            aweb=None,
+            files={},
+            remote=str(self.remote),
+            logs=str(self.logs),
+            home=str(self.home),
+            cloud_target="gate",
+        )
+        environment = {
+            "PATH": f"{self.stubs}:{os.environ['PATH']}",
+            "HOME": str(self.home),
+            "STUB_RECORD": str(self.record),
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "PYTHONPATH": str(Path(release.__file__).resolve().parents[1]),
+        }
+        result = subprocess.run(
+            ["bash", "-c", script], env=environment, capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        source = self.home / "cloud-source"
+        self.assertEqual(git(source, "rev-parse", "HEAD"), head)
+        self.assertEqual(git(source, "rev-parse", "origin/main"), self.cloud_main)
+        self.assertEqual(
+            (self.record / "gate.pwd").read_text().strip(), str(source)
+        )
 
     def test_an_unknown_cloud_target_is_refused(self):
         with self.assertRaises(ValueError):
@@ -843,6 +915,49 @@ class Receipt(unittest.TestCase):
             timeout=9000,
             directory=directory,
         )
+
+    def gate_record(self, directory, rows):
+        self.evidence(directory, "cloud", exit_code=0)
+        run = Path(directory) / f"evidence/tmp/ac-candidate-gate-{'c' * 40}-stages"
+        run.mkdir(parents=True)
+        (run / "summary.tsv").write_text(
+            "# stage run, NOT release evidence: all\n"
+            + "".join(f"{stage}\t{verdict}\t{stage}.log\t1s\n" for stage, verdict in rows)
+        )
+        return release.receipt(
+            machine="merak",
+            platform="linux/amd64",
+            run_id="vm-1",
+            result={"exit": 0, "infrastructure": None},
+            cloud_sha="c" * 40,
+            image=None,
+            main={"real_main": {"ac": "e" * 40}, "ac_main_is_ancestor_of_c": True},
+            files={},
+            aweb=None,
+            launcher_sha="1" * 40,
+            timeout=9000,
+            directory=directory,
+        )
+
+    def test_a_cloud_gate_is_green_only_when_every_stage_passed(self):
+        every = [(stage, "PASSED") for stage in release.CLOUD_GATE_STAGES]
+        with tempfile.TemporaryDirectory() as tmp:
+            record = self.gate_record(tmp, every)
+            self.assertEqual(release.exit_code(record), release.GREEN)
+            self.assertEqual(record["cloud"]["command"], "make gate GATE_STAGES=all")
+            self.assertEqual(set(record["cloud"]["stages"].values()), {"PASSED"})
+            self.assertEqual(record["real_main"], {"ac": "e" * 40})
+        for broken in (
+            every[:-1],
+            every[:-1] + [("cloud-user-journey", "FAILED")],
+            every[:-1] + [("cloud-user-journey", "BLOCKED")],
+        ):
+            with self.subTest(last=broken[-1]), tempfile.TemporaryDirectory() as tmp:
+                record = self.gate_record(tmp, broken)
+                # The suite's exit was 0; the stage rows still make it red.
+                self.assertEqual(record["cloud"]["exit"], 0)
+                self.assertEqual(release.exit_code(record), release.RED)
+                self.assertNotEqual(record["cloud"]["stages"]["cloud-user-journey"], "PASSED")
 
     def test_green_needs_both_suites_and_the_same_rebuilt_files(self):
         files = {"aweb-1.27.54-py3-none-any.whl": "9" * 64}

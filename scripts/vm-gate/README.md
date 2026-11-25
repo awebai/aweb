@@ -263,13 +263,23 @@ does not on its own identify a physical host or prove noisy-neighbor causation.
 ### Cloud gate
 
 `vm-gate cloud-gate --machine M --cloud-repo P --cloud-sha C --receipt R` runs
-Cloud's plain `make gate` at commit C on machine M, through the release job's
-own path. That path covers the Cloud bundle with a frozen main, the
-guest-measured budget split (Cloud has the whole guest), the cpu.stat sampler,
-evidence collection (including Cloud's `/tmp/ac-candidate-gate-*` run
-directory), the receipt and the ledger lease. It builds no image, ships no
-Hermes key and runs no aweb suite. A moved Cloud main refuses it, as it refuses
-a release. The guest runs the launcher's own aweb commit.
+Cloud's full train gate, `make gate GATE_STAGES=all` (every stage, journeys
+included, without the release-candidate checks), through the release job's own
+path. Shared with a release:
+- the Hermes key (operator `hermes_key_file`, 0600, removed before collect);
+- the guest-measured budget split (Cloud has the whole guest);
+- the cpu.stat sampler and evidence collection, including Cloud's
+  `/tmp/ac-candidate-gate-*` run directory;
+- the receipt and the ledger lease.
+
+Differences from a release:
+- C is a train head: admission requires real main in its history, and the
+  bundle carries real main as main plus C, checked out detached.
+- It builds no image and runs no aweb suite. The guest runs the launcher's own
+  aweb commit.
+- A stage run writes no Cloud ledger record, so the receipt is the evidence.
+  It records each Cloud stage's verdict from Cloud's own summary, and it is
+  green only when every stage shows PASSED. A missing row is red.
 
 ### Merak
 

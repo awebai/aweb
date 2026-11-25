@@ -66,8 +66,12 @@ def check_machine(machine, config):
     return platform, backend
 
 
-def cloud_main(repo, cloud_sha):
-    """Refuse before boot unless the release commit sits directly on real main."""
+def cloud_main(repo, cloud_sha, gate=False):
+    """Refuse before boot unless C is where its job needs it on real main.
+
+    A release's version commit C sits directly on real main. A gate's C is a
+    train head: real main must be in its history.
+    """
     if not SHA.fullmatch(cloud_sha):
         raise Refused("--cloud-sha must be a full commit SHA")
     git(
@@ -79,6 +83,18 @@ def cloud_main(repo, cloud_sha):
         "+refs/heads/main:refs/remotes/origin/main",
     )
     real_main = git(repo, "rev-parse", "refs/remotes/origin/main^{commit}")
+    if gate:
+        over = subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", real_main, cloud_sha],
+            capture_output=True,
+            text=True,
+        )
+        if over.returncode:
+            raise Refused(
+                f"Cloud main moved: {cloud_sha} is not over real main {real_main}; "
+                "rebase the train onto main"
+            )
+        return {"real_main": {"ac": real_main}, "ac_main_is_ancestor_of_c": True}
     parent = git(repo, "rev-parse", cloud_sha + "^{commit}^")
     if parent != real_main:
         raise Refused(
@@ -88,8 +104,12 @@ def cloud_main(repo, cloud_sha):
     return {"real_main": {"ac": real_main}, "ac_parent_of_c": parent}
 
 
-def cloud_bundle(repo, cloud_sha, out):
-    """A bundle whose main is the release commit, without touching the Cloud repo's refs."""
+def cloud_bundle(repo, cloud_sha, out, main=None):
+    """A bundle for the guest, without touching the Cloud repo's refs.
+
+    A release's main is its commit C. A gate's main is real main, and C goes
+    as refs/heads/candidate, so the guest's origin/main stays real main.
+    """
     common = Path(git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
     with tempfile.TemporaryDirectory() as scratch:
         borrowed = Path(scratch) / "borrowed.git"
@@ -97,8 +117,12 @@ def cloud_bundle(repo, cloud_sha, out):
         (borrowed / "objects/info/alternates").write_text(
             str(common / "objects") + "\n"
         )
-        git(borrowed, "update-ref", "refs/heads/main", cloud_sha)
-        git(borrowed, "bundle", "create", str(out), "refs/heads/main")
+        git(borrowed, "update-ref", "refs/heads/main", main or cloud_sha)
+        refs = ["refs/heads/main"]
+        if main:
+            git(borrowed, "update-ref", "refs/heads/candidate", cloud_sha)
+            refs.append("refs/heads/candidate")
+        git(borrowed, "bundle", "create", str(out), *refs)
         git(borrowed, "bundle", "verify", str(out))
     return sha256(out)
 
@@ -190,7 +214,10 @@ def hermes_key(path):
     if not path:
         raise Refused("operator config requires hermes_key_file for the Cloud journeys")
     path = Path(path)
-    info = path.lstat()
+    try:
+        info = path.lstat()
+    except OSError as error:
+        raise Refused(f"hermes_key_file is unreadable: {error.strerror}") from None
     if (
         not stat.S_ISREG(info.st_mode)
         or info.st_uid != os.getuid()
@@ -249,6 +276,8 @@ def guest_script(
         f"AWEB_GATE_LEDGER={release}/cloud/ledger.tsv",
         f"AWEB_GATE_LOG_DIR={release}/cloud/gate-logs",
         f"DOCKER_CONFIG={release}/cloud/empty-docker-config",
+        # Both jobs run the Hermes journey, which needs its isolated credential.
+        f"AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE={key}",
     ]
     if cloud_target == "release-gate":
         cloud_env += [
@@ -256,8 +285,14 @@ def guest_script(
             f"AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE={remote}/cloud-image.tar",
             f"AC_CANDIDATE_RELEASE_IMAGE_MEMBER={member}",
             f"AC_CANDIDATE_AWEB_LOCK_SOURCE_SHA={lock_source_sha}",
-            f"AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE={key}",
         ]
+    # A train gate runs every stage on its own head; a release runs release-gate.
+    cloud_make = "release-gate" if cloud_target == "release-gate" else "gate GATE_STAGES=all"
+    checkout = (
+        ""
+        if cloud_target == "release-gate"
+        else f"git -C cloud-source checkout --quiet --detach {Q(cloud_sha)} || exit 70"
+    )
     image_check = (
         f"echo {Q(archive_sha256 + '  ' + remote + '/cloud-image.tar')} | sha256sum -c - || exit 70"
         if cloud_target == "release-gate"
@@ -314,6 +349,7 @@ git init --quiet --bare cloud-origin || exit 70
 git --git-dir=cloud-origin fetch --quiet {Q(remote + "/cloud.bundle")} refs/heads/main:refs/heads/main || exit 70
 git --git-dir=cloud-origin symbolic-ref HEAD refs/heads/main || exit 70
 git clone --quiet cloud-origin cloud-source || exit 70
+{checkout}
 test "$(git -C cloud-source rev-parse HEAD)" = {Q(cloud_sha)} || exit 70
 {aweb_suite}
 (
@@ -321,7 +357,7 @@ test "$(git -C cloud-source rev-parse HEAD)" = {Q(cloud_sha)} || exit 70
   git config user.name 'aweb release gate'
   git config user.email 'release-gate@localhost'
   {exports}
-  make {cloud_target} > {Q(release + "/cloud/gate-output.log")} 2>&1
+  make {cloud_make} > {Q(release + "/cloud/gate-output.log")} 2>&1
   printf '%s\\n' "$?" > {Q(release + "/cloud/exit")}
 ) &
 cloud_suite=$!
@@ -352,22 +388,44 @@ class ReleaseExecutor(Executor):
         )
         for path in self.release["files"]:
             self.upload(path, GUEST_FILES + "/" + Path(path).name, mode="0444")
-        if self.release["hermes_key"]:
-            self.run(
-                f"install -d -o root -g gateuser -m 0710 {GUEST_KEY_DIRECTORY}",
-                "hermes-directory",
-            )
-            self.upload(
-                self.release["hermes_key"],
-                GUEST_KEY,
-                owner="gateuser:gateuser",
-                mode="0600",
-            )
+        self.run(
+            f"install -d -o root -g gateuser -m 0710 {GUEST_KEY_DIRECTORY}",
+            "hermes-directory",
+        )
+        self.upload(
+            self.release["hermes_key"],
+            GUEST_KEY,
+            owner="gateuser:gateuser",
+            mode="0600",
+        )
 
     def collect(self, server, timeout):
         self.deadline = time.monotonic() + timeout
         self.run(f"rm -f {GUEST_KEY}", "hermes-key-removed")
         return super().collect(server, timeout)
+
+
+# Every stage of Cloud's full gate (scripts/candidate-suite.sh). A stage run
+# writes no Cloud ledger record, so its receipt is its evidence.
+CLOUD_GATE_STAGES = (
+    "preflight",
+    "backend",
+    "frontend",
+    "image",
+    "two-service",
+    "cloud-user-journey",
+)
+
+
+def cloud_stage_verdicts(evidence, cloud_sha):
+    """Each Cloud stage's verdict, from the gate's own summary in the evidence."""
+    verdicts = {}
+    for summary in sorted((Path(evidence) / "tmp").glob(f"ac-candidate-gate-{cloud_sha}*/summary.tsv")):
+        for line in summary.read_text().splitlines():
+            fields = line.split("\t")
+            if len(fields) >= 2 and not line.startswith("#"):
+                verdicts[fields[0]] = fields[1]
+    return {stage: verdicts.get(stage, "MISSING") for stage in CLOUD_GATE_STAGES}
 
 
 def suite_record(evidence, suite):
@@ -407,7 +465,8 @@ def receipt(
             command="make release-gate",
         )
     else:
-        cloud["command"] = "make gate"
+        cloud["command"] = "make gate GATE_STAGES=all"
+        cloud["stages"] = cloud_stage_verdicts(evidence, cloud_sha)
     architecture = evidence / "var/log/vm-gate/release/host-architecture"
     split_path = evidence / "var/log/vm-gate/release/split.json"
     split = json.loads(split_path.read_text()) if split_path.exists() else None
@@ -455,7 +514,8 @@ GREEN, RED, REFUSED, INFRASTRUCTURE = 0, 1, 2, 70
 
 
 def exit_code(record):
-    """Green only when every suite passed and aweb rebuilt the exact files."""
+    """Green only when every suite passed, aweb rebuilt the exact files and,
+    for a Cloud gate, every Cloud stage shows PASSED in its summary."""
     classification = record["vm_gate"]["infrastructure"]
     if classification == "refused":
         return REFUSED
@@ -467,6 +527,10 @@ def exit_code(record):
     if any(suite["exit"] != 0 for suite in suites):
         return RED
     if "aweb" in record and record["aweb"]["rebuilt_files"] != record["files"]:
+        return RED
+    # A Cloud gate is green only when its own summary shows every stage passed.
+    stages = record["cloud"].get("stages")
+    if stages is not None and any(v != "PASSED" for v in stages.values()):
         return RED
     return GREEN
 

@@ -138,9 +138,8 @@ def run_release(
             host.put(inputs["archive"], job + "/cloud-image.tar")
         for path in inputs["files"]:
             host.put(path, job + "/release-files/" + Path(path).name)
-        if inputs["hermes_key"]:
-            host.put(inputs["hermes_key"], job + "/hermes-key")
-            host.run(f"chmod 0600 {Q(job)}/hermes-key")
+        host.put(inputs["hermes_key"], job + "/hermes-key")
+        host.run(f"chmod 0600 {Q(job)}/hermes-key")
         host.put(ledger_before, job + "/ledger.tsv")
         release_script = directory / "release.sh"
         release_script.write_text(script(job))
