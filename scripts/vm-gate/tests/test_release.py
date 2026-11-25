@@ -545,9 +545,12 @@ class GuestScript(CloudFixture, unittest.TestCase):
         self.assertEqual(recorded, expected)
 
     def test_a_cloud_gate_runs_make_gate_with_the_whole_guest(self):
+        bundle = release.cloud_bundle(
+            self.cloud, self.cloud_sha, self.remote / "cloud.bundle", main=self.cloud_main
+        )
         script = release.guest_script(
             cloud_sha=self.cloud_sha,
-            bundle_sha256=self.bundle,
+            bundle_sha256=bundle,
             archive_sha256=None,
             image=None,
             member=None,
@@ -612,6 +615,9 @@ class GuestScript(CloudFixture, unittest.TestCase):
             ["bash", "-c", script], env=environment, capture_output=True, text=True
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+        origin = self.home / "cloud-origin"
+        self.assertEqual(git(origin, "rev-parse", "refs/heads/candidate"), head)
+        self.assertEqual(git(origin, "rev-parse", "refs/heads/main"), self.cloud_main)
         source = self.home / "cloud-source"
         self.assertEqual(git(source, "rev-parse", "HEAD"), head)
         self.assertEqual(git(source, "rev-parse", "origin/main"), self.cloud_main)

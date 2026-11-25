@@ -288,10 +288,17 @@ def guest_script(
         ]
     # A train gate runs every stage on its own head; a release runs release-gate.
     cloud_make = "release-gate" if cloud_target == "release-gate" else "gate GATE_STAGES=all"
+    # A gate's candidate is fetched by its own ref, never found by object id:
+    # a fetch that keeps only reachable objects would otherwise lose it.
+    refs = (
+        "refs/heads/main:refs/heads/main"
+        if cloud_target == "release-gate"
+        else "refs/heads/main:refs/heads/main refs/heads/candidate:refs/heads/candidate"
+    )
     checkout = (
         ""
         if cloud_target == "release-gate"
-        else f"git -C cloud-source checkout --quiet --detach {Q(cloud_sha)} || exit 70"
+        else "git -C cloud-source checkout --quiet --detach origin/candidate || exit 70"
     )
     image_check = (
         f"echo {Q(archive_sha256 + '  ' + remote + '/cloud-image.tar')} | sha256sum -c - || exit 70"
@@ -346,7 +353,7 @@ echo {Q(bundle_sha256 + "  " + remote + "/cloud.bundle")} | sha256sum -c - || ex
 cd {Q(home)}
 rm -rf cloud-origin cloud-source
 git init --quiet --bare cloud-origin || exit 70
-git --git-dir=cloud-origin fetch --quiet {Q(remote + "/cloud.bundle")} refs/heads/main:refs/heads/main || exit 70
+git --git-dir=cloud-origin fetch --quiet {Q(remote + "/cloud.bundle")} {refs} || exit 70
 git --git-dir=cloud-origin symbolic-ref HEAD refs/heads/main || exit 70
 git clone --quiet cloud-origin cloud-source || exit 70
 {checkout}
@@ -405,10 +412,11 @@ class ReleaseExecutor(Executor):
         return super().collect(server, timeout)
 
 
-# Every stage of Cloud's full gate (scripts/candidate-suite.sh). A stage run
-# writes no Cloud ledger record, so its receipt is its evidence.
+# The stages Cloud's full gate records in its summary.tsv
+# (scripts/candidate-suite.sh). Preflight writes no row: a failed preflight
+# stops the run before any stage row exists. A stage run writes no Cloud ledger
+# record, so its receipt is its evidence.
 CLOUD_GATE_STAGES = (
-    "preflight",
     "backend",
     "frontend",
     "image",

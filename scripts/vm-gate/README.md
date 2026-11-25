@@ -279,7 +279,8 @@ Differences from a release:
   aweb commit.
 - A stage run writes no Cloud ledger record, so the receipt is the evidence.
   It records each Cloud stage's verdict from Cloud's own summary, and it is
-  green only when every stage shows PASSED. A missing row is red.
+  green only when every stage there shows PASSED. Preflight writes no row (a failed
+  preflight leaves no stage rows), and a missing row is red.
 
 ### Merak
 
