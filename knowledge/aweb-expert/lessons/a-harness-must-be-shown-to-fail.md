@@ -30,6 +30,28 @@ which would have produced a confident wrong answer, none caught by inspection.
 - The harnesses most likely to lack all of this are the ones that are not tests:
   log greps, process counts, exit-code checks, read-backs, roster queries.
 
+# When the tests cannot run locally
+
+Database and e2e suites that need services the workstation lacks (no
+database, no Docker on the Mac) can be shown to fail only in CI. Then:
+
+- Make the PR's first commit plant the defects. The PR body predicts each
+  failing test, with names copied from the code, not recalled. Check the red
+  run one for one against the prediction, then push a revert commit.
+- Tell the operator before the planned red run.
+- Keep plants inside the package under test. CI selects packages by changed
+  paths, so a plant in a shared library such as naapp-lib selects every
+  package. One small red run becomes a full one, and other packages' tests
+  that assert the same thing go red too; predict those as well, or avoid
+  them.
+- A predicted failure that passes is itself a finding: that test does not
+  test what it claims.
+
+Evidence: OKF proposal from aweb-expert/aweb-expert-naapp-folio-links,
+2026-11-24; notes/2026-11-25-planted-defect-first-run.md. naapp PR #25,
+planted run 45518289423 (a planted title limit failed exactly the predicted
+test).
+
 # Review standard
 
 Any verdict citing a harness carries one of two lines: "the fix was removed and
