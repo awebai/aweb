@@ -20,7 +20,6 @@ from aweb.human_channels.contract import ContractError
 from aweb.human_channels.participants import require_native_participant_input
 
 ConversationType = Literal["mail", "chat"]
-ConversationStatus = Literal["active", "closed", "expired"]
 ParticipantRole = Literal["initiator", "participant"]
 
 DEFAULT_CONVERSATION_TTL: timedelta | None = timedelta(days=30)
@@ -402,51 +401,6 @@ async def list_conversation_participants(
     return [_participant_dict(dict(row)) for row in rows]
 
 
-async def add_conversation_participant(
-    db,
-    *,
-    conversation_id: str | UUID,
-    participant: ConversationParticipant | dict[str, Any],
-    role: ParticipantRole = "participant",
-) -> dict[str, Any]:
-    conversation = await get_conversation(db, conversation_id=conversation_id)
-    if conversation is None:
-        raise NotFoundError()
-    await _get_active_conversation(db, conversation_id=conversation_id)
-
-    record = _participant_record(participant, role=role)
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.conversation_participants}} (
-            conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        ON CONFLICT (conversation_id, did) DO UPDATE
-        SET agent_id = EXCLUDED.agent_id,
-            alias = EXCLUDED.alias,
-            address = EXCLUDED.address,
-            delivery_origin = EXCLUDED.delivery_origin,
-            current_did_key = COALESCE(EXCLUDED.current_did_key, {{tables.conversation_participants}}.current_did_key),
-            transport_hint = EXCLUDED.transport_hint,
-            role = EXCLUDED.role
-        RETURNING conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role, joined_at
-        """,
-        _parse_uuid(conversation_id, field_name="conversation_id"),
-        record["did"],
-        record["agent_id"],
-        record["alias"],
-        record["address"],
-        record["delivery_origin"],
-        record["current_did_key"],
-        record["transport_hint"],
-        record["role"],
-    )
-    if not row:
-        raise ServiceError("Failed to add participant")
-    return _participant_dict(dict(row))
-
-
 async def require_active_conversation_participant(
     db,
     *,
@@ -560,29 +514,4 @@ async def close_conversation(
     )
     if not row:
         raise NotFoundError()
-    return _conversation_dict(dict(row))
-
-
-async def expire_conversation(db, *, conversation_id: str | UUID) -> dict[str, Any]:
-    conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
-    now = _now_utc()
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        UPDATE {{tables.conversations}}
-        SET status = 'expired',
-            updated_at = $2
-        WHERE conversation_id = $1
-          AND status != 'expired'
-        RETURNING conversation_id, conversation_type, status, team_id, created_by_did,
-                  created_at, updated_at, closed_at, expires_at
-        """,
-        conversation_uuid,
-        now,
-    )
-    if not row:
-        existing = await get_conversation(db, conversation_id=conversation_uuid)
-        if existing is None:
-            raise NotFoundError()
-        return existing
     return _conversation_dict(dict(row))

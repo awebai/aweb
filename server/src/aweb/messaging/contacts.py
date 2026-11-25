@@ -21,7 +21,6 @@ from aweb.service_errors import ConflictError, ValidationError
 CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
 HANDLE_NAMESPACE_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+$")
 TARGET_AGENT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+$")
-CONTACT_REFERENCE_TYPES = {"identity", "handle"}
 CONTACT_STATUSES = {"pending", "active"}
 
 logger = logging.getLogger(__name__)

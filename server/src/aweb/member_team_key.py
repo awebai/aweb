@@ -690,19 +690,6 @@ def _strip_team_context(
     return {**row, "team_id": None, "alias": None, "agent_id": None}
 
 
-async def current_member_team_ids_for_identity(
-    db,
-    dids: list[str],
-    *,
-    registry_client,
-    read_lock: MemberReadLock = MemberReadLock.NONE,
-) -> set[str]:
-    (teams,) = await current_member_team_ids_for_identities(
-        db, dids, registry_client=registry_client, read_lock=read_lock
-    )
-    return teams
-
-
 async def current_member_team_ids_for_identities(
     db,
     *identities: Collection[str],

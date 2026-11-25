@@ -92,12 +92,3 @@ def mcp_messaging_runtime(
         if state is not None
         else OrderedDict(),
     )
-
-
-def registry_delivery_origin(resolution) -> str:
-    delivery = getattr(resolution, "delivery", None)
-    return str(
-        getattr(resolution, "delivery_origin", None)
-        or getattr(delivery, "origin", "")
-        or ""
-    ).strip()

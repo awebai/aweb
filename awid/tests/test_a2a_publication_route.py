@@ -9,7 +9,6 @@ from awid.a2a_publication import (
     A2A_AUTHORITY_SELF_DELEGATION,
     A2A_AUTHORITY_SELF_IDENTITY_KEY,
     A2A_CARD_DIGEST_ALG_SHA256,
-    A2A_CONFLICT_CODES,
     A2A_CUSTODY_DELEGATED_BRIDGE,
     A2A_DELEGATION_OPERATION,
     A2A_PUBLICATION_OPERATION,
@@ -70,7 +69,6 @@ def test_a2a_publication_vector_canonical_bytes_and_conflict_codes():
         canonical_json_bytes(vector["delegation"]["payload"]).decode("utf-8")
         == vector["delegation"]["canonical"]
     )
-    assert vector["conflict_codes"] == list(A2A_CONFLICT_CODES)
 
     delegation_digest = signed_assertion_digest(
         vector["delegation"]["canonical"].encode("utf-8"),

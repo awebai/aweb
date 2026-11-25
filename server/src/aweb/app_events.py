@@ -21,8 +21,6 @@ from aweb.service_errors import ForbiddenError, ValidationError
 
 APP_EVENT_LOOKBACK_SECONDS = 300
 
-INTENT_RANK = {"ambient": 0, "wake": 1, "steer": 2}
-
 
 @dataclass(frozen=True)
 class AppEventAuth:

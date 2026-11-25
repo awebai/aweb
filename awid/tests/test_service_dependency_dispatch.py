@@ -20,7 +20,7 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.dns_verify import verify_domain
 from awid.registry import RegistryClient, RegistryError
-from awid_service.deps import get_db, get_domain_verifier, get_redis
+from awid_service.deps import get_db, get_domain_verifier
 from awid_service.testing import REGISTRY_URL, ServiceTransport, running_registry
 
 
@@ -57,14 +57,13 @@ async def occupied_thread_pool() -> AsyncIterator[None]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("dependency", [get_db, get_redis, get_domain_verifier])
+@pytest.mark.parametrize("dependency", [get_db, get_domain_verifier])
 async def test_state_getter_does_not_consume_thread_capacity(dependency) -> None:
     app = FastAPI()
     app.state.db = object()
     app.state.redis = object()
     expected = {
         get_db: app.state.db,
-        get_redis: app.state.redis,
         get_domain_verifier: verify_domain,
     }[dependency]
 

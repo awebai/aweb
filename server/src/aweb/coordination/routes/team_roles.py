@@ -33,8 +33,6 @@ roles_router = APIRouter(
 )
 router = roles_router
 
-DEFAULT_TEAM_ROLES_BUNDLE: Dict[str, Any] = get_default_bundle()
-
 
 def _resolve_alias_pair(
     *,

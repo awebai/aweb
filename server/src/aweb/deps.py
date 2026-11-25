@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 from fastapi import Request
-
-from awid.dns_verify import DomainAuthority, verify_domain as _real_verify_domain
-
-DomainVerifier = Callable[[str], Awaitable[DomainAuthority]]
 
 
 def get_db(request: Request) -> Any:
@@ -22,8 +18,3 @@ def get_db(request: Request) -> Any:
 def get_redis(request: Request) -> Any:
     """Return the Redis handle from `app.state` (if configured)."""
     return request.app.state.redis
-
-
-def get_domain_verifier() -> DomainVerifier:
-    """Return the DNS domain verifier. Override via app.dependency_overrides in tests."""
-    return _real_verify_domain
