@@ -322,6 +322,9 @@ run_candidate() {
             sorted(entries),
             [("artifacts", "passed"), ("checks", "passed"), ("integration", "passed")],
         )
+        # The caller still sees the gate's output while it is recorded.
+        self.assertIn("candidate stage-verdict: checks PASSED\n", output)
+        self.assertIn("candidate gate cleanup PASSED\n", output)
 
     def test_failed_target_of_a_stage_recorded_as_it_passed_fails_the_run(self):
         code, rows, logs, output = self.invoke(status=0, stage_verdicts="target-failed")
