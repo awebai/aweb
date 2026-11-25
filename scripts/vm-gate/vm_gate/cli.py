@@ -79,12 +79,13 @@ def release_job(args, *, factory=None, out=None):
             raise Refused("external --config or VM_GATE_CONFIG is required")
         if (args.aweb_sha is None) != (args.files is None):
             raise Refused("--aweb-sha and --files go together: the files are that commit's build")
-        platform = release.check_machine(args.machine)
         launcher = Path(__file__).resolve().parents[3]
         config = load(args.config, launcher)
         repo = Path(config.get("repo") or launcher).resolve()
         config = load(args.config, repo)
-        timeout = (config.get(args.machine) or {}).get("release_timeout_seconds")
+        platform = release.check_machine(args.machine, config)
+        machine = config[args.machine]
+        timeout = machine.get("release_timeout_seconds")
         if type(timeout) is not int or timeout <= 0:
             raise Refused(f"operator config needs {args.machine}.release_timeout_seconds")
         files = release.built_files(args.files)
@@ -95,7 +96,9 @@ def release_job(args, *, factory=None, out=None):
         directory = Path(config["state_root"]) / "runs" / run_id
         directory.mkdir(parents=True, mode=0o700)
         target = SimpleNamespace(
-            target=args.machine, type=None, stages=None, timeout=timeout, intent="branch"
+            target=args.machine,
+            type=machine.get("server_type", "ccx43") if args.machine == "hetzner" else None,
+            stages=None, timeout=timeout, intent="branch",
         )
         select_target(target, config)
         select_manifest(config, target.target)

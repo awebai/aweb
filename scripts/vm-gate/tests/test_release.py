@@ -76,7 +76,11 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
             "location": "location",
             "snapshot_id": 1,
             "hermes_key_file": str(self.key),
-            "merak": {"manifest": str(self.manifest), "release_timeout_seconds": 9000},
+            "merak": {"manifest": str(self.manifest), "platform": "linux/amd64",
+                      "release_timeout_seconds": 9000},
+            "hetzner": {"platform": "linux/amd64", "server_type": "ccx43",
+                        "release_timeout_seconds": 10800},
+            "antares": {"platform": "linux/arm64", "release_timeout_seconds": 9000},
         }))
         self.receipt = self.root / "gate-receipt.json"
         self.calls = []
@@ -111,13 +115,43 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         self.assertIn(moved, receipt["vm_gate"]["error"])
         self.assertEqual(self.calls, [])
 
-    def test_a_machine_that_is_not_amd64_is_refused(self):
-        for machine in ("antares", "hetzner"):
+    def test_an_arm64_machine_or_an_undeclared_one_is_refused(self):
+        for machine, reason in (("antares", "linux/arm64"), ("elsewhere", "no platform")):
             with self.subTest(machine=machine):
                 code, receipt = self.invoke(machine)
                 self.assertEqual(code, 2)
-                self.assertIn("amd64", receipt["vm_gate"]["error"])
+                self.assertIn(reason, receipt["vm_gate"]["error"])
         self.assertEqual(self.calls, [])
+
+    def admitted(self, machine):
+        def image_archive(image, platform, run_id, out):
+            out.write_bytes(b"image")
+            return {"image": image, "member": "sha256:" + "b" * 64,
+                    "config": "sha256:" + "d" * 64, "archive_sha256": "0" * 64}
+
+        class Runtime:
+            def run(self):
+                return {"exit": 0, "infrastructure": None}
+
+        def factory(**kwargs):
+            self.calls.append(kwargs)
+            return Runtime()
+
+        self.factory = factory
+        with patch.object(release, "image_archive", image_archive):
+            return self.invoke(machine)
+
+    def test_an_amd64_machine_from_config_is_admitted_on_its_backend(self):
+        for machine, server_type, timeout in (("hetzner", "ccx43", 10800), ("merak", None, 9000)):
+            with self.subTest(machine=machine):
+                self.calls.clear()
+                code, receipt = self.admitted(machine)
+                self.assertEqual(len(self.calls), 1, receipt)
+                args = self.calls[0]["args"]
+                self.assertEqual((args.target, args.type, args.timeout), (machine, server_type, timeout))
+                self.assertEqual(receipt["machine"], machine)
+                self.assertEqual(receipt["machine_platform"], "linux/amd64")
+                self.assertEqual(receipt["timeout_seconds"], timeout)
 
     def test_aweb_files_need_their_commit_and_the_commit_its_files(self):
         for extra in (("--aweb-sha", self.sha), ("--files", str(self.files))):

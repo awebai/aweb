@@ -24,7 +24,9 @@ from .executor import LOGS, REMOTE, Executor
 
 Q = shlex.quote
 # A release qualifies the amd64 image that production runs.
-RELEASE_MACHINES = {"merak": "linux/amd64"}
+RELEASE_PLATFORM = "linux/amd64"
+# The machines vm-gate can run a guest on.
+BACKENDS = ("merak", "hetzner")
 IMAGE = re.compile(r"(?P<repository>[a-z0-9./-]+)@(?P<index>sha256:[0-9a-f]{64})")
 SHA = re.compile(r"[0-9a-f]{40}")
 GUEST_RELEASE = LOGS + "/release"
@@ -51,12 +53,18 @@ def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def check_machine(machine):
-    if machine not in RELEASE_MACHINES:
+def check_machine(machine, config):
+    """The machine is an input; operator config declares its platform."""
+    platform = (config.get(machine) or {}).get("platform")
+    if platform is None:
+        raise Refused(f"operator config declares no platform for machine {machine}")
+    if platform != RELEASE_PLATFORM:
         raise Refused(
-            f"a release gate runs on an amd64 machine ({', '.join(RELEASE_MACHINES)}), not {machine}"
+            f"a release gate needs a {RELEASE_PLATFORM} machine; {machine} is {platform}"
         )
-    return RELEASE_MACHINES[machine]
+    if machine not in BACKENDS:
+        raise Refused(f"vm-gate has no backend for machine {machine}")
+    return platform
 
 
 def cloud_main(repo, cloud_sha):
