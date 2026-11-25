@@ -3,7 +3,6 @@
 import json
 from collections import OrderedDict
 from dataclasses import FrozenInstanceError, fields, is_dataclass, replace
-from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -250,19 +249,6 @@ def test_acknowledgement_context_retains_the_existing_identity_fields(
         "subject": "",
         "content_mode": mode.value,
     }
-
-
-def test_standard_mutation_vocabulary_covers_the_retained_call_site_inventory():
-    root = Path(__file__).resolve().parents[2]
-    inventory = json.loads(
-        (root / "docs/vectors/mutation-hook-call-sites-v1.json").read_text()
-    )
-    assert {site["event"] for site in inventory["call_sites"]} <= {
-        event.value for event in MutationEventType
-    }
-    # Known names are constants, not a new callback admission gate.
-    assert MutationEventType.MAIL_SENT == "message.sent"
-    assert "host.custom_event" != MutationEventType.MAIL_SENT
 
 
 def test_delivered_transport_event_preserves_the_literal_wire_fields():

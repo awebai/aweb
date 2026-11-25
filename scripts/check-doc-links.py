@@ -5,8 +5,7 @@ WHY THIS EXISTS SEPARATELY FROM check-doc-paths.sh. That gate extracts
 backtick-quoted paths beginning with a top-level directory, so it validates
 `docs/foo.md` and `server/src/bar.py`. A bare relative link between two
 documents in the same directory — `[text](sibling.md)` — carries no such prefix
-and is structurally invisible to it. check-extension-docs.py asserts index
-completeness, not link targets.
+and is structurally invisible to it.
 
 That gap is not theoretical: deleting docs/messaging.md in aweb-aazb.8.2 left
 docs/messaging-contract-matrix.md declaring itself subordinate to authorities

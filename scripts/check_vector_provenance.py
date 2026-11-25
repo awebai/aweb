@@ -68,11 +68,6 @@ ROOT_CONSUMERS = {
         "team-control-requests-v1.json",
         'filepath.Join("..", "..", "..", "..", "docs", "vectors", "team-control-requests-v1.json")',
     ),
-    PurePosixPath("server/tests/test_message_event_contracts.py"): _consumer(
-        "mutation-hook-call-sites-v1.json",
-        "root = Path(__file__).resolve().parents[2]",
-        '(root / "docs/vectors/mutation-hook-call-sites-v1.json").read_text()',
-    ),
     PurePosixPath("cli/go/cmd/aw/team_invite_issuance_test.go"): _consumer(
         "cli-integration-codes-v1.json",
         'filepath.Join("..", "..", "..", "..", "docs", "vectors", "cli-integration-codes-v1.json")',
@@ -925,15 +920,6 @@ ROOT_CONSUMERS = {
         },
         'new URL("../../docs/vectors/team-auth-envelope-v2.json", import.meta.url)',
         'new URL("../../docs/vectors/message-display-binding-v1.json", import.meta.url)',
-    ),
-    PurePosixPath("scripts/check-extension-docs.py"): _consumer(
-        {
-            "federation-authority-state-v1.json",
-            "mutation-hook-call-sites-v1.json",
-        },
-        'HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"',
-        "inventory_path = docs / HOOK_INVENTORY",
-        'vector_path = docs / "vectors/federation-authority-state-v1.json"',
     ),
     PurePosixPath("scripts/generate_federation_error_reference.py"): _consumer(
         "federation-authority-state-v1.json",
