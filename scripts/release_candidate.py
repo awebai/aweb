@@ -14,7 +14,6 @@ from pathlib import Path
 
 from release_versions import (
     VersionRefusal as CandidateRefusal,
-    require_runner_values,
     tag_parts,
     valid_version,
 )
@@ -22,19 +21,10 @@ from release_versions import (
 MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
-    "aweb-naapp-v": "naapp-lib/pyproject.toml",
     "awid-v": "awid/pyproject.toml",
     "channel-v": "channel/package.json",
     "pi-v": "pi-extension/package.json",
     "skills-v": "packages/claude-skills/package.json",
-    "secrets-v": "naapp/secrets/pyproject.toml",
-    "logs-v": "naapp/logs/pyproject.toml",
-    "aweb-secrets-runner-v": "naapp/secrets/runner/pyproject.toml",
-}
-# Packages a tag lane publishes together with its manifest's, at the same version.
-LOCKSTEP = {
-    "aweb-naapp-v": ["naapp-lib/testing/pyproject.toml"],
-    "aweb-secrets-runner-v": ["naapp/secrets/values/pyproject.toml"],
 }
 
 
@@ -90,13 +80,11 @@ def validate_tags(root: Path, tags: list[str]) -> tuple[str, dict[str, str]]:
         if prefix in versions:
             raise CandidateRefusal(f"more than one {prefix} tag was requested")
         versions[prefix] = version
-        for manifest in ([MANIFESTS[prefix]] if prefix in MANIFESTS else []) + LOCKSTEP.get(prefix, []):
-            if manifest_version(root, manifest) != version:
-                raise CandidateRefusal(
-                    f"{tag} does not match {manifest} version {manifest_version(root, manifest)}"
-                )
-        if prefix == "aweb-secrets-runner-v":
-            require_runner_values(root, source_sha)
+        manifest = MANIFESTS.get(prefix)
+        if manifest is not None and manifest_version(root, manifest) != version:
+            raise CandidateRefusal(
+                f"{tag} does not match {manifest} version {manifest_version(root, manifest)}"
+            )
         if run(root, "git", "tag", "--list", tag):
             raise CandidateRefusal(f"local tag {tag} already exists; tags are never moved")
     return source_sha, versions
