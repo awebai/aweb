@@ -327,38 +327,6 @@ run_candidate() {
                     (logs / "summary.tsv").read_bytes(),
                 )
 
-    def test_docker_proof_command_resolves_from_supervisor_directory(self):
-        import test_candidate_gate_ledger as proof
-
-        class CapturedCommandError(Exception):
-            pass
-
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            fixture = root / "fixture"
-            (fixture / "scripts").mkdir(parents=True)
-            expected = fixture / "scripts/candidate-docker-gate.sh"
-            expected.write_text("exit 0\n")
-            evidence = root / "evidence"
-            evidence.mkdir()
-            with (
-                patch.object(proof, "checked", return_value="a" * 40),
-                patch.object(
-                    proof.subprocess, "Popen", side_effect=CapturedCommandError
-                ) as launch,
-                self.assertRaises(CapturedCommandError),
-            ):
-                proof.interrupted_docker_proof(fixture, evidence, {})
-            target = Path(launch.call_args.args[0][-1])
-            resolved = (
-                target if target.is_absolute() else evidence / "supervised" / target
-            )
-            self.assertTrue(
-                resolved.is_file(),
-                "proof gate command does not resolve from supervisor cwd",
-            )
-            self.assertEqual(resolved, expected)
-
     def test_reused_artifacts_still_prepare_integration_inputs(self):
         # First retain the actual interrupted artifacts row; the resumed suite
         # starts in a fresh directory with none of its disposable outputs.

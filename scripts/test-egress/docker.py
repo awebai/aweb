@@ -124,7 +124,7 @@ def main():
     parser.add_argument('--collect-summary', action='store_true',
                         help='collect the isolated candidate suite target summary')
     parser.add_argument('--command', nargs=argparse.REMAINDER, help='guard qualification command instead of make targets')
-    parser.add_argument('targets', nargs='*', default=['test-server', 'test-awid', 'test-cli', 'test-channel', 'test-channel-name-live-contract', 'test-channel-core', 'test-pi-extension'])
+    parser.add_argument('targets', nargs='*', default=['test-server', 'test-awid', 'test-cli', 'test-channel', 'test-channel-core', 'test-pi-extension'])
     args = parser.parse_args()
     if args.server_workers and args.profile != 'ccx33':
         parser.error('seven server workers require --profile ccx33')

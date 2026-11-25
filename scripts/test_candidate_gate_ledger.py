@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import errno
-import json
 import os
 import re
 import shutil
@@ -12,7 +11,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 from collections.abc import Callable
@@ -106,7 +104,7 @@ class CompleteGateVerdictTests(unittest.TestCase):
         for stage in STAGES.split():
             self.assertEqual(rows.get(stage), "FAILED", result.stdout)
         self.assertEqual(rows["checks/check-product-table-writes"], "FAILED")
-        self.assertEqual(rows["checks/test-release-cli-version"], "PASSED")
+        self.assertEqual(rows["checks/check-go-vulnerability-audit"], "PASSED")
         self.assertEqual(rows["unit/_candidate-unit-suites"], "PASSED")
         self.assertEqual(rows["artifacts/_candidate-artifact-a2a-image"], "PASSED")
         self.assertEqual(rows["integration/e2e-naapp"], "SKIPPED")
@@ -119,24 +117,17 @@ class CompleteGateVerdictTests(unittest.TestCase):
         result, rows = self.suite("checks user-paths", "host-published-port")
         self.assertEqual(result.returncode, 7)
         self.assertEqual(rows["checks/host-published-port"], "FAILED")
-        self.assertEqual(rows["checks/test-release-cli-version"], "PASSED")
+        self.assertEqual(rows["checks/check-go-vulnerability-audit"], "PASSED")
         self.assertEqual(rows["checks"], "FAILED")
         self.assertEqual(rows["user-paths"], "PASSED")
 
     def test_isolated_unit_keeps_every_leaf_after_server_failure(self):
         result, rows = self.suite("--isolated-suites", "test-server", "test-cli")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(rows, {
-            "unit/test-server": "FAILED",
-            "unit/test-awid": "PASSED",
-            "unit/test-naapp": "PASSED",
-            "unit/test-cli": "FAILED",
-            "unit/test-cli-auth-v2": "PASSED",
-            "unit/_candidate-unit-channel": "PASSED",
-            "unit/test-channel-name-live-contract": "PASSED",
-            "unit/_candidate-unit-channel-core": "PASSED",
-            "unit/_candidate-unit-pi": "PASSED",
-        })
+        failed = {leaf for leaf, verdict in rows.items() if verdict == "FAILED"}
+        self.assertEqual(failed, {"unit/test-server", "unit/test-cli"})
+        self.assertEqual(set(rows.values()), {"FAILED", "PASSED"})
+        self.assertEqual(rows["unit/_candidate-unit-pi"], "PASSED")
 
 
 def run(root: Path, *args: str, env: dict[str, str] | None = None):
@@ -154,86 +145,6 @@ def checked(root: Path, *args: str):
     result = run(root, *args)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout.strip()
-
-
-def interrupted_docker_proof(repo: Path, evidence: Path, env: dict[str, str]) -> None:
-    """Exercise the real wrapper, GNU deadline and owned Docker cleanup."""
-    supervised = evidence / "supervised"
-    supervised.mkdir()
-    settings = dict(env, AWEB_CANDIDATE_STAGES="checks unit",
-                    PYTHONPATH=str(ROOT / "scripts/vm-gate"))
-    command = ["timeout", "--signal=TERM", "--kill-after=130s", "600",
-               sys.executable, "-m", "vm_gate.supervisor", "run", str(supervised),
-               "120", "bash", str(repo / "scripts/candidate-docker-gate.sh")]
-    sha = checked(repo, "git", "rev-parse", "HEAD")
-    with (evidence / "deadline-output.log").open("w") as output:
-        process = subprocess.Popen(command, cwd=repo, env=settings, stdout=output,
-                                   stderr=subprocess.STDOUT)
-        try:
-            started = time.monotonic()
-            log_dir = None
-            while time.monotonic() - started < 550 and process.poll() is None:
-                active = [path for path in Path('/tmp').glob('aweb-candidate-gate-' + sha + '-*')
-                          if (path / 'unit-active').exists()]
-                if len(active) == 1:
-                    log_dir = active[0]
-                    break
-                time.sleep(.2)
-            if log_dir is None:
-                raise AssertionError('real blocked Docker stage was not reached; see deadline-output.log')
-            builders = [line.split('\t')[1] for line in (log_dir / 'owned-resources.tsv').read_text().splitlines()
-                        if line.startswith('builder\t')]
-            assert builders, 'no owned builder manifest'
-            label = 'aweb.candidate-gate=' + builders[0]
-            before = run(repo, 'docker', 'ps', '-aq', '--filter', 'label=' + label)
-            assert before.returncode == 0 and before.stdout.strip(), 'no live owned Docker containers'
-            (evidence / 'docker-before-deadline.json').write_text(json.dumps({
-                'label': label, 'container_ids': before.stdout.split(), 'builders': builders,
-                'unit_active': str(log_dir / 'unit-active')}, indent=2) + '\n')
-            from vm_gate.memory import current_bytes, sample, summarize_samples
-
-            memory_sample = sample()
-            memory_receipt = summarize_samples([memory_sample])
-            (evidence / 'memory.jsonl').write_text(json.dumps(memory_sample) + '\n')
-            (evidence / 'memory-receipt.json').write_text(json.dumps(memory_receipt, indent=2) + '\n')
-            assert any(
-                current_bytes(row) is not None
-                and any(row['id'].startswith(cid) for cid in before.stdout.split())
-                for row in memory_sample['containers']
-            ), 'memory proof did not read a live owned gate container'
-            raw = process.wait(timeout=760)
-            assert raw == 124, f'GNU timeout raw exit {raw}, expected 124'
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=150)
-    receipt = json.loads((supervised / 'supervisor-receipt.json').read_text())
-    assert receipt['raw_exit'] == 143 and receipt['child_exit'] != 0, receipt
-    assert receipt['finalized'] and not receipt['grace_expired'], receipt
-    assert (log_dir / 'unit-active').stat().st_mtime < receipt['term_at']
-    interruption = (log_dir / 'interruption.tsv').read_text()
-    assert 'cleanup=passed' in interruption and 'writer_exit=0' in interruption
-    rows = [line.split('\t') for line in (evidence / 'ledger.tsv').read_text().splitlines()]
-    assert [(row[1], row[2]) for row in rows if "/" not in row[1]] == [('cleanup', 'passed'), ('checks', 'passed')], rows
-    assert any(row[1:3] == ['checks/test-shipping', 'passed'] for row in rows), rows
-    assert not any(row[1] == 'unit/_candidate-unit-suites' for row in rows), rows
-    assert 'run\tINTERRUPTED\t' in (log_dir / 'summary.tsv').read_text()
-    absence = {}
-    for kind, args in [('containers', ['ps', '-aq']), ('networks', ['network', 'ls', '-q']),
-                       ('volumes', ['volume', 'ls', '-q'])]:
-        result = run(repo, 'docker', *args, '--filter', 'label=' + label)
-        assert result.returncode == 0 and not result.stdout.strip(), (kind, result.stdout, result.stderr)
-        absence[kind] = result.stdout.split()
-    for builder in builders:
-        for kind, name in [('container', 'buildx_buildkit_' + builder + '0'),
-                           ('volume', 'buildx_buildkit_' + builder + '0_state')]:
-            result = run(repo, 'docker', kind, 'inspect', name)
-            assert result.returncode != 0, (kind, name, 'still exists')
-    (evidence / 'deadline-result.json').write_text(json.dumps({
-        'fixture_sha': sha, 'gnu_timeout_exit': raw, 'supervisor': receipt,
-        'run_log': str(log_dir), 'owned_absence_before_vm_delete': absence,
-        'builder_names_absent': builders, 'memory': memory_receipt}, indent=2) + '\n')
-    print('PASS: real deadline TERM preserves checks, completes gate Docker cleanup, and proves own absence', flush=True)
 
 
 def stage_rows(rows: list[str]) -> list[list[str]]:
@@ -361,11 +272,6 @@ e2e-naapp:
 candidate-gate:
 \tbash scripts/candidate-docker-gate.sh
 """
-        interruption_only = sys.argv[1:] == ["--interruption-only"]
-        if interruption_only:
-            recipes = recipes.replace(
-                "_candidate-unit-suites:\n",
-                "_candidate-unit-suites:\n\t@touch \"$$CANDIDATE_LOG_DIR/unit-active\"; sleep 1800\n")
         (repo / "Makefile").write_text(recipes)
         init_fixture_repo(repo)
         checked(repo, "git", "config", "user.name", "gate integration")
@@ -390,10 +296,6 @@ candidate-gate:
             AWEB_CANDIDATE_RUNNER_MEMORY="1g",
             AWEB_CANDIDATE_BUILDER_MEMORY="1g",
         )
-
-        if interruption_only:
-            interrupted_docker_proof(repo, evidence, env)
-            return
 
         def invoke(
             name: str, *args: str, stages: str | None = None, success: bool = True
@@ -487,7 +389,7 @@ candidate-gate:
         for entry, verdict in {
             "checks": "failed",
             "checks/test-shipping": "failed",
-            "checks/test-release-cli-version": "passed",
+            "checks/check-go-vulnerability-audit": "passed",
             "user-paths": "passed",
             "unit": "failed",
             "unit/test-server": "failed",

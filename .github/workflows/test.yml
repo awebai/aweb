@@ -143,7 +143,7 @@ jobs:
 
       - name: Run remaining test targets
         # These suites ran above on the isolated Docker network.
-        run: make -o test-server -o test-awid -o test-cli -o test-channel -o test-channel-name-live-contract -o test-channel-core -o test-pi-extension test
+        run: make -o test-server -o test-awid -o test-cli -o test-channel -o test-channel-core -o test-pi-extension test
 
       - name: Preserve network isolation evidence
         if: always()
