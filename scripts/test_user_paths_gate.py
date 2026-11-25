@@ -362,7 +362,8 @@ if args[0]=='run' and 'scripts/candidate-suite.sh' in args:
  checkout=args[args.index('-w')+1]
  env['PATH']={str(commands)!r}+os.pathsep+env['PATH']
  # The fixture executes the actual stage script at the runner boundary.
- sys.exit(subprocess.run(['bash','scripts/candidate-suite.sh',args[-1]],cwd=checkout,env=env).returncode)
+ suite=args.index('scripts/candidate-suite.sh')
+ sys.exit(subprocess.run(['bash',*args[suite:]],cwd=checkout,env=env).returncode)
 if args[0]=='run': print('1000' if 'stat' in args else 'service');sys.exit(0)
 if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.exit(0)
 """)

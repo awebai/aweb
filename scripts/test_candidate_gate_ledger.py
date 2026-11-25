@@ -153,6 +153,44 @@ class CompleteGateVerdictTests(unittest.TestCase):
         self.assertEqual(failed, {"unit/test-server", "unit/test-cli"})
         self.assertEqual(rows["unit/_candidate-unit-pi"], "PASSED")
 
+    def test_a_nested_suite_run_cannot_write_the_lane_summary(self):
+        """A target that runs candidate-suite.sh itself, as the gate's own
+        tests do, writes its rows to its own log directory, never the lane's."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            nested = root / "nested"
+            nested.mkdir()
+            lane = root / "lanes" / "checks.tsv"
+            lane.parent.mkdir()
+            (root / "host-published-port.log").write_text("host preflight\n")
+            make = root / "make"
+            make.write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = check-product-table-writes ]; then\n'
+                f'  CANDIDATE_LOG_DIR={nested} bash {ROOT}/scripts/candidate-suite.sh static\n'
+                "fi\n"
+            )
+            make.chmod(0o700)
+            env = dict(
+                os.environ,
+                PATH=f"{root}{os.pathsep}{os.environ['PATH']}",
+                CANDIDATE_LOG_DIR=str(root),
+            )
+            env.pop("CANDIDATE_HOST_PORT_STATUS", None)
+            result = run(
+                ROOT,
+                "bash",
+                "scripts/candidate-suite.sh",
+                "--summary",
+                str(lane),
+                "checks",
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            stages = {line.split("\t")[0].split("/")[0] for line in lane.read_text().splitlines()}
+            self.assertEqual(stages, {"checks"})
+            self.assertIn("static\tPASSED", (nested / "summary.tsv").read_text())
+
     def test_an_unknown_unit_suite_is_refused(self):
         result, rows = self.suite("--isolated-suite test-nothing")
         self.assertEqual(result.returncode, 2)
@@ -321,7 +359,7 @@ _candidate-unit-suites:
 \t@test "$$(psql -h "$$TEST_DB_HOST" -U postgres -d postgres -Atc 'SELECT 6 * 7')" = 42
 \t@set -e; for suite in $$(bash scripts/candidate-suite.sh --list-unit-suites); do \\
 \t  mkdir -p "$$CANDIDATE_LOG_DIR/test-egress/$$suite"; \\
-\t  CANDIDATE_SUMMARY="$$CANDIDATE_LOG_DIR/test-egress/$$suite/summary.tsv" bash scripts/candidate-suite.sh --isolated-suite "$$suite" > "$$CANDIDATE_LOG_DIR/test-egress/$$suite/suite.log" 2>&1 || status=1; \\
+\t  bash scripts/candidate-suite.sh --summary "$$CANDIDATE_LOG_DIR/test-egress/$$suite/summary.tsv" --isolated-suite "$$suite" > "$$CANDIDATE_LOG_DIR/test-egress/$$suite/suite.log" 2>&1 || status=1; \\
 \t  cat "$$CANDIDATE_LOG_DIR/test-egress/$$suite/summary.tsv" >> "$$CANDIDATE_LOG_DIR/test-egress/summary.tsv"; \\
 \tdone; exit $${status:-0}
 test-server:

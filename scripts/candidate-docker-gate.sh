@@ -517,7 +517,6 @@ run_lane() {
     -e CANDIDATE_SOURCE_SHA="$SOURCE_SHA" \
     -e CANDIDATE_RUNNER_NAME="$name" \
     -e CANDIDATE_CHECKOUT_ROOT="$checkout" \
-    -e CANDIDATE_SUMMARY="$LOG_DIR/lanes/$lane.tsv" \
     -e GIT_CONFIG_COUNT=1 \
     -e GIT_CONFIG_KEY_0=safe.directory \
     -e GIT_CONFIG_VALUE_0="$checkout" \
@@ -562,7 +561,7 @@ run_lane() {
     -v "$LOG_DIR:$LOG_DIR" \
     -w "$checkout" \
     "$IMAGE" \
-    bash scripts/candidate-suite.sh "$lane" > "$LOG_DIR/lanes/$lane.out" 2>&1 || lane_status=$?
+    bash scripts/candidate-suite.sh --summary "$LOG_DIR/lanes/$lane.tsv" "$lane" > "$LOG_DIR/lanes/$lane.out" 2>&1 || lane_status=$?
   printf '%s\n' "$lane_status" > "$LOG_DIR/lanes/$lane.exit"
 }
 

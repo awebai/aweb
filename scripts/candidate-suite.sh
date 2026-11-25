@@ -4,8 +4,14 @@
 set -euo pipefail
 
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
-# A gate lane writes its own summary; the wrapper merges it when the lane ends.
-summary="${CANDIDATE_SUMMARY:-$log_dir/summary.tsv}"
+# A gate lane names its own summary file; the wrapper merges it when the lane
+# ends. An argument, not the environment: targets that run this script
+# themselves (the gate's own tests) must write their own log directory.
+summary="$log_dir/summary.tsv"
+if [[ "${1:-}" == "--summary" ]]; then
+  summary="${2:?--summary needs a path}"
+  shift 2
+fi
 
 target_result() {
   local target="$1" verdict="$2" elapsed="$3" note="${4:-}"
