@@ -12,6 +12,7 @@ from pathlib import Path
 from generate_cli_reference import (
     RootCoverageError,
     main,
+    markdown_prose,
     parse_help,
     validate_root_coverage,
 )
@@ -77,6 +78,28 @@ class CLIReferenceGeneratorTests(unittest.TestCase):
                     ],
                 ),
             ],
+        )
+
+    def test_angle_bracket_placeholders_render_as_code_not_html(self) -> None:
+        help_text = (
+            'A reply continues the conversation, with the subject "Re: <title>".\n'
+            "Start a thread: aw mail send --to <recipient> --subject <subject>.\n"
+            'An empty subject becomes "Re: <original subject>".\n'
+            "Already code: `aw --identity-home <root>\n"
+            "workspace connect --service <url>` stays as written.\n"
+            "\n"
+            "    aw mail reply <message_id>\n"
+        )
+
+        self.assertEqual(
+            markdown_prose(help_text),
+            'A reply continues the conversation, with the subject "Re: `<title>`".\n'
+            "Start a thread: aw mail send --to `<recipient>` --subject `<subject>`.\n"
+            'An empty subject becomes "Re: `<original subject>`".\n'
+            "Already code: `aw --identity-home <root>\n"
+            "workspace connect --service <url>` stays as written.\n"
+            "\n"
+            "    aw mail reply <message_id>\n",
         )
 
     def test_visible_root_command_addition_fails_until_rendered(self) -> None:
