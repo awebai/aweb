@@ -15,6 +15,7 @@ def collect_archive(archive, sha, destination):
     stages = []
     targets = []
     summaries = []
+    budget = None
     links = []
     with tarfile.open(archive) as t:
         for item in t:
@@ -37,15 +38,20 @@ def collect_archive(archive, sha, destination):
             with target.open("wb") as output:
                 while chunk := source.read(1024 * 1024):
                     output.write(chunk)
-            if (
+            gate_run = (
                 len(rel.parts) == 3
                 and rel.parts[0] == "tmp"
-                and rel.parts[2] == "summary.tsv"
                 and (
                     rel.parts[1] == "aweb-candidate-gate-" + sha
                     or rel.parts[1].startswith("aweb-candidate-gate-" + sha + "-")
                 )
-            ):
+            )
+            if gate_run and rel.parts[2] == "budget.tsv":
+                budget = {}
+                for line in target.read_text().splitlines():
+                    name, _, value = line.partition("\t")
+                    budget[name] = int(value) if value.isdigit() else value
+            if gate_run and rel.parts[2] == "summary.tsv":
                 summaries.append(item.name)
                 for line in target.read_text().splitlines():
                     fields = line.split("\t")
@@ -99,6 +105,7 @@ def collect_archive(archive, sha, destination):
     )
     return {
         "supervision": supervision,
+        "budget": budget,
         "stages": stages,
         "targets": targets,
         "gate_summaries": summaries,

@@ -15,6 +15,34 @@ import time
 
 ROOT = Path.home() / ".local/share/aweb-gates"
 LABEL = "aweb.merak.run"
+# QEMU's own memory beyond the guest's.
+QEMU_OVERHEAD_MIB = 4096
+
+
+def host_capacity():
+    """This host's CPU count and memory in MiB, measured now."""
+    total = next(
+        int(line.split()[1]) // 1024
+        for line in Path("/proc/meminfo").read_text().splitlines()
+        if line.startswith("MemTotal:")
+    )
+    return os.cpu_count(), total
+
+
+def guest_size(host_cpus, host_memory_mib):
+    """The guest gets every CPU and the memory the host can spare.
+
+    The host keeps an eighth of its memory, at least 2 GiB, plus QEMU's own
+    overhead; the guest's memory is the rest. Nothing else runs here during
+    a gate, so no CPU is held back.
+    """
+    if type(host_cpus) is not int or type(host_memory_mib) is not int:
+        raise ValueError("host capacity is whole CPUs and MiB")
+    reserve = max(host_memory_mib // 8, 2048)
+    memory_mib = host_memory_mib - reserve - QEMU_OVERHEAD_MIB
+    if host_cpus < 1 or memory_mib < 1024:
+        raise ValueError("this host is too small for a gate guest")
+    return host_cpus, memory_mib
 RUN = re.compile(r"vm-[a-f0-9]{32}")
 
 
@@ -128,6 +156,7 @@ def serve(spec):
     duration = spec["duration"]
     if type(duration) is not int or not 0 < duration <= 86400:
         raise ValueError("invalid guest lifetime")
+    cpus, memory_mib = guest_size(*host_capacity())
     runs = ROOT / "runs"
     runs.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (ROOT / "slot.lock").open("a") as lock:
@@ -227,9 +256,13 @@ def serve(spec):
                 "--tmpfs",
                 "/tmp",
                 "--memory",
-                "50g",
+                f"{memory_mib + QEMU_OVERHEAD_MIB}m",
                 "--memory-swap",
-                "50g",
+                f"{memory_mib + QEMU_OVERHEAD_MIB}m",
+                "--env",
+                f"VM_CPUS={cpus}",
+                "--env",
+                f"VM_MEMORY_MIB={memory_mib}",
                 "--mount",
                 f"type=bind,src={base},dst=/base/disk.raw,readonly",
                 "--mount",
@@ -239,6 +272,7 @@ def serve(spec):
             notify(
                 ready=True,
                 run=run,
+                guest={"cpus": cpus, "memory_mib": memory_mib},
                 container=identifier,
                 network_id=network_id,
                 egress=egress,

@@ -1,6 +1,7 @@
 """make release's one gate job, against real Git repositories and real shell."""
 
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -12,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from vm_gate import release
+from vm_gate import budget, release
 from vm_gate.cli import main
 from test_config import hashes
 from test_source import GitFixture, git
@@ -318,6 +319,14 @@ case "$target" in
 esac
 exit 99
 """
+# A guest engine of 12 CPUs and 60 GiB.
+STUB_DOCKER = """#!/bin/bash
+case "$*" in
+  *NCPU*) echo "12 64424509440" ;;
+  *Architecture*) echo x86_64 ;;
+  *) exit 99 ;;
+esac
+"""
 STUB_UV = """#!/bin/bash
 # uv build --quiet --wheel --sdist --out-dir DIR PROJECT: writes PROJECT's files.
 out="$6"; project="$7"
@@ -348,7 +357,7 @@ class GuestScript(CloudFixture, unittest.TestCase):
         )
         (self.remote / "cloud-image.tar").write_bytes(b"image")
         self.archive = hashlib.sha256(b"image").hexdigest()
-        for name, text in (("make", STUB_MAKE), ("uv", STUB_UV)):
+        for name, text in (("make", STUB_MAKE), ("uv", STUB_UV), ("docker", STUB_DOCKER)):
             (self.stubs / name).write_text(text)
             (self.stubs / name).chmod(0o755)
 
@@ -374,6 +383,7 @@ class GuestScript(CloudFixture, unittest.TestCase):
             "STUB_RECORD": str(self.record),
             "AWEB_GATE_LEDGER": str(self.root / "aweb-ledger.tsv"),
             "GIT_CONFIG_GLOBAL": "/dev/null",
+            "PYTHONPATH": str(Path(release.__file__).resolve().parents[1]),
             **env,
         }
         return subprocess.run(
@@ -424,6 +434,24 @@ class GuestScript(CloudFixture, unittest.TestCase):
         for suite in ("cloud", "aweb"):
             self.assertEqual((self.logs / f"release/{suite}/exit").read_text(), "0\n")
 
+    def test_each_gate_gets_its_share_of_the_guest(self):
+        result = self.run_script({"aweb-1.27.54-py3-none-any.whl": "x"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cloud = self.suite_env("release-gate")
+        aweb = self.suite_env("candidate-gate")
+        self.assertEqual((cloud["GATE_CPUS"], aweb["GATE_CPUS"]), ("6", "6"))
+        self.assertEqual(
+            (cloud["GATE_MEMORY_MIB"], aweb["GATE_MEMORY_MIB"]), ("30720", "30720")
+        )
+        recorded = json.loads((self.logs / "release/split.json").read_text())
+        self.assertEqual(recorded["measured"], {"cpus": 12, "memory_mib": 61440})
+
+    def test_a_cloud_only_release_gives_cloud_the_whole_guest(self):
+        result = self.run_script({}, aweb=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cloud = self.suite_env("release-gate")
+        self.assertEqual((cloud["GATE_CPUS"], cloud["GATE_MEMORY_MIB"]), ("12", "61440"))
+
     def test_a_red_suite_makes_the_job_red_and_both_exits_are_kept(self):
         for env, cloud_exit, aweb_exit in (
             ({"CLOUD_EXIT": "3"}, "3", "0"),
@@ -467,12 +495,21 @@ class NativeJob(CloudFixture, unittest.TestCase):
 
         self.directory = self.root / "state/runs/vm-native"
         self.directory.mkdir(parents=True)
+        # The release commit carries the vm_gate split the job runs.
+        package = Path(release.__file__).resolve().parent
+        fixture_package = self.repo / "scripts/vm-gate/vm_gate"
+        fixture_package.mkdir(parents=True)
+        for name in ("__init__.py", "budget.py"):
+            shutil.copy2(package / name, fixture_package / name)
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-m", "release split")
+        self.sha = git(self.repo, "rev-parse", "HEAD")
         self.source = prepare(
             self.repo, self.sha, self.directory, observed=self.observed
         )
         stubs = self.root / "stubs"
         stubs.mkdir()
-        for name, text in (("make", STUB_MAKE), ("uv", STUB_UV)):
+        for name, text in (("make", STUB_MAKE), ("uv", STUB_UV), ("docker", STUB_DOCKER)):
             (stubs / name).write_text(text)
             (stubs / name).chmod(0o755)
         self.record = self.root / "record"
@@ -564,6 +601,80 @@ class NativeJob(CloudFixture, unittest.TestCase):
         self.assertEqual(result["exit"], 124)
         self.assertEqual(result["infrastructure"], "infrastructure")
         self.assertFalse((Path(result["job"]) / "hermes-key").exists())
+
+
+# Machine shapes, as (CPUs, MiB): small ones, 10 and 12 CPUs, arm64 native
+# hosts, and Hetzner's dedicated sizes. The computation sees only numbers.
+SHAPES = [
+    (1, 2048),
+    (2, 4096),
+    (4, 8192),
+    (10, 45056),
+    (12, 51642),
+    (12, 32768),
+    (14, 98304),
+    (8, 32768),
+    (16, 65536),
+    (32, 131072),
+    (48, 196608),
+    (96, 393216),
+]
+
+
+class Budget(unittest.TestCase):
+    def gate_sizes(self, cpus, memory_mib):
+        spec = importlib.util.spec_from_file_location(
+            "gate_budget",
+            Path(release.__file__).resolve().parents[2] / "gate_budget.py",
+        )
+        gate_budget = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate_budget)
+        return gate_budget.size(cpus, memory_mib), gate_budget.workers
+
+    def test_every_cpu_is_used_and_nothing_is_oversubscribed(self):
+        for cpus, memory_mib in SHAPES:
+            for aweb in (True, False):
+                with self.subTest(cpus=cpus, memory_mib=memory_mib, aweb=aweb):
+                    if aweb and cpus < 2:
+                        with self.assertRaises(ValueError):
+                            budget.release_split(cpus, memory_mib, aweb)
+                        continue
+                    shares = budget.release_split(cpus, memory_mib, aweb)
+                    self.assertEqual(
+                        shares["measured"], {"cpus": cpus, "memory_mib": memory_mib}
+                    )
+                    gates = [shares[g] for g in ("aweb", "cloud") if g in shares]
+                    # The gates' shares are exactly the measured capacity.
+                    self.assertEqual(sum(g["cpus"] for g in gates), cpus)
+                    self.assertEqual(sum(g["memory_mib"] for g in gates), memory_mib)
+                    for gate in gates:
+                        sizes, workers = self.gate_sizes(gate["cpus"], gate["memory_mib"])
+                        for cap in ("runner_cpus", "builder_cpus", "sibling_cpus"):
+                            self.assertEqual(sizes[cap], gate["cpus"])
+                        count = sizes["server_workers"]
+                        self.assertLessEqual(count, max(gate["cpus"] - 1, 0))
+                        if count:
+                            self.assertLessEqual(
+                                workers.service_memory_mib(count), gate["memory_mib"] // 2
+                            )
+
+    def test_an_override_is_input_and_a_missing_value_is_measured(self):
+        with patch.object(budget, "measure", return_value=(12, 51642)):
+            self.assertEqual(
+                budget.budget_from({}), (12, 51642, "cpus=measured,memory=measured")
+            )
+            self.assertEqual(
+                budget.budget_from({"GATE_CPUS": "6"}),
+                (6, 51642, "cpus=input,memory=measured"),
+            )
+        with patch.object(budget, "measure", side_effect=AssertionError("measured")):
+            self.assertEqual(
+                budget.budget_from({"GATE_CPUS": "6", "GATE_MEMORY_MIB": "1024"}),
+                (6, 1024, "cpus=input,memory=input"),
+            )
+        for bad in ("0", "-1", "1.5", "six"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "GATE_CPUS"):
+                budget.budget_from({"GATE_CPUS": bad, "GATE_MEMORY_MIB": "1024"})
 
 
 class Receipt(unittest.TestCase):

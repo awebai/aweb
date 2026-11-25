@@ -271,6 +271,14 @@ OS package comparison. Each Merak receipt carries both file digests, the
 observed Python binary hash and the package comparison itself. Build the launcher from `scripts/vm-gate/merak`
 with a digest-pinned Debian base supplied as the `BASE` build argument.
 
+The guest's size is measured, not configured. When it admits a run, the host
+script reads its own CPU count and memory: the guest gets every CPU, and the
+host keeps an eighth of its memory (at least 2 GiB) plus QEMU's own 4 GiB. The
+admission record carries the guest size. Inside the guest each gate measures
+its own Docker engine (`vm_gate/budget.py`), so nothing names a machine or
+assumes a size. A release divides the measured capacity between its Cloud and
+aweb gates, and the receipt records the measurement and the split.
+
 Place the verified disk at `~/.local/share/aweb-gates/base/<sha256>.raw` with
 mode 0444. Merak holds one slot from admission through cleanup. Each invocation
 boots a new writable overlay and NoCloud seed under

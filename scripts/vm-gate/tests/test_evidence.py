@@ -34,7 +34,7 @@ class EvidenceTests(unittest.TestCase):
         archive = self.archive(
             {
                 main: (
-                    "unit/test-server\tFAILED\ttest-egress/suite.log\t22s\texit 2\n"
+                    "unit/test-server\tFAILED\ttest-egress/test-server/suite.log\t22s\texit 2\n"
                     "unit\tFAILED\tunit.log\t23s\t900s\n"
                 ),
                 other: "unit\tPASSED\tunit.log\t0s\t900s\n",
@@ -55,11 +55,35 @@ class EvidenceTests(unittest.TestCase):
                     "status": "FAILED",
                     "seconds": 22.0,
                     "summary": main,
-                    "log": "test-egress/suite.log",
+                    "log": "test-egress/test-server/suite.log",
                     "detail": "exit 2",
                 }
             ],
         )
+
+    def test_the_run_budget_and_a_stopped_stage_reach_the_summary(self):
+        run = f"tmp/aweb-candidate-gate-{SHA}-run"
+        archive = self.archive(
+            {
+                run + "/summary.tsv": (
+                    "checks/test-shipping\tFAILED\tchecks.log\t40s\texit 2\n"
+                    "checks\tFAILED\tchecks.log\t41s\t\n"
+                    "unit\tSTOPPED\t-\t42s\tafter checks FAILED\n"
+                ),
+                run + "/budget.tsv": (
+                    "cpus\t12\nmemory_mib\t56000\nsource\tmachine\nserver_workers\t11\n"
+                ),
+                "tmp/aweb-candidate-gate-" + "b" * 40 + "-x/budget.tsv": "cpus\t1\n",
+            }
+        )
+        result = collect_archive(archive, SHA, Path(self.tmp.name) / "out")
+        self.assertEqual(
+            result["budget"],
+            {"cpus": 12, "memory_mib": 56000, "source": "machine", "server_workers": 11},
+        )
+        stopped = [row for row in result["stages"] if row["stage"] == "unit"]
+        self.assertEqual(stopped[0]["status"], "STOPPED")
+        self.assertEqual(stopped[0]["seconds"], 42.0)
 
     def test_reused_stage_is_explicit_with_no_fabricated_duration(self):
         output = f"gate: tree {'b' * 40} already passed checks; original log /retained/checks.log\n"

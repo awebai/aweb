@@ -152,6 +152,8 @@ def run_release(
                 "AWEB_GATE_LEDGER": job + "/ledger.tsv",
                 "AWEB_GATE_LOG_DIR": job + "/gate-logs",
                 "GATE_OWNER": owner,
+                # The release script splits the host with this checkout's vm_gate.
+                "PYTHONPATH": job + "/source/scripts/vm-gate",
             }.items()
         )
         result = host.run(

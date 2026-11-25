@@ -235,7 +235,11 @@ def guest_script(
             f"AC_CANDIDATE_AWEB_WHEELS={files_dir}",
             f"AC_CANDIDATE_AWEB_WHEELS_SOURCE_SHA={aweb}",
         ]
-    exports = "export " + " ".join(Q(e) for e in cloud_env)
+    exports = (
+        "export "
+        + " ".join(Q(e) for e in cloud_env)
+        + ' GATE_CPUS="$cloud_cpus" GATE_MEMORY_MIB="$cloud_memory"'
+    )
     projects = sorted(
         {
             AWEB_PROJECTS[p]
@@ -255,7 +259,7 @@ def guest_script(
   set -u
   cd {Q(remote + "/source")}
   test "$(git rev-parse HEAD)" = {Q(aweb)} || exit 70
-  make candidate-gate > {Q(release + "/aweb/gate-output.log")} 2>&1
+  GATE_CPUS="$aweb_cpus" GATE_MEMORY_MIB="$aweb_memory" make candidate-gate > {Q(release + "/aweb/gate-output.log")} 2>&1
   printf '%s\\n' "$?" > {Q(release + "/aweb/exit")}
   mkdir -p {Q(release + "/aweb/rebuilt")}
 {rebuild}
@@ -267,6 +271,8 @@ aweb_suite=$!
 mkdir -p {Q(release + "/aweb")} {Q(release + "/cloud/empty-docker-config")}
 {{ uname -m; docker info --format '{{{{.Architecture}}}}'; }} > {Q(release + "/host-architecture")} 2>/dev/null
 chmod 0700 {Q(release + "/cloud/empty-docker-config")}
+read -r cloud_cpus cloud_memory aweb_cpus aweb_memory < <(python3 -m vm_gate.budget split {Q(release + "/split.json")} {"aweb" if aweb else "cloud-only"}) || exit 70
+test -n "$cloud_cpus" || exit 70
 echo {Q(bundle_sha256 + "  " + remote + "/cloud.bundle")} | sha256sum -c - || exit 70
 echo {Q(archive_sha256 + "  " + remote + "/cloud-image.tar")} | sha256sum -c - || exit 70
 cd {Q(home)}
@@ -366,6 +372,8 @@ def receipt(
         **suite_record(evidence, "cloud"),
     }
     architecture = evidence / "var/log/vm-gate/release/host-architecture"
+    split_path = evidence / "var/log/vm-gate/release/split.json"
+    split = json.loads(split_path.read_text()) if split_path.exists() else None
     record = {
         "machine": machine,
         "machine_platform": platform,
@@ -376,6 +384,7 @@ def receipt(
         "launcher_sha": launcher_sha,
         "timeout_seconds": timeout,
         "files": files,
+        "split": split,
         "cloud": cloud,
         **main,
         "vm_gate": {
@@ -423,3 +432,4 @@ def exit_code(record):
     if "aweb" in record and record["aweb"]["rebuilt_files"] != record["files"]:
         return RED
     return GREEN
+
