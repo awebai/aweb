@@ -20,73 +20,75 @@ worker_spec = importlib.util.spec_from_file_location(
 worker_services = importlib.util.module_from_spec(worker_spec)
 worker_spec.loader.exec_module(worker_services)
 
-MACHINES = [
-    (cpus, memory_mib)
-    for cpus in range(1, 129)
-    for memory_mib in (2048, 8192, 16384, 31_000, 45_000, 64_000, 256_000)
-]
+WORK = gate_budget.WORK
+
+
+def run_budget(**env):
+    return subprocess.run(
+        [sys.executable, str(ROOT / "scripts/gate_budget.py")],
+        env=dict(os.environ, **env),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
 
 
 class BudgetTests(unittest.TestCase):
-    def test_every_cap_and_worker_plan_fits_the_budget(self):
-        for cpus, memory_mib in MACHINES:
-            with self.subTest(cpus=cpus, memory_mib=memory_mib):
-                sizes = gate_budget.size(cpus, memory_mib)
-                for cap in ("runner_cpus", "builder_cpus", "sibling_cpus"):
-                    self.assertGreater(sizes[cap], 0)
-                    self.assertLessEqual(sizes[cap], cpus)
-                workers = sizes["server_workers"]
-                self.assertGreaterEqual(workers, 0)
-                self.assertLessEqual(workers, max(cpus - 1, 0))
-                self.assertLessEqual(workers, worker_services.MAX_WORKERS)
-                self.assertNotEqual(workers, 1)
-                # The parallel plan's real service limits fit half the memory.
-                if workers:
-                    self.assertLessEqual(
-                        worker_services.service_memory_mib(workers), memory_mib // 2
-                    )
-
-    def test_a_larger_machine_never_gets_fewer_workers(self):
-        for memory_mib in (8192, 45_000, 256_000):
-            counts = [gate_budget.size(c, memory_mib)["server_workers"] for c in range(1, 129)]
-            self.assertEqual(counts, sorted(counts))
-        self.assertEqual(gate_budget.size(10, 45_000)["server_workers"], 9)
-        self.assertEqual(gate_budget.size(2, 8192)["server_workers"], 0)
-
-    def test_invalid_budgets_are_refused(self):
-        for cpus, memory_mib in [(0, 1024), (2, 0), (-1, 1024)]:
-            with self.subTest(cpus=cpus, memory_mib=memory_mib):
-                with self.assertRaises(ValueError):
-                    gate_budget.size(cpus, memory_mib)
-
-    def test_an_explicit_budget_is_used_and_a_bad_one_refused(self):
-        env = dict(os.environ, GATE_CPUS="6", GATE_MEMORY_MIB="20000")
-        result = subprocess.run(
-            [sys.executable, str(ROOT / "scripts/gate_budget.py")],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
+    def test_a_releases_fractional_share_is_the_budget(self):
+        result = run_budget(
+            GATE_CPUS="4.83",
+            GATE_MEMORY_MIB="20333",
+            GATE_LANES="checks user-paths unit artifacts integration",
+            GATE_CPU_WEIGHT_PROBE="100",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         values = dict(line.split("=", 1) for line in result.stdout.split())
-        self.assertEqual(values["GATE_CPUS"], "6")
-        self.assertEqual(values["GATE_MEMORY_MIB"], "20000")
+        self.assertEqual(values["GATE_CPUS"], "4.83")
         self.assertEqual(values["GATE_BUDGET_SOURCE"], "cpus=input,memory=input")
-        # Unit alone (the default lanes) has the whole budget.
-        self.assertEqual(values["GATE_UNIT_CPUS"], "6")
-        self.assertEqual(values["GATE_LANES_CONCURRENT"], "1")
-        for bad in ("0", "two", "1.5"):
-            env["GATE_CPUS"] = bad
-            refused = subprocess.run(
-                [sys.executable, str(ROOT / "scripts/gate_budget.py")],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            self.assertEqual(refused.returncode, 2, bad)
-            self.assertIn("GATE_CPUS", refused.stderr)
+        # The release's aweb share on merak gives unit 4.83 x 9576 / 12660.
+        self.assertEqual(values["GATE_UNIT_CPUS"], "3.65")
+        # Every lane's containers carry the shares whose cpu.weight, under
+        # the probed mapping, is half its measured CPU-seconds.
+        budget = gate_budget.budget
+        self.assertEqual(values["GATE_CPU_MAPPING"], "runc-1.3")
+        for lane, seconds in WORK["lanes"].items():
+            name = lane.upper().replace("-", "_")
+            weight = budget.cpu_weight(seconds)
+            self.assertEqual(values["GATE_LANE_CPU_WEIGHT_" + name], str(weight))
+            shares = int(values["GATE_LANE_CPU_SHARES_" + name])
+            self.assertEqual(budget.weight_of(shares, "runc-1.3"), weight)
+        builder = int(values["GATE_BUILDER_CPU_SHARES"])
+        self.assertEqual(
+            budget.weight_of(builder, "runc-1.3"), budget.cpu_weight(WORK["lanes"]["unit"])
+        )
+
+    def test_without_a_probe_only_the_budget_is_given(self):
+        result = run_budget(GATE_CPUS="12", GATE_MEMORY_MIB="51642")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        names = {line.split("=", 1)[0] for line in result.stdout.split()}
+        self.assertEqual(names, {"GATE_CPUS", "GATE_MEMORY_MIB", "GATE_BUDGET_SOURCE"})
+
+    def test_an_unknown_mapping_is_refused(self):
+        refused = run_budget(GATE_CPUS="12", GATE_MEMORY_MIB="51642", GATE_CPU_WEIGHT_PROBE="40")
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("cpu.weight", refused.stderr)
+
+    def test_no_cpu_cap_is_planned(self):
+        result = run_budget(
+            GATE_CPUS="12", GATE_MEMORY_MIB="51642", GATE_LANES="unit checks", GATE_CPU_WEIGHT_PROBE="39"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        names = {line.split("=", 1)[0] for line in result.stdout.split()}
+        for cap in ("GATE_RUNNER_CPUS", "GATE_BUILDER_CPUS", "GATE_SIBLING_CPUS", "GATE_LANES_CONCURRENT"):
+            self.assertNotIn(cap, names)
+        self.assertFalse(any(n.startswith("GATE_LANE_CPUS_") for n in names), names)
+
+    def test_a_bad_budget_is_refused(self):
+        for bad in ("0", "two", "-1", "1.5.2", "0.0"):
+            with self.subTest(bad=bad):
+                refused = run_budget(GATE_CPUS=bad, GATE_MEMORY_MIB="20000")
+                self.assertEqual(refused.returncode, 2, bad)
+                self.assertIn("GATE_CPUS", refused.stderr)
 
 
 if __name__ == "__main__":

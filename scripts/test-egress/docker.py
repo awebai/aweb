@@ -41,8 +41,8 @@ def runner_memory_mib(server_workers=0):
     return RUNNER_MEMORY_MIB + WORKER_PROCESS_MIB * server_workers
 
 
-def runner_args(token, dns_ip, image, cpus, server_workers=0, name="runner"):
-    """One suite runner. Its CPU cap is the gate's budget, never more."""
+def runner_args(token, dns_ip, image, cpu_shares, server_workers=0, name="runner"):
+    """One suite runner, with its suite's cgroup weight (--cpu-shares); no CPU cap."""
     worker_env = (
         ["-e", f"AWEB_SERVER_TEST_WORKERS={server_workers}"] if server_workers else []
     )
@@ -64,8 +64,8 @@ def runner_args(token, dns_ip, image, cpus, server_workers=0, name="runner"):
         "signer.example.com:127.0.0.1",
         "--name",
         f"{token}-{name}",
-        "--cpus",
-        str(cpus),
+        "--cpu-shares",
+        str(cpu_shares),
         "--memory",
         f"{runner_memory_mib(server_workers)}m",
         "--pids-limit",
@@ -89,7 +89,7 @@ def docker(*args):
     return subprocess.check_output(["docker", *args], text=True).strip()
 
 
-def postgres_args(runner, port=5432, parallel=False):
+def postgres_args(runner, cpu_shares, port=5432, parallel=False):
     # Disposable databases must not wait on the host disk's WAL fsync. Bound
     # both RAM and WAL growth, and prohibit swapping the tmpfs back to disk.
     # The first pair keeps the serial suites' cap; further workers are smaller.
@@ -104,8 +104,8 @@ def postgres_args(runner, port=5432, parallel=False):
         "-d",
         "--network",
         "container:" + runner,
-        "--cpus",
-        "1",
+        "--cpu-shares",
+        str(cpu_shares),
         "--memory",
         memory,
         "--memory-swap",
@@ -127,7 +127,7 @@ def postgres_args(runner, port=5432, parallel=False):
     ]
 
 
-def redis_args(runner, port=6379, parallel=False):
+def redis_args(runner, cpu_shares, port=6379, parallel=False):
     primary = port == 6379
     memory = (
         f"{_worker_module.PRIMARY_REDIS_MIB}m"
@@ -136,8 +136,6 @@ def redis_args(runner, port=6379, parallel=False):
     )
     limits = (
         [
-            "--cpus",
-            "1" if primary else ".25",
             "--memory",
             memory,
             "--memory-swap",
@@ -146,7 +144,7 @@ def redis_args(runner, port=6379, parallel=False):
             "512" if primary else "128",
         ]
         if parallel
-        else ["--cpus", "1", "--memory", memory, "--pids-limit", "512"]
+        else ["--memory", memory, "--pids-limit", "512"]
     )
     command = ["redis-server", "--port", str(port)] if parallel else []
     return [
@@ -154,6 +152,8 @@ def redis_args(runner, port=6379, parallel=False):
         "-d",
         "--network",
         "container:" + runner,
+        "--cpu-shares",
+        str(cpu_shares),
         *limits,
         "redis:7",
         *command,
@@ -249,22 +249,19 @@ _budget_spec.loader.exec_module(_budget)
 RUNNER_AW = "/tmp/aw-cli/aw"
 
 
-def budget_cpus():
-    return _budget.budget_from(os.environ)[0]
-
-
 def unit_plan(suites, environ=os.environ):
     """Unit's CPU share divided among its suites by their measured work.
 
     The share is GATE_UNIT_CPUS (and GATE_UNIT_MEMORY_MIB), which the gate
-    passes from its plan; standalone, the measured budget.
+    passes from its plan; standalone, the measured budget. The engine's
+    cpu.weight mapping is GATE_CPU_MAPPING from the gate, else probed here.
     """
     work = json.loads((ROOT / "candidate-gate/measured-work.json").read_text())
     missing = [suite for suite in suites if suite not in work["unit_suites"]]
     if missing:
         raise ValueError(f"no measured work for unit suites {missing}")
     if environ.get("GATE_UNIT_CPUS"):
-        cpus = int(environ["GATE_UNIT_CPUS"])
+        cpus = float(environ["GATE_UNIT_CPUS"])
         memory_mib = int(environ["GATE_UNIT_MEMORY_MIB"])
     else:
         cpus, memory_mib, _ = _budget.budget_from(environ)
@@ -272,20 +269,34 @@ def unit_plan(suites, environ=os.environ):
         cpus,
         memory_mib,
         {suite: work["unit_suites"][suite] for suite in suites},
+        runs=work["unit_runs"],
+        mapping=environ.get("GATE_CPU_MAPPING") or _budget.probe_mapping(),
         service_memory_mib=_worker_module.service_memory_mib,
         max_workers=_worker_module.MAX_WORKERS,
     )
+
+
+def lane_cpu_shares():
+    """The weight of the lane this runs in (the gate passes it), else Docker's default."""
+    return int(os.environ.get("AWEB_CANDIDATE_SIBLING_CPU_SHARES", "1024"))
+
+
+def unit_requests(plan, suites):
+    """How many of unit's workers each suite takes, and how many run at once.
+
+    A parallel suite takes its xdist workers, a serial suite one; together
+    they never exceed unit's workers. Suites with equal requests start
+    heaviest first, by measured CPU-seconds.
+    """
+    capacity = sum(plan["workers"].values()) + plan["serial_slots"]
+    ordered = sorted(suites, key=lambda suite: -plan["cpu_shares"][suite])
+    return capacity, {suite: plan["workers"].get(suite, 1) for suite in ordered}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, required=True)
     parser.add_argument("--image", help="already prepared source/dependency image")
-    parser.add_argument(
-        "--cpus",
-        type=int,
-        help="each runner's CPU cap; default: the gate budget (GATE_CPUS or the engine)",
-    )
     parser.add_argument(
         "--server-workers",
         type=int,
@@ -333,10 +344,6 @@ def main():
         parser.error("--suites and --command are exclusive")
     if args.suites and len(set(args.suites)) != len(args.suites):
         parser.error("each suite runs once")
-    if args.cpus is None:
-        args.cpus = budget_cpus()
-    if args.cpus < 1:
-        parser.error("--cpus must be positive")
     if sys.platform == "darwin":
         sys.path.insert(0, str(ROOT / "scripts"))
         from local_suite_slots import Scope, SuiteLabel, suite_slot
@@ -346,21 +353,21 @@ def main():
     return run_suite(args)
 
 
-def start_runner(token, dns_ip, image, cpus, server_workers, name, pairs, evidence):
+def start_runner(token, dns_ip, image, cpu_shares, server_workers, name, pairs, evidence):
     """One runner and its own Postgres and Redis pairs, in its own network
     namespace: every service a suite reaches on 127.0.0.1 belongs to it.
     Returns the runner, its service rows and every container it created."""
     containers = []
-    runner = docker(*runner_args(token, dns_ip, image, cpus, server_workers, name))
+    runner = docker(*runner_args(token, dns_ip, image, cpu_shares, server_workers, name))
     containers.append(runner)
     parallel = pairs > 1
     services = []
     try:
         for plan in service_plan(pairs if parallel else 0):
             port = plan["postgres_port"]
-            pg = docker(*postgres_args(runner, port, parallel))
+            pg = docker(*postgres_args(runner, cpu_shares, port, parallel))
             containers.append(pg)
-            redis = docker(*redis_args(runner, plan["redis_port"], parallel))
+            redis = docker(*redis_args(runner, cpu_shares, plan["redis_port"], parallel))
             containers.append(redis)
             wait_for_postgres(pg, port)
             storage = require_memory_postgres(pg, port)
@@ -449,12 +456,15 @@ def remove(containers):
 
 
 def run_isolated_suite(name, plan, args, token, dns_ip, image, evidence, owned):
-    """Runs one suite in its own runner, capped at its slots; returns its exit."""
+    """Runs one suite in its own runner, weighted by its measured work; returns its exit."""
     directory = evidence / name
-    slots, workers = plan["slots"][name], plan["workers"].get(name, 0)
+    weight = plan["cpu_shares"][name]
+    # One worker is a serial run; more are xdist workers with their own services.
+    workers = plan["workers"].get(name, 1)
+    xdist = workers if workers > 1 else 0
     started = time.monotonic()
     runner, _, containers = start_runner(
-        token, dns_ip, image, slots, workers, name, workers, directory
+        token, dns_ip, image, weight, xdist, name, xdist, directory
     )
     owned.extend(containers)
     command_env = []
@@ -487,20 +497,21 @@ def run_isolated_suite(name, plan, args, token, dns_ip, image, evidence, owned):
         status = status or 1
     print(
         f"unit suite {name}: exit {status} in {time.monotonic() - started:.0f}s"
-        f" ({slots} CPUs, {workers} workers)",
+        f" (weight {weight}, {workers} workers)",
         flush=True,
     )
     return status
 
 
 def run_concurrent_suites(args, token, dns_ip, image, evidence, owned):
-    """Every suite within unit's share: the running suites' caps never exceed it."""
+    """Every suite within unit's workers: the running suites never take more."""
     plan = unit_plan(args.suites)
     (evidence / "unit-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     print(f"unit plan: {json.dumps(plan, sort_keys=True)}", flush=True)
+    capacity, requests = unit_requests(plan, args.suites)
     results = _budget.run_within(
-        plan["cpus"],
-        plan["slots"],
+        capacity,
+        requests,
         lambda name: run_isolated_suite(
             name, plan, args, token, dns_ip, image, evidence, owned
         ),
@@ -533,7 +544,7 @@ def run_command(args, token, dns_ip, image, evidence, owned):
         token,
         dns_ip,
         image,
-        args.cpus,
+        lane_cpu_shares(),
         args.server_workers,
         "runner",
         args.server_workers,
@@ -609,8 +620,6 @@ def run_suite(args):
             token,
             "--name",
             token + "-dns",
-            "--cpus",
-            ".5",
             "--memory",
             "128m",
             "--pids-limit",

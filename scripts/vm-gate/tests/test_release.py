@@ -850,43 +850,41 @@ SHAPES = [
 
 
 class Budget(unittest.TestCase):
-    def gate_sizes(self, cpus, memory_mib):
+    def gate_plan(self, cpus, memory_mib):
         spec = importlib.util.spec_from_file_location(
             "gate_budget",
             Path(release.__file__).resolve().parents[2] / "gate_budget.py",
         )
         gate_budget = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gate_budget)
-        return gate_budget.size(cpus, memory_mib), gate_budget.workers
+        lanes = list(gate_budget.WORK["lanes"])
+        return gate_budget.plan(cpus, memory_mib, lanes), gate_budget.workers
 
-    def test_every_cpu_is_used_and_nothing_is_oversubscribed(self):
+    def test_the_gates_divide_the_guest_and_cap_nothing(self):
         measured = release.gate_weights()
         for cpus, memory_mib in SHAPES:
             for aweb in (True, False):
                 weights = measured if aweb else {"cloud": measured["cloud"]}
                 with self.subTest(cpus=cpus, memory_mib=memory_mib, aweb=aweb):
-                    if aweb and cpus < 2:
-                        with self.assertRaises(ValueError):
-                            budget.release_split(cpus, memory_mib, weights)
-                        continue
                     shares = budget.release_split(cpus, memory_mib, weights)
                     self.assertEqual(
                         shares["measured"], {"cpus": cpus, "memory_mib": memory_mib}
                     )
                     gates = [shares[g] for g in ("aweb", "cloud") if g in shares]
-                    # The gates' shares are exactly the measured capacity.
-                    self.assertEqual(sum(g["cpus"] for g in gates), cpus)
-                    self.assertEqual(sum(g["memory_mib"] for g in gates), memory_mib)
-                    self.assertTrue(all(g["cpus"] >= 1 for g in gates))
-                    for gate in gates:
-                        sizes, workers = self.gate_sizes(gate["cpus"], gate["memory_mib"])
-                        for cap in ("runner_cpus", "builder_cpus", "sibling_cpus"):
-                            self.assertEqual(sizes[cap], gate["cpus"])
-                        count = sizes["server_workers"]
-                        self.assertLessEqual(count, max(gate["cpus"] - 1, 0))
-                        if count:
+                    # The proportional shares are the measured capacity, to
+                    # their two decimals; memory is floored per gate.
+                    self.assertAlmostEqual(sum(g["cpus"] for g in gates), cpus, delta=0.011)
+                    self.assertLessEqual(sum(g["memory_mib"] for g in gates), memory_mib)
+                    self.assertGreaterEqual(sum(g["memory_mib"] for g in gates), memory_mib - len(gates))
+                    self.assertTrue(all(g["cpus"] > 0 for g in gates))
+                    if not aweb:
+                        continue
+                    plan, workers = self.gate_plan(shares["aweb"]["cpus"], shares["aweb"]["memory_mib"])
+                    self.assertTrue(all("cpu_shares" in lane for lane in plan["lanes"].values()))
+                    for suite, count in plan["unit"]["workers"].items():
+                        if count > 1:
                             self.assertLessEqual(
-                                workers.service_memory_mib(count), gate["memory_mib"] // 2
+                                workers.service_memory_mib(count), plan["unit"]["memory_mib"] // 2
                             )
 
     def test_the_split_follows_the_gates_measured_work(self):
@@ -922,9 +920,16 @@ class Budget(unittest.TestCase):
                 budget.budget_from({"GATE_CPUS": "6", "GATE_MEMORY_MIB": "1024"}),
                 (6, 1024, "cpus=input,memory=input"),
             )
-        for bad in ("0", "-1", "1.5", "six"):
+            # A release passes its gate's proportional, fractional share.
+            self.assertEqual(
+                budget.budget_from({"GATE_CPUS": "5.37", "GATE_MEMORY_MIB": "1024"}),
+                (5.37, 1024, "cpus=input,memory=input"),
+            )
+        for bad in ("0", "0.0", "-1", "1.5.2", "six"):
             with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "GATE_CPUS"):
                 budget.budget_from({"GATE_CPUS": bad, "GATE_MEMORY_MIB": "1024"})
+        with self.assertRaisesRegex(ValueError, "GATE_MEMORY_MIB"):
+            budget.budget_from({"GATE_CPUS": "2", "GATE_MEMORY_MIB": "1.5"})
 
 
 class Receipt(unittest.TestCase):

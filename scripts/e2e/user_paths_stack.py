@@ -210,7 +210,7 @@ def configuration(dns=None, server_image=None, *, production=False):
                 f"{WORK}/production-package:/work/production-package:ro"
             ]
     for service in services.values():
-        service.update(cpus=1, mem_limit="1g", pids_limit=256)
+        service.update(mem_limit="1g", pids_limit=256)
     for name in ("awid", "server", "peer", "cli"):
         if dns:
             services[name]["dns"] = [dns]
@@ -317,8 +317,6 @@ def qualify_released_clients(released_aw, runtimes, observations, production):
             "bridge",
             "--user",
             CLIENT_USER,
-            "--cpus",
-            "1",
             "--memory",
             "512m",
             "--pids-limit",
@@ -720,8 +718,6 @@ def main():
                 "bridge",
                 "--user",
                 CLIENT_USER,
-                "--cpus",
-                "1",
                 "--memory",
                 "512m",
                 "--pids-limit",
@@ -759,8 +755,6 @@ def main():
                     "bridge",
                     "--user",
                     CLIENT_USER,
-                    "--cpus",
-                    "1",
                     "--memory",
                     "512m",
                     "--pids-limit",

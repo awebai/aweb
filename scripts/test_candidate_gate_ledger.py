@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import errno
+import importlib.util
+import json
 import os
 import re
 import shutil
@@ -33,6 +35,11 @@ def held_library_default():
 
 
 ROOT = Path(__file__).resolve().parents[1]
+_budget_spec = importlib.util.spec_from_file_location(
+    "release_budget", ROOT / "scripts/vm-gate/vm_gate/budget.py"
+)
+budget = importlib.util.module_from_spec(_budget_spec)
+_budget_spec.loader.exec_module(budget)
 STAGES = "static checks user-paths unit artifacts integration"
 # The targets the fixture gives real recipes: the stage assertions below
 # use real tools and services, never a replacement runner.
@@ -528,17 +535,65 @@ candidate-gate:
             len(stage_rows(version_rows)) == len(stage_rows(rows)) + 1
             and version_rows[-1].split("\t")[0] != rows[-1].split("\t")[0]
         )
-        # Fewer CPUs than lanes: the lanes run one at a time, each with the
-        # budget, and the run still passes and records every stage.
+        # A budget smaller than the lanes caps nothing: every lane runs at
+        # once, each container weighted by its lane's measured CPU-seconds.
+        # A docker shim on the wrapper's PATH records every Docker call.
         env["CLI_VERSION"] = "1.2.5"
-        serial_env = dict(env, GATE_CPUS="2", GATE_MEMORY_MIB="8192")
-        serial = run(repo, *gate, env=dict(serial_env, AWEB_CANDIDATE_STAGES="checks user-paths unit"))
-        (evidence / "serial-lanes.log").write_text(serial.stdout + serial.stderr)
-        assert serial.returncode == 0, f"serial-lanes: see {evidence}/serial-lanes.log"
-        serial_logs = Path(re.findall(r"logs: (\S+)", serial.stdout + serial.stderr)[-1])
-        assert "lanes_concurrent\t0" in (serial_logs / "budget.tsv").read_text()
-        order = re.findall(r"^gate lane (\S+): exit 0", serial.stdout, flags=re.MULTILINE)
-        assert order == ["checks", "user-paths", "unit"], order
+        shim = evidence / "docker-shim"
+        shim.mkdir()
+        calls = evidence / "docker-calls.jsonl"
+        (shim / "docker").write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, sys\n"
+            f"with open({str(calls)!r}, 'a') as log:\n"
+            "    log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            f"os.execv({shutil.which('docker')!r}, ['docker', *sys.argv[1:]])\n"
+        )
+        (shim / "docker").chmod(0o755)
+        small = dict(
+            env,
+            GATE_CPUS="2",
+            GATE_MEMORY_MIB="8192",
+            PATH=f"{shim}{os.pathsep}{env['PATH']}",
+            AWEB_CANDIDATE_STAGES="checks user-paths unit",
+        )
+        weighted = run(repo, *gate, env=small)
+        (evidence / "weighted-lanes.log").write_text(weighted.stdout + weighted.stderr)
+        assert weighted.returncode == 0, f"weighted-lanes: see {evidence}/weighted-lanes.log"
+        weighted_logs = Path(re.findall(r"logs: (\S+)", weighted.stdout + weighted.stderr)[-1])
+        budget_rows = (weighted_logs / "budget.tsv").read_text()
+        assert "lanes_concurrent" not in budget_rows, budget_rows
+        work = json.loads((ROOT / "candidate-gate/measured-work.json").read_text())
+        recorded = {}
+        for row in budget_rows.splitlines():
+            field, *rest = row.split("\t")
+            recorded[(field, *rest[:-1])] = rest[-1]
+        mapping = budget.mapping_from_probe(recorded[("cpu_weight_probe",)])
+        assert recorded[("cpu_mapping",)] == mapping, recorded
+
+        def lane_shares(lane):
+            return str(budget.lane_shares(work["lanes"][lane], mapping))
+
+        for lane in ("checks", "user-paths", "unit"):
+            assert recorded[("lane_cpu_weight", lane)] == str(budget.cpu_weight(work["lanes"][lane]))
+            assert recorded[("lane_cpu_shares", lane)] == lane_shares(lane), recorded
+        argv = [json.loads(line) for line in calls.read_text().splitlines()]
+        capped = [args for args in argv if any(a == "--cpus" or a.startswith("--cpus=") for a in args)]
+        assert not capped, capped
+        runners = {}
+        for args in argv:
+            if args[:1] == ["run"] and "--name" in args:
+                container = args[args.index("--name") + 1]
+                for lane in ("checks", "user-paths", "unit"):
+                    if container.endswith(f"-runner-{lane}"):
+                        runners[lane] = args
+        assert set(runners) == {"checks", "user-paths", "unit"}, sorted(runners)
+        for lane, args in runners.items():
+            assert args[args.index("--cpu-shares") + 1] == lane_shares(lane), (lane, args)
+        builder = [args for args in argv if args[:1] == ["update"]]
+        assert builder and all(
+            args[args.index("--cpu-shares") + 1] == lane_shares("unit") for args in builder
+        ), builder
         version_rows = ledger.read_text().splitlines()
         env["CLI_VERSION"] = "1.2.3"
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "7 * 6 == 42"))

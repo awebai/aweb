@@ -84,8 +84,6 @@ def main():
                     "run",
                     "-d",
                     "--rm",
-                    "--cpus",
-                    "1",
                     "--memory",
                     "512m",
                     "-p",

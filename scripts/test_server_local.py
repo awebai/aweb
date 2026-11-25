@@ -120,7 +120,6 @@ def compose_configuration(*, workers: int) -> dict:
             "tmpfs": ["/var/lib/postgresql/data:rw,noexec,nosuid,size=1g"],
             "mem_limit": "2g",
             "memswap_limit": "2g",
-            "cpus": 1,
             "pids_limit": 512,
             "command": [
                 "postgres",
@@ -142,7 +141,6 @@ def compose_configuration(*, workers: int) -> dict:
             "tmpfs": ["/data:rw,noexec,nosuid,size=128m"],
             "mem_limit": "256m",
             "memswap_limit": "256m",
-            "cpus": 0.5,
             "pids_limit": 128,
             "command": ["redis-server", "--save", "", "--appendonly", "no"],
             "healthcheck": {

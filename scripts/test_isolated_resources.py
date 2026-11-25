@@ -13,11 +13,13 @@ runner_args = module.runner_args
 
 
 class RunnerResources(unittest.TestCase):
-    def test_the_budget_changes_only_cpu_and_memory(self):
-        small = runner_args("owned-network", "172.20.0.2", "owned-image", 2)
-        large = runner_args("owned-network", "172.20.0.2", "owned-image", 12, 11)
+    def test_the_plan_changes_only_the_weight_and_memory(self):
+        small = runner_args("owned-network", "172.20.0.2", "owned-image", 481)
+        large = runner_args("owned-network", "172.20.0.2", "owned-image", 5901, 11)
+        for args in (small, large):
+            self.assertFalse(any(a == "--cpus" or a.startswith("--cpus=") for a in args), args)
         for option, low, high in [
-            ("--cpus", "2", "12"),
+            ("--cpu-shares", "481", "5901"),
             ("--memory", f"{module.RUNNER_MEMORY_MIB}m", f"{module.runner_memory_mib(11)}m"),
         ]:
             at = small.index(option) + 1

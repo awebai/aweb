@@ -15,6 +15,7 @@ FIELDS = (
     "memory.events",
     "cpu.stat",
     "cpu.max",
+    "cpu.weight",
     "cpuset.cpus.effective",
 )
 alive = True
@@ -69,7 +70,7 @@ def container_sample(cid, proc_root, cgroup_root):
         filename = None
         row["host_config"] = {
             k: d["HostConfig"].get(k)
-            for k in ("NetworkMode", "NanoCpus", "Memory", "PidsLimit")
+            for k in ("NetworkMode", "NanoCpus", "CpuShares", "Memory", "PidsLimit")
         }
         row["complete"] = not errors
     except (

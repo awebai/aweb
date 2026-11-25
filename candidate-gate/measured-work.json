@@ -1,33 +1,63 @@
 {
-  "measure": "CPU-seconds each lane and unit suite consumed: the cumulative usage_usec of every container's cpu.stat in the receipt's memory.jsonl samples, attributed to its lane by name (a lane's runner, its Postgres and Redis, the Compose and service containers it started) and to a unit suite by its isolated runner and the services in that runner's network namespace. Each lane's figure is from the latest receipt in which that lane completed. The run's shared builder (about 510 s) is not counted in any lane. Short-lived containers between samples are undercounted.",
-  "lane_receipts": {
-    "checks": "vm-7b34f721a68d4c4faef631e677065e38",
-    "user-paths": "vm-7b34f721a68d4c4faef631e677065e38",
-    "unit": "vm-7b34f721a68d4c4faef631e677065e38",
-    "artifacts": "vm-7b34f721a68d4c4faef631e677065e38",
-    "integration": "vm-3f1940bd1a7046ebb7fa38418ca81884"
-  },
-  "unit_suites_receipt": "vm-7b34f721a68d4c4faef631e677065e38",
+  "measure": "One green receipt, vm-cc7cf483e850489387faf6d878bc6312 (aweb 6a460770f9, 12-CPU merak guest, every lane at once). CPU-seconds: the cumulative usage_usec of every container's cpu.stat in its memory.jsonl, attributed to a lane by name (its runner, Postgres and Redis, and the containers it started) and to a unit suite by its isolated runner and the services in that runner's network namespace. The run's shared builder (509) and static (201) are in no lane; 60 CPU-s in one unlabelled sibling (aweb-cross-reg) are attributed to none. Short-lived containers between samples are undercounted. Workers and elapsed seconds are that run's: each lane other than unit ran one process; unit's suites ran in its plan (test-server 4 xdist workers, test-naapp-lib serial, the serial suites in a pool of 3 slots), after 733 s of setup (node deps, aw, and the suite image build). A part's workers per busy CPU is workers x elapsed / CPU-seconds (the pool's: its slot-seconds / CPU-seconds). The pool's longest suite, test-naapp-secrets at 1640 s, bounds how fast the pool can finish.",
+  "receipt": "vm-cc7cf483e850489387faf6d878bc6312",
   "lanes": {
-    "checks": 1431,
-    "user-paths": 275,
-    "unit": 11951,
-    "artifacts": 268,
-    "integration": 1310
+    "checks": 1333,
+    "user-paths": 252,
+    "unit": 9576,
+    "artifacts": 244,
+    "integration": 1255
+  },
+  "lane_runs": {
+    "checks": {
+      "workers": 1,
+      "elapsed_seconds": 1581
+    },
+    "user-paths": {
+      "workers": 1,
+      "elapsed_seconds": 147
+    },
+    "unit": {
+      "setup_seconds": 733,
+      "elapsed_seconds": 2436
+    },
+    "artifacts": {
+      "workers": 1,
+      "elapsed_seconds": 326
+    },
+    "integration": {
+      "workers": 1,
+      "elapsed_seconds": 2084
+    }
   },
   "unit_suites": {
-    "test-server": 5901,
-    "test-awid": 481,
-    "test-naapp-lib": 1676,
-    "test-naapp-folio": 69,
-    "test-naapp-library": 69,
-    "test-naapp-secrets": 1934,
-    "test-naapp-logs": 319,
-    "test-cli": 874,
-    "test-cli-auth-v2": 153,
-    "_candidate-unit-channel": 34,
-    "_candidate-unit-channel-core": 220,
-    "_candidate-unit-pi": 31
+    "test-server": 4872,
+    "test-awid": 386,
+    "test-naapp-lib": 1194,
+    "test-naapp-folio": 54,
+    "test-naapp-library": 52,
+    "test-naapp-secrets": 1508,
+    "test-naapp-logs": 258,
+    "test-cli": 678,
+    "test-cli-auth-v2": 70,
+    "_candidate-unit-channel": 26,
+    "_candidate-unit-channel-core": 177,
+    "_candidate-unit-pi": 25
+  },
+  "unit_runs": {
+    "test-server": {
+      "workers": 4,
+      "elapsed_seconds": 1636
+    },
+    "test-naapp-lib": {
+      "workers": 1,
+      "elapsed_seconds": 1265
+    },
+    "serial": {
+      "workers": 3,
+      "slot_seconds": 3721,
+      "longest_suite_seconds": 1640
+    }
   },
   "gates": {
     "cloud": {

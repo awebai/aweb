@@ -30,8 +30,8 @@ class ServerWorkerTests(unittest.TestCase):
                     "AWEB_SERVER_TEST_WORKERS": str(count),
                 }
                 services_module.configure_worker_environment(env)
-                pg = runner.postgres_args("owned-runner", services["postgres_port"], True)
-                redis = runner.redis_args("owned-runner", services["redis_port"], True)
+                pg = runner.postgres_args("owned-runner", 5901, services["postgres_port"], True)
+                redis = runner.redis_args("owned-runner", 5901, services["redis_port"], True)
                 self.assertIn("port=" + env["TEST_DB_PORT"], pg)
                 self.assertEqual(
                     redis[redis.index("--port") + 1], str(services["redis_port"])
@@ -63,6 +63,9 @@ class ServerWorkerTests(unittest.TestCase):
                     self.assertEqual(
                         args[args.index("--network") + 1], "container:owned-runner"
                     )
+                    # The suite's services carry its weight and no CPU cap.
+                    self.assertEqual(args[args.index("--cpu-shares") + 1], "5901")
+                    self.assertNotIn("--cpus", args)
                     self.assertNotIn("-p", args)
                     self.assertNotIn("--publish", args)
                 pg_ports.add(env["TEST_DB_PORT"])
@@ -84,9 +87,10 @@ class ServerWorkerTests(unittest.TestCase):
                     for plan in runner.service_plan(count)
                 ),
             )
-            args = runner.runner_args("owned-network", "172.20.0.2", "owned-image", 12, count)
+            args = runner.runner_args("owned-network", "172.20.0.2", "owned-image", 5901, count)
             self.assertIn(f"AWEB_SERVER_TEST_WORKERS={count}", args)
-            self.assertEqual(args[args.index("--cpus") + 1], "12")
+            self.assertEqual(args[args.index("--cpu-shares") + 1], "5901")
+            self.assertNotIn("--cpus", args)
             self.assertFalse(any("docker.sock" in arg for arg in args))
 
     def test_serial_environment_and_resources_stay_unchanged(self):
@@ -95,14 +99,14 @@ class ServerWorkerTests(unittest.TestCase):
         runner._worker_module.configure_worker_environment(env)
         self.assertEqual(env, before)
         self.assertEqual(len(runner.service_plan(0)), 1)
-        args = runner.postgres_args("owned-runner")
+        args = runner.postgres_args("owned-runner", 481)
         self.assertEqual(args[args.index("--memory") + 1], "2048m")
         self.assertEqual(args[args.index("--memory-swap") + 1], "2048m")
-        self.assertEqual(runner.redis_args("owned-runner")[-1], "redis:7")
+        self.assertEqual(runner.redis_args("owned-runner", 481)[-1], "redis:7")
         self.assertFalse(
             any(
                 "AWEB_SERVER_TEST_WORKERS" in arg
-                for arg in runner.runner_args("net", "172.20.0.2", "image", 4)
+                for arg in runner.runner_args("net", "172.20.0.2", "image", 481)
             )
         )
 
@@ -110,17 +114,41 @@ class ServerWorkerTests(unittest.TestCase):
         suites = [
             "test-server", "test-awid", "test-naapp-lib", "test-naapp-secrets", "test-cli",
         ]
-        env = {"GATE_UNIT_CPUS": "8", "GATE_UNIT_MEMORY_MIB": "34428"}
+        work = json.loads((ROOT / "candidate-gate/measured-work.json").read_text())
+        # The release's aweb share on merak gives unit 3.65 CPUs.
+        env = {
+            "GATE_UNIT_CPUS": "3.65",
+            "GATE_UNIT_MEMORY_MIB": "18000",
+            "GATE_CPU_MAPPING": "runc-1.3",
+        }
         plan = runner.unit_plan(suites, env)
-        self.assertEqual(plan["cpus"], 8)
-        self.assertEqual(set(plan["slots"]), set(suites))
-        for suite in ("test-server", "test-naapp-lib"):
-            self.assertLessEqual(plan["workers"][suite], plan["slots"][suite])
-        parallel = plan["slots"]["test-server"] + plan["slots"]["test-naapp-lib"]
-        self.assertEqual(parallel + plan["serial_slots"], 8)
-        self.assertEqual(plan["slots"]["test-awid"], 1)
+        self.assertEqual(plan["cpus"], 3.65)
+        budget = runner._budget
+        for suite in suites:
+            self.assertEqual(
+                budget.weight_of(plan["cpu_shares"][suite], "runc-1.3"),
+                budget.cpu_weight(work["unit_suites"][suite]),
+            )
+        self.assertGreaterEqual(plan["workers"]["test-server"], 2)
+        self.assertGreaterEqual(plan["serial_slots"], 1)
         with self.assertRaisesRegex(ValueError, "no measured work"):
             runner.unit_plan(["test-unmeasured"], env)
+
+    def test_the_suites_run_within_units_workers_heaviest_first(self):
+        plan = {
+            "workers": {"test-server": 3, "test-naapp-lib": 1},
+            "serial_slots": 2,
+            "cpu_shares": {"test-server": 5901, "test-naapp-lib": 1676,
+                           "test-awid": 481, "test-naapp-secrets": 1934, "test-cli": 874},
+        }
+        capacity, requests = runner.unit_requests(plan, list(plan["cpu_shares"]))
+        self.assertEqual(capacity, 3 + 1 + 2)
+        self.assertEqual(requests["test-server"], 3)
+        self.assertEqual(requests["test-naapp-lib"], 1)
+        self.assertEqual(requests["test-awid"], 1)
+        # Equal requests start by measured work, heaviest first.
+        ones = [name for name in requests if requests[name] == 1]
+        self.assertEqual(ones, ["test-naapp-secrets", "test-naapp-lib", "test-cli", "test-awid"])
 
     def test_a_one_worker_or_oversized_plan_is_refused(self):
         for workers in (1, -1, runner._worker_module.MAX_WORKERS + 1):

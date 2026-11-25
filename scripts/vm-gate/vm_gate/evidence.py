@@ -9,6 +9,16 @@ from .errors import Infrastructure
 from .memory import load_samples, summarize_samples
 
 
+def budget_number(value):
+    """A budget.tsv value: an integer, a decimal (a fractional CPU share), or text."""
+    if value.isdigit():
+        return int(value)
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
 def collect_archive(archive, sha, destination):
     destination = Path(destination).resolve()
     destination.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -50,14 +60,12 @@ def collect_archive(archive, sha, destination):
                 budget = {}
                 for line in target.read_text().splitlines():
                     name, _, value = line.partition("\t")
-                    if name == "lane_cpus":
-                        # One row per lane: lane_cpus<TAB>lane<TAB>cpus.
-                        lane, _, cpus = value.partition("\t")
-                        budget.setdefault("lane_cpus", {})[lane] = (
-                            int(cpus) if cpus.isdigit() else cpus
-                        )
+                    if name in ("lane_cpu_weight", "lane_cpu_shares", "lane_share"):
+                        # One row per lane: name<TAB>lane<TAB>number.
+                        lane, _, number = value.partition("\t")
+                        budget.setdefault(name, {})[lane] = budget_number(number)
                     else:
-                        budget[name] = int(value) if value.isdigit() else value
+                        budget[name] = budget_number(value)
             if gate_run and rel.parts[2] == "summary.tsv":
                 summaries.append(item.name)
                 for line in target.read_text().splitlines():
