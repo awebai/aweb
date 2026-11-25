@@ -66,11 +66,11 @@ elif args[0] not in ('create', 'rm'):
             DOCKER_HOST="unix:///admitted-local.sock",
             DISK_USED=str(self.root / "disk-used"),
             AWEB_GATE_MIN_FREE_GB="50",
-            AWEB_GATE_RESERVE_GB="30",
+            AWEB_GATE_RESERVE_GB="60",
         )
         for name, body in {
             "uname": "#!/bin/sh\necho Linux\n",
-            "df": '#!/bin/sh\necho \'Filesystem 1024-blocks Used Available Capacity Mounted\'\nif [ -f "$DISK_USED" ]; then free=1048576; else free=104857600; fi\necho "fixture 200000000 0 $free 0% /fixture"\n',
+            "df": '#!/bin/sh\necho \'Filesystem 1024-blocks Used Available Capacity Mounted\'\nif [ -f "$DISK_USED" ]; then free=1048576; else free=209715200; fi\necho "fixture 200000000 0 $free 0% /fixture"\n',
         }.items():
             path = self.bin / name
             path.write_text(body)
@@ -289,7 +289,7 @@ touch "$DISK_USED"
             "no invented stack exit for a refused admission",
         )
         diagnostic = (second / "preflight.log").read_text()
-        self.assertIn("need 80 GiB", diagnostic)
+        self.assertIn("need 110 GiB", diagnostic)
         self.assertIn("docker system prune", diagnostic)
         self.assertIn("fstrim", diagnostic)
         self.assertIn("head-1.36.58: PASS", output.getvalue())

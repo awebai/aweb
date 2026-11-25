@@ -9,11 +9,22 @@ refuse() { printf 'candidate gate refused: %s\n' "$*" >&2; exit 2; }
 # Probe the backing host filesystem without pulling an image or starting a
 # container. Desktop's Linux DockerRootDir lives inside its sparse disk image.
 # Keep the critical floor free after this gate's measured peak allocation.
+# The critical floor nothing may use, and one parallel gate's peak. The
+# reserve is measured: in vm-3f1940bd (12 CPUs, all lanes at once) the guest
+# went from 7.0 to 60.0 GB used, a 53 GB peak: builder cache 28.5, images
+# 18.8, lane workspaces 5.9, containers 2.7. 60 GiB rounds it up.
+CRITICAL_FREE_GB=50
+GATE_RESERVE_GB=60
 wait_for_disk() {
   local mode="${1:-wait}"
-  local floor="${AWEB_GATE_MIN_FREE_GB:-50}" reserve="${AWEB_GATE_RESERVE_GB:-30}" path available
+  local floor="${AWEB_GATE_MIN_FREE_GB:-$CRITICAL_FREE_GB}" reserve="${AWEB_GATE_RESERVE_GB:-$GATE_RESERVE_GB}" path available
   [[ "$floor" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_MIN_FREE_GB must be a nonnegative integer"
   [[ "$reserve" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_RESERVE_GB must be a nonnegative integer"
+  # An override may raise either value, never lower it.
+  (( floor >= CRITICAL_FREE_GB )) \
+    || refuse "AWEB_GATE_MIN_FREE_GB=$floor would lower the $CRITICAL_FREE_GB GiB critical floor"
+  (( reserve >= GATE_RESERVE_GB )) \
+    || refuse "AWEB_GATE_RESERVE_GB=$reserve would lower the measured $GATE_RESERVE_GB GiB gate reserve"
   path="$(docker info --format '{{.DockerRootDir}}')" || refuse "docker daemon is unavailable"
   if [[ "$(uname -s)" == Darwin ]]; then
     path="$(python3 - <<'PY'

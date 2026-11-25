@@ -199,12 +199,11 @@ target run the complete Secrets unit suite in one process.
 `main` may move while the gate runs. The tested SHA and its local tags do not.
 
 Before allocating Docker resources, the gate waits for the critical free-space
-floor plus one gate's peak budget on Docker's backing host filesystem. Defaults
-are `AWEB_GATE_MIN_FREE_GB=50` and `AWEB_GATE_RESERVE_GB=30`, requiring 80 GiB
-free. The reserve covers the measured 20–28 GB peak of the private builder cache,
-tool/suite images, workspace and runner; it is separate from the critical floor.
-Both settings accept nonnegative integer GiB values, including a smaller reserve
-for a deliberately smaller fixture. Before any self-test or Docker test,
+floor plus one gate's peak on Docker's backing host filesystem: a 50 GiB
+critical floor and a 60 GiB gate reserve, 110 GiB free in all. The reserve is
+the measured peak of a parallel gate (vm-3f1940bd: 53 GB of builder cache,
+images, lane workspaces and containers), rounded up. `AWEB_GATE_MIN_FREE_GB` and
+`AWEB_GATE_RESERVE_GB` may raise either value; a lower value is refused. Before any self-test or Docker test,
 `make release-candidate` and `make candidate-gate` check this floor once and
 refuse with the measured free space and required floor when it is not met.
 They do not spend the ledger self-test's 900-second timeout waiting for disk.

@@ -108,19 +108,19 @@ class CandidateDiskFloorTests(unittest.TestCase):
             return result, log, sleeps
 
     def test_one_shot_refuses_before_sleep_or_allocation(self):
-        result, docker, sleeps = self.invoke([int(79.4 * 1024**2)], mode="--check-disk")
+        result, docker, sleeps = self.invoke([int(109.4 * 1024**2)], mode="--check-disk")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("79.4 GiB free", result.stderr)
-        self.assertIn("80 GiB", result.stderr)
+        self.assertIn("109.4 GiB free", result.stderr)
+        self.assertIn("110 GiB", result.stderr)
         self.assertEqual(sleeps, "")
         self.assertTrue(
             all(line.startswith("info") for line in docker.splitlines()), docker
         )
 
     def test_release_refuses_disk_before_ledger_prerequisite(self):
-        result, docker, sleeps = self.invoke([int(79.4 * 1024**2)], release=True)
+        result, docker, sleeps = self.invoke([int(109.4 * 1024**2)], release=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("79.4 GiB free", result.stderr)
+        self.assertIn("109.4 GiB free", result.stderr)
         self.assertNotIn("SELF_TEST_STARTED", result.stdout)
         self.assertEqual(sleeps, "")
         self.assertTrue(
@@ -128,9 +128,9 @@ class CandidateDiskFloorTests(unittest.TestCase):
         )
 
     def test_start_floor_reserves_one_gate_footprint(self):
-        # Reported gate: starts with 70 GiB, allocates up to 28 GiB and
-        # crosses the 50 GiB critical line. Require its 30 GiB budget too.
-        result, docker, sleeps = self.invoke([70 * 1024**2, 79 * 1024**2, 80 * 1024**2])
+        # A parallel gate peaked at 53 GB (vm-3f1940bd). Starting with 70 or
+        # 109 GiB would cross the 50 GiB critical line: require its reserve too.
+        result, docker, sleeps = self.invoke([70 * 1024**2, 109 * 1024**2, 110 * 1024**2])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(sleeps.splitlines(), ["60", "60"])
         self.assertTrue(
@@ -138,17 +138,17 @@ class CandidateDiskFloorTests(unittest.TestCase):
         )
 
     def test_waits_once_per_minute_then_continues_at_default_floor(self):
-        result, docker, sleeps = self.invoke([79 * 1024**2, 79 * 1024**2, 80 * 1024**2])
+        result, docker, sleeps = self.invoke([109 * 1024**2, 109 * 1024**2, 110 * 1024**2])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(sleeps.splitlines(), ["60", "60"])
         self.assertEqual(result.stdout.count("candidate gate waiting:"), 2)
-        self.assertIn("80 GiB (50 critical + 30 gate reserve)", result.stdout)
+        self.assertIn("110 GiB (50 critical + 60 gate reserve)", result.stdout)
         self.assertTrue(
             all(line.startswith("info") for line in docker.splitlines()), docker
         )
 
     def test_equal_floor_passes_without_wait_or_allocation(self):
-        result, docker, sleeps = self.invoke([2 * 1024**2], floor=2, reserve=0)
+        result, docker, sleeps = self.invoke([110 * 1024**2])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(sleeps, "")
         self.assertNotIn("waiting", result.stdout)
@@ -171,11 +171,19 @@ class CandidateDiskFloorTests(unittest.TestCase):
                     all(line.startswith("info") for line in docker.splitlines()), docker
                 )
 
-    def test_separate_critical_floor_and_configured_reserve(self):
-        result, _, sleeps = self.invoke([69 * 1024**2, 70 * 1024**2], reserve=20)
+    def test_an_override_raises_the_floor_and_never_lowers_it(self):
+        result, _, sleeps = self.invoke([119 * 1024**2, 120 * 1024**2], reserve=70)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(sleeps.splitlines(), ["60"])
-        self.assertIn("70 GiB (50 critical + 20 gate reserve)", result.stdout)
+        self.assertIn("120 GiB (50 critical + 70 gate reserve)", result.stdout)
+        for floor, reserve, name in ((20, None, "AWEB_GATE_MIN_FREE_GB"), (None, 30, "AWEB_GATE_RESERVE_GB")):
+            with self.subTest(floor=floor, reserve=reserve):
+                result, docker, sleeps = self.invoke([500 * 1024**2], floor=floor, reserve=reserve)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(name, result.stderr)
+                self.assertIn("would lower", result.stderr)
+                self.assertEqual(docker, "")
+                self.assertEqual(sleeps, "")
         for invalid in ("bad", "-1"):
             result, docker, _ = self.invoke([100 * 1024**2], reserve=invalid)
             self.assertNotEqual(result.returncode, 0)
@@ -185,7 +193,7 @@ class CandidateDiskFloorTests(unittest.TestCase):
     def test_desktop_measures_default_or_relocated_backing_filesystem(self):
         for relocated in (False, True):
             with self.subTest(relocated=relocated):
-                result, docker, sleeps = self.invoke([80 * 1024**2], desktop=relocated)
+                result, docker, sleeps = self.invoke([110 * 1024**2], desktop=relocated)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(sleeps, "")
                 self.assertTrue(
