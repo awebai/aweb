@@ -519,7 +519,7 @@ test-e2e:
 
 test-federation-e2e:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/e2e-federation-authority.sh
-	./scripts/e2e-oss-federation.sh
+	if [ -n "$$AWEB_CANDIDATE_RELEASE_FILES" ]; then ./scripts/e2e-federation-release-wheel.sh; else ./scripts/e2e-oss-federation.sh; fi
 	./scripts/e2e-cross-registry-messaging.sh
 
 test-a2a-gateway-e2e:

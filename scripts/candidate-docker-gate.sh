@@ -142,6 +142,18 @@ REVIEWED_PRODUCT_TABLE_CEILINGS="$(python3 "$ROOT/scripts/product_table_writes.p
   || refuse "cannot read synchronized main's product-table ceilings. Synchronize main and start a new gate invocation."
 external_inputs+="REVIEWED_PRODUCT_TABLE_CEILINGS=$REVIEWED_PRODUCT_TABLE_CEILINGS"$'\n'
 external_inputs+="RELEASED_AW=$released_identity"$'\n'
+# A release gate takes the release command's built files: the integration lane
+# installs their server wheel under test. Their digests are a gate input, so a
+# pass with other files, or with none, is never reused for them.
+RELEASE_FILES="${AWEB_CANDIDATE_RELEASE_FILES:-}"
+release_listing=""
+if [[ -n "$RELEASE_FILES" ]]; then
+  [[ "$RELEASE_FILES" == /* && -d "$RELEASE_FILES" ]] \
+    || refuse "AWEB_CANDIDATE_RELEASE_FILES must be an existing absolute directory"
+  release_listing="$(python3 "$ROOT/scripts/release_files.py" listing "$RELEASE_FILES")" \
+    || refuse "AWEB_CANDIDATE_RELEASE_FILES is not one release's built files"
+  external_inputs+="RELEASE_FILES=$(printf '%s\n' "$release_listing" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"$'\n'
+fi
 input_identity() {
   local name="$1" path="$2" default="$3" repo sha relative
   repo="$(git -C "$path" rev-parse --show-toplevel)"
@@ -487,6 +499,17 @@ seed_lane_workspace() {
 }
 
 mkdir -p "$docker_bind_root" "$checkout/.candidate-home" "$LOG_DIR/lanes"
+# The lanes read the release files from the run's log directory, which each
+# runner mounts; the copy is the same bytes the key names.
+lane_release_files=""
+if [[ -n "$release_listing" ]]; then
+  lane_release_files="$LOG_DIR/release-files"
+  mkdir -p "$lane_release_files"
+  cp -p "$RELEASE_FILES"/* "$lane_release_files"/
+  [[ "$(python3 "$ROOT/scripts/release_files.py" listing "$lane_release_files")" == "$release_listing" ]] \
+    || refuse "the lanes' copy of the release files differs from the gated files"
+  printf '%s\n' "$release_listing" > "$LOG_DIR/release-files.sha256"
+fi
 socket_gid="$(docker run --rm \
   --label "aweb.candidate-gate=$resource_label" \
   --memory "$redis_memory" --pids-limit "$redis_pids" \
@@ -542,6 +565,7 @@ run_lane() {
     -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
     -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
     -e CANDIDATE_LOG_DIR="$LOG_DIR" \
+    -e AWEB_CANDIDATE_RELEASE_FILES="$lane_release_files" \
     -e CANDIDATE_HOST_PORT_STATUS="$host_port_status" \
     -e USER_PATHS_LATEST_METADATA="${USER_PATHS_LATEST_METADATA:-}" \
     -e USER_PATHS_LATEST_SHA256="${USER_PATHS_LATEST_SHA256:-}" \

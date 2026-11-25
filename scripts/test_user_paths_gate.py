@@ -253,6 +253,7 @@ class FrozenGateInput(unittest.TestCase):
                     "fetch_released_aw.py",
                     "gate_budget.py",
                     "product_table_writes.py",
+                    "release_files.py",
                 ]:
                     shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
                 for relative in (
@@ -292,6 +293,8 @@ naapp-e2e-packages:
 e2e-user-paths:
 \t@python3 -c 'import os,pathlib,hashlib,json; p=pathlib.Path(os.environ["USER_PATHS_LATEST_METADATA"]); b=p.read_bytes(); pathlib.Path(os.environ["SNAPSHOT_RECEIPT"]).write_text(json.dumps(dict(body=b.decode(),digest=hashlib.sha256(b).hexdigest(),declared=os.environ.get("USER_PATHS_LATEST_SHA256"))))'
 \t@python3 scripts/coverage_fixture.py
+test-federation-e2e:
+\t@if [ -n "$$AWEB_CANDIDATE_RELEASE_FILES" ]; then printf '%s\\n' "$$AWEB_CANDIDATE_RELEASE_FILES" > "$$RELEASE_LANE_RECEIPT"; python3 scripts/release_files.py listing "$$AWEB_CANDIDATE_RELEASE_FILES" >> "$$RELEASE_LANE_RECEIPT"; fi
 """.lstrip()
                 )
 
@@ -396,8 +399,8 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     GATE_MEMORY_MIB="8192",
                 )
 
-                def invoke(stages):
-                    settings = dict(env)
+                def invoke(stages, expect=0, **extra):
+                    settings = dict(env, **extra)
                     if stages is not None:
                         settings["AWEB_CANDIDATE_STAGES"] = stages
                     result = run_fixture(
@@ -408,10 +411,13 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                         text=True,
                         timeout=30,
                     )
-                    self.assertEqual(
-                        result.returncode, 0, result.stdout + result.stderr
-                    )
-                    return result.stdout
+                    if expect == 0:
+                        self.assertEqual(
+                            result.returncode, 0, result.stdout + result.stderr
+                        )
+                    else:
+                        self.assertNotEqual(result.returncode, 0, result.stdout)
+                    return result.stdout + result.stderr
 
                 def ledger_rows():
                     rows = (root / "ledger.tsv").read_text().splitlines()
@@ -519,6 +525,42 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                         f"aweb-candidate-gate-{git('rev-parse', 'HEAD')}-{run_id}",
                     )
                     self.assertTrue((run / "owned-resources.tsv").is_file())
+                # A release gate's built files are a gate input: a pass without
+                # them is not reused for them, and the lane installs the copy
+                # in the run's own log directory.
+                dist = root / "release-dist"
+                dist.mkdir()
+                for name in ("aweb-1.27.55-py3-none-any.whl", "aweb-1.27.55.tar.gz"):
+                    (dist / name).write_bytes(name.encode())
+                lane_receipt = root / "release-lane"
+                invoke("integration", RELEASE_LANE_RECEIPT=str(lane_receipt))
+                self.assertFalse(lane_receipt.exists())
+                without = ledger_rows()[-1].split("\t")[0]
+                released = invoke(
+                    "integration",
+                    AWEB_CANDIDATE_RELEASE_FILES=str(dist),
+                    RELEASE_LANE_RECEIPT=str(lane_receipt),
+                )
+                self.assertNotIn("no stages run", released)
+                with_files = ledger_rows()[-1].split("\t")[0]
+                self.assertNotEqual(with_files, without)
+                listing = subprocess.check_output(
+                    [sys.executable, str(ROOT / "scripts/release_files.py"), "listing", str(dist)],
+                    text=True,
+                )
+                lane_path, *lane_listing = lane_receipt.read_text().splitlines()
+                self.assertEqual(Path(lane_path).name, "release-files")
+                self.assertTrue(Path(lane_path).parent.name.startswith("aweb-candidate-gate-"))
+                self.assertEqual(lane_listing, listing.splitlines())
+                self.assertIn(
+                    "no stages run",
+                    invoke("integration", AWEB_CANDIDATE_RELEASE_FILES=str(dist)),
+                )
+                (dist / "notes.txt").write_text("stray\n")
+                refused = invoke(
+                    "integration", expect=1, AWEB_CANDIDATE_RELEASE_FILES=str(dist)
+                )
+                self.assertIn("is not one release's built files", refused)
         finally:
             server.shutdown()
             thread.join()
