@@ -78,14 +78,25 @@ record_passed_stage() {
   cp "$LOG_DIR/$stage.log" "$stage_log" || return 1
   candidate_stage_passed "$stage" "$retained/summary.tsv" "$stage_log" || return 1
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  commit_passed_stage "$stage" "$stage_log" "$retained"
+}
+# Records a passed stage's target rows, then its stage row, which reuse reads.
+# A kill before the stage row leaves the stage to rerun. A stage with a target
+# that did not pass, or whose evidence cannot be read, gets no stage row: it
+# reruns, and the run fails through recorded-target-failures.
+commit_passed_stage() {
+  local stage="$1" stage_log="$2" retained="$3"
   record_stage_targets "$stage" "$retained"
   case "$?" in
     0) ;;
-    1) printf '%s\n' "$stage" >> "$LOG_DIR/recorded-target-failures" || return 1 ;;
+    1)
+      printf '%s\n' "$stage" >> "$LOG_DIR/recorded-target-failures" || return 1
+      printf '%s\n' "$stage" >> "$LOG_DIR/recorded-stages"
+      return
+      ;;
     *) return 1 ;;
   esac
   printf '%s\n' "$stage" >> "$LOG_DIR/recorded-stages" || return 1
-  # The stage row is written last: a kill before it leaves the stage to rerun.
   record_candidate_row "$stage" passed "$stage_log"
 }
 candidate_stage_passed() {
@@ -138,7 +149,7 @@ finalize_candidate() {
     fi
     cp "$LOG_DIR/$stage.log" "$stage_log" || return 1
     if [[ " $eligible " == *" $stage "* ]] && candidate_stage_passed "$stage" "$retained/summary.tsv" "$stage_log"; then
-      record_candidate_row "$stage" passed "$stage_log" || return 1
+      commit_passed_stage "$stage" "$stage_log" "$retained" || return 1
     elif [[ "$interrupted" == 0 ]]; then
       record_candidate_row "$stage" failed "$stage_log" || return 1
       status=1

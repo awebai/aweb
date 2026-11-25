@@ -85,8 +85,10 @@ run_candidate() {
   printf 'candidate stage-verdict: checks PASSED\\n'
   sleep 30
  fi
- if [[ "$STAGE_VERDICTS" == target-failed ]]; then
+ if [[ "$STAGE_VERDICTS" == target-failed* ]]; then
   printf 'checks/check-python-static\\tFAILED\\tchecks.log\\t1s\\texit 1\\n' >> "$LOG_DIR/summary.tsv"
+ fi
+ if [[ "$STAGE_VERDICTS" == target-failed ]]; then
   printf 'candidate stage-verdict: checks PASSED\\n'
  fi
  if [[ "$STAGE_VERDICTS" == complete ]]; then
@@ -327,10 +329,16 @@ run_candidate() {
         self.assertIn("candidate stage-verdict: checks PASSED\n", output)
         self.assertIn("candidate gate cleanup PASSED\n", output)
 
-    def test_failed_target_of_a_stage_recorded_as_it_passed_fails_the_run(self):
-        code, rows, logs, output = self.invoke(status=0, stage_verdicts="target-failed")
-        self.assertEqual(code, 1, output)
-        self.assertIn(("checks/check-python-static", "failed"), [(r[1], r[2]) for r in rows])
+    def test_a_stage_with_a_failed_target_gets_no_passed_row(self):
+        # As the stage passes (the reader) and at the end of the run (finalize).
+        for mode in ("target-failed", "target-failed-at-finalize"):
+            with self.subTest(mode=mode):
+                code, rows, logs, output = self.invoke(status=0, stage_verdicts=mode)
+                self.assertEqual(code, 1, output)
+                entries = [(r[1], r[2]) for r in rows]
+                self.assertIn(("checks/check-python-static", "failed"), entries)
+                self.assertNotIn(("checks", "passed"), entries)
+                self.assertEqual(entries.count(("checks/check-python-static", "failed")), 1)
 
     def test_real_term_without_cleanup_blocks_reuse(self):
         code, rows, logs, output = self.invoke(signal_number=signal.SIGTERM)
