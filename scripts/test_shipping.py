@@ -18,7 +18,6 @@ import textwrap
 import unittest
 import zipfile
 from unittest.mock import patch
-from email.message import Message
 from pathlib import Path
 
 from fixture_repo import fixture_env, init_fixture_repo, run_fixture
@@ -38,7 +37,6 @@ def load(name: str, path: str):
 CANDIDATE = load("release_candidate", "scripts/release_candidate.py")
 PUBLISH = load("publish_release", "scripts/publish_release.py")
 VERSIONS = sys.modules["release_versions"]
-NAAPP_PACKAGE = load("check_naapp_lib_package", "scripts/check-naapp-lib-package.py")
 
 
 def command(root: Path, *argv: str) -> str:
@@ -130,14 +128,6 @@ class TagContractTest(unittest.TestCase):
         (root / "awid/pyproject.toml").write_text(
             '[project]\nname = "awid-service"\nversion = "2.3.4"\n', encoding="utf-8"
         )
-        (root / "naapp-lib").mkdir()
-        (root / "naapp-lib/pyproject.toml").write_text(
-            '[project]\nname = "aweb-naapp"\nversion = "0.1.0"\n', encoding="utf-8"
-        )
-        (root / "naapp-lib/testing").mkdir()
-        (root / "naapp-lib/testing/pyproject.toml").write_text(
-            '[project]\nname = "aweb-naapp-testing"\nversion = "0.1.0"\n', encoding="utf-8"
-        )
         for directory, version in (
             ("channel", "3.4.5"),
             ("pi-extension", "4.5.6"),
@@ -151,8 +141,7 @@ class TagContractTest(unittest.TestCase):
         command(root, "git", "add", ".")
         # Build a real RC tree and its version-only final, rather than relying
         # on the now-refused final-without-RC path in neighboring tests.
-        manifests = [root / path for path in ("server/pyproject.toml", "awid/pyproject.toml",
-                                             "naapp-lib/pyproject.toml", "naapp-lib/testing/pyproject.toml")]
+        manifests = [root / path for path in ("server/pyproject.toml", "awid/pyproject.toml")]
         stable = {path: path.read_text() for path in manifests}
         for path in manifests:
             value = stable[path]
@@ -160,7 +149,7 @@ class TagContractTest(unittest.TestCase):
             path.write_text(re.sub(r'(version = "[^"]+)(")', r'\g<1>rc1\2', value))
         command(root, "git", "add", ".")
         command(root, "git", "commit", "-qm", "RC")
-        for tag in ("server-v1.2.3rc1", "awid-service-v2.3.4rc1", "aweb-naapp-v0.1.0rc1", "aw-v1.2.3-rc.1"):
+        for tag in ("server-v1.2.3rc1", "awid-service-v2.3.4rc1", "aw-v1.2.3-rc.1"):
             command(root, "git", "tag", tag)
         for path, value in stable.items():
             path.write_text(value)
@@ -172,11 +161,11 @@ class TagContractTest(unittest.TestCase):
         temporary, root = self.repository()
         self.addCleanup(temporary.cleanup)
         source, versions = CANDIDATE.validate_tags(
-            root, ["server-v1.2.3", "awid-service-v2.3.4", "aweb-naapp-v0.1.0", "channel-v3.4.5"]
+            root, ["server-v1.2.3", "awid-service-v2.3.4", "channel-v3.4.5"]
         )
         self.assertEqual(len(source), 40)
         self.assertEqual(versions["server-v"], "1.2.3")
-        self.assertEqual(versions["aweb-naapp-v"], "0.1.0")
+        self.assertEqual(versions["channel-v"], "3.4.5")
         with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "does not match"):
             CANDIDATE.validate_tags(root, ["server-v1.2.4"])
 
@@ -197,7 +186,7 @@ class TagContractTest(unittest.TestCase):
         # The registry image lane carries rc versions in awid's Python spelling;
         # the other image lanes keep final-only tags.
         self.assertEqual(VERSIONS.tag_parts("awid-v0.5.40rc2"), ("awid-v", "0.5.40rc2"))
-        for tag in ("awid-v0.5.40-rc.2", "awid-v0.5.40rc0", "secrets-v1.2.3rc1", "logs-v1.2.3rc1", "a2a-gw-v1.2.3rc1"):
+        for tag in ("awid-v0.5.40-rc.2", "awid-v0.5.40rc0", "a2a-gw-v1.2.3rc1"):
             with self.subTest(tag=tag), self.assertRaises(VERSIONS.VersionRefusal):
                 VERSIONS.tag_parts(tag)
         temporary, root = self.repository()
@@ -215,8 +204,7 @@ class TagContractTest(unittest.TestCase):
     def test_python_rc_tags_preserve_manifest_equality(self):
         temporary, root = self.repository()
         self.addCleanup(temporary.cleanup)
-        for path, version in (("server", "1.2.3rc1"), ("awid", "2.3.4rc2"),
-                              ("naapp-lib", "0.1.0rc1"), ("naapp-lib/testing", "0.1.0rc1")):
+        for path, version in (("server", "1.2.3rc1"), ("awid", "2.3.4rc2")):
             manifest = root / path / "pyproject.toml"
             value = manifest.read_text()
             import re
@@ -224,7 +212,7 @@ class TagContractTest(unittest.TestCase):
         command(root, "git", "commit", "-qam", "RC versions")
         for tag in command(root, "git", "tag", "--list").splitlines():
             command(root, "git", "tag", "-d", tag)
-        tags = ["server-v1.2.3rc1", "awid-service-v2.3.4rc2", "aweb-naapp-v0.1.0rc1", "aw-v1.2.3-rc.1"]
+        tags = ["server-v1.2.3rc1", "awid-service-v2.3.4rc2", "aw-v1.2.3-rc.1"]
         _source, versions = CANDIDATE.validate_tags(root, tags)
         self.assertEqual(versions["server-v"], "1.2.3rc1")
         for tag in tags:
@@ -242,7 +230,7 @@ class TagContractTest(unittest.TestCase):
 
     def test_final_without_prior_rc_is_accepted_by_candidate_and_publisher(self):
         # One gate qualifies the exact tree that is tagged; no published RC is required.
-        for tag in ("server-v1.2.3", "awid-service-v2.3.4", "aweb-naapp-v0.1.0", "aw-v1.2.3"):
+        for tag in ("server-v1.2.3", "awid-service-v2.3.4", "aw-v1.2.3"):
             with self.subTest(tag=tag):
                 temporary, root = self.repository()
                 self.addCleanup(temporary.cleanup)
@@ -313,7 +301,6 @@ class PypiLaneContractTest(unittest.TestCase):
         for prefix, package in PUBLISH.PYPI_PACKAGES.items():
             manifest = PUBLISH.MANIFESTS[prefix]
             self.assertEqual(CANDIDATE.MANIFESTS[prefix], manifest, prefix)
-            self.assertNotIn(prefix, CANDIDATE.LOCKSTEP, prefix)
             project = tomllib.loads((ROOT / manifest).read_text(encoding="utf-8"))["project"]
             self.assertEqual(project["name"], package, prefix)
 
@@ -441,19 +428,6 @@ class PypiLaneContractTest(unittest.TestCase):
             pypi.assert_not_called()
             oci.assert_not_called()
 
-    def test_app_tags_publish_nowhere_from_aweb(self):
-        command(self.root, "git", "tag", "-a", "aweb-naapp-v0.1.0", "-m", "tested")
-        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "publishes nothing"):
-            PUBLISH.publish(self.root, "aweb-naapp-v0.1.0", assets=self.assets)
-
-    def test_a_lockstep_package_at_another_version_refuses_the_candidate(self):
-        (self.root / "naapp-lib/testing/pyproject.toml").write_text(
-            '[project]\nname = "aweb-naapp-testing"\nversion = "0.0.9"\n', encoding="utf-8"
-        )
-        command(self.root, "git", "commit", "-qam", "drifted")
-        with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "naapp-lib/testing"):
-            CANDIDATE.validate_tags(self.root, ["aweb-naapp-v0.1.0"])
-
     def test_workflow_publishes_release_assets_on_release_and_never_on_tag_push(self):
         source = (ROOT / ".github/workflows/pypi-release.yml").read_text()
         self.assertIn("release:\n    types: [published]", source)
@@ -464,142 +438,6 @@ class PypiLaneContractTest(unittest.TestCase):
         self.assertIn('gh release download "$TAG" --dir "$ASSETS"', source)
         self.assertIn('git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"', source)
         self.assertIn('python3 scripts/publish_release.py --only pypi --assets "$ASSETS" "$TAG"', source)
-        for prefix in ("aweb-naapp-v", "aweb-secrets-runner-v"):
-            self.assertNotIn(prefix, source)
-
-
-class NaappPackageRcContractTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        temporary = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(temporary.cleanup)
-        root = Path(temporary.name)
-        cls.wheels = []
-        for directory in ("naapp-lib", "naapp-lib/testing"):
-            source, project = ROOT / directory, root / directory
-            project.mkdir(parents=True)
-            shutil.copytree(source / "src", project / "src", ignore=shutil.ignore_patterns("__pycache__"))
-            if (source / "README.md").exists():
-                shutil.copy2(source / "README.md", project / "README.md")
-            value = (source / "pyproject.toml").read_text()
-            value = re.sub(r'(?m)^version = "[^"]+"', 'version = "0.5.0rc1"', value)
-            value = re.sub(r'(aweb-naapp\[[^\]]+\]==)[^"\s]+', r'\g<1>0.5.0rc1', value)
-            value = re.sub(r'(awid-service>=)[^"\s]+', r'\g<1>0.5.32rc1', value)
-            (project / "pyproject.toml").write_text(value)
-            wheel = NAAPP_PACKAGE._build(project, root / "dist" / project.name)
-            cls.wheels.append((project, wheel, NAAPP_PACKAGE._metadata(wheel)))
-
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.awid = Path(temporary.name)
-        original = NAAPP_PACKAGE.AWID
-        NAAPP_PACKAGE.AWID = self.awid
-        self.addCleanup(setattr, NAAPP_PACKAGE, "AWID", original)
-        self.set_awid_version("0.5.32rc1")
-
-    def set_awid_version(self, version):
-        (self.awid / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
-
-    def test_real_rc_wheels_pass_contents_and_dependency_checks(self):
-        for project, wheel, metadata in self.wheels:
-            with self.subTest(package=metadata["Name"]):
-                self.assertEqual(metadata["Version"], "0.5.0rc1")
-                NAAPP_PACKAGE._check_contents(project, wheel)
-                NAAPP_PACKAGE._check_requirements(
-                    wheel, metadata,
-                    aweb_naapp_version="0.5.0rc1" if metadata["Name"] == "aweb-naapp-testing" else None,
-                )
-
-    def test_rc_exact_pin_is_checked_with_a_final_awid_neighbor(self):
-        self.set_awid_version("0.5.32")
-        _project, wheel, metadata = self.wheels[1]
-        NAAPP_PACKAGE._check_requirements(wheel, metadata, aweb_naapp_version="0.5.0rc1")
-        with self.assertRaisesRegex(NAAPP_PACKAGE.PackageRefusal, "must require exactly"):
-            NAAPP_PACKAGE._check_requirements(wheel, metadata, aweb_naapp_version="0.5.0rc2")
-
-    def test_awid_floor_uses_rc_before_final_and_numeric_rc_order(self):
-        for available, floor, accepted in (
-            ("0.5.32rc1", "0.5.32rc1", True),
-            ("0.5.32rc10", "0.5.32rc2", True),
-            ("0.5.32rc1", "0.5.32rc2", False),
-            ("0.5.32rc1", "0.5.32", False),
-            ("0.5.32", "0.5.32rc1", True),
-            ("0.5.32", "0.5.32", True),
-            ("0.5.31", "0.5.32rc1", False),
-        ):
-            with self.subTest(available=available, floor=floor):
-                self.set_awid_version(available)
-                metadata = Message()
-                metadata["Requires-Dist"] = "awid-service>=" + floor
-                if accepted:
-                    NAAPP_PACKAGE._check_requirements(Path("fixture.whl"), metadata, aweb_naapp_version=None)
-                else:
-                    with self.assertRaisesRegex(NAAPP_PACKAGE.PackageRefusal, "newer than"):
-                        NAAPP_PACKAGE._check_requirements(Path("fixture.whl"), metadata, aweb_naapp_version=None)
-
-    def test_missing_floor_direct_reference_and_malformed_rc_still_refuse(self):
-        self.set_awid_version("0.5.32")
-        for requirement in ("awid-service==0.5.32rc1", "awid-service>=0.5.32rc1junk",
-                            "awid-service @ file:///tmp/awid", "awid-service>=0.5.32rc01"):
-            with self.subTest(requirement=requirement):
-                metadata = Message()
-                metadata["Requires-Dist"] = requirement
-                with self.assertRaises(NAAPP_PACKAGE.PackageRefusal):
-                    NAAPP_PACKAGE._check_requirements(Path("fixture.whl"), metadata, aweb_naapp_version=None)
-
-
-class MatchedRcSiblingInstallTest(unittest.TestCase):
-    """Real wheels and uv: a matched RC set is explicit, its floors still bind."""
-
-    @classmethod
-    def setUpClass(cls):
-        temporary = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(temporary.cleanup)
-        root = Path(temporary.name)
-
-        def build(label, name, version, module, dependencies, body):
-            project = root / label
-            source = project / 'src' / module
-            source.mkdir(parents=True)
-            (source / '__init__.py').write_text(body)
-            (project / 'pyproject.toml').write_text(
-                f'[project]\nname = "{name}"\nversion = "{version}"\n'
-                f'dependencies = {json.dumps(dependencies)}\n'
-                '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
-                f'[tool.hatch.build.targets.wheel]\npackages = ["src/{module}"]\n')
-            wheel = NAAPP_PACKAGE._build(project, root / 'dist' / label)
-            return project, wheel, NAAPP_PACKAGE._metadata(wheel)
-
-        cls.awid = build('awid', 'awid-service', '0.5.40rc1', 'awid', [], 'LOCAL_RC = True\n')
-        stable = build('stable', 'awid-service', '0.5.39', 'awid', [], 'LOCAL_RC = False\n')
-        cls.naapp = build('naapp', 'aweb-naapp', '0.5.2rc1', 'aweb_naapp',
-                          ['awid-service>=0.5.40rc1'], 'from awid import LOCAL_RC\nassert LOCAL_RC\n')
-        cls.server = build('server', 'aweb', '1.27.51rc1', 'aweb',
-                           ['awid-service>=0.5.40rc1'], 'from awid import LOCAL_RC\nassert LOCAL_RC\n')
-        cls.testing = build('testing', 'aweb-naapp-testing', '0.5.2rc1', 'aweb_naapp_testing',
-                            ['aweb-naapp==0.5.2rc1', 'aweb>=1.27.51rc1'],
-                            'import aweb_naapp\nimport aweb\n')
-        cls.newer = build('newer', 'aweb-naapp', '0.5.2rc1', 'aweb_naapp',
-                          ['awid-service>=0.5.40rc2'], 'import awid\n')
-        cls.links = [row[1].parent for row in (cls.awid, cls.naapp, cls.server)]
-        # The older stable neighbor models the index without network access.
-        # Its presence prevents uv's only-prereleases-available exception.
-        index = root / 'index' / 'awid-service'
-        index.mkdir(parents=True)
-        (index / 'index.html').write_text(f'<a href="{stable[1].as_uri()}">{stable[1].name}</a>')
-        cls.environment = dict(UV_NO_INDEX='0', UV_INDEX_URL=(root / 'index').as_uri())
-
-    def test_matched_rc_siblings_install_and_import(self):
-        with patch.dict(os.environ, self.environment):
-            for row in (self.naapp, self.testing):
-                with self.subTest(package=row[2]['Name']):
-                    NAAPP_PACKAGE._check_install(*row, self.links)
-
-    def test_floor_newer_than_local_rc_still_refuses(self):
-        with patch.dict(os.environ, self.environment):
-            with self.assertRaisesRegex(NAAPP_PACKAGE.PackageRefusal, '0.5.40rc2'):
-                NAAPP_PACKAGE._check_install(*self.newer, self.links)
 
 
 class CandidateGateDeadlineTest(unittest.TestCase):
@@ -916,130 +754,46 @@ class ReleaseStampContractTest(unittest.TestCase):
         self.assertNotIn("no such file or directory", result.stderr.lower())
 
 
-class CustomerReleaseContractTest(unittest.TestCase):
-    """Customer lanes use the real tag/manifest/promotion boundary, without publishing."""
+class AppLaneRefusalTest(unittest.TestCase):
+    """The apps release from their own repository; aweb opens and publishes none of their lanes."""
 
-    def repository(self):
-        temporary = tempfile.TemporaryDirectory()
+    APP_TAGS = ("aweb-naapp-v0.1.0", "aweb-secrets-runner-v0.1.0", "secrets-v0.1.0", "logs-v0.1.0")
+
+    def test_release_candidate_refuses_an_app_tag_before_gating(self):
+        temporary, root = TagContractTest.repository(self)
         self.addCleanup(temporary.cleanup)
-        root = Path(temporary.name)
-        init_fixture_repo(root)
-        command(root, "git", "config", "user.name", "test")
-        command(root, "git", "config", "user.email", "test@example.com")
-        self.projects = {
-            "naapp/secrets": ("aweb-secrets", "0.1.0"),
-            "naapp/logs": ("aweb-logs", "0.1.0"),
-            "naapp/secrets/values": ("aweb-secrets-values", "0.1.0rc1"),
-            "naapp/secrets/runner": ("aweb-secrets-runner", "0.1.0rc1"),
-        }
-        for directory, (name, version) in self.projects.items():
-            path = root / directory
-            path.mkdir(parents=True, exist_ok=True)
-            dependencies = (
-                '["aweb-secrets-values==0.1.0rc1"]' if name == "aweb-secrets-runner" else "[]"
-            )
-            (path / "pyproject.toml").write_text(
-                f'[project]\nname = "{name}"\nversion = "{version}"\n'
-                f'dependencies = {dependencies}\n'
-            )
-        values = root / "naapp/secrets/values/src/aweb_secrets_values"
-        values.mkdir(parents=True)
-        (values / "__init__.py").write_text('CODEC_VERSION = 1\n')
-        command(root, "git", "add", ".")
-        command(root, "git", "commit", "-qm", "customer RC source")
-        return root
+        real_run, commands = CANDIDATE.run, []
 
-    def test_customer_candidates_bind_each_image_and_runner_to_its_version(self):
-        root = self.repository()
-        source, versions = CANDIDATE.validate_tags(
-            root, ["secrets-v0.1.0", "logs-v0.1.0", "aweb-secrets-runner-v0.1.0rc1"]
-        )
-        self.assertEqual(source, command(root, "git", "rev-parse", "HEAD"))
-        self.assertEqual(versions, {
-            "secrets-v": "0.1.0", "logs-v": "0.1.0", "aweb-secrets-runner-v": "0.1.0rc1",
-        })
+        def run(cwd, *argv, **kwargs):
+            commands.append(argv)
+            if argv[:2] == ("git", "fetch"):
+                return ""
+            return real_run(cwd, *argv, **kwargs)
 
-    def test_customer_image_version_mismatch_refuses(self):
-        root = self.repository()
-        CANDIDATE.validate_tags(root, ["secrets-v0.1.0", "logs-v0.1.0"])
-        for tag in ("secrets-v0.1.1", "logs-v0.1.1"):
-            with self.subTest(tag=tag), self.assertRaises(CANDIDATE.CandidateRefusal):
-                CANDIDATE.validate_tags(root, [tag])
+        with patch.object(CANDIDATE, "run", run):
+            for tag in self.APP_TAGS:
+                with self.subTest(tag=tag):
+                    commands.clear()
+                    with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "unsupported release tag"):
+                        CANDIDATE.create_candidate(root, ["server-v1.2.3", tag])
+                    self.assertNotIn(("scripts/candidate-docker-gate.sh",), commands)
+                    self.assertEqual(command(root, "git", "tag", "--list", "server-v1.2.3"), "")
 
-    def test_runner_values_version_mismatch_refuses_candidate_and_publisher(self):
-        root = self.repository()
-        tag = "aweb-secrets-runner-v0.1.0rc1"
-        CANDIDATE.validate_tags(root, [tag])
-        values = root / "naapp/secrets/values/pyproject.toml"
-        values.write_text(values.read_text().replace('version = "0.1.0rc1"', 'version = "0.1.1rc1"'))
-        command(root, "git", "commit", "-qam", "mismatched values")
-        with self.assertRaises(CANDIDATE.CandidateRefusal):
-            CANDIDATE.validate_tags(root, [tag])
-        command(root, "git", "tag", "-a", tag, "-m", "candidate")
-        with self.assertRaises(PUBLISH.PublishRefusal):
-            PUBLISH.tag_identity(root, tag)
-
-    def test_customer_publisher_uses_tagged_source_not_later_manifests(self):
-        root = self.repository()
-        source = command(root, "git", "rev-parse", "HEAD")
-        tags = ("secrets-v0.1.0", "logs-v0.1.0", "aweb-secrets-runner-v0.1.0rc1")
-        for tag in tags:
-            command(root, "git", "tag", "-a", tag, "-m", "candidate")
-        for directory in self.projects:
-            manifest = root / directory / "pyproject.toml"
-            manifest.write_text(re.sub(r'version = "[^"]+"', 'version = "9.9.9"', manifest.read_text()))
-        command(root, "git", "commit", "-qam", "later unrelated release")
-        for tag in tags:
+    def test_the_publisher_refuses_an_app_tag(self):
+        temporary, root = TagContractTest.repository(self)
+        self.addCleanup(temporary.cleanup)
+        for tag in self.APP_TAGS:
             with self.subTest(tag=tag):
-                prefix, version, observed = PUBLISH.tag_identity(root, tag)
-                self.assertEqual((prefix, version), VERSIONS.tag_parts(tag))
-                self.assertEqual(observed, source)
+                command(root, "git", "tag", "-a", tag, "-m", "app")
+                with self.assertRaisesRegex(PUBLISH.PublishRefusal, "unsupported release tag"):
+                    PUBLISH.publish(root, tag)
 
-    def test_equal_versions_with_wrong_values_dependency_refuse(self):
-        root = self.repository()
-        tag = "aweb-secrets-runner-v0.1.0rc1"
-        CANDIDATE.validate_tags(root, [tag])
-        manifest = root / "naapp/secrets/runner/pyproject.toml"
-        manifest.write_text(manifest.read_text().replace(
-            'aweb-secrets-values==0.1.0rc1', 'aweb-secrets-values==0.0.9'
-        ))
-        command(root, "git", "commit", "-qam", "wrong dependency with equal package versions")
-        with self.assertRaises(CANDIDATE.CandidateRefusal):
-            CANDIDATE.validate_tags(root, [tag])
-        command(root, "git", "tag", "-a", tag, "-m", "bad dependency")
-        with self.assertRaises(PUBLISH.PublishRefusal):
-            PUBLISH.tag_identity(root, tag)
-
-    def test_runner_final_needs_no_prior_rc_and_keeps_lockstep_values(self):
-        root = self.repository()
-        for directory in ("naapp/secrets/values", "naapp/secrets/runner"):
-            manifest = root / directory / "pyproject.toml"
-            manifest.write_text(manifest.read_text().replace("0.1.0rc1", "0.1.0"))
-        command(root, "git", "commit", "-qam", "final versions")
-        _source, versions = CANDIDATE.validate_tags(root, ["aweb-secrets-runner-v0.1.0"])
-        self.assertEqual(versions["aweb-secrets-runner-v"], "0.1.0")
-        runner = root / "naapp/secrets/runner/pyproject.toml"
-        runner.write_text(runner.read_text().replace("aweb-secrets-values==0.1.0", "aweb-secrets-values==0.0.9"))
-        command(root, "git", "commit", "-qam", "runner pins another values release")
-        with self.assertRaises(VERSIONS.VersionRefusal):
-            CANDIDATE.validate_tags(root, ["aweb-secrets-runner-v0.1.0"])
-
-    def test_built_runner_requires_the_exact_values_release_and_toolkit_floor(self):
-        from email.parser import BytesParser
-        import tomllib
-
-        version = tomllib.loads((ROOT / "naapp/secrets/values/pyproject.toml").read_text())["project"]["version"]
-        with tempfile.TemporaryDirectory() as directory:
-            command(ROOT, "uv", "build", "--wheel", "--no-sources", "--out-dir", directory,
-                    "naapp/secrets/runner")
-            wheels = list(Path(directory).glob("*.whl"))
-            self.assertEqual(len(wheels), 1)
-            with zipfile.ZipFile(wheels[0]) as wheel:
-                names = [name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")]
-                self.assertEqual(len(names), 1)
-                requirements = BytesParser().parsebytes(wheel.read(names[0])).get_all("Requires-Dist")
-            self.assertIn(f"aweb-secrets-values=={version}", requirements)
-            self.assertIn("aweb-naapp[pages]>=0.5.1", requirements)
+    def test_no_release_workflow_opens_an_app_lane(self):
+        for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+            source = workflow.read_text()
+            for prefix in ("aweb-naapp-v", "aweb-secrets-runner-v", "secrets-v", "logs-v"):
+                with self.subTest(workflow=workflow.name, prefix=prefix):
+                    self.assertIsNone(re.search(rf"(?<![\w-]){prefix}", source))
 
 
 if __name__ == "__main__":
