@@ -45,6 +45,14 @@ def parser():
     rel.add_argument("--aweb-lock-source-sha", required=True)
     rel.add_argument("--aweb-sha")
     rel.add_argument("--files")
+    cloud = sub.add_parser("cloud-gate")
+    cloud.add_argument("--machine", required=True)
+    cloud.add_argument("--cloud-repo", required=True)
+    cloud.add_argument("--cloud-sha", required=True)
+    cloud.add_argument("--receipt", required=True)
+    cloud.set_defaults(
+        cloud_image=None, aweb_lock_source_sha=None, aweb_sha=None, files=None
+    )
     snap = sub.add_parser("snapshot")
     snap.add_argument("--sha", required=True)
     snap.add_argument("--repo")
@@ -60,7 +68,13 @@ def default_factory(*args, **kwargs):
 
 
 def release_job(args, *, factory=None, out=None):
-    """make release's one gate job; every outcome, refusals included, writes the receipt."""
+    """make release's one gate job; every outcome, refusals included, writes the receipt.
+
+    `vm-gate cloud-gate` runs through this same job: Cloud's plain `make gate`
+    at a commit on main, with the same bundle, guest budget split, sampler,
+    receipt and ledger lease, and none of the release's image, key or aweb
+    suite.
+    """
     from functools import partial
     from types import SimpleNamespace
 
@@ -94,14 +108,20 @@ def release_job(args, *, factory=None, out=None):
             )
         if backend == "native" and not machine.get("root"):
             raise Refused(f"operator config needs {args.machine}.root for its jobs")
+        gate_only = args.action == "cloud-gate"
         files = release.built_files(args.files)
-        key = release.hermes_key(config.get("hermes_key_file"))
+        key = None if gate_only else release.hermes_key(config.get("hermes_key_file"))
         cloud_repo = Path(args.cloud_repo).resolve()
         record.update(release.cloud_main(cloud_repo, args.cloud_sha))
         run_id = "vm-" + uuid.uuid4().hex
         directory = Path(config["state_root"]) / "runs" / run_id
         directory.mkdir(parents=True, mode=0o700)
-        source_sha = args.aweb_sha or args.aweb_lock_source_sha
+        # A Cloud gate runs no aweb suite: the guest takes the launcher's own commit.
+        source_sha = (
+            args.aweb_sha
+            or args.aweb_lock_source_sha
+            or git(repo, "rev-parse", "HEAD").stdout.strip()
+        )
         if backend == "native":
             # The host's own Docker runs the gate image, so the pins are the source's.
             observed = aweb_requirements(
@@ -133,18 +153,21 @@ def release_job(args, *, factory=None, out=None):
         config["repo"] = str(repo)
         bundle = directory / "cloud.bundle"
         bundle_sha256 = release.cloud_bundle(cloud_repo, args.cloud_sha, bundle)
-        archive = directory / "cloud-image.tar"
-        image = release.image_archive(args.cloud_image, run_id, archive)
+        archive = None if gate_only else directory / "cloud-image.tar"
+        image = (
+            None if gate_only else release.image_archive(args.cloud_image, run_id, archive)
+        )
         script = partial(
             release.guest_script,
             cloud_sha=args.cloud_sha,
             bundle_sha256=bundle_sha256,
-            archive_sha256=image["archive_sha256"],
+            archive_sha256=image and image["archive_sha256"],
             image=args.cloud_image,
-            member=image["member"],
+            member=image and image["member"],
             lock_source_sha=args.aweb_lock_source_sha,
             aweb=args.aweb_sha,
             files=files,
+            cloud_target="gate" if gate_only else "release-gate",
         )
         inputs = {
             "bundle": bundle,
@@ -182,7 +205,8 @@ def release_job(args, *, factory=None, out=None):
             )
         with handling():
             result = runtime.run()
-        archive.unlink(missing_ok=True)
+        if archive:
+            archive.unlink(missing_ok=True)
         record = release.receipt(
             machine=args.machine,
             platform=platform,
@@ -215,7 +239,7 @@ def main(argv=None, *, factory=None, out=None):
     sha = None
     try:
         args = parser().parse_args(argv)
-        if args.action == "release":
+        if args.action in ("release", "cloud-gate"):
             return release_job(args, factory=factory, out=out)
         if not args.config:
             raise Refused("external --config or VM_GATE_CONFIG is required")

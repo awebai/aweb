@@ -232,6 +232,7 @@ def guest_script(
     key=GUEST_KEY,
     files_dir=GUEST_FILES,
     weights=None,
+    cloud_target="release-gate",
 ):
     """Both suites in parallel; each writes its exit and output under release/.
 
@@ -242,16 +243,26 @@ def guest_script(
     if not aweb:
         weights = {"cloud": weights["cloud"]}
     release = logs + "/release"
+    if cloud_target not in ("release-gate", "gate"):
+        raise ValueError(f"unknown Cloud target {cloud_target!r}")
     cloud_env = [
         f"AWEB_GATE_LEDGER={release}/cloud/ledger.tsv",
         f"AWEB_GATE_LOG_DIR={release}/cloud/gate-logs",
         f"DOCKER_CONFIG={release}/cloud/empty-docker-config",
-        f"AC_CANDIDATE_RELEASE_IMAGE={image}",
-        f"AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE={remote}/cloud-image.tar",
-        f"AC_CANDIDATE_RELEASE_IMAGE_MEMBER={member}",
-        f"AC_CANDIDATE_AWEB_LOCK_SOURCE_SHA={lock_source_sha}",
-        f"AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE={key}",
     ]
+    if cloud_target == "release-gate":
+        cloud_env += [
+            f"AC_CANDIDATE_RELEASE_IMAGE={image}",
+            f"AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE={remote}/cloud-image.tar",
+            f"AC_CANDIDATE_RELEASE_IMAGE_MEMBER={member}",
+            f"AC_CANDIDATE_AWEB_LOCK_SOURCE_SHA={lock_source_sha}",
+            f"AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE={key}",
+        ]
+    image_check = (
+        f"echo {Q(archive_sha256 + '  ' + remote + '/cloud-image.tar')} | sha256sum -c - || exit 70"
+        if cloud_target == "release-gate"
+        else ""
+    )
     if files:
         cloud_env += [
             f"AC_CANDIDATE_AWEB_WHEELS={files_dir}",
@@ -296,7 +307,7 @@ chmod 0700 {Q(release + "/cloud/empty-docker-config")}
 read -r cloud_cpus cloud_memory aweb_cpus aweb_memory < <(python3 -m vm_gate.budget split {Q(release + "/split.json")} {" ".join(Q(f"{gate}={weight}") for gate, weight in sorted(weights.items()))}) || exit 70
 test -n "$cloud_cpus" || exit 70
 echo {Q(bundle_sha256 + "  " + remote + "/cloud.bundle")} | sha256sum -c - || exit 70
-echo {Q(archive_sha256 + "  " + remote + "/cloud-image.tar")} | sha256sum -c - || exit 70
+{image_check}
 cd {Q(home)}
 rm -rf cloud-origin cloud-source
 git init --quiet --bare cloud-origin || exit 70
@@ -310,7 +321,7 @@ test "$(git -C cloud-source rev-parse HEAD)" = {Q(cloud_sha)} || exit 70
   git config user.name 'aweb release gate'
   git config user.email 'release-gate@localhost'
   {exports}
-  make release-gate > {Q(release + "/cloud/gate-output.log")} 2>&1
+  make {cloud_target} > {Q(release + "/cloud/gate-output.log")} 2>&1
   printf '%s\\n' "$?" > {Q(release + "/cloud/exit")}
 ) &
 cloud_suite=$!
@@ -333,23 +344,25 @@ class ReleaseExecutor(Executor):
     def prepare(self, server, timeout):
         super().prepare(server, timeout)
         self.upload(self.release["bundle"], REMOTE + "/cloud.bundle", mode="0444")
-        self.upload(self.release["archive"], REMOTE + "/cloud-image.tar", mode="0444")
+        if self.release["archive"]:
+            self.upload(self.release["archive"], REMOTE + "/cloud-image.tar", mode="0444")
         self.run(
             f"install -d -m 0755 -o root -g root {GUEST_FILES}",
             "release-files-directory",
         )
         for path in self.release["files"]:
             self.upload(path, GUEST_FILES + "/" + Path(path).name, mode="0444")
-        self.run(
-            f"install -d -o root -g gateuser -m 0710 {GUEST_KEY_DIRECTORY}",
-            "hermes-directory",
-        )
-        self.upload(
-            self.release["hermes_key"],
-            GUEST_KEY,
-            owner="gateuser:gateuser",
-            mode="0600",
-        )
+        if self.release["hermes_key"]:
+            self.run(
+                f"install -d -o root -g gateuser -m 0710 {GUEST_KEY_DIRECTORY}",
+                "hermes-directory",
+            )
+            self.upload(
+                self.release["hermes_key"],
+                GUEST_KEY,
+                owner="gateuser:gateuser",
+                mode="0600",
+            )
 
     def collect(self, server, timeout):
         self.deadline = time.monotonic() + timeout
@@ -384,15 +397,17 @@ def receipt(
 ):
     """The one record make release reads: both suites, both inputs, the main check."""
     evidence = Path(directory) / "evidence"
-    cloud = {
-        "sha": cloud_sha,
-        "image": image["image"],
-        "member": image["member"],
-        "config": image["config"],
-        "member_architecture": image.get("member_architecture"),
-        "command": "make release-gate",
-        **suite_record(evidence, "cloud"),
-    }
+    cloud = {"sha": cloud_sha, **suite_record(evidence, "cloud")}
+    if image:
+        cloud.update(
+            image=image["image"],
+            member=image["member"],
+            config=image["config"],
+            member_architecture=image.get("member_architecture"),
+            command="make release-gate",
+        )
+    else:
+        cloud["command"] = "make gate"
     architecture = evidence / "var/log/vm-gate/release/host-architecture"
     split_path = evidence / "var/log/vm-gate/release/split.json"
     split = json.loads(split_path.read_text()) if split_path.exists() else None

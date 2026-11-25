@@ -260,6 +260,17 @@ decrease. Raw counters are preserved without guessed percentages. The
 averages and cumulative stall time; before/after data supports diagnosis but
 does not on its own identify a physical host or prove noisy-neighbor causation.
 
+### Cloud gate
+
+`vm-gate cloud-gate --machine M --cloud-repo P --cloud-sha C --receipt R` runs
+Cloud's plain `make gate` at commit C on machine M, through the release job's
+own path. That path covers the Cloud bundle with a frozen main, the
+guest-measured budget split (Cloud has the whole guest), the cpu.stat sampler,
+evidence collection (including Cloud's `/tmp/ac-candidate-gate-*` run
+directory), the receipt and the ledger lease. It builds no image, ships no
+Hermes key and runs no aweb suite. A moved Cloud main refuses it, as it refuses
+a release. The guest runs the launcher's own aweb commit.
+
 ### Merak
 
 Select the dedicated KVM host with `--target merak`. The Mac operator config

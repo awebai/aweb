@@ -188,6 +188,63 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         with patch.object(release, "image_archive", image_archive):
             return self.invoke(machine)
 
+    def invoke_cloud_gate(self, machine="merak"):
+        code = main(
+            [
+                "--config",
+                str(self.config),
+                "cloud-gate",
+                "--machine",
+                machine,
+                "--cloud-repo",
+                str(self.cloud),
+                "--cloud-sha",
+                self.cloud_sha,
+                "--receipt",
+                str(self.receipt),
+            ],
+            factory=self.factory,
+            out=io.StringIO(),
+        )
+        return code, json.loads(self.receipt.read_text())
+
+    def test_a_cloud_gate_runs_make_gate_through_the_release_job(self):
+        self.factory_for_admission()
+
+        def no_image(*args, **kwargs):
+            raise AssertionError("a Cloud gate builds and ships no image")
+
+        def no_key(*args, **kwargs):
+            raise AssertionError("a Cloud gate needs no Hermes key")
+
+        with patch.object(release, "image_archive", no_image), patch.object(
+            release, "hermes_key", no_key
+        ):
+            code, receipt = self.invoke_cloud_gate()
+        self.assertEqual(len(self.calls), 1, receipt)
+        run = self.calls[0]
+        self.assertIn("make gate ", run["command"])
+        self.assertNotIn("make release-gate", run["command"])
+        self.assertNotIn("AC_CANDIDATE_RELEASE_IMAGE", run["command"])
+        self.assertNotIn("cloud-image.tar", run["command"])
+        self.assertIn("python3 -m vm_gate.budget split", run["command"])
+        inputs = run["executor_factory"].keywords["release"]
+        self.assertIsNone(inputs["archive"])
+        self.assertIsNone(inputs["hermes_key"])
+        self.assertEqual(inputs["files"], [])
+        self.assertEqual(receipt["cloud"]["command"], "make gate")
+        self.assertNotIn("image", receipt["cloud"])
+        self.assertNotIn("aweb", receipt)
+        self.assertEqual(receipt["cloud"]["sha"], self.cloud_sha)
+
+    def test_a_cloud_gate_refuses_a_moved_main_like_a_release(self):
+        moved = self.move_main()
+        code, receipt = self.invoke_cloud_gate()
+        self.assertEqual(code, 2)
+        self.assertIn("Cloud main moved", receipt["vm_gate"]["error"])
+        self.assertIn(moved, receipt["vm_gate"]["error"])
+        self.assertEqual(self.calls, [])
+
     def test_each_machine_from_config_is_admitted_on_its_backend(self):
         for machine, server_type, timeout in (
             ("hetzner", "ccx43", 10800),
@@ -315,7 +372,7 @@ target="$1"
 env | sort > "$STUB_RECORD/$target.env"
 pwd > "$STUB_RECORD/$target.pwd"
 case "$target" in
-  release-gate) sleep "${CLOUD_SLEEP:-0}"; exit "${CLOUD_EXIT:-0}" ;;
+  release-gate|gate) sleep "${CLOUD_SLEEP:-0}"; exit "${CLOUD_EXIT:-0}" ;;
   candidate-gate) exit "${AWEB_EXIT:-0}" ;;
 esac
 exit 99
@@ -452,6 +509,57 @@ class GuestScript(CloudFixture, unittest.TestCase):
         )
         recorded = json.loads((self.logs / "release/split.json").read_text())
         self.assertEqual(recorded, expected)
+
+    def test_a_cloud_gate_runs_make_gate_with_the_whole_guest(self):
+        script = release.guest_script(
+            cloud_sha=self.cloud_sha,
+            bundle_sha256=self.bundle,
+            archive_sha256=None,
+            image=None,
+            member=None,
+            lock_source_sha=None,
+            aweb=None,
+            files={},
+            remote=str(self.remote),
+            logs=str(self.logs),
+            home=str(self.home),
+            cloud_target="gate",
+        )
+        (self.remote / "cloud-image.tar").unlink()
+        environment = {
+            "PATH": f"{self.stubs}:{os.environ['PATH']}",
+            "HOME": str(self.home),
+            "STUB_RECORD": str(self.record),
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "PYTHONPATH": str(Path(release.__file__).resolve().parents[1]),
+        }
+        result = subprocess.run(
+            ["bash", "-c", script], env=environment, capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cloud = self.suite_env("gate")
+        self.assertFalse((self.record / "release-gate.env").exists())
+        self.assertFalse((self.record / "candidate-gate.env").exists())
+        self.assertNotIn("AC_CANDIDATE_RELEASE_IMAGE", cloud)
+        self.assertNotIn("AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE", cloud)
+        self.assertEqual((cloud["GATE_CPUS"], cloud["GATE_MEMORY_MIB"]), ("12", "61440"))
+        recorded = json.loads((self.logs / "release/split.json").read_text())
+        self.assertEqual(recorded["cloud"], {"cpus": 12, "memory_mib": 61440})
+        self.assertEqual((self.logs / "release/cloud/exit").read_text(), "0\n")
+
+    def test_an_unknown_cloud_target_is_refused(self):
+        with self.assertRaises(ValueError):
+            release.guest_script(
+                cloud_sha=self.cloud_sha,
+                bundle_sha256=self.bundle,
+                archive_sha256=None,
+                image=None,
+                member=None,
+                lock_source_sha=None,
+                aweb=None,
+                files={},
+                cloud_target="deploy",
+            )
 
     def test_a_cloud_only_release_gives_cloud_the_whole_guest(self):
         result = self.run_script({}, aweb=False)
