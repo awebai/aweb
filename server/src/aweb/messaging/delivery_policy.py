@@ -34,6 +34,18 @@ class DeliveryAttempt(Enum):
 
 
 @dataclass(frozen=True, kw_only=True)
+class SenderRestriction:
+    """A host's refusal of a sender's first contact outside its relationships.
+
+    ``reason`` is the machine-readable refusal reason and ``detail`` the
+    human-readable action, both chosen by the host.
+    """
+
+    reason: str
+    detail: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class DeliverySender:
     """Authenticated identity facts; no caller-selected team grants admission."""
 
