@@ -311,7 +311,10 @@ def _npm_publish_staged(
         if len(packages) != 1:
             raise PublishRefusal("npm staging did not contain exactly one package")
         archive = packages[0]
-        # Observe the registry npm publish and the readback use.
+        # Observe the registry npm publish and the readback use. Only the
+        # uppercase NPM_CONFIG_REGISTRY is read here, as the readback does; npm
+        # also honours lowercase npm_config_registry and .npmrc, which this
+        # decision does not see. Set NPM_CONFIG_REGISTRY to redirect a release.
         registry = os.environ.get(
             "NPM_CONFIG_REGISTRY", "https://registry.npmjs.org"
         ).rstrip("/")
