@@ -78,14 +78,15 @@ record_passed_stage() {
   cp "$LOG_DIR/$stage.log" "$stage_log" || return 1
   candidate_stage_passed "$stage" "$retained/summary.tsv" "$stage_log" || return 1
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  record_candidate_row "$stage" passed "$stage_log" || return 1
-  printf '%s\n' "$stage" >> "$LOG_DIR/recorded-stages" || return 1
   record_stage_targets "$stage" "$retained"
   case "$?" in
     0) ;;
     1) printf '%s\n' "$stage" >> "$LOG_DIR/recorded-target-failures" || return 1 ;;
     *) return 1 ;;
   esac
+  printf '%s\n' "$stage" >> "$LOG_DIR/recorded-stages" || return 1
+  # The stage row is written last: a kill before it leaves the stage to rerun.
+  record_candidate_row "$stage" passed "$stage_log"
 }
 candidate_stage_passed() {
   local stage="$1" summary="$2" log="$3"

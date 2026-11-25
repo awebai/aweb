@@ -297,16 +297,17 @@ run_candidate() {
         self.assertEqual(code, -signal.SIGKILL, output)
         self.assertEqual(
             [(r[1], r[2]) for r in temporary_ledger[0]],
-            [("checks", "passed"), ("checks/check-python-static", "passed")],
+            [("checks/check-python-static", "passed"), ("checks", "passed")],
         )
         self.assertEqual([(r[1], r[2]) for r in rows], [(r[1], r[2]) for r in temporary_ledger[0]])
-        self.assertEqual(Path(rows[0][5]).read_text(), "real completed checks\n")
+        self.assertEqual(Path(rows[1][5]).read_text(), "real completed checks\n")
         gate = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
         lookup = gate[gate.index("recorded() {") : gate.index("run_candidate() {")]
         result = subprocess.run(
             ["bash", "-ec", lookup + "\nprintf '%s\\n' \"$pending\"; exit 99"],
             env=dict(os.environ, TREE="tree", KEY="tree-inputs",
                      LEDGER=str(logs.parent / "ledger.tsv"),
+                     CANDIDATE_STAGES="static checks user-paths unit artifacts integration",
                      REQUESTED="checks artifacts integration"),
             capture_output=True, text=True,
         )
