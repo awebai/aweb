@@ -197,6 +197,8 @@ for stage in $all_stages; do
     printf 'user-paths coverage: %s\n' "$coverage"
   fi
   printf '%s\t%s\t%s.log\t%ss\t%s\n' "$stage" "$result" "$stage" "$((SECONDS-started))" "$coverage" >> "$summary"
+  # The wrapper records a passed stage in the ledger when it reads this line.
+  printf 'candidate stage-verdict: %s %s\n' "$stage" "$result"
 done
 if [[ "$suite_status" == 0 ]]; then
   printf '\ncandidate suite PASSED\n'

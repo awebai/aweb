@@ -38,12 +38,15 @@ LOCKSTEP = {
 }
 
 
+COMMAND_TIMEOUT_SECONDS = 7200
+
+
 def run(
     root: Path,
     *argv: str,
     capture: bool = True,
     env: dict[str, str] | None = None,
-    timeout: int = 7200,
+    bounded: bool = True,
 ) -> str:
     completed = subprocess.run(
         argv,
@@ -51,7 +54,7 @@ def run(
         text=True,
         capture_output=capture,
         env=env,
-        timeout=timeout,
+        timeout=COMMAND_TIMEOUT_SECONDS if bounded else None,
         check=False,
     )
     if completed.returncode:
@@ -112,7 +115,11 @@ def create_candidate(root: Path, tags: list[str], *, stage_aw_final: bool = Fals
         environment["CLI_VERSION"] = versions["aw-v"]
     if "a2a-gw-v" in versions:
         environment["A2A_GATEWAY_VERSION"] = versions["a2a-gw-v"]
-    run(root, "scripts/candidate-docker-gate.sh", capture=False, env=environment)
+    # The gate carries no deadline from here. Its run time depends on the
+    # machine, so the machine's runner owns the deadline and stops the gate
+    # with TERM, which lets it clean up and record the stages that passed. A
+    # timeout here would SIGKILL it and lose both.
+    run(root, "scripts/candidate-docker-gate.sh", capture=False, env=environment, bounded=False)
     if run(root, "git", "rev-parse", "HEAD") != source_sha:
         raise CandidateRefusal("checkout HEAD changed while the Docker gate ran")
     if run(root, "git", "status", "--porcelain", "--untracked-files=all"):
