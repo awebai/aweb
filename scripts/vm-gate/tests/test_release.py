@@ -92,6 +92,13 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
                     },
                     "antares": {
                         "platform": "linux/arm64",
+                        "backend": "native",
+                        "root": str(self.root / "antares-jobs"),
+                        "release_timeout_seconds": 9000,
+                    },
+                    "nowhere": {
+                        "platform": "linux/amd64",
+                        "backend": "teleport",
                         "release_timeout_seconds": 9000,
                     },
                 }
@@ -142,10 +149,10 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         self.assertIn(moved, receipt["vm_gate"]["error"])
         self.assertEqual(self.calls, [])
 
-    def test_an_arm64_machine_or_an_undeclared_one_is_refused(self):
+    def test_an_undeclared_machine_or_backend_is_refused(self):
         for machine, reason in (
-            ("antares", "linux/arm64"),
             ("elsewhere", "no platform"),
+            ("nowhere", "no backend"),
         ):
             with self.subTest(machine=machine):
                 code, receipt = self.invoke(machine)
@@ -153,16 +160,7 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
                 self.assertIn(reason, receipt["vm_gate"]["error"])
         self.assertEqual(self.calls, [])
 
-    def admitted(self, machine):
-        def image_archive(image, platform, run_id, out):
-            out.write_bytes(b"image")
-            return {
-                "image": image,
-                "member": "sha256:" + "b" * 64,
-                "config": "sha256:" + "d" * 64,
-                "archive_sha256": "0" * 64,
-            }
-
+    def factory_for_admission(self):
         class Runtime:
             def run(self):
                 return {"exit": 0, "infrastructure": None}
@@ -172,10 +170,23 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
             return Runtime()
 
         self.factory = factory
+
+    def admitted(self, machine):
+        def image_archive(image, run_id, out):
+            out.write_bytes(b"image")
+            return {
+                "image": image,
+                "member": "sha256:" + "b" * 64,
+                "config": "sha256:" + "d" * 64,
+                "member_architecture": "amd64",
+                "archive_sha256": "0" * 64,
+            }
+
+        self.factory_for_admission()
         with patch.object(release, "image_archive", image_archive):
             return self.invoke(machine)
 
-    def test_an_amd64_machine_from_config_is_admitted_on_its_backend(self):
+    def test_each_machine_from_config_is_admitted_on_its_backend(self):
         for machine, server_type, timeout in (
             ("hetzner", "ccx43", 10800),
             ("merak", None, 9000),
@@ -189,9 +200,44 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
                     (args.target, args.type, args.timeout),
                     (machine, server_type, timeout),
                 )
-                self.assertEqual(receipt["machine"], machine)
                 self.assertEqual(receipt["machine_platform"], "linux/amd64")
                 self.assertEqual(receipt["timeout_seconds"], timeout)
+        self.calls.clear()
+        code, receipt = self.admitted("antares")
+        self.assertEqual(len(self.calls), 1, receipt)
+        native = self.calls[0]
+        self.assertEqual(native["machine"]["root"], str(self.root / "antares-jobs"))
+        self.assertIn("/jobs/x/home", native["script"]("/jobs/x"))
+        self.assertEqual(receipt["machine_platform"], "linux/arm64")
+        self.assertEqual(receipt["cloud"]["member_architecture"], "amd64")
+
+    def test_an_arm64_host_refuses_a_member_that_is_not_amd64(self):
+        def docker(*argv):
+            if argv[:2] == ("buildx", "imagetools"):
+                return json.dumps(
+                    {
+                        "manifests": [
+                            {
+                                "digest": "sha256:" + "a" * 64,
+                                "platform": {"os": "linux", "architecture": "amd64"},
+                            },
+                            {
+                                "digest": "sha256:" + "e" * 64,
+                                "platform": {"os": "linux", "architecture": "arm64"},
+                            },
+                        ]
+                    }
+                )
+            if argv[0] == "save":
+                write_archive(Path(argv[2]), "arm64")
+            return ""
+
+        self.factory_for_admission()
+        with patch.object(release, "docker", docker):
+            code, receipt = self.invoke("antares")
+        self.assertEqual(code, 2)
+        self.assertIn("arm64, not amd64", receipt["vm_gate"]["error"])
+        self.assertEqual(self.calls, [])
 
     def test_aweb_files_need_their_commit_and_the_commit_its_files(self):
         for extra in (("--aweb-sha", self.sha), ("--files", str(self.files))):
@@ -227,16 +273,32 @@ class CloudBundle(CloudFixture, unittest.TestCase):
         self.assertEqual(git(clone, "rev-parse", "origin/main"), self.cloud_sha)
 
 
+def write_archive(path, architecture):
+    """A docker save archive holding one image config of the given architecture."""
+    config = json.dumps({"architecture": architecture, "os": "linux"}).encode()
+    digest = hashlib.sha256(config).hexdigest()
+    manifest = json.dumps([{"Config": "blobs/sha256/" + digest}]).encode()
+    with tarfile.open(path, "w") as tar:
+        for name, data in (
+            ("manifest.json", manifest),
+            ("blobs/sha256/" + digest, config),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return "sha256:" + digest
+
+
 class ArchiveConfig(unittest.TestCase):
-    def test_config_digest_comes_from_the_saved_manifest(self):
+    def test_config_digest_and_architecture_come_from_the_saved_image(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "image.tar"
-            manifest = json.dumps([{"Config": "blobs/sha256/" + "c" * 64}]).encode()
-            with tarfile.open(archive, "w") as tar:
-                info = tarfile.TarInfo("manifest.json")
-                info.size = len(manifest)
-                tar.addfile(info, io.BytesIO(manifest))
-            self.assertEqual(release.archive_config(archive), "sha256:" + "c" * 64)
+            digest = write_archive(archive, "amd64")
+            self.assertEqual(release.archive_config(archive), (digest, "amd64"))
+            self.assertEqual(release.shipped_member(archive), (digest, "amd64"))
+            write_archive(archive, "arm64")
+            with self.assertRaises(release.Refused):
+                release.shipped_member(archive)
 
 
 STUB_MAKE = """#!/bin/bash
@@ -245,7 +307,7 @@ target="$1"
 env | sort > "$STUB_RECORD/$target.env"
 pwd > "$STUB_RECORD/$target.pwd"
 case "$target" in
-  release-gate) exit "${CLOUD_EXIT:-0}" ;;
+  release-gate) sleep "${CLOUD_SLEEP:-0}"; exit "${CLOUD_EXIT:-0}" ;;
   candidate-gate) exit "${AWEB_EXIT:-0}" ;;
 esac
 exit 99
@@ -387,6 +449,115 @@ class GuestScript(CloudFixture, unittest.TestCase):
         result = self.run_script({}, aweb=False)
         self.assertEqual(result.returncode, 70)
         self.assertFalse((self.record / "release-gate.env").exists())
+
+
+@unittest.skipUnless(shutil.which("sha256sum"), "needs sha256sum")
+class NativeJob(CloudFixture, unittest.TestCase):
+    """The native path end to end on this machine, with stub make and uv."""
+
+    def setUp(self):
+        super().setUp()
+        from vm_gate.source import prepare
+
+        self.directory = self.root / "state/runs/vm-native"
+        self.directory.mkdir(parents=True)
+        self.source = prepare(
+            self.repo, self.sha, self.directory, observed=self.observed
+        )
+        stubs = self.root / "stubs"
+        stubs.mkdir()
+        for name, text in (("make", STUB_MAKE), ("uv", STUB_UV)):
+            (stubs / name).write_text(text)
+            (stubs / name).chmod(0o755)
+        self.record = self.root / "record"
+        self.record.mkdir()
+        environment = patch.dict(
+            os.environ,
+            {
+                "PATH": f"{stubs}:{os.environ['PATH']}",
+                "STUB_RECORD": str(self.record),
+                "GIT_CONFIG_GLOBAL": "/dev/null",
+            },
+        )
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.bundle = self.root / "cloud.bundle"
+        bundle_sha256 = release.cloud_bundle(self.cloud, self.cloud_sha, self.bundle)
+        self.archive = self.root / "cloud-image.tar"
+        self.archive.write_bytes(b"image")
+        files = self.root / "dist"
+        files.mkdir()
+        (files / "aweb-1.27.54-py3-none-any.whl").write_bytes(b"wheel")
+        key = self.root / "key"
+        key.write_text("test-only")
+        key.chmod(0o600)
+        ledger = self.root / "ledger.tsv"
+        ledger.write_text("")
+        self.jobs = self.root / "jobs"
+        self.jobs.mkdir()
+        from vm_gate.native import NativeRuntime
+
+        self.runtime = lambda timeout: NativeRuntime(
+            config={"ledger": str(ledger), "owner": "seat"},
+            directory=self.directory,
+            source=self.source,
+            script=lambda job: release.guest_script(
+                cloud_sha=self.cloud_sha,
+                bundle_sha256=bundle_sha256,
+                archive_sha256=hashlib.sha256(b"image").hexdigest(),
+                image="ghcr.io/awebai/ac@sha256:" + "a" * 64,
+                member="sha256:" + "b" * 64,
+                lock_source_sha=self.sha,
+                aweb=self.sha,
+                files={
+                    "aweb-1.27.54-py3-none-any.whl": hashlib.sha256(
+                        b"wheel"
+                    ).hexdigest()
+                },
+                remote=job,
+                logs=job + "/logs",
+                home=job + "/home",
+                key=job + "/hermes-key",
+                files_dir=job + "/release-files",
+            ),
+            machine={"root": str(self.jobs)},
+            inputs={
+                "bundle": self.bundle,
+                "archive": self.archive,
+                "files": [files / "aweb-1.27.54-py3-none-any.whl"],
+                "hermes_key": key,
+            },
+            timeout=timeout,
+        )
+
+    def test_both_suites_run_on_the_host_and_the_evidence_comes_back(self):
+        result = self.runtime(120).run()
+        self.assertEqual(result["exit"], 0, result)
+        self.assertIsNone(result["infrastructure"])
+        self.assertEqual(result["ledger_rows_imported"], 0)
+        evidence = self.directory / "evidence/var/log/vm-gate/release"
+        for suite in ("cloud", "aweb"):
+            self.assertEqual((evidence / suite / "exit").read_text(), "0\n")
+        job = Path(result["job"])
+        self.assertFalse((job / "hermes-key").exists())
+        self.assertFalse((job / "cloud-image.tar").exists())
+        cloud = (self.record / "release-gate.env").read_text()
+        self.assertIn(
+            f"AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE={job}/cloud-image.tar", cloud
+        )
+        self.assertIn(f"AWEB_GATE_LEDGER={job}/logs/release/cloud/ledger.tsv", cloud)
+        self.assertIn(
+            f"AWEB_GATE_LEDGER={job}/ledger.tsv",
+            (self.record / "candidate-gate.env").read_text(),
+        )
+        self.assertTrue((evidence / "host-architecture").read_text().strip())
+
+    def test_the_deadline_stops_the_job_with_term_and_is_infrastructure(self):
+        os.environ["CLOUD_SLEEP"] = "30"
+        result = self.runtime(2).run()
+        self.assertEqual(result["exit"], 124)
+        self.assertEqual(result["infrastructure"], "infrastructure")
+        self.assertFalse((Path(result["job"]) / "hermes-key").exists())
 
 
 class Receipt(unittest.TestCase):

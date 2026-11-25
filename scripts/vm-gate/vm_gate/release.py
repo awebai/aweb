@@ -23,10 +23,11 @@ from .errors import Infrastructure, Refused
 from .executor import LOGS, REMOTE, Executor
 
 Q = shlex.quote
-# A release qualifies the amd64 image that production runs.
+# A release qualifies the amd64 image that production runs, on every host:
+# an arm64 host runs that same member under its amd64 emulation (Rosetta).
 RELEASE_PLATFORM = "linux/amd64"
-# The machines vm-gate can run a guest on.
-BACKENDS = ("merak", "hetzner")
+# merak and hetzner boot a guest; native runs on the host's own Docker.
+BACKENDS = ("merak", "hetzner", "native")
 IMAGE = re.compile(r"(?P<repository>[a-z0-9./-]+)@(?P<index>sha256:[0-9a-f]{64})")
 SHA = re.compile(r"[0-9a-f]{40}")
 GUEST_RELEASE = LOGS + "/release"
@@ -54,17 +55,15 @@ def sha256(path):
 
 
 def check_machine(machine, config):
-    """The machine is an input; operator config declares its platform."""
-    platform = (config.get(machine) or {}).get("platform")
+    """The machine is an input; operator config declares its platform and backend."""
+    settings = config.get(machine) or {}
+    platform = settings.get("platform")
     if platform is None:
         raise Refused(f"operator config declares no platform for machine {machine}")
-    if platform != RELEASE_PLATFORM:
-        raise Refused(
-            f"a release gate needs a {RELEASE_PLATFORM} machine; {machine} is {platform}"
-        )
-    if machine not in BACKENDS:
+    backend = settings.get("backend", machine)
+    if backend not in BACKENDS:
         raise Refused(f"vm-gate has no backend for machine {machine}")
-    return platform
+    return platform, backend
 
 
 def cloud_main(repo, cloud_sha):
@@ -112,23 +111,35 @@ def docker(*argv):
 
 
 def archive_config(archive):
-    """The config digest of the single image in a docker save archive."""
+    """The config digest and architecture of the single image in a docker save archive."""
     with tarfile.open(archive) as tar:
         member = tar.extractfile("manifest.json")
         if member is None:
             raise Infrastructure("the image archive has no manifest.json")
         manifest = json.load(member)
-    if len(manifest) != 1:
-        raise Infrastructure("the image archive must hold exactly one image")
-    config = manifest[0]["Config"]
-    digest = config.removeprefix("blobs/sha256/").removesuffix(".json")
-    if not re.fullmatch(r"[0-9a-f]{64}", digest):
-        raise Infrastructure("the image archive names no config digest")
-    return "sha256:" + digest
+        if len(manifest) != 1:
+            raise Infrastructure("the image archive must hold exactly one image")
+        path = manifest[0]["Config"]
+        digest = path.removeprefix("blobs/sha256/").removesuffix(".json")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise Infrastructure("the image archive names no config digest")
+        blob = tar.extractfile(path)
+        if blob is None:
+            raise Infrastructure("the image archive has no config blob")
+        architecture = json.load(blob).get("architecture")
+    return "sha256:" + digest, architecture
 
 
-def image_archive(image, platform, run_id, out):
-    """Resolve the index's member for the machine's platform and save it by a run tag."""
+def shipped_member(archive):
+    """Refuse any member but amd64: the release qualifies what production runs."""
+    config, architecture = archive_config(archive)
+    if architecture != "amd64":
+        raise Refused(f"the shipped Cloud member is {architecture}, not amd64")
+    return config, architecture
+
+
+def image_archive(image, run_id, out, platform=RELEASE_PLATFORM):
+    """Resolve the index's amd64 member and save it by a run tag."""
     match = IMAGE.fullmatch(image)
     if match is None:
         raise Refused("--cloud-image must be <repository>@sha256:<index>")
@@ -152,10 +163,12 @@ def image_archive(image, platform, run_id, out):
         docker("save", "--output", str(out), tag)
     finally:
         docker("image", "rm", tag)
+    config, architecture = shipped_member(out)
     return {
         "image": image,
         "member": member,
-        "config": archive_config(out),
+        "config": config,
+        "member_architecture": architecture,
         "archive_sha256": sha256(out),
     }
 
@@ -252,6 +265,7 @@ aweb_suite=$!
 """
     return f"""set -u
 mkdir -p {Q(release + "/aweb")} {Q(release + "/cloud/empty-docker-config")}
+{{ uname -m; docker info --format '{{{{.Architecture}}}}'; }} > {Q(release + "/host-architecture")} 2>/dev/null
 chmod 0700 {Q(release + "/cloud/empty-docker-config")}
 echo {Q(bundle_sha256 + "  " + remote + "/cloud.bundle")} | sha256sum -c - || exit 70
 echo {Q(archive_sha256 + "  " + remote + "/cloud-image.tar")} | sha256sum -c - || exit 70
@@ -347,12 +361,17 @@ def receipt(
         "image": image["image"],
         "member": image["member"],
         "config": image["config"],
+        "member_architecture": image.get("member_architecture"),
         "command": "make release-gate",
         **suite_record(evidence, "cloud"),
     }
+    architecture = evidence / "var/log/vm-gate/release/host-architecture"
     record = {
         "machine": machine,
         "machine_platform": platform,
+        "host_architecture": (
+            architecture.read_text().split() if architecture.exists() else None
+        ),
         "run_id": run_id,
         "launcher_sha": launcher_sha,
         "timeout_seconds": timeout,

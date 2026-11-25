@@ -85,13 +85,15 @@ def release_job(args, *, factory=None, out=None):
         config = load(args.config, launcher)
         repo = Path(config.get("repo") or launcher).resolve()
         config = load(args.config, repo)
-        platform = release.check_machine(args.machine, config)
+        platform, backend = release.check_machine(args.machine, config)
         machine = config[args.machine]
         timeout = machine.get("release_timeout_seconds")
         if type(timeout) is not int or timeout <= 0:
             raise Refused(
                 f"operator config needs {args.machine}.release_timeout_seconds"
             )
+        if backend == "native" and not machine.get("root"):
+            raise Refused(f"operator config needs {args.machine}.root for its jobs")
         files = release.built_files(args.files)
         key = release.hermes_key(config.get("hermes_key_file"))
         cloud_repo = Path(args.cloud_repo).resolve()
@@ -99,23 +101,32 @@ def release_job(args, *, factory=None, out=None):
         run_id = "vm-" + uuid.uuid4().hex
         directory = Path(config["state_root"]) / "runs" / run_id
         directory.mkdir(parents=True, mode=0o700)
-        target = SimpleNamespace(
-            target=args.machine,
-            type=machine.get("server_type", "ccx43")
-            if args.machine == "hetzner"
-            else None,
-            stages=None,
-            timeout=timeout,
-            intent="branch",
-        )
-        select_target(target, config)
-        select_manifest(config, target.target)
         source_sha = args.aweb_sha or args.aweb_lock_source_sha
+        if backend == "native":
+            # The host's own Docker runs the gate image, so the pins are the source's.
+            observed = aweb_requirements(
+                git(repo, "show", source_sha + ":cli/go/go.mod").stdout,
+                git(repo, "show", source_sha + ":candidate-gate/Dockerfile").stdout,
+                source_sha,
+            )
+        else:
+            target = SimpleNamespace(
+                target=backend,
+                type=machine.get("server_type", "ccx43")
+                if backend == "hetzner"
+                else None,
+                stages=None,
+                timeout=timeout,
+                intent="branch",
+            )
+            select_target(target, config)
+            select_manifest(config, target.target)
+            observed = config["manifest"]["observed"]
         source = prepare(
             repo,
             source_sha,
             directory,
-            observed=config["manifest"]["observed"],
+            observed=observed,
             intent="branch",
             lock_root=config["state_root"],
         )
@@ -123,8 +134,9 @@ def release_job(args, *, factory=None, out=None):
         bundle = directory / "cloud.bundle"
         bundle_sha256 = release.cloud_bundle(cloud_repo, args.cloud_sha, bundle)
         archive = directory / "cloud-image.tar"
-        image = release.image_archive(args.cloud_image, platform, run_id, archive)
-        command = release.guest_script(
+        image = release.image_archive(args.cloud_image, run_id, archive)
+        script = partial(
+            release.guest_script,
             cloud_sha=args.cloud_sha,
             bundle_sha256=bundle_sha256,
             archive_sha256=image["archive_sha256"],
@@ -134,24 +146,40 @@ def release_job(args, *, factory=None, out=None):
             aweb=args.aweb_sha,
             files=files,
         )
-        executor = partial(
-            release.ReleaseExecutor,
-            release={
-                "bundle": bundle,
-                "archive": archive,
-                "files": [Path(args.files) / name for name in files],
-                "hermes_key": key,
-            },
-        )
-        runtime = (factory or default_factory)(
-            config=config,
-            directory=directory,
-            source=source,
-            command=command,
-            args=target,
-            run_id=run_id,
-            executor_factory=executor,
-        )
+        inputs = {
+            "bundle": bundle,
+            "archive": archive,
+            "files": [Path(args.files) / name for name in files],
+            "hermes_key": key,
+        }
+        if backend == "native":
+            from .native import NativeRuntime
+
+            runtime = (factory or NativeRuntime)(
+                config=config,
+                directory=directory,
+                source=source,
+                script=lambda job: script(
+                    remote=job,
+                    logs=job + "/logs",
+                    home=job + "/home",
+                    key=job + "/hermes-key",
+                    files_dir=job + "/release-files",
+                ),
+                machine=machine,
+                inputs=inputs,
+                timeout=timeout,
+            )
+        else:
+            runtime = (factory or default_factory)(
+                config=config,
+                directory=directory,
+                source=source,
+                command=script(),
+                args=target,
+                run_id=run_id,
+                executor_factory=partial(release.ReleaseExecutor, release=inputs),
+            )
         with handling():
             result = runtime.run()
         archive.unlink(missing_ok=True)
