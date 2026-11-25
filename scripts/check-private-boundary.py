@@ -9,7 +9,11 @@ every Git-tracked decodable text file, not only docs/:
      do not implement;
   2. hosted account-model schema fields — org_id and user_id, concepts the OSS
      product has no equivalent for, declared as JSON fields in public source;
-  3. private repository and source paths.
+  3. private repository and source paths;
+  4. private documents and managed-gateway names: a private transition
+     document's path, name or characteristic content, a managed-gateway
+     private token in any path or text, a removed private or company-strategy
+     path coming back, and a docs/ link into a private repository.
 
 BASELINE, NOT ALLOWLIST — the distinction matters and .9.1 forbids the other one.
 An allowlist exempts LOCATIONS: "anything under cli/go/awid/ may do this." A
@@ -28,11 +32,8 @@ is actually fixed makes this stricter with no other change and needs no
 discussion. Adding one is a visible diff in this file and should be argued for in
 review, not regenerated.
 
-WHAT THIS DOES NOT CHECK. Managed-gateway private tokens and private-transition
-document content are enforced by check-extension-docs.py, which owns those
-classes and their fixtures. This gate does not duplicate them. It also cannot
-judge whether prose about a hosted service is accurate — only whether private
-surface is present.
+WHAT THIS DOES NOT CHECK. It cannot judge whether prose about a hosted service
+is accurate — only whether private surface is present.
 """
 
 from __future__ import annotations
@@ -167,6 +168,78 @@ PRIVATE_PATH_EXCLUDED_PREFIXES = ("agents/",)
 #    wrongly protected.
 PRIVATE_PATH_EXCLUDED_FILES = (".claude/skills/cross-repo-change/SKILL.md",)
 
+# --- private documents and managed-gateway names -----------------------------
+# Every literal is split so this file does not match itself. These rules have no
+# exclusions: they apply to every tracked file, agents/ included.
+PRIVATE_TRANSITION_PATHS = (
+    "docs/restructuring/" + "ac-cross-boundary-" + "fk-inventory.md",
+    "docs/support/" + "aasn-migration-" + "evidence-runbook.md",
+)
+
+PRIVATE_TRANSITION_PATH_NAMES = (
+    "ac-cross-boundary-" + "fk-inventory",
+    "aasn-migration-" + "evidence-runbook",
+)
+
+# A file matches a rule only when it carries every term of that rule.
+PRIVATE_TRANSITION_CONTENT_RULES = (
+    (
+        "private database inventory",
+        ("cross-boundary " + "foreign keys", "aweb_" + "cloud", "aweb_" + "overlay"),
+    ),
+    (
+        "private production runbook",
+        ("migration " + "evidence runbook", "production " + "stop conditions"),
+    ),
+    (
+        "AC-only path/name",
+        ("ac/backend/src/" + "aweb_cloud/migrations",),
+    ),
+    (
+        "credentialed operator procedure",
+        ("database_url=" + "service=", "pg_dump --" + "data-only"),
+    ),
+    (
+        "private version/image baseline",
+        ("production baseline: " + "ac", "server-v1."),
+    ),
+    (
+        "private personnel approval flow",
+        ("credentialed " + "human operator", "reviews this plan before execution"),
+    ),
+)
+
+MANAGED_GATEWAY_PRIVATE_TOKENS = (
+    "a" + "c_config",
+    "a" + "c_base_url",
+    "AWEB_A2A_GW_AC_" + "BASE_URL",
+    "a2a-ac-" + "managed-gateway-contract",
+    "a2a-gateway-ac-" + "managed",
+    "a2a-gw-" + "ac",
+    "a" + "c_config_expired",
+    "/api/v1/a2a/gateway/" + "config",
+    "AC-" + "managed",
+    "AC runtime " + "config",
+    "AC " + "bridge",
+)
+
+REMOVED_PRIVATE_PATHS = (
+    "docs/" + "a2a-ac-" + "managed-gateway-contract.md",
+    "docs/examples/" + "a2a-gateway-ac-" + "managed.yaml",
+)
+
+REMOVED_STRATEGY_PATHS = (
+    "agents/souls/consultant/decisions/aweb-control-plane-and-apps.md",
+    "agents/souls/consultant/docs/customer-centered-aweb-positioning.md",
+    "agents/souls/consultant/memory/aweb-anapp-product-constraints.md",
+    "docs/company-agent-platform-thesis.md",
+    "docs/market-entry-wedge-research.md",
+    "docs/website-dashboard-strategy.md",
+)
+
+# Links from public docs into private repositories.
+PRIVATE_DOC_REFERENCES = ("../" + "ac", "ac/" + "docs/", "awebai/" + "naapp-specs")
+
 SKIP_SUFFIXES = (".woff2", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf")
 
 
@@ -180,7 +253,7 @@ def tracked_files(root: Path) -> list[str]:
 
 
 def decodable_text(path: Path) -> str | None:
-    """Text of a decodable file, or None for binary. Mirrors check-extension-docs."""
+    """Text of a decodable file, or None for binary."""
     try:
         raw = path.read_bytes()
     except OSError:
@@ -320,6 +393,57 @@ def find_private_paths(root: Path, files: list[str]) -> list[str]:
     return failures
 
 
+def find_private_documents(root: Path, files: list[str]) -> list[str]:
+    failures = []
+    for rel in sorted(files):
+        lowered_rel = rel.casefold()
+        for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
+            if token.casefold() in lowered_rel:
+                failures.append(
+                    f"tracked path {rel} retains private managed-gateway name {token!r}"
+                )
+        for name in PRIVATE_TRANSITION_PATH_NAMES:
+            if name.casefold() in lowered_rel:
+                failures.append(f"tracked path {rel} retains private transition document name")
+
+        path = root / rel
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        if b"\0" in raw:
+            continue
+        # Tokens are searched in every non-binary file, even one that is not UTF-8.
+        lowered = raw.decode("utf-8", errors="replace").casefold()
+        for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
+            if token.casefold() in lowered:
+                failures.append(f"{rel} retains private managed-gateway token {token!r}")
+        text = decodable_text(path)
+        if text is None:
+            continue
+        lowered = text.casefold()
+        for name in PRIVATE_TRANSITION_PATH_NAMES:
+            if name.casefold() in lowered:
+                failures.append(f"tracked file {rel} references private transition document name")
+        for label, terms in PRIVATE_TRANSITION_CONTENT_RULES:
+            if all(term.casefold() in lowered for term in terms):
+                failures.append(f"{rel} retains {label}")
+        if rel.startswith("docs/") and rel.endswith(".md"):
+            for reference in PRIVATE_DOC_REFERENCES:
+                if reference in text:
+                    failures.append(f"{rel} references a private repository: {reference!r}")
+
+    for rel in PRIVATE_TRANSITION_PATHS:
+        if (root / rel).exists():
+            failures.append(f"removed private transition path returned: {rel}")
+    for rel in REMOVED_PRIVATE_PATHS:
+        if (root / rel).exists():
+            failures.append(f"removed private managed-gateway path returned: {rel}")
+    for rel in REMOVED_STRATEGY_PATHS:
+        if (root / rel).exists():
+            failures.append(f"removed company-strategy path returned: {rel}")
+    return failures
+
+
 def check(root: Path) -> list[str]:
     files = tracked_files(root)
     failures: list[str] = []
@@ -339,6 +463,7 @@ def check(root: Path) -> list[str]:
         )
 
     failures.extend(find_private_paths(root, files))
+    failures.extend(find_private_documents(root, files))
     return failures
 
 
@@ -501,12 +626,127 @@ def self_test(root: Path) -> int:
             print("self-test failed: binary content was scanned as text")
             return 1
 
+        # Private documents and managed-gateway names. Each rule is proven on a
+        # docs/ file and on a non-document surface, and binary or undecodable
+        # bytes are not read as text.
+        transition_fixtures = {
+            "private database inventory": (
+                "Cross-boundary " + "foreign keys\naweb_" + "cloud rows\naweb_"
+                + "overlay changes\n",
+                "skills/transition-evidence/SKILL.md",
+            ),
+            "private production runbook": (
+                "Migration " + "evidence runbook\nProduction " + "stop conditions\n",
+                "scripts/self-test-transition-evidence.sh",
+            ),
+            "AC-only path/name": (
+                "ac/backend/src/" + "aweb_cloud/migrations/001.sql\n",
+                "channel/self-test-package.json",
+            ),
+            "credentialed operator procedure": (
+                "DATABASE_URL=" + "service=production\npg_dump --" + "data-only\n",
+                "deploy/self-test-operator.yaml",
+            ),
+            "private version/image baseline": (
+                "Production baseline: " + "AC v9.9.9\nserver-v1.2.3\n",
+                "server/tests/fixtures/self-test-baseline.txt",
+            ),
+            "private personnel approval flow": (
+                "Credentialed " + "human operator\nReviewer reviews this plan before execution\n",
+                "cli/go/npm/self-test-approval.js",
+            ),
+        }
+        if set(transition_fixtures) != {label for label, _ in PRIVATE_TRANSITION_CONTENT_RULES}:
+            print("self-test failed: every private transition rule needs a fixture")
+            return 1
+
+        def rejects(expected: str) -> bool:
+            return any(expected in failure for failure in check(tmp))
+
+        def remove(rel: str) -> None:
+            (tmp / rel).unlink()
+            subprocess.run(["git", "-C", str(tmp), "add", "-A"], check=True)
+
+        for index, (label, (content, surface)) in enumerate(transition_fixtures.items()):
+            for rel in (f"docs/private-transition-{index}.md", surface):
+                write(rel, content)
+                if not rejects(f"{rel} retains {label}"):
+                    print(f"self-test failed: {label} was not rejected in {rel}")
+                    return 1
+                remove(rel)
+            rel = f"server/tests/fixtures/private-transition-{index}.bin"
+            for raw_bytes in (
+                b"\0\x1f\x8b" + content.encode("utf-8") + b"\0",
+                "Príväte".encode("latin-1") + content.encode("utf-8"),
+            ):
+                (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+                (tmp / rel).write_bytes(raw_bytes)
+                subprocess.run(["git", "-C", str(tmp), "add", rel], check=True)
+                if rejects(f"{rel} retains"):
+                    print(f"self-test failed: binary or undecodable {label} was read as text")
+                    return 1
+            remove(rel)
+
+        for index, name in enumerate(PRIVATE_TRANSITION_PATH_NAMES):
+            rel = f"reviewer/{name}-{index}.md"
+            write(rel, "generic: true\n")
+            if not rejects(f"tracked path {rel} retains private transition document name"):
+                print(f"self-test failed: private transition name was not rejected: {rel}")
+                return 1
+            remove(rel)
+            rel = f"reviewer/private-transition-consumer-{index}.txt"
+            write(rel, f"docs/archive/{name}.md\n")
+            if not rejects(f"tracked file {rel} references private transition document name"):
+                print(f"self-test failed: a reference to {name} was not rejected")
+                return 1
+            remove(rel)
+
+        for index, token in enumerate(MANAGED_GATEWAY_PRIVATE_TOKENS):
+            for rel in ("README.md", f"cli/go/a2a/surface-{index}.go"):
+                write(rel, f"generic\n{token}\n")
+                if not rejects(f"{rel} retains private managed-gateway token"):
+                    print(f"self-test failed: managed-gateway token {token!r} was not rejected in {rel}")
+                    return 1
+                remove(rel)
+        for rel in (
+            "docs/examples/A2A-GW-" + "AC.yaml",
+            "reviewer/AC_" + "CONFIG.go",
+            "docs/examples/a2a-ac-" + "managed-gateway-contract-copy.yaml",
+        ):
+            write(rel, "generic: true\n")
+            if not rejects(f"tracked path {rel} retains private managed-gateway name"):
+                print(f"self-test failed: private managed-gateway path was not rejected: {rel}")
+                return 1
+            remove(rel)
+
+        for rel, expected in (
+            *((rel, "removed private transition path returned") for rel in PRIVATE_TRANSITION_PATHS),
+            *((rel, "removed private managed-gateway path returned") for rel in REMOVED_PRIVATE_PATHS),
+            *((rel, "removed company-strategy path returned") for rel in REMOVED_STRATEGY_PATHS),
+        ):
+            # Existence is enough: an untracked file in its old place still fails.
+            (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp / rel).write_text("generic: true\n", encoding="utf-8")
+            if not rejects(f"{expected}: {rel}"):
+                print(f"self-test failed: {rel} returned without failing")
+                return 1
+            (tmp / rel).unlink()
+
+        for reference in PRIVATE_DOC_REFERENCES:
+            rel = "docs/linking.md"
+            write(rel, f"[private]({reference}/x.md)\n")
+            if not rejects(f"{rel} references a private repository"):
+                print(f"self-test failed: a docs link to {reference!r} was not rejected")
+                return 1
+            remove(rel)
+
     print(
         "self-test passed: the baseline admits its known instances, rejects a new "
         "endpoint, a new account schema and a renamed one, follows a baselined "
         "schema across files, rejects private paths on non-source surfaces, keeps "
-        "the file exclusion off a sibling in the same directory, and skips binary "
-        "content"
+        "the file exclusion off a sibling in the same directory, skips binary "
+        "content, and rejects private transition documents, managed-gateway names, "
+        "returned private or strategy paths and private links from docs"
     )
     return 0
 

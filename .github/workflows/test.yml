@@ -49,8 +49,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Check extension docs against source
-        run: make check-extension-docs
+      - name: Check the private-infrastructure boundary
+        run: make check-private-boundary
 
   test:
     name: Test suite
