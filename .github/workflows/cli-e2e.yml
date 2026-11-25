@@ -58,10 +58,10 @@ jobs:
           # go.sum so `make build` reuses modules and compiled packages.
           cache-dependency-path: aweb/cli/go/go.sum
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - uses: ./.github/actions/pinned-python
 
       # GitHub runners share IPs and hit Docker Hub's anonymous pull limits, which
       # fails the stack's postgres/redis pulls and the python:3.12-slim base in the

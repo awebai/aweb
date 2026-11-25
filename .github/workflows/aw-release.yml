@@ -20,6 +20,8 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}
+      - uses: astral-sh/setup-uv@v7
+      - uses: ./.github/actions/pinned-python
       - name: Copy the tagged CLI source to its distribution repository
         env:
           AW_REPO_TOKEN: ${{ secrets.AW_REPO_TOKEN }}

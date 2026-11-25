@@ -72,6 +72,8 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v7
 
+      - uses: ./.github/actions/pinned-python
+
       # GitHub-hosted runners share Docker Hub egress and can hit anonymous
       # pull limits for the Python, Postgres, and Redis images used by the
       # generated federation compose stack.

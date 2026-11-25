@@ -169,7 +169,7 @@ test-server-image-build:
 
 .PHONY: test-vm-gate
 test-vm-gate:
-	PYTHONPATH=scripts/vm-gate uv run --no-project --python 3.12 --with-requirements scripts/vm-gate/requirements.txt python -m unittest discover -s scripts/vm-gate/tests -v
+	PYTHONPATH=scripts/vm-gate uv run --no-project --with-requirements scripts/vm-gate/requirements.txt python -m unittest discover -s scripts/vm-gate/tests -v
 
 # Run before uv-based checks so a cache-path regression cannot hide in setup.
 .PHONY: test-uv-cache

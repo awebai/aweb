@@ -61,16 +61,13 @@ jobs:
       - name: Checkout aweb
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: naapp/logs/uv.lock
+
+      - uses: ./.github/actions/pinned-python
 
       - name: Install locked logs dependencies
         working-directory: naapp/logs

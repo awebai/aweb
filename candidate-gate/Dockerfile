@@ -1,5 +1,7 @@
 # Tool image for the complete local candidate suite.
-FROM python:3.12-bookworm
+# The base carries no Python of its own choosing: python3 is the exact
+# uv-managed interpreter named in .python-version, installed below.
+FROM buildpack-deps:bookworm
 
 ARG GO_VERSION=1.26.11
 ARG DOCKER_COMPOSE_VERSION=5.7.1-1~debian.12~bookworm
@@ -30,6 +32,13 @@ ENV GOTOOLCHAIN=local
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /opt/uv/
 
+# Every user of the image, including the gate's host UID, runs this
+# interpreter; uv never falls back to another one.
+ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_PYTHON_BIN_DIR=/usr/local/bin UV_PYTHON_PREFERENCE=only-managed
+COPY .python-version /opt/candidate/python-version
+RUN uv python install "$(cat /opt/candidate/python-version)" --default \
+    && chmod -R a+rX /opt/python
+
 RUN python3 --version \
     && node --version | grep '^v22\.' \
     && test "$(go env GOVERSION)" = "go1.26.11" \
@@ -41,6 +50,7 @@ RUN python3 --version \
 # Install the browser at build time through the same locked Playwright as the
 # naapp tests, in a shared path independent of the runner's home directory.
 WORKDIR /opt/candidate-browser
+COPY .python-version .python-version
 COPY awid awid
 COPY naapp-lib naapp-lib
 COPY server server

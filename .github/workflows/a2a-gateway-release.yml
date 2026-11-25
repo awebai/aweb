@@ -21,9 +21,8 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+      - uses: ./.github/actions/pinned-python
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - name: Install registry client

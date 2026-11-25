@@ -30,12 +30,10 @@ jobs:
       # which loses the message that locks the release files.
       - name: Fetch the annotated release tag
         run: git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.11.32"
+      - uses: ./.github/actions/pinned-python
       - name: Download the release files
         env:
           GH_TOKEN: ${{ github.token }}

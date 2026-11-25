@@ -34,12 +34,10 @@ jobs:
         with:
           # Compare product-table ceilings with the reviewed main baseline.
           fetch-depth: 0
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+      - uses: ./.github/actions/pinned-python
       - name: Check product table writes
         run: make check-product-table-writes
 
@@ -49,12 +47,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+      - uses: ./.github/actions/pinned-python
       - name: Type-check the naapp packages
         run: make typecheck-naapp
 
@@ -64,9 +60,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+      - uses: ./.github/actions/pinned-python
       - name: Check the private-infrastructure boundary
         run: make check-private-boundary
 
@@ -138,13 +133,11 @@ jobs:
         with:
           node-version: "22"
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+
+      - uses: ./.github/actions/pinned-python
 
       - uses: actions/setup-go@v6
         with:

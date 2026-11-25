@@ -1,0 +1,16 @@
+name: Pinned Python
+description: >-
+  Install the exact uv-managed Python named in the repository's .python-version
+  and put it first on PATH, so uv and bare python3 both run that interpreter.
+  Needs the repository checked out and uv installed.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        UV_PYTHON_PREFERENCE: only-managed
+      run: |
+        version="$(cat .python-version)"
+        uv python install "$version"
+        dirname "$(uv python find "$version")" >> "$GITHUB_PATH"
+        echo "UV_PYTHON_PREFERENCE=only-managed" >> "$GITHUB_ENV"
