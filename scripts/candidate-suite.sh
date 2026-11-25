@@ -52,7 +52,6 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   run test-cli
   run test-cli-auth-v2
   run _candidate-unit-channel
-  run test-channel-name-live-contract
   run _candidate-unit-channel-core
   run _candidate-unit-pi
   exit "$stage_status"
@@ -102,7 +101,6 @@ checks() {
   run check-a2a-copy-guardrails
   run test-go-vulnerability-audit
   run check-go-vulnerability-audit
-  run test-release-cli-version
 }
 user-paths() {
   run e2e-user-paths

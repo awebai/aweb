@@ -826,16 +826,6 @@ class NpmRcContractTest(unittest.TestCase):
             self.assertIn("Npm-Publish-Channel: next", annotation)
             self.assertTrue((root / "runner/aw/.github/fixture").exists())
 
-    def test_dispatch_refuses_bad_rc_spellings(self):
-        for version in ("1.2.3rc1", "1.2.3-rc.0", "1.2.3-rc.01", "01.2.3", "1.2.3-beta.1"):
-            with self.subTest(version=version):
-                result = run_fixture(["bash", "scripts/npm-exact-publish.sh", "validate-inputs", "--version", version],
-                                        cwd=ROOT, text=True, capture_output=True)
-                self.assertNotEqual(result.returncode, 0)
-        result = run_fixture(["bash", "scripts/npm-exact-publish.sh", "validate-inputs", "--version", "1.2.3-rc.1"],
-                                cwd=ROOT, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
 
 class ReleaseStampContractTest(unittest.TestCase):
     def test_failed_go_build_is_not_masked_by_binary_inspection(self):

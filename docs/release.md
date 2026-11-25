@@ -244,13 +244,6 @@ Recovery keeps up to four numbered samples (`host-after-1.json` through
 `host-after-4.json`, with their raw snapshots), 15 seconds apart. It stops at
 the first passing sample and records its number in `host-recovery.json`;
 `host-after.json` mirrors the last sample. Four failures make recovery fail.
-The focused macOS control uses an installed `python:3.12-slim` image and an owned
-bind mount to hold host files through the production discovery/settle path:
-`AWEB_TEST_DOCKER_VM_RECOVERY=1 python3 scripts/test_candidate_cleanup.py`.
-It requires failure while files are held and recovery after guest close/unlink
-and container removal. Set `AWEB_VM_RECOVERY_EVIDENCE` to an empty directory to
-retain its raw snapshots and receipts. This control never pulls images or
-restarts shared Docker.
 For interruption, signal the gate's process group: a signal sent only to the
 Bash PID can wait for its foreground Docker command before running the trap.
 A cleanup or recovery failure makes the gate fail even when the suite passes;
@@ -411,7 +404,7 @@ sibling client, and checks that one journey cannot resolve the other's service.
 Run its focused proof in an approved Docker slot:
 
 ```sh
-AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeAdoptionTests ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests -v
+AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeAdoptionTests ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests NetworkLinkGuardDockerTests -v
 ```
 
 The diagnostic commits preceding this change demonstrated a possible socket and

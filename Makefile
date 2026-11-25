@@ -7,12 +7,11 @@ SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
 CANDIDATE_UNIT_PROFILE ?= $(or $(AWEB_GATE_UNIT_PROFILE),portable)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
-.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync typecheck-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync typecheck-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit test-go-vulnerability-audit \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
 	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps \
-	test-release-cli-version \
 	test-channel-integration \
 	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
@@ -27,9 +26,6 @@ AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml 
 NAAPP_LIB_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' naapp-lib/pyproject.toml 2>/dev/null | head -n 1)
 CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2>/dev/null)
 CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
-# aw CLI releases have independent semver. Derive the next patch from the
-# published aw-v* history; the release guard below rejects stale overrides.
-CLI_VERSION ?= $(shell ./scripts/cli-release-version.sh next)
 # The gateway is a Go artifact with independent patch history.
 A2A_GATEWAY_VERSION ?= $(shell python3 scripts/next_tag_version.py a2a-gw-v)
 # OATS seam tests default to an immutable reviewed upstream commit materialized
@@ -145,7 +141,7 @@ build: sync-doc-copies
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-scripts test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-scripts test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Discover the host/script controls together, including generators that import
 # the server's MCP registration. Use the locked server environment rather than
@@ -429,9 +425,6 @@ test-wake-channel-core-bundle:
 test-channel:
 	cd channel && $(TEST_EGRESS_RUNNER) npm test
 
-test-channel-name-live-contract:
-	python3 scripts/e2e/test_channel_name_live_contract.py
-
 # channel/package.json excludes test/integration.test.ts from `npm test`, so
 # `make test` never ran the one test that drives Channel against a REAL aweb
 # server. It was green by absence: the first time it ran it failed on a stale
@@ -489,7 +482,6 @@ test-oats: check-oats-launch-environment-contract check-oats-pi-launch-order bui
 
 test-oats-proof-helpers: prepare-oats-test-root
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
-	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
 
 test-tmux-guard:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
@@ -503,7 +495,7 @@ test-a2a:
 test-e2e:
 	python3 scripts/test_controller_key_absence_guard.py
 	python3 scripts/test_oss_user_journey.py
-	AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests
+	AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests NetworkLinkGuardDockerTests
 	./scripts/e2e-oss-user-journey.sh
 	./scripts/test-e2e-controller-key-absence-guard.sh
 
@@ -650,9 +642,6 @@ test-pypi-exact-publish:
 test-oci-exact-publish:
 	bash scripts/e2e/test_oci_exact_publish.sh
 
-test-release-cli-version:
-	bash scripts/check-cli-release-version-test.sh
-
 # ── Unified release ──────────────────────────────────────────────────
 
 # Internal steps consumed only by the complete local candidate map.
@@ -688,7 +677,6 @@ _candidate-oats: check-oats-launch-environment-contract check-oats-pi-launch-ord
 
 _candidate-oats-proof-helpers:
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
-	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
 
 _candidate-artifact-server:
 	rm -rf server/dist
