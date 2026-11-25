@@ -251,9 +251,16 @@ class FrozenGateInput(unittest.TestCase):
                     "candidate-record.sh",
                     "candidate-network.py",
                     "fetch_released_aw.py",
+                    "gate_budget.py",
                     "product_table_writes.py",
                 ]:
                     shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
+                for relative in (
+                    "scripts/vm-gate/vm_gate/budget.py",
+                    "server/tests/worker_services.py",
+                ):
+                    (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(ROOT / relative, repo / relative)
                 # Docker itself is fake in this input/ledger test. Keep the
                 # wrapper's real host-preflight call, with an explicit stand-in.
                 (repo / "scripts/e2e").mkdir()
@@ -382,6 +389,9 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     HOME=str(root / "home"),
                     SNAPSHOT_RECEIPT=str(root / "snapshot.json"),
                     ID_LOOKUP_RECEIPT=str(root / "id-lookups"),
+                    # Docker is fake here, so the budget is given, not measured.
+                    GATE_CPUS="4",
+                    GATE_MEMORY_MIB="8192",
                 )
 
                 def invoke(stages):

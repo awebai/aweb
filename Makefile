@@ -3,8 +3,6 @@
 TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 # Parallel server execution is opt-in and needs the owned worker service plan.
 SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
-# The VM recipe supplies its selected type; other callers remain portable.
-CANDIDATE_UNIT_PROFILE ?= $(or $(AWEB_GATE_UNIT_PROFILE),portable)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
 .PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync typecheck-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails build \
@@ -357,6 +355,9 @@ test-server: production-awid-sync
 # it, and the suites run offline.
 NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs
 
+naapp-packages:
+	@printf '%s\n' $(NAAPP_PACKAGES)
+
 # Installs each package's locked dependencies, for a runner that then goes offline.
 naapp-sync:
 	set -e; for package in $(NAAPP_PACKAGES); do \
@@ -610,8 +611,12 @@ test-candidate-ledger:
 	python3 scripts/test_candidate_make_environment.py
 	python3 scripts/test_candidate_gate_ledger.py
 
+# Every unit suite at once, each in its own isolated runner. The gate budget
+# (scripts/gate_budget.py) sizes the runners and the server's worker count.
 _candidate-unit-suites:
-	python3 scripts/test-egress/docker.py --profile $(CANDIDATE_UNIT_PROFILE) --server-workers $(if $(filter ccx33,$(CANDIDATE_UNIT_PROFILE)),7,0) --evidence "$$CANDIDATE_LOG_DIR/test-egress" --collect-summary --command bash scripts/candidate-suite.sh --isolated-suites
+	@set -eu; eval "$$(python3 scripts/gate_budget.py)"; \
+	python3 scripts/test-egress/docker.py --cpus "$$GATE_RUNNER_CPUS" --server-workers "$$CANDIDATE_SERVER_WORKERS" \
+		--evidence "$$CANDIDATE_LOG_DIR/test-egress" --suites $$(bash scripts/candidate-suite.sh --list-unit-suites)
 
 # The gate's own ledger test runs first, on the host, so a gate change that
 # breaks it stops every train and release candidate before any stage runs.

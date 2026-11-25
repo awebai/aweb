@@ -57,6 +57,9 @@ def source_checks() -> list[str]:
     target a stage adds is stubbed here without anyone editing this list."""
     suite = (ROOT / "scripts" / "candidate-suite.sh").read_text(encoding="utf-8")
     targets = re.findall(r"^\s*run ([A-Za-z0-9_.-]+)\s*$", suite, flags=re.MULTILINE)
+    # The unit suites the suite lists by name, besides each Naapp package.
+    for names in re.findall(r"^\s*printf '%s\\n' ([A-Za-z0-9_. -]+)$", suite, flags=re.MULTILINE):
+        targets += names.split()
     return [target for target in dict.fromkeys(targets) if target not in REAL_RECIPES]
 
 
@@ -69,7 +72,8 @@ class CompleteGateVerdictTests(unittest.TestCase):
             root = Path(temporary)
             (root / "host-published-port.log").write_text("host preflight\n")
             for name, command in {
-                "make": 'case " $FAILURES " in *" $1 "*) exit 23;; esac\n',
+                "make": 'case "$*" in *naapp-packages) printf "%s\\n" naapp-lib naapp/secrets; exit;; esac\n'
+                'case " $FAILURES " in *" $1 "*) exit 23;; esac\n',
                 "docker": "exit 0\n",
             }.items():
                 tool = root / name
@@ -86,7 +90,10 @@ class CompleteGateVerdictTests(unittest.TestCase):
                 env["CANDIDATE_HOST_PORT_STATUS"] = "7"
             else:
                 env.pop("CANDIDATE_HOST_PORT_STATUS", None)
-            result = run(ROOT, "bash", "scripts/candidate-suite.sh", selection, env=env)
+            result = run(
+                ROOT, "bash", "scripts/candidate-suite.sh", *selection.split(" ", 1)
+                if selection.startswith("--") else (selection,), env=env
+            )
             summary = root / "summary.tsv"
             rows = {}
             if summary.exists():
@@ -126,13 +133,30 @@ class CompleteGateVerdictTests(unittest.TestCase):
         self.assertEqual(rows["checks"], "FAILED")
         self.assertEqual(rows["user-paths"], "PASSED")
 
-    def test_isolated_unit_keeps_every_leaf_after_server_failure(self):
-        result, rows = self.suite("--isolated-suites", "test-server", "test-cli")
-        self.assertNotEqual(result.returncode, 0)
+    def test_each_isolated_unit_suite_reports_its_own_leaf(self):
+        listed, _ = self.suite("--list-unit-suites")
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        suites = listed.stdout.split()
+        self.assertIn("test-server", suites)
+        self.assertIn("test-naapp-secrets", suites)
+        rows = {}
+        for suite in suites:
+            result, suite_rows = self.suite(
+                "--isolated-suite " + suite, "test-server", "test-cli"
+            )
+            self.assertEqual(
+                result.returncode != 0, suite in ("test-server", "test-cli"), suite
+            )
+            self.assertEqual(set(suite_rows), {"unit/" + suite})
+            rows.update(suite_rows)
         failed = {leaf for leaf, verdict in rows.items() if verdict == "FAILED"}
         self.assertEqual(failed, {"unit/test-server", "unit/test-cli"})
-        self.assertEqual(set(rows.values()), {"FAILED", "PASSED"})
         self.assertEqual(rows["unit/_candidate-unit-pi"], "PASSED")
+
+    def test_an_unknown_unit_suite_is_refused(self):
+        result, rows = self.suite("--isolated-suite test-nothing")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unknown unit suite", result.stderr)
 
 
 def run(root: Path, *args: str, env: dict[str, str] | None = None):
@@ -238,6 +262,7 @@ def main() -> None:
             "candidate-host-pressure.py",
             "candidate-network.py",
             "fetch_released_aw.py",
+            "gate_budget.py",
             "next_tag_version.py",
             "product_table_writes.py",
             "release_candidate.py",
@@ -270,7 +295,16 @@ def main() -> None:
             ROOT / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
             repo / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
         )
-        (repo / "server").mkdir()
+        (repo / "scripts/vm-gate/vm_gate").mkdir(parents=True)
+        shutil.copy2(
+            ROOT / "scripts/vm-gate/vm_gate/budget.py",
+            repo / "scripts/vm-gate/vm_gate/budget.py",
+        )
+        (repo / "server/tests").mkdir(parents=True)
+        shutil.copy2(
+            ROOT / "server/tests/worker_services.py",
+            repo / "server/tests/worker_services.py",
+        )
         (repo / "server/pyproject.toml").write_text(
             '[project]\nname="ledger-proof"\nversion="1.2.3"\n'
         )
@@ -278,19 +312,26 @@ def main() -> None:
         recipes += """test-shipping:
 \t@python3 -c 'assert 6 * 7 == 42'
 _candidate-node-deps:
-\t@echo node >> "$$CANDIDATE_LOG_DIR/setup.log"
+\t@echo node >> .lane-setup.log
 build:
-\t@echo cli >> "$$CANDIDATE_LOG_DIR/setup.log"
+\t@echo cli >> .lane-setup.log
+naapp-packages:
+\t@printf '%s\\n' proof/first
 _candidate-unit-suites:
 \t@test "$$(psql -h "$$TEST_DB_HOST" -U postgres -d postgres -Atc 'SELECT 6 * 7')" = 42
-\t@mkdir -p "$$CANDIDATE_LOG_DIR/test-egress"
-\t@CANDIDATE_LOG_DIR="$$CANDIDATE_LOG_DIR/test-egress" bash scripts/candidate-suite.sh --isolated-suites > "$$CANDIDATE_LOG_DIR/test-egress/suite.log" 2>&1
+\t@set -e; for suite in $$(bash scripts/candidate-suite.sh --list-unit-suites); do \\
+\t  mkdir -p "$$CANDIDATE_LOG_DIR/test-egress/$$suite"; \\
+\t  CANDIDATE_SUMMARY="$$CANDIDATE_LOG_DIR/test-egress/$$suite/summary.tsv" bash scripts/candidate-suite.sh --isolated-suite "$$suite" > "$$CANDIDATE_LOG_DIR/test-egress/$$suite/suite.log" 2>&1 || status=1; \\
+\t  cat "$$CANDIDATE_LOG_DIR/test-egress/$$suite/summary.tsv" >> "$$CANDIDATE_LOG_DIR/test-egress/summary.tsv"; \\
+\tdone; exit $${status:-0}
 test-server:
 \t@true
+test-naapp:
+\t@test "$(NAAPP_PACKAGES)" = proof/first
 _candidate-artifact-server:
 \t@docker build -f candidate-gate/proof.Dockerfile -t "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" candidate-gate
 \t@docker run --rm "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" sh -c 'test "$$(echo 42)" = 42'
-\t@test "$$(wc -l < "$$CANDIDATE_LOG_DIR/setup.log")" = 2
+\t@test "$$(cat .lane-setup.log)" = "$$(printf 'node\\ncli')"
 cli-e2e:
 \t@set -eu; trap 'docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
 \t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml up -d --wait postgres; \
@@ -429,28 +470,33 @@ candidate-gate:
             row.split("\t") for row in before.splitlines()[len(changed_rows) :]
         ]
         verdicts = {row[1]: row[2] for row in failed_rows}
-        for entry, verdict in {
-            "static": "passed",
-            "checks": "failed",
-            "checks/test-shipping": "failed",
-            "checks/check-go-vulnerability-audit": "passed",
-            "user-paths": "passed",
-            "unit": "failed",
-            "unit/test-server": "failed",
-            "unit/_candidate-unit-pi": "passed",
-            "artifacts": "failed",
-            "artifacts/build": "failed",
-            "artifacts/_candidate-artifact-server": "passed",
-            "integration": "failed",
-            "integration/e2e-naapp": "skipped",
-            "integration/cli-e2e": "passed",
-            "integration/test-oci-exact-publish": "passed",
-        }.items():
-            if verdicts.get(entry) != verdict:
-                raise AssertionError(f"{entry} expected {verdict}: {verdicts}")
-        skipped = next(row for row in failed_rows if row[1] == "integration/e2e-naapp")
-        if "build FAILED" not in skipped[9]:
-            raise AssertionError(f"skip has no build failure detail: {skipped}")
+        # Stages run concurrently after static and the first red stops the
+        # rest. Every stage that ended failed names its own failing target; a
+        # stopped stage writes no stage row and is reported STOPPED.
+        failing_target = {
+            "checks": "checks/test-shipping",
+            "unit": "unit/test-server",
+            "artifacts": "artifacts/build",
+            "integration": "integration/build",
+        }
+        failed_output = (evidence / "failed-tree.log").read_text()
+        if verdicts.get("static") != "passed":
+            raise AssertionError(f"static must pass: {verdicts}")
+        if verdicts.get("user-paths", "passed") != "passed":
+            raise AssertionError(f"user-paths has no failure: {verdicts}")
+        failed_stages = {s for s, v in verdicts.items() if "/" not in s and v == "failed"}
+        if not failed_stages or not failed_stages <= set(failing_target):
+            raise AssertionError(f"failed stages {failed_stages}: {verdicts}")
+        for stage in failed_stages:
+            if verdicts.get(failing_target[stage]) != "failed":
+                raise AssertionError(f"{stage} lacks its failed target: {verdicts}")
+        for stage in STAGES.split()[1:]:
+            if stage not in verdicts and f"candidate: {stage} STOPPED" not in failed_output:
+                raise AssertionError(f"{stage} neither recorded nor STOPPED: {failed_output}")
+        if "integration" in failed_stages:
+            skipped = next(row for row in failed_rows if row[1] == "integration/e2e-naapp")
+            if skipped[2] != "skipped" or "build FAILED" not in skipped[9]:
+                raise AssertionError(f"skip has no build failure detail: {skipped}")
         refused = invoke("refused-tree", *gate, stages="integration", success=False)
         failure_lines = [
             line for line in refused.splitlines() if "already FAILED" in line

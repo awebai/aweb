@@ -122,13 +122,30 @@ resources and records stage verdicts (checks, user-paths, unit, artifacts,
 integration) and their `stage/target` results in one host ledger,
 `~/.cache/aweb-oss/candidate-gate-ledger.tsv`. The run's `summary.tsv` has both
 row types. Target rows include the duration, log and any failure or skip
-reason. A failed target leaves its stage red while independent targets and
-later stages continue. Integration skips the OATS and naapp targets if the
-runner's shared CLI build fails, and names that prerequisite in their rows.
-Other journeys build their own inputs or use no stage artifact. Only passing
-stages are reusable. Each stage is recorded as soon as it passes, so a run
-killed later keeps its completed stages. Only after all stages pass does the
-command create the requested annotated tags locally on the exact tested SHA.
+reason. A failed target leaves its stage red while the stage's independent
+targets continue. Integration skips the OATS and naapp targets if its lane's
+CLI build fails, and names that prerequisite in their rows. Other journeys
+build their own inputs or use no stage artifact. Only passing stages are
+reusable. Each stage is recorded as soon as it passes, so a run killed later
+keeps its completed stages. Only after all stages pass does the command create
+the requested annotated tags locally on the exact tested SHA.
+
+After static, every pending stage runs at once, each in its own lane: its own
+runner, its own workspace volume seeded from the same clean clone, and its own
+PostgreSQL and Redis. Lanes share the Docker daemon, the run's resource label
+and bind root (mktemp paths only), and the run's builder; artifacts has its own
+builder because it prunes its cache. No stage reads what another writes:
+integration builds its own CLI in its own workspace, as it does when artifacts
+is reused. The first red stage stops the others. A stopped stage is reported
+STOPPED and records no stage row; target rows and stage rows already written
+stay. The wrapper is the only writer of `summary.tsv`: each lane writes its own
+summary, merged when the lane ends.
+
+The gate is sized from its budget, `GATE_CPUS` and `GATE_MEMORY_MIB`, which
+default to the Docker engine's CPU count and memory (`scripts/gate_budget.py`).
+Every container CPU cap and the server's worker count derive from it. The
+budget sizes a run and is not a gate input: it is recorded in the run's
+`budget.tsv` and stays out of the ledger key.
 The release command puts no deadline on the gate. The machine that runs it
 bounds the run and stops it with TERM, which lets the gate clean up and record
 its verdict.
@@ -143,8 +160,8 @@ they create and remove their own bounded builder when none is supplied.
 
 `make candidate-gate`, direct `scripts/candidate-docker-gate.sh` calls and the
 release command use that same ledger. The key includes the source tree,
-effective CLI/A2A versions, external Library/blueprint revisions, non-default
-resource settings, and the content of synchronized main's product-table write
+effective CLI/A2A versions, external Library/blueprint revisions, explicit
+per-container resource overrides, and the content of synchronized main's product-table write
 ceilings, the only part of main a stage reads. Commit metadata, main's commit,
 stage selection and log paths do not create another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
 retained logs; all callers must share them.
@@ -167,15 +184,16 @@ are reusable only if the wrapper records successful cleanup. A missing cleanup
 verdict is recorded as a cleanup failure. A run killed outright records no
 cleanup verdict, so the stages it recorded before the kill stay reusable.
 
-On the ccx33 unit profile, the Secrets package uses two whole-module shards
-on separate Postgres and Redis pairs already owned by the isolated runner. The
+When the budget allows parallel server workers, the Secrets package uses two
+whole-module shards on two Postgres and Redis pairs owned by its isolated
+runner. The
 measured partition is in `candidate-gate/secrets-shards.json`. The static stage
 qualifies it by collecting tests without starting services. It reports modules
 missing from collection and collected modules missing from the manifest. The
 runner compares the ordered shard collections to the unsharded collection under the
 same unit selector before it executes either shard. Both shard outcomes and
-logs reach the unit stage. The portable profile and the standalone package
-target still run the complete Secrets unit suite in one process.
+logs reach the unit stage. A serial budget and the standalone package
+target run the complete Secrets unit suite in one process.
 
 `main` may move while the gate runs. The tested SHA and its local tags do not.
 

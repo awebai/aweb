@@ -4,7 +4,8 @@
 set -euo pipefail
 
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
-summary="$log_dir/summary.tsv"
+# A gate lane writes its own summary; the wrapper merges it when the lane ends.
+summary="${CANDIDATE_SUMMARY:-$log_dir/summary.tsv}"
 
 target_result() {
   local target="$1" verdict="$2" elapsed="$3" note="${4:-}"
@@ -40,20 +41,41 @@ run() {
   run_step "$1" make "$1"
 }
 
-if [[ "${1:-}" == "--isolated-suites" ]]; then
+# The unit suites. Each Naapp package is its own suite. scripts/test-egress/docker.py
+# runs every suite concurrently in its own runner, with its own Postgres and Redis.
+naapp_packages() {
+  make -s --no-print-directory naapp-packages
+}
+naapp_suite() {
+  printf 'test-%s\n' "$(printf '%s' "$1" | tr / -)"
+}
+unit_suites() {
+  local package
+  printf '%s\n' test-server test-awid
+  for package in $(naapp_packages); do
+    naapp_suite "$package"
+  done
+  printf '%s\n' test-cli test-cli-auth-v2 _candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi
+}
+if [[ "${1:-}" == "--list-unit-suites" ]]; then
+  unit_suites
+  exit
+fi
+if [[ "${1:-}" == "--isolated-suite" ]]; then
   export TEST_EGRESS_RUNNER=
   stage=unit
-  target_log=test-egress/suite.log
+  suite="${2:?--isolated-suite needs a suite name}"
+  [[ " $(unit_suites | tr '\n' ' ') " == *" $suite "* ]] || { echo "unknown unit suite: $suite" >&2; exit 2; }
+  target_log="test-egress/$suite/suite.log"
   stage_status=0
   : > "$summary"
-  run test-server
-  run test-awid
-  run test-naapp
-  run test-cli
-  run test-cli-auth-v2
-  run _candidate-unit-channel
-  run _candidate-unit-channel-core
-  run _candidate-unit-pi
+  for package in $(naapp_packages); do
+    if [[ "$(naapp_suite "$package")" == "$suite" ]]; then
+      run_step "$suite" make test-naapp NAAPP_PACKAGES="$package"
+      exit "$stage_status"
+    fi
+  done
+  run "$suite"
   exit "$stage_status"
 fi
 

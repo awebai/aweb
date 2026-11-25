@@ -18,25 +18,31 @@ cleanup_failure() {
 
 cleanup() {
   local original_status="${1:-$?}" cleanup_status=0 resource filter ids item
-  local -a filters list remove
+  local -a filters list remove runners
   trap - EXIT
   trap '' INT TERM
   set +e
   filters=("aweb.candidate-gate=$resource_label")
   for item in "${suite_projects[@]}"; do filters+=("com.docker.compose.project=$item"); done
-  # Stop the runner before removing anything it could recreate.
+  # Stop every runner before removing anything it could recreate: the run's
+  # runner and each stage lane's runner the manifest names.
   # A signal that reached the runner's docker run --rm CLI also makes the
   # daemon remove it, so this removal can fail with "already in progress"
   # while the runner disappears. Here and below, absence is the proof, not the
   # removal command's exit.
-  if docker container inspect "$runner_name" >/dev/null 2>&1; then
-    docker rm -fv "$runner_name" >/dev/null 2>&1
+  runners=("$runner_name")
+  while IFS=$'\t' read -r resource item; do
+    [[ "$resource" != runner ]] || runners+=("$item")
+  done < "$LOG_DIR/owned-resources.tsv"
+  for item in "${runners[@]}"; do
+    docker container inspect "$item" >/dev/null 2>&1 || continue
+    docker rm -fv "$item" >/dev/null 2>&1
     for _ in {1..100}; do
-      docker container inspect "$runner_name" >/dev/null 2>&1 || break
+      docker container inspect "$item" >/dev/null 2>&1 || break
       sleep .1
     done
-    ! docker container inspect "$runner_name" >/dev/null 2>&1 || cleanup_failure "runner still present"
-  fi
+    ! docker container inspect "$item" >/dev/null 2>&1 || cleanup_failure "runner $item still present"
+  done
   while IFS=$'\t' read -r resource item; do
     [[ "$resource" != compose-project ]] || filters+=("com.docker.compose.project=$item")
   done < "$LOG_DIR/owned-resources.tsv"

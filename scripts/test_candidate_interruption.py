@@ -68,8 +68,8 @@ run_candidate() {
  if [[ "$EMPTY_LOG" == 0 ]]; then printf 'real completed checks\\n' > "$LOG_DIR/checks.log"; else : > "$LOG_DIR/checks.log"; fi
  printf 'real completed artifacts\\n' > "$LOG_DIR/artifacts.log"
  printf 'integration incomplete\\n' > "$LOG_DIR/integration.log"
- mkdir -p "$LOG_DIR/test-egress"
- for number in {1..200}; do printf 'full child traceback line %s\\n' "$number"; done > "$LOG_DIR/test-egress/suite.log"
+ mkdir -p "$LOG_DIR/test-egress/test-server"
+ for number in {1..200}; do printf 'full child traceback line %s\\n' "$number"; done > "$LOG_DIR/test-egress/test-server/suite.log"
  if [[ "$CORRUPT_SUMMARY" == 1 ]]; then printf 'checks\\tPASSED\\twrong.log\\t1s\\n' > "$LOG_DIR/summary.tsv"; fi
  if [[ "$CLEANUP_CONTROL" == 1 ]]; then printf 'checks\\tPASSED\\tchecks.log\\t1s\\t\\n' > "$LOG_DIR/summary.tsv"; fi
  if [[ "$CONTROL_STATUS" == 0 ]]; then
@@ -415,11 +415,11 @@ run_candidate() {
                 code, _, logs, output = self.invoke(status=status)
                 self.assertEqual(code, status, output)
                 retained = logs.parent / "ledger-logs/tree-inputs-evidence-test-run"
-                self.assertTrue((retained / "test-egress/suite.log").is_file())
+                self.assertTrue((retained / "test-egress/test-server/suite.log").is_file())
                 self.assertTrue((retained / "summary.tsv").is_file())
                 self.assertEqual(
-                    (retained / "test-egress/suite.log").read_bytes(),
-                    (logs / "test-egress/suite.log").read_bytes(),
+                    (retained / "test-egress/test-server/suite.log").read_bytes(),
+                    (logs / "test-egress/test-server/suite.log").read_bytes(),
                 )
                 self.assertEqual(
                     (retained / "summary.tsv").read_bytes(),

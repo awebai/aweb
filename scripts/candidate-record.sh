@@ -13,8 +13,8 @@ retain_candidate_evidence() {
   local relative source target="$LEDGER_LOGS/${KEY:0:12}-evidence-$run_id"
   # The stage output contains only the child's tail. Keep its original report
   # beside the ledger on every outcome, before an ephemeral VM is deleted.
-  for relative in summary.tsv test-egress/suite.log; do
-    source="$LOG_DIR/$relative"
+  for source in "$LOG_DIR/summary.tsv" "$LOG_DIR"/test-egress/*/suite.log; do
+    relative="${source#"$LOG_DIR/"}"
     [[ -e "$source" || -L "$source" ]] || continue
     [[ -f "$source" && ! -L "$source" ]] || return 1
     mkdir -p "$(dirname "$target/$relative")" || return 1
@@ -38,7 +38,9 @@ record_stage_targets() {
     fi
     case "$relative" in
       "$stage.log") target_log="$LEDGER_LOGS/${KEY:0:12}-$stage-$run_id.log" ;;
-      test-egress/suite.log) target_log="$retained/$relative" ;;
+      test-egress/*/suite.log)
+        [[ "$relative" =~ ^test-egress/[A-Za-z0-9_.-]+/suite\.log$ ]] || { target_error=1; continue; }
+        target_log="$retained/$relative" ;;
       *) target_error=1; continue ;;
     esac
     if [[ ! -f "$target_log" ]]; then target_error=1; continue; fi
@@ -137,11 +139,14 @@ finalize_candidate() {
   for stage in $pending; do
     stage_already_recorded "$stage" && continue
     stage_log="$LEDGER_LOGS/${KEY:0:12}-$stage-$run_id.log"
+    # A stage the run did not start, or stopped after another stage's first
+    # red, did not fail: that red is recorded, and this stage gets no row.
+    if grep -Eq "^$stage"$'\t(NOT-RUN|STOPPED)\t' "$retained/summary.tsv" 2>/dev/null; then
+      printf 'gate: %s %s\n' "$stage" "$(awk -F'\t' -v stage="$stage" '$1 == stage {print tolower($2) " " $5}' "$retained/summary.tsv" | tail -1)" >> "$run_log"
+      continue
+    fi
     if [[ ! -f "$LOG_DIR/$stage.log" ]]; then
-      if grep -q "^$stage"$'\tNOT-RUN\t' "$retained/summary.tsv" 2>/dev/null; then
-        # The suite stopped after a failed static stage; that failure is recorded.
-        printf 'gate: %s not run after static FAILED\n' "$stage" >> "$run_log"
-      elif [[ "$interrupted" == 0 ]]; then
+      if [[ "$interrupted" == 0 ]]; then
         incomplete=1
         printf 'gate: missing completed proof for %s\n' "$stage" >> "$run_log"
       fi

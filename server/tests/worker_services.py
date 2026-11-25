@@ -6,12 +6,19 @@ import json
 import re
 from collections.abc import MutableMapping
 
-WORKERS = 7
+# The most workers one runner's port ranges hold: 5432+n stays below 6379.
+MAX_WORKERS = 64
+# Memory limits of one plan's services. The first pair also serves the serial
+# suites; every further worker gets a smaller pair.
+PRIMARY_POSTGRES_MIB = 2048
+PRIMARY_REDIS_MIB = 1024
+WORKER_POSTGRES_MIB = 1280
+WORKER_REDIS_MIB = 128
 
 
 def service_plan(workers: int) -> list[dict]:
-    if workers not in (0, WORKERS):
-        raise ValueError("server workers must be 0 or 7")
+    if type(workers) is not int or not 0 <= workers <= MAX_WORKERS or workers == 1:
+        raise ValueError(f"server workers must be 0 or 2 to {MAX_WORKERS}")
     return [
         {
             "worker": f"gw{index}",
@@ -20,6 +27,16 @@ def service_plan(workers: int) -> list[dict]:
         }
         for index in range(workers or 1)
     ]
+
+
+def service_memory_mib(workers: int) -> int:
+    """The memory limits of a plan's Postgres and Redis services together."""
+    pairs = len(service_plan(workers))
+    return (
+        PRIMARY_POSTGRES_MIB
+        + PRIMARY_REDIS_MIB
+        + (pairs - 1) * (WORKER_POSTGRES_MIB + WORKER_REDIS_MIB)
+    )
 
 
 def configure_worker_environment(environ: MutableMapping[str, str]) -> None:
@@ -31,15 +48,20 @@ def configure_worker_environment(environ: MutableMapping[str, str]) -> None:
         services = local_worker_service(environ)
         bind_service_environment(environ=environ, services=services)
         return
+    planned = environ.get("AWEB_SERVER_TEST_WORKERS", "")
+    match = re.fullmatch(r"gw([0-9]+)", worker)
     if (
-        environ.get("AWEB_SERVER_TEST_WORKERS") != str(WORKERS)
-        or environ.get("PYTEST_XDIST_WORKER_COUNT") != str(WORKERS)
-        or re.fullmatch(r"gw[0-6]", worker) is None
+        not re.fullmatch(r"[1-9][0-9]*", planned)
+        or int(planned) < 2
+        or int(planned) > MAX_WORKERS
+        or environ.get("PYTEST_XDIST_WORKER_COUNT") != planned
+        or match is None
+        or int(match.group(1)) >= int(planned)
     ):
         raise RuntimeError(
-            "parallel server tests require the owned seven-worker service plan"
+            "parallel server tests require the owned worker service plan"
         )
-    services = service_plan(WORKERS)[int(worker[2:])]
+    services = service_plan(int(planned))[int(match.group(1))]
     bind_service_environment(environ=environ, services=services)
 
 
