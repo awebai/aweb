@@ -136,8 +136,12 @@ reason. A failed target leaves its stage red while independent targets and
 later stages continue. Integration skips the OATS and naapp targets if the
 runner's shared CLI build fails, and names that prerequisite in their rows.
 Other journeys build their own inputs or use no stage artifact. Only passing
-stages are reusable. Only after all stages pass does the command create the
-requested annotated tags locally on the exact tested SHA.
+stages are reusable. Each stage is recorded as soon as it passes, so a run
+killed later keeps its completed stages. Only after all stages pass does the
+command create the requested annotated tags locally on the exact tested SHA.
+The release command puts no deadline on the gate. The machine that runs it
+bounds the run and stops it with TERM, which lets the gate clean up and record
+its verdict.
 
 Integration includes `make e2e-folio-wakes`, the same real document-change and
 browser-wake acceptance script run by Folio CI. Its services share a private
@@ -170,7 +174,8 @@ failed stage ledger lines and supplies `GATE_RERUN_REASON='<reason>'`; the next 
 result retains that reason. A refusal lists all failed stages and their retained
 logs. Cleanup failures also block reuse. After an interruption, completed stages
 are reusable only if the wrapper records successful cleanup. A missing cleanup
-verdict is recorded as a cleanup failure.
+verdict is recorded as a cleanup failure. A run killed outright records no
+cleanup verdict, so the stages it recorded before the kill stay reusable.
 
 On the ccx33 unit profile, the Secrets package uses two whole-module shards
 on separate Postgres and Redis pairs already owned by the isolated runner. The
