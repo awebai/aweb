@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-24
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-naapp-folio-links (task aweb-advy).
+* **Creation**: decision [an absent team-auth header answers <name>_missing](/aweb-expert/decisions/absent-team-auth-header-answers-missing.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
