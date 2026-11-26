@@ -323,17 +323,33 @@ never batch this step.
 
 ## PyPI publication
 
-PyPI receives the gated files themselves, never a rebuild. For a
-`server-vX.Y.Z` or `awid-service-vX.Y.Z` release, the release command:
+PyPI receives the gated files themselves, never a rebuild. aweb releases its
+Python packages with its own command, from a clean aweb checkout:
 
-1. creates the annotated tag at the gated aweb commit. Its message holds one
+```sh
+make release SHA=<reviewed commit> MACHINE=merak PACKAGES=aweb
+```
+
+It keeps a receipt in `~/.local/state/aweb/releases/<SHA>` and continues from
+its first unfinished step on a rerun:
+
+1. builds each package once from `SHA`, refusing a version PyPI already has;
+2. runs one `vm-gate run --project aweb --intent train --files <dir>` at
+   `SHA`: the gate installs the built server wheel in the federation journey
+   and rebuilds the files from `SHA`, and the receipt must show both;
+3. once `origin/main` contains `SHA` (it lands unchanged, as a fast-forward,
+   after that gate), creates the annotated tag at `SHA`. Its message holds one
    line per gated file in `sha256sum` format, the lowercase sha256, two
    spaces and the file's basename: exactly the package's wheel and sdist, so
    `git tag -l --format='%(contents)' <tag> | grep -E '^[0-9a-f]{64}  ' | sha256sum -c`
    checks a local copy;
-2. pushes the tag and runs `gh release create <tag> --verify-tag` with exactly
+4. pushes the tag and runs `gh release create <tag> --verify-tag` with exactly
    those two files attached;
-3. waits until PyPI serves exactly those files.
+5. waits, with a deadline that names the workflow run, until PyPI serves
+   exactly those files, then checks them against its own digests.
+
+Until the release gate installs a new `awid-service` wheel under test, the
+command refuses any release that needs an unpublished `awid-service` version.
 
 Publishing the release starts `.github/workflows/pypi-release.yml`; a tag push
 alone publishes nothing to PyPI. The workflow fetches the annotated tag object,
