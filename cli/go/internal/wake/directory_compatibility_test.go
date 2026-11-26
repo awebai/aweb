@@ -4,6 +4,7 @@ package wake
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -312,4 +313,19 @@ func TestRunnerStartupRemovesOnlyStaleUnheldOwnSnapshots(t *testing.T) {
 			t.Fatalf("removed live/recent/unrelated entry %s: %v", path, err)
 		}
 	}
+}
+
+// ListRegistrations reads every registration, ordered by registration time so
+// the stream bound admits the oldest first and a restart admits the same set.
+// A file that cannot be read, does not parse or names no usable home is an
+// error, as released; ListRegistrationsWithFaults skips such files instead.
+func (s *Store) ListRegistrations() ([]Registration, error) {
+	out, faults, err := s.ListRegistrationsWithFaults()
+	if err != nil {
+		return nil, err
+	}
+	if len(faults) > 0 {
+		return nil, fmt.Errorf("%s: %s", faults[0].Path, faults[0].Error)
+	}
+	return out, nil
 }

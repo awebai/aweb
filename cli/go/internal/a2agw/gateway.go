@@ -176,12 +176,6 @@ func (g *Gateway) ValidateTargets(ctx context.Context) error {
 	return nil
 }
 
-// New validates configuration and constructs a gateway with a fresh task store.
-// A native operator must call ValidateTargets before opening its listener.
-func New(config Config) (*Gateway, error) {
-	return newGateway(config, nil)
-}
-
 // NewPreservingRuntime rebuilds route policies while preserving the previous
 // task store and rate limiter so configuration refresh does not lose task access.
 func NewPreservingRuntime(config Config, previous *Gateway) (*Gateway, error) {

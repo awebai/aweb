@@ -95,15 +95,6 @@ func StartControl(ctx context.Context, b *Broker) (<-chan error, error) {
 	return served, nil
 }
 
-// ServeControl retains the blocking interface for embedded callers.
-func ServeControl(ctx context.Context, b *Broker) error {
-	served, err := StartControl(ctx, b)
-	if err != nil {
-		return err
-	}
-	return <-served
-}
-
 func serveControl(ctx context.Context, b *Broker, listener net.Listener) error {
 	defer listener.Close()
 	stopped := make(chan struct{})

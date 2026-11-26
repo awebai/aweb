@@ -114,24 +114,6 @@ func TestValidateCardRejectsInvalidShapes(t *testing.T) {
 	})
 }
 
-func TestVerificationResultStubs(t *testing.T) {
-	card := mustRootDefaultCard(t, CardConfig{Host: "team.aweb.ai", RouteID: "r_support", Name: "Aweb Support", Description: "Hosted support agent for aweb users.", Provider: Provider{Organization: "aweb", URL: "https://aweb.ai"}, Skills: []Skill{{ID: "support", Name: "Support", Description: "Answers product and onboarding questions.", Tags: []string{"support"}}}})
-	tier0, err := VerifyTier0(card)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tier0.Tier != VerificationTier0 || tier0.Status != VerificationIgnored || !strings.HasPrefix(tier0.Digest, "sha256:") {
-		t.Fatalf("unexpected tier0 result: %+v", tier0)
-	}
-	tier2, err := VerifyTier2Unavailable(card)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tier2.Tier != VerificationTier2 || tier2.Status != VerificationAWIDRequired || tier2.Code == "" {
-		t.Fatalf("unexpected tier2 unavailable result: %+v", tier2)
-	}
-}
-
 func requireValidateErrorContains(t *testing.T, card map[string]any, options ValidationOptions, want string) {
 	t.Helper()
 	err := ValidateCardMap(card, options)

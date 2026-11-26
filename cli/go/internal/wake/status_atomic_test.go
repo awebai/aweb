@@ -136,3 +136,10 @@ func TestStatusAtomicReadersAndIndependentWriters(t *testing.T) {
 		}
 	}
 }
+
+// LoadStatus reads the last status snapshot.
+func (s *Store) LoadStatus() (Status, bool, error) {
+	var status Status
+	ok, err := readJSON(s.StatusPath(), &status)
+	return status, ok, err
+}

@@ -100,7 +100,7 @@ func TestVerifiedManagedRouteRequiresRecipientIdentityCapabilityBeforeSend(t *te
 }
 
 func TestGatewayBoundsSlowRequestBodies(t *testing.T) {
-	handler, err := a2agw.New(a2agw.Config{Host: "example.com", Routes: []a2agw.Route{{RouteID: "slow", Address: "example.com/slow", Card: a2agw.RouteCard{Name: "Slow", Description: "Slow body test", Provider: a2a.Provider{Organization: "Example", URL: "https://example.com"}, Skills: []a2a.Skill{{ID: "reply", Name: "Reply", Description: "Reply"}}}}}})
+	handler, err := a2agw.NewPreservingRuntime(a2agw.Config{Host: "example.com", Routes: []a2agw.Route{{RouteID: "slow", Address: "example.com/slow", Card: a2agw.RouteCard{Name: "Slow", Description: "Slow body test", Provider: a2a.Provider{Organization: "Example", URL: "https://example.com"}, Skills: []a2a.Skill{{ID: "reply", Name: "Reply", Description: "Reply"}}}}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -142,11 +142,9 @@ const (
 type VerificationStatus string
 
 const (
-	VerificationIgnored      VerificationStatus = "ignored"
 	VerificationUnsigned     VerificationStatus = "unsigned"
 	VerificationSignatureOK  VerificationStatus = "signature_ok"
 	VerificationAWIDVerified VerificationStatus = "awid_verified"
-	VerificationAWIDRequired VerificationStatus = "awid_required"
 	VerificationFailed       VerificationStatus = "failed"
 )
 
@@ -351,28 +349,6 @@ func ValidateCardMap(card map[string]any, options ValidationOptions) error {
 		return fmt.Errorf("agent card skills must be a non-empty array")
 	}
 	return nil
-}
-
-func VerifyTier0(card Card) (VerificationResult, error) {
-	digest, err := CardDigest(card)
-	if err != nil {
-		return VerificationResult{}, err
-	}
-	return VerificationResult{Tier: VerificationTier0, Status: VerificationIgnored, Digest: digest.Value}, nil
-}
-
-func VerifyTier2Unavailable(card Card) (VerificationResult, error) {
-	digest, err := CardDigest(card)
-	if err != nil {
-		return VerificationResult{}, err
-	}
-	return VerificationResult{
-		Tier:    VerificationTier2,
-		Status:  VerificationAWIDRequired,
-		Code:    "awid_publication_verification_unavailable",
-		Message: "AWID publication and delegation verification is not implemented in this build",
-		Digest:  digest.Value,
-	}, nil
 }
 
 func baseCard(config CardConfig) Card {

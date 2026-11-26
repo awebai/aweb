@@ -113,24 +113,6 @@ func (e *Error) Error() string {
 	return code + ": " + msg
 }
 
-// IsRuntimeEndpointUnknown reports whether err is the typed pending-home error.
-func IsRuntimeEndpointUnknown(err error) bool {
-	var typed *Error
-	if errors.As(err, &typed) {
-		return strings.EqualFold(strings.TrimSpace(typed.Code), CodeRuntimeEndpointUnknown)
-	}
-	return false
-}
-
-// ErrorCode returns the typed code of err, or "" when err carries none.
-func ErrorCode(err error) string {
-	var typed *Error
-	if errors.As(err, &typed) {
-		return strings.TrimSpace(typed.Code)
-	}
-	return ""
-}
-
 // Client is the host-local session surface the broker depends on. Both methods
 // are host-local and synchronous; neither carries credentials, SSE, or state.
 type Client interface {

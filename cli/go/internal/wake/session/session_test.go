@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -198,4 +199,22 @@ func TestResolveBinPrefersFlagThenEnv(t *testing.T) {
 	if got := (&ExecClient{}).ResolveBin(); got != DefaultOatsBin {
 		t.Errorf("default=%q want %q", got, DefaultOatsBin)
 	}
+}
+
+// ErrorCode returns the typed code of err, or "" when err carries none.
+func ErrorCode(err error) string {
+	var typed *Error
+	if errors.As(err, &typed) {
+		return strings.TrimSpace(typed.Code)
+	}
+	return ""
+}
+
+// IsRuntimeEndpointUnknown reports whether err is the typed pending-home error.
+func IsRuntimeEndpointUnknown(err error) bool {
+	var typed *Error
+	if errors.As(err, &typed) {
+		return strings.EqualFold(strings.TrimSpace(typed.Code), CodeRuntimeEndpointUnknown)
+	}
+	return false
 }

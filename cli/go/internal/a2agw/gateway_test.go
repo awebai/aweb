@@ -330,3 +330,9 @@ func researchRoute(routeID string) Route {
 		},
 	}
 }
+
+// New validates configuration and constructs a gateway with a fresh task store.
+// A native operator must call ValidateTargets before opening its listener.
+func New(config Config) (*Gateway, error) {
+	return newGateway(config, nil)
+}

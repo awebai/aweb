@@ -168,3 +168,9 @@ func decodedTask(t *testing.T, value map[string]any) Task {
 	}
 	return task
 }
+
+// ParseA2AReply parses reply syntax under the released question option.
+// It does not establish sender identity or authorize a task transition.
+func ParseA2AReply(body string, allowQuestion bool) (BridgeReply, bool, error) {
+	return ParseA2AReplyWithOptions(ReplyParseInput{Body: body, AllowQuestionReply: allowQuestion})
+}

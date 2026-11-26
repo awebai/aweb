@@ -189,3 +189,12 @@ func TestStatusFromStoreAnswersWithTheDaemonDown(t *testing.T) {
 		t.Fatalf("status lost per-home state: %#v", got)
 	}
 }
+
+// ServeControl retains the blocking interface for embedded callers.
+func ServeControl(ctx context.Context, b *Broker) error {
+	served, err := StartControl(ctx, b)
+	if err != nil {
+		return err
+	}
+	return <-served
+}

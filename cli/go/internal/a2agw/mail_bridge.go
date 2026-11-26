@@ -702,12 +702,6 @@ func FormatA2ACancelMessage(taskID, contextID, requestID string) string {
 	return "```a2a-cancel\n" + string(body) + "\n```\n\nThe A2A caller canceled this task."
 }
 
-// ParseA2AReply parses reply syntax under the released question option.
-// It does not establish sender identity or authorize a task transition.
-func ParseA2AReply(body string, allowQuestion bool) (BridgeReply, bool, error) {
-	return ParseA2AReplyWithOptions(ReplyParseInput{Body: body, AllowQuestionReply: allowQuestion})
-}
-
 // ReplyParseInput supplies untrusted mail text and the plain-question option.
 type ReplyParseInput struct {
 	Body               string
