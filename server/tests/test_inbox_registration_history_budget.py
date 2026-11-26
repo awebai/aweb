@@ -16,6 +16,40 @@ from test_team_room import admit_room_member
 
 __all__ = ["privacy_app"]
 
+HISTORY_WRITER_DEADLINE_SECONDS = 120.0
+
+
+async def _write_revoked_history(env, writer, alice, history):
+    for number in range(history):
+        certificate_id = f"old-inbox-{number}"
+        certificate = _make_certificate(
+            env.team_sk,
+            env.team_did,
+            alice.did,
+            team_id=TEAM,
+            alias=certificate_id,
+            identity_scope="local",
+            certificate_id=certificate_id,
+        )
+        await writer.register_team_certificate(
+            "example.test",
+            TEAM_NAME,
+            team_controller_signing_key=env.team_sk,
+            certificate_id=certificate_id,
+            member_did_key=alice.did,
+            member_did_aw=None,
+            member_address=None,
+            alias=certificate_id,
+            identity_scope="local",
+            certificate=_encode_certificate(certificate),
+        )
+        await writer.revoke_team_certificate(
+            "example.test",
+            TEAM_NAME,
+            team_controller_signing_key=env.team_sk,
+            certificate_id=certificate_id,
+        )
+
 
 async def _warm_inbox_registration_cost(privacy_app, monkeypatch, history, *, enforce):
     env = privacy_app
@@ -36,35 +70,20 @@ async def _warm_inbox_registration_cost(privacy_app, monkeypatch, history, *, en
     )
     assert sent.status_code == 200, sent.text
     original = env.app.state.awid_registry_client
-    for number in range(history):
-        certificate_id = f"old-inbox-{number}"
-        certificate = _make_certificate(
-            env.team_sk,
-            env.team_did,
-            alice.did,
-            team_id=TEAM,
-            alias=certificate_id,
-            identity_scope="local",
-            certificate_id=certificate_id,
-        )
-        await original.register_team_certificate(
-            "example.test",
-            TEAM_NAME,
-            team_controller_signing_key=env.team_sk,
-            certificate_id=certificate_id,
-            member_did_key=alice.did,
-            member_did_aw=None,
-            member_address=None,
-            alias=certificate_id,
-            identity_scope="local",
-            certificate=_encode_certificate(certificate),
-        )
-        await original.revoke_team_certificate(
-            "example.test",
-            TEAM_NAME,
-            team_controller_signing_key=env.team_sk,
-            certificate_id=certificate_id,
-        )
+    # Builds the history only, never the client under test. Fixture writes can
+    # stall behind forced checkpoints on a shared PostgreSQL, which is not what
+    # this test measures; the client under test keeps its real deadline.
+    history_writer = RegistryClient(
+        original.registry_url,
+        timeout_seconds=HISTORY_WRITER_DEADLINE_SECONDS,
+        transport=httpx.ASGITransport(app=env.registry_app),
+        service_token=original.service_token,
+        domain_verifier=env.registry.namespace_authority,
+    )
+    try:
+        await _write_revoked_history(env, history_writer, alice, history)
+    finally:
+        await history_writer.aclose()
     pages = []
 
     class CountedTransport(httpx.ASGITransport):
