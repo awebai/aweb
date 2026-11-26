@@ -57,7 +57,7 @@ naapp_suite() {
 }
 unit_suites() {
   local package
-  printf '%s\n' test-server test-awid
+  printf '%s\n' test-server test-awid test-key-holder
   for package in $(naapp_packages); do
     naapp_suite "$package"
   done

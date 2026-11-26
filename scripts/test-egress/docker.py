@@ -316,6 +316,7 @@ def main():
         default=[
             "test-server",
             "test-awid",
+            "test-key-holder",
             "test-cli",
             "test-channel",
             "test-channel-core",
@@ -455,7 +456,9 @@ def run_isolated_suite(name, plan, args, token, dns_ip, image, evidence, owned):
     owned.extend(containers)
     command_env = []
     if args.aw_binary:
-        docker("exec", "--user", "0", runner, "mkdir", "-p", str(Path(RUNNER_AW).parent))
+        docker(
+            "exec", "--user", "0", runner, "mkdir", "-p", str(Path(RUNNER_AW).parent)
+        )
         docker("cp", str(args.aw_binary), f"{runner}:{RUNNER_AW}")
         command_env = ["-e", f"AW_TEST_CLI_BINARY={RUNNER_AW}"]
     with (directory / "suite.log").open("w") as log:
@@ -588,7 +591,9 @@ def run_suite(args):
     try:
         if not args.image:
             # In a gate run the suites' image starts from the gate's own image.
-            prepare_image(ROOT, evidence, image, base=os.environ.get("CANDIDATE_GATE_IMAGE"))
+            prepare_image(
+                ROOT, evidence, image, base=os.environ.get("CANDIDATE_GATE_IMAGE")
+            )
         # Pull service images before entering isolation.
         for service in ("postgres:17", "redis:7"):
             subprocess.run(
@@ -634,7 +639,9 @@ def run_suite(args):
         # Retain inspect evidence proving that runners have only the internal network.
         (evidence / "network.json").write_text(docker("network", "inspect", token))
         if args.suites:
-            status = run_concurrent_suites(args, token, dns_ip, image, evidence, containers)
+            status = run_concurrent_suites(
+                args, token, dns_ip, image, evidence, containers
+            )
         else:
             status = run_command(args, token, dns_ip, image, evidence, containers)
         if docker("inspect", "--format", "{{.State.Running}}", dns) != "true":
