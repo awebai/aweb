@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-25
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-gate-dispatch (task aweb-adyi).
+* **Creation**: lessons [missing equals missing passes](/aweb-expert/lessons/missing-equals-missing-passes.md) and [a stand-in runs the real receipt code](/aweb-expert/lessons/a-stand-in-runs-the-real-receipt-code.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
