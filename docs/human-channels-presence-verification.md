@@ -1,10 +1,6 @@
 # P8: portable presence approval
 
-Status: the Go verifiers in `awid` below are the implementation, and only their
-tests call them. The Python copy, `aweb.human_channels.presence`, was removed
-because nothing in aweb or aweb Cloud called it.
-
-The public Go library verifies the P0 presence records. They do not
+The public Python and Go libraries verify the P0 presence records. They do not
 create an OSS presence registry, operate bots, store generations, suppress
 messages or change author verification. There is no migration or new OSS HTTP
 route. Cloud/self-hosting operators own authenticated endpoints and resource,
@@ -18,17 +14,27 @@ and [P0 records](human-channels-contract-v1.md#presence-and-native-operation-rec
 
 ## Public entry points
 
-| Purpose | Go `awid` |
-| --- | --- |
-| Sign one presence intent/proof | `SignHumanChannelsPresenceRecord(record, privateKey)` |
-| Verify native suppression approval | `VerifyHumanChannelsNativePresence(artifact, context)` |
-| Verify shared/dedicated binding approval | `VerifyHumanChannelsPresenceBinding(artifact, context)` |
+| Purpose | Python `aweb.human_channels.presence` | Go `awid` |
+| --- | --- | --- |
+| Sign one presence intent/proof | `sign_presence_record(record, signing_key)` | `SignHumanChannelsPresenceRecord(record, privateKey)` |
+| Verify native suppression approval | `verify_native_presence(artifact, context)` | `VerifyHumanChannelsNativePresence(artifact, context)` |
+| Verify shared/dedicated binding approval | `verify_presence_binding(artifact, context)` | `VerifyHumanChannelsPresenceBinding(artifact, context)` |
+| Implement P0's two embedding ports | `PresenceVerifier(provider)` | Compose the two portable verifiers with the host's authenticated service |
 
-Inputs/outputs use P0 `HumanChannelsRecord` and `SignedArtifact`.
+Inputs/outputs use P0 `ContractRecord` / `HumanChannelsRecord` and `SignedArtifact`.
 Signing accepts only PresenceIntent, PresenceBindingIntent, OwnershipProof and
 BindingOwnershipProof. The supplied key must match `signing_key_id`; signing
-alone makes no assertion that the identity/key/owner is current. Signing takes
-an `ed25519.PrivateKey`.
+alone makes no assertion that the identity/key/owner is current. Python takes
+the existing 32-byte Ed25519 seed form; Go takes `ed25519.PrivateKey`.
+
+Python's `PresenceVerifier` calls an embedding's
+`PresenceContextProvider.resolve(auth, intent)` with existing, already verified
+`MessagingAuth` and the closed, typed intent. It snapshots the artifact before
+awaiting authority, checks returned caller/grant facts against that actual auth,
+then calls the same portable verifier. Returning a context for another principal
+or silently dropping a session grant refuses. The provider is read-only and receives untrusted
+intent data to resolve; it must not authorize merely because the signature fields
+name an actor or issuer. No private schema access is part of these interfaces.
 
 ## Trusted verification context
 
@@ -73,7 +79,8 @@ lane remains confined to the configured subject/service/provider policy.
 A session grant must include `presence.write`, remain live and accompany the
 actual subject/owner-signed intent. Its session key cannot substitute for the
 root identity signature. A mail-only grant refuses even if it presents a valid
-root-signed intent.
+root-signed intent. The Python port also prevents a host provider from hiding
+that grant in a purported root caller context.
 
 All inputs must match their exact target, purpose and current authority. The
 verifier checks canonical original bytes, key/signature, freshness, generation,
@@ -161,7 +168,20 @@ stale generation, cross-family replay, audience, consent policy, invalid
 signatures, canonical bytes, grant restrictions and exact private binding digest.
 No P0 or released native signing/encryption vector is re-frozen.
 
-Actual Cloud owner issuance/pins, lifecycle storage/CAS, consent and
-bot-resource operations must pass C2 acceptance using these published types.
-The public library needs no Cloud tables, token or private endpoint, and does
-not claim C2-D-ready.
+The focused Python host integration starts actual OSS HTTP/AWID/PG/Redis,
+registers disposable identities through public AWID, resolves their current keys,
+and receives real Go-signed HTTP requests. Go's public signer and authenticated
+client call an embedding fixture that uses real request auth and the public
+Python port. Local, global subject and configured-owner requests pass, including
+the new current key after a public registry rotation. Unrelated authenticated
+teammates, freshly signed stale generations, a wrong configured owner pin and
+the non-current key refuse with the expected presence code and diagnostic field.
+The fixture's action policy permits the unrelated teammate, so the verifier's
+signer binding must enforce that refusal. A separate test ensures
+caller-retained input mutation across the authority await cannot change the
+operation whose context was authorized.
+
+The fixture is an example host adapter, **not deployed Cloud C2**. Actual Cloud
+owner issuance/pins, lifecycle storage/CAS, consent and bot-resource operations
+must pass C2 acceptance using these published types. The public libraries need
+no Cloud tables, token or private endpoint, and do not claim C2-D-ready.

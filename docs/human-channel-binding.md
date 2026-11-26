@@ -39,10 +39,10 @@ Source facts:
   blinded commitment, audience, generation and request. Its owner lane verifies
   `BindingOwnershipProof` from an independently pinned authority. It grants no
   custody, team role or message authority
-  ([human-channels-contract-v1.md:417–435](human-channels-contract-v1.md#presence-and-native-operation-records)).
+  ([human-channels-contract-v1.md:415–433](human-channels-contract-v1.md#presence-and-native-operation-records)).
 - P8 requires a host transaction recheck and generation/request CAS; public actor
   locks stabilize local projections, not remote AWID
-  ([human-channels-presence-verification.md:97–138](human-channels-presence-verification.md#applying-a-verified-result)).
+  ([human-channels-presence-verification.md:104–145](human-channels-presence-verification.md#applying-a-verified-result)).
 
 **Hypothesis — decision provenance.** The assignment and the approved plan r3,
 J9/S6a/S6d/S6g/S6h, require this composition. The coordinator supplied r3 and
@@ -126,7 +126,7 @@ resource checks and P8 verification remain their existing authorities. This is
 an input/output predicate, not a proposed new persistence API.
 
 Source fact: P8 already has a distinct subject-signed lane and constrained grant
-checks ([human_channels_presence.go:228–253](../cli/go/awid/human_channels_presence.go)).
+checks ([presence.py:194–211,273–281](../server/src/aweb/human_channels/presence.py)).
 **Hypothesis:** the rule above does not remove that released lane or make every
 ordinary grant-backed action require a browser. A valid subject operation stays
 subject-authorized; it must not be labelled a human-owner action. BYOT owner acts
@@ -159,7 +159,7 @@ recovers its original result; it never reactivates a stopped binding. A differen
 operation or target under the same request ID conflicts.
 
 Public errors use the existing P8 vocabulary and HTTP map
-([human-channels-contract-v1.md:140–152](human-channels-contract-v1.md#capabilities-and-failure-results)).
+([human-channels-contract-v1.md:138–150](human-channels-contract-v1.md#capabilities-and-failure-results)).
 Log the actual cause at the decision boundary; do not expose raw channel
 identifiers, addresses, credentials or private account mappings in public errors.
 

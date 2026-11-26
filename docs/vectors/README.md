@@ -1045,8 +1045,7 @@ passes and the lifecycle label above still describes what the bytes prove.
 
 - `human-channels-profile-v1.json` — exact new DTO grammar/capability registry;
   not an advertised service feature. Python/Go compiled grammar is checked against
-  this authority. No server implements its `human-send-uow-v1` capability; the
-  token stays frozen until a contract change removes it.
+  this authority.
 - `human-channels-v1.json` — shared structural canonical bytes, digest/signature
   and refusal vectors with a public synthetic key. These do not establish actual
   owner, recipient, membership or custody authority.

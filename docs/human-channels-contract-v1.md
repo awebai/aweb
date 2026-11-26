@@ -5,7 +5,7 @@ Implemented today: the record grammar and its readers (Python
 vectors, human aliases with participant discovery at
 `GET /v1/messaging/participants/{alias}` ([native addressing](human-channels-native-send.md)),
 the host actor lock `aweb.human_channels.authority.lock_native_actors`, and the
-presence verifiers in Go `awid`, which only their tests call. Not implemented: the
+presence verifier library `aweb.human_channels.presence`. Not implemented: the
 service operations in [Public calls](#public-calls-needed-by-c0c3) and the
 embedded prepared send below; no server route serves them. The routes
 `GET /v1/messaging/capabilities`, `POST /v1/messaging/resolve`,
@@ -107,13 +107,11 @@ advertises none. A later server may enable a known implemented capability only
 after its acceptance/release gates; package installation alone is insufficient.
 Readers preserve/ignore unknown advertised tokens so adding a capability does
 not invalidate known native neighbors; explicit selection of an unknown or
-deferred token returns unsupported (Go `RequireCapability`).
+deferred token returns unsupported (`require_capability` / `RequireCapability`).
 The registry contains `signed-via-v1`, `human-alias-v1`, `human-send-uow-v1`,
 `bridged-participants-v1`, `managed-chat-policy-v1`, `shared-control-history-v1`,
 `chat-export-checkpoints-v1`, `presence-intents-v1`,
-`presence-binding-intents-v1`, `native-chat-receipts-v1`. No server implements
-`human-send-uow-v1`; the token stays in the frozen registry until a contract
-change removes it.
+`presence-binding-intents-v1`, `native-chat-receipts-v1`.
 
 `managed-chat-encrypted-v1`, `group-reshare-v1` and `group-federation-v1` are
 reserved **refused** boundaries, not frozen wire algorithms. X-E2/X-GF supply
@@ -162,7 +160,7 @@ remain authoritative for attachments.
 ## Public calls needed by C0–C3
 
 These are the operations the C0–C3 channel work needs. Only the presence
-verifiers are implemented, in Go; no service port or route implements the others. An
+verifiers are implemented; no service port or route implements the others. An
 implementation takes existing verified `MessagingAuth`, including team/grant
 restrictions; constructing a claimed DID, owner or DTO is not authentication.
 P0 adds no routes or bypass for Cloud.
@@ -175,8 +173,8 @@ P0 adds no routes or bypass for Cloud.
 | checkpoint(SignedArtifact of CheckpointIntent) → signed CheckpointReceipt or NarrowStopAck | Not implemented. |
 | checkpoint_receipt(session,transition) → signed original CheckpointReceipt | Not implemented. |
 | message_acceptance(session,message) → signed MessageAcceptance | Not implemented. |
-| verify_presence(SignedArtifact of PresenceIntent) → VerifiedPresence | Go `awid.VerifyHumanChannelsNativePresence`, for native suppression only; only its tests call it. Cloud owns its registration API. |
-| verify_presence_binding(SignedArtifact of PresenceBindingIntent) → VerifiedPresenceBinding | Go `awid.VerifyHumanChannelsPresenceBinding`, for shared/dedicated bind/rebind/unbind; only its tests call it. Native suppression approval never authorizes this call. |
+| verify_presence(SignedArtifact of PresenceIntent) → VerifiedPresence | Verifier library `aweb.human_channels.presence.verify_native_presence`, for native suppression only; Cloud owns its registration API. |
+| verify_presence_binding(SignedArtifact of PresenceBindingIntent) → VerifiedPresenceBinding | Verifier library `aweb.human_channels.presence.verify_presence_binding`, for shared/dedicated bind/rebind/unbind; native suppression approval never authorizes this call. |
 | native_operation(SignedArtifact of NativeOperationRequest) → signed NativeOperation | Not implemented. |
 | commit_native_reply(SignedArtifact of NativeReply) → AcceptedSend | Not implemented. |
 

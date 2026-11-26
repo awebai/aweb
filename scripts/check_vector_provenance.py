@@ -206,6 +206,10 @@ ROOT_CONSUMERS = {
         "human-channels-participants-v1.json",
         '"../../../docs/vectors/human-channels-participants-v1.json"',
     ),
+    PurePosixPath("server/tests/test_human_channels_presence.py"): _consumer(
+        "human-channels-presence-v1.json",
+        "ROOT / 'docs/vectors/human-channels-presence-v1.json'",
+    ),
     PurePosixPath("cli/go/awid/human_channels_presence_test.go"): _consumer(
         "human-channels-presence-v1.json",
         '"../../../docs/vectors/human-channels-presence-v1.json"',

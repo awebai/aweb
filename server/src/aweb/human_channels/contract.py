@@ -262,6 +262,13 @@ def canonical_record(record: ContractRecord) -> bytes:
     return raw
 
 
+def require_capability(record: ContractRecord, capability: str) -> None:
+    """Ignore unknown advertised tokens, but never select an unknown/deferred feature."""
+    _validate("Capabilities", record.value)
+    if capability not in PROFILE["capabilities"] or capability not in record.value["enabled"]:
+        raise ContractError("unsupported", "capability")
+
+
 def require_canonical_signed_payload(raw: bytes) -> None:
     """Require original new-profile signed bytes; never silently reserialize.
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from nacl.signing import VerifyKey
 
-from aweb.human_channels.contract import ContractError, decode_record, canonical_record, require_canonical_signed_payload, PROFILE
+from aweb.human_channels.contract import ContractError, decode_record, canonical_record, require_capability, require_canonical_signed_payload, PROFILE
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTORS = json.loads((ROOT / 'docs/vectors/human-channels-v1.json').read_text())
@@ -57,8 +57,10 @@ def test_semantic_tampering_breaks_original_signature(case):
 def test_unknown_advertised_capability_preserves_known_neighbor():
     case = next(c for c in VECTORS['valid'] if c['name'] == 'future_advertised_capability')
     record = decode_record('Capabilities', case['canonical'].encode())
-    assert record.value['enabled'] == ['signed-via-v1', 'future-v9']
-    assert canonical_record(record).decode() == case['canonical']
+    require_capability(record, 'signed-via-v1')
+    for token in ('future-v9', 'managed-chat-encrypted-v1', 'group-federation-v1'):
+        with pytest.raises(ContractError, match='unsupported'):
+            require_capability(record, token)
 
 
 def test_canonicalization_rechecks_mutated_dto():

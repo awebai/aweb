@@ -1525,6 +1525,30 @@
     },
     {
       "tool": "ruff",
+      "file": "server/tests/test_human_channels_presence.py",
+      "code": "B904",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_human_channels_presence.py",
+      "code": "E402",
+      "count": 8
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_human_channels_presence.py",
+      "code": "E702",
+      "count": 2
+    },
+    {
+      "tool": "ruff",
+      "file": "server/tests/test_human_channels_presence.py",
+      "code": "F401",
+      "count": 1
+    },
+    {
+      "tool": "ruff",
       "file": "server/tests/test_id_chain_message_metadata.py",
       "code": "F401",
       "count": 1

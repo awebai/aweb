@@ -185,7 +185,7 @@ adapter resolves correlation before constructing the signed native message;
 it cannot rewrite a signed conversation ID later. This preserves
 [original native envelope bytes](human-channels-contract-v1.md#compatibility-bytes-and-signatures)
 and the existing reply-correlation rule
-([human-channels-contract-v1.md](human-channels-contract-v1.md), lines 451–452).
+([human-channels-contract-v1.md](human-channels-contract-v1.md), lines 449–450).
 A platform's fresh-message/thread UI belongs to its reviewed profile; there is
 no generic "latest thread" fallback. The email rules appear in its profile.
 
