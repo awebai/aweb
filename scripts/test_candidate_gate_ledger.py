@@ -315,8 +315,8 @@ def main() -> None:
         (repo / "candidate-gate/proof.Dockerfile").write_text(
             'FROM busybox:1.37\nRUN test "$((6*7))" = 42\n'
         )
-        (repo / "naapp/library/test-vectors/blueprints/team").mkdir(parents=True)
-        (repo / "naapp/library/test-vectors/blueprints/team/proof").write_text(
+        (repo / "test-vectors/blueprints/team").mkdir(parents=True)
+        (repo / "test-vectors/blueprints/team/proof").write_text(
             "fixture\n"
         )
         shutil.copy2(ROOT / "docker-compose.e2e.yml", repo / "docker-compose.e2e.yml")

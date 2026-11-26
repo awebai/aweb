@@ -16,7 +16,7 @@ Environment:
                                MUST equal Library's LIBRARY_PUBLIC_ORIGIN: it is
                                the team-auth audience the seed signs.
   LIBRARY_E2E_BLUEPRINT_SRC    blueprint source dir
-                               (default: ../blueprints/team)
+                               (default: test-vectors/blueprints/team)
 """
 
 from __future__ import annotations
@@ -36,7 +36,10 @@ AW_BIN = os.environ.get("AW_BIN", "aw")
 AWID_URL = os.environ.get("LIBRARY_E2E_AWID_URL", "http://127.0.0.1:18010")
 LIBRARY_URL = os.environ.get("LIBRARY_E2E_LIBRARY_URL", "http://127.0.0.1:18765")
 BLUEPRINT_SRC = Path(
-    os.environ.get("LIBRARY_E2E_BLUEPRINT_SRC", "../blueprints/team")
+    os.environ.get(
+        "LIBRARY_E2E_BLUEPRINT_SRC",
+        Path(__file__).resolve().parents[2] / "test-vectors/blueprints/team",
+    )
 ).resolve()
 
 BLUEPRINT_PAYLOAD_SCHEMA = "aweb.blueprint.import-payload.v1"
@@ -179,8 +182,7 @@ def main() -> int:
     if not BLUEPRINT_SRC.is_dir():
         raise SystemExit(
             f"blueprint source not found: {BLUEPRINT_SRC}\n"
-            "Expected the ../blueprints checkout as a sibling of this repo, or set "
-            "LIBRARY_E2E_BLUEPRINT_SRC to the catalog blueprint directory."
+            "Set LIBRARY_E2E_BLUEPRINT_SRC to the catalog blueprint directory."
         )
 
     blueprint_id, source_version = _source_metadata()

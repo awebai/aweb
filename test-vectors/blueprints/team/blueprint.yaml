@@ -1,0 +1,23 @@
+id: aweb.team
+name: Aweb team e2e fixture
+version: 0.1.13
+summary: Minimal versioned fixture for the real Library materialization journey.
+description: >-
+  This fixture retains only the coordinator, developer, and reviewer profiles
+  needed to prove the self-hosted Library and activation path.
+profiles:
+  - id: coordinator
+    default_count: 1
+    min: 1
+    max: 1
+  - id: developer
+    default_count: 1
+    min: 1
+    max: 2
+  - id: reviewer
+    default_count: 1
+    min: 0
+    max: 1
+expected_apps: [library, tasks]
+first_mission_examples:
+  - Implement a scoped change and submit it for review.

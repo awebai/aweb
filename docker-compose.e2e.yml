@@ -1,11 +1,12 @@
 # Combined local end-to-end stack: awid + aweb + Library on one network.
 #
-# Brings up, from source, the services the profile/team/Library flow exercises:
+# Brings up the services the profile/team/Library flow exercises:
 #   postgres (tmpfs, ephemeral) + redis + awid + aweb + library
 #
-# awid, aweb and library build from this repo (context `.`); library depends on
-# the in-repo awid and naapp-lib. Its committed aweb.team fixture is selected by
-# the e2e stack script and stays overridable via LIBRARY_E2E_BLUEPRINT_SRC.
+# awid and aweb build from this repo (context `.`). Library runs the published
+# naapp image pinned by digest in tools/app-images.json; the e2e stack script
+# resolves it into LIBRARY_E2E_LIBRARY_IMAGE. The script also selects the
+# committed aweb.team fixture, overridable via LIBRARY_E2E_BLUEPRINT_SRC.
 #
 # Rate limiting is disabled and DNS verification skipped (like folio's
 # docker-compose.e2e.yml) so a freshly created test team works offline.
@@ -102,9 +103,7 @@ services:
       retries: 30
 
   library:
-    build:
-      context: .
-      dockerfile: naapp/library/Dockerfile
+    image: ${LIBRARY_E2E_LIBRARY_IMAGE:?set by scripts/e2e-library-stack.sh from tools/app-images.json}
     environment:
       LIBRARY_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/library
       LIBRARY_AWID_REGISTRY_URL: http://awid:8010

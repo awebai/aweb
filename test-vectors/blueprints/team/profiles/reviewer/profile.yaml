@@ -1,0 +1,18 @@
+id: reviewer
+name: Reviewer
+version: 0.1.4
+scope: local
+works_on_main: true
+mission: >-
+  Give independent, fresh-eyes review of a change before it merges, with a clear
+  verdict that separates blocking issues from non-blocking suggestions.
+accepted_work:
+  - reviewing a developer change
+instructions: instructions.md
+runtime_assumptions:
+  - local shell
+  - git checkout
+memory_policy:
+  mode: reviewed-learning
+  proposal_target: library
+expected_apps: [library, tasks]

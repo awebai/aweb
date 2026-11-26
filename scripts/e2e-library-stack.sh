@@ -4,21 +4,22 @@
 # seed the aweb.team catalog blueprint into Library, and verify it is live.
 #
 # This is the self-hosted tier of the aweb e2e harness (default-aabq.1):
-# postgres + redis + awid + OSS aweb + Library, all built from source, anchored
-# on folio/library docker-compose.e2e.yml.
+# postgres + redis + awid + OSS aweb, built from source, and Library, the
+# published naapp image pinned by digest in tools/app-images.json.
 #
 # Usage:
 #   ./scripts/e2e-library-stack.sh [all|up|seed|server-proof|down]
 #     all  (default)  up + wait healthy + seed + verify + teardown
-#     up              build + start the stack, wait until healthy, leave running
+#     up              build aweb/awid, pull Library, start the stack, wait until
+#                     healthy, leave running
 #     seed            seed the aweb.team blueprint into an already-running stack
 #     server-proof    bind installed aweb version/wheel bytes to container identity
 #     down            tear the stack down and remove all state (-v)
 #
-# Committed local inputs (see docs/e2e-library-stack.md):
-#   naapp/library                                  Library service source, built
-#                                                  from this checkout's root
-#   naapp/library/test-vectors/blueprints/team     seeded aweb.team blueprint
+# Committed inputs (see docs/e2e-library-stack.md):
+#   tools/app-images.json            Library image, by digest; an empty digest
+#                                    refuses every action
+#   test-vectors/blueprints/team     seeded aweb.team blueprint
 # Override the blueprint with LIBRARY_E2E_BLUEPRINT_SRC.
 #
 # Environment overrides:
@@ -40,6 +41,10 @@ ACTION="${1:-all}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$REPO_ROOT/scripts/journey-network.sh"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.e2e.yml"
+# Every action's compose configuration names the pinned image, so an
+# unpublished pin refuses here, before any Docker call.
+LIBRARY_E2E_LIBRARY_IMAGE="$(python3 "$REPO_ROOT/scripts/app_images.py" library)" || exit 2
+export LIBRARY_E2E_LIBRARY_IMAGE
 # Per-worktree compose project name so concurrent runs from different checkouts
 # (e.g. an author and a reviewer worktree) never tear down each other's stack.
 # Stable for a given checkout, so up/seed/down within one run target one stack.
@@ -66,8 +71,8 @@ AWEB_URL="$(journey_url "$PROJECT" aweb 8000 "http://$DOCKER_PUBLISHED_HOST:$AWE
 LIBRARY_URL="$(journey_url "$PROJECT" library 8765 "http://$DOCKER_PUBLISHED_HOST:$LIBRARY_PORT")"
 
 # Both inputs are versioned under this checkout, so release evidence and normal
-# e2e runs consume the same exact source. The blueprint override remains supported.
-export LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$REPO_ROOT/naapp/library/test-vectors/blueprints/team}"
+# e2e runs consume the same exact bytes. The blueprint override remains supported.
+export LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$REPO_ROOT/test-vectors/blueprints/team}"
 # Keep every advertised public endpoint in lockstep with the published-host probes.
 export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="${LIBRARY_E2E_AWEB_PUBLIC_ORIGIN:-$AWEB_URL}"
 export LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL="${LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL:-$AWID_URL}"
@@ -113,12 +118,8 @@ remove_stack() {
 }
 
 stack_up() {
-  if [[ ! -f "$REPO_ROOT/naapp/library/Dockerfile" ]]; then
-    echo "FATAL: library source not found at $REPO_ROOT/naapp/library" >&2
-    exit 1
-  fi
   echo "=== Building and starting the stack ==="
-  echo "  library source:  $REPO_ROOT/naapp/library"
+  echo "  library image:   $LIBRARY_E2E_LIBRARY_IMAGE"
   echo "  blueprint src:   $LIBRARY_E2E_BLUEPRINT_SRC"
   # Reset this exact project first and prove it has no residue. A failed reset
   # must not silently reuse state or redirect cleanup to another invocation.

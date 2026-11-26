@@ -61,7 +61,7 @@ fi
 # Library builds from the candidate checkout, with its awid and naapp-lib.
 [[ -z "${LIBRARY_E2E_LIBRARY_CONTEXT:-}" ]] \
   || refuse "LIBRARY_E2E_LIBRARY_CONTEXT is not an input: Library builds from the candidate checkout"
-LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$ROOT/naapp/library/test-vectors/blueprints/team}"
+LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$ROOT/test-vectors/blueprints/team}"
 canonical_git_input() {
   local name="$1" path="$2" top canonical
   top="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" \
@@ -132,7 +132,7 @@ input_identity() {
     external_inputs+="$name=source$relative"$'\n'
   fi
 }
-input_identity blueprints "$LIBRARY_E2E_BLUEPRINT_SRC" naapp/library/test-vectors/blueprints/team
+input_identity blueprints "$LIBRARY_E2E_BLUEPRINT_SRC" test-vectors/blueprints/team
 gate_setting() {
   local name="$1" default="$2" value
   value="${!name:-$default}"

@@ -6,7 +6,8 @@ encrypted-message E2E protocol. Library is unnecessary for basic communication,
 identity/team membership, or encrypted-v2 interoperability.
 
 The self-hosted integration stack the optional profile/team/Library flow runs against. It
-brings up, from source, on one Docker network:
+brings up, on one Docker network, awid and aweb built from source and Library
+as its published image:
 
 | Service  | Source            | Host port (default) | In-container |
 |----------|-------------------|---------------------|--------------|
@@ -14,7 +15,7 @@ brings up, from source, on one Docker network:
 | redis    | `redis:7`         | (internal only)     | 6379         |
 | awid     | `awid/Dockerfile` | 18010               | 8010         |
 | aweb     | `server/Dockerfile` | 18000             | 8000         |
-| library  | `naapp/library/Dockerfile` | 18765      | 8765         |
+| library  | `tools/app-images.json` (`ghcr.io/awebai/library@sha256:…`) | 18765 | 8765 |
 
 It then **seeds** the current `aweb.team` catalog blueprint into Library over
 real AWID team-certificate auth, so the materializer is exercised against the
@@ -27,12 +28,14 @@ compose or prerequisites for using it.
 
 ## Versioned inputs
 
-The harness builds Library from `naapp/library/Dockerfile` with the repository
-root as its context (`context: .`), like awid and aweb, because Library depends
-on the in-repo awid and naapp-lib. It seeds the committed
-`naapp/library/test-vectors/blueprints/team` aweb.team fixture. The local
-release gate therefore records one clean exact source SHA for the complete
-journey.
+Library lives in the naapp repository, which publishes its image. The harness
+runs exactly the image that `tools/app-images.json` pins by digest; a reviewed
+aweb change moves that pin to a naapp release. While the pin has no digest the
+naapp image is not yet published, and every harness action refuses with an
+error naming `tools/app-images.json` instead of building Library. The harness
+seeds the committed `test-vectors/blueprints/team` aweb.team fixture, which the
+`cli/go/e2e` suite also reads. The tree at one source SHA therefore fixes every
+input of the journey, and the local release gate records that SHA.
 
 `LIBRARY_E2E_BLUEPRINT_SRC` remains an explicit maintainer override for testing
 another checked-out blueprint. A release gate requires it to remain inside a
@@ -50,7 +53,7 @@ make e2e-library-stack
 Step by step (leaves the stack running between steps):
 
 ```bash
-make e2e-library-stack-up     # build + start, wait until all three are healthy
+make e2e-library-stack-up     # build, pull Library, start, wait until all three are healthy
 make e2e-library-stack-seed   # publish the aweb.team blueprint into Library
 make e2e-library-stack-down   # remove containers AND all state (-v)
 ```
@@ -157,7 +160,7 @@ harness and Compose stack. Explicit port overrides remain supported.
 | `LIBRARY_E2E_AWEB_PORT` | 18000 | aweb host port |
 | `LIBRARY_E2E_LIBRARY_PORT` | 18765 | library host port |
 | `LIBRARY_E2E_POSTGRES_PORT` | 55432 | postgres host port |
-| `LIBRARY_E2E_BLUEPRINT_SRC` | `../blueprints/team` | catalog blueprint source |
+| `LIBRARY_E2E_BLUEPRINT_SRC` | `test-vectors/blueprints/team` | catalog blueprint source |
 | `LIBRARY_E2E_LIBRARY_URL` | `http://127.0.0.1:18765` | Library base URL the Go e2e suite drives |
 | `AW_BIN` | `aw` | exact aw binary used to drive the seed / Go suite; `cli/scripts/e2e.sh` builds only when it is unset |
 | `AW_E2E` | (unset) | set to `1` to run the `cli/go/e2e` suite (else it skips) |

@@ -636,14 +636,6 @@
     "naapp/library/src/library/models.py",
     "naapp/library/src/library/repository.py",
     "naapp/library/src/library/surfaces.py",
-    "naapp/library/test-vectors/blueprints/team/README.md",
-    "naapp/library/test-vectors/blueprints/team/blueprint.yaml",
-    "naapp/library/test-vectors/blueprints/team/profiles/coordinator/instructions.md",
-    "naapp/library/test-vectors/blueprints/team/profiles/coordinator/profile.yaml",
-    "naapp/library/test-vectors/blueprints/team/profiles/developer/instructions.md",
-    "naapp/library/test-vectors/blueprints/team/profiles/developer/profile.yaml",
-    "naapp/library/test-vectors/blueprints/team/profiles/reviewer/instructions.md",
-    "naapp/library/test-vectors/blueprints/team/profiles/reviewer/profile.yaml",
     "naapp/library/tests/conftest.py",
     "naapp/library/tests/golden/aweb.css",
     "naapp/library/tests/golden/landing.html",
@@ -1498,6 +1490,14 @@
     "naapp-lib/tests/test_manifest_file.py": "naapp-contracts/tests/test_manifest_file.py",
     "naapp-lib/tests/test_manifest_tools.py": "naapp-contracts/tests/test_manifest_tools.py",
     "naapp-lib/tests/test_manifest_v2_vectors.py": "naapp-contracts/tests/test_manifest_v2_vectors.py",
-    "naapp-lib/tests/test_manifest_v3.py": "naapp-contracts/tests/test_manifest_v3.py"
+    "naapp-lib/tests/test_manifest_v3.py": "naapp-contracts/tests/test_manifest_v3.py",
+    "naapp/library/test-vectors/blueprints/team/README.md": "test-vectors/blueprints/team/README.md",
+    "naapp/library/test-vectors/blueprints/team/blueprint.yaml": "test-vectors/blueprints/team/blueprint.yaml",
+    "naapp/library/test-vectors/blueprints/team/profiles/coordinator/instructions.md": "test-vectors/blueprints/team/profiles/coordinator/instructions.md",
+    "naapp/library/test-vectors/blueprints/team/profiles/coordinator/profile.yaml": "test-vectors/blueprints/team/profiles/coordinator/profile.yaml",
+    "naapp/library/test-vectors/blueprints/team/profiles/developer/instructions.md": "test-vectors/blueprints/team/profiles/developer/instructions.md",
+    "naapp/library/test-vectors/blueprints/team/profiles/developer/profile.yaml": "test-vectors/blueprints/team/profiles/developer/profile.yaml",
+    "naapp/library/test-vectors/blueprints/team/profiles/reviewer/instructions.md": "test-vectors/blueprints/team/profiles/reviewer/instructions.md",
+    "naapp/library/test-vectors/blueprints/team/profiles/reviewer/profile.yaml": "test-vectors/blueprints/team/profiles/reviewer/profile.yaml"
   }
 }

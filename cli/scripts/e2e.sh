@@ -9,9 +9,11 @@
 # Usage:
 #   ./cli/scripts/e2e.sh            (or: make -C cli e2e)
 #
-# Requires Docker. The stack builds Library from this checkout and uses its
-# committed aweb.team fixture, so no sibling checkout is needed; override the
-# fixture with LIBRARY_E2E_BLUEPRINT_SRC to test another checked-out input.
+# Requires Docker. The stack runs the Library image pinned by digest in
+# tools/app-images.json and refuses while that pin has no digest. It seeds this
+# checkout's committed aweb.team fixture, so no sibling checkout is needed;
+# override the fixture with LIBRARY_E2E_BLUEPRINT_SRC to test another
+# checked-out input.
 #
 # Environment overrides:
 #   LIBRARY_E2E_AWID_PORT     awid host port    (default: 18010)
@@ -79,6 +81,8 @@ configure_go_args() {
 }
 
 main() {
+  # Refuse an unpublished Library pin before there is a stack to tear down.
+  python3 "$REPO_ROOT/scripts/app_images.py" library >/dev/null || exit 2
   trap teardown EXIT
   select_aw_binary
 

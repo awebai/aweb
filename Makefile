@@ -92,7 +92,7 @@ help:
 	@echo "  check-extension-docs Verify extension docs, source events, vectors, and authority map"
 	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
 	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
-	@echo "  e2e-library-stack             Bring up awid+aweb+Library, seed aweb.team, verify, tear down (requires Docker + ../library + ../blueprints)"
+	@echo "  e2e-library-stack             Bring up awid+aweb+Library, seed aweb.team, verify, tear down (requires Docker and the Library image pinned in tools/app-images.json)"
 	@echo "  e2e-library-stack-up / -seed / -down  Drive the combined stack step by step"
 	@echo ""
 	@echo "  awid-prod-verify    Print awid prod table row counts"
@@ -520,7 +520,7 @@ awid-logs:
 	cd awid && POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-change-me} docker compose logs -f awid
 
 # ---- combined e2e stack: awid + aweb + Library, seeded ----------------------
-# Requires Docker and sibling ../library + ../blueprints checkouts.
+# Requires Docker and the Library image pinned in tools/app-images.json.
 # See docs/e2e-library-stack.md.
 e2e-library-stack:
 	./scripts/e2e-library-stack.sh all

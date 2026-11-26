@@ -312,10 +312,10 @@ class FrozenGateInput(unittest.TestCase):
                 )
                 (repo / "candidate-gate").mkdir()
                 (repo / "candidate-gate/Dockerfile").write_text("FROM scratch\n")
-                (repo / "naapp/library/test-vectors/blueprints/team").mkdir(
+                (repo / "test-vectors/blueprints/team").mkdir(
                     parents=True
                 )
-                (repo / "naapp/library/test-vectors/blueprints/team/proof").touch()
+                (repo / "test-vectors/blueprints/team/proof").touch()
                 (repo / "Makefile").write_text(
                     """ .DEFAULT:
 \t@true
@@ -342,7 +342,7 @@ e2e-user-paths:
                 git("commit", "-qm", "gate entrypoint fixture")
                 git("remote", "add", "origin", str(repo))
                 git("fetch", "--quiet", "origin", "main")
-                blueprints = repo / "naapp/library/test-vectors/blueprints/team"
+                blueprints = repo / "test-vectors/blueprints/team"
                 self.assertEqual(
                     subprocess.check_output(
                         ["git", "-C", str(blueprints), "rev-parse", "--show-toplevel"],

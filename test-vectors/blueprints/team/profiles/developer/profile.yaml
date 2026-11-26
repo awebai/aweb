@@ -1,0 +1,16 @@
+id: developer
+name: Developer
+version: 0.1.4
+scope: local
+works_on_main: false
+mission: Implement one scoped task and provide its validation evidence.
+accepted_work:
+  - implementing a scoped task
+instructions: instructions.md
+runtime_assumptions:
+  - local shell
+  - git checkout
+memory_policy:
+  mode: reviewed-learning
+  proposal_target: library
+expected_apps: [library, tasks]
