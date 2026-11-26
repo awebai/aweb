@@ -266,9 +266,14 @@ class ProjectJob(CloudFixture, unittest.TestCase):
             "archive_sha256": "0" * 64,
         }
 
-    def cloud_evidence(self, *, built=None, inputs=True, suite="0", built_line=True):
+    def cloud_evidence(self, *, built=None, inputs=True, suite="0", built_line=True, stages=None):
         built = built or self.sha
         self.evidence = {"var/log/vm-gate/release/cloud/exit": suite + "\n"}
+        verdicts = {stage: "PASSED" for stage in project.release.CLOUD_GATE_STAGES} if stages is None else stages
+        if verdicts:
+            self.evidence[f"tmp/ac-candidate-gate-{self.cloud_sha}/summary.tsv"] = "".join(
+                f"{stage}\t{verdict}\t{stage}.log\t1s\n" for stage, verdict in verdicts.items()
+            )
         if inputs:
             self.evidence[f"tmp/ac-candidate-gate-{self.cloud_sha}/inputs.tsv"] = (
                 f"cloud-sha\t{self.cloud_sha}\naweb-lock-source\t{self.sha}\naweb-lock-tag\tserver-v1.27.55\n"
@@ -298,6 +303,23 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         inputs = call["executor_factory"].keywords["release"]
         self.assertEqual(inputs["files"], [])
         self.assertEqual(inputs["hermes_key"], self.key)
+
+    def test_ac_release_gate_is_green_only_when_every_stage_in_its_summary_passed(self):
+        every = {stage: "PASSED" for stage in project.release.CLOUD_GATE_STAGES}
+        first = project.release.CLOUD_GATE_STAGES[0]
+        for name, stages, expected in (
+            ("all passed", every, 0),
+            ("one failed", {**every, first: "FAILED"}, 1),
+            ("one row missing", {stage: v for stage, v in every.items() if stage != first}, 1),
+            ("no summary", {}, 1),
+        ):
+            with self.subTest(name=name):
+                self.calls.clear()
+                self.cloud_evidence(stages=stages)
+                code, receipt = self.invoke_release_gate()
+                self.assertEqual(code, expected, receipt)
+                expected_verdicts = {stage: stages.get(stage, "MISSING") for stage in every}
+                self.assertEqual(receipt["stages"], expected_verdicts)
 
     def test_ac_built_commit_other_than_the_input_is_red(self):
         self.cloud_evidence(built="e" * 40)

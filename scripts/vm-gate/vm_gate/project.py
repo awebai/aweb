@@ -14,7 +14,8 @@
   member, with --aweb-source as the aweb commit its journeys build; without
   it, `make gate GATE_STAGES=all`. The commit Cloud's gate built is the
   aweb-built-head line of its own inputs.tsv (git rev-parse HEAD of the tree
-  its journeys built), never the input copied.
+  its journeys built), never the input copied. Either way green needs every
+  stage PASSED in Cloud's own summary.tsv; a missing row is red.
 
 Every outcome, refusals included, writes the receipt. Every digest in it is
 sha256:<hex>.
@@ -318,8 +319,9 @@ def project_job(args, *, factory=None, out=None):
         else:
             if args.image and suite["exit"] == 0:
                 record["aweb_source_built"], record["aweb_source_tag"] = cloud_inputs(evidence, args.sha)
-            if not args.image:
-                record["stages"] = release.cloud_stage_verdicts(evidence, args.sha)
+            # Both Cloud gates are green only when their own summary shows every
+            # stage PASSED; a missing row reads MISSING and is red.
+            record["stages"] = release.cloud_stage_verdicts(evidence, args.sha)
     except (Refused, Infrastructure) as exc:
         record["vm_gate"].update(infrastructure=exc.classification, error=str(exc), exit=int(exc.exit_code))
     code = exit_code(record)
