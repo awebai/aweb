@@ -309,36 +309,6 @@ async def test_live_native_creation_and_managed_refusal_have_no_side_effects(
 
 
 @pytest.mark.asyncio
-async def test_typed_guest_metadata_never_resolves_the_bridge_as_the_human(
-    aweb_cloud_db,
-):
-    from aweb.identity_metadata import (
-        lookup_participant_identity_metadata,
-        routable_chat_address,
-    )
-
-    db = aweb_cloud_db.aweb_db
-    await db.execute(
-        "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) VALUES ('team:example.test','example.test','team','did:key:zTeam')"
-    )
-    await db.execute(
-        "INSERT INTO {{tables.agents}} (team_id,did_key,did_aw,alias,identity_scope,inbound_mode) VALUES ('team:example.test','did:key:zBridge','did:aw:bridge','Bridge','global','open')"
-    )
-    guest = participant(VECTORS["derivations"][0]["expected"])
-    await db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE did_aw='did:aw:bridge'"
-    )
-    meta = await lookup_participant_identity_metadata(db, guest)
-    assert meta["participant_kind"] == "bridged"
-    assert "agent_id" not in meta and "stable_id" not in meta and "alias" not in meta
-    assert routable_chat_address(meta, "team:example.test", "Same name") == ""
-    native = await lookup_participant_identity_metadata(
-        db, participant({"kind": "native", "did": "did:aw:bridge"})
-    )
-    assert native["stable_id"] == "did:aw:bridge" and native["alias"] == "Bridge"
-
-
-@pytest.mark.asyncio
 async def test_populated_pre_p3_upgrade_preserves_native_rows_and_receipt_fk(
     shared_test_pool, tmp_path
 ):

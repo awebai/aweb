@@ -128,10 +128,9 @@ establish all those facts before calling them in a managed-message read/send
 path. A successful projection is not a grant. P3 does not change what an existing
 message verifier calls `verified`.
 
-The typed metadata lookup `lookup_participant_identity_metadata` never looks up
-a guest using the bridge's DID as the human. Guest metadata cannot produce a
-native alias/address fallback; replies require the stored typed session route.
-Native DID metadata lookup remains unchanged.
+A guest is never looked up by the bridge's DID as the human. Guest metadata
+cannot produce a native alias/address fallback; replies require the stored
+typed session route. Native DID metadata lookup remains unchanged.
 
 ## Evidence and remaining activation
 
