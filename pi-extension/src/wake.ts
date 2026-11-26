@@ -16,7 +16,7 @@ export type WakeLogEvent =
   | "wake_delivered"
   | "wake_delivery_failed";
 
-export type WakeLogger = (event: WakeLogEvent, fields?: Record<string, unknown>) => void;
+type WakeLogger = (event: WakeLogEvent, fields?: Record<string, unknown>) => void;
 
 let diagnosticsInstalled = false;
 
