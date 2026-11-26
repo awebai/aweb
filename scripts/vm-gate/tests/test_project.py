@@ -12,7 +12,9 @@ from test_config import hashes
 from test_release import CloudFixture, commit
 from test_source import git
 
-MEMBER = "ghcr.io/awebai/ac@sha256:" + "b" * 64
+# Cloud's gate takes the image index; the launcher resolves its amd64 member.
+INDEX = "ghcr.io/awebai/ac@sha256:" + "a" * 64
+MEMBER_DIGEST = "sha256:" + "b" * 64
 
 
 def digest(data: bytes) -> str:
@@ -209,7 +211,7 @@ class ProjectJob(CloudFixture, unittest.TestCase):
 
     def test_aweb_refusals_write_a_receipt_and_start_no_machine(self):
         for extra, reason in (
-            (("--image", MEMBER), "Cloud's inputs"),
+            (("--image", INDEX), "Cloud's inputs"),
             (("--aweb-source", self.sha), "Cloud's inputs"),
             (("--stages", "checks"), "full gate"),
         ):
@@ -256,11 +258,13 @@ class ProjectJob(CloudFixture, unittest.TestCase):
 
     # ac
 
-    def member(self, image, run_id, out):
+    def resolved(self, image, run_id, out):
+        """release.image_archive: the index's amd64 member, saved for the guest."""
+        self.assertEqual(image, INDEX)
         out.write_bytes(b"image")
         return {
             "image": image,
-            "member": "sha256:" + "b" * 64,
+            "member": MEMBER_DIGEST,
             "config": "sha256:" + "d" * 64,
             "member_architecture": "amd64",
             "archive_sha256": "0" * 64,
@@ -281,8 +285,8 @@ class ProjectJob(CloudFixture, unittest.TestCase):
             )
 
     def invoke_release_gate(self, *extra):
-        with patch.object(project, "member_archive", self.member):
-            return self.invoke("ac", "--image", MEMBER, "--aweb-source", self.sha, *extra)
+        with patch.object(project.release, "image_archive", self.resolved):
+            return self.invoke("ac", "--image", INDEX, "--aweb-source", self.sha, *extra)
 
     def test_ac_release_gate_reads_the_built_commit_from_cloud_evidence(self):
         self.cloud_evidence()
@@ -293,10 +297,20 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         self.assertEqual(receipt["aweb_source"], self.sha)
         self.assertEqual(receipt["aweb_source_built"], self.sha)
         self.assertEqual(receipt["aweb_source_tag"], "server-v1.27.55")
-        self.assertEqual(receipt["image"]["member"], "sha256:" + "b" * 64)
-        self.assertEqual(receipt["image"]["config"], "sha256:" + "d" * 64)
+        self.assertEqual(
+            receipt["image"],
+            {
+                "index": INDEX,
+                "member": MEMBER_DIGEST,
+                "config": "sha256:" + "d" * 64,
+                "member_architecture": "amd64",
+            },
+        )
         [call] = self.calls
         self.assertIn("make release-gate", call["command"])
+        # The gate proves the index and its member separately: two digests.
+        self.assertIn(f"AC_CANDIDATE_RELEASE_IMAGE={INDEX}", call["command"])
+        self.assertIn(f"AC_CANDIDATE_RELEASE_IMAGE_MEMBER={MEMBER_DIGEST}", call["command"])
         self.assertIn(f"AC_CANDIDATE_AWEB_LOCK_SOURCE_SHA={self.sha}", call["command"])
         self.assertNotIn("AC_CANDIDATE_AWEB_WHEELS", call["command"])
         self.assertNotIn("make candidate-gate", call["command"])
@@ -346,15 +360,16 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         self.assertEqual(self.calls, [])
 
     def test_ac_image_without_aweb_source_is_refused(self):
-        code, receipt = self.invoke("ac", "--image", MEMBER)
+        code, receipt = self.invoke("ac", "--image", INDEX)
         self.assertEqual(code, 2)
         self.assertIn("--aweb-source", receipt["vm_gate"]["error"])
         self.assertEqual(self.calls, [])
 
-    def test_ac_index_instead_of_member_is_refused(self):
+    def test_ac_image_named_by_tag_is_refused(self):
         code, receipt = self.invoke("ac", "--image", "ghcr.io/awebai/ac:latest", "--aweb-source", self.sha)
         self.assertEqual(code, 2)
-        self.assertIn("amd64 member", receipt["vm_gate"]["error"])
+        self.assertIn("<repository>@sha256:<index>", receipt["vm_gate"]["error"])
+        self.assertEqual(self.calls, [])
 
     def test_ac_release_on_a_moved_main_is_refused(self):
         moved = self.move_main()

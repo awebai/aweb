@@ -10,8 +10,9 @@
   gate the guest rebuilds them from S. Green needs the suite green, the
   rebuild equal to the files and each server container holding the wheel.
 - ac: Cloud's gate at S from the local checkout, shipped as a bundle. With
-  --image (the amd64 member) the guest runs `make release-gate` on that
-  member, with --aweb-source as the aweb commit its journeys build; without
+  --image (the image index) the controller resolves its amd64 member and the
+  guest runs `make release-gate` on that member with the index as its release
+  image, with --aweb-source as the aweb commit its journeys build; without
   it, `make gate GATE_STAGES=all`. The commit Cloud's gate built is the
   aweb-built-head line of its own inputs.tsv (git rev-parse HEAD of the tree
   its journeys built), never the input copied. Either way green needs every
@@ -39,7 +40,6 @@ from .source import git, prepare
 
 PROJECTS = ("aweb", "ac")
 SHA = re.compile(r"[0-9a-f]{40}")
-MEMBER = re.compile(r"(?P<repository>[a-z0-9./-]+)@(?P<member>sha256:[0-9a-f]{64})")
 GREEN, RED, REFUSED, INFRASTRUCTURE = 0, 1, 2, 70
 
 
@@ -64,33 +64,12 @@ def admit(args):
     else:
         if args.files:
             raise Refused("--files is aweb's input: Cloud installs aweb from PyPI per its lock")
-        if args.image and not MEMBER.fullmatch(args.image):
-            raise Refused("--image must be <repository>@sha256:<amd64 member>")
+        if args.image and not release.IMAGE.fullmatch(args.image):
+            raise Refused("--image must be <repository>@sha256:<index>")
         if args.image and not args.aweb_source:
             raise Refused("--image needs --aweb-source, the aweb commit the journeys build")
         if args.aweb_source and not SHA.fullmatch(args.aweb_source):
             raise Refused("--aweb-source must be a full lowercase commit SHA")
-
-
-def member_archive(image, run_id, out):
-    """Pull the amd64 member as given and save it by a run tag, so a load resolves it by digest."""
-    match = MEMBER.fullmatch(image)
-    repository, member = match["repository"], match["member"]
-    release.docker("pull", "--quiet", "--platform", release.RELEASE_PLATFORM, image)
-    tag = f"{repository}:gate-{run_id}"
-    release.docker("tag", image, tag)
-    try:
-        release.docker("save", "--output", str(out), tag)
-    finally:
-        release.docker("image", "rm", tag)
-    config, architecture = release.shipped_member(out)
-    return {
-        "image": image,
-        "member": member,
-        "config": config,
-        "member_architecture": architecture,
-        "archive_sha256": release.sha256(out),
-    }
 
 
 def aweb_script(sha, files, *, logs=LOGS, files_dir=GUEST_FILES):
@@ -287,7 +266,10 @@ def project_job(args, *, factory=None, out=None):
                 args, config, backend, machine, target, directory, run_id, key, launcher, timeout, factory
             )
             if image:
-                record["image"] = {k: image[k] for k in ("member", "config", "member_architecture")}
+                record["image"] = {
+                    "index": image["image"],
+                    **{k: image[k] for k in ("member", "config", "member_architecture")},
+                }
         with handling():
             result = runtime.run()
         (directory / "cloud-image.tar").unlink(missing_ok=True)
@@ -361,7 +343,9 @@ def cloud_runtime(args, config, backend, machine, target, directory, run_id, key
     real_main = git(repo, "rev-parse", "refs/remotes/origin/main^{commit}").stdout.strip()
     bundle_sha256 = release.cloud_bundle(repo, args.sha, bundle, main=real_main if gate_only else None)
     archive = None if gate_only else directory / "cloud-image.tar"
-    image = None if gate_only else member_archive(args.image, run_id, archive)
+    # Cloud's gate proves the index and its amd64 member separately: the guest
+    # gets the index as its release image and runs the member resolved here.
+    image = None if gate_only else release.image_archive(args.image, run_id, archive)
     script = partial(
         release.guest_script,
         cloud_sha=args.sha,
