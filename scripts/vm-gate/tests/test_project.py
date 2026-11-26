@@ -3,7 +3,9 @@
 import hashlib
 import io
 import json
+import re
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from vm_gate import project
@@ -15,6 +17,30 @@ from test_source import git
 # Cloud's gate takes the image index; the launcher resolves its amd64 member.
 INDEX = "ghcr.io/awebai/ac@sha256:" + "a" * 64
 MEMBER_DIGEST = "sha256:" + "b" * 64
+
+
+# One real ac receipt, written by project_job with only the machine faked. Cloud's
+# release tests load it as their launcher stand-in, so a format change here fails
+# there too; the test below keeps it equal in form to what project_job writes.
+AC_RECEIPT_FIXTURE = Path(__file__).resolve().parent / "fixtures/ac-release-receipt.json"
+
+
+def form(value):
+    """A receipt value's format: per-run values become their kind, fixed values stay."""
+    if isinstance(value, dict):
+        return {key: form(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [form(item) for item in value]
+    if isinstance(value, str):
+        for kind, pattern in (
+            ("<digest>", r"sha256:[0-9a-f]{64}"),
+            ("<commit>", r"[0-9a-f]{40}"),
+            ("<run>", r"vm-[0-9a-f]{32}"),
+            ("<path>", r"/\S+"),
+        ):
+            if re.fullmatch(pattern, value):
+                return kind
+    return value
 
 
 def digest(data: bytes) -> str:
@@ -272,7 +298,11 @@ class ProjectJob(CloudFixture, unittest.TestCase):
 
     def cloud_evidence(self, *, built=None, inputs=True, suite="0", built_line=True, stages=None):
         built = built or self.sha
-        self.evidence = {"var/log/vm-gate/release/cloud/exit": suite + "\n"}
+        self.evidence = {
+            "var/log/vm-gate/release/cloud/exit": suite + "\n",
+            # What a real guest writes: uname -m, then the engine's architecture.
+            "var/log/vm-gate/release/host-architecture": "x86_64\nx86_64\n",
+        }
         verdicts = {stage: "PASSED" for stage in project.release.CLOUD_GATE_STAGES} if stages is None else stages
         if verdicts:
             self.evidence[f"tmp/ac-candidate-gate-{self.cloud_sha}/summary.tsv"] = "".join(
@@ -337,6 +367,15 @@ class ProjectJob(CloudFixture, unittest.TestCase):
                 self.assertEqual(code, expected, receipt)
                 expected_verdicts = {stage: stages.get(stage, "MISSING") for stage in every}
                 self.assertEqual(receipt["stages"], expected_verdicts)
+
+    def test_the_ac_receipt_fixture_has_the_form_project_job_writes(self):
+        self.cloud_evidence()
+        code, receipt = self.invoke_release_gate()
+        self.assertEqual(code, 0, receipt)
+        fixture = json.loads(AC_RECEIPT_FIXTURE.read_text())
+        self.assertEqual(form(receipt), form(fixture))
+        self.assertEqual(form(fixture["image"]["index"]), "<digest>")
+        self.assertEqual(form(fixture["aweb_source_built"]), "<commit>")
 
     def test_ac_built_commit_other_than_the_input_is_red(self):
         self.cloud_evidence(built="e" * 40)

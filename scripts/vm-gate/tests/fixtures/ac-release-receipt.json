@@ -1,0 +1,44 @@
+{
+  "ac_parent_of_c": "23077196066149dd90afb0d9f35e816ae29d6ea6",
+  "aweb_source": "640aaf3ff9b5309e78068cac6bfd7263ed62ccb9",
+  "aweb_source_built": "640aaf3ff9b5309e78068cac6bfd7263ed62ccb9",
+  "aweb_source_tag": "server-v1.27.55",
+  "command": "make release-gate",
+  "evidence": "/state-root/state/runs/vm-38b836c130e149e7a1471ef1abf9632f/evidence",
+  "exit": 0,
+  "host_architecture": [
+    "x86_64",
+    "x86_64"
+  ],
+  "image": {
+    "config": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "index": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "member": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "member_architecture": "amd64"
+  },
+  "intent": "train",
+  "launcher_sha": "f96ea6c8fc9d210c0424c5c6283212f677bab014",
+  "machine": "merak",
+  "machine_platform": "linux/amd64",
+  "project": "ac",
+  "real_main": {
+    "ac": "23077196066149dd90afb0d9f35e816ae29d6ea6"
+  },
+  "run_id": "vm-38b836c130e149e7a1471ef1abf9632f",
+  "sha": "b15e2c6cdfa62f3111c41a0b9f3ccfcaad93f096",
+  "stages": {
+    "backend": "PASSED",
+    "cloud-user-journey": "PASSED",
+    "frontend": "PASSED",
+    "image": "PASSED",
+    "two-service": "PASSED"
+  },
+  "suite_exit": 0,
+  "timeout_seconds": 9000,
+  "vm_gate": {
+    "error": null,
+    "exit": 0,
+    "infrastructure": null,
+    "summary": "/state-root/state/runs/vm-38b836c130e149e7a1471ef1abf9632f/summary.json"
+  }
+}
