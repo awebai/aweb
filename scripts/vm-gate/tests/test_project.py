@@ -300,12 +300,15 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         self.assertEqual(
             receipt["image"],
             {
-                "index": INDEX,
+                "index": "sha256:" + "a" * 64,
                 "member": MEMBER_DIGEST,
                 "config": "sha256:" + "d" * 64,
                 "member_architecture": "amd64",
             },
         )
+        # Every digest in the receipt is the bare sha256:<hex>, never a reference.
+        for field in ("index", "member", "config"):
+            self.assertRegex(receipt["image"][field], r"\Asha256:[0-9a-f]{64}\Z")
         [call] = self.calls
         self.assertIn("make release-gate", call["command"])
         # The gate proves the index and its member separately: two digests.

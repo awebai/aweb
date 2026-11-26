@@ -266,8 +266,10 @@ def project_job(args, *, factory=None, out=None):
                 args, config, backend, machine, target, directory, run_id, key, launcher, timeout, factory
             )
             if image:
+                # Every digest in the receipt is the bare sha256:<hex>: the
+                # index's digest, not the reference it was named by.
                 record["image"] = {
-                    "index": image["image"],
+                    "index": release.IMAGE.fullmatch(image["image"])["index"],
                     **{k: image[k] for k in ("member", "config", "member_architecture")},
                 }
         with handling():
