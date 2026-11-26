@@ -5,7 +5,7 @@ TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
-.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync typecheck-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync typecheck-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish release test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit test-go-vulnerability-audit \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
@@ -640,6 +640,15 @@ release-candidate: test-candidate-ledger
 release-publish:
 	@test -n "$(TAG)" || (echo "TAG=<artifact-vX.Y.Z> is required" >&2; exit 2)
 	python3 scripts/publish_release.py "$(TAG)"
+
+# aweb's Python release from the reviewed commit SHA: build once, gate those
+# files on MACHINE, tag once SHA is on main, publish through the trusted
+# publishing workflow, check PyPI. Rerun to continue after landing or a fix.
+release:
+	@test -n "$(SHA)" || (echo "SHA=<reviewed aweb commit> is required" >&2; exit 2)
+	@test -n "$(MACHINE)" || (echo "MACHINE=<gate machine> is required" >&2; exit 2)
+	@test -n "$(PACKAGES)" || (echo "PACKAGES='aweb' is required" >&2; exit 2)
+	python3 scripts/release.py --sha "$(SHA)" --machine "$(MACHINE)" $(foreach package,$(PACKAGES),--package $(package)) $(if $(THROUGH),--through "$(THROUGH)")
 
 deploy-site: verify-site
 	@set -eu; \
