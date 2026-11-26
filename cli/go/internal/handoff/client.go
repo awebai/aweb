@@ -141,32 +141,6 @@ func (s *Session) Do(ctx context.Context, method, path string, body []byte) (*Re
 	return receive(s.http, req)
 }
 
-// DoTo is Do for a response too large to hold: a 2xx body is copied to w
-// uncapped and Response.Body is empty. Any other answer writes nothing to w
-// and returns its body, capped, in Response.Body. A failed copy is an error.
-func (s *Session) DoTo(ctx context.Context, method, path string, body []byte, w io.Writer) (*Response, error) {
-	req, err := s.request(ctx, method, path, body)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		reply, err := readReply(resp)
-		if err != nil {
-			return nil, err
-		}
-		return &Response{Status: resp.StatusCode, Header: resp.Header, Body: reply}, nil
-	}
-	defer resp.Body.Close()
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		return nil, fmt.Errorf("copy the response: %w", err)
-	}
-	return &Response{Status: resp.StatusCode, Header: resp.Header}, nil
-}
-
 func (s *Session) request(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
 	target, err := url.Parse(s.origin + path)
 	if err != nil {

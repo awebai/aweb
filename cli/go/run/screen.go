@@ -743,10 +743,6 @@ func (s *ScreenController) renderFooterLocked() {
 	}
 }
 
-func (s *ScreenController) renderFooterLinesLocked(width int) []string {
-	return s.renderFooterLayoutLocked(width).lines
-}
-
 func (s *ScreenController) renderFooterLayoutLocked(width int) promptLayout {
 	currentLines := s.renderCurrentLinesLocked(contentWidthForTerminalWidth(width))
 	lines := append([]string{}, currentLines...)

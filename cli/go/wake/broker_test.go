@@ -258,3 +258,11 @@ func TestDispatchSkipsTransportOnlyEvents(t *testing.T) {
 		t.Fatalf("transport-only event queued=%d", got)
 	}
 }
+
+// dispatch fans one identity's event out to every instance registered under
+// that identity home, carrying the receive binding context through the hint.
+func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
+	teamID, _ := effectiveTeamID(identityHome, "")
+	key, _ := bindingKey(identityHome, teamID)
+	b.dispatchStream(key, ev)
+}

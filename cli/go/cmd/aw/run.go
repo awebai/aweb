@@ -352,30 +352,6 @@ func changedIntPtr(cmd *cobra.Command, name string, value int) *int {
 	return &result
 }
 
-func initRunCommandVars() {
-	runWaitSeconds = awrun.DefaultWaitSeconds
-	runContinueMode = false
-	runMaxRuns = 0
-	runIdleWait = awrun.DefaultIdleWaitSeconds
-	runInitialPrompt = ""
-	runBasePrompt = ""
-	runWorkPrompt = ""
-	runCommsPrompt = ""
-	runWorkingDir = ""
-	runAllowedTools = ""
-	runModel = ""
-	runProviderPTY = false
-	runAutofeedWork = false
-	runInitConfig = false
-	runTrustConfig = false
-}
-
-func setRunCommandIO(cmd *cobra.Command, in io.Reader, out io.Writer, errOut io.Writer) {
-	cmd.SetIn(in)
-	cmd.SetOut(out)
-	cmd.SetErr(errOut)
-}
-
 func resolveRunInvocation(cmd *cobra.Command, args []string, interactive bool, promptInput io.Reader) (string, string, []string, error) {
 	positionalArgs, providerArgs, err := splitRunInvocationArgs(args, argsLenAtDash(cmd))
 	if err != nil {

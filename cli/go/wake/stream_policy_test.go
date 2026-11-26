@@ -484,3 +484,15 @@ func TestStreamFlapWithTheConnectedEventGrowsTheRefusedDelay(t *testing.T) {
 		t.Fatalf("refused after a work event: retry in %s, want half of 1 minute", wait)
 	}
 }
+
+func (r *instanceRunner) allStreamsAdmitted() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, binding := range r.reg.ReceiveBindings() {
+		key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+		if err != nil || !r.admitted[key] {
+			return false
+		}
+	}
+	return true
+}

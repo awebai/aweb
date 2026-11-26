@@ -634,18 +634,6 @@ func (r *instanceRunner) streamAdmitted(binding ReceiveIdentity) bool {
 	return r.admitted[key]
 }
 
-func (r *instanceRunner) allStreamsAdmitted() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, binding := range r.reg.ReceiveBindings() {
-		key, err := bindingKey(binding.IdentityHome, binding.TeamID)
-		if err != nil || !r.admitted[key] {
-			return false
-		}
-	}
-	return true
-}
-
 func (r *instanceRunner) persist() {
 	// Serialize before taking the snapshot, so an old write cannot land last.
 	r.persistMu.Lock()
