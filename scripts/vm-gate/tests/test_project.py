@@ -236,12 +236,13 @@ class ProjectJob(CloudFixture, unittest.TestCase):
             "archive_sha256": "0" * 64,
         }
 
-    def cloud_evidence(self, *, built=None, inputs=True, suite="0"):
+    def cloud_evidence(self, *, built=None, inputs=True, suite="0", built_line=True):
         built = built or self.sha
         self.evidence = {"var/log/vm-gate/release/cloud/exit": suite + "\n"}
         if inputs:
             self.evidence[f"tmp/ac-candidate-gate-{self.cloud_sha}/inputs.tsv"] = (
-                f"cloud-sha\t{self.cloud_sha}\naweb-lock-source\t{built}\naweb-lock-tag\tserver-v1.27.55\n"
+                f"cloud-sha\t{self.cloud_sha}\naweb-lock-source\t{self.sha}\naweb-lock-tag\tserver-v1.27.55\n"
+                + (f"aweb-built-head\t{built}\n" if built_line else "")
             )
 
     def invoke_release_gate(self, *extra):
@@ -276,6 +277,12 @@ class ProjectJob(CloudFixture, unittest.TestCase):
 
     def test_ac_green_suite_without_cloud_inputs_is_red_and_copies_nothing(self):
         self.cloud_evidence(inputs=False)
+        code, receipt = self.invoke_release_gate()
+        self.assertEqual(code, 1, receipt)
+        self.assertIsNone(receipt["aweb_source_built"])
+
+    def test_ac_without_the_built_head_line_is_red_and_never_falls_back_to_the_input(self):
+        self.cloud_evidence(built_line=False)
         code, receipt = self.invoke_release_gate()
         self.assertEqual(code, 1, receipt)
         self.assertIsNone(receipt["aweb_source_built"])

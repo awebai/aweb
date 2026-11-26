@@ -11,8 +11,9 @@
 - ac: Cloud's gate at S from the local checkout, shipped as a bundle. With
   --image (the amd64 member) the guest runs `make release-gate` on that
   member, with --aweb-source as the aweb commit its journeys build; without
-  it, `make gate GATE_STAGES=all`. The commit Cloud's gate built is read from
-  its own inputs.tsv, never copied from the input.
+  it, `make gate GATE_STAGES=all`. The commit Cloud's gate built is the
+  aweb-built-head line of its own inputs.tsv (git rev-parse HEAD of the tree
+  its journeys built), never the input copied.
 
 Every outcome, refusals included, writes the receipt. Every digest in it is
 sha256:<hex>.
@@ -150,7 +151,9 @@ def installed_wheels(evidence, sha):
 
 
 def cloud_inputs(evidence, sha):
-    """Cloud's gate's own record of the aweb commit and tag its journeys built."""
+    """Cloud's gate's own record: the HEAD of the aweb tree its journeys built, and the locked tag.
+
+    Only the aweb-built-head line counts as built; the lock-source line is the input."""
     path = at_most_one(
         sorted((Path(evidence) / "tmp").glob(f"ac-candidate-gate-{sha}*/inputs.tsv")),
         "Cloud gate input records",
@@ -158,7 +161,7 @@ def cloud_inputs(evidence, sha):
     if path is None:
         return None, None
     rows = dict(line.split("\t", 1) for line in path.read_text().splitlines() if "\t" in line)
-    return rows.get("aweb-lock-source"), rows.get("aweb-lock-tag")
+    return rows.get("aweb-built-head"), rows.get("aweb-lock-tag")
 
 
 def exit_code(record):
