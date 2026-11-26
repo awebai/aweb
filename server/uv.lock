@@ -128,7 +128,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.27.54"
+version = "1.27.55"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
