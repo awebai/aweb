@@ -449,13 +449,6 @@ test-channel:
 # assertion that contradicted shipped acknowledgement behaviour. It needs Docker
 # and Postgres, so it belongs with the other real-stack journeys rather than in
 # `make test` - but it belongs somewhere, and this is somewhere.
-# Deliberately NO AWEB_SKEW_DIRECTION. With a direction set the journey emits a
-# skew observation, which requires the five exact-server inputs (wheel, wheel
-# sha, version, constraints, constraints sha); ship supplies none of them, so a
-# clean run would die on "skew observation lacks server runtime inventory"
-# rather than exercise the journey. Ship builds the server from source and this
-# target exercises Channel against THAT. Measuring against a PUBLISHED server is
-# the skew harness's job, with the exact artifacts it resolves itself.
 test-channel-integration:
 	cd channel && npm run test:integration
 
