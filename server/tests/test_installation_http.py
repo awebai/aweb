@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import httpx
@@ -40,8 +41,8 @@ def headers():
     }
 
 
-@pytest_asyncio.fixture
-async def client(db, origin, monkeypatch):
+@asynccontextmanager
+async def mounted(db, monkeypatch, fetcher):
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
     await db.execute(
@@ -66,7 +67,7 @@ async def client(db, origin, monkeypatch):
     inner.state.db = Managers()
     inner.state.public_origin = "http://test"
     inner.state.install_admin_policy = policy
-    inner.state.manifest_fetcher = origin.fetcher
+    inner.state.manifest_fetcher = fetcher
     inner.include_router(router)
     inner.include_router(hooks_router)
     outer = FastAPI()
@@ -74,6 +75,19 @@ async def client(db, origin, monkeypatch):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=outer), base_url="http://test"
     ) as caller:
+        yield caller
+
+
+@pytest_asyncio.fixture
+async def client(db, origin, monkeypatch):
+    async with mounted(db, monkeypatch, origin.fetcher) as caller:
+        yield caller
+
+
+@pytest_asyncio.fixture
+async def public_client(db, origin, monkeypatch):
+    """The production address policy, resolving names through the test DNS."""
+    async with mounted(db, monkeypatch, origin.public_fetcher) as caller:
         yield caller
 
 
@@ -188,6 +202,32 @@ async def test_member_preview_is_read_only_and_confirmation_is_digest_pinned(
     assert refused.status_code == 409
     assert refused.json()["detail"]["code"] == "manifest_changed"
     assert await store_fixture.current(db) is None
+
+
+@pytest.mark.parametrize(
+    ("url", "code"),
+    [
+        ("https://localhost", "origin_refused"),
+        ("https://10.0.0.1", "origin_refused"),
+        ("https://nothing-here.invalid", "origin_unresolvable"),
+    ],
+)
+async def test_preview_of_an_origin_never_reached_is_unprocessable(
+    public_client, origin, url, code
+):
+    origin.dns.records[("localhost", "A")] = ["127.0.0.1"]
+    response = await post(public_client, {"origin": url}, "preview")
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == code
+    assert not origin.tls.seen
+
+
+async def test_preview_of_an_origin_that_answers_500_is_a_bad_gateway(client, origin):
+    origin.routes["/.well-known/aweb-app-versions.json"] = (500, b"", [])
+    response = await post(client, {"origin": origin.url}, "preview")
+    assert response.status_code == 502, response.text
+    assert response.json()["detail"]["code"] == "catalog_unavailable"
+    assert len(origin.tls.seen) == 1
 
 
 async def test_member_request_has_a_separate_current_admin_approval_path(
