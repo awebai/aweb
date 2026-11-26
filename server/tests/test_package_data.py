@@ -213,39 +213,6 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("column", "legacy_value"),
-    [
-        ("inbound_mode", "contacts_or_teammates"),
-        ("inbound_mode", "team_only"),
-        ("identity_scope", "persistent"),
-        ("identity_scope", "ephemeral"),
-    ],
-)
-async def test_migrated_agents_table_refuses_legacy_values(
-    aweb_cloud_db, column, legacy_value
-):
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'Backend', 'did:key:team')
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, inbound_mode)
-        VALUES ('backend:acme.com', 'did:key:alice', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'open')
-        """
-    )
-
-    with pytest.raises(QueryError):
-        await aweb_cloud_db.aweb_db.execute(
-            f"UPDATE {{{{tables.agents}}}} SET {column} = $1 WHERE alias = 'alice'",
-            legacy_value,
-        )
-
-
-@pytest.mark.asyncio
 async def test_agents_table_accepts_strict_contacts_only_after_forward_migration(
     aweb_cloud_db,
 ):

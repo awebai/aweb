@@ -125,3 +125,29 @@ async def test_migrated_global_recipient_keeps_noncontacts_refused(
             still_restricted = await send(restricted)
             assert still_restricted.status_code == 403, still_restricted.text
             assert "exact active contacts" in still_restricted.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("inbound_mode", "identity_scope", "constraint"),
+    [
+        ("contacts_or_teammates", "global", "agents_inbound_mode_valid"),
+        ("team_only", "global", "agents_inbound_mode_valid"),
+        ("open", "persistent", "agents_identity_scope_valid"),
+        ("open", "ephemeral", "agents_identity_scope_valid"),
+    ],
+)
+async def test_migrated_agents_table_refuses_legacy_values(
+    aweb_cloud_db, inbound_mode, identity_scope, constraint
+):
+    with pytest.raises(QueryError) as refused:
+        # unreachable-state: a legacy writer stores a retired inbound mode or identity scope.
+        await aweb_cloud_db.aweb_db.execute(
+            """INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, inbound_mode)
+               VALUES ('backend:acme.com', 'did:key:legacy', 'legacy', $1, $2)""",
+            identity_scope,
+            inbound_mode,
+        )
+    refusal = refused.value.__cause__
+    assert isinstance(refusal, asyncpg.CheckViolationError)
+    assert refusal.constraint_name == constraint
