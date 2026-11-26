@@ -39,7 +39,7 @@ Source facts:
   blinded commitment, audience, generation and request. Its owner lane verifies
   `BindingOwnershipProof` from an independently pinned authority. It grants no
   custody, team role or message authority
-  ([human-channels-contract-v1.md:415–433](human-channels-contract-v1.md#presence-and-native-operation-records)).
+  ([human-channels-contract-v1.md:427–445](human-channels-contract-v1.md#presence-and-native-operation-records)).
 - P8 requires a host transaction recheck and generation/request CAS; public actor
   locks stabilize local projections, not remote AWID
   ([human-channels-presence-verification.md:104–145](human-channels-presence-verification.md#applying-a-verified-result)).

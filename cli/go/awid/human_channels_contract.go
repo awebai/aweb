@@ -528,7 +528,7 @@ func hcRelations(schema string, v map[string]any) error {
 }
 
 // checkHumanChannelsPrepareRequest keeps the message profile and its managed
-// author/context binding together (docs/human-channels-contract-v1.md:27-31).
+// author/context binding together (docs/human-channels-contract-v1.md:40-44).
 func checkHumanChannelsPrepareRequest(v map[string]any) error {
 	managed := v["format"] == "managed_chat_plaintext"
 	author := v["author"].(map[string]any)

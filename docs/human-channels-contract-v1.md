@@ -2,16 +2,16 @@
 
 Implemented today: the record grammar and its readers (Python
 `aweb.human_channels.contract`, Go `awid.DecodeHumanChannelsRecord`), the signed
-vectors, human aliases with participant discovery at
-`GET /v1/messaging/participants/{alias}` ([native addressing](human-channels-native-send.md)),
-the host actor lock `aweb.human_channels.authority.lock_native_actors`, and the
-presence verifier library `aweb.human_channels.presence`. Not implemented: the
-service operations in [Public calls](#public-calls-needed-by-c0c3) and the
-embedded prepared send below; no server route serves them. The routes
-`GET /v1/messaging/capabilities`, `POST /v1/messaging/resolve`,
-`POST /v1/messaging/prepare` and `GET /v1/messaging/ingress-results/{namespace}/{key}`
-were removed: they only ever answered `authority_unavailable`, or for
-capabilities a fixed list reporting the send facade as refused.
+vectors, the public embedding ports `aweb.human_channels.service.HumanChannelsService`
+and `HumanChannelsUnitOfWork` as Protocol definitions, human aliases with
+participant discovery at `GET /v1/messaging/participants/{alias}`
+([native addressing](human-channels-native-send.md)), the host actor lock
+`aweb.human_channels.authority.lock_native_actors`, and the presence verifier
+library `aweb.human_channels.presence`. Not implemented: a service behind the
+ports in [Public calls](#public-calls-needed-by-c0c3), and the embedded prepared
+send below. No server route serves `GET /v1/messaging/capabilities`,
+`POST /v1/messaging/resolve`, `POST /v1/messaging/prepare` or
+`GET /v1/messaging/ingress-results/{namespace}/{key}`.
 
 Status: P0 contract freeze candidate, aweb-acft.12. Juan authorized the build on
 2026-10-21 (integrations message 41221f08). This supplies definitions and
@@ -159,24 +159,36 @@ remain authoritative for attachments.
 
 ## Public calls needed by C0–C3
 
-These are the operations the C0–C3 channel work needs. Only the presence
-verifiers are implemented; no service port or route implements the others. An
-implementation takes existing verified `MessagingAuth`, including team/grant
-restrictions; constructing a claimed DID, owner or DTO is not authentication.
-P0 adds no routes or bypass for Cloud.
+Python `aweb.human_channels.service.HumanChannelsService` and
+`HumanChannelsUnitOfWork` are public embedding ports. They take existing verified
+`MessagingAuth`, including team/grant restrictions; constructing a claimed DID,
+owner or DTO is not authentication. HTTP uses existing identity/team/session
+authentication; MCP calls the same service after authentication. Implementing
+P tasks must supply these ports. P0 adds no routes or bypass for Cloud.
 
-| Operation / DTO input → output | Status |
+| Port / DTO input → output | Additive public HTTP projection; implementation task |
 | --- | --- |
-| list(PageRequest) → PageResult | Not implemented. Ordinary listing stays on `GET /v1/chat/sessions` and session messages. |
-| session(session_id), create_session(SessionCreate) → SessionView | Not implemented. The existing chat session ID (`POST /v1/chat/sessions`) remains the handle. |
-| change_membership(SignedArtifact of MembershipIntent) → SessionView | Not implemented. |
-| checkpoint(SignedArtifact of CheckpointIntent) → signed CheckpointReceipt or NarrowStopAck | Not implemented. |
-| checkpoint_receipt(session,transition) → signed original CheckpointReceipt | Not implemented. |
-| message_acceptance(session,message) → signed MessageAcceptance | Not implemented. |
-| verify_presence(SignedArtifact of PresenceIntent) → VerifiedPresence | Verifier library `aweb.human_channels.presence.verify_native_presence`, for native suppression only; Cloud owns its registration API. |
-| verify_presence_binding(SignedArtifact of PresenceBindingIntent) → VerifiedPresenceBinding | Verifier library `aweb.human_channels.presence.verify_presence_binding`, for shared/dedicated bind/rebind/unbind; native suppression approval never authorizes this call. |
-| native_operation(SignedArtifact of NativeOperationRequest) → signed NativeOperation | Not implemented. |
-| commit_native_reply(SignedArtifact of NativeReply) → AcceptedSend | Not implemented. |
+| capabilities → Capabilities | `GET /v1/messaging/capabilities`; P0 definitions, P1/P3/P8 acceptance implementations advertise their own floors |
+| resolve(ResolveRequest) → AuthorityFacts | `POST /v1/messaging/resolve`; P2a, P3 typed session lookup |
+| prepare(PrepareRequest) → PreparedSend | `POST /v1/messaging/prepare`; P2b; no send effect |
+| unit_of_work / ingress_result(IngressKey) → IngressResult | Embedded transaction below; remote `GET /v1/messaging/ingress-results/{namespace}/{key}` with authenticated issuer and input-hash binding; P2b |
+| list(PageRequest) → PageResult | `GET /v1/messaging/mail`, `GET /v1/chat/sessions`, existing session messages/participants, and control/capture paths below; P2/P3/P5/P7 |
+| session(session_id), create_session(SessionCreate) → SessionView | existing session ID remains the handle; additive managed create/get on `/v1/chat/sessions`; P3/P4/P5 |
+| change_membership(SignedArtifact of MembershipIntent) → SessionView | `POST /v1/chat/sessions/{id}/policy`; P4/P5; includes consent, delegation, succession and interval grants |
+| checkpoint(SignedArtifact of CheckpointIntent) → signed CheckpointReceipt or NarrowStopAck | existing proposed `POST .../{id}/export-checkpoints`; P7 |
+| checkpoint_receipt(session,transition) → signed original CheckpointReceipt | `GET .../{id}/export-checkpoints/{transition}`; P7, explicit control-history grant |
+| message_acceptance(session,message) → signed MessageAcceptance | `GET .../{id}/messages/{message}/acceptance`; P7, message-interval grant |
+| verify_presence(SignedArtifact of PresenceIntent) → VerifiedPresence | public verifier library for native suppression only; P8; Cloud owns its registration API |
+| verify_presence_binding(SignedArtifact of PresenceBindingIntent) → VerifiedPresenceBinding | distinct public verifier for shared/dedicated bind/rebind/unbind; P8 public proof verification + C1/C2 private resource/CAS; native suppression approval never authorizes this call |
+| native_operation(SignedArtifact of NativeOperationRequest) → signed NativeOperation | `POST /v1/chat/sessions/{id}/native-operations`; N1 |
+| commit_native_reply(SignedArtifact of NativeReply) → AcceptedSend | `POST /v1/chat/sessions/{id}/native-replies`; N1 uses the same P2b/P7 acceptance, no unsigned guest echo |
+
+The ports are published as these Protocol definitions; no implementation of
+them is configured in this server. The presence verifier library
+`aweb.human_channels.presence` (`verify_native_presence`,
+`verify_presence_binding`) supplies the two P8 operations. This server serves
+none of the HTTP projections for capabilities, resolve, prepare or ingress
+results; an implementation of the ports adds them.
 
 C0 itself needs only published acfn `AttachmentDescriptor`; its platform events,
 locators and `ChannelAttachment`/authenticated fetch stay private. C1–C3 obtain

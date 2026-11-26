@@ -12,7 +12,7 @@ type Comparison struct {
 }
 
 // EqualValues implements the safe-integer UTF-8 comparison used by signed
-// artifacts (docs/human-channels-contract-v1.md:27-31). A failure to encode
+// artifacts (docs/human-channels-contract-v1.md:40-44). A failure to encode
 // either value is an error, including when both values fail to encode.
 func EqualValues(input Comparison) (bool, error) {
 	expected, err := Strict(input.Expected)
