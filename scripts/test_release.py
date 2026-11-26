@@ -9,6 +9,7 @@ receipt format.
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -154,6 +155,17 @@ class Outside:
 
 class ReleaseCommand(unittest.TestCase):
     def setUp(self):
+        # The command tags as whoever runs it. Here that is a fixture identity, so
+        # the tests do not depend on the host's git config: the gate's runner has none.
+        identity = patch.dict(
+            os.environ,
+            GIT_AUTHOR_NAME="Release Fixture",
+            GIT_AUTHOR_EMAIL="release-fixture@example.invalid",
+            GIT_COMMITTER_NAME="Release Fixture",
+            GIT_COMMITTER_EMAIL="release-fixture@example.invalid",
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.tmp = Path(temporary.name)
