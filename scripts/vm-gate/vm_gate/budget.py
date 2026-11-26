@@ -1,10 +1,9 @@
-"""The release's one budget computation, from capacity measured at run time.
+"""The aweb gate's budget computation, from capacity measured at run time.
 
-Whatever runs the tests is measured when the job runs: the Docker engine's CPU
+Whatever runs the tests is measured when the gate runs: the Docker engine's CPU
 count and memory, inside a VM guest or on a native host. No machine is named
 and no size is assumed; an operator override is optional input, never a
-default. Standard library only: a release guest runs this before either gate
-starts, and the aweb gate loads it by path.
+default. Standard library only: the aweb gate loads it by path.
 
 Nothing caps a container's CPU and nothing weights it: every container runs
 at Docker's default, and the engine's CPU count is the only bound. What keeps
@@ -20,13 +19,10 @@ the CPUs, each worker building aw): each part is sized to its share, and aw
 is built once.
 """
 
-import json
 import math
 import re
 import subprocess
-import sys
 import threading
-from pathlib import Path
 
 # The unit suites that run xdist workers on an owned service plan.
 PARALLEL_SUITES = ("test-server", "test-naapp-lib")
@@ -59,28 +55,6 @@ def workers(share):
 def proportional(total, weights):
     weight = sum(weights.values())
     return {name: total * w / weight for name, w in weights.items()}
-
-
-def release_split(cpus, memory_mib, weights):
-    """The measured capacity divided between the release's gates.
-
-    weights holds each gate's measured CPU-seconds ("cloud", and "aweb" when
-    the release runs an aweb gate). Each gate's CPUs are its proportional
-    share, unrounded (two decimals): they size its workers and cap nothing.
-    Its memory is the same proportion, rounded down to whole MiB.
-    """
-    positive(cpus, memory_mib)
-    if set(weights) not in ({"cloud"}, {"cloud", "aweb"}):
-        raise ValueError("a release splits between cloud and, optionally, aweb")
-    if any(type(w) is not int or w < 1 for w in weights.values()):
-        raise ValueError("gate weights must be positive whole CPU-seconds")
-    split = {"measured": {"cpus": cpus, "memory_mib": memory_mib}, "weights": dict(weights)}
-    for gate, share in proportional(cpus, weights).items():
-        split[gate] = {
-            "cpus": cpus if len(weights) == 1 else round(share, 2),
-            "memory_mib": memory_mib * weights[gate] // sum(weights.values()),
-        }
-    return split
 
 
 def workers_per_busy_cpu(cpu_seconds, run):
@@ -214,8 +188,7 @@ def run_within(capacity, requests, work):
 def budget_from(environ):
     """GATE_CPUS and GATE_MEMORY_MIB when given, each measured otherwise.
 
-    A release passes its gate's proportional CPU share, which may be
-    fractional (GATE_CPUS=5.37); memory is whole MiB.
+    CPUs may be fractional (GATE_CPUS=5.37); memory is whole MiB.
     """
     given = {}
     for name, pattern in (
@@ -236,29 +209,3 @@ def budget_from(environ):
         for label, name in (("cpus", "GATE_CPUS"), ("memory", "GATE_MEMORY_MIB"))
     )
     return given["GATE_CPUS"], given["GATE_MEMORY_MIB"], source
-
-
-def write_split(path, weights):
-    """In the release job: measure, split, record, and print the shares."""
-    shares = release_split(*measure(), weights)
-    Path(path).write_text(json.dumps(shares, sort_keys=True) + "\n")
-    gates = [shares["cloud"], shares.get("aweb", {"cpus": 0, "memory_mib": 0})]
-    print(" ".join(str(gate[key]) for gate in gates for key in ("cpus", "memory_mib")))
-
-
-def parse_weights(arguments):
-    """GATE=CPU-SECONDS arguments, as the dispatcher passes the measured weights."""
-    weights = {}
-    for argument in arguments:
-        gate, _, value = argument.partition("=")
-        if gate not in ("cloud", "aweb") or gate in weights or not re.fullmatch(r"[1-9][0-9]*", value):
-            raise ValueError(f"invalid gate weight {argument!r}")
-        weights[gate] = int(value)
-    return weights
-
-
-if __name__ == "__main__":
-    if len(sys.argv) >= 4 and sys.argv[1] == "split":
-        write_split(sys.argv[2], parse_weights(sys.argv[3:]))
-    else:
-        raise SystemExit("usage: python3 -m vm_gate.budget split PATH cloud=N [aweb=N]")

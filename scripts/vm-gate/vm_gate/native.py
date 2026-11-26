@@ -1,8 +1,8 @@
-"""A release job run directly on a host's own Docker, as antares and altair run gates.
+"""A Cloud gate job run directly on a host's own Docker, as antares and altair run gates.
 
 The host is this machine or one reached by SSH. Each job gets its own
-directory with an aweb checkout whose frozen origin main is the release
-commit, its own copy of the canonical ledger, and the release inputs. The
+directory with an aweb checkout whose frozen origin main is the launcher's
+source, its own copy of the canonical ledger, and Cloud's inputs. The
 deadline arrives as TERM to the job's process group, then KILL after a grace,
 so the gates clean up and record what passed. Evidence and new ledger rows
 come back to the controller.
@@ -108,7 +108,7 @@ git --git-dir=origin update-ref refs/heads/main {Q(frozen_main)}
 git --git-dir=origin symbolic-ref HEAD refs/heads/main
 git clone --quiet origin source
 git -C source checkout --quiet --detach {Q(sha)}
-mkdir -p home logs gate-logs release-files
+mkdir -p home logs gate-logs
 chmod 0700 .
 """
 
@@ -136,8 +136,6 @@ def run_release(
         host.put(inputs["bundle"], job + "/cloud.bundle")
         if inputs["archive"]:
             host.put(inputs["archive"], job + "/cloud-image.tar")
-        for path in inputs["files"]:
-            host.put(path, job + "/release-files/" + Path(path).name)
         host.put(inputs["hermes_key"], job + "/hermes-key")
         host.run(f"chmod 0600 {Q(job)}/hermes-key")
         host.put(ledger_before, job + "/ledger.tsv")
@@ -153,8 +151,6 @@ def run_release(
                 "AWEB_GATE_LEDGER": job + "/ledger.tsv",
                 "AWEB_GATE_LOG_DIR": job + "/gate-logs",
                 "GATE_OWNER": owner,
-                # The release script splits the host with this checkout's vm_gate.
-                "PYTHONPATH": job + "/source/scripts/vm-gate",
             }.items()
         )
         result = host.run(

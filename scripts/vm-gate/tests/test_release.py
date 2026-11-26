@@ -1,7 +1,6 @@
-"""make release's one gate job, against real Git repositories and real shell."""
+"""Cloud's gate in one guest, and the helpers both projects use, against real Git and real shell."""
 
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -127,19 +126,23 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
             [
                 "--config",
                 str(self.config),
-                "release",
+                "run",
+                "--project",
+                "ac",
+                "--repo",
+                str(self.cloud),
+                "--sha",
+                self.cloud_sha,
+                "--intent",
+                "train",
                 "--machine",
                 machine,
-                "--cloud-repo",
-                str(self.cloud),
-                "--cloud-sha",
-                self.cloud_sha,
-                "--cloud-image",
+                "--image",
                 "ghcr.io/awebai/ac@sha256:" + "a" * 64,
+                "--aweb-source",
+                self.sha,
                 "--receipt",
                 str(self.receipt),
-                "--aweb-lock-source-sha",
-                self.sha,
                 *extra,
             ],
             factory=self.factory,
@@ -199,13 +202,17 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
             [
                 "--config",
                 str(self.config),
-                "cloud-gate",
+                "run",
+                "--project",
+                "ac",
+                "--repo",
+                str(self.cloud),
+                "--sha",
+                self.cloud_sha,
+                "--intent",
+                "train",
                 "--machine",
                 machine,
-                "--cloud-repo",
-                str(self.cloud),
-                "--cloud-sha",
-                self.cloud_sha,
                 "--receipt",
                 str(self.receipt),
             ],
@@ -214,11 +221,11 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         )
         return code, json.loads(self.receipt.read_text())
 
-    def test_a_cloud_gate_runs_make_gate_through_the_release_job(self):
+    def test_a_cloud_train_gate_runs_make_gate_with_no_image_and_no_budget(self):
         self.factory_for_admission()
 
         def no_image(*args, **kwargs):
-            raise AssertionError("a Cloud gate builds and ships no image")
+            raise AssertionError("a Cloud train gate builds and ships no image")
 
         key = self.root / "hermes.key"
         with patch.object(release, "image_archive", no_image), patch.object(
@@ -232,16 +239,20 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         self.assertNotIn("make release-gate", run["command"])
         self.assertNotIn("AC_CANDIDATE_RELEASE_IMAGE", run["command"])
         self.assertNotIn("cloud-image.tar", run["command"])
-        self.assertIn("python3 -m vm_gate.budget split", run["command"])
+        # One suite has the whole machine: no split, and no budget passed.
+        self.assertNotIn("vm_gate.budget", run["command"])
+        self.assertNotIn("GATE_CPUS", run["command"])
+        self.assertNotIn("GATE_MEMORY_MIB", run["command"])
+        self.assertNotIn("AC_CANDIDATE_AWEB_WHEELS", run["command"])
         inputs = run["executor_factory"].keywords["release"]
         self.assertIsNone(inputs["archive"])
         self.assertEqual(inputs["hermes_key"], key)
-        self.assertEqual(inputs["files"], [])
-        self.assertEqual(receipt["cloud"]["command"], "make gate GATE_STAGES=all")
+        self.assertNotIn("files", inputs)
+        self.assertEqual(receipt["command"], "make gate GATE_STAGES=all")
         self.assertEqual(receipt["real_main"], {"ac": self.cloud_main})
-        self.assertNotIn("image", receipt["cloud"])
-        self.assertNotIn("aweb", receipt)
-        self.assertEqual(receipt["cloud"]["sha"], self.cloud_sha)
+        self.assertNotIn("image", receipt)
+        self.assertNotIn("files", receipt)
+        self.assertEqual(receipt["sha"], self.cloud_sha)
 
     def test_a_cloud_gate_without_a_hermes_key_refuses_before_boot(self):
         self.key.unlink()
@@ -281,7 +292,7 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
         self.assertEqual(native["machine"]["root"], str(self.root / "antares-jobs"))
         self.assertIn("/jobs/x/home", native["script"]("/jobs/x"))
         self.assertEqual(receipt["machine_platform"], "linux/arm64")
-        self.assertEqual(receipt["cloud"]["member_architecture"], "amd64")
+        self.assertEqual(receipt["image"]["member_architecture"], "amd64")
 
     def test_an_arm64_host_refuses_a_member_that_is_not_amd64(self):
         def docker(*argv):
@@ -309,14 +320,6 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
             code, receipt = self.invoke("antares")
         self.assertEqual(code, 2)
         self.assertIn("arm64, not amd64", receipt["vm_gate"]["error"])
-        self.assertEqual(self.calls, [])
-
-    def test_aweb_files_need_their_commit_and_the_commit_its_files(self):
-        for extra in (("--aweb-sha", self.sha), ("--files", str(self.files))):
-            with self.subTest(extra=extra[0]):
-                code, receipt = self.invoke("merak", *extra)
-                self.assertEqual(code, 2)
-                self.assertIn("go together", receipt["vm_gate"]["error"])
         self.assertEqual(self.calls, [])
 
     def test_a_shared_hermes_key_is_refused(self):
@@ -374,8 +377,6 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
                 image="ghcr.io/awebai/ac@sha256:" + "a" * 64,
                 member="sha256:" + "b" * 64,
                 lock_source_sha=self.sha,
-                aweb=self.sha,
-                files={},
             )
         for marker in ("SSH_AUTH_SOCK", "/agent.sock", "/Users/operator", "insteadOf"):
             self.assertNotIn(marker, script)
@@ -488,7 +489,7 @@ class GuestScript(CloudFixture, unittest.TestCase):
             (self.stubs / name).write_text(text)
             (self.stubs / name).chmod(0o755)
 
-    def run_script(self, files, aweb=True, **env):
+    def run_script(self, **env):
         script = release.guest_script(
             cloud_sha=self.cloud_sha,
             bundle_sha256=self.bundle,
@@ -496,13 +497,10 @@ class GuestScript(CloudFixture, unittest.TestCase):
             image="ghcr.io/awebai/ac@sha256:" + "a" * 64,
             member="sha256:" + "b" * 64,
             lock_source_sha=self.sha,
-            aweb=self.sha if aweb else None,
-            files=files,
             remote=str(self.remote),
             logs=str(self.logs),
             home=str(self.home),
             key="/run/key",
-            files_dir="/opt/files",
         )
         environment = {
             "PATH": f"{self.stubs}:{os.environ['PATH']}",
@@ -524,12 +522,11 @@ class GuestScript(CloudFixture, unittest.TestCase):
             if "=" in line
         )
 
-    def test_both_suites_run_each_with_its_own_inputs(self):
-        files = {"aweb-1.27.54-py3-none-any.whl": hashlib.sha256(b"wheel").hexdigest()}
-        result = self.run_script(files)
+    def test_the_cloud_release_gate_runs_alone_with_its_own_inputs(self):
+        result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
         cloud = self.suite_env("release-gate")
-        aweb = self.suite_env("candidate-gate")
+        self.assertFalse((self.record / "candidate-gate.env").exists())
         self.assertEqual(
             (self.record / "release-gate.pwd").read_text().strip(),
             str(self.home / "cloud-source"),
@@ -540,11 +537,10 @@ class GuestScript(CloudFixture, unittest.TestCase):
         self.assertEqual(
             git(self.home / "cloud-source", "rev-parse", "origin/main"), self.cloud_sha
         )
-        # Cloud's gate keeps its own ledger; aweb's gate writes the canonical one.
+        # Cloud's gate keeps its own ledger.
         self.assertEqual(
             cloud["AWEB_GATE_LEDGER"], str(self.logs / "release/cloud/ledger.tsv")
         )
-        self.assertEqual(aweb["AWEB_GATE_LEDGER"], str(self.root / "aweb-ledger.tsv"))
         self.assertEqual(
             cloud["AC_CANDIDATE_RELEASE_IMAGE_MEMBER"], "sha256:" + "b" * 64
         )
@@ -552,34 +548,13 @@ class GuestScript(CloudFixture, unittest.TestCase):
             cloud["AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE"],
             str(self.remote / "cloud-image.tar"),
         )
-        self.assertEqual(cloud["AC_CANDIDATE_AWEB_WHEELS"], "/opt/files")
-        self.assertEqual(cloud["AC_CANDIDATE_AWEB_WHEELS_SOURCE_SHA"], self.sha)
+        self.assertEqual(cloud["AC_CANDIDATE_AWEB_LOCK_SOURCE_SHA"], self.sha)
         self.assertEqual(cloud["AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE"], "/run/key")
-        self.assertNotIn("AC_CANDIDATE_RELEASE_IMAGE", aweb)
-        rebuilt = json.loads((self.logs / "release/aweb/rebuilt.json").read_text())
-        self.assertEqual(rebuilt, files)
-        for suite in ("cloud", "aweb"):
-            self.assertEqual((self.logs / f"release/{suite}/exit").read_text(), "0\n")
+        self.assertNotIn("AC_CANDIDATE_AWEB_WHEELS", cloud)
+        self.assertNotIn("AC_CANDIDATE_AWEB_WHEELS_SOURCE_SHA", cloud)
+        self.assertEqual((self.logs / "release/cloud/exit").read_text(), "0\n")
 
-    def test_each_gate_gets_its_share_of_the_guest(self):
-        result = self.run_script({"aweb-1.27.54-py3-none-any.whl": "x"})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        cloud = self.suite_env("release-gate")
-        aweb = self.suite_env("candidate-gate")
-        # The stub guest is 12 CPUs and 61440 MiB, divided by the measured work.
-        expected = budget.release_split(12, 61440, release.gate_weights())
-        self.assertEqual(
-            (cloud["GATE_CPUS"], aweb["GATE_CPUS"]),
-            (str(expected["cloud"]["cpus"]), str(expected["aweb"]["cpus"])),
-        )
-        self.assertEqual(
-            (cloud["GATE_MEMORY_MIB"], aweb["GATE_MEMORY_MIB"]),
-            (str(expected["cloud"]["memory_mib"]), str(expected["aweb"]["memory_mib"])),
-        )
-        recorded = json.loads((self.logs / "release/split.json").read_text())
-        self.assertEqual(recorded, expected)
-
-    def test_a_cloud_gate_runs_make_gate_with_the_whole_guest(self):
+    def test_a_cloud_train_gate_runs_make_gate_and_passes_no_budget(self):
         bundle = release.cloud_bundle(
             self.cloud, self.cloud_sha, self.remote / "cloud.bundle", main=self.cloud_main
         )
@@ -590,8 +565,6 @@ class GuestScript(CloudFixture, unittest.TestCase):
             image=None,
             member=None,
             lock_source_sha=None,
-            aweb=None,
-            files={},
             remote=str(self.remote),
             logs=str(self.logs),
             home=str(self.home),
@@ -615,9 +588,10 @@ class GuestScript(CloudFixture, unittest.TestCase):
         self.assertNotIn("AC_CANDIDATE_RELEASE_IMAGE", cloud)
         self.assertEqual(cloud["AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE"], release.GUEST_KEY)
         self.assertEqual((self.record / "gate.args").read_text().split(), ["gate", "GATE_STAGES=all"])
-        self.assertEqual((cloud["GATE_CPUS"], cloud["GATE_MEMORY_MIB"]), ("12", "61440"))
-        recorded = json.loads((self.logs / "release/split.json").read_text())
-        self.assertEqual(recorded["cloud"], {"cpus": 12, "memory_mib": 61440})
+        # Cloud's gate sizes itself from its own machine.
+        self.assertNotIn("GATE_CPUS", cloud)
+        self.assertNotIn("GATE_MEMORY_MIB", cloud)
+        self.assertFalse((self.logs / "release/split.json").exists())
         self.assertEqual((self.logs / "release/cloud/exit").read_text(), "0\n")
 
     def test_a_cloud_gate_checks_the_train_head_out_over_real_main(self):
@@ -632,8 +606,6 @@ class GuestScript(CloudFixture, unittest.TestCase):
             image=None,
             member=None,
             lock_source_sha=None,
-            aweb=None,
-            files={},
             remote=str(self.remote),
             logs=str(self.logs),
             home=str(self.home),
@@ -669,37 +641,20 @@ class GuestScript(CloudFixture, unittest.TestCase):
                 image=None,
                 member=None,
                 lock_source_sha=None,
-                aweb=None,
-                files={},
                 cloud_target="deploy",
             )
 
-    def test_a_cloud_only_release_gives_cloud_the_whole_guest(self):
-        result = self.run_script({}, aweb=False)
+    def test_a_cloud_release_gate_passes_no_budget(self):
+        result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
         cloud = self.suite_env("release-gate")
-        self.assertEqual((cloud["GATE_CPUS"], cloud["GATE_MEMORY_MIB"]), ("12", "61440"))
+        self.assertNotIn("GATE_CPUS", cloud)
+        self.assertNotIn("GATE_MEMORY_MIB", cloud)
 
-    def test_a_red_suite_makes_the_job_red_and_both_exits_are_kept(self):
-        for env, cloud_exit, aweb_exit in (
-            ({"CLOUD_EXIT": "3"}, "3", "0"),
-            ({"AWEB_EXIT": "2"}, "0", "2"),
-        ):
-            with self.subTest(env=env):
-                result = self.run_script({"aweb-1.27.54-py3-none-any.whl": "x"}, **env)
-                self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertEqual(
-                    (self.logs / "release/cloud/exit").read_text(), cloud_exit + "\n"
-                )
-                self.assertEqual(
-                    (self.logs / "release/aweb/exit").read_text(), aweb_exit + "\n"
-                )
-
-    def test_a_cloud_only_release_runs_no_aweb_suite(self):
-        result = self.run_script({}, aweb=False)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse((self.record / "candidate-gate.env").exists())
-        self.assertNotIn("AC_CANDIDATE_AWEB_WHEELS", self.suite_env("release-gate"))
+    def test_a_red_suite_makes_the_job_red_and_its_exit_is_kept(self):
+        result = self.run_script(CLOUD_EXIT="3")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual((self.logs / "release/cloud/exit").read_text(), "3\n")
 
     def test_a_changed_bundle_stops_the_job_before_any_suite(self):
         # Still a valid bundle whose main is the release commit, with other bytes.
@@ -708,7 +663,7 @@ class GuestScript(CloudFixture, unittest.TestCase):
         bundle.unlink()
         self.assertEqual(git(self.cloud, "rev-parse", "main"), self.cloud_sha)
         git(self.cloud, "bundle", "create", str(bundle), "main", "extra")
-        result = self.run_script({}, aweb=False)
+        result = self.run_script()
         self.assertEqual(result.returncode, 70)
         self.assertFalse((self.record / "release-gate.env").exists())
 
@@ -723,15 +678,6 @@ class NativeJob(CloudFixture, unittest.TestCase):
 
         self.directory = self.root / "state/runs/vm-native"
         self.directory.mkdir(parents=True)
-        # The release commit carries the vm_gate split the job runs.
-        package = Path(release.__file__).resolve().parent
-        fixture_package = self.repo / "scripts/vm-gate/vm_gate"
-        fixture_package.mkdir(parents=True)
-        for name in ("__init__.py", "budget.py"):
-            shutil.copy2(package / name, fixture_package / name)
-        git(self.repo, "add", ".")
-        git(self.repo, "commit", "-m", "release split")
-        self.sha = git(self.repo, "rev-parse", "HEAD")
         self.source = prepare(
             self.repo, self.sha, self.directory, observed=self.observed
         )
@@ -756,9 +702,6 @@ class NativeJob(CloudFixture, unittest.TestCase):
         bundle_sha256 = release.cloud_bundle(self.cloud, self.cloud_sha, self.bundle)
         self.archive = self.root / "cloud-image.tar"
         self.archive.write_bytes(b"image")
-        files = self.root / "dist"
-        files.mkdir()
-        (files / "aweb-1.27.54-py3-none-any.whl").write_bytes(b"wheel")
         key = self.root / "key"
         key.write_text("test-only")
         key.chmod(0o600)
@@ -779,36 +722,28 @@ class NativeJob(CloudFixture, unittest.TestCase):
                 image="ghcr.io/awebai/ac@sha256:" + "a" * 64,
                 member="sha256:" + "b" * 64,
                 lock_source_sha=self.sha,
-                aweb=self.sha,
-                files={
-                    "aweb-1.27.54-py3-none-any.whl": hashlib.sha256(
-                        b"wheel"
-                    ).hexdigest()
-                },
                 remote=job,
                 logs=job + "/logs",
                 home=job + "/home",
                 key=job + "/hermes-key",
-                files_dir=job + "/release-files",
             ),
             machine={"root": str(self.jobs)},
             inputs={
                 "bundle": self.bundle,
                 "archive": self.archive,
-                "files": [files / "aweb-1.27.54-py3-none-any.whl"],
                 "hermes_key": key,
             },
             timeout=timeout,
         )
 
-    def test_both_suites_run_on_the_host_and_the_evidence_comes_back(self):
+    def test_the_cloud_gate_runs_on_the_host_and_the_evidence_comes_back(self):
         result = self.runtime(120).run()
         self.assertEqual(result["exit"], 0, result)
         self.assertIsNone(result["infrastructure"])
         self.assertEqual(result["ledger_rows_imported"], 0)
         evidence = self.directory / "evidence/var/log/vm-gate/release"
-        for suite in ("cloud", "aweb"):
-            self.assertEqual((evidence / suite / "exit").read_text(), "0\n")
+        self.assertEqual((evidence / "cloud" / "exit").read_text(), "0\n")
+        self.assertFalse((evidence / "aweb").exists())
         job = Path(result["job"])
         self.assertFalse((job / "hermes-key").exists())
         self.assertFalse((job / "cloud-image.tar").exists())
@@ -817,10 +752,8 @@ class NativeJob(CloudFixture, unittest.TestCase):
             f"AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE={job}/cloud-image.tar", cloud
         )
         self.assertIn(f"AWEB_GATE_LEDGER={job}/logs/release/cloud/ledger.tsv", cloud)
-        self.assertIn(
-            f"AWEB_GATE_LEDGER={job}/ledger.tsv",
-            (self.record / "candidate-gate.env").read_text(),
-        )
+        self.assertNotIn("GATE_CPUS=", cloud)
+        self.assertFalse((self.record / "candidate-gate.env").exists())
         self.assertTrue((evidence / "host-architecture").read_text().strip())
 
     def test_the_deadline_stops_the_job_with_term_and_is_infrastructure(self):
@@ -831,80 +764,7 @@ class NativeJob(CloudFixture, unittest.TestCase):
         self.assertFalse((Path(result["job"]) / "hermes-key").exists())
 
 
-# Machine shapes, as (CPUs, MiB): small ones, 10 and 12 CPUs, arm64 native
-# hosts, and Hetzner's dedicated sizes. The computation sees only numbers.
-SHAPES = [
-    (1, 2048),
-    (2, 4096),
-    (4, 8192),
-    (10, 45056),
-    (12, 51642),
-    (12, 32768),
-    (14, 98304),
-    (8, 32768),
-    (16, 65536),
-    (32, 131072),
-    (48, 196608),
-    (96, 393216),
-]
-
-
 class Budget(unittest.TestCase):
-    def gate_plan(self, cpus, memory_mib):
-        spec = importlib.util.spec_from_file_location(
-            "gate_budget",
-            Path(release.__file__).resolve().parents[2] / "gate_budget.py",
-        )
-        gate_budget = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(gate_budget)
-        lanes = list(gate_budget.WORK["lanes"])
-        return gate_budget.plan(cpus, memory_mib, lanes), gate_budget.workers
-
-    def test_the_gates_divide_the_guest_and_cap_nothing(self):
-        measured = release.gate_weights()
-        for cpus, memory_mib in SHAPES:
-            for aweb in (True, False):
-                weights = measured if aweb else {"cloud": measured["cloud"]}
-                with self.subTest(cpus=cpus, memory_mib=memory_mib, aweb=aweb):
-                    shares = budget.release_split(cpus, memory_mib, weights)
-                    self.assertEqual(
-                        shares["measured"], {"cpus": cpus, "memory_mib": memory_mib}
-                    )
-                    gates = [shares[g] for g in ("aweb", "cloud") if g in shares]
-                    # The proportional shares are the measured capacity, to
-                    # their two decimals; memory is floored per gate.
-                    self.assertAlmostEqual(sum(g["cpus"] for g in gates), cpus, delta=0.011)
-                    self.assertLessEqual(sum(g["memory_mib"] for g in gates), memory_mib)
-                    self.assertGreaterEqual(sum(g["memory_mib"] for g in gates), memory_mib - len(gates))
-                    self.assertTrue(all(g["cpus"] > 0 for g in gates))
-                    if not aweb:
-                        continue
-                    plan, workers = self.gate_plan(shares["aweb"]["cpus"], shares["aweb"]["memory_mib"])
-                    for suite, count in plan["unit"]["workers"].items():
-                        if count > 1:
-                            self.assertLessEqual(
-                                workers.service_memory_mib(count), plan["unit"]["memory_mib"] // 2
-                            )
-
-    def test_the_split_follows_the_gates_measured_work(self):
-        weights = release.gate_weights()
-        self.assertEqual(weights["aweb"], sum(json.loads(
-            (Path(release.__file__).resolve().parents[3] / "candidate-gate/measured-work.json").read_text()
-        )["lanes"].values()))
-        heavy = budget.release_split(24, 98304, {"aweb": 1000, "cloud": 3000})
-        self.assertEqual((heavy["aweb"]["cpus"], heavy["cloud"]["cpus"]), (6, 18))
-        self.assertEqual(heavy["weights"], {"aweb": 1000, "cloud": 3000})
-        for bad in ({"aweb": 1}, {"cloud": 0}, {"cloud": 1, "other": 1}, {"cloud": 1.5}):
-            with self.subTest(bad=bad), self.assertRaises(ValueError):
-                budget.release_split(12, 51642, bad)
-
-    def test_a_missing_cloud_figure_refuses(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "work.json"
-            path.write_text(json.dumps({"lanes": {"unit": 10}}))
-            with self.assertRaisesRegex(Refused, "Cloud"):
-                release.gate_weights(path)
-
     def test_an_override_is_input_and_a_missing_value_is_measured(self):
         with patch.object(budget, "measure", return_value=(12, 51642)):
             self.assertEqual(
@@ -919,7 +779,7 @@ class Budget(unittest.TestCase):
                 budget.budget_from({"GATE_CPUS": "6", "GATE_MEMORY_MIB": "1024"}),
                 (6, 1024, "cpus=input,memory=input"),
             )
-            # A release passes its gate's proportional, fractional share.
+            # A fractional CPU share is accepted.
             self.assertEqual(
                 budget.budget_from({"GATE_CPUS": "5.37", "GATE_MEMORY_MIB": "1024"}),
                 (5.37, 1024, "cpus=input,memory=input"),
@@ -929,112 +789,6 @@ class Budget(unittest.TestCase):
                 budget.budget_from({"GATE_CPUS": bad, "GATE_MEMORY_MIB": "1024"})
         with self.assertRaisesRegex(ValueError, "GATE_MEMORY_MIB"):
             budget.budget_from({"GATE_CPUS": "2", "GATE_MEMORY_MIB": "1.5"})
-
-
-class Receipt(unittest.TestCase):
-    def evidence(self, directory, suite, exit_code=None, rebuilt=None):
-        root = Path(directory) / "evidence/var/log/vm-gate/release" / suite
-        root.mkdir(parents=True, exist_ok=True)
-        if exit_code is not None:
-            (root / "exit").write_text(f"{exit_code}\n")
-        if rebuilt is not None:
-            (root / "rebuilt.json").write_text(json.dumps(rebuilt))
-
-    def record(self, directory, files, result=None):
-        return release.receipt(
-            machine="merak",
-            platform="linux/amd64",
-            run_id="vm-1",
-            result=result
-            or {"exit": 0, "infrastructure": None, "ledger_rows_imported": 9},
-            cloud_sha="c" * 40,
-            image={
-                "image": "ghcr.io/awebai/ac@sha256:" + "a" * 64,
-                "member": "sha256:" + "b" * 64,
-                "config": "sha256:" + "d" * 64,
-            },
-            main={"real_main": {"ac": "e" * 40}, "ac_parent_of_c": "e" * 40},
-            files=files,
-            aweb="f" * 40 if files else None,
-            launcher_sha="1" * 40,
-            timeout=9000,
-            directory=directory,
-        )
-
-    def gate_record(self, directory, rows):
-        self.evidence(directory, "cloud", exit_code=0)
-        run = Path(directory) / f"evidence/tmp/ac-candidate-gate-{'c' * 40}-stages"
-        run.mkdir(parents=True)
-        (run / "summary.tsv").write_text(
-            "# stage run, NOT release evidence: all\n"
-            + "".join(f"{stage}\t{verdict}\t{stage}.log\t1s\n" for stage, verdict in rows)
-        )
-        return release.receipt(
-            machine="merak",
-            platform="linux/amd64",
-            run_id="vm-1",
-            result={"exit": 0, "infrastructure": None},
-            cloud_sha="c" * 40,
-            image=None,
-            main={"real_main": {"ac": "e" * 40}, "ac_main_is_ancestor_of_c": True},
-            files={},
-            aweb=None,
-            launcher_sha="1" * 40,
-            timeout=9000,
-            directory=directory,
-        )
-
-    def test_a_cloud_gate_is_green_only_when_every_stage_passed(self):
-        every = [(stage, "PASSED") for stage in release.CLOUD_GATE_STAGES]
-        with tempfile.TemporaryDirectory() as tmp:
-            record = self.gate_record(tmp, every)
-            self.assertEqual(release.exit_code(record), release.GREEN)
-            self.assertEqual(record["cloud"]["command"], "make gate GATE_STAGES=all")
-            self.assertEqual(set(record["cloud"]["stages"].values()), {"PASSED"})
-            self.assertEqual(record["real_main"], {"ac": "e" * 40})
-        for broken in (
-            every[:-1],
-            every[:-1] + [("cloud-user-journey", "FAILED")],
-            every[:-1] + [("cloud-user-journey", "BLOCKED")],
-        ):
-            with self.subTest(last=broken[-1]), tempfile.TemporaryDirectory() as tmp:
-                record = self.gate_record(tmp, broken)
-                # The suite's exit was 0; the stage rows still make it red.
-                self.assertEqual(record["cloud"]["exit"], 0)
-                self.assertEqual(release.exit_code(record), release.RED)
-                self.assertNotEqual(record["cloud"]["stages"]["cloud-user-journey"], "PASSED")
-
-    def test_green_needs_both_suites_and_the_same_rebuilt_files(self):
-        files = {"aweb-1.27.54-py3-none-any.whl": "9" * 64}
-        with tempfile.TemporaryDirectory() as directory:
-            self.evidence(directory, "cloud", 0)
-            self.evidence(
-                directory, "aweb", 0, {**files, "aweb-1.27.54.tar.gz": "8" * 64}
-            )
-            record = self.record(directory, files)
-            self.assertEqual(release.exit_code(record), 0)
-            self.assertEqual(record["aweb"]["rebuilt_files"], files)
-            self.assertEqual(record["cloud"]["config"], "sha256:" + "d" * 64)
-            self.assertEqual(record["real_main"], {"ac": "e" * 40})
-            self.evidence(
-                directory, "aweb", 0, {"aweb-1.27.54-py3-none-any.whl": "7" * 64}
-            )
-            self.assertEqual(release.exit_code(self.record(directory, files)), 1)
-
-    def test_a_missing_suite_exit_is_infrastructure_and_a_red_suite_is_red(self):
-        with tempfile.TemporaryDirectory() as directory:
-            self.evidence(directory, "cloud")
-            self.assertEqual(release.exit_code(self.record(directory, {})), 70)
-            self.evidence(directory, "cloud", 4)
-            self.assertEqual(release.exit_code(self.record(directory, {})), 1)
-            infrastructure = {
-                "exit": 70,
-                "infrastructure": "infrastructure",
-                "error": "lost",
-            }
-            self.assertEqual(
-                release.exit_code(self.record(directory, {}, infrastructure)), 70
-            )
 
 
 if __name__ == "__main__":

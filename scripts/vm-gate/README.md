@@ -260,27 +260,31 @@ decrease. Raw counters are preserved without guessed percentages. The
 averages and cumulative stall time; before/after data supports diagnosis but
 does not on its own identify a physical host or prove noisy-neighbor causation.
 
-### Cloud gate
+### A project's gate, with one receipt
 
-`vm-gate cloud-gate --machine M --cloud-repo P --cloud-sha C --receipt R` runs
-Cloud's full train gate, `make gate GATE_STAGES=all` (every stage, journeys
-included, without the release-candidate checks), through the release job's own
-path. Shared with a release:
-- the Hermes key (operator `hermes_key_file`, 0600, removed before collect);
-- the guest-measured budget split (Cloud has the whole guest);
-- the cpu.stat sampler and evidence collection, including Cloud's
-  `/tmp/ac-candidate-gate-*` run directory;
-- the receipt and the ledger lease.
+`vm-gate run --project aweb|ac --repo PATH --sha S --intent train --machine M
+--receipt R` runs one project's full gate on the machine the operator config
+names, and writes one flat receipt on every outcome, refusals included, with
+every digest as `sha256:<hex>`. `--repo` is that project's local checkout. One
+suite has the whole machine: nothing is split and no budget is passed, so each
+gate sizes itself from the machine it runs on.
 
-Differences from a release:
-- C is a train head: admission requires real main in its history, and the
-  bundle carries real main as main plus C, checked out detached.
-- It builds no image and runs no aweb suite. The guest runs the launcher's own
-  aweb commit.
-- A stage run writes no Cloud ledger record, so the receipt is the evidence.
-  It records each Cloud stage's verdict from Cloud's own summary, and it is
-  green only when every stage there shows PASSED. Preflight writes no row (a failed
-  preflight leaves no stage rows), and a missing row is red.
+- `aweb`: aweb's candidate gate at S, with S as the guest's main (branch
+  scope) because S lands only after this gate; admission refuses S unless real
+  main is in its history. `--files DIR` places the release command's built
+  files in the guest: the federation journey installs their server wheel in
+  both servers, and after the gate the guest rebuilds them from S. Green needs
+  the suite green, the rebuild equal to the files and both server containers
+  holding the wheel. aweb runs only in a guest.
+- `ac`: Cloud's gate from the local checkout, shipped as a bundle, with the
+  operator's `hermes_key_file` (0600, removed before collect). With `--image`
+  (the amd64 member) and `--aweb-source`, the commit must sit directly on real
+  main and the guest runs `make release-gate` on that member; the receipt's
+  `aweb_source_built` is the `aweb-built-head` line of Cloud's own
+  `inputs.tsv`, never the input copied. Without `--image` the head must have
+  real main in its history, and the guest runs `make gate GATE_STAGES=all`.
+  Either way green needs every stage PASSED in Cloud's own `summary.tsv`; a
+  missing row is red. `ac` also runs on a native host.
 
 ### Merak
 
@@ -298,8 +302,7 @@ script reads its own CPU count and memory: the guest gets every CPU, and the
 host keeps an eighth of its memory (at least 2 GiB) plus QEMU's own 4 GiB. The
 admission record carries the guest size. Inside the guest each gate measures
 its own Docker engine (`vm_gate/budget.py`), so nothing names a machine or
-assumes a size. A release divides the measured capacity between its Cloud and
-aweb gates, and the receipt records the measurement and the split.
+assumes a size.
 
 Place the verified disk at `~/.local/share/aweb-gates/base/<sha256>.raw` with
 mode 0444. Merak holds one slot from admission through cleanup. Each invocation

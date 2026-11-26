@@ -56,19 +56,5 @@
       "workers": 3,
       "slot_seconds": 3721
     }
-  },
-  "gates": {
-    "cloud": {
-      "cpu_seconds": 18789,
-      "receipt": "vm-2ca9671a36aa4d6aa741914d1568625e",
-      "commit": "ced2e2a39d1aecc361a51491040d9f98452d6e22",
-      "lanes": {
-        "backend+frontend": 15800,
-        "cloud-user-journey": 2681,
-        "two-service": 106,
-        "image": 201
-      },
-      "measure": "CPU-seconds from cgroups, as aweb's lanes: the cumulative usage_usec of every container's cpu.stat in the receipt's memory.jsonl, from a full green `vm-gate cloud-gate` on a 12-CPU merak guest. backend+frontend is their shared runner (13177) plus its Postgres and Redis (2623); cloud-user-journey is its stage runner, stack, Hermes containers and DNS sidecars; image includes the run's builder. Lane figures are rounded. aweb's weight is the sum of this file's lanes."
-    }
   }
 }

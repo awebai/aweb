@@ -235,6 +235,26 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         self.assertEqual(code, 1, receipt)
         self.assertEqual(receipt["suite_exit"], 2)
 
+    def test_a_missing_suite_exit_or_a_machine_fault_is_infrastructure(self):
+        self.aweb_evidence()
+        del self.evidence["var/log/vm-gate/release/aweb/exit"]
+        code, receipt = self.invoke("aweb", "--files", str(self.files))
+        self.assertEqual(code, 70, receipt)
+        self.assertIsNone(receipt["suite_exit"])
+        self.aweb_evidence()
+        original = self.runtime
+
+        def faulty(**kwargs):
+            runtime = original(**kwargs)
+            run = runtime.run
+            runtime.run = lambda: {**run(), "exit": 70, "infrastructure": "infrastructure", "error": "lost"}
+            return runtime
+
+        self.runtime = faulty
+        code, receipt = self.invoke("aweb", "--files", str(self.files))
+        self.assertEqual(code, 70, receipt)
+        self.assertEqual(receipt["vm_gate"]["infrastructure"], "infrastructure")
+
     def test_aweb_refusals_write_a_receipt_and_start_no_machine(self):
         for extra, reason in (
             (("--image", INDEX), "Cloud's inputs"),
@@ -348,8 +368,11 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         self.assertNotIn("AC_CANDIDATE_AWEB_WHEELS", call["command"])
         self.assertNotIn("make candidate-gate", call["command"])
         inputs = call["executor_factory"].keywords["release"]
-        self.assertEqual(inputs["files"], [])
+        self.assertNotIn("files", inputs)
         self.assertEqual(inputs["hermes_key"], self.key)
+        # One suite has the whole machine: no split, no budget passed.
+        self.assertNotIn("vm_gate.budget", call["command"])
+        self.assertNotIn("GATE_CPUS", call["command"])
 
     def test_ac_release_gate_is_green_only_when_every_stage_in_its_summary_passed(self):
         every = {stage: "PASSED" for stage in project.release.CLOUD_GATE_STAGES}
@@ -427,7 +450,8 @@ class ProjectJob(CloudFixture, unittest.TestCase):
             with self.subTest(verdict=verdict):
                 self.calls.clear()
                 self.evidence = {"var/log/vm-gate/release/cloud/exit": "0\n"}
-                rows = "".join(
+                # A stage run's summary opens with a comment row, which is no stage.
+                rows = "# stage run, NOT release evidence: all\n" + "".join(
                     f"{stage}\t{verdict if stage == project.release.CLOUD_GATE_STAGES[0] else 'PASSED'}\t{stage}.log\t1s\n"
                     for stage in project.release.CLOUD_GATE_STAGES
                 )

@@ -322,7 +322,7 @@ def release_runtime_factory():
 
 
 def cloud_runtime(args, config, backend, machine, target, directory, run_id, key, launcher, timeout, factory):
-    """Cloud's suite alone, through the release job's bundle, image and key placement."""
+    """Cloud's suite alone: its bundle, its image when a release, and the Hermes key."""
     aweb_repo = Path(config.get("repo") or launcher).resolve()
     source_sha = args.aweb_source or git(aweb_repo, "rev-parse", "HEAD").stdout.strip()
     if backend == "native":
@@ -356,11 +356,9 @@ def cloud_runtime(args, config, backend, machine, target, directory, run_id, key
         image=args.image,
         member=image and image["member"],
         lock_source_sha=args.aweb_source,
-        aweb=None,
-        files={},
         cloud_target="gate" if gate_only else "release-gate",
     )
-    inputs = {"bundle": bundle, "archive": archive, "files": [], "hermes_key": key}
+    inputs = {"bundle": bundle, "archive": archive, "hermes_key": key}
     if backend == "native":
         from .native import NativeRuntime
 
@@ -373,7 +371,6 @@ def cloud_runtime(args, config, backend, machine, target, directory, run_id, key
                 logs=job + "/logs",
                 home=job + "/home",
                 key=job + "/hermes-key",
-                files_dir=job + "/release-files",
             ),
             machine=machine,
             inputs=inputs,

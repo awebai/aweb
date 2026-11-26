@@ -44,18 +44,6 @@ class Workers(unittest.TestCase):
                 self.assertEqual(budget.workers(share), workers)
 
 
-class ReleaseSplit(unittest.TestCase):
-    def test_cpus_are_proportional_and_unrounded_memory_is_floored(self):
-        split = budget.release_split(12, 50513, {"aweb": 15235, "cloud": 18789})
-        self.assertEqual(split["aweb"], {"cpus": 5.37, "memory_mib": 22618})
-        self.assertEqual(split["cloud"], {"cpus": 6.63, "memory_mib": 27894})
-        self.assertEqual(split["measured"], {"cpus": 12, "memory_mib": 50513})
-
-    def test_a_cloud_only_release_gives_cloud_the_whole_guest(self):
-        split = budget.release_split(12, 50513, {"cloud": 18789})
-        self.assertEqual(split["cloud"], {"cpus": 12, "memory_mib": 50513})
-
-
 class Plan(unittest.TestCase):
     def plan(self, cpus, memory_mib, lanes=LANES):
         return budget.plan(

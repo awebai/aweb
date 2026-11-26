@@ -1,9 +1,8 @@
-"""One release job on one machine: aweb's gate and Cloud's gate in one guest.
+"""Cloud's gate in one guest, and the machine and input helpers both projects use.
 
-The controller checks that the release commit still sits on Cloud's main,
-ships the Cloud commit as a bundle whose main is that commit, the amd64
-member of the Cloud image as a docker archive, the built aweb files and a
-test-only Hermes key, and writes one receipt for both suites.
+For a Cloud run (`vm-gate run --project ac`) the controller checks the commit
+against Cloud's real main, ships it as a bundle, the amd64 member of the Cloud
+image as a docker archive when it is a release, and a test-only Hermes key.
 """
 
 import hashlib
@@ -30,7 +29,6 @@ RELEASE_PLATFORM = "linux/amd64"
 BACKENDS = ("merak", "hetzner", "native")
 IMAGE = re.compile(r"(?P<repository>[a-z0-9./-]+)@(?P<index>sha256:[0-9a-f]{64})")
 SHA = re.compile(r"[0-9a-f]{40}")
-GUEST_RELEASE = LOGS + "/release"
 GUEST_FILES = REMOTE + "/release-files"
 GUEST_KEY_DIRECTORY = "/run/vm-gate-release"
 GUEST_KEY = GUEST_KEY_DIRECTORY + "/hermes-key"
@@ -255,20 +253,6 @@ def hermes_key(path):
     return path
 
 
-def gate_weights(path=None):
-    """Each gate's measured CPU-seconds, from candidate-gate/measured-work.json.
-
-    aweb's weight is the sum of its lanes there; Cloud's is the figure that
-    file names by its receipt.
-    """
-    path = path or Path(__file__).resolve().parents[3] / "candidate-gate/measured-work.json"
-    work = json.loads(Path(path).read_text())
-    cloud = work.get("gates", {}).get("cloud", {}).get("cpu_seconds")
-    if type(cloud) is not int or cloud < 1:
-        raise Refused("measured-work.json names no measured Cloud gate CPU-seconds")
-    return {"aweb": sum(work["lanes"].values()), "cloud": cloud}
-
-
 def guest_script(
     *,
     cloud_sha,
@@ -277,24 +261,16 @@ def guest_script(
     image,
     member,
     lock_source_sha,
-    aweb,
-    files,
     remote=REMOTE,
     logs=LOGS,
     home="/home/gateuser",
     key=GUEST_KEY,
-    files_dir=GUEST_FILES,
-    weights=None,
     cloud_target="release-gate",
 ):
-    """Both suites in parallel; each writes its exit and output under release/.
+    """Cloud's gate alone; its exit and output go under release/cloud/.
 
-    weights are the gates' measured CPU-seconds (gate_weights); the guest
-    divides its own measured capacity by them.
+    It passes no budget: Cloud's gate sizes itself from the machine it runs on.
     """
-    weights = weights or gate_weights()
-    if not aweb:
-        weights = {"cloud": weights["cloud"]}
     release = logs + "/release"
     if cloud_target not in ("release-gate", "gate"):
         raise ValueError(f"unknown Cloud target {cloud_target!r}")
@@ -302,7 +278,7 @@ def guest_script(
         f"AWEB_GATE_LEDGER={release}/cloud/ledger.tsv",
         f"AWEB_GATE_LOG_DIR={release}/cloud/gate-logs",
         f"DOCKER_CONFIG={release}/cloud/empty-docker-config",
-        # Both jobs run the Hermes journey, which needs its isolated credential.
+        # Cloud's journeys run the Hermes journey, which needs its isolated credential.
         f"AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE={key}",
     ]
     if cloud_target == "release-gate":
@@ -331,49 +307,11 @@ def guest_script(
         if cloud_target == "release-gate"
         else ""
     )
-    if files:
-        cloud_env += [
-            f"AC_CANDIDATE_AWEB_WHEELS={files_dir}",
-            f"AC_CANDIDATE_AWEB_WHEELS_SOURCE_SHA={aweb}",
-        ]
-    exports = (
-        "export "
-        + " ".join(Q(e) for e in cloud_env)
-        + ' GATE_CPUS="$cloud_cpus" GATE_MEMORY_MIB="$cloud_memory"'
-    )
-    projects = sorted(
-        {
-            AWEB_PROJECTS[p]
-            for name in files
-            for p in AWEB_PROJECTS
-            if name.startswith(p)
-        }
-    )
-    rebuild = "\n".join(
-        f"  uv build --quiet --wheel --sdist --out-dir {Q(release + '/aweb/rebuilt')} {Q(project)} || exit 1"
-        for project in projects
-    )
-    aweb_suite = ""
-    if aweb:
-        aweb_suite = f"""
-(
-  set -u
-  cd {Q(remote + "/source")}
-  test "$(git rev-parse HEAD)" = {Q(aweb)} || exit 70
-  GATE_CPUS="$aweb_cpus" GATE_MEMORY_MIB="$aweb_memory" make candidate-gate > {Q(release + "/aweb/gate-output.log")} 2>&1
-  printf '%s\\n' "$?" > {Q(release + "/aweb/exit")}
-  mkdir -p {Q(release + "/aweb/rebuilt")}
-{rebuild}
-  python3 -c 'import hashlib, json, pathlib, sys; d = pathlib.Path(sys.argv[1]); print(json.dumps({{p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(d.iterdir())}}, sort_keys=True))' {Q(release + "/aweb/rebuilt")} > {Q(release + "/aweb/rebuilt.json")}
-) > {Q(release + "/aweb/suite.log")} 2>&1 &
-aweb_suite=$!
-"""
+    exports = "export " + " ".join(Q(e) for e in cloud_env)
     return f"""set -u
-mkdir -p {Q(release + "/aweb")} {Q(release + "/cloud/empty-docker-config")}
+mkdir -p {Q(release + "/cloud/empty-docker-config")}
 {{ uname -m; docker info --format '{{{{.Architecture}}}}'; }} > {Q(release + "/host-architecture")} 2>/dev/null
 chmod 0700 {Q(release + "/cloud/empty-docker-config")}
-read -r cloud_cpus cloud_memory aweb_cpus aweb_memory < <(python3 -m vm_gate.budget split {Q(release + "/split.json")} {" ".join(Q(f"{gate}={weight}") for gate, weight in sorted(weights.items()))}) || exit 70
-test -n "$cloud_cpus" || exit 70
 echo {Q(bundle_sha256 + "  " + remote + "/cloud.bundle")} | sha256sum -c - || exit 70
 {image_check}
 cd {Q(home)}
@@ -384,27 +322,19 @@ git --git-dir=cloud-origin symbolic-ref HEAD refs/heads/main || exit 70
 git clone --quiet cloud-origin cloud-source || exit 70
 {checkout}
 test "$(git -C cloud-source rev-parse HEAD)" = {Q(cloud_sha)} || exit 70
-{aweb_suite}
-(
-  cd {Q(home + "/cloud-source")}
-  git config user.name 'aweb release gate'
-  git config user.email 'release-gate@localhost'
-  {exports}
-  make {cloud_make} > {Q(release + "/cloud/gate-output.log")} 2>&1
-  printf '%s\\n' "$?" > {Q(release + "/cloud/exit")}
-) &
-cloud_suite=$!
-wait "$cloud_suite"
-{'wait "$aweb_suite"' if aweb else ""}
-status=0
-test "$(cat {Q(release + "/cloud/exit")} 2>/dev/null)" = 0 || status=1
-{f'test "$(cat {Q(release + "/aweb/exit")} 2>/dev/null)" = 0 || status=1' if aweb else ""}
-exit "$status"
+cd {Q(home + "/cloud-source")}
+git config user.name 'aweb release gate'
+git config user.email 'release-gate@localhost'
+{exports}
+make {cloud_make} > {Q(release + "/cloud/gate-output.log")} 2>&1
+status=$?
+printf '%s\\n' "$status" > {Q(release + "/cloud/exit")}
+test "$status" = 0 || exit 1
 """
 
 
 class ReleaseExecutor(Executor):
-    """The guest executor with the release inputs placed before the gate starts."""
+    """The guest executor with Cloud's inputs placed before the gate starts."""
 
     def __init__(self, config, directory, source, command, provider, *, release):
         super().__init__(config, directory, source, command, provider)
@@ -415,12 +345,6 @@ class ReleaseExecutor(Executor):
         self.upload(self.release["bundle"], REMOTE + "/cloud.bundle", mode="0444")
         if self.release["archive"]:
             self.upload(self.release["archive"], REMOTE + "/cloud-image.tar", mode="0444")
-        self.run(
-            f"install -d -m 0755 -o root -g root {GUEST_FILES}",
-            "release-files-directory",
-        )
-        for path in self.release["files"]:
-            self.upload(path, GUEST_FILES + "/" + Path(path).name, mode="0444")
         self.run(
             f"install -d -o root -g gateuser -m 0710 {GUEST_KEY_DIRECTORY}",
             "hermes-directory",
@@ -470,101 +394,3 @@ def suite_record(evidence, suite):
         "exit": int(value) if value.isdigit() else None,
         "evidence": str(root),
     }
-
-
-def receipt(
-    *,
-    machine,
-    platform,
-    run_id,
-    result,
-    cloud_sha,
-    image,
-    main,
-    files,
-    aweb,
-    launcher_sha,
-    timeout,
-    directory,
-):
-    """The one record make release reads: both suites, both inputs, the main check."""
-    evidence = Path(directory) / "evidence"
-    cloud = {"sha": cloud_sha, **suite_record(evidence, "cloud")}
-    if image:
-        cloud.update(
-            image=image["image"],
-            member=image["member"],
-            config=image["config"],
-            member_architecture=image.get("member_architecture"),
-            command="make release-gate",
-        )
-    else:
-        cloud["command"] = "make gate GATE_STAGES=all"
-        cloud["stages"] = cloud_stage_verdicts(evidence, cloud_sha)
-    architecture = evidence / "var/log/vm-gate/release/host-architecture"
-    split_path = evidence / "var/log/vm-gate/release/split.json"
-    split = json.loads(split_path.read_text()) if split_path.exists() else None
-    record = {
-        "machine": machine,
-        "machine_platform": platform,
-        "host_architecture": (
-            architecture.read_text().split() if architecture.exists() else None
-        ),
-        "run_id": run_id,
-        "launcher_sha": launcher_sha,
-        "timeout_seconds": timeout,
-        "files": files,
-        "split": split,
-        "cloud": cloud,
-        **main,
-        "vm_gate": {
-            "exit": result.get("exit"),
-            "infrastructure": result.get("infrastructure"),
-            "error": result.get("error"),
-            "summary": str(Path(directory) / "summary.json"),
-        },
-    }
-    if aweb:
-        rebuilt_path = evidence / "var/log/vm-gate/release/aweb/rebuilt.json"
-        rebuilt = (
-            json.loads(rebuilt_path.read_text()) if rebuilt_path.exists() else None
-        )
-        record["aweb"] = {
-            "sha": aweb,
-            "command": "make candidate-gate",
-            "rebuilt_files": (
-                {name: rebuilt[name] for name in files if name in rebuilt}
-                if rebuilt is not None
-                else None
-            ),
-            "ledger_rows_imported": result.get("ledger_rows_imported"),
-            **suite_record(evidence, "aweb"),
-        }
-    return record
-
-
-# The release job's exits: green, a red suite, refused before boot, infrastructure.
-GREEN, RED, REFUSED, INFRASTRUCTURE = 0, 1, 2, 70
-
-
-def exit_code(record):
-    """Green only when every suite passed, aweb rebuilt the exact files and,
-    for a Cloud gate, every Cloud stage shows PASSED in its summary."""
-    classification = record["vm_gate"]["infrastructure"]
-    if classification == "refused":
-        return REFUSED
-    if classification is not None:
-        return INFRASTRUCTURE
-    suites = [record["cloud"]] + ([record["aweb"]] if "aweb" in record else [])
-    if any(suite["exit"] is None for suite in suites):
-        return INFRASTRUCTURE
-    if any(suite["exit"] != 0 for suite in suites):
-        return RED
-    if "aweb" in record and record["aweb"]["rebuilt_files"] != record["files"]:
-        return RED
-    # A Cloud gate is green only when its own summary shows every stage passed.
-    stages = record["cloud"].get("stages")
-    if stages is not None and any(v != "PASSED" for v in stages.values()):
-        return RED
-    return GREEN
-
