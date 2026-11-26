@@ -580,7 +580,7 @@ run_lane() {
     -e GOFLAGS=-modcacherw \
     -e NPM_CONFIG_CACHE=/tmp/npm-cache \
     -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
-    -e AWEB_SKEW_PROJECT_TOKEN="${suite_projects[0]}" \
+    -e AWEB_CHANNEL_E2E_PROJECT="${suite_projects[0]}" \
     -e AWEB_E2E_PROJECT="${suite_projects[1]}" \
     -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \
     -e AWEB_FED_E2E_PROJECT="${suite_projects[3]}" \
