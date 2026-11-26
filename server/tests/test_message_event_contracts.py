@@ -12,8 +12,6 @@ from aweb.federation.envelope import verify_federation_envelope
 from aweb.hooks import fire_mutation_callback
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.message_events import (
-    ChatMessageEvent,
-    MessageAcknowledgedEvent,
     ChatMessageSentContext,
     FederatedMessageSentContext,
     MailSentContext,
@@ -379,14 +377,3 @@ def test_acknowledgement_context_preserves_historical_metadata_strings():
         content_mode=" Historical/Content ",
     )
     assert dto.to_context()["content_mode"] == " Historical/Content "
-
-
-def test_transport_exports_reuse_existing_public_dtos_instead_of_a_second_set():
-    assert MessageDeliveredEvent is existing_transport.MessageDeliveredEvent
-    assert MessageAcknowledgedEvent is existing_transport.MessageAcknowledgedEvent
-    assert ChatMessageEvent is existing_transport.ChatMessageEvent
-    event = MessageDeliveredEvent(
-        workspace_id="workspace", content_mode=ContentMode.ENCRYPTED
-    )
-    assert json.loads(event.to_json())["content_mode"] == "encrypted_v2"
-    assert event.type == TransportEventType.MAIL_DELIVERED

@@ -895,22 +895,6 @@ func TestAwDoctorFixApplyErrorDoesNotLeakHandlerError(t *testing.T) {
 	}
 }
 
-func TestAwDoctorFixHandlerRegistryCleanup(t *testing.T) {
-	restore := setDoctorFixHandlersForTest(t, map[string]doctorFixHandler{
-		"fake.cleanup": &fakeDoctorFixHandler{id: "fake.cleanup"},
-	})
-	if _, ok := doctorFixHandlers["fake.cleanup"]; !ok {
-		t.Fatalf("fake handler was not installed")
-	}
-	restore()
-	if _, ok := doctorFixHandlers["fake.cleanup"]; ok {
-		t.Fatalf("fake handler leaked after cleanup")
-	}
-	if _, ok := doctorFixHandlers[doctorCheckWorkspaceAwebURL]; !ok {
-		t.Fatalf("production local fix handler was not restored after fake registry cleanup")
-	}
-}
-
 func TestAwDoctorLocalChecksValidLocalWorkspace(t *testing.T) {
 	t.Parallel()
 

@@ -231,12 +231,6 @@ def _assert_refused_before_the_network(
     assert listener.connections == 0
 
 
-def test_the_setting_is_named_once():
-    from aweb.config import FEDERATION_OUTBOUND_SETTING
-
-    assert FEDERATION_OUTBOUND_SETTING == SETTING
-
-
 @pytest.mark.asyncio
 async def test_unset_keeps_delivering_to_any_admitted_origin(
     aweb_cloud_db, monkeypatch

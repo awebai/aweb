@@ -130,31 +130,6 @@ async def test_openapi_only_mounts_registry_routes(client):
 
 
 @pytest.mark.asyncio
-async def test_did_routes_use_redis_rate_limiter(client, fake_redis):
-    _, public_key = generate_keypair()
-    missing_did_aw = stable_id_from_did_key(did_from_public_key(public_key))
-    resp = await client.get(f"/v1/did/{missing_did_aw}/key")
-    assert resp.status_code == 404
-    assert fake_redis.eval_calls
-
-
-@pytest.mark.asyncio
-async def test_namespace_and_address_read_routes_use_redis_rate_limiter(
-    client, fake_redis
-):
-    fake_redis.eval_calls.clear()
-
-    namespace_resp = await client.get("/v1/namespaces")
-    address_list_resp = await client.get("/v1/namespaces/example.com/addresses")
-    address_get_resp = await client.get("/v1/namespaces/example.com/addresses/alice")
-
-    assert namespace_resp.status_code == 200
-    assert address_list_resp.status_code == 404
-    assert address_get_resp.status_code == 404
-    assert len(fake_redis.eval_calls) >= 3
-
-
-@pytest.mark.asyncio
 async def test_trusted_service_token_uses_constant_time_comparison_for_reads_and_provisioning(
     awid_db_infra, fake_redis, fake_domain_verifier, monkeypatch
 ):

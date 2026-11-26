@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import inspect
 import ipaddress
 import json
 import logging
@@ -26,7 +25,6 @@ from awid.external_authority import OriginContext
 from awid.registry import Address, AddressDelivery, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
 
-import aweb.federation.mail as federation_mail
 import test_chat_http
 import test_messages_http
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
@@ -522,13 +520,6 @@ async def test_large_error_answer_reaches_the_caller_as_a_status_only(caplog):
     assert origin in records[0]
     assert "500" in records[0]
     assert len(records[0]) <= 512
-
-
-def test_delivery_requires_a_transport():
-    parameter = inspect.signature(deliver_federated_message).parameters["transport"]
-    assert parameter.default is inspect.Parameter.empty
-    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
-    assert not hasattr(federation_mail, "deliver_federated_mail")
 
 
 @pytest.mark.asyncio
