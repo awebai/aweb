@@ -46,6 +46,10 @@ class EgressNotSent(Exception):
     """The request failed before any byte of it was written."""
 
 
+class EgressUnresolved(EgressNotSent):
+    """The destination's name resolved to no address, so nothing was sent."""
+
+
 class EgressOutcomeUnknown(Exception):
     """The request failed after bytes of it were written; it may have taken effect."""
 
@@ -91,7 +95,7 @@ class Response:
 
 class Resolver(Protocol):
     async def resolve(self, host: str) -> list[IPAddress]:
-        """Every A and AAAA address of ``host``; raises EgressNotSent if none."""
+        """Every A and AAAA address of ``host``; raises EgressUnresolved if none."""
         ...
 
 
@@ -115,12 +119,12 @@ class DnsResolver:
         addresses: list[IPAddress] = []
         for answer in answers:
             if isinstance(answer, dns.resolver.NXDOMAIN):
-                raise EgressNotSent(f"{host} does not exist") from answer
+                raise EgressUnresolved(f"{host} does not exist") from answer
             if isinstance(answer, BaseException):
-                raise EgressNotSent(f"{host} could not be resolved") from answer
+                raise EgressUnresolved(f"{host} could not be resolved") from answer
             addresses += answer
         if not addresses:
-            raise EgressNotSent(f"{host} has no address")
+            raise EgressUnresolved(f"{host} has no address")
         return addresses
 
     async def _query(self, name: dns.name.Name, kind: str) -> list[IPAddress]:
@@ -208,7 +212,7 @@ class Egress:
             async with asyncio.timeout_at(resolve_by):
                 return await self.resolver.resolve(host)
         except TimeoutError as error:
-            raise EgressNotSent(f"resolving {host} timed out") from error
+            raise EgressUnresolved(f"resolving {host} timed out") from error
 
     def _ssl_context(self) -> ssl.SSLContext:
         context = ssl.create_default_context()

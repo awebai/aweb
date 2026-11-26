@@ -168,6 +168,7 @@ async def test_catalog_failure_never_falls_back_or_follows_redirects(origin, sta
     with pytest.raises(ManifestFetchError) as refused:
         await origin.fetcher.fetch(origin.url)
     assert refused.value.code == "catalog_unavailable"
+    assert refused.value.status_code == 502
     assert len(origin.tls.seen) == 1
 
 
@@ -220,9 +221,27 @@ async def test_truncated_bytes_are_never_accepted(origin, catalog):
 async def test_default_public_policy_refuses_private_dns_before_connect(origin):
     with pytest.raises(ManifestFetchError) as refused:
         await origin.public_fetcher.fetch(origin.url)
-    assert refused.value.code == "catalog_unavailable"
+    assert refused.value.code == "origin_refused"
+    assert refused.value.status_code == 422
     assert origin.dns.queries[(NAME, "A")] > 0
     assert not origin.tls.seen
+
+
+async def test_a_name_that_does_not_resolve_is_unresolvable_before_connect(origin):
+    with pytest.raises(ManifestFetchError) as refused:
+        await origin.public_fetcher.fetch("https://nothing-here.invalid")
+    assert refused.value.code == "origin_unresolvable"
+    assert refused.value.status_code == 422
+    assert not origin.tls.seen
+
+
+async def test_an_origin_that_is_reached_and_fails_stays_unavailable(origin):
+    origin.publish(origin.manifest())
+    origin.routes[VARIANT] = (500, b"", [])
+    with pytest.raises(ManifestFetchError) as refused:
+        await origin.fetcher.fetch(origin.url)
+    assert refused.value.code == "variant_unavailable"
+    assert refused.value.status_code == 502
 
 
 def operator_listed(origin, *origins, network=None):
@@ -247,7 +266,8 @@ async def test_an_unlisted_origin_stays_public_when_another_is_listed(origin):
     origin.publish(origin.manifest())
     with pytest.raises(ManifestFetchError) as refused:
         await operator_listed(origin, "https://other-app.fetch.test").fetch(origin.url)
-    assert refused.value.code == "catalog_unavailable"
+    assert refused.value.code == "origin_refused"
+    assert refused.value.status_code == 422
     assert not origin.tls.seen
 
 
@@ -256,7 +276,8 @@ async def test_a_listed_origin_resolving_outside_its_network_is_refused(origin):
     elsewhere = ip_network(f"{ip_address(origin.host) + 1}/32")
     with pytest.raises(ManifestFetchError) as refused:
         await operator_listed(origin, origin.url, network=elsewhere).fetch(origin.url)
-    assert refused.value.code == "catalog_unavailable"
+    assert refused.value.code == "origin_refused"
+    assert refused.value.status_code == 422
     assert not origin.tls.seen
 
 

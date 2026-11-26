@@ -19,6 +19,7 @@ from aweb_naapp.egress import (
     DnsResolver,
     Egress,
     EgressRefused,
+    EgressUnresolved,
     HeaderRules,
     parse_destination,
 )
@@ -168,6 +169,17 @@ class ManifestFetcher:
             manifest = load_manifest(selected.data, reserved_names=reserved_app_ids())
             check_manifest_keys(manifest)
         except ManifestError as exc:
+            # Only an origin that was reached and failed is a bad gateway; a
+            # request the guard refused or a name that did not resolve never
+            # left this server.
+            if isinstance(exc.__cause__, EgressRefused):
+                raise ManifestFetchError(
+                    "origin_refused", "The app origin is not a reachable public origin"
+                ) from exc
+            if isinstance(exc.__cause__, EgressUnresolved):
+                raise ManifestFetchError(
+                    "origin_unresolvable", "The app origin's name does not resolve"
+                ) from exc
             status = 502 if exc.code.endswith("_unavailable") else 422
             raise ManifestFetchError(
                 exc.code, "The app manifest could not be fetched or validated", status
