@@ -60,7 +60,6 @@ func DecodeStd(value string) ([]byte, error) { return base64.RawStdEncoding.Deco
 func DecodeStdStrict(value string) ([]byte, error) {
 	return base64.RawStdEncoding.Strict().DecodeString(value)
 }
-func DecodeURL(value string) ([]byte, error) { return base64.RawURLEncoding.DecodeString(value) }
 func DecodeURLStrict(value string) ([]byte, error) {
 	return base64.RawURLEncoding.Strict().DecodeString(value)
 }

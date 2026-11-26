@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -273,31 +272,4 @@ func randomHexString(n int) string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(buf)
-}
-
-// IsTerminalState reports whether a task state ends further execution.
-func IsTerminalState(state string) bool {
-	switch state {
-	case TaskStateCompleted, TaskStateFailed, TaskStateCanceled, TaskStateRejected:
-		return true
-	default:
-		return false
-	}
-}
-
-// SameOriginRPCFromCardURL derives the conventional RPC path beside a direct
-// card. Callers validate an advertised endpoint with ValidateRPCOrigin before
-// selecting a stored credential.
-func SameOriginRPCFromCardURL(cardURL string) string {
-	parsed, err := url.Parse(strings.TrimSpace(cardURL))
-	if err != nil {
-		return ""
-	}
-	if strings.HasSuffix(parsed.Path, "/agent-card.json") {
-		parsed.Path = strings.TrimSuffix(parsed.Path, "/agent-card.json") + "/rpc"
-		parsed.RawQuery = ""
-		parsed.Fragment = ""
-		return parsed.String()
-	}
-	return ""
 }
