@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-26
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-cleanup-oss.
+* **Creation**: lessons [landed is a content question, not an ancestry one](/aweb-expert/lessons/landed-is-a-content-question-not-an-ancestry-one.md) and [an unread Settings field can be startup validation](/aweb-expert/lessons/an-unread-settings-field-can-be-startup-validation.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
