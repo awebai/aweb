@@ -5,7 +5,7 @@ TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
-.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync typecheck-naapp test-naapp test-awid test-awid-pooler test-key-holder test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish release test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync typecheck-naapp test-naapp test-awid test-awid-pooler test-key-holder test-hermes-platform test-hermes-platform-source test-clitest-cli-auth-v2 test-node-deps test-channel test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish release test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit test-go-vulnerability-audit \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
@@ -49,6 +49,7 @@ help:
 	@echo "  test-server  Run server tests"
 	@echo "  test-awid    Run awid service tests"
 	@echo "  test-key-holder Run the key holder's tests (PostgreSQL and REDIS_URL)"
+	@echo "  test-hermes-platform Run the Hermes plugin's tests on Hermes's own locked environment (release precondition)"
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
 	@echo "  test-channel-core Run channel-core tests"
@@ -137,7 +138,7 @@ build: sync-doc-copies
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-scripts test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-key-holder test-cli test-channel test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-scripts test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-key-holder test-hermes-platform-source test-cli test-channeltest-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Discover the host/script controls together, including generators that import
 # the server's MCP registration. Use the locked server environment rather than
@@ -401,6 +402,44 @@ check-secrets-shards:
 test-key-holder:
 	cd key-holder && uv sync --frozen
 	cd key-holder && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+
+# The Hermes revision the plugin is checked against. Cloud's
+# candidate-gate/Dockerfile.hermes pins the same one; move both together.
+HERMES_SOURCE_SHA := 3b421578588243f920886e6fe79a6faa87ea026e
+HERMES_CACHE ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/aweb-oss/hermes-$(HERMES_SOURCE_SHA)
+HERMES_PLATFORM_TESTS := test_adapter test_content_boundary test_hermes_lifecycle test_home_notice test_startup_health test_team_policy test_live_chat test_live_delivery
+
+# The Hermes plugin's controls that need no Hermes run in the server's locked
+# environment, in make test and the gate.
+test-hermes-platform-source:
+	cd server && uv sync --frozen
+	cd server && for test in test_fixture_registry test_probe_timing; do \
+		PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync \
+			python -m unittest discover -s ../packages/hermes-aweb-platform/tests -p "$$test.py" -v || exit 1; \
+	done
+
+# The Hermes plugin's tests on Hermes's own frozen environment, built once per
+# pinned revision under the user's cache. Hermes supports Python 3.14 only and
+# resolves through its own uv overrides, so it is not a dependency of any aweb
+# project, nor part of make test or the gate image; releasing the plugin
+# requires this target. A build that stopped part-way is refused, never
+# deleted here. The live tests skip unless their environment is set.
+test-hermes-platform:
+	set -e; dir="$(HERMES_CACHE)"; \
+	if [ ! -f "$$dir/.aweb-hermes-ready" ]; then \
+		if [ -e "$$dir" ]; then \
+			echo "incomplete Hermes environment at $$dir: remove it and rerun" >&2; exit 1; \
+		fi; \
+		git init -q "$$dir"; \
+		git -C "$$dir" fetch -q --depth 1 https://github.com/NousResearch/hermes-agent.git $(HERMES_SOURCE_SHA); \
+		git -C "$$dir" checkout -q --detach FETCH_HEAD; \
+		(cd "$$dir" && uv sync --frozen --python 3.14); \
+		touch "$$dir/.aweb-hermes-ready"; \
+	fi; \
+	test "$$(git -C "$$dir" rev-parse HEAD)" = "$(HERMES_SOURCE_SHA)"; \
+	cd packages/hermes-aweb-platform && for test in $(HERMES_PLATFORM_TESTS); do \
+		PYTHONPYCACHEPREFIX=/tmp/pycache "$$dir/.venv/bin/python" -m unittest discover -s tests -p "$$test.py" -v || exit 1; \
+	done
 
 # awid's database session tests through a real transaction-mode PgBouncer.
 test-awid-pooler:

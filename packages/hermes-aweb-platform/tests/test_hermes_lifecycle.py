@@ -1,21 +1,11 @@
-"""Run against a real Hermes checkout and its installed dependencies.
-
-HERMES_AGENT_SOURCE=/path/to/hermes-agent python -m unittest discover \
-    -s packages/hermes-aweb-platform/tests -p test_hermes_lifecycle.py -v
-"""
+"""Run against Hermes's own locked environment: make test-hermes-platform."""
 
 import importlib.util
-import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 
-
-source = os.environ.get("HERMES_AGENT_SOURCE")
-if not source:
-    raise unittest.SkipTest("Set HERMES_AGENT_SOURCE to a real Hermes checkout")
-sys.path.insert(0, str(Path(source).resolve()))
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platform_registry import platform_registry

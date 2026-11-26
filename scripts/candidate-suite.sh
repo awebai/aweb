@@ -123,6 +123,7 @@ checks() {
   run test-federation-error-reference
   run test-federation-authority-mutations
   run test-federation-harness
+  run test-hermes-platform-source
   run test-cli-reference
   run test-mcp-tools-reference
   run _candidate-channel-version

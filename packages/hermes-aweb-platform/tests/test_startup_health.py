@@ -9,10 +9,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-SOURCE = os.environ.get("HERMES_AGENT_SOURCE")
-if not SOURCE:
-    raise unittest.SkipTest("Set HERMES_AGENT_SOURCE to a real Hermes checkout")
-sys.path.insert(0, str(Path(SOURCE).resolve()))
 from gateway.config import Platform, PlatformConfig
 from gateway.platform_registry import PlatformEntry, platform_registry
 from gateway.run_adapters import GatewayAdapterLifecycleMixin

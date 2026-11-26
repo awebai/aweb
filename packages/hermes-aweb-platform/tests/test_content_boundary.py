@@ -10,16 +10,10 @@ import asyncio
 import importlib.util
 import os
 from pathlib import Path
-import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-
-SOURCE = os.environ.get("HERMES_AGENT_SOURCE")
-if not SOURCE:
-    raise unittest.SkipTest("Set HERMES_AGENT_SOURCE to a real Hermes checkout")
-sys.path.insert(0, str(Path(SOURCE).resolve()))
 
 from agent.i18n import t
 from gateway.config import PlatformConfig

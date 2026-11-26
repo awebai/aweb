@@ -1,16 +1,11 @@
 import asyncio
 import importlib.util
-import os
 import sys
 import types
 import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
-HERMES = Path(
-    os.environ.get("HERMES_AGENT_SOURCE", HERE.parents[4] / "other" / "hermes-agent")
-)
-sys.path.insert(0, str(HERMES))
 
 if "yaml" not in sys.modules:
     yaml_stub = types.ModuleType("yaml")
