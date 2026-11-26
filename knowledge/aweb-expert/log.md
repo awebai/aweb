@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-25
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-gate-dispatch (lessons from the first real runs of aweb's release gate).
+* **Creation**: lessons [a full gate of an unlanded head takes it as the guest's main](/aweb-expert/lessons/a-full-gate-of-an-unlanded-head-takes-it-as-main.md) and [tests that make commits or tags carry their own git identity](/aweb-expert/lessons/git-making-tests-carry-their-own-identity.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
