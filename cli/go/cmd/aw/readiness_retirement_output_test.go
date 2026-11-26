@@ -11,7 +11,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
-	"github.com/awebai/aw/wake"
+	"github.com/awebai/aw/internal/wake"
 )
 
 func invokeWithCommandStdout(t *testing.T, file *os.File, run func() error) error {

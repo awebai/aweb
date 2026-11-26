@@ -504,7 +504,7 @@ async def _present_by_wake(
     ]
     runner = await asyncio.create_subprocess_exec(
         "node",
-        str(REPO / "cli/go/wake/channel_core_runner_bundle.mjs"),
+        str(REPO / "cli/go/internal/wake/channel_core_runner_bundle.mjs"),
         cwd=command_dir,
         env=command_env,
         stdin=asyncio.subprocess.PIPE,

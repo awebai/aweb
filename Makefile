@@ -544,7 +544,7 @@ test-tmux-guard:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
 
 test-a2a:
-	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid ./tools/a2a-gateway-check-workspace -count=1 -timeout 20m
+	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./internal/a2a ./internal/a2agw ./awid ./tools/a2a-gateway-check-workspace -count=1 -timeout 20m
 	cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw ./cmd/aweb-a2a-gw -run A2A -count=1 -timeout 20m
 	cd awid && uv run pytest tests/test_a2a_publication_route.py -q
 	./scripts/check-a2a-copy-guardrails.sh

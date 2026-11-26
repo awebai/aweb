@@ -22,10 +22,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/awebai/aw/a2a"
-	"github.com/awebai/aw/a2agw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/a2a"
+	"github.com/awebai/aw/internal/a2agw"
 	"github.com/awebai/aw/internal/releaseversion"
 	"gopkg.in/yaml.v3"
 )

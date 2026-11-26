@@ -743,7 +743,7 @@ def self_test(root: Path) -> int:
             remove(rel)
 
         for index, token in enumerate(MANAGED_GATEWAY_PRIVATE_TOKENS):
-            for rel in ("README.md", f"cli/go/a2a/surface-{index}.go"):
+            for rel in ("README.md", f"cli/go/internal/a2a/surface-{index}.go"):
                 write(rel, f"generic\n{token}\n")
                 if not rejects(f"{rel} retains private managed-gateway token"):
                     print(

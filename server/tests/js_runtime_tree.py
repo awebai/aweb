@@ -13,7 +13,7 @@ PACKAGES = ("channel-core", "channel", "pi-extension")
 FILES = (
     "scripts/check-node-build-provenance.mjs",
     "server/tests/activity_emitter_host.mjs",
-    "cli/go/wake/channel_core_runner_bundle.mjs",
+    "cli/go/internal/wake/channel_core_runner_bundle.mjs",
 )
 
 

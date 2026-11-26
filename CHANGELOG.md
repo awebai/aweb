@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
+  `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
+  of the documented Go library and are now internal to the `aw` module, under
+  `cli/go/internal/`. The documented library is `aw`, `awid`, `awconfig`,
+  `chat` and `run`; none of its exported API changes. An outside importer of
+  the moved packages must vendor the code it needs.
+
 - Certificate requests from a member that left a team and reconnected with
   the same key are admitted again. Since server 1.27.51 the native member read
   could return the archived row instead of the live one for that key and

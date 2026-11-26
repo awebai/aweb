@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awebai/aw/a2agw"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/a2agw"
 )
 
 type replySignatureBinding int

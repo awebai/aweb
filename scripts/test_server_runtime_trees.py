@@ -275,10 +275,11 @@ class RuntimeTrees(unittest.TestCase):
                     commands.append(values["command"])
                     self.assertEqual(
                         (
-                            reader / "cli/go/wake/channel_core_runner_bundle.mjs"
+                            reader
+                            / "cli/go/internal/wake/channel_core_runner_bundle.mjs"
                         ).read_bytes(),
                         (
-                            ROOT / "cli/go/wake/channel_core_runner_bundle.mjs"
+                            ROOT / "cli/go/internal/wake/channel_core_runner_bundle.mjs"
                         ).read_bytes(),
                     )
                     for command in commands:
@@ -350,7 +351,6 @@ class RuntimeTrees(unittest.TestCase):
             self.assertEqual(sentinel.read_text(), "keep")
             self.assertEqual(runtime.runtime_repo(ROOT), ROOT)
 
-
     def test_every_worker_of_the_planned_count_owns_its_tree(self):
         uid = "a" * 32
         for count in (2, 7, 11, 64):
@@ -360,8 +360,9 @@ class RuntimeTrees(unittest.TestCase):
                     "PYTEST_XDIST_WORKER_COUNT": str(count),
                     "PYTEST_XDIST_TESTRUNUID": uid,
                 }
-                with self.subTest(count=count, index=index), mock.patch.dict(
-                    os.environ, environ
+                with (
+                    self.subTest(count=count, index=index),
+                    mock.patch.dict(os.environ, environ),
                 ):
                     self.assertEqual(
                         runtime.runtime_repo(ROOT).name,
@@ -373,8 +374,9 @@ class RuntimeTrees(unittest.TestCase):
                 "PYTEST_XDIST_WORKER_COUNT": count,
                 "PYTEST_XDIST_TESTRUNUID": uid,
             }
-            with self.subTest(worker=worker, count=count), mock.patch.dict(
-                os.environ, environ
+            with (
+                self.subTest(worker=worker, count=count),
+                mock.patch.dict(os.environ, environ),
             ):
                 with self.assertRaisesRegex(RuntimeError, "owned xdist identity"):
                     runtime.runtime_repo(ROOT)

@@ -76,7 +76,7 @@ ROOT_CONSUMERS = {
         "signature-point-encoding-v2.json",
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
     ),
-    PurePosixPath("cli/go/signaturewire/point_encoding_test.go"): _consumer(
+    PurePosixPath("cli/go/internal/signaturewire/point_encoding_test.go"): _consumer(
         "signature-point-encoding-v2.json",
         '"docs", "vectors", "signature-point-encoding-v2.json"',
     ),
@@ -637,17 +637,17 @@ ROOT_CONSUMERS = {
         "hook-catalog-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json"',
     ),
-    PurePosixPath("cli/go/logschain/vectors_test.go"): _consumer(
+    PurePosixPath("cli/go/internal/logschain/vectors_test.go"): _consumer(
         "logs-chain-v1.json",
-        '"../../../docs/vectors/logs-chain-v1.json"',
+        '"../../../../docs/vectors/logs-chain-v1.json"',
     ),
     PurePosixPath("naapp/logs/tests/chain_vector.py"): _consumer(
         "logs-chain-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "logs-chain-v1.json"',
     ),
-    PurePosixPath("cli/go/logschain/bundle_vectors_test.go"): _consumer(
+    PurePosixPath("cli/go/internal/logschain/bundle_vectors_test.go"): _consumer(
         "logs-export-v1.json",
-        '"../../../docs/vectors/logs-export-v1.json"',
+        '"../../../../docs/vectors/logs-export-v1.json"',
     ),
     PurePosixPath("cli/go/cmd/aw/audit_verify_binary_test.go"): _consumer(
         "logs-export-v1.json",
@@ -721,28 +721,28 @@ ROOT_CONSUMERS = {
         "human-role-holding-v1.json",
         'Path(__file__).resolve().parents[3] / "docs/vectors/human-role-holding-v1.json"',
     ),
-    PurePosixPath("cli/go/hookevent/vectors_test.go"): _consumer(
+    PurePosixPath("cli/go/internal/hookevent/vectors_test.go"): _consumer(
         {
             "hook-catalog-v1.json",
             "hook-delivery-credential-v2.json",
             "hook-event-envelope-v1.json",
         },
-        '"../../../docs/vectors/hook-event-envelope-v1.json"',
-        '"../../../docs/vectors/hook-delivery-credential-v2.json"',
-        '"../../../docs/vectors/hook-catalog-v1.json"',
+        '"../../../../docs/vectors/hook-event-envelope-v1.json"',
+        '"../../../../docs/vectors/hook-delivery-credential-v2.json"',
+        '"../../../../docs/vectors/hook-catalog-v1.json"',
     ),
-    PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
+    PurePosixPath("cli/go/internal/a2a/card_test.go"): _consumer(
         {"a2a-v1.json", "canonical-json-v1.json"},
         'filepath.Join(root, "docs", "vectors", "a2a-v1.json")',
         'filepath.Join(root, "docs", "vectors", "canonical-json-v1.json")',
     ),
-    PurePosixPath("cli/go/a2agw/envelope_vector_test.go"): _consumer(
+    PurePosixPath("cli/go/internal/a2agw/envelope_vector_test.go"): _consumer(
         "a2a-bridge-envelope-v0.json",
         'filepath.Join(root, "docs", "vectors", "a2a-bridge-envelope-v0.json")',
     ),
-    PurePosixPath("cli/go/a2agw/gateway_rpc_test.go"): _consumer(
+    PurePosixPath("cli/go/internal/a2agw/gateway_rpc_test.go"): _consumer(
         "a2a-v1.json",
-        'os.ReadFile("../../../docs/vectors/a2a-v1.json")',
+        'os.ReadFile("../../../../docs/vectors/a2a-v1.json")',
     ),
     PurePosixPath("cli/go/awid/a2a_publication_test.go"): _consumer(
         "a2a-awid-publication-v1.json",
@@ -1452,8 +1452,8 @@ def self_test(root: Path) -> None:
         },
         expected="unclassified public-vector code reference",
     )
-    a2a_consumer = PurePosixPath("cli/go/a2agw/gateway_rpc_test.go")
-    a2a_mirror = PurePosixPath("cli/go/a2agw/testdata/a2a-v1.json")
+    a2a_consumer = PurePosixPath("cli/go/internal/a2agw/gateway_rpc_test.go")
+    a2a_mirror = PurePosixPath("cli/go/internal/a2agw/testdata/a2a-v1.json")
     redirected = read_bytes(root, a2a_consumer).replace(
         b"../../../docs/vectors/a2a-v1.json",
         b"testdata/a2a-v1.json",

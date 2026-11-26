@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 // aweb.team-server/1: a team-key-signed binding of a team to its coordination

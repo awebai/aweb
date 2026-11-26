@@ -78,7 +78,7 @@ main implements of the design itself is marked in Parts A and B.
 | Membership authority is the team controller's signature. AWID records certificate register and revoke, has no outbox or push feed, and exposes pull reads. The hosted deployment holds a managed team's controller key. | `docs/awid-sot.md` §Who signs certificates, §Revocation and §Responsibilities; `register_certificate`, `revoke_certificate` and the `/{name}/revocations` read in `awid/src/awid_service/routes/teams.py` |
 | Core caches AWID revocations for authentication and read-time sender membership. It persists no membership-revocation effect. | `_get_revoked_certificates` in `server/src/aweb/team_auth_deps.py`; `sender_memberships` in `server/src/aweb/messaging/sender_membership.py` |
 | Core's `audit_log` table has no chain and is not part of this design. Identity grant revoke and the operator-audited routes write it in the effecting transaction. | `server/src/aweb/migrations/aweb/001_initial.sql` (`audit_log`); `revoke_identity_grant` in `server/src/aweb/routes/identity_grants.py`; `record_coordination_audit` in `server/src/aweb/audit.py` |
-| `aw` mints no `trace_id`. It sets `X-Request-ID` only on AWID registry and A2A calls. | `RegistryClient.newRequest` in `cli/go/awid/registry_client.go`; `Client.Call` in `cli/go/a2a/client.go` |
+| `aw` mints no `trace_id`. It sets `X-Request-ID` only on AWID registry and A2A calls. | `RegistryClient.newRequest` in `cli/go/awid/registry_client.go`; `Client.Call` in `cli/go/internal/a2a/client.go` |
 
 ## 2. Governing model
 
@@ -967,7 +967,7 @@ Per team and chain epoch, under a row lock on the team's chain head:
   input**, and reports any receipt or checkpoint that the current chain
   contradicts. `aw audit verify --bundle` checks an export offline, with no
   server. **In flight (aweb-acgh.16.24):** the Go chain verifier
-  (`cli/go/logschain`) passes `logs-chain-v1.json`; the `aw logs` command is
+  (`cli/go/internal/logschain`) passes `logs-chain-v1.json`; the `aw logs` command is
   not on main.
 
 **What this does and does not protect against.** It detects in-transit loss

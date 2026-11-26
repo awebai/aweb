@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/a2a"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/a2a"
 	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )

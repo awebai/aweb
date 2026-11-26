@@ -20,8 +20,8 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
-	"github.com/awebai/aw/wake"
-	"github.com/awebai/aw/wake/session"
+	"github.com/awebai/aw/internal/wake"
+	"github.com/awebai/aw/internal/wake/session"
 )
 
 // TestWakeCommandsProductionBinary is the identity-home regression every entry

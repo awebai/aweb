@@ -6,8 +6,8 @@ part of the default communication journey.
 
 Current source and test anchors:
 
-- `cli/go/a2a/` — Agent Card model, validation, digest, and client;
-- `cli/go/a2agw/` — gateway cards, JSON-RPC task handling, bridge envelopes, and
+- `cli/go/internal/a2a/` — Agent Card model, validation, digest, and client;
+- `cli/go/internal/a2agw/` — gateway cards, JSON-RPC task handling, bridge envelopes, and
   in-memory task state;
 - `cli/go/cmd/aw/a2a.go` and `cli/go/cmd/aweb-a2a-gw/` — shipped commands;
 - `awid/src/awid_service/routes/a2a_publications.py` — publication/delegation
@@ -252,7 +252,7 @@ The fixture source was cross-checked against the upstream A2A repository's `scri
 `card_digest` is computed as:
 
 1. Remove the top-level `signatures` field from the Agent Card if present.
-2. Materialize the remaining Agent Card object: A2A field/default processing, `signatures` absent. `aw` decodes the card into its Agent Card model (`cli/go/a2a/card.go`) and encodes that model, so a member the model does not define is not hashed and an optional member that is empty is omitted. Fixture cards materialize all fields required by this contract before hashing.
+2. Materialize the remaining Agent Card object: A2A field/default processing, `signatures` absent. `aw` decodes the card into its Agent Card model (`cli/go/internal/a2a/card.go`) and encodes that model, so a member the model does not define is not hashed and an optional member that is empty is omitted. Fixture cards materialize all fields required by this contract before hashing.
 3. Encode the object as the escaped form of aweb canonical JSON, the bytes `awid.CanonicalJSONValueEscapingLineSeparators` writes:
    - UTF-8, no insignificant whitespace, no trailing newline; arrays keep their order.
    - Object keys are sorted by Unicode code point, comparing the keys themselves and not their escaped text.
@@ -270,7 +270,7 @@ These bytes are not RFC 8785 (JCS) bytes for every card. Checked against an RFC 
 - **Negative zero.** RFC 8785 writes `0`; the digest bytes hold `-0`. The other number forms listed in step 3 are the ones RFC 8785 writes.
 - **Unpaired surrogates.** RFC 8785 refuses them; `aw` reads an escaped unpaired surrogate as U+FFFD and hashes that.
 
-`escaped_line_separator_cases` in `docs/vectors/canonical-json-v1.json` pins the escaped form, including a card with both separators and its `card_digest`; `cases` and `code_point_key_order_cases` in the same file pin the rules the two forms share. `cli/go/awid/canonical_json_vector_test.go` and `cli/go/a2a/card_test.go` consume them. The signed publication and delegation payloads of [A2A AWID publication](a2a-awid-publication-contract.md) use the canonical form (`awid.CanonicalJSONValue`), which writes U+2028 and U+2029 as UTF-8.
+`escaped_line_separator_cases` in `docs/vectors/canonical-json-v1.json` pins the escaped form, including a card with both separators and its `card_digest`; `cases` and `code_point_key_order_cases` in the same file pin the rules the two forms share. `cli/go/awid/canonical_json_vector_test.go` and `cli/go/internal/a2a/card_test.go` consume them. The signed publication and delegation payloads of [A2A AWID publication](a2a-awid-publication-contract.md) use the canonical form (`awid.CanonicalJSONValue`), which writes U+2028 and U+2029 as UTF-8.
 
 Hex is intentional for A2A card digests because the digest is a public content-addressing value for a served document. This differs deliberately from some AWID signed-proof hashes that use raw-standard-base64-no-padding for compact signed payload fields. Do not unify these encodings without a contract amendment and fixture update.
 

@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/awebai/aw/canonicaljson"
+	"github.com/awebai/aw/internal/canonicaljson"
 )
 
 const HumanChannelsProfile = "aweb-human-channels-v1"

@@ -340,7 +340,7 @@ or a stored record reproduces: the [A2A Agent Card digest](../a2a.md), custody
 request digests, blueprint payload digests and the stored hosted creation
 response. One case is an Agent Card with its `card_digest`.
 `cli/go/awid/canonical_json_vector_test.go` reproduces every case, and
-`cli/go/a2a/card_test.go` reproduces the card case through `CardDigest`.
+`cli/go/internal/a2a/card_test.go` reproduces the card case through `CardDigest`.
 
 ### `message-signing-v1.json`
 
@@ -752,7 +752,7 @@ producer kind the hook does not allow, a client actor that is not its signer, a
 team mismatch and a wrong signature. The `catalog` layer passes the envelope
 checks and is refused by the catalog reader. A digest construction case shows
 `request_sha256` taken before credential injection. The Go authority in
-`cli/go/hookevent` regenerates every case byte for byte.
+`cli/go/internal/hookevent` regenerates every case byte for byte.
 
 ### `hook-delivery-credential-v2.json`
 
@@ -801,7 +801,7 @@ event of another team with a broken link, a wrong event hash with its content
 gone, a wrong event hash with its content altered, wrong key evidence with a
 changed skeleton) and expects the earlier. The
 Python implementation in `naapp/logs` regenerates it byte for byte, and the Go
-verifier in `cli/go/logschain` passes it.
+verifier in `cli/go/internal/logschain` passes it.
 
 
 ### `logs-export-v1.json`
