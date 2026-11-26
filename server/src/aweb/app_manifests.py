@@ -174,7 +174,7 @@ class ManifestFetcher:
             # left this server.
             if isinstance(exc.__cause__, EgressRefused):
                 raise ManifestFetchError(
-                    "origin_refused", "The app origin is not a reachable public origin"
+                    "origin_refused", "The app origin is refused by the egress policy"
                 ) from exc
             if isinstance(exc.__cause__, EgressUnresolved):
                 raise ManifestFetchError(

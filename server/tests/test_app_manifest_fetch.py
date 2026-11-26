@@ -278,6 +278,7 @@ async def test_a_listed_origin_resolving_outside_its_network_is_refused(origin):
         await operator_listed(origin, origin.url, network=elsewhere).fetch(origin.url)
     assert refused.value.code == "origin_refused"
     assert refused.value.status_code == 422
+    assert str(refused.value) == "The app origin is refused by the egress policy"
     assert not origin.tls.seen
 
 
