@@ -190,16 +190,19 @@ pinned commit, while later runs reuse and reset the repository-owned cache.
 environment before creating any local release tag. Its complete product-test
 list is the readable shell script `scripts/candidate-suite.sh`: release-shaped
 packages/images, unit and contract suites, OATS and real-stack journeys,
-freshness, process guards, and vulnerability audits. All four stages must have
-passed for the same tree and external inputs. The Docker entry point owns the
+freshness, process guards, and vulnerability audits. All six stages (static,
+checks, user-paths, unit, artifacts and integration) must have passed for the
+same tree and external inputs. The Docker entry point owns the
 single ledger used by make, direct calls and release candidates; it executes
 missing stages and refuses a previously failed tree. See [release instructions](release.md)
 for focused stages and infrastructure reruns. Hosted tag workflows do not repeat
 this complete suite. Changes to the gate are checked with `make test-candidate-ledger`,
 which exercises the actual Docker entry point and RC using small real stages.
 
-The suite stops on the first failing command and the gate retains its complete
-output. Gate runs share lockfile-keyed
+A failed target leaves its stage red while the stage's other targets run. A
+failed static stage stops the run before the other stages start; after that the
+stages run in parallel and the first red stage stops the rest. The gate retains
+its complete output. Gate runs share lockfile-keyed
 package and layer caches; determinism is carried by the committed lockfiles,
 whose hashes the gate records in its evidence. It starts from one exact clean aweb commit, records the exact
 clean Library and blueprint input commits, and rejects dirty or missing inputs.

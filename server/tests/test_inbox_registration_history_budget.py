@@ -138,7 +138,7 @@ class _RegistrationBudgetExceeded(AssertionError):
         pytest.param(
             2000,
             marks=pytest.mark.xfail(
-                reason="aweb-adus: REQUIRED scans the full catalog, including revoked history",
+                reason="aweb-adyq: REQUIRED scans the full catalog, including revoked history",
                 raises=_RegistrationBudgetExceeded,
                 strict=True,
             ),
