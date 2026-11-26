@@ -351,6 +351,19 @@ def test_routable_chat_address_policy():
     )
 
 
+def test_bridged_participant_metadata_has_no_routable_address():
+    # A bridged guest must never route as its bridge owner's native identity,
+    # even when its metadata carries the owner's address, alias and team.
+    bridged = {
+        "participant_kind": "bridged",
+        "team_id": "ops:acme.com",
+        "alias": "bridge-owner",
+        "address": "acme.com/bridge-owner",
+    }
+    assert routable_chat_address(bridged, "ops:acme.com", "bridge-owner") == ""
+    assert routable_chat_address(bridged, "support:acme.com", "Same name") == ""
+
+
 @pytest.mark.asyncio
 async def test_chat_to_external_address_posts_federated_chat_and_projects_locally(
     route_pair,
