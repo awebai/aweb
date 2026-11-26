@@ -279,6 +279,22 @@ class ReleaseCommand(unittest.TestCase):
             self.release()
         self.assertEqual(self.outside.releases, [])
 
+    def test_a_local_tag_that_is_not_the_release_tag_is_refused_before_any_push(self):
+        with self.assertRaises(release.ReleaseRefusal):
+            self.release()
+        checkout = self.state / "aweb"
+        for make, reason in (
+            (lambda: git(checkout, "tag", "server-v1.27.55", self.sha), "not an annotated tag"),
+            (lambda: git(checkout, "-c", "user.name=f", "-c", "user.email=f@x", "tag", "-a", "server-v1.27.55", self.sha, "-m", "no files"), "locks other files"),
+        ):
+            with self.subTest(reason=reason):
+                git(checkout, "tag", "-d", "server-v1.27.55") if git(checkout, "tag", "--list", "server-v1.27.55") else None
+                make()
+                self.land()
+                with self.assertRaisesRegex(release.ReleaseRefusal, reason):
+                    self.release()
+                self.assertIsNone(release.remote_tag(str(self.remote), "server-v1.27.55"))
+
     def test_pypi_serving_other_digests_is_refused_naming_the_workflow_run(self):
         self.outside.publishing = "serve-other"
         self.land()

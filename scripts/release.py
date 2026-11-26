@@ -328,15 +328,25 @@ class Release:
                 if not git(checkout, "tag", "--list", tag):
                     message = f"{tag}\n\nGated by run {gate['run_id']} on {self.machine}.\n\n{lines}"
                     git(checkout, "-c", "tag.gpgSign=false", "tag", "-a", tag, self.sha, "-m", message)
+                self.require_tag(checkout, tag, lines)
                 git(checkout, "push", "--quiet", self.remote, f"refs/tags/{tag}")
             elif tagged != self.sha:
                 raise ReleaseRefusal(f"{tag} already identifies {tagged}, not {self.sha}")
             else:
                 git(checkout, "fetch", "--quiet", self.remote, f"+refs/tags/{tag}:refs/tags/{tag}")
-                if not git(checkout, "for-each-ref", "--format=%(contents)", f"refs/tags/{tag}").endswith(lines.rstrip("\n")):
-                    raise ReleaseRefusal(f"{tag} at {self.sha} locks other files than the ones built")
+                self.require_tag(checkout, tag, lines)
             tags[name] = tag
         self.receipt.record("tag", tags)
+
+    def require_tag(self, checkout: Path, tag: str, lines: str) -> None:
+        """The tag is annotated, identifies S and ends with exactly the built files' lines."""
+        ref = f"refs/tags/{tag}"
+        if git(checkout, "cat-file", "-t", ref) != "tag":
+            raise ReleaseRefusal(f"{tag} is not an annotated tag")
+        if git(checkout, "rev-parse", f"{ref}^{{commit}}") != self.sha:
+            raise ReleaseRefusal(f"{tag} identifies {git(checkout, 'rev-parse', ref + '^{commit}')}, not {self.sha}")
+        if not git(checkout, "for-each-ref", "--format=%(contents)", ref).endswith(lines.rstrip("\n")):
+            raise ReleaseRefusal(f"{tag} at {self.sha} locks other files than the ones built")
 
     # 4. Attach exactly the files; the trusted-publishing workflow uploads them.
     def publish(self) -> None:
