@@ -228,8 +228,9 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
             raise AssertionError("a Cloud train gate builds and ships no image")
 
         key = self.root / "hermes.key"
-        with patch.object(release, "image_archive", no_image), patch.object(
-            release, "hermes_key", lambda path: key
+        with (
+            patch.object(release, "image_archive", no_image),
+            patch.object(release, "hermes_key", lambda path: key),
         ):
             code, receipt = self.invoke_cloud_gate()
         self.assertEqual(len(self.calls), 1, receipt)
@@ -357,7 +358,9 @@ class ReleaseAdmission(CloudFixture, unittest.TestCase):
             f'[url "{self.cloud_origin}"]\n\tinsteadOf = git@example.invalid:ac.git\n'
         )
         git(self.cloud, "remote", "set-url", "origin", "git@example.invalid:ac.git")
-        with patch.dict(os.environ, {"HOME": str(home), "SSH_AUTH_SOCK": "/agent.sock"}):
+        with patch.dict(
+            os.environ, {"HOME": str(home), "SSH_AUTH_SOCK": "/agent.sock"}
+        ):
             environment = release.operator_git_environment()
             self.assertEqual(environment["HOME"], str(home))
             self.assertEqual(environment["SSH_AUTH_SOCK"], "/agent.sock")
@@ -485,7 +488,11 @@ class GuestScript(CloudFixture, unittest.TestCase):
         )
         (self.remote / "cloud-image.tar").write_bytes(b"image")
         self.archive = hashlib.sha256(b"image").hexdigest()
-        for name, text in (("make", STUB_MAKE), ("uv", STUB_UV), ("docker", STUB_DOCKER)):
+        for name, text in (
+            ("make", STUB_MAKE),
+            ("uv", STUB_UV),
+            ("docker", STUB_DOCKER),
+        ):
             (self.stubs / name).write_text(text)
             (self.stubs / name).chmod(0o755)
 
@@ -556,7 +563,10 @@ class GuestScript(CloudFixture, unittest.TestCase):
 
     def test_a_cloud_train_gate_runs_make_gate_and_passes_no_budget(self):
         bundle = release.cloud_bundle(
-            self.cloud, self.cloud_sha, self.remote / "cloud.bundle", main=self.cloud_main
+            self.cloud,
+            self.cloud_sha,
+            self.remote / "cloud.bundle",
+            main=self.cloud_main,
         )
         script = release.guest_script(
             cloud_sha=self.cloud_sha,
@@ -586,8 +596,12 @@ class GuestScript(CloudFixture, unittest.TestCase):
         self.assertFalse((self.record / "release-gate.env").exists())
         self.assertFalse((self.record / "candidate-gate.env").exists())
         self.assertNotIn("AC_CANDIDATE_RELEASE_IMAGE", cloud)
-        self.assertEqual(cloud["AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE"], release.GUEST_KEY)
-        self.assertEqual((self.record / "gate.args").read_text().split(), ["gate", "GATE_STAGES=all"])
+        self.assertEqual(
+            cloud["AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE"], release.GUEST_KEY
+        )
+        self.assertEqual(
+            (self.record / "gate.args").read_text().split(), ["gate", "GATE_STAGES=all"]
+        )
         # Cloud's gate sizes itself from its own machine.
         self.assertNotIn("GATE_CPUS", cloud)
         self.assertNotIn("GATE_MEMORY_MIB", cloud)
@@ -628,9 +642,7 @@ class GuestScript(CloudFixture, unittest.TestCase):
         source = self.home / "cloud-source"
         self.assertEqual(git(source, "rev-parse", "HEAD"), head)
         self.assertEqual(git(source, "rev-parse", "origin/main"), self.cloud_main)
-        self.assertEqual(
-            (self.record / "gate.pwd").read_text().strip(), str(source)
-        )
+        self.assertEqual((self.record / "gate.pwd").read_text().strip(), str(source))
 
     def test_an_unknown_cloud_target_is_refused(self):
         with self.assertRaises(ValueError):
@@ -683,7 +695,11 @@ class NativeJob(CloudFixture, unittest.TestCase):
         )
         stubs = self.root / "stubs"
         stubs.mkdir()
-        for name, text in (("make", STUB_MAKE), ("uv", STUB_UV), ("docker", STUB_DOCKER)):
+        for name, text in (
+            ("make", STUB_MAKE),
+            ("uv", STUB_UV),
+            ("docker", STUB_DOCKER),
+        ):
             (stubs / name).write_text(text)
             (stubs / name).chmod(0o755)
         self.record = self.root / "record"
@@ -698,6 +714,11 @@ class NativeJob(CloudFixture, unittest.TestCase):
         )
         environment.start()
         self.addCleanup(environment.stop)
+        # The job inherits this process's environment. Inside a gate lane the
+        # runner exports its own budget; clear it so the test sees only what
+        # the Cloud script sets (patch.dict restores it on stop).
+        for name in ("GATE_CPUS", "GATE_MEMORY_MIB"):
+            os.environ.pop(name, None)
         self.bundle = self.root / "cloud.bundle"
         bundle_sha256 = release.cloud_bundle(self.cloud, self.cloud_sha, self.bundle)
         self.archive = self.root / "cloud-image.tar"
