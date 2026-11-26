@@ -397,5 +397,8 @@
     "server/tests/test_task_search.py": 1,
     "server/tests/test_verified_installations.py": 5
   },
-  "schema_version": 1
+  "schema_version": 1,
+  "marked_nonliteral_files": {
+    "server/tests/test_app_manifest_fetch.py": 1
+  }
 }

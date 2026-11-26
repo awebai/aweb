@@ -239,7 +239,7 @@ async def test_an_origin_that_is_reached_and_fails_stays_unavailable(origin):
     origin.publish(origin.manifest())
     origin.routes[VARIANT] = (500, b"", [])
     with pytest.raises(ManifestFetchError) as refused:
-        await origin.fetcher.fetch(origin.url)
+        await origin.fetcher.fetch(origin.url)  # nonliteral-call: HTTP, not SQL
     assert refused.value.code == "variant_unavailable"
     assert refused.value.status_code == 502
 
