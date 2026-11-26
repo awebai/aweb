@@ -190,7 +190,7 @@ def image_archive(image, run_id, out, platform=RELEASE_PLATFORM):
     """Resolve the index's amd64 member and save it by a run tag."""
     match = IMAGE.fullmatch(image)
     if match is None:
-        raise Refused("--cloud-image must be <repository>@sha256:<index>")
+        raise Refused("--image must be <repository>@sha256:<index>")
     repository = match["repository"]
     index = json.loads(docker("buildx", "imagetools", "inspect", "--raw", image))
     os_name, architecture = platform.split("/")
