@@ -4,7 +4,8 @@
 --receipt R` runs one suite on one machine:
 
 - aweb: aweb's candidate gate at S, a fast-forward of aweb's main, from the
-  local checkout. With --files, the release command's built files go into
+  local checkout, with S as the guest's main (branch scope), since S lands
+  only after this gate. With --files, the release command's built files go into
   the guest; the gate installs their server wheel under test, and after the
   gate the guest rebuilds them from S. Green needs the suite green, the
   rebuild equal to the files and each server container holding the wheel.
@@ -252,14 +253,24 @@ def project_job(args, *, factory=None, out=None):
             select_target(target, config)
             select_manifest(config, target.target)
         if args.project == "aweb":
+            # Branch scope makes S the guest's main, as the release job's aweb
+            # suite has it: the full gate refuses a head off the guest's main,
+            # and S lands only after this gate. Landing unchanged needs S to be
+            # a fast-forward of real main, checked here before boot.
             source = prepare(
                 repo,
                 args.sha,
                 directory,
                 observed=config["manifest"]["observed"],
-                intent="train",
+                intent="branch",
                 lock_root=config["state_root"],
             )
+            if not source["main_is_ancestor"]:
+                raise Refused(
+                    f"origin/main {source['real_main']} is not in {args.sha}'s history: "
+                    "S must land unchanged as a fast-forward"
+                )
+            record["source_scope"] = source["scope"]
             config["repo"] = str(repo)
             runtime = (factory or release_runtime_factory())(
                 config=config,
@@ -294,7 +305,13 @@ def project_job(args, *, factory=None, out=None):
         record["suite_exit"] = suite["exit"]
         if args.project == "aweb":
             rebuilt = evidence / "var/log/vm-gate/release/aweb/rebuilt.json"
-            record["rebuilt_files"] = json.loads(rebuilt.read_text()) if rebuilt.exists() else None
+            # The builder leaves its own markers (.gitignore) beside the files;
+            # only the shipped names are compared, and a missing one is red.
+            record["rebuilt_files"] = (
+                {name: digest for name, digest in json.loads(rebuilt.read_text()).items() if name in files}
+                if rebuilt.exists()
+                else None
+            )
             record["ledger_rows_imported"] = result.get("ledger_rows_imported")
             if files and suite["exit"] == 0:
                 record["installed_wheels"] = installed_wheels(evidence, args.sha)

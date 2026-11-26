@@ -9,7 +9,8 @@ from unittest.mock import patch
 from vm_gate import project
 from vm_gate.cli import main
 from test_config import hashes
-from test_release import CloudFixture
+from test_release import CloudFixture, commit
+from test_source import git
 
 MEMBER = "ghcr.io/awebai/ac@sha256:" + "b" * 64
 
@@ -153,7 +154,36 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         self.assertIn("uv build --quiet --wheel --sdist", call["command"])
         placed = call["executor_factory"].keywords["files"]
         self.assertEqual(sorted(path.name for path in placed), sorted(self.shipped))
-        self.assertEqual(call["source"]["scope"], "train candidate")
+        # The guest's main is S itself, as the release job's aweb suite has it:
+        # a full gate refuses a head that is not on the guest's main.
+        self.assertEqual(call["source"]["scope"], "branch qualification")
+        self.assertEqual(call["source"]["frozen_main"], self.sha)
+        self.assertEqual(receipt["source_scope"], "branch qualification")
+
+    def test_aweb_rebuild_beside_a_builders_own_marker_is_green(self):
+        self.aweb_evidence(rebuilt={**self.shipped, ".gitignore": digest(b"*\n")})
+        code, receipt = self.invoke("aweb", "--files", str(self.files))
+        self.assertEqual(code, 0, receipt)
+        self.assertEqual(receipt["rebuilt_files"], self.shipped)
+
+    def test_aweb_rebuild_missing_a_shipped_file_is_red(self):
+        self.aweb_evidence(rebuilt={"aweb-1.27.55-py3-none-any.whl": self.shipped["aweb-1.27.55-py3-none-any.whl"]})
+        code, receipt = self.invoke("aweb", "--files", str(self.files))
+        self.assertEqual(code, 1, receipt)
+
+    def test_aweb_head_that_does_not_contain_main_is_refused_before_boot(self):
+        git(self.repo, "checkout", "--quiet", "--detach", self.main)
+        aside = commit(self.repo, "aside")
+        moved = self.root / "teammate-aweb"
+        git(self.root, "clone", "--quiet", str(self.remote), str(moved))
+        git(moved, "config", "user.email", "fixture@example.invalid")
+        git(moved, "config", "user.name", "Fixture")
+        commit(moved, "landed")
+        git(moved, "push", "--quiet", "origin", "HEAD:main")
+        code, receipt = self.invoke("aweb", "--files", str(self.files), sha=aside)
+        self.assertEqual(code, 2, receipt)
+        self.assertIn("fast-forward", receipt["vm_gate"]["error"])
+        self.assertEqual(self.calls, [])
 
     def test_aweb_rebuild_that_differs_from_the_files_is_red(self):
         self.aweb_evidence(rebuilt={**self.shipped, "aweb-1.27.55.tar.gz": digest(b"other")})
