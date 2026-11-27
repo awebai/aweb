@@ -10,21 +10,54 @@ import pytest
 import pytest_asyncio
 
 from aweb.events import team_events_channel_name
+from aweb.db import DatabaseInfra
+from aweb.migrations import native_migration_modules
 from aweb.presence_transitions import PresenceReconciliationError, reconcile_presence
+from awid_service.db import AwidDatabaseInfra
+from awid_service.testing_templates import (
+    AWID_MIGRATION_DIRECTORY,
+    migrated_test_database,
+)
 from test_coordination_state_http import request_as
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_stack
 from aweb.embedding import OutboxRecoveryOwnership
 
 
+@pytest_asyncio.fixture(scope="session")
+async def presence_database_template():
+    modules = [
+        (module.module_name, module.migrations_path)
+        for module in native_migration_modules()
+    ]
+    modules.append(("awid-service", AWID_MIGRATION_DIRECTORY))
+
+    async def migrate(pool):
+        server = DatabaseInfra()
+        registry = AwidDatabaseInfra(schema="privacy_registry")
+        try:
+            await server.initialize(shared_pool=pool)
+            await registry.initialize(shared_pool=pool)
+        finally:
+            await registry.close()
+            await server.close()
+
+    async with migrated_test_database("privacy", modules, migrate) as template:
+        yield template
+
+
 @pytest_asyncio.fixture
-async def privacy_app(shared_test_pool, monkeypatch):
+async def privacy_app(presence_database_template, monkeypatch):
     # Exercise the supported HOST scheduler mode: these tests call its public
     # maintenance operation explicitly, without an uncontrolled second timer.
-    async with privacy_stack(
-        shared_test_pool, monkeypatch, outbox_recovery=OutboxRecoveryOwnership.HOST
-    ) as env:
-        yield env
+    async with presence_database_template.clone() as pool:
+        async with privacy_stack(
+            pool,
+            monkeypatch,
+            outbox_recovery=OutboxRecoveryOwnership.HOST,
+            run_migrations=False,
+        ) as env:
+            yield env
 
 
 @pytest_asyncio.fixture(autouse=True)

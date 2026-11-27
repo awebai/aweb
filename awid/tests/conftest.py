@@ -4,6 +4,7 @@ import os
 import base64
 import hashlib
 import json
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import httpx
@@ -23,6 +24,10 @@ from awid.dns_verify import DomainAuthority
 from awid_service.db import AwidDatabaseInfra
 from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app
+from awid_service.testing_templates import (
+    AWID_MIGRATION_DIRECTORY,
+    migrated_test_database,
+)
 
 pytest_plugins = ("pgdbm.fixtures.conftest",)
 
@@ -91,14 +96,38 @@ async def shared_test_pool(test_db_factory):
         await pool.close()
 
 
-@pytest_asyncio.fixture
-async def awid_db_infra(shared_test_pool):
+@asynccontextmanager
+async def _awid_db_infra(pool, *, run_migrations):
     infra = AwidDatabaseInfra(schema="awid")
-    await infra.initialize(shared_pool=shared_test_pool, run_migrations=True)
     try:
+        await infra.initialize(shared_pool=pool, run_migrations=run_migrations)
         yield infra
     finally:
         await infra.close()
+
+
+@pytest_asyncio.fixture
+async def awid_db_infra(shared_test_pool):
+    async with _awid_db_infra(shared_test_pool, run_migrations=True) as infra:
+        yield infra
+
+
+@pytest_asyncio.fixture(scope="session")
+async def awid_database_template():
+    async def migrate(pool):
+        async with _awid_db_infra(pool, run_migrations=True):
+            pass
+
+    modules = (("awid-service", AWID_MIGRATION_DIRECTORY),)
+    async with migrated_test_database("awid", modules, migrate) as template:
+        yield template
+
+
+@pytest_asyncio.fixture
+async def cloned_awid_db_infra(awid_database_template):
+    async with awid_database_template.clone() as pool:
+        async with _awid_db_infra(pool, run_migrations=False) as infra:
+            yield infra
 
 
 @pytest_asyncio.fixture

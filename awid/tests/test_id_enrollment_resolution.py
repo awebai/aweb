@@ -40,6 +40,11 @@ from id_tree_support import (
 from test_registry_client import FakeRedis
 
 
+@pytest.fixture
+def awid_db_infra(cloned_awid_db_infra):
+    return cloned_awid_db_infra
+
+
 @pytest_asyncio.fixture
 async def tree(clocked_client, manual_clock):
     tree = Tree(clocked_client, manual_clock)
