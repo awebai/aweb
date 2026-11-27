@@ -13,10 +13,15 @@
   no longer writes the returned profile into a local home; like every other
   plugin verb, it prints the Library's answer. aw no longer installs
   `~/.config/aw/guard-bin/tmux`. The reserved app ids lose `agent`, `blueprint`
-  and `run`. The Go package `github.com/awebai/aw/run` is removed from the
-  documented library, which is now `aw`, `awid`, `awconfig` and `chat`; the
-  event stream client policy the `aw wake` broker uses is in
-  `cli/go/internal/eventstream`. Dropping `run` also drops its terminal
+  and `run`. Two exports leave the documented Go library: the package
+  `github.com/awebai/aw/run` and `awconfig.DefaultRunConfigPath` (the path of
+  `aw run`'s defaults file). The documented library is now `aw`, `awid`,
+  `awconfig` and `chat`, and no other export changes. Before removing them we
+  measured their importers: pkg.go.dev lists one importing module of
+  `aw/run`, our own awebai/bdh, which pins a March 2026 aw and whose current
+  code imports nothing from `aw/run`; a code search across the awebai
+  organization finds no other importer. The event stream client policy the
+  `aw wake` broker uses is in `cli/go/internal/eventstream`. Dropping `run` also drops its terminal
   rendering dependencies (glamour, lipgloss, goldmark) and the goldmark
   vulnerability exception they carried. Released `aw` binaries keep their
   commands; the server is unchanged.
@@ -44,9 +49,10 @@
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under
-  `cli/go/internal/`. The documented library is `aw`, `awid`, `awconfig`,
-  `chat` and `run`; none of its exported API changes. An outside importer of
-  the moved packages must vendor the code it needs.
+  `cli/go/internal/`. The documented library is `aw`, `awid`, `awconfig` and
+  `chat`; this move changes none of its exported API (the removal of `run` and
+  `awconfig.DefaultRunConfigPath` is its own entry above). An outside importer
+  of the moved packages must vendor the code it needs.
 
 - Certificate requests from a member that left a team and reconnected with
   the same key are admitted again. Since server 1.27.51 the native member read
