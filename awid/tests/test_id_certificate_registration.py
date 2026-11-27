@@ -34,6 +34,7 @@ import test_id_namespace_epochs  # noqa: F401  (consumes namespace cases by name
 import test_id_certificate_status  # noqa: F401  (consumes status cases by name)
 import test_id_namespace_rotation  # noqa: F401  (consumes rotation cases by name)
 import test_namespace_recovery_delegations  # noqa: F401  (consumes recovery delegation cases by name)
+import test_id_registration_verdict  # noqa: F401  (consumes the registration rule's cases by name)
 from id_tree_support import (
     CONSUMED,
     DOMAIN,
@@ -307,35 +308,11 @@ def _bob_variant(**changes):
 
 
 @consumes("invitation-conflict-child")
-async def test_invitation_conflict_child(case, tree, awid_db_infra):
+async def test_the_invitation_lookup_finds_an_invitation_another_certificate_used(
+    case, tree, awid_db_infra
+):
     await _invitation_conflict(
         case, tree, awid_db_infra, [certificate("alice"), certificate("global-agent")]
-    )
-
-
-@consumes("invitation-conflict-parent")
-async def test_invitation_conflict_parent(case, tree, awid_db_infra):
-    under_root = _bob_variant(
-        parent={"kind": "namespace", "id": DOMAIN}, issuer_key=did_key("root")
-    )
-    await _invitation_conflict(case, tree, awid_db_infra, [sign(under_root, "root")])
-
-
-@consumes("invitation-conflict-domain")
-async def test_invitation_conflict_domain(case, tree, awid_db_infra):
-    elsewhere = _bob_variant(
-        domain="other.example",
-        parent={"kind": "namespace", "id": "other.example"},
-        issuer_key=did_key("root"),
-    )
-    await _invitation_conflict(case, tree, awid_db_infra, [sign(elsewhere, "root")])
-
-
-@consumes("invitation-conflict-certificate")
-async def test_invitation_conflict_certificate(case, tree, awid_db_infra):
-    reissued = _bob_variant(issued_at="2026-10-26T00:09:00Z")
-    await _invitation_conflict(
-        case, tree, awid_db_infra, [certificate("alice"), sign(reissued, "alice")]
     )
 
 
@@ -375,90 +352,6 @@ async def test_same_certificate_retry_does_not_reactivate_old_head(
         if r["superseded_at"] is None
     ]
     assert heads == [certificate_id("global-agent-reparented")]
-
-
-@consumes("registration-after-parent-rotate-refuses-old-key")
-async def test_registration_after_parent_rotate_refuses_old_key(
-    case, tree, awid_db_infra
-):
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    tree.clock.now = at(case["input"]["parent_rotated_at"])
-    await tree.rotate_did("alice", "alice_rotated")
-    before = await _revisions(awid_db_infra)
-
-    resp = await tree.register(
-        [certificate("alice"), certificate("bob")],
-        when=at(case["input"]["registered_at"]),
-    )
-
-    assert resp.status_code == 422, resp.text
-    assert _code(resp) == case["expected"]["reason"]
-    assert await _revisions(awid_db_infra) == before
-
-
-@consumes("registered-kind-change-refuses")
-async def test_registered_kind_change_refuses(case, tree, awid_db_infra):
-    assert case["input"]["id"] == did_aw("alice")
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    as_agent = copy.deepcopy(certificate("alice")["certificate"])
-    as_agent.update(
-        kind=case["input"]["requested_kind"], issued_at="2026-10-26T00:05:00Z"
-    )
-    before = await _revisions(awid_db_infra)
-
-    resp = await tree.register(
-        [sign(as_agent, "root")], expected_head=certificate_id("alice")
-    )
-
-    assert resp.status_code == 422, resp.text
-    assert _code(resp) == case["expected"]["reason"]
-    assert await _revisions(awid_db_infra) == before
-
-
-@consumes("registered-domain-change-refuses")
-async def test_registered_domain_change_refuses(case, tree, awid_db_infra):
-    assert case["input"]["id"] == did_aw("alice")
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    moved = copy.deepcopy(certificate("alice")["certificate"])
-    domain = case["input"]["requested_domain"]
-    moved.update(
-        domain=domain,
-        parent={"kind": "namespace", "id": domain},
-        issued_at="2026-10-26T00:05:00Z",
-    )
-    before = await _revisions(awid_db_infra)
-
-    resp = await tree.register(
-        [sign(moved, "root")], expected_head=certificate_id("alice")
-    )
-
-    assert resp.status_code == 422, resp.text
-    assert _code(resp) == case["expected"]["reason"]
-    assert await _revisions(awid_db_infra) == before
-
-
-@consumes("registered-child-under-local-parent-refuses")
-async def test_registered_child_under_local_parent_refuses(case, tree, awid_db_infra):
-    leaf = certificate("global-from-local")["certificate"]
-    assert (leaf["id"], leaf["kind"], leaf["parent"]["id"]) == (
-        case["input"]["child_id"],
-        case["input"]["child_kind"],
-        case["input"]["parent"],
-    )
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    before = await _revisions(awid_db_infra)
-
-    resp = await tree.register(
-        [
-            certificate("alice"),
-            certificate("coordinator"),
-            certificate("global-from-local"),
-        ]
-    )
-
-    assert resp.status_code == 422, resp.text
-    assert _code(resp) == case["expected"]["reason"]
-    assert await _revisions(awid_db_infra) == before
 
 
 @consumes("registered-reparent-keeps-key-and-team-cert")
@@ -533,101 +426,6 @@ async def _revoked(tree, key_name, *, when, by=None):
     assert resp.status_code == 200, resp.text
 
 
-@consumes("registration-after-sign-then-parent-revoke")
-async def test_registration_after_sign_then_parent_revoke(case, tree, awid_db_infra):
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    assert (
-        certificate(case["input"]["certificate"])["certificate"]["issued_at"]
-        == "2026-10-26T00:02:00Z"
-    )
-    await _revoked(tree, "alice", when=at(case["input"]["parent_revoked_at"]))
-    before = await _revisions(awid_db_infra)
-
-    resp = await tree.register(
-        [certificate("alice"), certificate("bob")],
-        invitation_id=case["input"]["invitation_id"],
-        when=at(case["input"]["registered_at"]),
-    )
-
-    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), (
-        resp.text
-    )
-    assert await _revisions(awid_db_infra) == before
-
-
-@consumes("signed-issued-at-cannot-backdate")
-async def test_signed_issued_at_cannot_backdate(case, tree, awid_db_infra):
-    await tree.enroll("alice", when=at("2026-10-26T00:00:30Z"))
-    cutoff = at(case["input"]["parent_effective_from"])
-    await _revoked(tree, "alice", when=cutoff, by="root")
-    backdated = _bob_variant(issued_at=case["input"]["issued_at"])
-    before = await _revisions(awid_db_infra)
-
-    resp = await tree.register(
-        [certificate("alice"), sign(backdated, "alice")],
-        when=at(case["input"]["registered_at"]),
-    )
-
-    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), (
-        resp.text
-    )
-    assert await _revisions(awid_db_infra) == before
-
-
-@consumes("directly-revoked-subject-cannot-reopen-head")
-async def test_directly_revoked_subject_cannot_reopen_head(case, tree, awid_db_infra):
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
-    await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
-    await _revoked(tree, "global_agent", when=at("2026-10-26T00:20:00Z"))
-    before = await _revisions(awid_db_infra)
-
-    resp = await tree.register(
-        [
-            certificate("alice"),
-            certificate("bob"),
-            certificate(case["input"]["certificate"]),
-        ],
-        expected_head=certificate_id("global-agent"),
-        when=at("2026-10-26T00:30:00Z"),
-    )
-
-    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), (
-        resp.text
-    )
-    assert await _revisions(awid_db_infra) == before
-
-
-@consumes("accepted-human-invite-retry-after-inviter-revoke")
-async def test_accepted_human_invite_retry_after_inviter_revoke(
-    case, tree, awid_db_infra
-):
-    invitation = operation_case("first-exact-invitation-registration")["input"][
-        "invitation_id"
-    ]
-    chain = [certificate("alice"), certificate(case["input"]["certificate"])]
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    first = await tree.register(
-        chain,
-        invitation_id=invitation,
-        when=at(case["input"]["original_registered_at"]),
-    )
-    assert first.status_code == 200, first.text
-    await _revoked(tree, "alice", when=at("2026-10-26T00:20:00Z"))
-    before = await _revisions(awid_db_infra)
-
-    retry = await tree.register(
-        chain, invitation_id=invitation, when=at(case["input"]["retry_at"])
-    )
-
-    assert retry.status_code == 200, retry.text
-    assert retry.json() == {
-        "certificate_id": certificate_id("bob"),
-        "registered_at": case["expected"]["registered_at"],
-    }
-    assert await _revisions(awid_db_infra) == before
-
-
 async def _enroll_normal_tree(tree):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("other-human", when=at("2026-10-26T00:01:30Z"))
@@ -662,7 +460,9 @@ def _registered_agent(subject: str, parent: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_an_agent_whose_human_was_revoked_cannot_issue(tree, awid_db_infra):
+async def test_the_parent_chain_snapshot_holds_a_grandparents_revocation(
+    tree, awid_db_infra
+):
     await tree.did("child_of_global")
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
@@ -689,7 +489,7 @@ async def test_an_agent_whose_human_was_revoked_cannot_issue(tree, awid_db_infra
 
 
 @pytest.mark.asyncio
-async def test_a_human_invitee_outlives_its_inviters_later_revocation(
+async def test_the_parent_chain_snapshot_judges_an_ancestor_at_the_parents_registration(
     tree, awid_db_infra
 ):
     await tree.did("replacement_human")
@@ -737,7 +537,9 @@ async def _rotate_many_times(tree, key_name: str, times: int):
 
 
 @pytest.mark.asyncio
-async def test_a_parent_whose_evidence_is_unavailable_cannot_issue(tree, awid_db_infra):
+async def test_a_parent_key_history_too_large_to_snapshot_is_unavailable(
+    tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     signing_key, current = await _rotate_many_times(tree, "alice", 200)
     child = copy.deepcopy(certificate("bob")["certificate"])
@@ -830,7 +632,9 @@ async def _contradict_alices_epoch_window(awid_db_infra):
 
 
 @pytest.mark.asyncio
-async def test_a_parent_with_contradictory_evidence_cannot_issue(tree, awid_db_infra):
+async def test_the_parent_chain_snapshot_reads_a_contradictory_epoch_as_unavailable(
+    tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await _contradict_alices_epoch_window(awid_db_infra)
     before = await _revisions(awid_db_infra)
@@ -891,7 +695,7 @@ async def _replaced_tree(tree):
 
 
 @consumes("replacement-old-owner-child-registration-refuses")
-async def test_replacement_old_owner_child_registration_refuses(
+async def test_the_parent_chain_snapshot_holds_the_root_replacement_cutoff(
     case, tree, awid_db_infra
 ):
     await _replaced_tree(tree)
@@ -1694,18 +1498,6 @@ async def test_the_skip_dns_bypass_gives_no_root_authority(
 
 
 @pytest.mark.asyncio
-async def test_root_children_must_be_signed_by_the_open_epoch_key(tree, awid_db_infra):
-    tree.clock.now = at("2026-10-26T00:00:30Z")
-    await tree.replace_root("root_rotated")
-
-    resp = await tree.register([certificate("alice")], when=at("2026-10-26T00:01:00Z"))
-
-    assert resp.status_code == 422, resp.text
-    assert _code(resp) == "issuer_key_not_current"
-    assert await _revisions(awid_db_infra) == []
-
-
-@pytest.mark.asyncio
 async def test_a_human_cannot_be_registered_under_an_agent(tree, awid_db_infra):
     resp = await tree.register(
         [
@@ -1718,20 +1510,6 @@ async def test_a_human_cannot_be_registered_under_an_agent(tree, awid_db_infra):
     assert resp.status_code == 422, resp.text
     assert _code(resp) == "human_issuer_is_agent"
     assert await _revisions(awid_db_infra) == []
-
-
-@pytest.mark.asyncio
-async def test_the_request_must_be_signed_by_the_subjects_current_key(
-    tree, awid_db_infra
-):
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-
-    resp = await tree.register(
-        [certificate("alice"), certificate("bob")], signer="alice"
-    )
-
-    assert resp.status_code == 403, resp.text
-    assert _code(resp) == "subject_mismatch"
 
 
 @pytest.mark.asyncio
@@ -1748,28 +1526,6 @@ async def test_a_rotated_subject_proves_its_current_key(tree, awid_db_infra):
 
     assert (stale.status_code, _code(stale)) == (403, "subject_mismatch")
     assert current.status_code == 200, current.text
-
-
-@pytest.mark.asyncio
-async def test_head_cas_refuses_a_stale_or_missing_expected_head(tree, awid_db_infra):
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
-    await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
-    reparented = [
-        certificate("alice"),
-        certificate("bob"),
-        certificate("global-agent-reparented"),
-    ]
-
-    missing = await tree.register(reparented)
-    stale = await tree.register(reparented, expected_head=certificate_id("bob"))
-    first_with_head = await tree.register(
-        [certificate("other-human")],
-        expected_head=certificate_id("alice"),
-    )
-
-    for resp in (missing, stale, first_with_head):
-        assert (resp.status_code, _code(resp)) == (409, "head_conflict"), resp.text
 
 
 @pytest.mark.asyncio
@@ -1809,19 +1565,6 @@ async def test_a_reparent_under_its_own_descendant_is_a_cycle(tree, awid_db_infr
     )
 
     assert (resp.status_code, _code(resp)) == (422, "cycle"), resp.text
-
-
-@pytest.mark.asyncio
-async def test_the_supporting_chain_must_be_the_registered_ancestry(
-    tree, awid_db_infra
-):
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    reissued_alice = copy.deepcopy(certificate("alice")["certificate"])
-    reissued_alice["issued_at"] = "2026-10-26T00:00:30Z"
-
-    resp = await tree.register([sign(reissued_alice, "root"), certificate("bob")])
-
-    assert (resp.status_code, _code(resp)) == (422, "superseded_certificate"), resp.text
 
 
 @pytest.mark.asyncio
@@ -1928,20 +1671,6 @@ async def test_register_local_subject_refuses(case, tree, awid_db_infra):
         resp.text
     )
     assert await _revisions(awid_db_infra) == before
-
-
-@pytest.mark.asyncio
-async def test_a_receipt_is_returned_only_for_the_exact_invitation(tree, awid_db_infra):
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    chain = [certificate("alice"), certificate("bob")]
-    first = await tree.register(chain, when=at("2026-10-26T00:03:00Z"))
-    assert first.status_code == 200, first.text
-
-    resp = await tree.register(
-        chain, invitation_id="00000000-0000-4000-8000-000000000009"
-    )
-
-    assert (resp.status_code, _code(resp)) == (409, "invitation_conflict"), resp.text
 
 
 @pytest.mark.asyncio
