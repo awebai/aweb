@@ -29,8 +29,11 @@ tests, and documentation. Public contracts must not require a separate
 application checkout or unpublished implementation note to explain their
 meaning.
 
-The `agents/` tree holds `agents/instructions.md`, the shared agent
-instructions. The souls used to develop the framework live in `souls/`.
+The maintainer team's souls (`souls/`) and knowledge base (`knowledge/`) are
+retained here by explicit maintainer decision; [OATS workspace](oats-workspace.md)
+describes them. They are engineering assets used to develop the framework.
+Contributors should treat those assets as part of this repository rather than
+moving them piecemeal.
 
 ## What belongs with an application owner
 

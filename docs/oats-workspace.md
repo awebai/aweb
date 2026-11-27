@@ -18,8 +18,7 @@ What this repository contributes to the workspace lives here:
 | `knowledge/` | The aweb knowledge base (id `aweb-oss-knowledge`): one node per soul, owned by the id in `knowledge/okf-base.json`. Each soul's `okf.json` refers to it under the base alias `aweb` (`aweb/<node>`). |
 
 A soul directory must not contain a `knowledge/` bundle: OATS refuses to spawn
-such a soul, so `souls/*/knowledge/` is gitignored. The `agents/` tree holds
-only the shared `agents/instructions.md`.
+such a soul, so `souls/*/knowledge/` is gitignored.
 
 ## Public contributors
 

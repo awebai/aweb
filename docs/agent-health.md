@@ -2,7 +2,7 @@
 
 Status: **approved by Juan on 2026-10-14 (aweb-acah.3); implemented.**
 Designating the status host, publishing (`aw status publish`,
-`PUT /{alias}/status`), reading (dashboard rosters carry `health`) and the
+`PUT /v1/agents/{alias}/status`), reading (dashboard rosters carry `health`) and the
 listening fallback are built. The signed document's wire bytes are frozen in
 [`docs/vectors/agent-status-v1.json`](vectors/agent-status-v1.json), agreed with
 the OATS publisher before either side implemented it.
