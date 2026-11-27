@@ -15,9 +15,9 @@ import (
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/wake"
 	"github.com/awebai/aw/internal/wake/session"
-	"github.com/awebai/aw/run"
 	"github.com/spf13/cobra"
 )
 
@@ -466,12 +466,12 @@ func wakeStore() (*wake.Store, error) {
 // path every other identity-home-aware command uses. The broker needs
 // stream-read and presence authority — it never opens a message, so it never
 // needs decryption material for any identity.
-func wakeStreamOpener(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+func wakeStreamOpener(ctx context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error) {
 	client, _, err := wakeIdentityClient(ctx, identityHome, teamID, resolveAuthenticatedBaseURLContext)
 	if err != nil {
 		return nil, err
 	}
-	return run.NewEventStreamOpener(client.Client), nil
+	return eventstream.NewEventStreamOpener(client.Client), nil
 }
 
 // wakeStreamReload builds one identity's event stream source before a retry
@@ -479,7 +479,7 @@ func wakeStreamOpener(ctx context.Context, identityHome, teamID string) (run.Eve
 // does, and builds the client for the mount of the stored server URL that
 // answers as the API (resolveReloadBaseURLContext); that mount is stored once
 // a stream opens there (reloadedEventStreamOpener).
-func wakeStreamReload(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+func wakeStreamReload(ctx context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error) {
 	client, sel, err := wakeIdentityClient(ctx, identityHome, teamID, resolveReloadBaseURLContext)
 	if err != nil {
 		return nil, err

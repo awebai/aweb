@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/manualclock"
-	"github.com/awebai/aw/run"
 	"testing"
 	"time"
 )
@@ -20,7 +20,7 @@ func TestStreamQuarantinesOnlyPermanentRegistrationErrors(t *testing.T) {
 			server.status = code
 			clock := manualclock.New(time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC))
 			clock.SetRandom(0.5)
-			runner := newStreamRunner("key", "identity", "team", openerFor(t, server.URL), nil, func(awid.AgentEvent) {}, func(string, ...any) {}, clock.Now, run.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random})
+			runner := newStreamRunner("key", "identity", "team", openerFor(t, server.URL), nil, func(awid.AgentEvent) {}, func(string, ...any) {}, clock.Now, eventstream.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random})
 			runner.start(context.Background())
 			defer runner.stop()
 			permanent := code >= 400 && code < 500 && code != 408 && code != 409 && code != 425 && code != 429

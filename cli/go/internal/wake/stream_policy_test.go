@@ -9,10 +9,10 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/manualclock"
 	"github.com/awebai/aw/internal/streamtest"
 	"github.com/awebai/aw/internal/wake/session"
-	"github.com/awebai/aw/run"
 )
 
 // The broker's streams on the event stream client policy
@@ -22,7 +22,7 @@ var streamPolicyStart = time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 
 // policyBroker starts a broker whose streams run on clock and open through
 // openStream, and registers one home with it.
-func policyBroker(t *testing.T, clock *manualclock.Clock, openStream func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error)) (*Broker, *logCapture, Registration) {
+func policyBroker(t *testing.T, clock *manualclock.Clock, openStream func(ctx context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error)) (*Broker, *logCapture, Registration) {
 	t.Helper()
 	store := tempStore(t)
 	home := tempHome(t, "instance")
@@ -31,7 +31,7 @@ func policyBroker(t *testing.T, clock *manualclock.Clock, openStream func(ctx co
 		Store:        store,
 		Session:      session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateIdle, RawState: "idle"}),
 		Log:          logs.log,
-		StreamPolicy: run.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
+		StreamPolicy: eventstream.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
 		OpenStream:   openStream,
 	})
 	reg := Registration{Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession}
@@ -41,8 +41,8 @@ func policyBroker(t *testing.T, clock *manualclock.Clock, openStream func(ctx co
 	return broker, logs, reg
 }
 
-func sameOpener(opener *streamtest.Opener) func(context.Context, string, string) (run.EventStreamOpener, error) {
-	return func(context.Context, string, string) (run.EventStreamOpener, error) { return opener.Open, nil }
+func sameOpener(opener *streamtest.Opener) func(context.Context, string, string) (eventstream.EventStreamOpener, error) {
+	return func(context.Context, string, string) (eventstream.EventStreamOpener, error) { return opener.Open, nil }
 }
 
 // awaitStreamRetryWait waits for the one stream to be sleeping before a
@@ -233,7 +233,7 @@ func TestRefusedStreamReadsCredentialsAgainBeforeEachRetry(t *testing.T) {
 	var mu sync.Mutex
 	stored := "expired"
 	var read, used []string
-	openStream := func(_ context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+	openStream := func(_ context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		credential := stored
@@ -365,12 +365,12 @@ func TestStreamStopDoesNotWaitOnAReload(t *testing.T) {
 	clock := manualclock.New(streamPolicyStart)
 	opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
 	entered := make(chan struct{})
-	reload := func(ctx context.Context) (run.EventStreamOpener, error) {
+	reload := func(ctx context.Context) (eventstream.EventStreamOpener, error) {
 		close(entered)
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	stream := newStreamRunner("key", "/identity", "team", opener.Open, reload, func(awid.AgentEvent) {}, func(string, ...any) {}, clock.Now, run.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random})
+	stream := newStreamRunner("key", "/identity", "team", opener.Open, reload, func(awid.AgentEvent) {}, func(string, ...any) {}, clock.Now, eventstream.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random})
 	stream.start(context.Background())
 	clock.Advance(awaitStreamRetryWait(t, clock, 2))
 	select {
@@ -402,7 +402,7 @@ func TestBrokerReloadsThroughOpenStreamWithTheStreamContext(t *testing.T) {
 	calls := 0
 	entered := make(chan struct{})
 	ended := make(chan error, 1)
-	openStream := func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+	openStream := func(ctx context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error) {
 		mu.Lock()
 		calls++
 		first := calls == 1
@@ -420,7 +420,7 @@ func TestBrokerReloadsThroughOpenStreamWithTheStreamContext(t *testing.T) {
 	broker, cancel := liveBroker(t, Config{
 		Store:        store,
 		Session:      session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateIdle, RawState: "idle"}),
-		StreamPolicy: run.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
+		StreamPolicy: eventstream.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
 		OpenStream:   openStream,
 	})
 	if err := broker.Register(Registration{Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession}); err != nil {
@@ -454,7 +454,7 @@ func TestStreamFlapWithTheConnectedEventGrowsTheRefusedDelay(t *testing.T) {
 		sources <- source
 		return source, nil
 	}
-	broker, _, _ := policyBroker(t, clock, func(context.Context, string, string) (run.EventStreamOpener, error) { return open, nil })
+	broker, _, _ := policyBroker(t, clock, func(context.Context, string, string) (eventstream.EventStreamOpener, error) { return open, nil })
 
 	revoked := streamtest.Item{Err: &awid.AgentEventStreamClosedError{Event: "grant_revoked", Detail: "identity grant revoked"}}
 	started := 0

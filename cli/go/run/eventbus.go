@@ -8,6 +8,7 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 )
 
 // ConnectionState tracks the SSE connection lifecycle. While the bus runs it
@@ -153,7 +154,7 @@ func (q *PriorityQueue) Ready() <-chan struct{} {
 // through an interrupt channel (for high-priority) and a priority queue
 // (for deferred events).
 type EventBus struct {
-	policy *StreamPolicy
+	policy *eventstream.StreamPolicy
 
 	interrupts chan BusEvent
 	queue      *PriorityQueue
@@ -170,17 +171,17 @@ type EventBus struct {
 
 // EventBusConfig holds construction parameters for an EventBus.
 type EventBusConfig struct {
-	Stream EventStreamOpener
+	Stream eventstream.EventStreamOpener
 	// Reload reads the credentials again from where they are kept and
 	// returns the opener that uses them. The bus calls it before each retry
 	// of a refused stream, in a context that ends when the bus stops.
 	// Without it a retry uses Stream.
-	Reload        StreamReload
+	Reload        eventstream.StreamReload
 	Now           func() time.Time
 	OnStateChange func(ConnectionState)
 	// Policy supplies the reconnect policy's timer and random source; its
 	// clock defaults to Now.
-	Policy StreamPolicyConfig
+	Policy eventstream.StreamPolicyConfig
 }
 
 func NewEventBus(cfg EventBusConfig) *EventBus {
@@ -193,7 +194,7 @@ func NewEventBus(cfg EventBusConfig) *EventBus {
 		policyCfg.Now = nowFn
 	}
 	b := &EventBus{
-		policy:        NewStreamPolicy(cfg.Stream, cfg.Reload, policyCfg),
+		policy:        eventstream.NewStreamPolicy(cfg.Stream, cfg.Reload, policyCfg),
 		interrupts:    make(chan BusEvent, 8),
 		queue:         NewPriorityQueue(),
 		deduper:       newRecentEventDeduper(256),
@@ -252,7 +253,7 @@ func (b *EventBus) InjectAutofeed() {
 
 // run keeps the stream open for the life of the bus. When a connection
 // closes, what its end means and how long to wait are decided by the event
-// stream client policy (streampolicy.go); this loop reports the state.
+// stream client policy (internal/eventstream/policy.go); this loop reports the state.
 func (b *EventBus) run(ctx context.Context) {
 	defer close(b.done)
 	defer b.setState(ConnDisconnected)
@@ -283,17 +284,17 @@ func (b *EventBus) run(ctx context.Context) {
 		}
 		end := conn.End(err)
 		switch end.Kind {
-		case StreamEndStopped:
+		case eventstream.StreamEndStopped:
 			return
-		case StreamEndPlannedClose:
+		case eventstream.StreamEndPlannedClose:
 			// Not an outage: the state stays as it is and nothing is reported.
-		case StreamEndTransient:
+		case eventstream.StreamEndTransient:
 			b.setState(ConnReconnecting)
 			if !outageReported {
 				outageReported = true
 				b.connectionNotice(formatStreamDisconnectNotice(end.Err, end.Wait))
 			}
-		case StreamEndRefused:
+		case eventstream.StreamEndRefused:
 			// Reported once on entering the quarantine; a retry that is refused
 			// again moves the next attempt and says nothing.
 			b.setState(ConnRefused)
@@ -342,7 +343,7 @@ func formatStreamDisconnectNotice(err error, delay time.Duration) string {
 	return "aweb: event stream disconnected (" + cause + ") — retrying in " + delay.Round(100*time.Millisecond).String()
 }
 
-func (b *EventBus) consumeStream(conn *StreamConnection, source awid.EventSource) error {
+func (b *EventBus) consumeStream(conn *eventstream.StreamConnection, source awid.EventSource) error {
 	ctx := conn.Context()
 	for ctx.Err() == nil {
 		ev, err := source.Next(ctx)

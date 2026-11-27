@@ -17,6 +17,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/manualclock"
 	"github.com/awebai/aw/internal/wake"
 	"github.com/awebai/aw/internal/wake/session"
@@ -213,7 +214,7 @@ func requireNotFoundNamingMount(t *testing.T, err error, mount string) {
 	}
 }
 
-func openStreamOnce(opener awrun.EventStreamOpener) error {
+func openStreamOnce(opener eventstream.EventStreamOpener) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	source, err := opener(ctx, time.Now().Add(time.Minute))
@@ -457,10 +458,10 @@ func TestRunEventStreamSignsForTheAnsweringMountAfterAReload(t *testing.T) {
 	}
 	clock := manualclock.New(time.Now())
 	bus := awrun.NewEventBus(awrun.EventBusConfig{
-		Stream: awrun.NewEventStreamOpener(client.Client),
+		Stream: eventstream.NewEventStreamOpener(client.Client),
 		Reload: runEventStreamReload(workingDir),
 		Now:    clock.Now,
-		Policy: awrun.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random},
+		Policy: eventstream.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random},
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	bus.Start(ctx)
@@ -521,7 +522,7 @@ func TestWakeBrokerSignsForTheAnsweringMountAfterAReload(t *testing.T) {
 		Session:      session.NewFake(session.Inspection{Home: instanceHome, Backend: "herdr", Present: true, State: session.StateIdle, RawState: "idle"}),
 		OpenStream:   wakeStreamOpener,
 		ReloadStream: wakeStreamReload,
-		StreamPolicy: awrun.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
+		StreamPolicy: eventstream.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -578,10 +579,10 @@ func TestWakeBrokerSignsForTheAnsweringMountAfterAReload(t *testing.T) {
 
 // The two reloads that find the answering mount: `aw run`'s and the wake
 // broker's, which the broker calls before a refused retry.
-func answeringMountReloads(workingDir string) map[string]awrun.StreamReload {
-	return map[string]awrun.StreamReload{
+func answeringMountReloads(workingDir string) map[string]eventstream.StreamReload {
+	return map[string]eventstream.StreamReload{
 		"aw run": runEventStreamReload(workingDir),
-		"wake broker": func(ctx context.Context) (awrun.EventStreamOpener, error) {
+		"wake broker": func(ctx context.Context) (eventstream.EventStreamOpener, error) {
 			return wakeStreamReload(ctx, awconfig.WorktreeIdentityHome(workingDir), "")
 		},
 	}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/manualclock"
 	"github.com/awebai/aw/internal/wake"
 	"github.com/awebai/aw/internal/wake/session"
@@ -158,11 +159,11 @@ func TestRunEventStreamUsesAGrantRenewedOnDiskAfterARefusal(t *testing.T) {
 	clock := manualclock.New(time.Now())
 	states := make(chan awrun.ConnectionState, 16)
 	bus := awrun.NewEventBus(awrun.EventBusConfig{
-		Stream:        awrun.NewEventStreamOpener(client.Client),
+		Stream:        eventstream.NewEventStreamOpener(client.Client),
 		Reload:        runEventStreamReload(workingDir),
 		Now:           clock.Now,
 		OnStateChange: func(state awrun.ConnectionState) { states <- state },
-		Policy:        awrun.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random},
+		Policy:        eventstream.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random},
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	bus.Start(ctx)
@@ -210,7 +211,7 @@ func TestRunEventStreamReloadReadsTheGrantHomeOnEachCall(t *testing.T) {
 	identityHomeFlag = grantHome
 
 	reload := runEventStreamReload(workingDir)
-	open := func(opener awrun.EventStreamOpener) {
+	open := func(opener eventstream.EventStreamOpener) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -369,7 +370,7 @@ func TestWakeBrokerUsesAGrantRenewedOnDiskAfterARefusal(t *testing.T) {
 		Store:        store,
 		Session:      session.NewFake(session.Inspection{Home: instanceHome, Backend: "herdr", Present: true, State: session.StateIdle, RawState: "idle"}),
 		OpenStream:   wakeStreamOpener,
-		StreamPolicy: awrun.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
+		StreamPolicy: eventstream.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -13,10 +13,10 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/manualclock"
 	"github.com/awebai/aw/internal/streamtest"
 	"github.com/awebai/aw/internal/wake/session"
-	"github.com/awebai/aw/run"
 )
 
 // recordingServer is a stand-in aweb server that serves the event stream and
@@ -102,13 +102,13 @@ func (s *oneEventSource) Next(ctx context.Context) (*awid.AgentEvent, error) {
 
 func (s *oneEventSource) Close() error { return nil }
 
-func openerFor(t *testing.T, baseURL string) run.EventStreamOpener {
+func openerFor(t *testing.T, baseURL string) eventstream.EventStreamOpener {
 	t.Helper()
 	client, err := awid.New(baseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return run.NewEventStreamOpener(client)
+	return eventstream.NewEventStreamOpener(client)
 }
 
 // liveBroker starts a real broker with real goroutines and short timings.
@@ -188,7 +188,7 @@ func TestRegisterBeforeRunStartsReconciledRunners(t *testing.T) {
 		RateLimit:    50 * time.Millisecond,
 		PollInterval: 10 * time.Millisecond,
 		Reconcile:    20 * time.Millisecond,
-		OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+		OpenStream: func(context.Context, string, string) (eventstream.EventStreamOpener, error) {
 			return openerFor(t, server.URL), nil
 		},
 	})
@@ -232,7 +232,7 @@ func TestBrokerRoutesSameRootStreamsByPinnedTeam(t *testing.T) {
 		Store:   store,
 		Session: session.NewFake(session.Inspection{}),
 		Log:     logs.log,
-		OpenStream: func(_ context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+		OpenStream: func(_ context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error) {
 			opened <- identityHome + "|" + teamID
 			ev := awid.AgentEvent{Type: awid.AgentEventChannelReconnected}
 			if teamID == "team:b" {
@@ -295,7 +295,7 @@ func TestBrokerNeverFetchesOrAcknowledgesAnything(t *testing.T) {
 		Store:   store,
 		Session: session.NewFake(session.Inspection{}),
 		Log:     logs.log,
-		OpenStream: func(_ context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+		OpenStream: func(_ context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error) {
 			return openerFor(t, server.URL), nil
 		},
 	})
@@ -328,8 +328,8 @@ func TestPlannedCloseIsNotReportedAsAnOutage(t *testing.T) {
 		Store:        store,
 		Session:      session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateBusy, RawState: "working"}),
 		Log:          logs.log,
-		StreamPolicy: run.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
-		OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+		StreamPolicy: eventstream.StreamPolicyConfig{Now: clock.Now, Timer: clock.Timer, Rand: clock.Random},
+		OpenStream: func(context.Context, string, string) (eventstream.EventStreamOpener, error) {
 			return opener.Open, nil
 		},
 	})
@@ -379,8 +379,8 @@ func TestPlannedCloseIsNotReportedAsAnOutage(t *testing.T) {
 			t.Fatalf("phase=%s across a planned close; a planned close does not leave streaming", stream.Phase)
 		}
 	}
-	if run.StreamPlannedCloseMin != 3*time.Minute+30*time.Second || run.StreamPlannedCloseMax != 4*time.Minute {
-		t.Fatalf("planned close between %s and %s; the policy fixes 3 min 30 s to 4 min inside the server's five-minute cap", run.StreamPlannedCloseMin, run.StreamPlannedCloseMax)
+	if eventstream.StreamPlannedCloseMin != 3*time.Minute+30*time.Second || eventstream.StreamPlannedCloseMax != 4*time.Minute {
+		t.Fatalf("planned close between %s and %s; the policy fixes 3 min 30 s to 4 min inside the server's five-minute cap", eventstream.StreamPlannedCloseMin, eventstream.StreamPlannedCloseMax)
 	}
 }
 
@@ -404,7 +404,7 @@ func TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming(t *testing.T) {
 		Store:   store,
 		Session: oats,
 		Log:     logs.log,
-		OpenStream: func(_ context.Context, identityHome, teamID string) (run.EventStreamOpener, error) {
+		OpenStream: func(_ context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error) {
 			if strings.HasPrefix(identityHome, badHome) {
 				return openerFor(t, bad.URL), nil
 			}
@@ -507,8 +507,8 @@ func TestReconnectAfterAnOutageDeliversOnlySnapshotItems(t *testing.T) {
 		Store:        store,
 		Session:      oats,
 		Log:          logs.log,
-		StreamPolicy: run.StreamPolicyConfig{Timer: streamtest.ScaledTimer(100)},
-		OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+		StreamPolicy: eventstream.StreamPolicyConfig{Timer: streamtest.ScaledTimer(100)},
+		OpenStream: func(context.Context, string, string) (eventstream.EventStreamOpener, error) {
 			return openerFor(t, server.URL), nil
 		},
 	})
@@ -530,7 +530,7 @@ func TestReconnectAfterAnOutageDeliversOnlySnapshotItems(t *testing.T) {
 
 func TestSnapshotRequestsCoalesceAndStopWithStream(t *testing.T) {
 	server := newRecordingServer(t, sseEvent("connected", `{"agent_id":"self"}`))
-	stream := newStreamRunner("test", "/identity", "team", openerFor(t, server.URL), nil, func(awid.AgentEvent) {}, func(string, ...any) {}, time.Now, run.StreamPolicyConfig{})
+	stream := newStreamRunner("test", "/identity", "team", openerFor(t, server.URL), nil, func(awid.AgentEvent) {}, func(string, ...any) {}, time.Now, eventstream.StreamPolicyConfig{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream.start(ctx)

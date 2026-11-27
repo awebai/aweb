@@ -123,7 +123,7 @@ func NewOpener(now func() time.Time, attempts ...Attempt) *Opener {
 	return &Opener{now: now, attempts: attempts}
 }
 
-// Open has the signature of run.EventStreamOpener.
+// Open has the signature of eventstream.EventStreamOpener.
 func (o *Opener) Open(ctx context.Context, deadline time.Time) (awid.EventSource, error) {
 	o.mu.Lock()
 	index := len(o.openedAt)
@@ -160,7 +160,7 @@ func (o *Opener) LastDeadline() time.Time {
 
 // ScaledTimer is a real timer that runs factor times faster than asked, for
 // tests that reconnect over real connections and bound themselves in real
-// time. It has the signature of run.StreamPolicyConfig.Timer.
+// time. It has the signature of eventstream.StreamPolicyConfig.Timer.
 func ScaledTimer(factor int) func(time.Duration) (<-chan time.Time, func()) {
 	return func(d time.Duration) (<-chan time.Time, func()) {
 		timer := time.NewTimer(d / time.Duration(factor))

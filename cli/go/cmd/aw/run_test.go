@@ -21,6 +21,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/chat"
+	"github.com/awebai/aw/internal/eventstream"
 	awrun "github.com/awebai/aw/run"
 	"github.com/spf13/cobra"
 )
@@ -146,7 +147,7 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 	runWorkspaceStateForDir = func(dir string) (runWorkspaceState, error) {
 		return runWorkspaceStateInitialized, nil
 	}
-	runNewEventBus = func(client *aweb.Client, _ awrun.StreamReload) *awrun.EventBus {
+	runNewEventBus = func(client *aweb.Client, _ eventstream.StreamReload) *awrun.EventBus {
 		if client == nil {
 			t.Fatal("expected client for event bus")
 		}
@@ -337,7 +338,7 @@ func TestRunAllowsEmptyPromptWhenInteractiveScreenIsAvailable(t *testing.T) {
 		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
-	runNewEventBus = func(client *aweb.Client, _ awrun.StreamReload) *awrun.EventBus { return nil }
+	runNewEventBus = func(client *aweb.Client, _ eventstream.StreamReload) *awrun.EventBus { return nil }
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController {
 		return &awrun.ScreenController{}
 	}
@@ -404,7 +405,7 @@ func TestRunDefaultsCodexToNonPTYWhenInteractive(t *testing.T) {
 		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
-	runNewEventBus = func(client *aweb.Client, _ awrun.StreamReload) *awrun.EventBus { return nil }
+	runNewEventBus = func(client *aweb.Client, _ eventstream.StreamReload) *awrun.EventBus { return nil }
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController {
 		return &awrun.ScreenController{}
 	}
@@ -468,7 +469,7 @@ func TestRunHonorsExplicitCodexPTYOverride(t *testing.T) {
 		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
-	runNewEventBus = func(client *aweb.Client, _ awrun.StreamReload) *awrun.EventBus { return nil }
+	runNewEventBus = func(client *aweb.Client, _ eventstream.StreamReload) *awrun.EventBus { return nil }
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController {
 		return &awrun.ScreenController{}
 	}
@@ -588,7 +589,7 @@ func TestRunInteractiveOnboardsBeforeRunning(t *testing.T) {
 	runExecuteLoop = func(loop *awrun.Loop, ctx context.Context, opts awrun.LoopOptions) error {
 		return nil
 	}
-	runNewEventBus = func(client *aweb.Client, _ awrun.StreamReload) *awrun.EventBus { return nil }
+	runNewEventBus = func(client *aweb.Client, _ eventstream.StreamReload) *awrun.EventBus { return nil }
 
 	var capturedReq guidedOnboardingRequest
 	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
@@ -1557,7 +1558,7 @@ func TestRunContinuePrintsRecentInteractionRecap(t *testing.T) {
 		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
-	runNewEventBus = func(client *aweb.Client, _ awrun.StreamReload) *awrun.EventBus { return nil }
+	runNewEventBus = func(client *aweb.Client, _ eventstream.StreamReload) *awrun.EventBus { return nil }
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController { return nil }
 	runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
 		return awrun.NewLoop(provider, out)
@@ -1677,7 +1678,7 @@ func TestRunPrintsContinueAndProviderCommandsOnExit(t *testing.T) {
 		return &aweb.Client{}, &awconfig.Selection{Domain: "team", Alias: "rose"}, nil
 	}
 	runWorkspaceStateForDir = func(string) (runWorkspaceState, error) { return runWorkspaceStateInitialized, nil }
-	runNewEventBus = func(client *aweb.Client, _ awrun.StreamReload) *awrun.EventBus { return nil }
+	runNewEventBus = func(client *aweb.Client, _ eventstream.StreamReload) *awrun.EventBus { return nil }
 	runNewScreenController = func(in io.Reader, out io.Writer) *awrun.ScreenController { return nil }
 	runNewLoop = func(provider awrun.Provider, out io.Writer) *awrun.Loop {
 		return awrun.NewLoop(provider, out)

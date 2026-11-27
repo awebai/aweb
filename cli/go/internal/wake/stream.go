@@ -7,12 +7,12 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
-	"github.com/awebai/aw/run"
+	"github.com/awebai/aw/internal/eventstream"
 )
 
 // The broker's streams follow docs/event-stream-client-policy.md: when a
 // connection closes, what its end means and how long to wait are decided by
-// run.StreamPolicy, the implementation `aw run` uses too. This file keeps
+// eventstream.StreamPolicy, the implementation `aw run` uses too. This file keeps
 // what is the broker's own: one runner per identity, the phase it reports in
 // status, and the snapshot requests that reopen a live stream.
 //
@@ -45,7 +45,7 @@ type streamRunner struct {
 	key          string
 	identityHome string
 	teamID       string
-	policy       *run.StreamPolicy
+	policy       *eventstream.StreamPolicy
 	onEvent      func(awid.AgentEvent)
 	log          func(string, ...any)
 	now          func() time.Time
@@ -71,7 +71,7 @@ type streamRunner struct {
 // newStreamRunner builds one identity's stream. reload reads the identity's
 // credentials again from its home; the policy calls it before each retry of a
 // refused stream.
-func newStreamRunner(key, identityHome, teamID string, open run.EventStreamOpener, reload run.StreamReload, onEvent func(awid.AgentEvent), log func(string, ...any), now func() time.Time, policy run.StreamPolicyConfig) *streamRunner {
+func newStreamRunner(key, identityHome, teamID string, open eventstream.EventStreamOpener, reload eventstream.StreamReload, onEvent func(awid.AgentEvent), log func(string, ...any), now func() time.Time, policy eventstream.StreamPolicyConfig) *streamRunner {
 	if policy.Now == nil {
 		policy.Now = now
 	}
@@ -79,7 +79,7 @@ func newStreamRunner(key, identityHome, teamID string, open run.EventStreamOpene
 		key:          key,
 		identityHome: identityHome,
 		teamID:       teamID,
-		policy:       run.NewStreamPolicy(open, reload, policy),
+		policy:       eventstream.NewStreamPolicy(open, reload, policy),
 		onEvent:      onEvent,
 		log:          log,
 		now:          now,
@@ -142,7 +142,7 @@ func (s *streamRunner) requestNow() {
 // setPhase records the stream's phase and, for a stream that is not
 // streaming, the end that put it there: its cause, the time of the next
 // attempt, and the error as text and as its stable detail.
-func (s *streamRunner) setPhase(p StreamPhase, end run.StreamEnd) {
+func (s *streamRunner) setPhase(p StreamPhase, end eventstream.StreamEnd) {
 	s.mu.Lock()
 	s.phase = p
 	s.cause, s.nextAttempt = end.Cause, end.NextAttempt
@@ -249,7 +249,7 @@ func (s *streamRunner) run(ctx context.Context) {
 
 	for ctx.Err() == nil {
 		conn := s.policy.Connect(ctx, func(endedRefusal string) {
-			s.setPhase(StreamLive, run.StreamEnd{})
+			s.setPhase(StreamLive, eventstream.StreamEnd{})
 			switch {
 			case endedRefusal != "":
 				s.log("stream quarantine ended identity_home=%s cause=%s", s.identityHome, endedRefusal)
@@ -276,19 +276,19 @@ func (s *streamRunner) run(ctx context.Context) {
 
 		end := conn.End(err)
 		switch end.Kind {
-		case run.StreamEndStopped:
+		case eventstream.StreamEndStopped:
 			return
-		case run.StreamEndPlannedClose:
+		case eventstream.StreamEndPlannedClose:
 			// The stream's own planned close, or a snapshot request. Not an
 			// outage: it is reopened immediately and the fresh stream's
 			// snapshot is what re-raises anything still unread.
-		case run.StreamEndTransient:
+		case eventstream.StreamEndTransient:
 			s.setPhase(StreamRetrying, end)
 			if !outageReported {
 				outageReported = true
 				s.log("stream outage identity_home=%s err=%v", s.identityHome, end.Err)
 			}
-		case run.StreamEndRefused:
+		case eventstream.StreamEndRefused:
 			// One identity is quarantined and reported; the daemon and every
 			// other stream keep running. The quarantine is logged when it
 			// starts; a retry that is refused again only moves the time of
@@ -304,7 +304,7 @@ func (s *streamRunner) run(ctx context.Context) {
 	}
 }
 
-func (s *streamRunner) consume(conn *run.StreamConnection, source awid.EventSource) error {
+func (s *streamRunner) consume(conn *eventstream.StreamConnection, source awid.EventSource) error {
 	ctx := conn.Context()
 	for ctx.Err() == nil {
 		ev, err := source.Next(ctx)

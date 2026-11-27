@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,17 +13,30 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/manualclock"
 	"github.com/awebai/aw/internal/streamtest"
 )
+
+var policyStart = time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+
+// almostOne is the largest value a uniform random source in [0, 1) returns.
+var almostOne = math.Nextafter(1, 0)
+
+func awaitTimers(t *testing.T, clock *manualclock.Clock, n int) {
+	t.Helper()
+	if !clock.AwaitTimers(n) {
+		t.Fatalf("timers waiting=%d, want %d", clock.Timers(), n)
+	}
+}
 
 // `aw run` on the event stream client policy
 // (docs/event-stream-client-policy.md), with a clock the tests advance.
 
 // fastStreamPolicy runs the policy's waits a hundred times faster, for tests
 // that reconnect over real connections and bound themselves in real time.
-func fastStreamPolicy() StreamPolicyConfig {
-	return StreamPolicyConfig{Timer: streamtest.ScaledTimer(100)}
+func fastStreamPolicy() eventstream.StreamPolicyConfig {
+	return eventstream.StreamPolicyConfig{Timer: streamtest.ScaledTimer(100)}
 }
 
 type busRecord struct {
@@ -55,7 +69,7 @@ func (r *busRecord) allStates() []ConnectionState {
 	return append([]ConnectionState(nil), r.states...)
 }
 
-func startManualBus(t *testing.T, clock *manualclock.Clock, stream EventStreamOpener, reload StreamReload) (*EventBus, *busRecord) {
+func startManualBus(t *testing.T, clock *manualclock.Clock, stream eventstream.EventStreamOpener, reload eventstream.StreamReload) (*EventBus, *busRecord) {
 	t.Helper()
 	record := &busRecord{}
 	bus := NewEventBus(EventBusConfig{
@@ -63,7 +77,7 @@ func startManualBus(t *testing.T, clock *manualclock.Clock, stream EventStreamOp
 		Reload:        reload,
 		Now:           clock.Now,
 		OnStateChange: record.state,
-		Policy:        StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random},
+		Policy:        eventstream.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random},
 	})
 	bus.onConnectionNotice = record.notice
 	ctx, cancel := context.WithCancel(context.Background())
@@ -194,7 +208,7 @@ func TestEventBusRetriesAMinuteAfter401(t *testing.T) {
 
 	clock := manualclock.New(policyStart)
 	clock.SetRandom(almostOne)
-	bus, record := startManualBus(t, clock, NewEventStreamOpener(client), nil)
+	bus, record := startManualBus(t, clock, eventstream.NewEventStreamOpener(client), nil)
 
 	awaitRetryWait(t, clock, 2)
 	if busStopped(bus) {
@@ -394,7 +408,7 @@ func TestEventBusReloadsCredentialsBetweenRefusedAttempts(t *testing.T) {
 	var used []string
 	reloads := 0
 	source := streamtest.NewSource()
-	openerWith := func(credential string) EventStreamOpener {
+	openerWith := func(credential string) eventstream.EventStreamOpener {
 		return func(context.Context, time.Time) (awid.EventSource, error) {
 			mu.Lock()
 			used = append(used, credential)
@@ -405,7 +419,7 @@ func TestEventBusReloadsCredentialsBetweenRefusedAttempts(t *testing.T) {
 			return nil, streamtest.HTTPFailure(401)
 		}
 	}
-	reload := func(context.Context) (EventStreamOpener, error) {
+	reload := func(context.Context) (eventstream.EventStreamOpener, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		reloads++
@@ -446,7 +460,7 @@ func TestEventBusStopDoesNotWaitOnAReload(t *testing.T) {
 	clock := manualclock.New(policyStart)
 	opener := streamtest.NewOpener(clock.Now, streamtest.Fails(streamtest.HTTPFailure(401)))
 	entered := make(chan struct{})
-	reload := func(ctx context.Context) (EventStreamOpener, error) {
+	reload := func(ctx context.Context) (eventstream.EventStreamOpener, error) {
 		close(entered)
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -455,7 +469,7 @@ func TestEventBusStopDoesNotWaitOnAReload(t *testing.T) {
 		Stream: opener.Open,
 		Reload: reload,
 		Now:    clock.Now,
-		Policy: StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random},
+		Policy: eventstream.StreamPolicyConfig{Timer: clock.Timer, Rand: clock.Random},
 	})
 	bus.Start(context.Background())
 	advanceToNextAttempt(t, clock, 2)

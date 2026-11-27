@@ -19,6 +19,7 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/manualclock"
 )
 
@@ -961,7 +962,7 @@ func TestEventBusKeepsRetryingWhenServerReturns404(t *testing.T) {
 	}
 
 	clock := manualclock.New(policyStart)
-	bus, _ := startManualBus(t, clock, NewEventStreamOpener(client), nil)
+	bus, _ := startManualBus(t, clock, eventstream.NewEventStreamOpener(client), nil)
 
 	// A 404 quarantines the stream; the bus goroutine keeps a retry scheduled.
 	awaitRetryWait(t, clock, 2)

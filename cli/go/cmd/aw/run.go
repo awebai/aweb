@@ -18,6 +18,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	awrun "github.com/awebai/aw/run"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -49,9 +50,9 @@ var (
 	runNewProvider     = awrun.NewProvider
 	runNewLoop         = awrun.NewLoop
 	runExecuteLoop     = func(loop *awrun.Loop, ctx context.Context, opts awrun.LoopOptions) error { return loop.Run(ctx, opts) }
-	runNewEventBus     = func(client *aweb.Client, reload awrun.StreamReload) *awrun.EventBus {
+	runNewEventBus     = func(client *aweb.Client, reload eventstream.StreamReload) *awrun.EventBus {
 		return awrun.NewEventBus(awrun.EventBusConfig{
-			Stream: awrun.NewEventStreamOpener(client.Client),
+			Stream: eventstream.NewEventStreamOpener(client.Client),
 			Reload: reload,
 		})
 	}
@@ -540,8 +541,8 @@ func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive b
 // It runs on the bus goroutine. Whatever it waits on ends with ctx, so
 // stopping the run does not wait for it, and it does not record its client as
 // the command's last client, which the root command reads after the run.
-func runEventStreamReload(workingDir string) awrun.StreamReload {
-	return func(ctx context.Context) (awrun.EventStreamOpener, error) {
+func runEventStreamReload(workingDir string) eventstream.StreamReload {
+	return func(ctx context.Context) (eventstream.EventStreamOpener, error) {
 		client, sel, err := buildClientSelectionForDir(ctx, workingDir, strings.TrimSpace(teamFlag), resolveReloadBaseURLContext)
 		if err != nil {
 			return nil, err
@@ -555,8 +556,8 @@ func runEventStreamReload(workingDir string) awrun.StreamReload {
 // URL, that mount is stored once a stream signed for it has opened there: the
 // open's 200 is the first signed answer the mount gives. A refused or failed
 // open stores nothing.
-func reloadedEventStreamOpener(client *aweb.Client, sel *awconfig.Selection) awrun.EventStreamOpener {
-	open := awrun.NewEventStreamOpener(client.Client)
+func reloadedEventStreamOpener(client *aweb.Client, sel *awconfig.Selection) eventstream.EventStreamOpener {
+	open := eventstream.NewEventStreamOpener(client.Client)
 	if sel == nil || strings.TrimSpace(os.Getenv("AWEB_URL")) != "" {
 		return open
 	}

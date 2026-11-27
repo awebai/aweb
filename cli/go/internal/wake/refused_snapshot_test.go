@@ -15,8 +15,8 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/wake/session"
-	"github.com/awebai/aw/run"
 )
 
 func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
@@ -100,7 +100,7 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				defer traceMu.Unlock()
 				trace = append(trace, time.Now().Format("15:04:05.000")+" "+fmt.Sprintf(format, args...))
 			}
-			broker, cancel := liveBroker(t, Config{Log: record, Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(context.Context, string, string) (run.EventStreamOpener, error) {
+			broker, cancel := liveBroker(t, Config{Log: record, Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(context.Context, string, string) (eventstream.EventStreamOpener, error) {
 				return func(ctx context.Context, _ time.Time) (awid.EventSource, error) {
 					mu.Lock()
 					openedAt := time.Now()

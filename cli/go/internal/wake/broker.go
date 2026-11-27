@@ -11,8 +11,8 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/wake/session"
-	"github.com/awebai/aw/run"
 )
 
 // Defaults from docs/terminal-wake-broker.md §4, and the two bounds the note
@@ -60,12 +60,12 @@ type Config struct {
 	// The broker calls it when it creates a stream and, unless ReloadStream is
 	// set, again before each retry of a refused one; anything it waits on must
 	// end with ctx.
-	OpenStream func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error)
+	OpenStream func(ctx context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error)
 	// ReloadStream, when set, is what the broker calls in place of OpenStream
 	// before each retry of a refused stream. It reads the same identity home
 	// again, and may do what only a refused stream needs, such as looking for
 	// the server mount that answers; anything it waits on must end with ctx.
-	ReloadStream func(ctx context.Context, identityHome, teamID string) (run.EventStreamOpener, error)
+	ReloadStream func(ctx context.Context, identityHome, teamID string) (eventstream.EventStreamOpener, error)
 	// Heartbeat uses the same explicit identity/team selection as OpenStream.
 	// The runner calls it only after this tick's fresh inspect says present.
 	Heartbeat         func(ctx context.Context, identityHome, teamID string) error
@@ -81,7 +81,7 @@ type Config struct {
 	// StreamPolicy supplies the timer and random source of the streams'
 	// reconnect policy (docs/event-stream-client-policy.md); its clock
 	// defaults to Now.
-	StreamPolicy run.StreamPolicyConfig
+	StreamPolicy eventstream.StreamPolicyConfig
 
 	// Version and Commit identify the daemon's own build. They are reported in
 	// Status so readers see the running daemon, not the CLI asking.
@@ -492,7 +492,7 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	if b.cfg.ReloadStream != nil {
 		reopen = b.cfg.ReloadStream
 	}
-	reload := func(ctx context.Context) (run.EventStreamOpener, error) {
+	reload := func(ctx context.Context) (eventstream.EventStreamOpener, error) {
 		return reopen(ctx, identityHome, teamID)
 	}
 	runner := newStreamRunner(key, identityHome, teamID, opener, reload, func(ev awid.AgentEvent) {

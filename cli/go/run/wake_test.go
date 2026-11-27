@@ -10,6 +10,7 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/eventstream"
 )
 
 func TestEventBusRetriesEarlyEOF(t *testing.T) {
@@ -38,7 +39,7 @@ func TestEventBusRetriesEarlyEOF(t *testing.T) {
 		t.Fatal(err)
 	}
 	bus := NewEventBus(EventBusConfig{
-		Stream: NewEventStreamOpener(client),
+		Stream: eventstream.NewEventStreamOpener(client),
 		Policy: fastStreamPolicy(),
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -86,7 +87,7 @@ func TestEventBusQueuesAppEventWakeFromSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bus := NewEventBus(EventBusConfig{Stream: NewEventStreamOpener(client)})
+	bus := NewEventBus(EventBusConfig{Stream: eventstream.NewEventStreamOpener(client)})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	bus.Start(ctx)
@@ -130,7 +131,7 @@ func TestEventBusRetriesTransientOpenError(t *testing.T) {
 		t.Fatal(err)
 	}
 	bus := NewEventBus(EventBusConfig{
-		Stream: NewEventStreamOpener(client),
+		Stream: eventstream.NewEventStreamOpener(client),
 		Policy: fastStreamPolicy(),
 	})
 	notices := make(chan string, 8)
