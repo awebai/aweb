@@ -10,9 +10,7 @@ from aweb.service_errors import ForbiddenError
 
 VerificationStatus = Literal["verified", "verified_legacy", "unverified", "failed"]
 
-LEGACY_CONVERSATION_CONTINUATION_DETAIL = (
-    "Conversation cannot be continued because the latest signed message does not bind conversation_id"
-)
+LEGACY_CONVERSATION_CONTINUATION_DETAIL = "Conversation cannot be continued because the latest signed message does not bind conversation_id"
 
 
 def message_verification_status(row: dict[str, Any]) -> VerificationStatus:
@@ -93,11 +91,17 @@ def _encrypted_message_verification_status(row: dict[str, Any]) -> VerificationS
 
     # The signature covers the envelope; the envelope must also belong to this row.
     sender = envelope.get("from") or {}
-    sender_dids = {str(sender.get("did") or "").strip(), str(sender.get("stable_id") or "").strip()} - {""}
+    sender_dids = {
+        str(sender.get("did") or "").strip(),
+        str(sender.get("stable_id") or "").strip(),
+    } - {""}
     bindings = (
         (row.get("from_did"), sender_dids),
         (row.get("message_id"), {str(envelope.get("message_id") or "").strip()}),
-        (row.get("conversation_id"), {str(envelope.get("conversation_id") or "").strip()}),
+        (
+            row.get("conversation_id"),
+            {str(envelope.get("conversation_id") or "").strip()},
+        ),
     )
     for row_value, envelope_values in bindings:
         row_value = str(row_value or "").strip()
@@ -142,7 +146,9 @@ async def _latest_message_verification_candidate(
             candidates.append(dict(row))
     if not candidates:
         return None
-    latest = max(candidates, key=lambda row: (row["created_at"], str(row["message_id"])))
+    latest = max(
+        candidates, key=lambda row: (row["created_at"], str(row["message_id"]))
+    )
     return latest
 
 

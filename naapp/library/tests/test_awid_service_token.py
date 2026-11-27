@@ -86,11 +86,15 @@ async def test_team_request_authenticates(monkeypatch, private, configured, faul
         calls.append(req.url.path)
         assert req.headers.get("X-AWID-Service-Token") == (token if configured else None)
         if req.url.path.endswith("/status"):
-            return httpx.Response(200, json={
-                "team_id": cert["team_id"], "team_did_key": team_did,
-                "status": "revoked" if fault == "revoked" else "active",
-                "revoked_at": now if fault == "revoked" else None,
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "team_id": cert["team_id"],
+                    "team_did_key": team_did,
+                    "status": "revoked" if fault == "revoked" else "active",
+                    "revoked_at": now if fault == "revoked" else None,
+                },
+            )
         if private and req.headers.get("X-AWID-Service-Token") != token:
             return httpx.Response(403, json={"detail": {"code": "team_private"}})
         return httpx.Response(
@@ -125,7 +129,9 @@ async def test_team_request_authenticates(monkeypatch, private, configured, faul
     )
     assert principal.team_id == cert["team_id"]
     assert len(calls) == (2 if configured else 1)
-    assert calls[-1].endswith("/certificates" if configured else "/certificates/synthetic-cert/status")
+    assert calls[-1].endswith(
+        "/certificates" if configured else "/certificates/synthetic-cert/status"
+    )
     assert db.execute.await_count == 2
 
 

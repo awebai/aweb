@@ -22,7 +22,7 @@ import base64
 import os
 import subprocess
 import sys
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 from pgdbm.testing import DatabaseTestConfig
@@ -118,7 +118,9 @@ socket.socket.connect_ex = _refuse
 _UNNAMED_SERVER_CHILD = "AWID_TEST_UNNAMED_SERVER_CHILD"
 
 
-def check_suite_refuses_an_unnamed_server(request: pytest.FixtureRequest, scratch: Path) -> None:
+def check_suite_refuses_an_unnamed_server(
+    request: pytest.FixtureRequest, scratch: Path
+) -> None:
     """The whole body of a suite's one test that its database fixtures refuse a
     run that names no Postgres server.
 
@@ -145,7 +147,17 @@ def check_suite_refuses_an_unnamed_server(request: pytest.FixtureRequest, scratc
         filter(None, (str(scratch), os.environ.get("PYTHONPATH")))
     )
     child = subprocess.run(
-        [sys.executable, "-P", "-m", "pytest", "-q", "-p", "no_network", "-p", "no:cacheprovider"]
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no_network",
+            "-p",
+            "no:cacheprovider",
+        ]
         + [f"--basetemp={scratch / 'child'}", f"{request.path}::{request.node.name}"],
         cwd=request.config.invocation_params.dir,
         env=environ,
@@ -162,30 +174,16 @@ SERVICE_TOKEN = "awid-testing-service-token-32-bytes"
 ResponseFault = Callable[[httpx.Request, httpx.Response], httpx.Response | None]
 
 
-class _FixtureAuthorityApp(Protocol):
-    @property
-    def state(self) -> Any: ...
-
-    @property
-    def dependency_overrides(self) -> Mapping[Callable[..., Any], Callable[..., Any]]: ...
-
-
-def _namespace_verifier_for(app: _FixtureAuthorityApp) -> DomainVerifier:
-    registry: Registry = app.state.fixture_namespace_registry
-    return registry.namespace_authority
-
-
-async def _fixture_namespace_verifier(request: Request) -> DomainVerifier:
-    return _namespace_verifier_for(request.app)
-
-
-async def fixture_domain_authority(app: _FixtureAuthorityApp, domain: str) -> DomainAuthority:
+async def fixture_domain_authority(
+    overrides: Mapping[
+        Callable[..., Any], Callable[[], DomainVerifier | Awaitable[DomainVerifier]]
+    ],
+    domain: str,
+) -> DomainAuthority:
     """Resolve the fixture's DNS override outside FastAPI dependency injection."""
-    factory = app.dependency_overrides.get(get_domain_verifier)
+    factory = overrides.get(get_domain_verifier)
     if factory is None:
         raise DnsVerificationError(f"No TXT records found for _awid.{domain}")
-    if factory is _fixture_namespace_verifier:
-        return await _namespace_verifier_for(app)(domain)
     verifier = factory()
     if isawaitable(verifier):
         verifier = await verifier
@@ -282,7 +280,9 @@ class Registry:
         default_factory=dict, repr=False
     )
 
-    _registry_client: RegistryClient | None = field(default=None, init=False, repr=False)
+    _registry_client: RegistryClient | None = field(
+        default=None, init=False, repr=False
+    )
 
     async def ensure_namespace(
         self,
@@ -309,19 +309,18 @@ class Registry:
         if key is None:
             key, _ = generate_keypair()
         self._namespace_keys[domain] = key
-        self._install_namespace_verifier()
+        if get_domain_verifier not in self.app.dependency_overrides:
+
+            async def get_namespace_verifier() -> DomainVerifier:
+                return self.namespace_authority
+
+            self.app.dependency_overrides[get_domain_verifier] = get_namespace_verifier
         try:
             await client.register_namespace(domain, did_key_from_signing_key(key), key)
         except Exception:
             del self._namespace_keys[domain]
             raise
         return key
-
-    def _install_namespace_verifier(self) -> None:
-        if get_domain_verifier not in self.app.dependency_overrides:
-            # FastAPI can retain dependency callables after their app is unused.
-            self.app.state.fixture_namespace_registry = self
-            self.app.dependency_overrides[get_domain_verifier] = _fixture_namespace_verifier
 
     async def namespace_authority(self, domain: str) -> DomainAuthority:
         """The DNS authority published by this fixture's explicit namespace controller."""
@@ -349,7 +348,9 @@ class Registry:
         name, domain = team_id.split(":", 1)
         controller = await self.ensure_namespace(
             domain=domain,
-            controller=bytes(namespace_controller) if namespace_controller is not None else None,
+            controller=bytes(namespace_controller)
+            if namespace_controller is not None
+            else None,
         )
         await self._client().register_team(
             domain=domain,
@@ -379,7 +380,9 @@ class Registry:
         namespace controller (registered for the domain if it has none), so
         AWID keeps the act a pinned server checks against DNS (dns_naming)."""
         name, domain = team_id.split(":", 1)
-        namespace_key = await self.ensure_namespace(domain=domain, controller=bytes(controller))
+        namespace_key = await self.ensure_namespace(
+            domain=domain, controller=bytes(controller)
+        )
         await self._client().rotate_team_key(
             domain,
             name,
@@ -387,7 +390,9 @@ class Registry:
             namespace_controller_signing_key=namespace_key,
         )
 
-    async def add_certificate(self, cert: dict[str, Any], *, team_key: SigningKey) -> None:
+    async def add_certificate(
+        self, cert: dict[str, Any], *, team_key: SigningKey
+    ) -> None:
         """Register the signed membership through AWID, per docs/identity.md:97-100."""
         name, domain = cert["team_id"].split(":", 1)
         await self._client().register_team_certificate(
@@ -454,7 +459,9 @@ class Registry:
                 else AttestationOperation.PERSON
             )
             claims = {"team_name": name, "certificate_id": record["certificate_id"]}
-            resource = "custody" if operation is AttestationOperation.CUSTODY else "person"
+            resource = (
+                "custody" if operation is AttestationOperation.CUSTODY else "person"
+            )
             path = f"{prefix}/certificates/{record['certificate_id']}/{resource}"
         else:
             raise ValueError(
@@ -476,7 +483,9 @@ class Registry:
         headers = {
             "Content-Type": "application/json",
             "X-AWEB-Timestamp": timestamp,
-            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii"),
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload)
+            .rstrip(b"=")
+            .decode("ascii"),
             "Authorization": f"DIDKey {_did_key(team_key)} {sign_message(bytes(team_key), payload)}",
         }
         async with httpx.AsyncClient(
@@ -558,7 +567,9 @@ class Registry:
         async with httpx.AsyncClient(
             transport=self.transport, base_url=self.registry_url
         ) as client:
-            response = await client.put(f"/v1/namespaces/{domain}/teams/{name}/server", json=body)
+            response = await client.put(
+                f"/v1/namespaces/{domain}/teams/{name}/server", json=body
+            )
         response.raise_for_status()
 
 
@@ -606,7 +617,9 @@ async def running_registry(
         # Its public origin, which covering controller signatures name. After
         # mount_registry, which reads AWID_PUBLIC_ORIGINS from the environment.
         app.state.awid_public_origins = (REGISTRY_URL,)
-        registry = Registry(app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app))
+        registry = Registry(
+            app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app)
+        )
         yield registry
     finally:
         try:

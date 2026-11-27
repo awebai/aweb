@@ -140,7 +140,9 @@ def test_every_frozen_operation_case_is_accounted_for_by_name():
     assert len(names) == len(set(names))
     groups = [CONSUMED, S2_LATER, set(OWNED_ELSEWHERE)]
     assert CONSUMED & set(OWNED_ELSEWHERE) == TWO_OWNERS
-    assert sum(len(group) for group in groups) == len(set().union(*groups)) + len(TWO_OWNERS)
+    assert sum(len(group) for group in groups) == len(set().union(*groups)) + len(
+        TWO_OWNERS
+    )
     assert set(names) == set().union(*groups)
 
 
@@ -148,7 +150,13 @@ def test_every_frozen_operation_case_is_accounted_for_by_name():
 async def tree(clocked_client, manual_clock):
     tree = Tree(clocked_client, manual_clock)
     await tree.root()
-    for key_name in ("alice", "bob", "other_human", "global_agent", "global_from_local"):
+    for key_name in (
+        "alice",
+        "bob",
+        "other_human",
+        "global_agent",
+        "global_from_local",
+    ):
         await tree.did(key_name)
     return tree
 
@@ -186,61 +194,106 @@ async def test_first_exact_invitation_registration(case, tree, awid_db_infra):
     )
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"certificate_id": certificate_id("bob"), "registered_at": case["expected"]["registered_at"]}
-    assert len(await _revisions(awid_db_infra, did_aw("bob"))) == case["expected"]["writes"]
+    assert resp.json() == {
+        "certificate_id": certificate_id("bob"),
+        "registered_at": case["expected"]["registered_at"],
+    }
+    assert (
+        len(await _revisions(awid_db_infra, did_aw("bob")))
+        == case["expected"]["writes"]
+    )
 
 
 @consumes("csr-awid-success-local-failure-exact-retry")
-async def test_a_child_retrying_its_registered_response_keeps_the_original_registration(case, tree, awid_db_infra):
-    request = VECTORS["child_requests"]["requests"][case["input"]["request"]]["signed"]["request"]
-    chain = VECTORS["child_requests"]["responses"][case["input"]["response"]]["response"]["chain"]["certificates"]
+async def test_a_child_retrying_its_registered_response_keeps_the_original_registration(
+    case, tree, awid_db_infra
+):
+    request = VECTORS["child_requests"]["requests"][case["input"]["request"]]["signed"][
+        "request"
+    ]
+    chain = VECTORS["child_requests"]["responses"][case["input"]["response"]][
+        "response"
+    ]["chain"]["certificates"]
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    first = await tree.register(chain, invitation_id=request["invitation_id"], when=at("2026-10-26T00:03:00Z"))
+    first = await tree.register(
+        chain, invitation_id=request["invitation_id"], when=at("2026-10-26T00:03:00Z")
+    )
     assert first.status_code == 200, first.text
     before = await _revisions(awid_db_infra)
 
     # The child's local commit failed; it resubmits the same response unchanged.
-    retry = await tree.register(chain, invitation_id=request["invitation_id"], when=at("2026-10-26T00:30:00Z"))
+    retry = await tree.register(
+        chain, invitation_id=request["invitation_id"], when=at("2026-10-26T00:30:00Z")
+    )
 
     expected = case["expected"]
     assert (retry.status_code == 200) is expected["accepted"], retry.text
-    stored = [(row["certificate_id"], str(row["invitation_id"])) for row in before if row["id"] == request["id"]]
-    assert (retry.json()["certificate_id"] == first.json()["certificate_id"] == certificate_id("bob")) is (
-        expected["same_certificate"]
-    )
-    assert (stored == [(certificate_id("bob"), request["invitation_id"])]) is expected["same_invitation_id"]
-    assert (retry.json()["registered_at"] == first.json()["registered_at"] == "2026-10-26T00:03:00.000000Z") is (
-        expected["registered_at_preserved"]
-    )
+    stored = [
+        (row["certificate_id"], str(row["invitation_id"]))
+        for row in before
+        if row["id"] == request["id"]
+    ]
+    assert (
+        retry.json()["certificate_id"]
+        == first.json()["certificate_id"]
+        == certificate_id("bob")
+    ) is (expected["same_certificate"])
+    assert (stored == [(certificate_id("bob"), request["invitation_id"])]) is expected[
+        "same_invitation_id"
+    ]
+    assert (
+        retry.json()["registered_at"]
+        == first.json()["registered_at"]
+        == "2026-10-26T00:03:00.000000Z"
+    ) is (expected["registered_at_preserved"])
     assert await _revisions(awid_db_infra) == before
 
 
 @consumes("exact-invitation-retry-keeps-time")
 async def test_exact_invitation_retry_keeps_time(case, tree, awid_db_infra):
-    invitation = operation_case("first-exact-invitation-registration")["input"]["invitation_id"]
+    invitation = operation_case("first-exact-invitation-registration")["input"][
+        "invitation_id"
+    ]
     chain = [certificate("alice"), certificate("bob")]
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    first = await tree.register(chain, invitation_id=invitation, when=at(case["input"]["original_registered_at"]))
-    assert first.status_code == 200, first.text
-    before = await _revisions(awid_db_infra)
-
-    retry = await tree.register(chain, invitation_id=invitation, when=at(case["input"]["retry_at"]))
-
-    assert retry.status_code == 200, retry.text
-    assert retry.json() == {"certificate_id": certificate_id("bob"), "registered_at": case["expected"]["registered_at"]}
-    assert await _revisions(awid_db_infra) == before
-
-
-async def _invitation_conflict(case, tree, awid_db_infra, conflicting_chain, *, signer=None):
-    invitation = operation_case("first-exact-invitation-registration")["input"]["invitation_id"]
-    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     first = await tree.register(
-        [certificate("alice"), certificate("bob")], invitation_id=invitation, when=at("2026-10-26T00:03:00Z"),
+        chain,
+        invitation_id=invitation,
+        when=at(case["input"]["original_registered_at"]),
     )
     assert first.status_code == 200, first.text
     before = await _revisions(awid_db_infra)
 
-    resp = await tree.register(conflicting_chain, invitation_id=invitation, signer=signer)
+    retry = await tree.register(
+        chain, invitation_id=invitation, when=at(case["input"]["retry_at"])
+    )
+
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == {
+        "certificate_id": certificate_id("bob"),
+        "registered_at": case["expected"]["registered_at"],
+    }
+    assert await _revisions(awid_db_infra) == before
+
+
+async def _invitation_conflict(
+    case, tree, awid_db_infra, conflicting_chain, *, signer=None
+):
+    invitation = operation_case("first-exact-invitation-registration")["input"][
+        "invitation_id"
+    ]
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    first = await tree.register(
+        [certificate("alice"), certificate("bob")],
+        invitation_id=invitation,
+        when=at("2026-10-26T00:03:00Z"),
+    )
+    assert first.status_code == 200, first.text
+    before = await _revisions(awid_db_infra)
+
+    resp = await tree.register(
+        conflicting_chain, invitation_id=invitation, signer=signer
+    )
 
     assert resp.status_code == 409, resp.text
     assert _code(resp) == case["expected"]["reason"]
@@ -255,19 +308,25 @@ def _bob_variant(**changes):
 
 @consumes("invitation-conflict-child")
 async def test_invitation_conflict_child(case, tree, awid_db_infra):
-    await _invitation_conflict(case, tree, awid_db_infra, [certificate("alice"), certificate("global-agent")])
+    await _invitation_conflict(
+        case, tree, awid_db_infra, [certificate("alice"), certificate("global-agent")]
+    )
 
 
 @consumes("invitation-conflict-parent")
 async def test_invitation_conflict_parent(case, tree, awid_db_infra):
-    under_root = _bob_variant(parent={"kind": "namespace", "id": DOMAIN}, issuer_key=did_key("root"))
+    under_root = _bob_variant(
+        parent={"kind": "namespace", "id": DOMAIN}, issuer_key=did_key("root")
+    )
     await _invitation_conflict(case, tree, awid_db_infra, [sign(under_root, "root")])
 
 
 @consumes("invitation-conflict-domain")
 async def test_invitation_conflict_domain(case, tree, awid_db_infra):
     elsewhere = _bob_variant(
-        domain="other.example", parent={"kind": "namespace", "id": "other.example"}, issuer_key=did_key("root"),
+        domain="other.example",
+        parent={"kind": "namespace", "id": "other.example"},
+        issuer_key=did_key("root"),
     )
     await _invitation_conflict(case, tree, awid_db_infra, [sign(elsewhere, "root")])
 
@@ -275,36 +334,62 @@ async def test_invitation_conflict_domain(case, tree, awid_db_infra):
 @consumes("invitation-conflict-certificate")
 async def test_invitation_conflict_certificate(case, tree, awid_db_infra):
     reissued = _bob_variant(issued_at="2026-10-26T00:09:00Z")
-    await _invitation_conflict(case, tree, awid_db_infra, [certificate("alice"), sign(reissued, "alice")])
+    await _invitation_conflict(
+        case, tree, awid_db_infra, [certificate("alice"), sign(reissued, "alice")]
+    )
 
 
 @consumes("same-certificate-retry-does-not-reactivate-old-head")
-async def test_same_certificate_retry_does_not_reactivate_old_head(case, tree, awid_db_infra):
+async def test_same_certificate_retry_does_not_reactivate_old_head(
+    case, tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
-    await tree.enroll("alice", "global-agent", when=at(case["expected"]["registered_at"]))
+    await tree.enroll(
+        "alice", "global-agent", when=at(case["expected"]["registered_at"])
+    )
     reparent = await tree.register(
-        [certificate("alice"), certificate("bob"), certificate("global-agent-reparented")],
-        expected_head=certificate_id("global-agent"), when=at("2026-10-26T00:14:00Z"),
+        [
+            certificate("alice"),
+            certificate("bob"),
+            certificate("global-agent-reparented"),
+        ],
+        expected_head=certificate_id("global-agent"),
+        when=at("2026-10-26T00:14:00Z"),
     )
     assert reparent.status_code == 200, reparent.text
 
-    retry = await tree.register([certificate("alice"), certificate("global-agent")], when=at("2026-10-26T00:20:00Z"))
+    retry = await tree.register(
+        [certificate("alice"), certificate("global-agent")],
+        when=at("2026-10-26T00:20:00Z"),
+    )
 
     assert retry.status_code == 200, retry.text
-    assert retry.json() == {"certificate_id": certificate_id("global-agent"), "registered_at": case["expected"]["registered_at"]}
-    heads = [r["certificate_id"] for r in await _revisions(awid_db_infra, did_aw("global_agent")) if r["superseded_at"] is None]
+    assert retry.json() == {
+        "certificate_id": certificate_id("global-agent"),
+        "registered_at": case["expected"]["registered_at"],
+    }
+    heads = [
+        r["certificate_id"]
+        for r in await _revisions(awid_db_infra, did_aw("global_agent"))
+        if r["superseded_at"] is None
+    ]
     assert heads == [certificate_id("global-agent-reparented")]
 
 
 @consumes("registration-after-parent-rotate-refuses-old-key")
-async def test_registration_after_parent_rotate_refuses_old_key(case, tree, awid_db_infra):
+async def test_registration_after_parent_rotate_refuses_old_key(
+    case, tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     tree.clock.now = at(case["input"]["parent_rotated_at"])
     await tree.rotate_did("alice", "alice_rotated")
     before = await _revisions(awid_db_infra)
 
-    resp = await tree.register([certificate("alice"), certificate("bob")], when=at(case["input"]["registered_at"]))
+    resp = await tree.register(
+        [certificate("alice"), certificate("bob")],
+        when=at(case["input"]["registered_at"]),
+    )
 
     assert resp.status_code == 422, resp.text
     assert _code(resp) == case["expected"]["reason"]
@@ -316,10 +401,14 @@ async def test_registered_kind_change_refuses(case, tree, awid_db_infra):
     assert case["input"]["id"] == did_aw("alice")
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     as_agent = copy.deepcopy(certificate("alice")["certificate"])
-    as_agent.update(kind=case["input"]["requested_kind"], issued_at="2026-10-26T00:05:00Z")
+    as_agent.update(
+        kind=case["input"]["requested_kind"], issued_at="2026-10-26T00:05:00Z"
+    )
     before = await _revisions(awid_db_infra)
 
-    resp = await tree.register([sign(as_agent, "root")], expected_head=certificate_id("alice"))
+    resp = await tree.register(
+        [sign(as_agent, "root")], expected_head=certificate_id("alice")
+    )
 
     assert resp.status_code == 422, resp.text
     assert _code(resp) == case["expected"]["reason"]
@@ -332,10 +421,16 @@ async def test_registered_domain_change_refuses(case, tree, awid_db_infra):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     moved = copy.deepcopy(certificate("alice")["certificate"])
     domain = case["input"]["requested_domain"]
-    moved.update(domain=domain, parent={"kind": "namespace", "id": domain}, issued_at="2026-10-26T00:05:00Z")
+    moved.update(
+        domain=domain,
+        parent={"kind": "namespace", "id": domain},
+        issued_at="2026-10-26T00:05:00Z",
+    )
     before = await _revisions(awid_db_infra)
 
-    resp = await tree.register([sign(moved, "root")], expected_head=certificate_id("alice"))
+    resp = await tree.register(
+        [sign(moved, "root")], expected_head=certificate_id("alice")
+    )
 
     assert resp.status_code == 422, resp.text
     assert _code(resp) == case["expected"]["reason"]
@@ -346,12 +441,20 @@ async def test_registered_domain_change_refuses(case, tree, awid_db_infra):
 async def test_registered_child_under_local_parent_refuses(case, tree, awid_db_infra):
     leaf = certificate("global-from-local")["certificate"]
     assert (leaf["id"], leaf["kind"], leaf["parent"]["id"]) == (
-        case["input"]["child_id"], case["input"]["child_kind"], case["input"]["parent"],
+        case["input"]["child_id"],
+        case["input"]["child_kind"],
+        case["input"]["parent"],
     )
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     before = await _revisions(awid_db_infra)
 
-    resp = await tree.register([certificate("alice"), certificate("coordinator"), certificate("global-from-local")])
+    resp = await tree.register(
+        [
+            certificate("alice"),
+            certificate("coordinator"),
+            certificate("global-from-local"),
+        ]
+    )
 
     assert resp.status_code == 422, resp.text
     assert _code(resp) == case["expected"]["reason"]
@@ -364,32 +467,53 @@ async def test_registered_reparent_keeps_key_and_team_cert(case, tree, awid_db_i
     await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
     db = awid_db_infra.get_manager("aweb")
-    team_certificates = await db.fetch_value("SELECT COUNT(*) FROM {{tables.team_certificates}}")
+    team_certificates = await db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.team_certificates}}"
+    )
 
     resp = await tree.register(
-        [certificate("alice"), certificate("bob"), certificate(case["input"]["new_certificate"])],
-        expected_head=certificate_id(case["input"]["old_certificate"]), when=at("2026-10-26T00:14:00Z"),
+        [
+            certificate("alice"),
+            certificate("bob"),
+            certificate(case["input"]["new_certificate"]),
+        ],
+        expected_head=certificate_id(case["input"]["old_certificate"]),
+        when=at("2026-10-26T00:14:00Z"),
     )
 
     assert resp.status_code == 200, resp.text
     key = await tree.client.get(f"/v1/did/{did_aw('global_agent')}/key")
     assert key.json()["current_did_key"] == did_key("global_agent")
-    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.team_certificates}}") == team_certificates
+    assert (
+        await db.fetch_value("SELECT COUNT(*) FROM {{tables.team_certificates}}")
+        == team_certificates
+    )
     old, new = await _revisions(awid_db_infra, did_aw("global_agent"))
-    assert (old["certificate_id"], old["superseded_at"]) == (certificate_id("global-agent"), at("2026-10-26T00:14:00Z"))
-    assert (new["certificate_id"], new["superseded_at"]) == (certificate_id("global-agent-reparented"), None)
+    assert (old["certificate_id"], old["superseded_at"]) == (
+        certificate_id("global-agent"),
+        at("2026-10-26T00:14:00Z"),
+    )
+    assert (new["certificate_id"], new["superseded_at"]) == (
+        certificate_id("global-agent-reparented"),
+        None,
+    )
 
 
 @consumes("post-lock-registration-time-is-monotone")
 async def test_post_lock_registration_time_is_monotone(case, tree, awid_db_infra):
-    await tree.enroll("alice", when=at(case["input"]["last_authority_serialization_at"]))
+    await tree.enroll(
+        "alice", when=at(case["input"]["last_authority_serialization_at"])
+    )
     db = awid_db_infra.get_manager("aweb")
     tree.clock.now = at(case["input"]["transaction_started_at"])
     async with db.transaction() as holder:
         await holder.fetch_one(
-            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE",
+            DOMAIN,
         )
-        registration = asyncio.create_task(tree.register([certificate("alice"), certificate("bob")]))
+        registration = asyncio.create_task(
+            tree.register([certificate("alice"), certificate("bob")])
+        )
         await wait_until_blocked_on_lock(db, registration)
         tree.clock.now = at(case["input"]["last_lock_acquired_at"])
     resp = await registration
@@ -401,7 +525,10 @@ async def test_post_lock_registration_time_is_monotone(case, tree, awid_db_infra
 async def _revoked(tree, key_name, *, when, by=None):
     """Revoke ``key_name``'s registered ID through the revoke endpoint (self-revocation by default)."""
     resp = await tree.revoke(
-        by or key_name, key_name, expected_head=certificate_id(key_name.replace("_", "-")), when=when,
+        by or key_name,
+        key_name,
+        expected_head=certificate_id(key_name.replace("_", "-")),
+        when=when,
     )
     assert resp.status_code == 200, resp.text
 
@@ -409,16 +536,22 @@ async def _revoked(tree, key_name, *, when, by=None):
 @consumes("registration-after-sign-then-parent-revoke")
 async def test_registration_after_sign_then_parent_revoke(case, tree, awid_db_infra):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    assert certificate(case["input"]["certificate"])["certificate"]["issued_at"] == "2026-10-26T00:02:00Z"
+    assert (
+        certificate(case["input"]["certificate"])["certificate"]["issued_at"]
+        == "2026-10-26T00:02:00Z"
+    )
     await _revoked(tree, "alice", when=at(case["input"]["parent_revoked_at"]))
     before = await _revisions(awid_db_infra)
 
     resp = await tree.register(
         [certificate("alice"), certificate("bob")],
-        invitation_id=case["input"]["invitation_id"], when=at(case["input"]["registered_at"]),
+        invitation_id=case["input"]["invitation_id"],
+        when=at(case["input"]["registered_at"]),
     )
 
-    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), (
+        resp.text
+    )
     assert await _revisions(awid_db_infra) == before
 
 
@@ -431,10 +564,13 @@ async def test_signed_issued_at_cannot_backdate(case, tree, awid_db_infra):
     before = await _revisions(awid_db_infra)
 
     resp = await tree.register(
-        [certificate("alice"), sign(backdated, "alice")], when=at(case["input"]["registered_at"]),
+        [certificate("alice"), sign(backdated, "alice")],
+        when=at(case["input"]["registered_at"]),
     )
 
-    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), (
+        resp.text
+    )
     assert await _revisions(awid_db_infra) == before
 
 
@@ -447,28 +583,48 @@ async def test_directly_revoked_subject_cannot_reopen_head(case, tree, awid_db_i
     before = await _revisions(awid_db_infra)
 
     resp = await tree.register(
-        [certificate("alice"), certificate("bob"), certificate(case["input"]["certificate"])],
-        expected_head=certificate_id("global-agent"), when=at("2026-10-26T00:30:00Z"),
+        [
+            certificate("alice"),
+            certificate("bob"),
+            certificate(case["input"]["certificate"]),
+        ],
+        expected_head=certificate_id("global-agent"),
+        when=at("2026-10-26T00:30:00Z"),
     )
 
-    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), (
+        resp.text
+    )
     assert await _revisions(awid_db_infra) == before
 
 
 @consumes("accepted-human-invite-retry-after-inviter-revoke")
-async def test_accepted_human_invite_retry_after_inviter_revoke(case, tree, awid_db_infra):
-    invitation = operation_case("first-exact-invitation-registration")["input"]["invitation_id"]
+async def test_accepted_human_invite_retry_after_inviter_revoke(
+    case, tree, awid_db_infra
+):
+    invitation = operation_case("first-exact-invitation-registration")["input"][
+        "invitation_id"
+    ]
     chain = [certificate("alice"), certificate(case["input"]["certificate"])]
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
-    first = await tree.register(chain, invitation_id=invitation, when=at(case["input"]["original_registered_at"]))
+    first = await tree.register(
+        chain,
+        invitation_id=invitation,
+        when=at(case["input"]["original_registered_at"]),
+    )
     assert first.status_code == 200, first.text
     await _revoked(tree, "alice", when=at("2026-10-26T00:20:00Z"))
     before = await _revisions(awid_db_infra)
 
-    retry = await tree.register(chain, invitation_id=invitation, when=at(case["input"]["retry_at"]))
+    retry = await tree.register(
+        chain, invitation_id=invitation, when=at(case["input"]["retry_at"])
+    )
 
     assert retry.status_code == 200, retry.text
-    assert retry.json() == {"certificate_id": certificate_id("bob"), "registered_at": case["expected"]["registered_at"]}
+    assert retry.json() == {
+        "certificate_id": certificate_id("bob"),
+        "registered_at": case["expected"]["registered_at"],
+    }
     assert await _revisions(awid_db_infra) == before
 
 
@@ -480,15 +636,23 @@ async def _enroll_normal_tree(tree):
 
 
 async def _delete_namespace(tree, domain):
-    headers = build_signed_headers(seed("root"), did_key("root"), domain=domain, operation="delete_namespace")
-    return await tree.client.request("DELETE", f"/v1/namespaces/{domain}", headers=headers)
+    headers = build_signed_headers(
+        seed("root"), did_key("root"), domain=domain, operation="delete_namespace"
+    )
+    return await tree.client.request(
+        "DELETE", f"/v1/namespaces/{domain}", headers=headers
+    )
 
 
 def _registered_agent(subject: str, parent: str) -> dict:
     """A did:aw agent certificate issued by ``parent``'s registered did:aw."""
     fields = copy.deepcopy(certificate("global-agent")["certificate"])
-    fields.update(id=did_aw(subject), parent={"kind": "identity", "id": did_aw(parent)}, issuer_key=did_key(parent),
-                  issued_at="2026-10-26T00:06:00Z")
+    fields.update(
+        id=did_aw(subject),
+        parent={"kind": "identity", "id": did_aw(parent)},
+        issuer_key=did_key(parent),
+        issued_at="2026-10-26T00:06:00Z",
+    )
     return sign(fields, parent)
 
 
@@ -502,12 +666,21 @@ async def test_an_agent_whose_human_was_revoked_cannot_issue(tree, awid_db_infra
     await tree.did("child_of_global")
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
-    revoked = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:10:00Z"))
+    revoked = await tree.revoke(
+        "alice",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:10:00Z"),
+    )
     assert revoked.status_code == 200, revoked.text
     before = await _revisions(awid_db_infra)
 
     resp = await tree.register(
-        [certificate("alice"), certificate("global-agent"), _registered_agent("child_of_global", "global_agent")],
+        [
+            certificate("alice"),
+            certificate("global-agent"),
+            _registered_agent("child_of_global", "global_agent"),
+        ],
         when=at("2026-10-26T00:12:00Z"),
     )
 
@@ -516,19 +689,30 @@ async def test_an_agent_whose_human_was_revoked_cannot_issue(tree, awid_db_infra
 
 
 @pytest.mark.asyncio
-async def test_a_human_invitee_outlives_its_inviters_later_revocation(tree, awid_db_infra):
+async def test_a_human_invitee_outlives_its_inviters_later_revocation(
+    tree, awid_db_infra
+):
     await tree.did("replacement_human")
     await tree.did("child_of_global")
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     invited = await tree.register(
-        [certificate("alice"), certificate("post-replacement-child-of-old-owner")], when=at("2026-10-26T00:02:00Z"),
+        [certificate("alice"), certificate("post-replacement-child-of-old-owner")],
+        when=at("2026-10-26T00:02:00Z"),
     )
     assert invited.status_code == 200, invited.text
-    revoked = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:10:00Z"))
+    revoked = await tree.revoke(
+        "alice",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:10:00Z"),
+    )
     assert revoked.status_code == 200, revoked.text
     resp = await tree.register(
-        [certificate("alice"), certificate("post-replacement-child-of-old-owner"),
-         _registered_agent("child_of_global", "replacement_human")],
+        [
+            certificate("alice"),
+            certificate("post-replacement-child-of-old-owner"),
+            _registered_agent("child_of_global", "replacement_human"),
+        ],
         when=at("2026-10-26T00:12:00Z"),
     )
 
@@ -543,7 +727,9 @@ async def _rotate_many_times(tree, key_name: str, times: int):
     for _ in range(times):
         next_key, next_public = generate_keypair()
         next_did = did_from_public_key(next_public)
-        resp = await request_rotation(tree.client, signing_key, did_aw(key_name), current, next_did)
+        resp = await request_rotation(
+            tree.client, signing_key, did_aw(key_name), current, next_did
+        )
         assert resp.status_code == 200, resp.text
         signing_key, current = next_key, next_did
     tree.client.app.state.rate_limiter = limiter
@@ -559,7 +745,10 @@ async def test_a_parent_whose_evidence_is_unavailable_cannot_issue(tree, awid_db
     before = await _revisions(awid_db_infra)
 
     resp = await tree.register(
-        [certificate("alice"), {"certificate": child, "signature": _raw_sign(signing_key, child)}],
+        [
+            certificate("alice"),
+            {"certificate": child, "signature": _raw_sign(signing_key, child)},
+        ],
         when=at("2026-10-26T00:12:00Z"),
     )
 
@@ -568,38 +757,66 @@ async def test_a_parent_whose_evidence_is_unavailable_cannot_issue(tree, awid_db
 
 
 @pytest.mark.asyncio
-async def test_a_parent_whose_evidence_is_unavailable_cannot_revoke(tree, awid_db_infra):
+async def test_a_parent_whose_evidence_is_unavailable_cannot_revoke(
+    tree, awid_db_infra
+):
     await _enroll_normal_tree(tree)
     signing_key, current = await _rotate_many_times(tree, "alice", 200)
     body = json.dumps(
-        {"domain": DOMAIN, "id": did_aw("bob"), "expected_head": certificate_id("bob"), "effective_from": None},
+        {
+            "domain": DOMAIN,
+            "id": did_aw("bob"),
+            "expected_head": certificate_id("bob"),
+            "effective_from": None,
+        },
         separators=(",", ":"),
     ).encode()
     timestamp, payload = _covering_payload(REVOKE_PATH, body, "revoke_id_certificate")
 
-    resp = await tree.client.post(REVOKE_PATH, content=body, headers={
-        "Authorization": f"DIDKey {current} {sign_message(signing_key, payload)}",
-        "X-AWEB-Timestamp": timestamp,
-        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode(),
-        "Content-Type": "application/json",
-    })
+    resp = await tree.client.post(
+        REVOKE_PATH,
+        content=body,
+        headers={
+            "Authorization": f"DIDKey {current} {sign_message(signing_key, payload)}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload)
+            .rstrip(b"=")
+            .decode(),
+            "Content-Type": "application/json",
+        },
+    )
 
     assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text
     assert await _revocations(awid_db_infra) == []
 
 
 def _raw_sign(signing_key: bytes, fields: dict) -> str:
-    signature = SigningKey(signing_key).sign(id_certificate_signing_bytes(fields)).signature
+    signature = (
+        SigningKey(signing_key).sign(id_certificate_signing_bytes(fields)).signature
+    )
     return base64.urlsafe_b64encode(signature).rstrip(b"=").decode()
 
 
 def _covering_payload(path: str, body: bytes, operation: str) -> tuple[str, bytes]:
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    return timestamp, canonical_json_bytes({
-        "v": 2, "type": "aweb.awid-controller-request", "aud": ORIGIN, "method": "POST", "path": path,
-        "body_sha256": hashlib.sha256(body).hexdigest(), "timestamp": timestamp,
-        "domain": DOMAIN, "operation": operation,
-    })
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    return timestamp, canonical_json_bytes(
+        {
+            "v": 2,
+            "type": "aweb.awid-controller-request",
+            "aud": ORIGIN,
+            "method": "POST",
+            "path": path,
+            "body_sha256": hashlib.sha256(body).hexdigest(),
+            "timestamp": timestamp,
+            "domain": DOMAIN,
+            "operation": operation,
+        }
+    )
 
 
 async def _contradict_alices_epoch_window(awid_db_infra):
@@ -607,7 +824,8 @@ async def _contradict_alices_epoch_window(awid_db_infra):
     db = awid_db_infra.get_manager("aweb")
     await db.execute(
         "UPDATE {{tables.id_namespace_epochs}} SET registered_at = $2 WHERE domain = $1 AND seq = 1",
-        DOMAIN, at("2026-10-26T00:01:30Z"),
+        DOMAIN,
+        at("2026-10-26T00:01:30Z"),
     )
 
 
@@ -617,7 +835,9 @@ async def test_a_parent_with_contradictory_evidence_cannot_issue(tree, awid_db_i
     await _contradict_alices_epoch_window(awid_db_infra)
     before = await _revisions(awid_db_infra)
 
-    resp = await tree.register([certificate("alice"), certificate("bob")], when=at("2026-10-26T00:12:00Z"))
+    resp = await tree.register(
+        [certificate("alice"), certificate("bob")], when=at("2026-10-26T00:12:00Z")
+    )
 
     assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text
     assert await _revisions(awid_db_infra) == before
@@ -628,19 +848,28 @@ async def test_a_parent_with_contradictory_evidence_cannot_revoke(tree, awid_db_
     await _enroll_normal_tree(tree)
     await _contradict_alices_epoch_window(awid_db_infra)
 
-    resp = await tree.revoke("alice", "bob", expected_head=certificate_id("bob"), when=REVOKED_AT_NOW)
+    resp = await tree.revoke(
+        "alice", "bob", expected_head=certificate_id("bob"), when=REVOKED_AT_NOW
+    )
 
     assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text
     assert await _revocations(awid_db_infra) == []
 
 
 @pytest.mark.asyncio
-async def test_a_parent_revocation_is_timed_after_the_parents_key_epoch(tree, awid_db_infra):
+async def test_a_parent_revocation_is_timed_after_the_parents_key_epoch(
+    tree, awid_db_infra
+):
     await _enroll_normal_tree(tree)
     tree.clock.now = at("2026-10-26T00:10:00Z")
     await tree.rotate_did("alice", "alice_rotated")
 
-    resp = await tree.revoke("alice_rotated", "bob", expected_head=certificate_id("bob"), when=at("2026-10-26T00:05:00Z"))
+    resp = await tree.revoke(
+        "alice_rotated",
+        "bob",
+        expected_head=certificate_id("bob"),
+        when=at("2026-10-26T00:05:00Z"),
+    )
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["revoked_at"] == "2026-10-26T00:10:00.000001Z"
@@ -662,15 +891,20 @@ async def _replaced_tree(tree):
 
 
 @consumes("replacement-old-owner-child-registration-refuses")
-async def test_replacement_old_owner_child_registration_refuses(case, tree, awid_db_infra):
+async def test_replacement_old_owner_child_registration_refuses(
+    case, tree, awid_db_infra
+):
     await _replaced_tree(tree)
     before = await _revisions(awid_db_infra)
 
     resp = await tree.register(
-        [certificate("alice"), certificate(case["input"]["certificate"])], when=at(case["input"]["registered_at"]),
+        [certificate("alice"), certificate(case["input"]["certificate"])],
+        when=at(case["input"]["registered_at"]),
     )
 
-    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), (
+        resp.text
+    )
     assert await _revisions(awid_db_infra) == before
 
 
@@ -678,7 +912,10 @@ async def test_replacement_old_owner_child_registration_refuses(case, tree, awid
 async def test_replacement_new_root_first_registration(case, tree, awid_db_infra):
     await _replaced_tree(tree)
 
-    resp = await tree.register([certificate(case["input"]["certificate"])], when=at(case["input"]["registered_at"]))
+    resp = await tree.register(
+        [certificate(case["input"]["certificate"])],
+        when=at(case["input"]["registered_at"]),
+    )
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["registered_at"] == case["expected"]["registered_at"]
@@ -689,25 +926,33 @@ async def test_replacement_root_readmits_existing_id(case, tree, awid_db_infra):
     await _replaced_tree(tree)
     db = awid_db_infra.get_manager("aweb")
     key_before = await db.fetch_value(
-        "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw("alice"),
+        "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
+        did_aw("alice"),
     )
 
     resp = await tree.register(
-        [certificate(case["input"]["certificate"])], expected_head=case["input"]["expected_head"],
+        [certificate(case["input"]["certificate"])],
+        expected_head=case["input"]["expected_head"],
         when=at(case["input"]["registered_at"]),
     )
     child = await tree.register(
-        [certificate(case["input"]["certificate"]), certificate("bob")], when=at("2026-10-26T00:15:00Z"),
+        [certificate(case["input"]["certificate"]), certificate("bob")],
+        when=at("2026-10-26T00:15:00Z"),
     )
 
     assert resp.status_code == 200, resp.text
     old, new = await _revisions(awid_db_infra, did_aw("alice"))
     assert (old["certificate_id"], new["certificate_id"]) == (
-        case["input"]["expected_head"], certificate_id(case["input"]["certificate"]),
+        case["input"]["expected_head"],
+        certificate_id(case["input"]["certificate"]),
     )
-    assert await db.fetch_value(
-        "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw("alice"),
-    ) == key_before
+    assert (
+        await db.fetch_value(
+            "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
+            did_aw("alice"),
+        )
+        == key_before
+    )
     assert child.status_code == 200, child.text
 
 
@@ -721,12 +966,15 @@ async def test_replacement_races_parent_registration(case, tree, awid_db_infra):
     tree.exact_dns("root_rotated")
     async with db.transaction() as holder:
         await holder.fetch_one(
-            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE",
+            DOMAIN,
         )
         replacement = asyncio.create_task(tree.replace_controller("root_rotated"))
         await wait_until_blocked_on_lock(db, replacement)
         registration = asyncio.create_task(
-            tree.register([certificate("alice"), certificate(case["input"]["certificate"])]),
+            tree.register(
+                [certificate("alice"), certificate(case["input"]["certificate"])]
+            ),
         )
         await wait_until_blocked_on_lock(db, registration, waiters=2)
     replaced = await replacement
@@ -766,8 +1014,11 @@ def _revocation_of(rows, key_name):
 async def _revoke_case(case, tree, *, when=REVOKED_AT_NOW):
     subject = case["input"]["subject"]
     return await tree.revoke(
-        case["input"]["actor"], subject, expected_head=certificate_id(subject.replace("_", "-")),
-        effective_from=case["input"]["effective_from"], when=when,
+        case["input"]["actor"],
+        subject,
+        expected_head=certificate_id(subject.replace("_", "-")),
+        effective_from=case["input"]["effective_from"],
+        when=when,
     )
 
 
@@ -778,11 +1029,17 @@ async def test_root_revokes_with_compromise_cutoff(case, tree, awid_db_infra):
     resp = await _revoke_case(case, tree)
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"revoked_at": wire_time(REVOKED_AT_NOW), "effective_from": case["input"]["effective_from"]}
+    assert resp.json() == {
+        "revoked_at": wire_time(REVOKED_AT_NOW),
+        "effective_from": case["input"]["effective_from"],
+    }
     rows = await _revocations(awid_db_infra)
     assert len(rows) == case["expected"]["writes"]
     row = _revocation_of(rows, "alice")
-    assert (row["revoked_at"], row["effective_from"]) == (REVOKED_AT_NOW, at(case["input"]["effective_from"]))
+    assert (row["revoked_at"], row["effective_from"]) == (
+        REVOKED_AT_NOW,
+        at(case["input"]["effective_from"]),
+    )
     assert row["revoked_by"] == did_key("root")
 
 
@@ -798,7 +1055,10 @@ async def test_self_revokes_now(case, tree, awid_db_infra):
     rows = await _revocations(awid_db_infra)
     assert len(rows) == case["expected"]["writes"]
     row = _revocation_of(rows, case["input"]["subject"])
-    assert (row["revoked_at"], row["effective_from"]) == (REVOKED_AT_NOW, REVOKED_AT_NOW)
+    assert (row["revoked_at"], row["effective_from"]) == (
+        REVOKED_AT_NOW,
+        REVOKED_AT_NOW,
+    )
     assert row["revoked_by"] == did_key(case["input"]["actor"])
 
 
@@ -813,18 +1073,25 @@ async def test_live_parent_revokes_now(case, tree, awid_db_infra):
     assert resp.json() == {"revoked_at": now, "effective_from": now}
     rows = await _revocations(awid_db_infra)
     assert len(rows) == case["expected"]["writes"]
-    assert _revocation_of(rows, case["input"]["subject"])["revoked_by"] == did_key(case["input"]["actor"])
+    assert _revocation_of(rows, case["input"]["subject"])["revoked_by"] == did_key(
+        case["input"]["actor"]
+    )
 
 
 @consumes("post-lock-revocation-time-is-not-transaction-start")
-async def test_post_lock_revocation_time_is_not_transaction_start(case, tree, awid_db_infra):
+async def test_post_lock_revocation_time_is_not_transaction_start(
+    case, tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:00:30Z"))
-    await tree.enroll("alice", "bob", when=at(case["input"]["registration_serialized_at"]))
+    await tree.enroll(
+        "alice", "bob", when=at(case["input"]["registration_serialized_at"])
+    )
     db = awid_db_infra.get_manager("aweb")
     tree.clock.now = at(case["input"]["transaction_started_at"])
     async with db.transaction() as holder:
         await holder.fetch_one(
-            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE",
+            DOMAIN,
         )
         revocation = asyncio.create_task(_revoke_case(case, tree, when=None))
         await wait_until_blocked_on_lock(db, revocation)
@@ -833,7 +1100,10 @@ async def test_post_lock_revocation_time_is_not_transaction_start(case, tree, aw
 
     assert resp.status_code == 200, resp.text
     expected = case["expected"]
-    assert resp.json() == {"revoked_at": expected["revoked_at"], "effective_from": expected["effective_from"]}
+    assert resp.json() == {
+        "revoked_at": expected["revoked_at"],
+        "effective_from": expected["effective_from"],
+    }
 
 
 async def _agent_under_agent(tree):
@@ -842,7 +1112,10 @@ async def _agent_under_agent(tree):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
     child = _registered_agent("child_of_global", "global_agent")
-    resp = await tree.register([certificate("alice"), certificate("global-agent"), child], when=at("2026-10-26T00:05:00Z"))
+    resp = await tree.register(
+        [certificate("alice"), certificate("global-agent"), child],
+        when=at("2026-10-26T00:05:00Z"),
+    )
     assert resp.status_code == 200, resp.text
     return child
 
@@ -850,12 +1123,20 @@ async def _agent_under_agent(tree):
 @pytest.mark.asyncio
 async def test_a_parent_whose_ancestor_was_revoked_cannot_revoke(tree, awid_db_infra):
     child = await _agent_under_agent(tree)
-    revoked = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:10:00Z"))
+    revoked = await tree.revoke(
+        "alice",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:10:00Z"),
+    )
     assert revoked.status_code == 200, revoked.text
     before = await _revocations(awid_db_infra)
 
     resp = await tree.revoke(
-        "global_agent", "child_of_global", expected_head=id_certificate_id(child["certificate"]), when=REVOKED_AT_NOW,
+        "global_agent",
+        "child_of_global",
+        expected_head=id_certificate_id(child["certificate"]),
+        when=REVOKED_AT_NOW,
     )
 
     assert (resp.status_code, _code(resp)) == (403, "revocation_forbidden"), resp.text
@@ -868,7 +1149,9 @@ async def test_a_parent_cut_off_by_root_replacement_cannot_revoke(tree, awid_db_
     tree.clock.now = at("2026-10-26T00:10:00Z")
     await tree.replace_root("root_rotated")
 
-    resp = await tree.revoke("alice", "bob", expected_head=certificate_id("bob"), when=REVOKED_AT_NOW)
+    resp = await tree.revoke(
+        "alice", "bob", expected_head=certificate_id("bob"), when=REVOKED_AT_NOW
+    )
 
     assert (resp.status_code, _code(resp)) == (403, "revocation_forbidden"), resp.text
     assert await _revocations(awid_db_infra) == []
@@ -880,7 +1163,9 @@ async def test_unrelated_human_cannot_revoke(case, tree, awid_db_infra):
 
     resp = await _revoke_case(case, tree)
 
-    assert (resp.status_code, _code(resp)) == (403, case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (403, case["expected"]["reason"]), (
+        resp.text
+    )
     assert await _revocations(awid_db_infra) == []
 
 
@@ -888,13 +1173,20 @@ async def test_unrelated_human_cannot_revoke(case, tree, awid_db_infra):
 async def test_revoked_parent_cannot_revoke(case, tree, awid_db_infra):
     assert case["input"]["status"] == "alice-revoked-now"
     await _enroll_normal_tree(tree)
-    revoked = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:10:00Z"))
+    revoked = await tree.revoke(
+        "alice",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:10:00Z"),
+    )
     assert revoked.status_code == 200, revoked.text
     before = await _revocations(awid_db_infra)
 
     resp = await _revoke_case(case, tree)
 
-    assert (resp.status_code, _code(resp)) == (403, case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (403, case["expected"]["reason"]), (
+        resp.text
+    )
     assert await _revocations(awid_db_infra) == before
 
 
@@ -904,7 +1196,9 @@ async def test_only_the_root_backdates(case, tree, awid_db_infra):
 
     resp = await _revoke_case(case, tree)
 
-    assert (resp.status_code, _code(resp)) == (403, case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (403, case["expected"]["reason"]), (
+        resp.text
+    )
     assert await _revocations(awid_db_infra) == []
 
 
@@ -914,7 +1208,9 @@ async def test_non_root_explicit_now_cutoff_refuses(case, tree, awid_db_infra):
 
     resp = await _revoke_case(case, tree, when=at(case["input"]["now"]))
 
-    assert (resp.status_code, _code(resp)) == (403, case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (403, case["expected"]["reason"]), (
+        resp.text
+    )
     assert await _revocations(awid_db_infra) == []
 
 
@@ -924,7 +1220,9 @@ async def test_future_cutoff_refuses(case, tree, awid_db_infra):
 
     resp = await _revoke_case(case, tree, when=at(case["input"]["now"]))
 
-    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (422, case["expected"]["reason"]), (
+        resp.text
+    )
     assert await _revocations(awid_db_infra) == []
 
 
@@ -935,28 +1233,43 @@ async def test_a_self_revocation_is_timed_after_its_last_lock_wait(tree, awid_db
     tree.clock.now = at("2026-10-26T00:01:00Z")
     async with db.transaction() as holder:
         await holder.fetch_one(
-            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE",
+            DOMAIN,
         )
-        revocation = asyncio.create_task(tree.revoke("alice", "alice", expected_head=certificate_id("alice")))
+        revocation = asyncio.create_task(
+            tree.revoke("alice", "alice", expected_head=certificate_id("alice"))
+        )
         await wait_until_blocked_on_lock(db, revocation)
         tree.clock.now = at("2026-10-26T00:05:00Z")
     resp = await revocation
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"revoked_at": "2026-10-26T00:05:00.000000Z", "effective_from": "2026-10-26T00:05:00.000000Z"}
+    assert resp.json() == {
+        "revoked_at": "2026-10-26T00:05:00.000000Z",
+        "effective_from": "2026-10-26T00:05:00.000000Z",
+    }
 
 
 @pytest.mark.asyncio
-async def test_without_exact_dns_evidence_a_root_revocation_is_unavailable(tree, awid_db_infra, monkeypatch):
+async def test_without_exact_dns_evidence_a_root_revocation_is_unavailable(
+    tree, awid_db_infra, monkeypatch
+):
     await _enroll_normal_tree(tree)
     monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
     tree.clock.now = at("2026-10-26T00:10:00Z")
     await tree.replace_root("root_rotated")
 
-    by_root = await tree.revoke("root_rotated", "alice", expected_head=certificate_id("alice"), when=REVOKED_AT_NOW)
+    by_root = await tree.revoke(
+        "root_rotated",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=REVOKED_AT_NOW,
+    )
     by_self = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"))
 
-    assert (by_root.status_code, _code(by_root)) == (503, "evidence_unavailable"), by_root.text
+    assert (by_root.status_code, _code(by_root)) == (503, "evidence_unavailable"), (
+        by_root.text
+    )
     assert by_self.status_code == 200, by_self.text
 
 
@@ -966,7 +1279,10 @@ async def test_a_root_revocation_needs_dns_to_agree(tree, awid_db_infra):
     tree.exact_dns("root_rotated")
 
     by_root = await tree.revoke(
-        "root", "alice", expected_head=certificate_id("alice"), effective_from="2026-10-26T00:02:00.000000Z",
+        "root",
+        "alice",
+        expected_head=certificate_id("alice"),
+        effective_from="2026-10-26T00:02:00.000000Z",
         when=REVOKED_AT_NOW,
     )
     by_self = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"))
@@ -978,18 +1294,33 @@ async def test_a_root_revocation_needs_dns_to_agree(tree, awid_db_infra):
 
 
 @pytest.mark.asyncio
-async def test_a_repeat_writes_nothing_and_keeps_the_original_times(tree, awid_db_infra):
+async def test_a_repeat_writes_nothing_and_keeps_the_original_times(
+    tree, awid_db_infra
+):
     await _enroll_normal_tree(tree)
-    first = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:10:00Z"))
+    first = await tree.revoke(
+        "alice",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:10:00Z"),
+    )
     assert first.status_code == 200, first.text
     before = await _revocations(awid_db_infra)
 
-    by_self = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=REVOKED_AT_NOW)
+    by_self = await tree.revoke(
+        "alice", "alice", expected_head=certificate_id("alice"), when=REVOKED_AT_NOW
+    )
     by_root = await tree.revoke(
-        "root", "alice", expected_head=certificate_id("alice"), effective_from=first.json()["effective_from"],
+        "root",
+        "alice",
+        expected_head=certificate_id("alice"),
+        effective_from=first.json()["effective_from"],
     )
 
-    assert by_self.status_code == by_root.status_code == 200, (by_self.text, by_root.text)
+    assert by_self.status_code == by_root.status_code == 200, (
+        by_self.text,
+        by_root.text,
+    )
     assert by_self.json() == by_root.json() == first.json()
     assert await _revocations(awid_db_infra) == before
 
@@ -997,41 +1328,74 @@ async def test_a_repeat_writes_nothing_and_keeps_the_original_times(tree, awid_d
 @pytest.mark.asyncio
 async def test_a_repeat_still_checks_the_head_and_the_actor(tree, awid_db_infra):
     await _enroll_normal_tree(tree)
-    first = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:10:00Z"))
+    first = await tree.revoke(
+        "alice",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:10:00Z"),
+    )
     assert first.status_code == 200, first.text
     before = await _revocations(awid_db_infra)
 
-    stale = await tree.revoke("alice", "alice", expected_head=certificate_id("bob"), when=REVOKED_AT_NOW)
-    unrelated = await tree.revoke("other_human", "alice", expected_head=certificate_id("alice"))
+    stale = await tree.revoke(
+        "alice", "alice", expected_head=certificate_id("bob"), when=REVOKED_AT_NOW
+    )
+    unrelated = await tree.revoke(
+        "other_human", "alice", expected_head=certificate_id("alice")
+    )
 
     assert (stale.status_code, _code(stale)) == (409, "head_conflict"), stale.text
-    assert (unrelated.status_code, _code(unrelated)) == (403, "revocation_forbidden"), unrelated.text
+    assert (unrelated.status_code, _code(unrelated)) == (403, "revocation_forbidden"), (
+        unrelated.text
+    )
     assert await _revocations(awid_db_infra) == before
 
 
 @pytest.mark.asyncio
 async def test_only_the_root_corrects_a_cutoff_and_only_earlier(tree, awid_db_infra):
     await _enroll_normal_tree(tree)
-    first = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:10:00Z"))
+    first = await tree.revoke(
+        "alice",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:10:00Z"),
+    )
     assert first.status_code == 200, first.text
 
     by_self = await tree.revoke(
-        "alice", "alice", expected_head=certificate_id("alice"), effective_from="2026-10-26T00:02:00.000000Z",
+        "alice",
+        "alice",
+        expected_head=certificate_id("alice"),
+        effective_from="2026-10-26T00:02:00.000000Z",
         when=REVOKED_AT_NOW,
     )
     later = await tree.revoke(
-        "root", "alice", expected_head=certificate_id("alice"), effective_from="2026-10-26T00:15:00.000000Z",
+        "root",
+        "alice",
+        expected_head=certificate_id("alice"),
+        effective_from="2026-10-26T00:15:00.000000Z",
     )
     earlier = await tree.revoke(
-        "root", "alice", expected_head=certificate_id("alice"), effective_from="2026-10-26T00:02:00.000000Z",
+        "root",
+        "alice",
+        expected_head=certificate_id("alice"),
+        effective_from="2026-10-26T00:02:00.000000Z",
     )
 
-    assert (by_self.status_code, _code(by_self)) == (403, "backdate_forbidden"), by_self.text
+    assert (by_self.status_code, _code(by_self)) == (403, "backdate_forbidden"), (
+        by_self.text
+    )
     assert (later.status_code, _code(later)) == (422, "invalid_cutoff"), later.text
     assert earlier.status_code == 200, earlier.text
-    assert earlier.json() == {"revoked_at": first.json()["revoked_at"], "effective_from": "2026-10-26T00:02:00.000000Z"}
+    assert earlier.json() == {
+        "revoked_at": first.json()["revoked_at"],
+        "effective_from": "2026-10-26T00:02:00.000000Z",
+    }
     row = _revocation_of(await _revocations(awid_db_infra), "alice")
-    assert (row["revoked_at"], row["effective_from"]) == (at("2026-10-26T00:10:00Z"), at("2026-10-26T00:02:00Z"))
+    assert (row["revoked_at"], row["effective_from"]) == (
+        at("2026-10-26T00:10:00Z"),
+        at("2026-10-26T00:02:00Z"),
+    )
 
 
 @pytest.mark.asyncio
@@ -1041,7 +1405,10 @@ async def test_the_open_exact_epoch_key_revokes_as_the_root(tree, awid_db_infra)
     await tree.rotate_did("alice", "root")
 
     resp = await tree.revoke(
-        "root", "alice", expected_head=certificate_id("alice"), effective_from="2026-10-26T00:02:00.000000Z",
+        "root",
+        "alice",
+        expected_head=certificate_id("alice"),
+        effective_from="2026-10-26T00:02:00.000000Z",
         when=REVOKED_AT_NOW,
     )
 
@@ -1050,7 +1417,9 @@ async def test_the_open_exact_epoch_key_revokes_as_the_root(tree, awid_db_infra)
 
 
 @pytest.mark.asyncio
-async def test_a_registered_id_without_a_current_head_is_unavailable(tree, awid_db_infra):
+async def test_a_registered_id_without_a_current_head_is_unavailable(
+    tree, awid_db_infra
+):
     await _enroll_normal_tree(tree)
     db = awid_db_infra.get_manager("aweb")
     await db.execute(
@@ -1062,7 +1431,9 @@ async def test_a_registered_id_without_a_current_head_is_unavailable(tree, awid_
         did_aw("alice"),
     )
 
-    resp = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=REVOKED_AT_NOW)
+    resp = await tree.revoke(
+        "alice", "alice", expected_head=certificate_id("alice"), when=REVOKED_AT_NOW
+    )
 
     assert resp.status_code == 503, resp.text
     assert _code(resp) == "evidence_unavailable"
@@ -1071,7 +1442,9 @@ async def test_a_registered_id_without_a_current_head_is_unavailable(tree, awid_
 
 @pytest.mark.asyncio
 async def test_an_unregistered_id_is_unknown(tree, awid_db_infra):
-    resp = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=REVOKED_AT_NOW)
+    resp = await tree.revoke(
+        "alice", "alice", expected_head=certificate_id("alice"), when=REVOKED_AT_NOW
+    )
 
     assert (resp.status_code, _code(resp)) == (404, "unknown_id"), resp.text
 
@@ -1090,12 +1463,24 @@ async def test_an_unregistered_id_is_unknown(tree, awid_db_infra):
     ],
 )
 @pytest.mark.asyncio
-async def test_the_revoke_body_has_exactly_the_contract_fields(tree, awid_db_infra, changes):
+async def test_the_revoke_body_has_exactly_the_contract_fields(
+    tree, awid_db_infra, changes
+):
     await _enroll_normal_tree(tree)
-    body = {"domain": DOMAIN, "id": did_aw("alice"), "expected_head": certificate_id("alice"), "effective_from": None}
+    body = {
+        "domain": DOMAIN,
+        "id": did_aw("alice"),
+        "expected_head": certificate_id("alice"),
+        "effective_from": None,
+    }
     raw = json.dumps({**body, **changes}).encode()
     headers = covering_headers(
-        "root", method="POST", path=REVOKE_PATH, body=raw, domain=DOMAIN, operation="revoke_id_certificate",
+        "root",
+        method="POST",
+        path=REVOKE_PATH,
+        body=raw,
+        domain=DOMAIN,
+        operation="revoke_id_certificate",
     )
 
     resp = await tree.client.post(REVOKE_PATH, content=raw, headers=headers)
@@ -1108,9 +1493,16 @@ async def test_the_revoke_body_has_exactly_the_contract_fields(tree, awid_db_inf
 async def test_a_validly_signed_legacy_envelope_never_revokes(tree, awid_db_infra):
     await _enroll_normal_tree(tree)
     body = json.dumps(
-        {"domain": DOMAIN, "id": did_aw("alice"), "expected_head": certificate_id("alice"), "effective_from": None},
+        {
+            "domain": DOMAIN,
+            "id": did_aw("alice"),
+            "expected_head": certificate_id("alice"),
+            "effective_from": None,
+        },
     ).encode()
-    headers = build_signed_headers(seed("root"), did_key("root"), domain=DOMAIN, operation="revoke_id_certificate")
+    headers = build_signed_headers(
+        seed("root"), did_key("root"), domain=DOMAIN, operation="revoke_id_certificate"
+    )
     headers["Content-Type"] = "application/json"
 
     resp = await tree.client.post(REVOKE_PATH, content=body, headers=headers)
@@ -1123,10 +1515,20 @@ async def test_a_validly_signed_legacy_envelope_never_revokes(tree, awid_db_infr
 async def test_a_revocation_must_name_the_ids_own_domain(tree, awid_db_infra):
     await _enroll_normal_tree(tree)
     body = json.dumps(
-        {"domain": "other.example", "id": did_aw("alice"), "expected_head": certificate_id("alice"), "effective_from": None},
+        {
+            "domain": "other.example",
+            "id": did_aw("alice"),
+            "expected_head": certificate_id("alice"),
+            "effective_from": None,
+        },
     ).encode()
     headers = covering_headers(
-        "alice", method="POST", path=REVOKE_PATH, body=body, domain="other.example", operation="revoke_id_certificate",
+        "alice",
+        method="POST",
+        path=REVOKE_PATH,
+        body=body,
+        domain="other.example",
+        operation="revoke_id_certificate",
     )
 
     resp = await tree.client.post(REVOKE_PATH, content=body, headers=headers)
@@ -1139,7 +1541,12 @@ async def test_a_revocation_must_name_the_ids_own_domain(tree, awid_db_infra):
 async def test_revocation_time_follows_the_domains_latest_event(tree, awid_db_infra):
     await tree.enroll("alice", when=at("2026-10-26T00:20:00Z"))
 
-    resp = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:05:00Z"))
+    resp = await tree.revoke(
+        "alice",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:05:00Z"),
+    )
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["revoked_at"] == "2026-10-26T00:20:00.000001Z"
@@ -1152,7 +1559,10 @@ async def test_revocation_time_follows_the_signers_key_epoch(tree, awid_db_infra
     await tree.rotate_did("alice", "alice_rotated")
 
     resp = await tree.revoke(
-        "alice_rotated", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:05:00Z"),
+        "alice_rotated",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:05:00Z"),
     )
 
     assert resp.status_code == 200, resp.text
@@ -1160,7 +1570,9 @@ async def test_revocation_time_follows_the_signers_key_epoch(tree, awid_db_infra
 
 
 @pytest.mark.asyncio
-async def test_a_since_revoked_subjects_exact_retry_returns_its_receipt_and_writes_nothing(tree, awid_db_infra):
+async def test_a_since_revoked_subjects_exact_retry_returns_its_receipt_and_writes_nothing(
+    tree, awid_db_infra
+):
     chain = [certificate("alice"), certificate("bob")]
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     first = await tree.register(chain, when=at("2026-10-26T00:03:00Z"))
@@ -1170,7 +1582,10 @@ async def test_a_since_revoked_subjects_exact_retry_returns_its_receipt_and_writ
 
     retry = await tree.register(chain, when=at("2026-10-26T00:30:00Z"))
     fresh = await tree.register(
-        [certificate("alice"), sign(_bob_variant(issued_at="2026-10-26T00:25:00Z"), "alice")],
+        [
+            certificate("alice"),
+            sign(_bob_variant(issued_at="2026-10-26T00:25:00Z"), "alice"),
+        ],
         expected_head=certificate_id("bob"),
     )
 
@@ -1190,10 +1605,13 @@ async def test_frozen_registration_example_is_accepted_byte_for_byte(tree, monke
     example = VECTORS["registration_example"]
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     tree.clock.now = at(example["response"]["registered_at"])
-    monkeypatch.setattr(dns_auth, "_utc_now", lambda: at(example["payload"]["timestamp"]))
+    monkeypatch.setattr(
+        dns_auth, "_utc_now", lambda: at(example["payload"]["timestamp"])
+    )
 
     resp = await tree.client.post(
-        REGISTER_PATH, content=example["body_utf8"].encode(),
+        REGISTER_PATH,
+        content=example["body_utf8"].encode(),
         headers={**example["headers"], "Content-Type": "application/json"},
     )
 
@@ -1203,21 +1621,31 @@ async def test_frozen_registration_example_is_accepted_byte_for_byte(tree, monke
 
 
 @pytest.mark.asyncio
-async def test_root_child_records_the_exact_epoch_it_was_issued_under(tree, awid_db_infra):
+async def test_root_child_records_the_exact_epoch_it_was_issued_under(
+    tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
 
     [revision] = await _revisions(awid_db_infra, did_aw("alice"))
-    assert (revision["issuer_key_seq"], revision["registered_at"]) == (1, at("2026-10-26T00:01:00Z"))
+    assert (revision["issuer_key_seq"], revision["registered_at"]) == (
+        1,
+        at("2026-10-26T00:01:00Z"),
+    )
 
 
 @pytest.mark.asyncio
-async def test_identity_child_records_its_parents_current_key_version(tree, awid_db_infra):
+async def test_identity_child_records_its_parents_current_key_version(
+    tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     tree.clock.now = at("2026-10-26T00:02:00Z")
     await tree.rotate_did("alice", "alice_rotated")
     reissued = _bob_variant(issuer_key=did_key("alice_rotated"))
 
-    resp = await tree.register([certificate("alice"), sign(reissued, "alice_rotated")], when=at("2026-10-26T00:03:00Z"))
+    resp = await tree.register(
+        [certificate("alice"), sign(reissued, "alice_rotated")],
+        when=at("2026-10-26T00:03:00Z"),
+    )
 
     assert resp.status_code == 200, resp.text
     [revision] = await _revisions(awid_db_infra, did_aw("bob"))
@@ -1225,7 +1653,9 @@ async def test_identity_child_records_its_parents_current_key_version(tree, awid
 
 
 @pytest.mark.asyncio
-async def test_root_children_require_an_exact_dns_epoch(clocked_client, manual_clock, monkeypatch):
+async def test_root_children_require_an_exact_dns_epoch(
+    clocked_client, manual_clock, monkeypatch
+):
     tree = Tree(clocked_client, manual_clock)
     monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
     await tree.root()
@@ -1242,7 +1672,9 @@ async def test_every_registration_needs_current_root_authority(tree, awid_db_inf
     tree.exact_dns("root_rotated")
     before = await _revisions(awid_db_infra)
 
-    resp = await tree.register([certificate("alice"), certificate("bob")], when=at("2026-10-26T00:02:00Z"))
+    resp = await tree.register(
+        [certificate("alice"), certificate("bob")], when=at("2026-10-26T00:02:00Z")
+    )
 
     assert resp.status_code == 503, resp.text
     assert _code(resp) == "evidence_unavailable"
@@ -1250,7 +1682,9 @@ async def test_every_registration_needs_current_root_authority(tree, awid_db_inf
 
 
 @pytest.mark.asyncio
-async def test_the_skip_dns_bypass_gives_no_root_authority(tree, awid_db_infra, monkeypatch):
+async def test_the_skip_dns_bypass_gives_no_root_authority(
+    tree, awid_db_infra, monkeypatch
+):
     monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
 
     resp = await tree.register([certificate("alice")], when=at("2026-10-26T00:01:00Z"))
@@ -1274,7 +1708,11 @@ async def test_root_children_must_be_signed_by_the_open_epoch_key(tree, awid_db_
 @pytest.mark.asyncio
 async def test_a_human_cannot_be_registered_under_an_agent(tree, awid_db_infra):
     resp = await tree.register(
-        [certificate("alice"), certificate("coordinator"), certificate("human-issued-by-agent")],
+        [
+            certificate("alice"),
+            certificate("coordinator"),
+            certificate("human-issued-by-agent"),
+        ],
     )
 
     assert resp.status_code == 422, resp.text
@@ -1283,10 +1721,14 @@ async def test_a_human_cannot_be_registered_under_an_agent(tree, awid_db_infra):
 
 
 @pytest.mark.asyncio
-async def test_the_request_must_be_signed_by_the_subjects_current_key(tree, awid_db_infra):
+async def test_the_request_must_be_signed_by_the_subjects_current_key(
+    tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
 
-    resp = await tree.register([certificate("alice"), certificate("bob")], signer="alice")
+    resp = await tree.register(
+        [certificate("alice"), certificate("bob")], signer="alice"
+    )
 
     assert resp.status_code == 403, resp.text
     assert _code(resp) == "subject_mismatch"
@@ -1297,8 +1739,12 @@ async def test_a_rotated_subject_proves_its_current_key(tree, awid_db_infra):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.rotate_did("bob", "bob_agent")
 
-    stale = await tree.register([certificate("alice"), certificate("bob")], signer="bob")
-    current = await tree.register([certificate("alice"), certificate("bob")], signer="bob_agent")
+    stale = await tree.register(
+        [certificate("alice"), certificate("bob")], signer="bob"
+    )
+    current = await tree.register(
+        [certificate("alice"), certificate("bob")], signer="bob_agent"
+    )
 
     assert (stale.status_code, _code(stale)) == (403, "subject_mismatch")
     assert current.status_code == 200, current.text
@@ -1309,12 +1755,17 @@ async def test_head_cas_refuses_a_stale_or_missing_expected_head(tree, awid_db_i
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
-    reparented = [certificate("alice"), certificate("bob"), certificate("global-agent-reparented")]
+    reparented = [
+        certificate("alice"),
+        certificate("bob"),
+        certificate("global-agent-reparented"),
+    ]
 
     missing = await tree.register(reparented)
     stale = await tree.register(reparented, expected_head=certificate_id("bob"))
     first_with_head = await tree.register(
-        [certificate("other-human")], expected_head=certificate_id("alice"),
+        [certificate("other-human")],
+        expected_head=certificate_id("alice"),
     )
 
     for resp in (missing, stale, first_with_head):
@@ -1326,21 +1777,34 @@ async def test_a_reparent_under_its_own_descendant_is_a_cycle(tree, awid_db_infr
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
     child = {
-        "v": 1, "type": "aweb.id-certificate", "id": did_aw("global_from_local"), "domain": DOMAIN,
-        "parent": {"kind": "identity", "id": did_aw("global_agent")}, "kind": "agent",
-        "issuer_key": did_key("global_agent"), "issued_at": "2026-10-26T00:05:00Z",
+        "v": 1,
+        "type": "aweb.id-certificate",
+        "id": did_aw("global_from_local"),
+        "domain": DOMAIN,
+        "parent": {"kind": "identity", "id": did_aw("global_agent")},
+        "kind": "agent",
+        "issuer_key": did_key("global_agent"),
+        "issued_at": "2026-10-26T00:05:00Z",
     }
     child_signed = sign(child, "global_agent")
-    created = await tree.register([certificate("alice"), certificate("global-agent"), child_signed])
+    created = await tree.register(
+        [certificate("alice"), certificate("global-agent"), child_signed]
+    )
     assert created.status_code == 200, created.text
     loop = copy.deepcopy(certificate("global-agent")["certificate"])
     loop.update(
         parent={"kind": "identity", "id": did_aw("global_from_local")},
-        issuer_key=did_key("global_from_local"), issued_at="2026-10-26T00:06:00Z",
+        issuer_key=did_key("global_from_local"),
+        issued_at="2026-10-26T00:06:00Z",
     )
 
     resp = await tree.register(
-        [certificate("alice"), certificate("global-agent"), child_signed, sign(loop, "global_from_local")],
+        [
+            certificate("alice"),
+            certificate("global-agent"),
+            child_signed,
+            sign(loop, "global_from_local"),
+        ],
         expected_head=certificate_id("global-agent"),
     )
 
@@ -1348,7 +1812,9 @@ async def test_a_reparent_under_its_own_descendant_is_a_cycle(tree, awid_db_infr
 
 
 @pytest.mark.asyncio
-async def test_the_supporting_chain_must_be_the_registered_ancestry(tree, awid_db_infra):
+async def test_the_supporting_chain_must_be_the_registered_ancestry(
+    tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     reissued_alice = copy.deepcopy(certificate("alice")["certificate"])
     reissued_alice["issued_at"] = "2026-10-26T00:00:30Z"
@@ -1363,7 +1829,8 @@ async def test_the_chain_leaf_must_be_the_body_certificate(tree):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
 
     resp = await tree.register(
-        [certificate("alice"), certificate("bob")], header_chain=[certificate("alice"), certificate("global-agent")],
+        [certificate("alice"), certificate("bob")],
+        header_chain=[certificate("alice"), certificate("global-agent")],
     )
 
     assert (resp.status_code, _code(resp)) == (400, "invalid_shape"), resp.text
@@ -1371,9 +1838,20 @@ async def test_the_chain_leaf_must_be_the_body_certificate(tree):
 
 @pytest.mark.asyncio
 async def test_a_missing_chain_header_refuses(tree):
-    body = json.dumps({"certificate": certificate("alice"), "expected_head": None, "invitation_id": None}).encode()
+    body = json.dumps(
+        {
+            "certificate": certificate("alice"),
+            "expected_head": None,
+            "invitation_id": None,
+        }
+    ).encode()
     headers = covering_headers(
-        "alice", method="POST", path=REGISTER_PATH, body=body, domain=DOMAIN, operation="register_id_certificate",
+        "alice",
+        method="POST",
+        path=REGISTER_PATH,
+        body=body,
+        domain=DOMAIN,
+        operation="register_id_certificate",
     )
 
     resp = await tree.client.post(REGISTER_PATH, content=body, headers=headers)
@@ -1387,15 +1865,26 @@ async def test_a_missing_chain_header_refuses(tree):
         {"certificate": None, "expected_head": None},
         {"certificate": None, "expected_head": None, "invitation_id": None, "extra": 1},
         {"certificate": None, "expected_head": "sha256:XYZ", "invitation_id": None},
-        {"certificate": None, "expected_head": None, "invitation_id": "00000000-0000-4000-8000-00000000000A"},
+        {
+            "certificate": None,
+            "expected_head": None,
+            "invitation_id": "00000000-0000-4000-8000-00000000000A",
+        },
     ],
 )
 @pytest.mark.asyncio
 async def test_the_body_has_exactly_the_contract_fields(tree, body):
-    body = {**body, "certificate": certificate("alice")} if "certificate" in body else body
+    body = (
+        {**body, "certificate": certificate("alice")} if "certificate" in body else body
+    )
     raw = json.dumps(body).encode()
     headers = covering_headers(
-        "alice", method="POST", path=REGISTER_PATH, body=raw, domain=DOMAIN, operation="register_id_certificate",
+        "alice",
+        method="POST",
+        path=REGISTER_PATH,
+        body=raw,
+        domain=DOMAIN,
+        operation="register_id_certificate",
     )
 
     resp = await tree.client.post(REGISTER_PATH, content=raw, headers=headers)
@@ -1406,9 +1895,18 @@ async def test_the_body_has_exactly_the_contract_fields(tree, body):
 @pytest.mark.asyncio
 async def test_a_validly_signed_legacy_envelope_is_never_accepted(tree, awid_db_infra):
     chain = [certificate("alice")]
-    body = json.dumps({"certificate": chain[0], "expected_head": None, "invitation_id": None}).encode()
-    headers = build_signed_headers(seed("alice"), did_key("alice"), domain=DOMAIN, operation="register_id_certificate")
-    headers.update({"Content-Type": "application/json", "X-AWID-ID-Chain": chain_header(chain)})
+    body = json.dumps(
+        {"certificate": chain[0], "expected_head": None, "invitation_id": None}
+    ).encode()
+    headers = build_signed_headers(
+        seed("alice"),
+        did_key("alice"),
+        domain=DOMAIN,
+        operation="register_id_certificate",
+    )
+    headers.update(
+        {"Content-Type": "application/json", "X-AWID-ID-Chain": chain_header(chain)}
+    )
 
     resp = await tree.client.post(REGISTER_PATH, content=body, headers=headers)
 
@@ -1422,10 +1920,13 @@ async def test_register_local_subject_refuses(case, tree, awid_db_infra):
     before = await _revisions(awid_db_infra)
 
     resp = await tree.register(
-        [certificate("alice"), certificate(case["input"]["certificate"])], signer=case["input"]["certificate"],
+        [certificate("alice"), certificate(case["input"]["certificate"])],
+        signer=case["input"]["certificate"],
     )
 
-    assert (resp.status_code, _code(resp)) == (400, case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (400, case["expected"]["reason"]), (
+        resp.text
+    )
     assert await _revisions(awid_db_infra) == before
 
 
@@ -1436,20 +1937,28 @@ async def test_a_receipt_is_returned_only_for_the_exact_invitation(tree, awid_db
     first = await tree.register(chain, when=at("2026-10-26T00:03:00Z"))
     assert first.status_code == 200, first.text
 
-    resp = await tree.register(chain, invitation_id="00000000-0000-4000-8000-000000000009")
+    resp = await tree.register(
+        chain, invitation_id="00000000-0000-4000-8000-000000000009"
+    )
 
     assert (resp.status_code, _code(resp)) == (409, "invitation_conflict"), resp.text
 
 
 @pytest.mark.asyncio
-async def test_witness_times_never_precede_the_key_epochs_they_select(tree, awid_db_infra):
+async def test_witness_times_never_precede_the_key_epochs_they_select(
+    tree, awid_db_infra
+):
     tree.clock.now = at("2026-10-26T00:10:00Z")
     await tree.rotate_did("alice", "alice_rotated")
-    resp = await tree.register([certificate("alice")], signer="alice_rotated", when=at("2026-10-26T00:01:00Z"))
+    resp = await tree.register(
+        [certificate("alice")], signer="alice_rotated", when=at("2026-10-26T00:01:00Z")
+    )
     assert resp.status_code == 200, resp.text
 
     [revision] = await _revisions(awid_db_infra, did_aw("alice"))
-    assert revision["registered_at"] == at("2026-10-26T00:10:00Z") + timedelta(microseconds=1)
+    assert revision["registered_at"] == at("2026-10-26T00:10:00Z") + timedelta(
+        microseconds=1
+    )
     assert wire_time(revision["registered_at"]) == "2026-10-26T00:10:00.000001Z"
 
 
@@ -1466,10 +1975,16 @@ async def test_a_registration_waits_for_its_parents_revocation(tree, awid_db_inf
     async with db.transaction() as holder:
         # The revocation reads the revoker's key epoch after taking all its
         # locks, so holding that table pauses it while it holds them.
-        await holder.execute("LOCK TABLE {{tables.did_aw_log}} IN ACCESS EXCLUSIVE MODE")
-        revocation = asyncio.create_task(tree.revoke("alice", "alice", expected_head=certificate_id("alice")))
+        await holder.execute(
+            "LOCK TABLE {{tables.did_aw_log}} IN ACCESS EXCLUSIVE MODE"
+        )
+        revocation = asyncio.create_task(
+            tree.revoke("alice", "alice", expected_head=certificate_id("alice"))
+        )
         await wait_until_blocked_on_lock(db, revocation)
-        registration = asyncio.create_task(tree.register([certificate("alice"), certificate("bob")]))
+        registration = asyncio.create_task(
+            tree.register([certificate("alice"), certificate("bob")])
+        )
         await wait_until_blocked_on_lock(db, registration, waiters=2)
     revoked, registered = await revocation, await registration
 
@@ -1493,7 +2008,9 @@ async def _until_done_or_blocked(db, task, *, waiters):
 
 
 @pytest.mark.asyncio
-async def test_only_the_domain_lock_orders_a_registration_before_its_grandparents_revocation(tree, awid_db_infra):
+async def test_only_the_domain_lock_orders_a_registration_before_its_grandparents_revocation(
+    tree, awid_db_infra
+):
     """The grandparent's row is never locked by a registration under its child.
 
     The registration is paused after every check, at its insert, by an
@@ -1505,7 +2022,11 @@ async def test_only_the_domain_lock_orders_a_registration_before_its_grandparent
     await tree.did("child_of_global")
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
-    chain = [certificate("alice"), certificate("global-agent"), _registered_agent("child_of_global", "global_agent")]
+    chain = [
+        certificate("alice"),
+        certificate("global-agent"),
+        _registered_agent("child_of_global", "global_agent"),
+    ]
     db = awid_db_infra.get_manager("aweb")
     async with db.transaction() as holder:
         await holder.execute(
@@ -1513,15 +2034,22 @@ async def test_only_the_domain_lock_orders_a_registration_before_its_grandparent
             INSERT INTO {{tables.id_identities}} (id, domain, kind, first_registered_at)
             VALUES ($1, $2, 'agent', $3)
             """,
-            did_aw("child_of_global"), DOMAIN, at("2026-10-26T00:00:00Z"),
+            did_aw("child_of_global"),
+            DOMAIN,
+            at("2026-10-26T00:00:00Z"),
         )
         tree.clock.now = at("2026-10-26T00:12:00Z")
         registration = asyncio.create_task(tree.register(chain))
         await wait_until_blocked_on_lock(db, registration)
         tree.clock.now = at("2026-10-26T00:10:00Z")
-        revocation = asyncio.create_task(tree.revoke("root", "alice", expected_head=certificate_id("alice")))
+        revocation = asyncio.create_task(
+            tree.revoke("root", "alice", expected_head=certificate_id("alice"))
+        )
         await _until_done_or_blocked(db, revocation, waiters=2)
-        await holder.execute("DELETE FROM {{tables.id_identities}} WHERE id = $1", did_aw("child_of_global"))
+        await holder.execute(
+            "DELETE FROM {{tables.id_identities}} WHERE id = $1",
+            did_aw("child_of_global"),
+        )
     registered, revoked = await registration, await revocation
 
     assert registered.status_code == 200, registered.text
@@ -1531,18 +2059,29 @@ async def test_only_the_domain_lock_orders_a_registration_before_its_grandparent
 
 
 @pytest.mark.asyncio
-async def test_a_registration_queued_behind_its_grandparents_revocation_refuses(tree, awid_db_infra):
+async def test_a_registration_queued_behind_its_grandparents_revocation_refuses(
+    tree, awid_db_infra
+):
     """The revocation holds the domain lock first; the registration then sees its cutoff."""
     await tree.did("child_of_global")
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
-    chain = [certificate("alice"), certificate("global-agent"), _registered_agent("child_of_global", "global_agent")]
+    chain = [
+        certificate("alice"),
+        certificate("global-agent"),
+        _registered_agent("child_of_global", "global_agent"),
+    ]
     db = awid_db_infra.get_manager("aweb")
     async with db.transaction() as holder:
         # The revocation takes the domain lock, then waits here for alice's row.
-        await holder.fetch_one("SELECT id FROM {{tables.id_identities}} WHERE id = $1 FOR SHARE", did_aw("alice"))
+        await holder.fetch_one(
+            "SELECT id FROM {{tables.id_identities}} WHERE id = $1 FOR SHARE",
+            did_aw("alice"),
+        )
         tree.clock.now = at("2026-10-26T00:10:00Z")
-        revocation = asyncio.create_task(tree.revoke("root", "alice", expected_head=certificate_id("alice")))
+        revocation = asyncio.create_task(
+            tree.revoke("root", "alice", expected_head=certificate_id("alice"))
+        )
         await wait_until_blocked_on_lock(db, revocation)
         registration = asyncio.create_task(tree.register(chain))
         await wait_until_blocked_on_lock(db, registration, waiters=2)
@@ -1551,7 +2090,9 @@ async def test_a_registration_queued_behind_its_grandparents_revocation_refuses(
     registered = await registration
 
     assert revoked.status_code == 200, revoked.text
-    assert (registered.status_code, _code(registered)) == (422, "revoked"), registered.text
+    assert (registered.status_code, _code(registered)) == (422, "revoked"), (
+        registered.text
+    )
     assert await _revisions(awid_db_infra, did_aw("child_of_global")) == []
 
 
@@ -1559,9 +2100,13 @@ async def _register_both_at_once(tree, db, attempts):
     """Queue registrations behind one held namespace row, then release them together."""
     async with db.transaction() as holder:
         await holder.fetch_one(
-            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE",
+            DOMAIN,
         )
-        tasks = [asyncio.create_task(tree.register(chain, expected_head=head)) for chain, head in attempts]
+        tasks = [
+            asyncio.create_task(tree.register(chain, expected_head=head))
+            for chain, head in attempts
+        ]
         await wait_until_blocked_on_lock(db, tasks[-1], waiters=len(tasks))
     return await asyncio.gather(*tasks)
 
@@ -1574,16 +2119,30 @@ async def test_concurrent_registration_cas(case, tree, awid_db_infra):
     tree.clock.now = at("2026-10-26T00:04:00Z")
     head = case["input"]["expected_head"]
 
-    responses = await _register_both_at_once(tree, awid_db_infra.get_manager("aweb"), [
-        ([certificate("alice"), certificate("global-agent")], head),
-        ([certificate("alice"), certificate("bob"), certificate("global-agent-reparented")], head),
-    ])
+    responses = await _register_both_at_once(
+        tree,
+        awid_db_infra.get_manager("aweb"),
+        [
+            ([certificate("alice"), certificate("global-agent")], head),
+            (
+                [
+                    certificate("alice"),
+                    certificate("bob"),
+                    certificate("global-agent-reparented"),
+                ],
+                head,
+            ),
+        ],
+    )
 
     statuses = sorted(resp.status_code for resp in responses)
     assert statuses == [200, 409], [resp.text for resp in responses]
     [loser] = [resp for resp in responses if resp.status_code == 409]
     assert _code(loser) == case["expected"]["other_reason"]
-    assert len(await _revisions(awid_db_infra, did_aw("global_agent"))) == case["expected"]["accepted_writes"]
+    assert (
+        len(await _revisions(awid_db_infra, did_aw("global_agent")))
+        == case["expected"]["accepted_writes"]
+    )
 
 
 @consumes("reparent-register-race")
@@ -1597,10 +2156,21 @@ async def test_reparent_register_race(case, tree, awid_db_infra):
     tree.clock.now = at("2026-10-26T00:14:00Z")
     head = case["input"]["expected_head"]
 
-    responses = await _register_both_at_once(tree, awid_db_infra.get_manager("aweb"), [
-        ([certificate("alice"), sign(resigned, "alice")], head),
-        ([certificate("alice"), certificate("bob"), certificate("global-agent-reparented")], head),
-    ])
+    responses = await _register_both_at_once(
+        tree,
+        awid_db_infra.get_manager("aweb"),
+        [
+            ([certificate("alice"), sign(resigned, "alice")], head),
+            (
+                [
+                    certificate("alice"),
+                    certificate("bob"),
+                    certificate("global-agent-reparented"),
+                ],
+                head,
+            ),
+        ],
+    )
 
     statuses = sorted(resp.status_code for resp in responses)
     assert statuses == [200, 409], [resp.text for resp in responses]
@@ -1608,11 +2178,16 @@ async def test_reparent_register_race(case, tree, awid_db_infra):
     assert _code(loser) == case["expected"]["other_reason"]
     revisions = await _revisions(awid_db_infra, did_aw("global_agent"))
     assert len(revisions) == 1 + case["expected"]["accepted_writes"]
-    assert [revision["superseded_at"] is None for revision in revisions] == [False, True]
+    assert [revision["superseded_at"] is None for revision in revisions] == [
+        False,
+        True,
+    ]
 
 
 @pytest.mark.asyncio
-async def test_a_resign_queued_behind_the_subjects_revocation_refuses(tree, awid_db_infra):
+async def test_a_resign_queued_behind_the_subjects_revocation_refuses(
+    tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("alice", "bob", when=at("2026-10-26T00:02:00Z"))
     resigned = sign(_bob_variant(issued_at="2026-10-26T00:09:00Z"), "alice")
@@ -1621,18 +2196,25 @@ async def test_a_resign_queued_behind_the_subjects_revocation_refuses(tree, awid
     tree.clock.now = at("2026-10-26T00:10:00Z")
     async with db.transaction() as holder:
         await holder.fetch_one(
-            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE",
+            DOMAIN,
         )
-        revocation = asyncio.create_task(tree.revoke("bob", "bob", expected_head=certificate_id("bob")))
+        revocation = asyncio.create_task(
+            tree.revoke("bob", "bob", expected_head=certificate_id("bob"))
+        )
         await wait_until_blocked_on_lock(db, revocation)
         resign = asyncio.create_task(
-            tree.register([certificate("alice"), resigned], expected_head=certificate_id("bob")),
+            tree.register(
+                [certificate("alice"), resigned], expected_head=certificate_id("bob")
+            ),
         )
         await wait_until_blocked_on_lock(db, resign, waiters=2)
     revoked, registered = await revocation, await resign
 
     assert revoked.status_code == 200, revoked.text
-    assert (registered.status_code, _code(registered)) == (422, "subject_revoked"), registered.text
+    assert (registered.status_code, _code(registered)) == (422, "subject_revoked"), (
+        registered.text
+    )
     assert await _revisions(awid_db_infra, did_aw("bob")) == before
 
 
@@ -1643,21 +2225,40 @@ async def _team_member(tree, *, member: str) -> tuple[bytes, str, str]:
     created = await tree.client.post(
         f"/v1/namespaces/{DOMAIN}/teams",
         json={"name": "ops", "team_did_key": team_did, "visibility": "private"},
-        headers=build_signed_headers(seed("root"), did_key("root"), domain=DOMAIN, operation="create_team", name="ops"),
+        headers=build_signed_headers(
+            seed("root"),
+            did_key("root"),
+            domain=DOMAIN,
+            operation="create_team",
+            name="ops",
+        ),
     )
     assert created.status_code == 200, created.text
     cert_id = str(uuid4())
     registered = await tree.client.post(
         f"/v1/namespaces/{DOMAIN}/teams/ops/certificates",
         json={
-            "certificate_id": cert_id, "member_did_key": did_key(member), "alias": "agent", "identity_scope": "local",
+            "certificate_id": cert_id,
+            "member_did_key": did_key(member),
+            "alias": "agent",
+            "identity_scope": "local",
             "certificate": _signed_certificate_blob(
-                team_key, certificate_id=cert_id, team_id=f"ops:{DOMAIN}", team_did_key=team_did,
-                member_did_key=did_key(member), alias="agent", lifetime="local",
+                team_key,
+                certificate_id=cert_id,
+                team_id=f"ops:{DOMAIN}",
+                team_did_key=team_did,
+                member_did_key=did_key(member),
+                alias="agent",
+                lifetime="local",
             ),
         },
         headers=build_signed_headers(
-            team_key, team_did, domain=DOMAIN, operation="register_certificate", team_name="ops", certificate_id=cert_id,
+            team_key,
+            team_did,
+            domain=DOMAIN,
+            operation="register_certificate",
+            team_name="ops",
+            certificate_id=cert_id,
         ),
     )
     assert registered.status_code == 200, registered.text
@@ -1667,14 +2268,28 @@ async def _team_member(tree, *, member: str) -> tuple[bytes, str, str]:
 async def _address(tree, name: str, owner: str):
     return await tree.client.post(
         f"/v1/namespaces/{DOMAIN}/addresses",
-        json={"name": name, "did_aw": did_aw(owner), "current_did_key": did_key(owner), "reachability": "public"},
-        headers=build_signed_headers(seed("root"), did_key("root"), domain=DOMAIN, operation="register_address", name=name),
+        json={
+            "name": name,
+            "did_aw": did_aw(owner),
+            "current_did_key": did_key(owner),
+            "reachability": "public",
+        },
+        headers=build_signed_headers(
+            seed("root"),
+            did_key("root"),
+            domain=DOMAIN,
+            operation="register_address",
+            name=name,
+        ),
     )
 
 
 @consumes("loss-replacement-is-a-new-human-id")
 async def test_loss_replacement_is_a_new_human_id(case, tree, awid_db_infra):
-    assert (case["input"]["old_human"], case["input"]["new_human"]) == ("alice", "replacement_human")
+    assert (case["input"]["old_human"], case["input"]["new_human"]) == (
+        "alice",
+        "replacement_human",
+    )
     db = awid_db_infra.get_manager("aweb")
     await tree.did("replacement_human")
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
@@ -1682,66 +2297,114 @@ async def test_loss_replacement_is_a_new_human_id(case, tree, awid_db_infra):
     assert (await _address(tree, "alice", "alice")).status_code == 200
     await _team_member(tree, member="global_agent")
     alice_history = await _revisions(awid_db_infra, did_aw("alice"))
-    alice_log = await db.fetch_all("SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq", did_aw("alice"))
-    agent_key = await db.fetch_value(
-        "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw("global_agent"),
+    alice_log = await db.fetch_all(
+        "SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq",
+        did_aw("alice"),
     )
-    team_certificates = await db.fetch_all("SELECT * FROM {{tables.team_certificates}} ORDER BY certificate_id")
+    agent_key = await db.fetch_value(
+        "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
+        did_aw("global_agent"),
+    )
+    team_certificates = await db.fetch_all(
+        "SELECT * FROM {{tables.team_certificates}} ORDER BY certificate_id"
+    )
     replacement_log = await db.fetch_all(
-        "SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq", did_aw("replacement_human"),
+        "SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq",
+        did_aw("replacement_human"),
     )
 
     # Alice has lost her key: the root admits a replacement human ID, the kept
     # agent re-parents to it with its own key, the address is reassigned
     # through the existing procedure, and the old human is revoked now.
-    admitted = await tree.register([certificate("replacement-human")], when=at("2026-10-26T00:10:00Z"))
+    admitted = await tree.register(
+        [certificate("replacement-human")], when=at("2026-10-26T00:10:00Z")
+    )
     reparented = await tree.register(
         [certificate("replacement-human"), certificate("agent-reparented-after-loss")],
-        expected_head=certificate_id("global-agent"), when=at("2026-10-26T00:11:00Z"),
+        expected_head=certificate_id("global-agent"),
+        when=at("2026-10-26T00:11:00Z"),
     )
     reassigned = await tree.client.post(
         f"/v1/namespaces/{DOMAIN}/addresses/alice/reassign",
-        json={"did_aw": did_aw("replacement_human"), "current_did_key": did_key("replacement_human")},
+        json={
+            "did_aw": did_aw("replacement_human"),
+            "current_did_key": did_key("replacement_human"),
+        },
         headers=build_signed_headers(
-            seed("root"), did_key("root"), domain=DOMAIN, operation="reassign_address", name="alice",
+            seed("root"),
+            did_key("root"),
+            domain=DOMAIN,
+            operation="reassign_address",
+            name="alice",
         ),
     )
-    revoked = await tree.revoke("root", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:12:00Z"))
+    revoked = await tree.revoke(
+        "root",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:12:00Z"),
+    )
 
     for resp in (admitted, reparented, reassigned, revoked):
         assert resp.status_code == 200, resp.text
-    assert (did_aw("replacement_human") != did_aw("alice")) is case["expected"]["id_changed"]
-    assert (await _revisions(awid_db_infra, did_aw("alice")) != alice_history) is case["expected"]["old_history_changed"]
-    assert await db.fetch_all(
-        "SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq", did_aw("alice"),
-    ) == alice_log
-    assert (await db.fetch_value(
-        "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw("global_agent"),
-    ) != agent_key) is case["expected"]["kept_registered_agent_keys_changed"]
-    assert (await db.fetch_all(
-        "SELECT * FROM {{tables.team_certificates}} ORDER BY certificate_id",
-    ) != team_certificates) is case["expected"]["kept_registered_team_certificates_changed"]
+    assert (did_aw("replacement_human") != did_aw("alice")) is case["expected"][
+        "id_changed"
+    ]
+    assert (await _revisions(awid_db_infra, did_aw("alice")) != alice_history) is case[
+        "expected"
+    ]["old_history_changed"]
+    assert (
+        await db.fetch_all(
+            "SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq",
+            did_aw("alice"),
+        )
+        == alice_log
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT current_did_key FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
+            did_aw("global_agent"),
+        )
+        != agent_key
+    ) is case["expected"]["kept_registered_agent_keys_changed"]
+    assert (
+        await db.fetch_all(
+            "SELECT * FROM {{tables.team_certificates}} ORDER BY certificate_id",
+        )
+        != team_certificates
+    ) is case["expected"]["kept_registered_team_certificates_changed"]
     # The AWID half of address replacement: the address is kept and now names
     # the replacement, whose own DID log is untouched (contact trust is the
     # server's, see address-replacement-does-not-transfer-contact-trust).
     address = await tree.client.get(f"/v1/namespaces/{DOMAIN}/addresses/alice")
     assert address.json()["did_aw"] == did_aw("replacement_human")
-    assert await db.fetch_all(
-        "SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq", did_aw("replacement_human"),
-    ) == replacement_log
+    assert (
+        await db.fetch_all(
+            "SELECT * FROM {{tables.did_aw_log}} WHERE did_aw = $1 ORDER BY seq",
+            did_aw("replacement_human"),
+        )
+        == replacement_log
+    )
     assert revoked.json()["effective_from"] == revoked.json()["revoked_at"]
 
 
-@pytest.mark.parametrize("held", ["alice", "bob"], ids=["parent-mapping", "subject-mapping"])
+@pytest.mark.parametrize(
+    "held", ["alice", "bob"], ids=["parent-mapping", "subject-mapping"]
+)
 @pytest.mark.asyncio
-async def test_registration_waits_for_a_rotation_holding_a_selected_key(held, tree, awid_db_infra):
+async def test_registration_waits_for_a_rotation_holding_a_selected_key(
+    held, tree, awid_db_infra
+):
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     db = awid_db_infra.get_manager("aweb")
     async with db.transaction() as rotation:
         await rotation.fetch_one(
-            "SELECT did_aw FROM {{tables.did_aw_mappings}} WHERE did_aw = $1 FOR UPDATE", did_aw(held),
+            "SELECT did_aw FROM {{tables.did_aw_mappings}} WHERE did_aw = $1 FOR UPDATE",
+            did_aw(held),
         )
-        registration = asyncio.create_task(tree.register([certificate("alice"), certificate("bob")]))
+        registration = asyncio.create_task(
+            tree.register([certificate("alice"), certificate("bob")])
+        )
         await wait_until_blocked_on_lock(db, registration)
     resp = await registration
 
@@ -1754,9 +2417,12 @@ async def test_a_parent_rotation_committed_during_the_wait_is_seen(tree, awid_db
     db = awid_db_infra.get_manager("aweb")
     async with db.transaction() as holder:
         await holder.fetch_one(
-            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE", DOMAIN,
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain = $1 FOR UPDATE",
+            DOMAIN,
         )
-        registration = asyncio.create_task(tree.register([certificate("alice"), certificate("bob")]))
+        registration = asyncio.create_task(
+            tree.register([certificate("alice"), certificate("bob")])
+        )
         await wait_until_blocked_on_lock(db, registration)
         await tree.rotate_did("alice", "alice_rotated")
     resp = await registration
@@ -1770,23 +2436,40 @@ async def test_a_parent_rotation_committed_during_the_wait_is_seen(tree, awid_db
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("credential", ["configured", "missing", "wrong", "unconfigured"])
+@pytest.mark.parametrize(
+    "credential", ["configured", "missing", "wrong", "unconfigured"]
+)
 @pytest.mark.asyncio
 async def test_only_the_configured_service_token_exempts_registration_from_its_bucket(
-    credential, clocked_client, monkeypatch,
+    credential,
+    clocked_client,
+    monkeypatch,
 ):
     token = "s" * 40
     app = clocked_client.app
-    monkeypatch.setattr(app.state, "awid_service_token", None if credential == "unconfigured" else token)
+    monkeypatch.setattr(
+        app.state, "awid_service_token", None if credential == "unconfigured" else token
+    )
     monkeypatch.setattr(app.state, "rate_limiter", MemoryFixedWindowRateLimiter())
-    monkeypatch.setitem(ratelimit_module._BUCKET_DEFAULTS, "id_certificate_register", (2, 3600))
-    headers = {} if credential == "missing" else {"X-AWID-Service-Token": "w" * 40 if credential == "wrong" else token}
+    monkeypatch.setitem(
+        ratelimit_module._BUCKET_DEFAULTS, "id_certificate_register", (2, 3600)
+    )
+    headers = (
+        {}
+        if credential == "missing"
+        else {"X-AWID-Service-Token": "w" * 40 if credential == "wrong" else token}
+    )
 
     statuses = [
-        (await clocked_client.post(REGISTER_PATH, content=b"{}", headers=headers)).status_code for _ in range(3)
+        (
+            await clocked_client.post(REGISTER_PATH, content=b"{}", headers=headers)
+        ).status_code
+        for _ in range(3)
     ]
 
-    assert statuses == ([400, 400, 400] if credential == "configured" else [400, 400, 429])
+    assert statuses == (
+        [400, 400, 400] if credential == "configured" else [400, 400, 429]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1795,7 +2478,12 @@ async def test_only_the_configured_service_token_exempts_registration_from_its_b
 
 
 @pytest.mark.parametrize(
-    "name", ["ed25519-mixed-order-issuer", "ed25519-small-order-issuer-0", "ed25519-mixed-order-R-honest-A"],
+    "name",
+    [
+        "ed25519-mixed-order-issuer",
+        "ed25519-small-order-issuer-0",
+        "ed25519-mixed-order-R-honest-A",
+    ],
 )
 @pytest.mark.asyncio
 async def test_registration_applies_the_ed25519_point_rule(name, tree, awid_db_infra):
@@ -1803,11 +2491,20 @@ async def test_registration_applies_the_ed25519_point_rule(name, tree, awid_db_i
     bundle = json.loads(case["raw_utf8"])
     leaf = bundle["certificates"][-1]
     assert leaf["certificate"]["id"] == did_aw("alice")
-    body = json.dumps({"certificate": leaf, "expected_head": None, "invitation_id": None}).encode()
+    body = json.dumps(
+        {"certificate": leaf, "expected_head": None, "invitation_id": None}
+    ).encode()
     headers = covering_headers(
-        "alice", method="POST", path=REGISTER_PATH, body=body, domain=DOMAIN, operation="register_id_certificate",
+        "alice",
+        method="POST",
+        path=REGISTER_PATH,
+        body=body,
+        domain=DOMAIN,
+        operation="register_id_certificate",
     )
-    headers["X-AWID-ID-Chain"] = base64.urlsafe_b64encode(case["raw_utf8"].encode()).rstrip(b"=").decode()
+    headers["X-AWID-ID-Chain"] = (
+        base64.urlsafe_b64encode(case["raw_utf8"].encode()).rstrip(b"=").decode()
+    )
 
     resp = await tree.client.post(REGISTER_PATH, content=body, headers=headers)
 

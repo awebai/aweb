@@ -15,7 +15,9 @@ _VERSION = "_crl_index_version"
 
 
 def is_revocation_key(key: str, *, prefix: str) -> bool:
-    return key.startswith(prefix) and not key.endswith((":membership", ":membership-meta"))
+    return key.startswith(prefix) and not key.endswith(
+        (":membership", ":membership-meta")
+    )
 
 
 def index_keys(key: str) -> tuple[str, str]:
@@ -72,7 +74,9 @@ return result
 """
 
 
-async def publish(redis, key: str, entry: dict, *, retention_seconds: int, expected: str | None = None) -> bool:
+async def publish(
+    redis, key: str, entry: dict, *, retention_seconds: int, expected: str | None = None
+) -> bool:
     """Publish a complete entry/index atomically, or CAS-backfill its old age.
 
     No EVAL support or an unavailable index is an optimization miss. The
@@ -82,20 +86,35 @@ async def publish(redis, key: str, entry: dict, *, retention_seconds: int, expec
         return False
     values = entry.get("value")
     fetched_at, fresh_until = entry.get("fetched_at"), entry.get("fresh_until")
-    if (not isinstance(values, list) or not all(isinstance(value, str) for value in values)
-            or type(fetched_at) is not int or type(fresh_until) is not int):
+    if (
+        not isinstance(values, list)
+        or not all(isinstance(value, str) for value in values)
+        or type(fetched_at) is not int
+        or type(fresh_until) is not int
+    ):
         return False
     token = uuid4().hex
     marker = "present:" + token
     versioned = {**entry, _VERSION: token}
     prefix = '{"' + _VERSION + '":"' + token + '",'
-    meta = {"prefix": prefix, "marker": marker, "fetched_at": fetched_at, "fresh_until": fresh_until}
+    meta = {
+        "prefix": prefix,
+        "marker": marker,
+        "fetched_at": fetched_at,
+        "fresh_until": fresh_until,
+    }
     try:
         answer = await redis.eval(
-            _PUBLISH, 3, key, *index_keys(key),
+            _PUBLISH,
+            3,
+            key,
+            *index_keys(key),
             json.dumps(versioned, separators=(",", ":"), sort_keys=True),
             json.dumps(meta, separators=(",", ":"), sort_keys=True),
-            retention_seconds * 1000, expected or "", marker, *values,
+            retention_seconds * 1000,
+            expected or "",
+            marker,
+            *values,
         )
     except (RedisError, OSError, TypeError, AttributeError):
         return False
@@ -110,15 +129,26 @@ async def read(redis, key: str, certificate_ids: list[str], *, now: int) -> dict
         return None
     try:
         answer = await redis.eval(_READ, 3, key, *index_keys(key), *certificate_ids)
-        if not isinstance(answer, (tuple, list)) or len(answer) != len(certificate_ids) + 2 or answer[0] != 1:
+        if (
+            not isinstance(answer, (tuple, list))
+            or len(answer) != len(certificate_ids) + 2
+            or answer[0] != 1
+        ):
             return None
         if any(value not in (0, 1) for value in answer[2:]):
             return None
         meta = json.loads(answer[1])
         if type(meta["fetched_at"]) is not int or type(meta["fresh_until"]) is not int:
             return None
-        return {"fetched_at": meta["fetched_at"], "fresh_until": meta["fresh_until"],
-                "fresh": meta["fresh_until"] > now,
-                "value": {cid for cid, revoked in zip(certificate_ids, answer[2:], strict=True) if revoked}}
+        return {
+            "fetched_at": meta["fetched_at"],
+            "fresh_until": meta["fresh_until"],
+            "fresh": meta["fresh_until"] > now,
+            "value": {
+                cid
+                for cid, revoked in zip(certificate_ids, answer[2:], strict=True)
+                if revoked
+            },
+        }
     except (RedisError, OSError, TypeError, AttributeError, ValueError, KeyError):
         return None

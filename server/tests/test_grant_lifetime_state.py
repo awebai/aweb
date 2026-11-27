@@ -27,7 +27,9 @@ def test_revocation_ends_both_finite_and_never_grants(expiry):
     issued = datetime(2024, 2, 29, tzinfo=UTC)
     now = datetime(2224, 3, 1, tzinfo=UTC)
     assert (
-        grant_lifetime_state(issued_at=issued, expires_at=expiry, revoked_at=now, now=now)
+        grant_lifetime_state(
+            issued_at=issued, expires_at=expiry, revoked_at=now, now=now
+        )
         is GrantLifetimeState.REVOKED
     )
 

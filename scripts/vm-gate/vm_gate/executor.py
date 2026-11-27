@@ -49,10 +49,9 @@ class Executor:
 
     def env(self, root=False):
         home = "/root" if root else "/home/gateuser"
-        profile = "ccx33" if self.config.get("server_type") == "ccx33" else "portable"
         project = self.config.get("compose_project")
         compose = "COMPOSE_PROJECT_NAME=" + Q(project) + " " if project else ""
-        return f"env -i {compose}HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator AWEB_GATE_UNIT_PROFILE={profile} "
+        return f"env -i {compose}HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator "
 
     def host_check(self, root=False):
         return (
@@ -192,6 +191,11 @@ exit "$status"
             Path(self.source["bundle"]).read_bytes()
         ).hexdigest()
         self.run("bash -c " + Q(self.bootstrap_program(bundle_hash)), "source-prepare")
+        self.run(
+            f"nohup python3 {REMOTE}/operator/vm_gate/daemon_journal.py follow "
+            f">{REMOTE}/daemon-journal-collector.log 2>&1 </dev/null &",
+            "daemon-journal-start",
+        )
         negative = self.run(self.host_check(root=True), "uid0-negative", check=False)
         if negative.returncode != 78 or "UID 0 refused" not in negative.stderr:
             raise Infrastructure("UID 0 admission negative control failed")
@@ -347,6 +351,12 @@ exit "$status"
             "after-state",
             check=False,
         )
+        # A failed final read leaves the previously spooled journal available.
+        self.run(
+            f"python3 {REMOTE}/operator/vm_gate/daemon_journal.py finish",
+            "daemon-journal-finish",
+            check=False,
+        )
         ledger = self.config["ledger"]
         pack = f"""import tarfile,glob,shutil
 from pathlib import Path
@@ -354,9 +364,13 @@ ledger=Path({ledger!r})
 if ledger.exists():shutil.copyfile(ledger,{LOGS + "/ledger-after.tsv"!r})
 logs=ledger.parent/'gate-logs'
 if logs.exists():shutil.copytree(logs,{LOGS + "/ledger-gate-logs"!r},dirs_exist_ok=True)
-paths=[{LOGS!r}]+glob.glob('/tmp/aweb-candidate-gate-*')+glob.glob('/tmp/aweb-ledger-evidence.*')
+paths=[{LOGS!r}]+glob.glob('/tmp/aweb-candidate-gate-*')+glob.glob('/tmp/ac-candidate-gate-*')+glob.glob('/tmp/aweb-ledger-evidence.*')
 with tarfile.open({REMOTE + "/evidence.tar.gz"!r},'w:gz') as t:
  for path in paths:t.add(path,arcname=path.lstrip('/'))
+ spool=Path({REMOTE!r})/'daemon-journal'
+ for name in ('daemon.log','errors.log','checkpoint.json'):
+  if (spool/name).is_file():t.add(spool/name,arcname='var/log/vm-gate/daemon-journal/'+name)
+
 """
         self.run("python3 -c " + Q(pack), "evidence-pack")
         archive = self.directory / "evidence.tar.gz"

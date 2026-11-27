@@ -147,7 +147,9 @@ def _registered_domain_boundary(domain: str) -> str:
     try:
         from publicsuffix2 import get_sld
     except ImportError as exc:
-        raise RuntimeError("publicsuffix2 is required for awid DNS authority lookup") from exc
+        raise RuntimeError(
+            "publicsuffix2 is required for awid DNS authority lookup"
+        ) from exc
 
     boundary = get_sld(domain, strict=True)
     if not boundary:
@@ -170,7 +172,9 @@ def _parse_awid_record(record: str, *, dns_name: str) -> DomainAuthority:
         key, _, value = part.partition("=")
         normalized_key = key.strip()
         if normalized_key in fields:
-            raise DnsVerificationError(f"Duplicate {normalized_key} field in awid TXT record")
+            raise DnsVerificationError(
+                f"Duplicate {normalized_key} field in awid TXT record"
+            )
         fields[normalized_key] = value.strip()
 
     version = fields.get("awid")
@@ -181,7 +185,9 @@ def _parse_awid_record(record: str, *, dns_name: str) -> DomainAuthority:
     if not controller:
         raise DnsVerificationError("Missing controller field in awid TXT record")
     if not validate_did(controller):
-        raise DnsVerificationError(f"Invalid controller DID: {controller} (must be did:key Ed25519)")
+        raise DnsVerificationError(
+            f"Invalid controller DID: {controller} (must be did:key Ed25519)"
+        )
 
     registry = fields.get("registry")
     registry_explicit = registry is not None
@@ -189,7 +195,9 @@ def _parse_awid_record(record: str, *, dns_name: str) -> DomainAuthority:
         try:
             registry = _validate_registry_origin(registry)
         except Exception as exc:
-            raise DnsVerificationError(f"Invalid registry origin in awid TXT record: {registry}") from exc
+            raise DnsVerificationError(
+                f"Invalid registry origin in awid TXT record: {registry}"
+            ) from exc
     else:
         registry = DEFAULT_AWID_REGISTRY_URL
 
@@ -204,7 +212,9 @@ def _parse_awid_record(record: str, *, dns_name: str) -> DomainAuthority:
 
 def _validate_registry_origin(registry_url: str) -> str:
     canonical = canonical_server_origin(registry_url)
-    parsed = ipaddress.ip_address  # bind for local use below without repeated global lookup
+    parsed = (
+        ipaddress.ip_address
+    )  # bind for local use below without repeated global lookup
 
     from urllib.parse import urlparse
 
@@ -233,7 +243,9 @@ def _validate_registry_origin(registry_url: str) -> str:
             or ip.is_reserved
             or ip.is_multicast
         ):
-            raise ValueError("registry URL must not target a local or reserved IP address")
+            raise ValueError(
+                "registry URL must not target a local or reserved IP address"
+            )
         raise ValueError("registry URL must not use a literal IP address")
 
     return canonical

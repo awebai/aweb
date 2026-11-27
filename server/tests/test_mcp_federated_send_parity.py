@@ -290,7 +290,9 @@ async def test_mcp_mail_on_an_own_origin_federation_route_wakes_the_recipient(se
     for wakes in server.wakes.submitted:
         for key, kinds in wakes.items():
             woken.setdefault(key, set()).update(kinds)
-    assert "mail" in woken.get("did:" + server.target_did, set()), server.wakes.submitted
+    assert "mail" in woken.get("did:" + server.target_did, set()), (
+        server.wakes.submitted
+    )
     await server.wakes.close()
     marks = await read_wake_marks(server.redis, ["did:" + server.target_did])
     assert marks[("did:" + server.target_did, "mail")] is not None
@@ -319,7 +321,11 @@ async def test_mcp_federated_mail_sends_the_envelope_the_route_sends(server):
     for delivery in (from_mcp, from_rest):
         assert delivery.status == 200
         message_id = UUID(delivery.body["envelope"]["message_id"])
-        table = "messages" if delivery.body["envelope"]["type"] == "mail" else "chat_messages"
+        table = (
+            "messages"
+            if delivery.body["envelope"]["type"] == "mail"
+            else "chat_messages"
+        )
         row = await server.remote_db.fetch_one(
             f"SELECT body, signed_payload FROM {{{{tables.{table}}}}} WHERE message_id=$1",
             message_id,
@@ -332,7 +338,9 @@ async def test_mcp_federated_mail_sends_the_envelope_the_route_sends(server):
 async def test_mcp_federated_chat_sends_the_envelope_the_route_sends(server):
     session_id = await server.remote_chat_session()
 
-    await server.mcp_call("chat_send", session_id=session_id, message="status", plaintext=True)
+    await server.mcp_call(
+        "chat_send", session_id=session_id, message="status", plaintext=True
+    )
     await server.rest_send(
         f"/v1/chat/sessions/{session_id}/messages",
         {"body": "status"},
@@ -345,7 +353,11 @@ async def test_mcp_federated_chat_sends_the_envelope_the_route_sends(server):
     for delivery in (from_mcp, from_rest):
         assert delivery.status == 200
         message_id = UUID(delivery.body["envelope"]["message_id"])
-        table = "messages" if delivery.body["envelope"]["type"] == "mail" else "chat_messages"
+        table = (
+            "messages"
+            if delivery.body["envelope"]["type"] == "mail"
+            else "chat_messages"
+        )
         row = await server.remote_db.fetch_one(
             f"SELECT body, signed_payload FROM {{{{tables.{table}}}}} WHERE message_id=$1",
             message_id,

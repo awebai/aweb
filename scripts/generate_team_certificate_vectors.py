@@ -17,7 +17,10 @@ from pathlib import Path
 from awid.did import did_key_from_signing_key
 from awid.signing import canonical_json_bytes, sign_message
 
-VECTOR = Path(__file__).resolve().parents[1] / "docs/vectors/team-certificate-verification-v1.json"
+VECTOR = (
+    Path(__file__).resolve().parents[1]
+    / "docs/vectors/team-certificate-verification-v1.json"
+)
 TEAM_ID = "backend:acme.com"
 
 # What a verifier answers for a certificate it refuses. `None` is acceptance.
@@ -41,10 +44,14 @@ def _key(name: str) -> dict[str, str]:
     return {"seed_hex": seed.hex(), "did_key": did_key_from_signing_key(seed)}
 
 
-KEYS = {name: _key(name) for name in ("team", "member", "another-team", "another-member")}
+KEYS = {
+    name: _key(name) for name in ("team", "member", "another-team", "another-member")
+}
 
 
-def _certificate(*, signed_by: str = "team", drop: tuple[str, ...] = (), **fields) -> dict:
+def _certificate(
+    *, signed_by: str = "team", drop: tuple[str, ...] = (), **fields
+) -> dict:
     cert = {
         "version": 1,
         "certificate_id": "cert-001",
@@ -60,7 +67,9 @@ def _certificate(*, signed_by: str = "team", drop: tuple[str, ...] = (), **field
     cert.update(fields)
     for name in drop:
         del cert[name]
-    cert["signature"] = sign_message(bytes.fromhex(KEYS[signed_by]["seed_hex"]), canonical_json_bytes(cert))
+    cert["signature"] = sign_message(
+        bytes.fromhex(KEYS[signed_by]["seed_hex"]), canonical_json_bytes(cert)
+    )
     return cert
 
 
@@ -72,7 +81,9 @@ def _negative_zero() -> str:
     """A certificate signed with a member that is 0, spelled -0 in the header."""
     text = json.dumps(_certificate(weight=0))
     assert text.count('"weight": 0') == 1
-    return base64.b64encode(text.replace('"weight": 0', '"weight": -0').encode()).decode()
+    return base64.b64encode(
+        text.replace('"weight": 0', '"weight": -0').encode()
+    ).decode()
 
 
 def _tampered() -> dict:
@@ -97,11 +108,22 @@ def _url_safe_signature() -> dict:
     raise AssertionError("no signature with a character outside the URL-safe alphabet")
 
 
-def _case(name: str, about: str, header: str, expected: str | None, today: dict[str, str], **context) -> dict:
+def _case(
+    name: str,
+    about: str,
+    header: str,
+    expected: str | None,
+    today: dict[str, str],
+    **context,
+) -> dict:
     reason, _, field = (expected or "").partition(":")
     assert expected is None or reason in REASONS, expected
     assert bool(field) == (reason == "invalid_field"), expected
-    verdict = None if expected is None else {"reason": reason, **({"field": field} if field else {})}
+    verdict = (
+        None
+        if expected is None
+        else {"reason": reason, **({"field": field} if field else {})}
+    )
     return {
         "name": name,
         "about": about,
@@ -121,7 +143,13 @@ ACCEPTED = {"awid": "accepted", "server": "accepted"}
 def cases() -> list[dict]:
     refused = lambda awid, server: {"awid": awid, "server": server}
     return [
-        _case("valid", "A current member certificate.", _header(_certificate()), None, ACCEPTED),
+        _case(
+            "valid",
+            "A current member certificate.",
+            _header(_certificate()),
+            None,
+            ACCEPTED,
+        ),
         _case(
             "valid_issued_long_ago",
             "Revocation is the only end of a certificate: none expires, and issued_at bounds nothing "
@@ -138,7 +166,13 @@ def cases() -> list[dict]:
                 None,
                 ACCEPTED,
             )
-            for name in ("team_did_key", "identity_scope", "issued_at", "member_did_aw", "member_address")
+            for name in (
+                "team_did_key",
+                "identity_scope",
+                "issued_at",
+                "member_did_aw",
+                "member_address",
+            )
         ],
         _case(
             "extra_signed_field",
@@ -147,9 +181,27 @@ def cases() -> list[dict]:
             None,
             ACCEPTED,
         ),
-        _case("not_base64", "The header is not base64.", "%%%not-base64%%%", "malformed", refused("malformed", "refused")),
-        _case("not_json", "The header decodes to text that is not JSON.", base64.b64encode(b"not json").decode(), "malformed", refused("malformed", "refused")),
-        _case("not_an_object", "The header decodes to a JSON list.", _header([1, 2]), "malformed", refused("malformed", "refused")),
+        _case(
+            "not_base64",
+            "The header is not base64.",
+            "%%%not-base64%%%",
+            "malformed",
+            refused("malformed", "refused"),
+        ),
+        _case(
+            "not_json",
+            "The header decodes to text that is not JSON.",
+            base64.b64encode(b"not json").decode(),
+            "malformed",
+            refused("malformed", "refused"),
+        ),
+        _case(
+            "not_an_object",
+            "The header decodes to a JSON list.",
+            _header([1, 2]),
+            "malformed",
+            refused("malformed", "refused"),
+        ),
         _case(
             "oversized_header",
             "A correctly signed certificate whose header is longer than 8192 bytes.",
@@ -194,16 +246,76 @@ def cases() -> list[dict]:
             "malformed",
             refused("malformed", "refused"),
         ),
-        _case("version_2", "A version this verifier does not know.", _header(_certificate(version=2)), "unsupported_version", refused("accepted", "refused")),
-        _case("version_string", 'version is the string "1".', _header(_certificate(version="1")), "unsupported_version", refused("accepted", "refused")),
-        _case("version_true", "version is true, which equals 1 in some languages.", _header(_certificate(version=True)), "unsupported_version", refused("accepted", "refused")),
-        _case("version_absent", "No version.", _header(_certificate(drop=("version",))), "invalid_field:version", refused("accepted", "refused")),
-        _case("alias_absent", "No alias.", _header(_certificate(drop=("alias",))), "invalid_field:alias", refused("accepted", "refused")),
-        _case("alias_empty", "An empty alias.", _header(_certificate(alias="")), "invalid_field:alias", refused("accepted", "refused")),
-        _case("alias_not_a_string", "alias is a number.", _header(_certificate(alias=7)), "invalid_field:alias", refused("accepted", "refused")),
-        _case("certificate_id_absent", "No certificate_id.", _header(_certificate(drop=("certificate_id",))), "invalid_field:certificate_id", refused("accepted", "refused")),
-        _case("team_id_absent", "No team_id.", _header(_certificate(drop=("team_id",))), "invalid_field:team_id", refused("accepted", "refused")),
-        _case("member_did_key_absent", "No member_did_key.", _header(_certificate(drop=("member_did_key",))), "invalid_field:member_did_key", refused("accepted", "refused")),
+        _case(
+            "version_2",
+            "A version this verifier does not know.",
+            _header(_certificate(version=2)),
+            "unsupported_version",
+            refused("accepted", "refused"),
+        ),
+        _case(
+            "version_string",
+            'version is the string "1".',
+            _header(_certificate(version="1")),
+            "unsupported_version",
+            refused("accepted", "refused"),
+        ),
+        _case(
+            "version_true",
+            "version is true, which equals 1 in some languages.",
+            _header(_certificate(version=True)),
+            "unsupported_version",
+            refused("accepted", "refused"),
+        ),
+        _case(
+            "version_absent",
+            "No version.",
+            _header(_certificate(drop=("version",))),
+            "invalid_field:version",
+            refused("accepted", "refused"),
+        ),
+        _case(
+            "alias_absent",
+            "No alias.",
+            _header(_certificate(drop=("alias",))),
+            "invalid_field:alias",
+            refused("accepted", "refused"),
+        ),
+        _case(
+            "alias_empty",
+            "An empty alias.",
+            _header(_certificate(alias="")),
+            "invalid_field:alias",
+            refused("accepted", "refused"),
+        ),
+        _case(
+            "alias_not_a_string",
+            "alias is a number.",
+            _header(_certificate(alias=7)),
+            "invalid_field:alias",
+            refused("accepted", "refused"),
+        ),
+        _case(
+            "certificate_id_absent",
+            "No certificate_id.",
+            _header(_certificate(drop=("certificate_id",))),
+            "invalid_field:certificate_id",
+            refused("accepted", "refused"),
+        ),
+        _case(
+            "team_id_absent",
+            "No team_id.",
+            _header(_certificate(drop=("team_id",))),
+            "invalid_field:team_id",
+            refused("accepted", "refused"),
+        ),
+        _case(
+            "member_did_key_absent",
+            "No member_did_key.",
+            _header(_certificate(drop=("member_did_key",))),
+            "invalid_field:member_did_key",
+            refused("accepted", "refused"),
+        ),
         _case(
             "member_key_mismatch",
             "The request is signed by a key the certificate does not name.",
@@ -212,8 +324,20 @@ def cases() -> list[dict]:
             refused("accepted", "refused"),
             request_did_key=KEYS["another-member"]["did_key"],
         ),
-        _case("signature_absent", "No signature.", _header(_unsigned()), "invalid_field:signature", refused("missing_signature", "refused")),
-        _case("signature_tampered", "A field was changed after signing.", _header(_tampered()), "bad_signature", refused("bad_signature", "refused")),
+        _case(
+            "signature_absent",
+            "No signature.",
+            _header(_unsigned()),
+            "invalid_field:signature",
+            refused("missing_signature", "refused"),
+        ),
+        _case(
+            "signature_tampered",
+            "A field was changed after signing.",
+            _header(_tampered()),
+            "bad_signature",
+            refused("bad_signature", "refused"),
+        ),
         _case(
             "signed_by_another_key",
             "Signed by a key that is not the team's current key at the registry.",
@@ -221,7 +345,14 @@ def cases() -> list[dict]:
             "bad_signature",
             refused("bad_signature", "refused"),
         ),
-        _case("revoked", "The registry lists the certificate as revoked.", _header(_certificate()), "revoked", refused("accepted", "refused"), revoked=["cert-001"]),
+        _case(
+            "revoked",
+            "The registry lists the certificate as revoked.",
+            _header(_certificate()),
+            "revoked",
+            refused("accepted", "refused"),
+            revoked=["cert-001"],
+        ),
         _case(
             "unregistered",
             "A correctly signed certificate the registry never published.",
@@ -350,9 +481,12 @@ def document() -> str:
         # Refusal formatting is independent of the primitive input cases. Exact
         # protected registry binding is exercised by protected-membership-v1.
         "refusal_answers": [
-            {"reason": reason, **({"field": "alias"} if reason == "invalid_field" else {}),
-             "status_code": 401,
-             "detail": f"{reason}: alias" if reason == "invalid_field" else reason}
+            {
+                "reason": reason,
+                **({"field": "alias"} if reason == "invalid_field" else {}),
+                "status_code": 401,
+                "detail": f"{reason}: alias" if reason == "invalid_field" else reason,
+            }
             for reason in REASONS
         ],
         "today_verifiers": {
@@ -388,7 +522,10 @@ def main(argv: list[str]) -> int:
     text = document()
     if "--check" in argv:
         if not VECTOR.exists() or VECTOR.read_text() != text:
-            print(f"{VECTOR} is not what this script writes; run it without --check", file=sys.stderr)
+            print(
+                f"{VECTOR} is not what this script writes; run it without --check",
+                file=sys.stderr,
+            )
             return 1
         return 0
     VECTOR.write_text(text)

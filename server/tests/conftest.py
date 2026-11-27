@@ -29,7 +29,7 @@ from awid.db_config import build_database_config  # noqa: E402
 from aweb.migrations import apply_native_migrations  # noqa: E402
 
 pytest_plugins = (
-    "awid_service.testing_postgres",
+    "pgdbm.fixtures.conftest",
     "tests.real_stack",
     "tests.chat_coverage_support",
 )
@@ -37,7 +37,11 @@ pytest_plugins = (
 
 @pytest.fixture(scope="session")
 def server_js_runtime():
-    from tests.js_runtime_tree import prepare_runtime_tree, remove_runtime_tree, runtime_repo
+    from tests.js_runtime_tree import (
+        prepare_runtime_tree,
+        remove_runtime_tree,
+        runtime_repo,
+    )
 
     source = Path(__file__).resolve().parents[2]
     root = runtime_repo(source)
@@ -77,7 +81,9 @@ async def shared_test_database(test_db_factory):
     # template can carry it): migration 001's unqualified CREATE EXTENSION
     # then no-ops instead of resolving into the pinned pg_catalog and
     # colliding with the built-in gen_random_uuid.
-    await db_manager.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public")
+    await db_manager.execute(
+        "CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public"
+    )
     config = build_database_config(
         connection_string=db_manager.config.get_dsn(),
         min_connections=2,
@@ -131,12 +137,21 @@ def aw_cli_binary(tmp_path_factory):
     if configured:
         # Preserve the explicit artifact override used by release harnesses.
         return Path(configured)
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        # Every worker compiling aw at once starved the gate (vm-7b34f721).
+        raise RuntimeError(
+            "parallel server workers use one prebuilt aw: set AW_TEST_CLI_BINARY "
+            "(make test-server builds it once)"
+        )
     binary = tmp_path_factory.mktemp("aw-cli") / ("aw.exe" if os.name == "nt" else "aw")
     repo = Path(__file__).resolve().parents[2]
     started = time.monotonic()
     build = subprocess.run(
         ["go", "build", "-o", str(binary), "./cmd/aw"],
-        cwd=repo / "cli/go", capture_output=True, text=True, timeout=120,
+        cwd=repo / "cli/go",
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     assert build.returncode == 0, build.stdout + build.stderr
     print(f"shared server-test CLI build: {time.monotonic() - started:.3f}s")

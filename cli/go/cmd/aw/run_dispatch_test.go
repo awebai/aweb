@@ -1810,3 +1810,13 @@ func TestMailWakeTellsTheAgentWhenTheSenderIsNotVerified(t *testing.T) {
 		t.Fatalf("an unsigned message carries no note: %q", result.CycleContext)
 	}
 }
+
+// resolveChatWake and resolveMailWake resolve an event through the run
+// loop's production wake validator, as the client's own identity.
+func resolveChatWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
+	return newRunWakeValidator(client, handleFromAddress(client.Address()))(ctx, evt)
+}
+
+func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
+	return newRunWakeValidator(client, handleFromAddress(client.Address()))(ctx, evt)
+}

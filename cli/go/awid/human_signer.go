@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 	"golang.org/x/term"
 )
 

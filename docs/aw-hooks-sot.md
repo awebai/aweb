@@ -180,12 +180,9 @@ the combined behavior.
 
 ## Current route call sites
 
-[`vectors/mutation-hook-call-sites-v1.json`](vectors/mutation-hook-call-sites-v1.json)
-is the machine-readable source path + enclosing function + literal event
-inventory of `fire_mutation_hook` and `fire_mutation_callback` calls. Inbound
-federation fires through its outbox instead, so the inventory does not list it. Repeated rows preserve multiplicity when one function has multiple
-calls for the same event. The table below groups those exact call sites by their
-public HTTP behavior. The create, update, delete, dependency and comment rows of
+The table below groups the `fire_mutation_hook` and `fire_mutation_callback`
+call sites by their public HTTP behavior. Inbound federation fires through its
+outbox. The create, update, delete, dependency and comment rows of
 `/v1/tasks` fire from the task service the route calls, a `POST /v1/messages`
 send fires from `server/src/aweb/messaging/mail_send.py`, which the route and
 the MCP `send_mail` tool both call, a chat send fires from

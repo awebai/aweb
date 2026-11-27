@@ -54,16 +54,25 @@ async def test_off_mode_authentication_does_not_read_registration(
             headers=_signed_identity_headers(actor.sk, actor.did, ""),
         )
     assert response.status_code == 200, response.text
-    registry_paths = [request.url.path for request in env.registry.transport.calls[started:]]
+    registry_paths = [
+        request.url.path for request in env.registry.transport.calls[started:]
+    ]
     assert any("/revocations" in path for path in registry_paths), registry_paths
-    assert all(not path.endswith("/certificates") for path in registry_paths), registry_paths
+    assert all(not path.endswith("/certificates") for path in registry_paths), (
+        registry_paths
+    )
     assert (REGISTRY.get_sample_value(metric, labels) or 0) == before
 
     registry = application_registry_client(env.app.state)
     certificate_id = decode_team_certificate(actor.certificate)["certificate_id"]
     configured = await read_certificate_standings(registry, TEAM, [certificate_id])
-    assert configured[certificate_id].registration.state is RegistrationState.NOT_OBSERVED
+    assert (
+        configured[certificate_id].registration.state is RegistrationState.NOT_OBSERVED
+    )
     explicit = await read_certificate_standings(
-        registry, TEAM, [certificate_id], mode=RegistrationMode.NOT_REQUIRED,
+        registry,
+        TEAM,
+        [certificate_id],
+        mode=RegistrationMode.NOT_REQUIRED,
     )
     assert explicit[certificate_id].registration.state is RegistrationState.UNREGISTERED

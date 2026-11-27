@@ -18,7 +18,7 @@ import (
 	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/crashtest"
 	"github.com/awebai/aw/internal/pathpreflight"
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 // GenerateKeypair creates a new Ed25519 keypair using crypto/rand.

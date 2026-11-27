@@ -84,6 +84,7 @@ class AdmittedInstallation:
 @dataclass(frozen=True)
 class InstallationPermit:
     """A fresh observation; check its SQL fence before locking app resources."""
+
     store: InstallationFence
     status: InstallationStatus
     admitted: AdmittedInstallation
@@ -103,7 +104,9 @@ class InstallationPermit:
         """A SQL facade for member handlers using this exact admission."""
         return InstallationDatabase(self)
 
-    def bind(self, *, installation_id: str | None, created_at: datetime, refused: bool = False) -> str:
+    def bind(
+        self, *, installation_id: str | None, created_at: datetime, refused: bool = False
+    ) -> str:
         """Bind a legacy capability only to an installation older than that row.
 
         The caller persists this ID or a permanent refusal under the resource
@@ -111,16 +114,30 @@ class InstallationPermit:
         Database clock skew is outside this creation-order rule.
         """
         if refused:
-            raise InstallationRefused("installation_binding_refused", 403, "The capability's installation binding was refused")
+            raise InstallationRefused(
+                "installation_binding_refused",
+                403,
+                "The capability's installation binding was refused",
+            )
         if installation_id is not None:
             if installation_id != self.admitted.installation_id:
-                raise InstallationRefused("installation_replaced", 403, "The capability belongs to a retired installation")
+                raise InstallationRefused(
+                    "installation_replaced", 403, "The capability belongs to a retired installation"
+                )
             return installation_id
         installed_at = self.status.installed_at
-        if not isinstance(installed_at, datetime) or installed_at.tzinfo is None or created_at.tzinfo is None:
+        if (
+            not isinstance(installed_at, datetime)
+            or installed_at.tzinfo is None
+            or created_at.tzinfo is None
+        ):
             raise _unavailable("A typed installation creation time is required")
         if installed_at >= created_at:
-            raise InstallationRefused("installation_binding_refused", 403, "The current installation was created after this capability")
+            raise InstallationRefused(
+                "installation_binding_refused",
+                403,
+                "The current installation was created after this capability",
+            )
         return self.admitted.installation_id
 
 
@@ -159,7 +176,10 @@ class InstallationDispatchFence:
     """
 
     def __init__(
-        self, store: InstallationFence, admitted: AdmittedInstallation, grant: Grant | None = None,
+        self,
+        store: InstallationFence,
+        admitted: AdmittedInstallation,
+        grant: Grant | None = None,
     ) -> None:
         self.store = store
         self.admitted = admitted
@@ -229,12 +249,15 @@ class InstallationFence:
             or grant.generation > 9223372036854775807
         ):
             raise InstallationRefused(
-                "installation_identity_required", 403,
+                "installation_identity_required",
+                403,
                 "The installation authority must supply an identity and positive generation",
             )
         return AdmittedInstallation(
-            team_id=grant.team_id, app_id=self.app_id,
-            installation_id=grant.installation_id, generation=grant.generation,
+            team_id=grant.team_id,
+            app_id=self.app_id,
+            installation_id=grant.installation_id,
+            generation=grant.generation,
         )
 
     def _remaining(self, grant: Grant) -> int:
@@ -248,13 +271,15 @@ class InstallationFence:
         await tx.execute(
             """INSERT INTO {{tables.installation_fences}} (app_id, team_id)
                VALUES ($1, $2) ON CONFLICT (app_id, team_id) DO NOTHING""",
-            self.app_id, team_id,
+            self.app_id,
+            team_id,
         )
         return await tx.fetch_one(
             """SELECT installation_id, generation, active_installation_id, state
                FROM {{tables.installation_fences}}
                WHERE app_id = $1 AND team_id = $2 FOR UPDATE""",
-            self.app_id, team_id,
+            self.app_id,
+            team_id,
         )
 
     def _order(self, row, grant: Grant) -> None:
@@ -262,16 +287,27 @@ class InstallationFence:
         # this app never saw before. Freshness cannot order cached observations.
         if row["generation"] is not None:
             if row["generation"] > grant.generation:
-                raise InstallationRefused("generation_superseded", 409, "A newer generation was observed")
-            if row["generation"] == grant.generation and row["installation_id"] != grant.installation_id:
-                raise _unavailable("The authority assigned one generation to different installations")
+                raise InstallationRefused(
+                    "generation_superseded", 409, "A newer generation was observed"
+                )
+            if (
+                row["generation"] == grant.generation
+                and row["installation_id"] != grant.installation_id
+            ):
+                raise _unavailable(
+                    "The authority assigned one generation to different installations"
+                )
 
-    async def _retire(self, tx: TransactionManager, team_id: str, installation_id: str | None) -> None:
+    async def _retire(
+        self, tx: TransactionManager, team_id: str, installation_id: str | None
+    ) -> None:
         if installation_id is not None:
             retired = await tx.fetch_value(
                 """INSERT INTO {{tables.retired_installation_fences}} (app_id, team_id, installation_id)
                    VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING installation_id""",
-                self.app_id, team_id, installation_id,
+                self.app_id,
+                team_id,
+                installation_id,
             )
             if retired is not None and self.on_retire is not None:
                 await self.on_retire(tx, team_id)
@@ -289,7 +325,9 @@ class InstallationFence:
         retired = await tx.fetch_value(
             """SELECT EXISTS (SELECT 1 FROM {{tables.retired_installation_fences}}
                WHERE app_id = $1 AND team_id = $2 AND installation_id = $3)""",
-            self.app_id, grant.team_id, grant.installation_id,
+            self.app_id,
+            grant.team_id,
+            grant.installation_id,
         )
         if retired:
             raise InstallationRefused("installation_inactive", 403, "The installation is inactive")
@@ -306,8 +344,12 @@ class InstallationFence:
                    active_installation_id = $3,
                    fresh_until = $5::timestamptz + $6::bigint * interval '1 microsecond'
                WHERE app_id = $1 AND team_id = $2""",
-            self.app_id, grant.team_id, grant.installation_id, grant.generation,
-            observed_at, remaining // NANOSECONDS_PER_MICROSECOND,
+            self.app_id,
+            grant.team_id,
+            grant.installation_id,
+            grant.generation,
+            observed_at,
+            remaining // NANOSECONDS_PER_MICROSECOND,
         )
         return self._identity(grant)
 
@@ -316,7 +358,8 @@ class InstallationFence:
             await tx.execute(
                 """UPDATE {{tables.installation_fences}} SET fresh_until = NULL
                    WHERE app_id = $1 AND team_id = $2""",
-                self.app_id, team_id,
+                self.app_id,
+                team_id,
             )
 
     async def refresh(self, team_id: str) -> InstallationStatus:
@@ -335,8 +378,10 @@ class InstallationFence:
                 if status.team_id != team_id or status.app_id != self.app_id:
                     raise _unavailable("The authority returned another team's installation")
                 grant = Grant(
-                    team_id=status.team_id, scopes=status.granted_scopes,
-                    installation_id=status.installation_id, generation=status.generation,
+                    team_id=status.team_id,
+                    scopes=status.granted_scopes,
+                    installation_id=status.installation_id,
+                    generation=status.generation,
                     fresh_until=status.fresh_until,
                 )
                 self._remaining(grant)
@@ -348,7 +393,9 @@ class InstallationFence:
         if status is None:
             # A stale replica's denied key says nothing about the healthy
             # replica's installed generation in the shared database.
-            raise InstallationRefused("installation_inactive", 403, "This caller's app key is not registered")
+            raise InstallationRefused(
+                "installation_inactive", 403, "This caller's app key is not registered"
+            )
         async with self.db.transaction() as tx:
             if status.state == "active":
                 await self.admit(tx, grant)
@@ -365,7 +412,10 @@ class InstallationFence:
                            state = 'inactive', fresh_until = NULL,
                            active_installation_id = CASE WHEN $5 THEN NULL ELSE active_installation_id END
                        WHERE app_id = $1 AND team_id = $2""",
-                    self.app_id, team_id, status.installation_id, status.generation,
+                    self.app_id,
+                    team_id,
+                    status.installation_id,
+                    status.generation,
                     status.state == "uninstalled",
                 )
 
@@ -375,12 +425,20 @@ class InstallationFence:
         """Refresh outside app locks, then require an active typed installation."""
         status = await self.refresh(team_id)
         if status.state != "active":
-            raise InstallationRefused("installation_inactive", 403, "The app installation is inactive")
+            raise InstallationRefused(
+                "installation_inactive", 403, "The app installation is inactive"
+            )
         assert status.installation_id is not None and status.generation is not None
-        return InstallationPermit(self, status, AdmittedInstallation(
-            team_id=team_id, app_id=self.app_id,
-            installation_id=status.installation_id, generation=status.generation,
-        ))
+        return InstallationPermit(
+            self,
+            status,
+            AdmittedInstallation(
+                team_id=team_id,
+                app_id=self.app_id,
+                installation_id=status.installation_id,
+                generation=status.generation,
+            ),
+        )
 
     async def check(self, tx: TransactionManager, admitted: AdmittedInstallation) -> None:
         """SQL-only standalone check; acquire this before app resource locks.
@@ -394,13 +452,16 @@ class InstallationFence:
 
     async def _lock(self, tx: TransactionManager, admitted: AdmittedInstallation) -> None:
         if admitted.app_id != self.app_id:
-            raise InstallationRefused("generation_superseded", 409, "The admission belongs to another app")
+            raise InstallationRefused(
+                "generation_superseded", 409, "The admission belongs to another app"
+            )
         # Do not evaluate the SQL clock in this query: PostgreSQL can project
         # it before the row-lock wait and return that stale result afterward.
         row = await tx.fetch_one(
             """SELECT installation_id FROM {{tables.installation_fences}}
                WHERE app_id = $1 AND team_id = $2 FOR SHARE""",
-            self.app_id, admitted.team_id,
+            self.app_id,
+            admitted.team_id,
         )
         if row is None:
             raise _unavailable("Refresh the installation before dispatch")
@@ -411,7 +472,8 @@ class InstallationFence:
                       fresh_until > clock_timestamp() AS fresh
                FROM {{tables.installation_fences}}
                WHERE app_id = $1 AND team_id = $2""",
-            self.app_id, admitted.team_id,
+            self.app_id,
+            admitted.team_id,
         )
         if row is None:
             raise _unavailable("Refresh the installation before dispatch")
@@ -419,5 +481,10 @@ class InstallationFence:
             raise InstallationRefused("installation_inactive", 403, "The installation is inactive")
         if not row["fresh"]:
             raise _unavailable()
-        if row["installation_id"] != admitted.installation_id or row["generation"] != admitted.generation:
-            raise InstallationRefused("generation_superseded", 409, "The admitted generation is no longer current")
+        if (
+            row["installation_id"] != admitted.installation_id
+            or row["generation"] != admitted.generation
+        ):
+            raise InstallationRefused(
+                "generation_superseded", 409, "The admitted generation is no longer current"
+            )

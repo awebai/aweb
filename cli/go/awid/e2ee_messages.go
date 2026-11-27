@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 const (

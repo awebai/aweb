@@ -37,7 +37,11 @@ def _checkpoint(value: dict | None) -> IdentityCheckpoint | None:
     )
 
 
-@pytest.mark.parametrize("case", _load("identity-log-negative-v1.json")["cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case",
+    _load("identity-log-negative-v1.json")["cases"],
+    ids=lambda case: case["name"],
+)
 def test_identity_head_vectors(case: dict) -> None:
     checkpoint = _checkpoint(case["cached"])
     if case["expected_outcome"] == "OK_VERIFIED":
@@ -65,7 +69,11 @@ def test_identity_head_vectors(case: dict) -> None:
     assert raised.value.reason == expected_reason
 
 
-@pytest.mark.parametrize("case", _load("identity-log-negative-v1.json")["log_cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case",
+    _load("identity-log-negative-v1.json")["log_cases"],
+    ids=lambda case: case["name"],
+)
 def test_full_identity_log_vectors(case: dict) -> None:
     if case["expect_error"]:
         with pytest.raises(FederationAuthorityError) as raised:
@@ -110,10 +118,17 @@ def test_canonical_positive_log_and_checkpoint_containment() -> None:
             expected_current_did_key=vectors["mapping"]["rotated_did_key"],
             checkpoint=checkpoint,
         )
-    assert raised.value.reason in {"sender_did_log_invalid", "sender_did_log_split_view"}
+    assert raised.value.reason in {
+        "sender_did_log_invalid",
+        "sender_did_log_split_view",
+    }
 
 
-@pytest.mark.parametrize("case", _load("identity-log-raw-wire-v1.json")["cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case",
+    _load("identity-log-raw-wire-v1.json")["cases"],
+    ids=lambda case: case["name"],
+)
 def test_raw_wire_sequence_values_fail_closed(case: dict) -> None:
     with pytest.raises(FederationAuthorityError) as raised:
         decode_identity_key_resolution(case["resolution_json"].encode("utf-8"))
@@ -152,18 +167,29 @@ def _resigned_genesis(timestamp: str) -> dict:
     fields = dict(vectors["entries"][0]["entry_payload"], timestamp=timestamp)
     payload = log_entry_payload(**fields)
     seed = bytes.fromhex(vectors["key_seeds"]["initial_seed_hex"])
-    return {**fields, "entry_hash": hashlib.sha256(payload).hexdigest(), "signature": sign_message(seed, payload)}
+    return {
+        **fields,
+        "entry_hash": hashlib.sha256(payload).hexdigest(),
+        "signature": sign_message(seed, payload),
+    }
 
 
 def test_resigned_genesis_with_ascii_timestamp_verifies() -> None:
     vectors = _load("identity-log-v1.json")
-    verified = verify_identity_log(did_aw=vectors["mapping"]["did_aw"], entries=[_resigned_genesis("2026-04-18T12:00:00Z")])
+    verified = verify_identity_log(
+        did_aw=vectors["mapping"]["did_aw"],
+        entries=[_resigned_genesis("2026-04-18T12:00:00Z")],
+    )
     assert verified.current_did_key == vectors["mapping"]["initial_did_key"]
 
 
-@pytest.mark.parametrize("timestamp", ["\uff12\uff10\uff12\uff16-04-18T12:00:00Z", "2026-02-30T12:00:00Z"])
+@pytest.mark.parametrize(
+    "timestamp", ["\uff12\uff10\uff12\uff16-04-18T12:00:00Z", "2026-02-30T12:00:00Z"]
+)
 def test_log_timestamps_need_ascii_digits_and_a_real_date(timestamp: str) -> None:
     vectors = _load("identity-log-v1.json")
     with pytest.raises(FederationAuthorityError) as raised:
-        verify_identity_log(did_aw=vectors["mapping"]["did_aw"], entries=[_resigned_genesis(timestamp)])
+        verify_identity_log(
+            did_aw=vectors["mapping"]["did_aw"], entries=[_resigned_genesis(timestamp)]
+        )
     assert raised.value.reason == "sender_did_log_invalid"

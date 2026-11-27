@@ -48,7 +48,10 @@ def test_the_lanes_logs_is_the_deployments_base_with_its_files_read_only():
 def test_the_lanes_logs_uses_the_lanes_registry_and_mail_and_an_id_of_its_own():
     env = LOGS_COMPOSE_ENV
     assert env["AWID_REGISTRY_URL"] == REGISTRY
-    assert env["LOGS_EMAIL_SMTP_HOST"] == "mail.svc.test" and env["LOGS_EMAIL_CA_FILE"] == "/runtime/tls/ca.pem"
+    assert (
+        env["LOGS_EMAIL_SMTP_HOST"] == "mail.svc.test"
+        and env["LOGS_EMAIL_CA_FILE"] == "/runtime/tls/ca.pem"
+    )
     # Only the hosted origin may serve the hosted id.
     assert env["LOGS_APP_ID"] != "logs"
     assert (env["LOGS_PUBLIC_ORIGIN"], env["LOGS_CONSOLE_ORIGIN"]) == (LOGS_API, LOGS_CONSOLE)
@@ -64,11 +67,16 @@ def test_the_front_serves_logs_and_aweb_installs_it_from_its_internal_origin():
 
 
 def test_the_front_routes_each_host_to_its_service_with_the_lanes_certificate():
-    text = front_caddyfile({"console.secrets.svc.test": "secrets:8770", "api.logs.svc.test": "logs:8765"},
-                           "c.pem", "k.pem")
-    assert text == ("{\n  auto_https off\n}\n"
-                    "console.secrets.svc.test:443 {\n  tls /tls/c.pem /tls/k.pem\n  reverse_proxy secrets:8770\n}\n"
-                    "api.logs.svc.test:443 {\n  tls /tls/c.pem /tls/k.pem\n  reverse_proxy logs:8765\n}\n")
+    text = front_caddyfile(
+        {"console.secrets.svc.test": "secrets:8770", "api.logs.svc.test": "logs:8765"},
+        "c.pem",
+        "k.pem",
+    )
+    assert text == (
+        "{\n  auto_https off\n}\n"
+        "console.secrets.svc.test:443 {\n  tls /tls/c.pem /tls/k.pem\n  reverse_proxy secrets:8770\n}\n"
+        "api.logs.svc.test:443 {\n  tls /tls/c.pem /tls/k.pem\n  reverse_proxy logs:8765\n}\n"
+    )
 
 
 def test_secrets_sends_its_governance_and_use_events_to_the_lanes_logs():

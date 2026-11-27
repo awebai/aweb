@@ -104,7 +104,9 @@ class TeamGrantSource:
             generation=status.generation,
         )
 
-    async def status_for(self, team_id: str, certificate_id: str | None = None) -> GrantStatus | None:
+    async def status_for(
+        self, team_id: str, certificate_id: str | None = None
+    ) -> GrantStatus | None:
         """Fresh status or no registered key; unavailable authority raises GrantUnavailable.
 
         The total caller deadline includes discovery. Cancellation never
@@ -122,7 +124,9 @@ class TeamGrantSource:
         except (KeyError, TypeError, ValueError, RecursionError) as exc:
             raise GrantUnavailable("grant_answer_malformed") from exc
 
-    async def _status_for(self, team_id: str, certificate_id: str | None = None) -> GrantStatus | None:
+    async def _status_for(
+        self, team_id: str, certificate_id: str | None = None
+    ) -> GrantStatus | None:
         server = await self._directory.resolve(team_id, certificate_id)
         # A move or controller-key change cannot reuse the old server's answer.
         key = (team_id, server.server_url, server.audience, server.team_did_key)
@@ -178,7 +182,8 @@ class TeamGrantSource:
             body["team_id"] != team_id
             or body["app_id"] != identity.app_id
             or body["origin"] != identity.origin
-            or expected_digest is None or body["digest"] != expected_digest
+            or expected_digest is None
+            or body["digest"] != expected_digest
         ):
             raise ValueError("grant answer names another team or app identity")
         for field in ("state", "app_version", "as_of"):
@@ -194,7 +199,9 @@ class TeamGrantSource:
         if not isinstance(scopes, list) or not all(isinstance(s, str) and s for s in scopes):
             raise ValueError("invalid granted_scopes")
         installation_id = body["installation_id"]
-        if installation_id is not None and (not isinstance(installation_id, str) or not installation_id):
+        if installation_id is not None and (
+            not isinstance(installation_id, str) or not installation_id
+        ):
             raise ValueError("invalid installation_id")
         generation = body["generation"]
         if generation is not None and (

@@ -85,7 +85,9 @@ class Storage:
 
 class Registry(LegacyTeamFacts, RegistryClient):
     def __init__(self, world, transport):
-        super().__init__("http://registry.test", transport=transport, timeout_seconds=0.1)
+        super().__init__(
+            "http://registry.test", transport=transport, timeout_seconds=0.1
+        )
         self.world = world
 
     async def get_team_public_key(self, domain, name):
@@ -124,7 +126,9 @@ async def world(monkeypatch):
         assert request.url.path == f"/v1/did/{value.identity}/key"
         value.registry_reads += 1
         if value.status != 200:
-            headers = {} if value.retry_after is None else {"Retry-After": value.retry_after}
+            headers = (
+                {} if value.retry_after is None else {"Retry-After": value.retry_after}
+            )
             return httpx.Response(
                 value.status, headers=headers, json={"detail": "private upstream body"}
             )
@@ -132,7 +136,9 @@ async def world(monkeypatch):
             200,
             json={
                 "did_aw": value.identity,
-                "current_did_key": value.team_did if value.mismatched else value.member_did,
+                "current_did_key": value.team_did
+                if value.mismatched
+                else value.member_did,
                 "id_tree": {"enrolled": False},
             },
         )
@@ -152,7 +158,9 @@ async def world(monkeypatch):
 
     monkeypatch.setattr(apps, "installation_view_on", installation)
     value.app = app
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url=ORIGIN
+    ) as client:
         value.client = client
         try:
             yield value
@@ -174,7 +182,9 @@ def signed_headers(world, *, forged=False):
         "identity_scope": "global",
         "issued_at": timestamp,
     }
-    certificate["signature"] = sign_message(bytes(world.team), canonical_json_bytes(certificate))
+    certificate["signature"] = sign_message(
+        bytes(world.team), canonical_json_bytes(certificate)
+    )
     payload = canonical_json_bytes(
         {
             "v": 2,
@@ -191,7 +201,9 @@ def signed_headers(world, *, forged=False):
         "Authorization": f"DIDKey {world.member_did} {sign_message(bytes(signer), payload)}",
         "X-AWEB-Timestamp": timestamp,
         "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).decode().rstrip("="),
-        "X-AWID-Team-Certificate": base64.b64encode(json.dumps(certificate).encode()).decode(),
+        "X-AWID-Team-Certificate": base64.b64encode(
+            json.dumps(certificate).encode()
+        ).decode(),
     }
 
 
@@ -275,7 +287,9 @@ async def test_forged_request_does_not_read_registry_or_installation(world):
 async def test_only_sanitized_throttle_hint_is_exposed(delay, header):
     class Throttled:
         async def resolve_key_fresh(self, identity):
-            raise RegistryThrottled(retry_after_seconds=delay, attempts=1, reason="elapsed_budget")
+            raise RegistryThrottled(
+                retry_after_seconds=delay, attempts=1, reason="elapsed_budget"
+            )
 
     with pytest.raises(IdentityBindingError) as caught:
         await observe_identity_binding(

@@ -30,8 +30,10 @@ NAMESPACE_KEY = SigningKey.generate()
 @pytest.fixture(params=[None, SERVICE_TOKEN], ids=["certificate-status", "history"])
 def cache(registry, request):
     return AWIDTeamCache(
-        registry_url=REGISTRY_URL, ttl_seconds=60,
-        service_token=request.param, transport=registry.transport,
+        registry_url=REGISTRY_URL,
+        ttl_seconds=60,
+        service_token=request.param,
+        transport=registry.transport,
         txt_resolver=dns_naming("example.com", NAMESPACE_KEY),
     )
 
@@ -69,7 +71,9 @@ async def test_preflight_proof_keeps_the_original_facts_deadline(registry, cache
         TEAM, certificate_id=member.certificate_id, team_did_key=member.team_did_key
     )
     assert (proof.team_id, proof.certificate_id, proof.team_did_key) == (
-        TEAM, member.certificate_id, member.team_did_key,
+        TEAM,
+        member.certificate_id,
+        member.team_did_key,
     )
     assert before <= proof.checked_at == facts.fetched_at <= after
     assert type(proof.checked_at) is int and type(proof.fresh_until) is int
@@ -101,7 +105,12 @@ async def test_current_member_passes_without_observed_principal_rows(cache, memb
 
 @pytest.mark.parametrize("change", ["revoke", "replace_history", "rotate"])
 async def test_lost_authority_refuses_on_refresh(
-    registry, cache, member, change, test_db_factory, monkeypatch,
+    registry,
+    cache,
+    member,
+    change,
+    test_db_factory,
+    monkeypatch,
 ):
     await require(cache, member)
     async with AsyncExitStack() as stack:
@@ -111,11 +120,15 @@ async def test_lost_authority_refuses_on_refresh(
             # A restored authority can have the team but lack its later
             # certificate history. Use a second real registry for that view.
             restored_db = await test_db_factory.create_db(suffix="naapp_awid_restore")
-            restored = await stack.enter_async_context(running_registry(restored_db.config.get_dsn()))
+            restored = await stack.enter_async_context(
+                running_registry(restored_db.config.get_dsn())
+            )
             await restored.add_team(TEAM, member.team_did_key, namespace_controller=NAMESPACE_KEY)
             monkeypatch.setattr(cache, "_transport", restored.transport)
         else:
-            await registry.rotate_team_key_by_controller(TEAM, did_key(SigningKey.generate()), NAMESPACE_KEY)
+            await registry.rotate_team_key_by_controller(
+                TEAM, did_key(SigningKey.generate()), NAMESPACE_KEY
+            )
         expire(cache)
         with pytest.raises(HTTPException) as refused:
             await require(cache, member)
@@ -134,7 +147,9 @@ async def test_another_teams_evidence_is_not_authority(registry, cache, member):
 
 async def test_unreadable_private_team_facts_are_retryable(registry, member):
     cache = AWIDTeamCache(
-        registry_url=REGISTRY_URL, ttl_seconds=60, service_token="wrong-service-token-at-least-32-bytes",
+        registry_url=REGISTRY_URL,
+        ttl_seconds=60,
+        service_token="wrong-service-token-at-least-32-bytes",
         transport=registry.transport,
     )
     visibility = await registry.db.fetch_value("SELECT visibility FROM {{tables.teams}}")
@@ -147,10 +162,15 @@ async def test_unreadable_private_team_facts_are_retryable(registry, member):
         assert refused.value.detail["code"] == "current_membership_unavailable"
 
 
-@pytest.mark.parametrize("evidence", [
-    {"certificate_id": ""}, {"certificate_id": None},
-    {"team_did_key": ""}, {"team_did_key": None},
-])
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        {"certificate_id": ""},
+        {"certificate_id": None},
+        {"team_did_key": ""},
+        {"team_did_key": None},
+    ],
+)
 async def test_incomplete_mint_evidence_refuses_before_lookup(registry, cache, member, evidence):
     setup_calls = list(registry.transport.calls)
     with pytest.raises(HTTPException) as refused:
@@ -159,20 +179,33 @@ async def test_incomplete_mint_evidence_refuses_before_lookup(registry, cache, m
     assert registry.transport.calls == setup_calls
 
 
-async def test_runtime_uses_the_request_verifiers_bounded_cache(registry, member, test_db_factory, tmp_path):
+async def test_runtime_uses_the_request_verifiers_bounded_cache(
+    registry, member, test_db_factory, tmp_path
+):
     db = await test_db_factory.create_db()
     migrations = tmp_path / "migrations"
     migrations.mkdir()
     manifest = tmp_path / "aweb-app.json"
-    write_manifest_file(manifest, {
-        "manifest_version": 1, "app": {"id": "example", "origin": ORIGIN}, "tools": [],
-    })
+    write_manifest_file(
+        manifest,
+        {
+            "manifest_version": 1,
+            "app": {"id": "example", "origin": ORIGIN},
+            "tools": [],
+        },
+    )
     runtime = NaappRuntime(
         NaappSettings(
-            _env_file=None, database_url=db.config.get_dsn(), db_schema=db.schema,
-            app_id="example", public_origin=ORIGIN, awid_registry_url=REGISTRY_URL,
+            _env_file=None,
+            database_url=db.config.get_dsn(),
+            db_schema=db.schema,
+            app_id="example",
+            public_origin=ORIGIN,
+            awid_registry_url=REGISTRY_URL,
         ),
-        module_name="example", migrations_path=migrations, manifest_path=manifest,
+        module_name="example",
+        migrations_path=migrations,
+        manifest_path=manifest,
         awid_transport=registry.transport,
     )
     app = FastAPI()
@@ -180,18 +213,25 @@ async def test_runtime_uses_the_request_verifiers_bounded_cache(registry, member
     @app.get("/mint")
     async def mint(request: Request):
         principal = await runtime.principal(request)
-        return {"team_id": principal.team_id, "certificate_id": principal.certificate_id,
-                "team_did_key": principal.team_did_key}
+        return {
+            "team_id": principal.team_id,
+            "certificate_id": principal.certificate_id,
+            "team_did_key": principal.team_did_key,
+        }
 
     async with runtime.lifespan(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url=ORIGIN) as client:
-            response = await client.get("/mint", headers=member.headers(aud=ORIGIN, method="GET", path="/mint"))
+            response = await client.get(
+                "/mint", headers=member.headers(aud=ORIGIN, method="GET", path="/mint")
+            )
         assert response.status_code == 200, response.text
         evidence = response.json()
         calls = len(registry.transport.calls)
         proof = await runtime.check_current_member(**evidence)
         assert (proof.team_id, proof.certificate_id, proof.team_did_key) == (
-            TEAM, member.certificate_id, member.team_did_key,
+            TEAM,
+            member.certificate_id,
+            member.team_did_key,
         )
         await runtime.require_current_member(**evidence)
         assert len(registry.transport.calls) == calls
@@ -214,7 +254,9 @@ async def test_stopped_awid_is_retryable_not_authority_loss(registry, member):
     listener.bind(("127.0.0.1", 0))
     listener.listen()
     origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
-    server = uvicorn.Server(uvicorn.Config(registry.transport._inner.app, log_level="error", lifespan="off"))
+    server = uvicorn.Server(
+        uvicorn.Config(registry.transport._inner.app, log_level="error", lifespan="off")
+    )
     serving = asyncio.create_task(server.serve(sockets=[listener]))
     try:
         async with asyncio.timeout(5):

@@ -65,9 +65,20 @@ async def test_workspace_profile_requires_the_bounded_named_input():
 
     with pytest.raises(ValidationError) as refused:
         await connect_agent(
-            db=None, cert_info={"team_id": "t:example.com", "alias": "member", "did_key": "member"},
-            team_did_key="team", hostname="", workspace_path="", repo_origin="", role="",
-            human_name="", agent_type="agent", workspace_profile="hosted_mcp",
+            db=None,
+            cert_info={
+                "team_id": "t:example.com",
+                "alias": "member",
+                "did_key": "member",
+            },
+            team_did_key="team",
+            hostname="",
+            workspace_path="",
+            repo_origin="",
+            role="",
+            human_name="",
+            agent_type="agent",
+            workspace_profile="hosted_mcp",
         )
     assert refused.value.status_code == 422
     assert refused.value.detail == {

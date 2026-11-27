@@ -836,3 +836,7 @@ func TestScreenControllerUpMovesWithinWrappedInputBeforeHistory(t *testing.T) {
 		t.Fatalf("expected wrapped up-arrow to move cursor within input, got cursor=%d", screen.inputCursor)
 	}
 }
+
+func (s *ScreenController) renderFooterLinesLocked(width int) []string {
+	return s.renderFooterLayoutLocked(width).lines
+}

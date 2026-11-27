@@ -23,7 +23,9 @@ from aweb.member_team_key import grant_issuer_current
         "issuer-less-with-current",
     ],
 )
-def test_issuer_bound_grant_requires_its_exact_current_certificate(issuer, current, expected):
+def test_issuer_bound_grant_requires_its_exact_current_certificate(
+    issuer, current, expected
+):
     # Deliberate unit inputs. No row or cache is represented as admission proof.
     row = {
         "identity_scope": "local",

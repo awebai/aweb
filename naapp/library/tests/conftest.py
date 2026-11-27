@@ -7,10 +7,8 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from aweb_naapp_testing.databases import TEST_SCHEMA, SchemaDatabases
-from awid_service.testing import selected_test_database_config
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
-from pgdbm.testing import AsyncTestDatabase
+from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
 from test_e2e_smoke import (  # noqa: F401
     aw_workspace,
     aw_workspace_factory,
@@ -18,9 +16,19 @@ from test_e2e_smoke import (  # noqa: F401
     library_origin,
 )
 
-pytest_plugins = ("awid_service.testing_postgres",)
-
 _MIGRATIONS = Path(__file__).resolve().parent.parent / "src" / "library" / "migrations"
+
+# A naapp runs in its own schema: the candidate gate's role carries
+# production's search_path=pg_catalog, where an unqualified table resolves to
+# no user schema at all.
+TEST_SCHEMA = "naapp_test"
+
+_TEST_DB_CONFIG = DatabaseTestConfig(
+    host=os.environ.get("TEST_DB_HOST", "localhost"),
+    port=int(os.environ.get("TEST_DB_PORT", "5432")),
+    user=os.environ.get("TEST_DB_USER", "postgres"),
+    password=os.environ.get("TEST_DB_PASSWORD", "postgres"),
+)
 
 
 @pytest_asyncio.fixture
@@ -28,7 +36,7 @@ async def migrated_db() -> AsyncIterator[AsyncDatabaseManager]:
     """A real Postgres database with library's migrations applied. Skips cleanly when
     no Postgres is reachable, so it runs in CI / the reviewer's real-DB pass and is a
     no-op in environments without a database."""
-    test_database = AsyncTestDatabase(selected_test_database_config())
+    test_database = AsyncTestDatabase(_TEST_DB_CONFIG)
     try:
         await test_database.create_test_database()
     except Exception as exc:  # pragma: no cover - environment without Postgres
@@ -47,6 +55,23 @@ async def migrated_db() -> AsyncIterator[AsyncDatabaseManager]:
         await test_database.drop_test_database()
 
 
+class _SchemaDatabases:
+    """pgdbm's test database factory, giving every database a schema unless the test names one.
+
+    A copy of aweb_naapp_testing.databases.SchemaDatabases: Library's lock pins
+    aweb-naapp from an external commit and cannot see the tree's testing
+    package until aweb-acgh.5 moves it to in-repo path sources.
+    """
+
+    def __init__(self, factory: Any) -> None:
+        self._factory = factory
+
+    async def create_db(
+        self, suffix: str | None = None, schema: str | None = None, **kwargs: Any
+    ) -> AsyncDatabaseManager:
+        return await self._factory.create_db(suffix, schema or TEST_SCHEMA, **kwargs)
+
+
 @pytest.fixture
-async def test_db_factory(test_db_factory: Any) -> SchemaDatabases:
-    return SchemaDatabases(test_db_factory)
+async def test_db_factory(test_db_factory: Any) -> _SchemaDatabases:
+    return _SchemaDatabases(test_db_factory)

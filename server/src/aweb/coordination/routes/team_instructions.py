@@ -15,7 +15,11 @@ from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, field_validator
 
 from aweb.audit import OperatorAuditRoute, audit_success
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
 
 from ...db import DatabaseInfra, get_db_infra
 from ..defaults import get_default_team_instructions
@@ -24,7 +28,9 @@ from ..team_documents import activate_team_document, serialized_team_document
 logger = logging.getLogger(__name__)
 
 instructions_router = APIRouter(
-    prefix="/v1/instructions", tags=["instructions"], route_class=OperatorAuditRoute,
+    prefix="/v1/instructions",
+    tags=["instructions"],
+    route_class=OperatorAuditRoute,
 )
 router = instructions_router
 
@@ -112,7 +118,9 @@ def _normalize_document_data(document_data: Any) -> Dict[str, Any]:
         normalized.setdefault("format", "markdown")
         normalized.setdefault("body_md", "")
         return normalized
-    raise ValueError("team instructions document must be a JSON object or markdown string")
+    raise ValueError(
+        "team instructions document must be a JSON object or markdown string"
+    )
 
 
 def _legacy_invariants_to_markdown(bundle_data: Dict[str, Any]) -> str:
@@ -259,7 +267,9 @@ async def get_active_team_instructions(
             id=str(result["id"]),
             team_id=result["team_id"],
             version=result["version"],
-            document=TeamInstructionsDocument(**_normalize_document_data(document_data)),
+            document=TeamInstructionsDocument(
+                **_normalize_document_data(document_data)
+            ),
             created_by_alias=result["created_by_alias"],
             created_at=result["created_at"],
             updated_at=result["updated_at"],
@@ -347,13 +357,17 @@ async def get_active_team_instructions_endpoint(
 @instructions_router.get("/history")
 async def list_team_instructions_history(
     request: Request,
-    limit: int = Query(20, ge=1, le=100, description="Max number of versions to return"),
+    limit: int = Query(
+        20, ge=1, le=100, description="Max number of versions to return"
+    ),
     db: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> TeamInstructionsHistoryResponse:
     aweb_db = db.get_manager("aweb")
 
-    await get_active_team_instructions(aweb_db, identity.team_id, bootstrap_if_missing=True)
+    await get_active_team_instructions(
+        aweb_db, identity.team_id, bootstrap_if_missing=True
+    )
 
     rows = await aweb_db.fetch_all(
         """
@@ -469,7 +483,9 @@ async def activate_team_instructions_endpoint(
             """,
             identity.team_id,
         )
-        previous_instructions_id = str(previous_active["id"]) if previous_active else None
+        previous_instructions_id = (
+            str(previous_active["id"]) if previous_active else None
+        )
 
         await activate_team_instructions(
             aweb_db,
@@ -507,7 +523,9 @@ async def reset_team_instructions_to_default_endpoint(
             """,
             identity.team_id,
         )
-        previous_instructions_id = str(previous_active["id"]) if previous_active else None
+        previous_instructions_id = (
+            str(previous_active["id"]) if previous_active else None
+        )
 
         version = await create_team_instructions_version(
             aweb_db,

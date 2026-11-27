@@ -15,7 +15,6 @@ from .errors import Infrastructure, Refused
 from .lifecycle import write_summary
 from .source import git, prepare
 from .signals import handling
-from .local_guard import run_guard
 
 
 class Parser(argparse.ArgumentParser):
@@ -37,6 +36,14 @@ def parser():
     run.add_argument("--type", choices=["ccx33", "ccx43"])
     run.add_argument("--target", choices=["merak", "hetzner"])
     run.add_argument("--timeout", type=int, default=7200)
+    # A project receipt: one project's full gate for its release command.
+    run.add_argument("--project", choices=["aweb", "ac", "servers"])
+    run.add_argument("--machine")
+    run.add_argument("--receipt")
+    run.add_argument("--files")
+    run.add_argument("--image")
+    run.add_argument("--aweb-source")
+    run.add_argument("--steps")
     snap = sub.add_parser("snapshot")
     snap.add_argument("--sha", required=True)
     snap.add_argument("--repo")
@@ -56,9 +63,20 @@ def main(argv=None, *, factory=None, out=None):
     out = out or sys.stdout
     directory = None
     sha = None
-    local_checks = None
     try:
         args = parser().parse_args(argv)
+        if args.action == "run" and (args.project or args.receipt):
+            if not (args.project and args.receipt):
+                raise Refused("--project and --receipt go together")
+            from .project import project_job
+
+            return project_job(args, factory=factory, out=out)
+        if args.action == "run" and (
+            args.machine or args.files or args.image or args.aweb_source or args.steps
+        ):
+            raise Refused(
+                "--machine, --files, --image, --aweb-source and --steps need --project"
+            )
         if not args.config:
             raise Refused("external --config or VM_GATE_CONFIG is required")
         if os.geteuid() == 0:
@@ -101,10 +119,6 @@ def main(argv=None, *, factory=None, out=None):
                 intent=intent,
                 lock_root=config["state_root"],
             )
-            if args.action == "run":
-                local_checks = run_guard(
-                    source, directory, config.get("lint_timeout_seconds", 600)
-                )
             config["repo"] = str(repo)
         else:
             run_id = None
@@ -121,7 +135,6 @@ def main(argv=None, *, factory=None, out=None):
         with handling():
             result = getattr(runtime, args.action)()
         if directory is not None:
-            result["local_checks"] = local_checks
             write_summary(directory, result)
         if result.get("spend", {}).get("warn"):
             print(
@@ -140,7 +153,6 @@ def main(argv=None, *, factory=None, out=None):
             "infrastructure": exc.classification if known else "infrastructure",
             "error": str(exc) if known else type(exc).__name__,
             "finished": time.time(),
-            "local_checks": getattr(exc, "local_checks", local_checks),
         }
         if directory is not None:
             write_summary(directory, result)

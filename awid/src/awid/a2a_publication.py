@@ -29,30 +29,6 @@ A2A_STATUS_REVOKED = "revoked"
 A2A_CARD_DIGEST_ALG_SHA256 = "sha256"
 A2A_MIN_ALLOWED_OPERATIONS = ("send_task", "receive_reply", "cancel_task", "serve_card")
 
-A2A_CONFLICT_CODES = (
-    "a2a_publication_exists_different_digest",
-    "a2a_publication_exists_different_gateway",
-    "a2a_delegation_missing",
-    "a2a_delegation_digest_mismatch",
-    "a2a_delegation_expired",
-    "a2a_delegation_revoked",
-    "a2a_card_digest_mismatch",
-    "a2a_card_url_invalid",
-    "a2a_rpc_url_invalid",
-    "a2a_route_id_invalid",
-    "a2a_identity_signature_invalid",
-    "a2a_identity_key_history_invalid",
-    "a2a_delegation_signature_invalid",
-    "a2a_timestamp_stale",
-    "a2a_namespace_not_registered",
-    "a2a_address_not_registered",
-    "a2a_custody_combination_unsupported",
-    "a2a_authority_source_invalid",
-    "a2a_payload_canonicalization_mismatch",
-    "a2a_primitive_disabled",
-    "a2a_primitive_not_supported",
-)
-
 _ROUTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _ASSERTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _DIGEST_HEX_RE = re.compile(r"^sha256:[0-9a-f]{64}$")

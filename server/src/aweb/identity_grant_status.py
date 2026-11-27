@@ -61,7 +61,9 @@ def grant_status(row: Mapping[str, Any], now: datetime) -> GrantLifetimeState:
     )
 
 
-def _stored_grant_validity(row: Mapping[str, Any], *, now: datetime) -> GrantValidityState:
+def _stored_grant_validity(
+    row: Mapping[str, Any], *, now: datetime
+) -> GrantValidityState:
     """Apply lifetime, subject and retained issuer rules before registry reads.
 
     Session grants (docs/identity.md:773-811): no default lifetime cap; delegation ends with its
@@ -72,7 +74,9 @@ def _stored_grant_validity(row: Mapping[str, Any], *, now: datetime) -> GrantVal
         return GrantValidityState.REVOKED
     if lifetime is GrantLifetimeState.EXPIRED:
         return GrantValidityState.EXPIRED
-    if not member_row_active({"status": row["subject_status"], "deleted_at": row["subject_deleted_at"]}):
+    if not member_row_active(
+        {"status": row["subject_status"], "deleted_at": row["subject_deleted_at"]}
+    ):
         return GrantValidityState.SUBJECT_INACTIVE
     if not grant_issuer_current(row):
         return GrantValidityState.ISSUER_SUPERSEDED
@@ -96,8 +100,11 @@ async def grant_validity(
     observation. Issuer revocation is checked in either case.
     """
     (validity,) = await grant_validities(
-        rows=[row], now=now, registry_client=registry_client,
-        registration_mode=registration_mode, request=request,
+        rows=[row],
+        now=now,
+        registry_client=registry_client,
+        registration_mode=registration_mode,
+        request=request,
     )
     return validity
 
@@ -126,7 +133,10 @@ async def grant_validities(
         candidates.append((state, key))
         if request is not None and reuse_admitted and registration_mode is None:
             admitted = admitted_certificate_standing(
-                request, registry_client, team_id=team, certificate_id=issuer,
+                request,
+                registry_client,
+                team_id=team,
+                certificate_id=issuer,
                 team_key=row["current_team_did_key"],
             )
             if admitted is not None:
@@ -137,11 +147,19 @@ async def grant_validities(
     standings = reused
     for team, issuer_ids in issuer_ids_by_team.items():
         batch = await read_certificate_standings(
-            registry_client, team, issuer_ids, request=request, mode=registration_mode,
+            registry_client,
+            team,
+            issuer_ids,
+            request=request,
+            mode=registration_mode,
         )
-        standings.update({(team, issuer): standing for issuer, standing in batch.items()})
+        standings.update(
+            {(team, issuer): standing for issuer, standing in batch.items()}
+        )
     return [
-        GrantValidityObservation(state=state) if key is None else _issuer_validity(standings[key])
+        GrantValidityObservation(state=state)
+        if key is None
+        else _issuer_validity(standings[key])
         for state, key in candidates
     ]
 

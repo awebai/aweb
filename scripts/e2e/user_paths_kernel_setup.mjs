@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import strictAssert from "node:assert/strict";
@@ -101,13 +101,47 @@ export function runKernelProbeCommand({ name, argv, cwd, env, timeout = 60000, o
   return result.stdout;
 }
 
-// Stops the owned tmux server, then removes root. A failed, signalled or
-// timed-out stop keeps root, which holds the server's socket, for inspection.
+const PANE_EXIT_MS = 10000;
+
+// A zombie has exited: where nothing reaps orphans (a container whose PID 1 is
+// not an init), an exited pane stays one, and signal 0 still reaches it.
+function processRunning(pid) {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    return error.code !== "ESRCH";
+  }
+  let state;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    state = stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3);
+  } catch {
+    state = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout?.trim().charAt(0);
+  }
+  return state !== "Z";
+}
+
+// Stops the owned tmux server, waits for its panes to exit, then removes root.
+// kill-server returns before the panes exit, and a pane's shell can still
+// write (its history, under HOME) as it does. A failed, signalled or timed-out
+// stop, or a pane still running after the bound, keeps root, which holds the
+// server's socket, for inspection.
 export function cleanupPassiveTerminal({ root, tmuxBinary, env }) {
+  const listed = spawnSync(tmuxBinary, ["-L", "oats", "list-panes", "-a", "-F", "#{pane_pid}"], { env, encoding: "utf8", timeout: 10000 });
+  const panes = listed.status === 0 ? listed.stdout.split(/\s+/).filter((field) => /^[1-9][0-9]*$/.test(field)).map(Number) : [];
   const stopped = spawnSync(tmuxBinary, ["-L", "oats", "kill-server"], { env, encoding: "utf8", timeout: 10000 });
   const noServer = stopped.status === 1 && /^(?:no server running on [^\r\n]+|error connecting to [^\r\n]+ \(No such file or directory\))\s*$/.test(stopped.stderr);
   if (stopped.error || stopped.signal || (stopped.status !== 0 && !noServer)) {
     throw new Error(`Owned tmux cleanup failed (status=${stopped.status}, signal=${stopped.signal}, code=${stopped.error?.code ?? "none"}); socket root retained at ${root}. Inspect the owned server before removing that directory.`, { cause: stopped.error });
+  }
+  const deadline = performance.now() + PANE_EXIT_MS;
+  let running = panes.filter(processRunning);
+  while (running.length && performance.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    running = running.filter(processRunning);
+  }
+  if (running.length) {
+    throw new Error(`Owned tmux cleanup failed: panes ${running.join(", ")} still running ${PANE_EXIT_MS} ms after kill-server; socket root retained at ${root}. Inspect them before removing that directory.`);
   }
   rmSync(root, { recursive: true, force: true });
 }

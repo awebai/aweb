@@ -16,7 +16,11 @@ __all__ = ["privacy_app"]
 @pytest.mark.parametrize(
     "error,status,action",
     [
-        (httpx.ConnectError("request-content-marker"), 503, "Retry when the registry is available"),
+        (
+            httpx.ConnectError("request-content-marker"),
+            503,
+            "Retry when the registry is available",
+        ),
         (
             RegistryError(
                 "request-content-marker",
@@ -31,7 +35,11 @@ __all__ = ["privacy_app"]
             422,
             "Ask the server operator to check the registry",
         ),
-        (RuntimeError("request-content-marker"), 500, "Ask the server operator to investigate"),
+        (
+            RuntimeError("request-content-marker"),
+            500,
+            "Ask the server operator to investigate",
+        ),
     ],
 )
 def test_delivery_registry_refusal_keeps_status_and_action_without_input_text(
@@ -55,19 +63,24 @@ def test_delivery_registry_refusal_keeps_status_and_action_without_input_text(
 
 
 @pytest.mark.asyncio
-async def test_mail_send_returns_coded_422_for_an_unusable_registry_response(privacy_app, caplog):
+async def test_mail_send_returns_coded_422_for_an_unusable_registry_response(
+    privacy_app, caplog
+):
     env = privacy_app
     actor = env.actors["alice"]
     # The real AWID address route refuses this namespace after canonicalization.
     registry_path = "/v1/namespaces/.../addresses/bob"
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=env.registry_app), base_url="http://registry.test"
+        transport=httpx.ASGITransport(app=env.registry_app),
+        base_url="http://registry.test",
     ) as registry:
         upstream = await registry.get(registry_path)
     assert upstream.status_code == 400, upstream.text
     assert upstream.json() == {"detail": "Invalid domain"}
 
-    body = json.dumps({"to_address": ".../bob", "subject": "Hello", "body": "Hello"}).encode()
+    body = json.dumps(
+        {"to_address": ".../bob", "subject": "Hello", "body": "Hello"}
+    ).encode()
     headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, body)
     headers["Content-Type"] = "application/json"
     env.registry.transport.calls.clear()

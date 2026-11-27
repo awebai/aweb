@@ -33,12 +33,16 @@ class WorkspaceState(StrEnum):
 
 
 @pytest.mark.asyncio
-async def test_outer_transaction_removed_workspace_retry_completes_without_replay(privacy_app):
+async def test_outer_transaction_removed_workspace_retry_completes_without_replay(
+    privacy_app,
+):
     env = privacy_app
     member = env.actors["alice"]
     request = LifecycleCascadeRequest(
         operation="delete_local_workspace",
-        actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+        actor=LifecycleActor(
+            actor_id="owner", actor_type="system", authority="embedding"
+        ),
         team_id=TEAM,
         target_workspace_ids=(str(member.workspace),),
         workspace_scope="explicit",
@@ -46,14 +50,18 @@ async def test_outer_transaction_removed_workspace_retry_completes_without_repla
     arguments = dict(registry_client=env.app.state.awid_registry_client)
     removed = await apply_lifecycle_cascade(env.db, env.redis, request, **arguments)
     assert removed.errors == ()
-    assert [change.workspace_id for change in removed.workspace_changes] == [str(member.workspace)]
+    assert [change.workspace_id for change in removed.workspace_changes] == [
+        str(member.workspace)
+    ]
     async with env.db.transaction() as outer:
         before = await outer.fetch_value(
             "SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1",
             TEAM,
         )
         for _attempt in range(2):
-            result = await apply_lifecycle_cascade(outer, env.redis, request, **arguments)
+            result = await apply_lifecycle_cascade(
+                outer, env.redis, request, **arguments
+            )
             assert not result.errors
             assert result.post_commit_status == "completed"
             assert result.outbox_operation_id is None
@@ -81,7 +89,9 @@ async def test_agent_cleanup_retains_history_and_releases_live_coordination(
     alice, bob = env.actors["alice"], env.actors["bob"]
     for alias in ("alice", "bob"):
         await admit_room_member(env, alias=alias)
-    actor = LifecycleActor(actor_id="test-host", actor_type="system", authority="embedding")
+    actor = LifecycleActor(
+        actor_id="test-host", actor_type="system", authority="embedding"
+    )
     registry = env.app.state.awid_registry_client
     if workspace_state is WorkspaceState.DELETED:
         removed = await apply_lifecycle_cascade(
@@ -100,23 +110,38 @@ async def test_agent_cleanup_retains_history_and_releases_live_coordination(
         assert not removed.identity_deleted
 
     mail = await _request(
-        env, "alice", "POST", "/v1/messages",
+        env,
+        "alice",
+        "POST",
+        "/v1/messages",
         {"to_did": bob.did, "subject": "Cleanup history", "body": "retained mail"},
     )
     assert mail.status_code == 200, mail.text
     chat = await _request(
-        env, "alice", "POST", "/v1/chat/sessions",
+        env,
+        "alice",
+        "POST",
+        "/v1/chat/sessions",
         {"to_dids": [bob.did], "message": "retained history"},
     )
     assert chat.status_code == 200, chat.text
-    message_id, session_id = UUID(mail.json()["message_id"]), UUID(chat.json()["session_id"])
+    message_id, session_id = (
+        UUID(mail.json()["message_id"]),
+        UUID(chat.json()["session_id"]),
+    )
     control = (
         ("POST", "/v1/reservations", {"resource_key": "cleanup", "ttl_seconds": 600}),
-        ("POST", "/v1/session-leases", {"session_id": "cleanup", "session_key": "c" * 32}),
+        (
+            "POST",
+            "/v1/session-leases",
+            {"session_id": "cleanup", "session_key": "c" * 32},
+        ),
         ("PUT", "/v1/agents/me/status-host", {"host_did": bob.did}),
     )
     for method, route, body in control:
-        response = await _send_member_request(env, alias="alice", method=method, path=route, body=body)
+        response = await _send_member_request(
+            env, alias="alice", method=method, path=route, body=body
+        )
         assert response.status_code == 200, response.text
 
     request = LifecycleCascadeRequest(
@@ -127,7 +152,9 @@ async def test_agent_cleanup_retains_history_and_releases_live_coordination(
         workspace_scope="all_for_agent",
         agent_disposition=disposition,
     )
-    result = await apply_lifecycle_cascade(env.db, env.redis, request, registry_client=registry)
+    result = await apply_lifecycle_cascade(
+        env.db, env.redis, request, registry_client=registry
+    )
     assert result.errors == ()
     row = await env.db.fetch_one(
         "SELECT status,deleted_at FROM {{tables.agents}} WHERE agent_id=$1", alice.id
@@ -145,36 +172,49 @@ async def test_agent_cleanup_retains_history_and_releases_live_coordination(
     assert result.chat_participant_cleanup_count == 1
     assert not await env.db.fetch_value(
         "SELECT EXISTS(SELECT 1 FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2)",
-        session_id, alice.did,
+        session_id,
+        alice.did,
     )
     assert await env.db.fetch_value(
         "SELECT EXISTS(SELECT 1 FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2)",
-        session_id, bob.did,
+        session_id,
+        bob.did,
     )
     assert await env.db.fetch_value(
         """SELECT EXISTS(
             SELECT 1 FROM {{tables.conversation_participants}} WHERE conversation_id=$1 AND did=$2
         )""",
-        session_id, alice.did,
+        session_id,
+        alice.did,
     )
-    assert await env.db.fetch_value(
-        "SELECT body FROM {{tables.chat_messages}} WHERE session_id=$1", session_id
-    ) == "retained history"
-    assert await env.db.fetch_value(
-        "SELECT body FROM {{tables.messages}} WHERE message_id=$1", message_id
-    ) == "retained mail"
+    assert (
+        await env.db.fetch_value(
+            "SELECT body FROM {{tables.chat_messages}} WHERE session_id=$1", session_id
+        )
+        == "retained history"
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT body FROM {{tables.messages}} WHERE message_id=$1", message_id
+        )
+        == "retained mail"
+    )
     for table in ("reservations", "session_admission_leases", "agent_status_hosts"):
         assert not await env.db.fetch_value(
             f"SELECT COUNT(*) FROM {{{{tables.{table}}}}} WHERE team_id=$1", TEAM
         )
-    repeated = await apply_lifecycle_cascade(env.db, env.redis, request, registry_client=registry)
+    repeated = await apply_lifecycle_cascade(
+        env.db, env.redis, request, registry_client=registry
+    )
     assert repeated.errors == ()
     assert repeated.identity_deleted == result.identity_deleted
     assert repeated.identity_retired == result.identity_retired
 
 
 @pytest.mark.asyncio
-async def test_cleanup_scope_refuses_an_agent_of_another_team(aweb_cloud_db, lifecycle_redis):
+async def test_cleanup_scope_refuses_an_agent_of_another_team(
+    aweb_cloud_db, lifecycle_redis
+):
     db = aweb_cloud_db.aweb_db
     team, agent, workspace = await _seed_workspace_with_claim(db)
     result = await apply_lifecycle_cascade(
@@ -182,7 +222,9 @@ async def test_cleanup_scope_refuses_an_agent_of_another_team(aweb_cloud_db, lif
         lifecycle_redis,
         LifecycleCascadeRequest(
             operation="cleanup_agent_coordination_state",
-            actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+            actor=LifecycleActor(
+                actor_id="owner", actor_type="system", authority="embedding"
+            ),
             team_id="another:acme.com",
             target_agent_id=str(agent),
             workspace_scope="all_for_agent",
@@ -192,12 +234,15 @@ async def test_cleanup_scope_refuses_an_agent_of_another_team(aweb_cloud_db, lif
     )
     assert [error.code for error in result.errors] == ["agent_not_found"]
     assert (
-        await db.fetch_value("SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", agent)
+        await db.fetch_value(
+            "SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", agent
+        )
         is None
     )
     assert (
         await db.fetch_value(
-            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+            workspace,
         )
         is None
     )
@@ -236,28 +281,34 @@ async def test_coordination_cleanup_rolls_back_with_its_outer_transaction(
             )
             raise RuntimeError("outer transaction refused")
     assert (
-        await db.fetch_value("SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", agent)
+        await db.fetch_value(
+            "SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", agent
+        )
         is None
     )
     assert (
         await db.fetch_value(
-            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+            workspace,
         )
         is None
     )
     assert await db.fetch_value(
         "SELECT EXISTS(SELECT 1 FROM {{tables.chat_participants}} WHERE session_id=$1 AND did=$2)",
-        session, did,
+        session,
+        did,
     )
     assert (
         await db.fetch_value(
-            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1", workspace
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1",
+            workspace,
         )
         == 1
     )
     assert (
         await db.fetch_value(
-            "SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1", team
+            "SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1",
+            team,
         )
         == 0
     )
@@ -273,7 +324,9 @@ async def test_prepared_removal_denies_ordinary_member_activity(privacy_app):
         env.redis,
         LifecycleCascadeRequest(
             operation="cleanup_agent_coordination_state",
-            actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+            actor=LifecycleActor(
+                actor_id="owner", actor_type="system", authority="embedding"
+            ),
             team_id=TEAM,
             target_agent_id=str(agent),
             workspace_scope="all_for_agent",
@@ -287,7 +340,9 @@ async def test_prepared_removal_denies_ordinary_member_activity(privacy_app):
     )
     assert response.status_code == 403, response.text
     assert (
-        await env.db.fetch_value("SELECT status FROM {{tables.agents}} WHERE agent_id=$1", agent)
+        await env.db.fetch_value(
+            "SELECT status FROM {{tables.agents}} WHERE agent_id=$1", agent
+        )
         == "active"
     )
     assert await env.db.fetch_value(
@@ -296,7 +351,9 @@ async def test_prepared_removal_denies_ordinary_member_activity(privacy_app):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal", [AgentDisposition.DELETED, AgentDisposition.RETIRED])
+@pytest.mark.parametrize(
+    "terminal", [AgentDisposition.DELETED, AgentDisposition.RETIRED]
+)
 async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_removal(
     aweb_cloud_db, lifecycle_redis, terminal
 ):
@@ -307,7 +364,9 @@ async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_re
 
     async def prepare():
         async with db.transaction() as prepared_tx:
-            prepared_pid.set_result(await prepared_tx.fetch_value("SELECT pg_backend_pid()"))
+            prepared_pid.set_result(
+                await prepared_tx.fetch_value("SELECT pg_backend_pid()")
+            )
             return await apply_lifecycle_cascade(
                 prepared_tx,
                 lifecycle_redis,
@@ -341,28 +400,36 @@ async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_re
             assert pid != terminal_pid
             # Wait for the real blocked UPDATE, not a guessed scheduling delay.
             async with asyncio.timeout(5):
-                while not await db.fetch_value("SELECT cardinality(pg_blocking_pids($1)) > 0", pid):
+                while not await db.fetch_value(
+                    "SELECT cardinality(pg_blocking_pids($1)) > 0", pid
+                ):
                     assert not prepared_task.done()
                     await asyncio.sleep(0.01)
         result = await prepared_task
-        assert [error.code for error in result.errors] == ["terminal_agent_cannot_prepare_removal"]
+        assert [error.code for error in result.errors] == [
+            "terminal_agent_cannot_prepare_removal"
+        ]
         expected_status = {
             AgentDisposition.DELETED: MemberStatus.DELETED,
             AgentDisposition.RETIRED: MemberStatus.RETIRED,
         }[terminal]
         assert (
-            await db.fetch_value("SELECT status FROM {{tables.agents}} WHERE agent_id=$1", agent)
+            await db.fetch_value(
+                "SELECT status FROM {{tables.agents}} WHERE agent_id=$1", agent
+            )
             == expected_status
         )
         assert (
             await db.fetch_value(
-                "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+                "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+                workspace,
             )
             is None
         )
         assert (
             await db.fetch_value(
-                "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1", workspace
+                "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1",
+                workspace,
             )
             == 1
         )
@@ -395,7 +462,9 @@ async def test_omitted_team_retry_uses_retained_workspace_team_binding(
         team_id=TEAM,
         target_workspace_ids=(str(member.workspace),),
     )
-    removed = await apply_lifecycle_cascade(env.db, env.redis, request, registry_client=registry)
+    removed = await apply_lifecycle_cascade(
+        env.db, env.redis, request, registry_client=registry
+    )
     assert removed.errors == ()
     assert removed.workspace_changes
     result = await apply_lifecycle_cascade(
@@ -412,7 +481,8 @@ async def test_omitted_team_retry_uses_retained_workspace_team_binding(
     )
     assert (
         await env.db.fetch_value(
-            "SELECT team_id FROM {{tables.workspaces}} WHERE workspace_id=$1", member.workspace
+            "SELECT team_id FROM {{tables.workspaces}} WHERE workspace_id=$1",
+            member.workspace,
         )
         == TEAM
     )
@@ -426,7 +496,9 @@ async def test_explicit_workspace_cannot_select_another_agent_for_cleanup(privac
     bob = env.actors["bob"]
     request = LifecycleCascadeRequest(
         operation="cleanup_agent_coordination_state",
-        actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+        actor=LifecycleActor(
+            actor_id="owner", actor_type="system", authority="embedding"
+        ),
         team_id=TEAM,
         target_agent_id=str(alice.id).upper(),
         target_workspace_ids=(str(bob.workspace),),
@@ -435,7 +507,9 @@ async def test_explicit_workspace_cannot_select_another_agent_for_cleanup(privac
     refused = await apply_lifecycle_cascade(
         env.db, env.redis, request, registry_client=env.app.state.awid_registry_client
     )
-    assert [error.code for error in refused.errors] == ["lifecycle_workspace_target_mismatch"]
+    assert [error.code for error in refused.errors] == [
+        "lifecycle_workspace_target_mismatch"
+    ]
     for actor in (alice, bob):
         assert (
             await env.db.fetch_value(
@@ -463,7 +537,8 @@ async def test_explicit_workspace_cannot_select_another_agent_for_cleanup(privac
     )
     assert (
         await env.db.fetch_value(
-            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", bob.workspace
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+            bob.workspace,
         )
         is None
     )
@@ -481,12 +556,18 @@ async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
     # Claim high first so the product puts low first in recency order.
     for alias in reversed(aliases):
         task = await _send_member_request(
-            env, alias=alias, method="POST", path="/v1/tasks",
+            env,
+            alias=alias,
+            method="POST",
+            path="/v1/tasks",
             body={"title": f"Cleanup ordering claim for {alias}"},
         )
         assert task.status_code == 200, task.text
         claimed = await _send_member_request(
-            env, alias=alias, method="PATCH", path=f"/v1/tasks/{task.json()['task_ref']}",
+            env,
+            alias=alias,
+            method="PATCH",
+            path=f"/v1/tasks/{task.json()['task_ref']}",
             body={"status": "in_progress"},
         )
         assert claimed.status_code == 200, claimed.text
@@ -494,7 +575,9 @@ async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
 
     async def clean():
         async with db.transaction() as cleanup_tx:
-            cleanup_pid.set_result(await cleanup_tx.fetch_value("SELECT pg_backend_pid()"))
+            cleanup_pid.set_result(
+                await cleanup_tx.fetch_value("SELECT pg_backend_pid()")
+            )
             return await apply_lifecycle_cascade(
                 cleanup_tx,
                 env.redis,
@@ -521,7 +604,9 @@ async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
             pid = await cleanup_pid
             assert pid != holder_pid
             async with asyncio.timeout(5):
-                while not await db.fetch_value("SELECT cardinality(pg_blocking_pids($1)) > 0", pid):
+                while not await db.fetch_value(
+                    "SELECT cardinality(pg_blocking_pids($1)) > 0", pid
+                ):
                     assert not cleanup_task.done(), cleanup_task.result().errors
             # A delete before the full workspace lock set would lock this row.
             claim = await holder.fetch_one(

@@ -10,18 +10,39 @@ cleanup_work() {
   [[ ! -e "$work" ]]
 }
 
+# Records why cleanup failed beside the resources it checked.
+cleanup_failure() {
+  cleanup_status=1
+  printf 'cleanup-failure\t%s\n' "$1" >> "$LOG_DIR/owned-resources.tsv"
+}
+
 cleanup() {
   local original_status="${1:-$?}" cleanup_status=0 resource filter ids item
-  local -a filters list remove
+  local -a filters list remove runners
   trap - EXIT
   trap '' INT TERM
   set +e
   filters=("aweb.candidate-gate=$resource_label")
   for item in "${suite_projects[@]}"; do filters+=("com.docker.compose.project=$item"); done
-  # Stop the runner before removing anything it could recreate.
-  if docker container inspect "$runner_name" >/dev/null 2>&1; then
-    docker rm -fv "$runner_name" >/dev/null 2>&1 || cleanup_status=1
-  fi
+  # Stop every runner before removing anything it could recreate: the run's
+  # runner and each stage lane's runner the manifest names.
+  # A signal that reached the runner's docker run --rm CLI also makes the
+  # daemon remove it, so this removal can fail with "already in progress"
+  # while the runner disappears. Here and below, absence is the proof, not the
+  # removal command's exit.
+  runners=("$runner_name")
+  while IFS=$'\t' read -r resource item; do
+    [[ "$resource" != runner ]] || runners+=("$item")
+  done < "$LOG_DIR/owned-resources.tsv"
+  for item in "${runners[@]}"; do
+    docker container inspect "$item" >/dev/null 2>&1 || continue
+    docker rm -fv "$item" >/dev/null 2>&1
+    for _ in {1..100}; do
+      docker container inspect "$item" >/dev/null 2>&1 || break
+      sleep .1
+    done
+    ! docker container inspect "$item" >/dev/null 2>&1 || cleanup_failure "runner $item still present"
+  done
   while IFS=$'\t' read -r resource item; do
     [[ "$resource" != compose-project ]] || filters+=("com.docker.compose.project=$item")
   done < "$LOG_DIR/owned-resources.tsv"
@@ -33,16 +54,16 @@ cleanup() {
       image) list=(docker images -q); remove=(docker image rm -f) ;;
     esac
     for filter in "${filters[@]}"; do
-      ids="$("${list[@]}" --filter "label=$filter" | sort -u)" || cleanup_status=1
+      ids="$("${list[@]}" --filter "label=$filter" | sort -u)" || cleanup_failure "cannot list $resource $filter"
       for item in $ids; do
         printf '%s\t%s\n' "$resource" "$item" >> "$LOG_DIR/owned-resources.tsv"
-        "${remove[@]}" "$item" >/dev/null 2>&1 || cleanup_status=1
+        "${remove[@]}" "$item" >/dev/null 2>&1
       done
-      ids="$("${list[@]}" --filter "label=$filter")" || cleanup_status=1
+      ids="$("${list[@]}" --filter "label=$filter")" || cleanup_failure "cannot list $resource $filter"
       printf 'absence-filter\t%s\t%s\t%s\n' "$resource" "$filter" "${ids:-none}" >> "$LOG_DIR/owned-resources.tsv"
       if [[ -n "$ids" ]]; then
         printf 'candidate gate cleanup residue: %s %s %s\n' "$resource" "$filter" "$ids" >&2
-        cleanup_status=1
+        cleanup_failure "$resource residue $filter"
       fi
     done
   done
@@ -52,28 +73,28 @@ cleanup() {
     [[ "$resource" == builder ]] || continue
     BUILDX_CONFIG="$buildx_config" docker buildx rm --force "$item" >/dev/null 2>&1
     if docker container inspect "buildx_buildkit_${item}0" >/dev/null 2>&1; then
-      docker rm -fv "buildx_buildkit_${item}0" >/dev/null 2>&1 || cleanup_status=1
+      docker rm -fv "buildx_buildkit_${item}0" >/dev/null 2>&1
     fi
     if docker volume inspect "buildx_buildkit_${item}0_state" >/dev/null 2>&1; then
-      docker volume rm "buildx_buildkit_${item}0_state" >/dev/null 2>&1 || cleanup_status=1
+      docker volume rm "buildx_buildkit_${item}0_state" >/dev/null 2>&1
     fi
-    ! docker container inspect "buildx_buildkit_${item}0" >/dev/null 2>&1 || cleanup_status=1
-    ! docker volume inspect "buildx_buildkit_${item}0_state" >/dev/null 2>&1 || cleanup_status=1
-    ! BUILDX_CONFIG="$buildx_config" docker buildx inspect "$item" >/dev/null 2>&1 || cleanup_status=1
+    ! docker container inspect "buildx_buildkit_${item}0" >/dev/null 2>&1 || cleanup_failure "builder container $item still present"
+    ! docker volume inspect "buildx_buildkit_${item}0_state" >/dev/null 2>&1 || cleanup_failure "builder volume $item still present"
+    ! BUILDX_CONFIG="$buildx_config" docker buildx inspect "$item" >/dev/null 2>&1 || cleanup_failure "builder $item still present"
   done < "$LOG_DIR/owned-resources.tsv"
   if docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    docker image rm "$IMAGE" >/dev/null 2>&1 || cleanup_status=1
+    docker image rm "$IMAGE" >/dev/null 2>&1
   fi
-  ! docker image inspect "$IMAGE" >/dev/null 2>&1 || cleanup_status=1
+  ! docker image inspect "$IMAGE" >/dev/null 2>&1 || cleanup_failure "gate image still present"
   # A daemon outage must not look like successful absence checks.
-  docker info >/dev/null 2>&1 || cleanup_status=1
-  cleanup_work || cleanup_status=1
+  docker info >/dev/null 2>&1 || cleanup_failure "docker daemon unavailable"
+  cleanup_work || cleanup_failure "work directory not removed"
   printf 'absence-check\tstatus=%s\n' "$cleanup_status" >> "$LOG_DIR/owned-resources.tsv"
   if [[ -f "$LOG_DIR/host-before.json" ]]; then
     python3 "$ROOT/scripts/candidate-host-pressure.py" settle \
-      "$LOG_DIR/host-before.json" "$LOG_DIR" || cleanup_status=1
+      "$LOG_DIR/host-before.json" "$LOG_DIR" || cleanup_failure "host resources not recovered"
   else
-    cleanup_status=1
+    cleanup_failure "no host baseline"
   fi
   if [[ "$cleanup_status" -ne 0 ]]; then
     printf 'candidate gate cleanup FAILED\n' | tee -a "$LOG_DIR/wrapper-verdict.log" >&2

@@ -56,11 +56,6 @@ jobs:
     name: Lint, test, and real-stack e2e
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    # naapp tests create databases only on a Postgres the run names (aweb-admf):
-    # this job's own postgres service.
-    env:
-      TEST_DB_HOST: localhost
-      TEST_DB_PORT: "5432"
     services:
       postgres:
         image: postgres:16

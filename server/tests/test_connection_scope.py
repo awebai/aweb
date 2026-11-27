@@ -16,7 +16,11 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from httpx import ASGITransport, AsyncClient
 
-from aweb.connection_scope import ConnectionScopeMiddleware, DatabaseManager, connection_scope
+from aweb.connection_scope import (
+    ConnectionScopeMiddleware,
+    DatabaseManager,
+    connection_scope,
+)
 
 _LOCK_KEY = 815_004
 
@@ -73,7 +77,9 @@ async def test_a_manager_call_inside_a_transaction_still_runs_outside_it(manager
             await tx.execute("CREATE TEMP TABLE scope_probe (n int) ON COMMIT DROP")
             outer_pid = await tx.fetch_value("SELECT pg_backend_pid()")
             inner_pid = await public_db.fetch_value("SELECT pg_backend_pid()")
-            inner_sees_temp = await public_db.fetch_value("SELECT to_regclass('pg_temp.scope_probe') IS NOT NULL")
+            inner_sees_temp = await public_db.fetch_value(
+                "SELECT to_regclass('pg_temp.scope_probe') IS NOT NULL"
+            )
     assert inner_pid != outer_pid
     assert inner_sees_temp is False
 
@@ -96,7 +102,9 @@ async def test_a_cancelled_statement_discards_the_lent_connection(managers):
     async with connection_scope():
         await aweb_db.execute("SELECT pg_advisory_lock($1)", _LOCK_KEY)
         with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(aweb_db.fetch_value("SELECT pg_sleep(5)"), timeout=0.2)
+            await asyncio.wait_for(
+                aweb_db.fetch_value("SELECT pg_sleep(5)"), timeout=0.2
+            )
         assert await public_db.fetch_value("SELECT 1") == 1
         assert not await _holds_session_lock(public_db)
         await _mark(public_db)
@@ -163,7 +171,9 @@ def _app(db) -> FastAPI:
 @pytest.mark.asyncio
 async def test_a_request_shares_one_checkout_until_its_response_starts(managers):
     aweb_db, _ = managers
-    async with AsyncClient(transport=ASGITransport(app=_app(aweb_db)), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(aweb_db)), base_url="http://test"
+    ) as client:
         plain = await client.get("/plain")
         stream = await client.get("/stream")
     assert plain.json() == {"marked": True}
@@ -190,13 +200,17 @@ async def test_an_aweb_app_request_shares_one_checkout(shared_test_pool):
         await _mark(db)
         return {"marked": await _marked(db)}
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/probe")
     assert response.json() == {"marked": True}
 
 
 @pytest.mark.asyncio
-async def test_a_mounted_app_with_its_own_scope_middleware_joins_the_outer_scope(managers):
+async def test_a_mounted_app_with_its_own_scope_middleware_joins_the_outer_scope(
+    managers,
+):
     aweb_db, _ = managers
     outer = FastAPI()
     outer.mount("/inner", _app(aweb_db))
@@ -207,7 +221,9 @@ async def test_a_mounted_app_with_its_own_scope_middleware_joins_the_outer_scope
         await _mark(aweb_db)
         return await call_next(request)
 
-    async with AsyncClient(transport=ASGITransport(app=outer), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=outer), base_url="http://test"
+    ) as client:
         response = await client.get("/inner/plain")
     assert response.json() == {"marked": True}
 
@@ -228,7 +244,9 @@ async def small_pool(test_db_factory):
     from pgdbm import AsyncDatabaseManager
 
     db = await test_db_factory.create_db(suffix="scope_small_pool")
-    config = build_database_config(connection_string=db.config.get_dsn(), min_connections=1, max_connections=3)
+    config = build_database_config(
+        connection_string=db.config.get_dsn(), min_connections=1, max_connections=3
+    )
     pool = await AsyncDatabaseManager.create_shared_pool(config)
     try:
         yield pool
@@ -246,7 +264,9 @@ async def test_requests_waiting_on_the_network_do_not_starve_the_pool(small_pool
         await asyncio.sleep(2)
         return {"ok": True}
 
-    upstream = AsyncClient(transport=ASGITransport(app=stalled_upstream), base_url="http://upstream")
+    upstream = AsyncClient(
+        transport=ASGITransport(app=stalled_upstream), base_url="http://upstream"
+    )
     app = FastAPI()
 
     @app.get("/stalled")
@@ -260,8 +280,12 @@ async def test_requests_waiting_on_the_network_do_not_starve_the_pool(small_pool
         return {"value": await db.fetch_value("SELECT 3")}
 
     app.add_middleware(ConnectionScopeMiddleware)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        stalled_requests = [asyncio.create_task(client.get("/stalled")) for _ in range(10)]
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        stalled_requests = [
+            asyncio.create_task(client.get("/stalled")) for _ in range(10)
+        ]
         await asyncio.sleep(0.3)
         started = asyncio.get_running_loop().time()
         db_only_response = await client.get("/db")
@@ -275,7 +299,9 @@ async def test_requests_waiting_on_the_network_do_not_starve_the_pool(small_pool
 
 
 @pytest.mark.asyncio
-async def test_an_exhausted_pool_fails_a_request_with_a_retryable_503(small_pool, monkeypatch):
+async def test_an_exhausted_pool_fails_a_request_with_a_retryable_503(
+    small_pool, monkeypatch
+):
     import aweb.connection_scope as connection_scope_module
 
     monkeypatch.setattr(connection_scope_module, "ACQUIRE_TIMEOUT_SECONDS", 0.3)
@@ -289,7 +315,9 @@ async def test_an_exhausted_pool_fails_a_request_with_a_retryable_503(small_pool
     app.add_middleware(ConnectionScopeMiddleware)
     held = [await small_pool.acquire() for _ in range(3)]
     try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             started = asyncio.get_running_loop().time()
             response = await client.get("/db")
             seconds = asyncio.get_running_loop().time() - started
@@ -298,13 +326,17 @@ async def test_an_exhausted_pool_fails_a_request_with_a_retryable_503(small_pool
             await small_pool.release(connection)
 
     assert response.status_code == 503
-    assert response.json() == {"detail": {"code": "database_unavailable", "retryable": True}}
+    assert response.json() == {
+        "detail": {"code": "database_unavailable", "retryable": True}
+    }
     assert response.headers["retry-after"] == "1"
     assert seconds < 1.0
 
 
 @pytest.mark.asyncio
-async def test_an_exhausted_pool_in_a_middleware_is_a_retryable_503_not_a_500(small_pool, monkeypatch):
+async def test_an_exhausted_pool_in_a_middleware_is_a_retryable_503_not_a_500(
+    small_pool, monkeypatch
+):
     import aweb.connection_scope as connection_scope_module
 
     monkeypatch.setattr(connection_scope_module, "ACQUIRE_TIMEOUT_SECONDS", 0.3)
@@ -324,7 +356,8 @@ async def test_an_exhausted_pool_in_a_middleware_is_a_retryable_503_not_a_500(sm
     held = [await small_pool.acquire() for _ in range(3)]
     try:
         async with AsyncClient(
-            transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test",
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
         ) as client:
             response = await client.get("/db")
     finally:
@@ -332,7 +365,9 @@ async def test_an_exhausted_pool_in_a_middleware_is_a_retryable_503_not_a_500(sm
             await small_pool.release(connection)
 
     assert response.status_code == 503
-    assert response.json() == {"detail": {"code": "database_unavailable", "retryable": True}}
+    assert response.json() == {
+        "detail": {"code": "database_unavailable", "retryable": True}
+    }
 
 
 @pytest.mark.asyncio
@@ -374,6 +409,8 @@ async def test_a_request_memo_is_gone_for_its_streaming_body():
         return StreamingResponse(body(), media_type="text/plain")
 
     app.add_middleware(ConnectionScopeMiddleware)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/stream")
     assert response.text == "True"

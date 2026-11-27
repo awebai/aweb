@@ -15,6 +15,7 @@ FIELDS = (
     "memory.events",
     "cpu.stat",
     "cpu.max",
+    "cpu.weight",
     "cpuset.cpus.effective",
 )
 alive = True

@@ -102,7 +102,9 @@ def _attestation(**overrides):
 
 def test_signing_bytes_are_the_type_prefix_and_newline_then_canonical_json():
     record = _custodian()
-    assert signing_bytes(record) == b"aweb.team-custodian/1\n" + canonical_json_bytes(record)
+    assert signing_bytes(record) == b"aweb.team-custodian/1\n" + canonical_json_bytes(
+        record
+    )
     assert signing_bytes(_custody()).startswith(b"aweb.member-custody/1\n")
     assert signing_bytes(_person()).startswith(b"aweb.member-person/1\n")
     assert signing_bytes(_attestation()).startswith(b"aweb.principal-attestation/1\n")
@@ -138,13 +140,19 @@ def test_a_record_naming_another_team_key_is_refused_even_if_signed():
         (validate_team_custodian, _custodian(extra="x")),
         (validate_team_custodian, _custodian(custodian_id="Upper.Case")),
         (validate_team_custodian, _custodian(issuer_did_keys=[ISSUER_DID, ISSUER_DID])),
-        (validate_team_custodian, _custodian(issuer_did_keys=[ISSUER_DID, TEAM_DID, MEMBER_DID])),
+        (
+            validate_team_custodian,
+            _custodian(issuer_did_keys=[ISSUER_DID, TEAM_DID, MEMBER_DID]),
+        ),
         (validate_team_custodian, _custodian(issued_at="2026-10-20T12:00:00+00:00")),
         (validate_team_custodian, _custodian(v=2)),
         (validate_member_custody, _custody(certificate_id="")),
         (validate_member_custody, _custody(member_did_key="did:aw:x")),
         (validate_member_person, _person(single_person="yes")),
-        (validate_member_person, {k: v for k, v in _person().items() if k != "single_person"}),
+        (
+            validate_member_person,
+            {k: v for k, v in _person().items() if k != "single_person"},
+        ),
     ],
 )
 def test_malformed_records_are_refused(validate, record):

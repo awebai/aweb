@@ -30,7 +30,9 @@ from test_workspace_liveness_http import (
 __all__ = ["privacy_app"]
 
 
-async def _claim_tasks(env, *, count: int, alias: str = "alice", team_id: str = TEAM) -> list[str]:
+async def _claim_tasks(
+    env, *, count: int, alias: str = "alice", team_id: str = TEAM
+) -> list[str]:
     refs = []
     for index in range(count):
         created = await _send_member_request(
@@ -58,7 +60,9 @@ async def _claim_tasks(env, *, count: int, alias: str = "alice", team_id: str = 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("claim_count", [0, 3])
-async def test_self_delete_reports_actual_released_claims_and_events(privacy_app, claim_count):
+async def test_self_delete_reports_actual_released_claims_and_events(
+    privacy_app, claim_count
+):
     env = privacy_app
     alice = env.actors["alice"]
     refs = await _claim_tasks(env, count=claim_count)
@@ -87,7 +91,9 @@ async def test_self_delete_reports_actual_released_claims_and_events(privacy_app
                                 break
             for channel in channels:
                 assert {
-                    event["task_ref"] for observed, event in received if observed == channel
+                    event["task_ref"]
+                    for observed, event in received
+                    if observed == channel
                 } == set(refs)
                 assert all(
                     event["type"] == "task.unclaimed"
@@ -96,7 +102,8 @@ async def test_self_delete_reports_actual_released_claims_and_events(privacy_app
                 )
     assert (
         await env.db.fetch_value(
-            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1", alice.workspace
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1",
+            alice.workspace,
         )
         == 0
     )
@@ -105,7 +112,8 @@ async def test_self_delete_reports_actual_released_claims_and_events(privacy_app
         alice.workspace,
     )
     assert await env.db.fetch_value(
-        "SELECT deleted_at IS NOT NULL FROM {{tables.agents}} WHERE agent_id=$1", alice.id
+        "SELECT deleted_at IS NOT NULL FROM {{tables.agents}} WHERE agent_id=$1",
+        alice.id,
     )
 
 
@@ -127,13 +135,15 @@ async def test_peer_delete_preserves_a_global_identity_and_its_claim(privacy_app
     )
     assert (
         await env.db.fetch_value(
-            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", alice.workspace
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+            alice.workspace,
         )
         is None
     )
     assert (
         await env.db.fetch_value(
-            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1", alice.workspace
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1",
+            alice.workspace,
         )
         == 1
     )
@@ -144,8 +154,11 @@ async def test_cross_team_workspace_delete_does_not_touch_foreign_bindings(priva
     env = privacy_app
     team = "neighbor:example.test"
     await env.app.state.awid_registry_client.register_team(
-        domain="example.test", name="neighbor", display_name="Neighbor",
-        team_did_key=env.team_did, visibility="public",
+        domain="example.test",
+        name="neighbor",
+        display_name="Neighbor",
+        team_did_key=env.team_did,
+        visibility="public",
         namespace_controller_signing_key=env.namespace_sk,
     )
     member = await _connect_registered_member(env, alias="foreign", team_id=team)
@@ -157,7 +170,8 @@ async def test_cross_team_workspace_delete_does_not_touch_foreign_bindings(priva
     assert response.status_code == 404, response.text
     assert (
         await env.db.fetch_value(
-            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+            workspace,
         )
         is None
     )
@@ -169,7 +183,8 @@ async def test_cross_team_workspace_delete_does_not_touch_foreign_bindings(priva
     )
     assert (
         await env.db.fetch_value(
-            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1", workspace
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1",
+            workspace,
         )
         == 1
     )
@@ -180,7 +195,15 @@ async def _redis_without_command(env, command: str):
     """A temporary Redis client with one forbidden command."""
     username, password = f"cleanup-{uuid4().hex}", uuid4().hex
     await env.redis.execute_command(
-        "ACL", "SETUSER", username, "on", f">{password}", "~*", "&*", "+@all", f"-{command}"
+        "ACL",
+        "SETUSER",
+        username,
+        "on",
+        f">{password}",
+        "~*",
+        "&*",
+        "+@all",
+        f"-{command}",
     )
     try:
         parts = urlsplit(os.environ["REDIS_URL"])
@@ -197,7 +220,9 @@ async def _redis_without_command(env, command: str):
 
 
 @pytest.mark.asyncio
-async def test_post_commit_redis_permission_failure_is_retried_against_real_service(privacy_app, monkeypatch):
+async def test_post_commit_redis_permission_failure_is_retried_against_real_service(
+    privacy_app, monkeypatch
+):
     env = privacy_app
     alice, bob = env.actors["alice"], env.actors["bob"]
     await _claim_tasks(env, count=1)
@@ -207,7 +232,8 @@ async def test_post_commit_redis_permission_failure_is_retried_against_real_serv
     )
     assert reservation["last_seen_at"] is None
     _set_workspace_route_time(
-        monkeypatch, reservation["created_at"] + timedelta(seconds=get_presence_ttl_seconds() + 1),
+        monkeypatch,
+        reservation["created_at"] + timedelta(seconds=get_presence_ttl_seconds() + 1),
     )
     await clear_workspace_presence(env.redis, [str(alice.workspace)])
     # This host owns replay explicitly; the test drives it after the outage.
@@ -226,7 +252,9 @@ async def test_post_commit_redis_permission_failure_is_retried_against_real_serv
             transport=httpx.ASGITransport(app=app), base_url=str(env.client.base_url)
         ) as client:
             headers = _signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate)
-            failed = await client.delete(f"/v1/workspaces/{alice.workspace}", headers=headers)
+            failed = await client.delete(
+                f"/v1/workspaces/{alice.workspace}", headers=headers
+            )
             assert failed.status_code == 503, failed.text
             assert failed.json()["detail"]["code"] == "post_commit_cleanup_pending"
             operations = await env.db.fetch_all(

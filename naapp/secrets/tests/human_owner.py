@@ -23,6 +23,7 @@ from aweb_naapp_testing.webauthn import SoftAuthenticator, SoftCredential
 from awid.did import stable_id_from_public_key
 from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import RegistryClient
+from awid_service.deps import get_domain_verifier
 from cryptography.hazmat.primitives.asymmetric import ec
 from nacl.signing import SigningKey
 
@@ -76,6 +77,7 @@ async def human(world, principal, *, member=None, client=None, kind="human"):
         world.human_identities = {}
 
     authority = world.registry.namespace_authority
+    world.registry.app.dependency_overrides[get_domain_verifier] = lambda: authority
     world.registry.app.state.awid_public_origins = (REGISTRY_URL,)
     async with aclosing(
         RegistryClient(

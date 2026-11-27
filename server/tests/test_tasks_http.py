@@ -47,7 +47,10 @@ def _build_tasks_app(aweb_db, *, identity: TeamIdentity | None = None) -> FastAP
             continue
         for dependency in getattr(dependant, "dependencies", []):
             call = getattr(dependency, "call", None)
-            if getattr(call, "_aweb_grant_scope", None) in {"coord.read", "coord.write"}:
+            if getattr(call, "_aweb_grant_scope", None) in {
+                "coord.read",
+                "coord.write",
+            }:
                 app.dependency_overrides[call] = _fake_dependency
     return app
 
@@ -151,8 +154,12 @@ async def test_task_routes_filter_reparent_and_unassign(aweb_cloud_db, monkeypat
         assignee_alias="alice",
     )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        listed = await client.get("/v1/tasks", params={"parent_task_id": "backend-aaaa"})
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        listed = await client.get(
+            "/v1/tasks", params={"parent_task_id": "backend-aaaa"}
+        )
         moved = await client.patch(
             "/v1/tasks/backend-aaaa.1",
             json={"parent_task_id": "backend-aaab", "assignee_alias": None},
@@ -172,7 +179,9 @@ async def test_task_routes_filter_reparent_and_unassign(aweb_cloud_db, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_combined_reparent_and_claim_uses_new_hierarchy_apex(aweb_cloud_db, monkeypatch):
+async def test_combined_reparent_and_claim_uses_new_hierarchy_apex(
+    aweb_cloud_db, monkeypatch
+):
     actor = member_identity()
     app = _build_tasks_app(aweb_cloud_db.aweb_db, identity=actor)
     await _seed_team(aweb_cloud_db.aweb_db)
@@ -236,7 +245,9 @@ async def test_combined_reparent_and_claim_uses_new_hierarchy_apex(aweb_cloud_db
         datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
     )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.patch(
             "/v1/tasks/backend-aaaa.1",
             json={"parent_task_id": "backend-aaab", "status": "in_progress"},
@@ -256,7 +267,9 @@ async def test_combined_reparent_and_claim_uses_new_hierarchy_apex(aweb_cloud_db
 
 
 @pytest.mark.asyncio
-async def test_add_dependency_route_uses_service_result_keys(aweb_cloud_db, monkeypatch):
+async def test_add_dependency_route_uses_service_result_keys(
+    aweb_cloud_db, monkeypatch
+):
     app = _build_tasks_app(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db)
 
@@ -279,7 +292,9 @@ async def test_add_dependency_route_uses_service_result_keys(aweb_cloud_db, monk
         title="Dependency task",
     )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/tasks/backend-aaaa/deps",
             json={"depends_on": "backend-aaab"},
@@ -293,7 +308,9 @@ async def test_add_dependency_route_uses_service_result_keys(aweb_cloud_db, monk
 
 
 @pytest.mark.asyncio
-async def test_remove_dependency_route_uses_service_result_keys(aweb_cloud_db, monkeypatch):
+async def test_remove_dependency_route_uses_service_result_keys(
+    aweb_cloud_db, monkeypatch
+):
     app = _build_tasks_app(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db)
 
@@ -325,7 +342,9 @@ async def test_remove_dependency_route_uses_service_result_keys(aweb_cloud_db, m
         TEAM_ID,
     )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.delete("/v1/tasks/backend-aaaa/deps/backend-aaab")
 
     assert resp.status_code == 200
@@ -336,7 +355,9 @@ async def test_remove_dependency_route_uses_service_result_keys(aweb_cloud_db, m
 
 
 @pytest.mark.asyncio
-async def test_create_task_mutation_context_includes_actor_did_aw(aweb_cloud_db, monkeypatch):
+async def test_create_task_mutation_context_includes_actor_did_aw(
+    aweb_cloud_db, monkeypatch
+):
     captured: dict[str, dict] = {}
 
     async def _capture(event_type: str, context: dict) -> None:
@@ -347,7 +368,9 @@ async def test_create_task_mutation_context_includes_actor_did_aw(aweb_cloud_db,
     app.state.on_mutation = _capture
     await _seed_team(aweb_cloud_db.aweb_db)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/tasks",
             json={"title": "Emit did:aw in mutation context"},
@@ -359,17 +382,29 @@ async def test_create_task_mutation_context_includes_actor_did_aw(aweb_cloud_db,
 
 
 @pytest.mark.asyncio
-async def test_a_caller_transaction_holds_the_status_change_its_claim_release_and_its_events(aweb_cloud_db):
+async def test_a_caller_transaction_holds_the_status_change_its_claim_release_and_its_events(
+    aweb_cloud_db,
+):
     db = aweb_cloud_db.aweb_db
     await _seed_team(db)
     actor = member_identity()
     workspace_id = uuid4()
     await db.execute(
         "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) VALUES ($1, $2, $3, 'alice')",
-        workspace_id, TEAM_ID, UUID(actor.agent_id),
+        workspace_id,
+        TEAM_ID,
+        UUID(actor.agent_id),
     )
-    task = await create_task(_DbShim(db), actor=actor, on_mutation=None, title="Held by the caller")
-    await update_task(_DbShim(db), actor=actor, on_mutation=None, ref=task["task_ref"], status="in_progress")
+    task = await create_task(
+        _DbShim(db), actor=actor, on_mutation=None, title="Held by the caller"
+    )
+    await update_task(
+        _DbShim(db),
+        actor=actor,
+        on_mutation=None,
+        ref=task["task_ref"],
+        status="in_progress",
+    )
     held: list[tuple[str, dict]] = []
 
     async def hold(event_type: str, context: dict) -> None:
@@ -377,12 +412,20 @@ async def test_a_caller_transaction_holds_the_status_change_its_claim_release_an
 
     async def claims(manager) -> int:
         return await manager.fetch_value(
-            "SELECT count(*) FROM {{tables.task_claims}} WHERE team_id = $1 AND task_ref = $2", TEAM_ID, task["task_ref"],
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE team_id = $1 AND task_ref = $2",
+            TEAM_ID,
+            task["task_ref"],
         )
 
     with pytest.raises(RuntimeError, match="caller aborts"):
         async with db.transaction() as tx:
-            closed = await update_task(_DbShim(tx), actor=actor, on_mutation=hold, ref=task["task_ref"], status="closed")
+            closed = await update_task(
+                _DbShim(tx),
+                actor=actor,
+                on_mutation=hold,
+                ref=task["task_ref"],
+                status="closed",
+            )
             assert closed["status"] == "closed"
             assert await claims(tx) == 0
             # Other connections see neither the close nor the release.
@@ -390,11 +433,15 @@ async def test_a_caller_transaction_holds_the_status_change_its_claim_release_an
             raise RuntimeError("caller aborts")
 
     # The caller held the event; nothing was published for the change it rolled back.
-    assert [(kind, context["released_claim_workspace_ids"]) for kind, context in held] == [
+    assert [
+        (kind, context["released_claim_workspace_ids"]) for kind, context in held
+    ] == [
         ("task.status_changed", [str(workspace_id)]),
     ]
     assert await claims(db) == 1
-    assert (await get_task(_DbShim(db), team_id=TEAM_ID, ref=task["task_ref"]))["status"] == "in_progress"
+    assert (await get_task(_DbShim(db), team_id=TEAM_ID, ref=task["task_ref"]))[
+        "status"
+    ] == "in_progress"
 
 
 @pytest.mark.asyncio
@@ -482,9 +529,12 @@ async def test_list_active_work_allows_null_updated_at(aweb_cloud_db):
     )
 
     from awid.registry import RegistryClient
+
     registry = RegistryClient(registry_url="https://registry.example.test")
     try:
-        tasks = await list_active_work(db, team_id=TEAM_ID, redis=None, registry_client=registry)
+        tasks = await list_active_work(
+            db, team_id=TEAM_ID, redis=None, registry_client=registry
+        )
     finally:
         await registry.aclose()
 
@@ -559,19 +609,39 @@ async def test_list_blocked_tasks_allows_null_updated_at(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scenario", ["root_moved_in", "foreign_child_moved_in", "child_moved_out", "deleted_child", "nested_parent", "descendant_refs"])
-async def test_create_child_keeps_reference_namespace_after_reparenting(aweb_cloud_db, scenario):
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "root_moved_in",
+        "foreign_child_moved_in",
+        "child_moved_out",
+        "deleted_child",
+        "nested_parent",
+        "descendant_refs",
+    ],
+)
+async def test_create_child_keeps_reference_namespace_after_reparenting(
+    aweb_cloud_db, scenario
+):
     db = aweb_cloud_db.aweb_db
     await _seed_team(db)
     app = _build_tasks_app(db)
-    async with AsyncClient(transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+
         async def create(title, parent=None):
-            response = await client.post("/v1/tasks", json={"title": title, "parent_task_id": parent})
+            response = await client.post(
+                "/v1/tasks", json={"title": title, "parent_task_id": parent}
+            )
             assert response.status_code == 200, response.text
             return response.json()["task_ref"]
 
         async def move(task, parent):
-            response = await client.patch(f"/v1/tasks/{task}", json={"parent_task_id": parent})
+            response = await client.patch(
+                f"/v1/tasks/{task}", json={"parent_task_id": parent}
+            )
             assert response.status_code == 200, response.text
             assert response.json()["task_ref"] == task
 

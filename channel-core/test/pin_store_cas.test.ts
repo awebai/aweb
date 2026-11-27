@@ -69,7 +69,9 @@ beforeAll(async () => {
     "./cmd/aw",
   ], {
     cwd: join(repoRoot, "cli/go"),
-    timeout: 120_000,
+    // A cold build of aw, possibly while every other suite runs: a hang
+    // guard, not a time limit for the compile.
+    timeout: 600_000,
     maxBuffer: 1024 * 1024,
   });
   hermeticAWBinary = join(awBinaryDir, "aw-hermetic");
@@ -80,7 +82,7 @@ beforeAll(async () => {
     "",
   ].join("\n"), "utf-8");
   await chmod(hermeticAWBinary, 0o700);
-}, 120_000);
+}, 600_000);
 
 afterAll(async () => {
   if (awBinaryDir) await rm(awBinaryDir, { recursive: true, force: true });

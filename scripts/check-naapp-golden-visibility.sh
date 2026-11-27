@@ -35,14 +35,9 @@
 #   live run      measures the REAL tree in this repository. This is the only arm that
 #                 can tell you the real negations are intact.
 #
-# THE GAP THIS GATE HAS UNTIL THE MOVE LANDS, stated because a silent version of it
-# would read as coverage: naapp/library and naapp/folio do not exist yet, so the live
-# arm has nothing to measure and reports NOT APPLICABLE. It becomes live by itself
-# when aweb-aauv.2's merge lands. Until then the real negations are measured only by
-# scripts/check-naapp-move-addable.sh, which reads the source repositories from
-# outside aweb and is deliberately not wired into CI. That check is not this gate and
-# must not be substituted for it: it measures the pre-move question and after the move
-# it has nothing left to measure.
+# A tree without naapp/library and naapp/folio gives the live arm nothing to
+# measure: it reports NOT APPLICABLE, which is stated so that it never reads as a
+# pass.
 #
 # When the movers are reachable - as siblings before the move, or in-repo after it -
 # the self-test adds an arm that runs the same assertions against a scratch tree built
@@ -363,11 +358,8 @@ main() {
   local rc=$?
   case "$rc" in
     0) echo "every protected subtree is visible to git"; return 0 ;;
-    3) printf 'NOT APPLICABLE: no mover destination exists in this repository yet, so there is\n'
-       printf '                nothing here to measure. This is not a pass. The gate becomes live\n'
-       printf "                on its own when aweb-aauv.2's merge lands; until then the real\n"
-       printf '                negations are measured only by check-naapp-move-addable.sh, from\n'
-       printf '                outside this repository and not in CI.\n'
+    3) printf 'NOT APPLICABLE: no mover destination exists in this repository, so there is\n'
+       printf '                nothing here to measure. This is not a pass.\n'
        return 0 ;;
     1) return 1 ;;
     *) return 2 ;;

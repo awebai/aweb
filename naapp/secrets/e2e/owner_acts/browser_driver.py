@@ -34,8 +34,11 @@ def load_device(path: Path, origin: str) -> SoftAuthenticator:
             key = serialization.load_pem_private_key(item["key"].encode(), password=None)
             cid = base64.b64decode(item["credential_id"])
             device.credentials[cid] = SoftCredential(
-                credential_id=cid, key=key, rp_id=item["rp_id"],
-                user_handle=base64.b64decode(item["user_handle"]), sign_count=item["sign_count"],
+                credential_id=cid,
+                key=key,
+                rp_id=item["rp_id"],
+                user_handle=base64.b64decode(item["user_handle"]),
+                sign_count=item["sign_count"],
             )
     return device
 
@@ -45,7 +48,8 @@ def save_device(path: Path, device: SoftAuthenticator) -> None:
         {
             "credential_id": base64.b64encode(c.credential_id).decode(),
             "key": c.key.private_bytes(
-                serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
                 serialization.NoEncryption(),
             ).decode(),
             "rp_id": c.rp_id,
@@ -60,7 +64,9 @@ def save_device(path: Path, device: SoftAuthenticator) -> None:
 
 def expect(response: httpx.Response, status: int = 200) -> httpx.Response:
     if response.status_code != status:
-        sys.exit(f"{response.request.method} {response.request.url.path}: {response.status_code} {response.text[:300]}")
+        sys.exit(
+            f"{response.request.method} {response.request.url.path}: {response.status_code} {response.text[:300]}"
+        )
     return response
 
 
@@ -70,26 +76,44 @@ def main() -> int:
     parser.add_argument("--purpose", required=True, choices=("credential", "session"))
     parser.add_argument("--device", required=True, type=Path)
     parser.add_argument("--ca", required=True)
-    parser.add_argument("--no-page", action="store_true", help="skip the HTML check until the page lands")
+    parser.add_argument(
+        "--no-page", action="store_true", help="skip the HTML check until the page lands"
+    )
     args = parser.parse_args()
 
     page = urlsplit(args.page)
     origin = f"{page.scheme}://{page.netloc}"
     handoff_id = page.path.rsplit("/", 1)[-1]
     device = load_device(args.device, origin)
-    with httpx.Client(base_url=origin, verify=args.ca, follow_redirects=False, timeout=30) as browser:
+    with httpx.Client(
+        base_url=origin, verify=args.ca, follow_redirects=False, timeout=30
+    ) as browser:
         if not args.no_page:
             shown = expect(browser.get(page.path))
             if not shown.headers.get("content-type", "").startswith("text/html"):
                 sys.exit(f"the handoff page is not HTML: {shown.headers.get('content-type')}")
         prefix = f"/handoff/{handoff_id}/{args.purpose}"
         state = expect(browser.get(prefix)).json()
-        headers = {"Origin": origin, "X-CSRF-Token": state["csrf_token"], "Content-Type": "application/json"}
+        headers = {
+            "Origin": origin,
+            "X-CSRF-Token": state["csrf_token"],
+            "Content-Type": "application/json",
+        }
         options = expect(browser.post(prefix + "/options", json={}, headers=headers)).json()
         if args.purpose == "credential":
-            done = expect(browser.post(prefix + "/complete", json={"credential": device.create(options)}, headers=headers))
+            done = expect(
+                browser.post(
+                    prefix + "/complete",
+                    json={"credential": device.create(options)},
+                    headers=headers,
+                )
+            )
         else:
-            expect(browser.post(prefix + "/login", json={"assertion": device.get(options)}, headers=headers))
+            expect(
+                browser.post(
+                    prefix + "/login", json={"assertion": device.get(options)}, headers=headers
+                )
+            )
             done = expect(browser.post(prefix + "/allow", json={"allow": True}, headers=headers))
         save_device(args.device, device)
         redirect = done.json()["redirect_uri"]

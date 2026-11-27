@@ -30,7 +30,9 @@ API = "https://api.example"
 DOMAIN = "example.com"
 
 
-async def test_direct_child_handoff_distinguishes_unusable_status_from_failed_read(handoff_db, registry):
+async def test_direct_child_handoff_distinguishes_unusable_status_from_failed_read(
+    handoff_db, registry
+):
     holder = Member(team_id=f"people:{DOMAIN}")
     await registry.add_team(holder.team_id, holder.team_did_key)
     async with (
@@ -39,14 +41,20 @@ async def test_direct_child_handoff_distinguishes_unusable_status_from_failed_re
     ):
         human = await namespace.register(holder)
         agent = Member(
-            team_id=holder.team_id, team_key=holder.team_key,
-            certificate_id="requester-cert", alias="requester",
+            team_id=holder.team_id,
+            team_key=holder.team_key,
+            certificate_id="requester-cert",
+            alias="requester",
         )
         agent_id = (await human.client.register_did(agent.did_key, bytes(agent.member_key))).did_aw
         agent.extra_cert_fields = {"member_did_aw": agent_id}
         fields = {
-            "v": 1, "type": "aweb.id-certificate", "id": agent_id, "domain": DOMAIN,
-            "parent": {"kind": "identity", "id": human.principal}, "kind": "agent",
+            "v": 1,
+            "type": "aweb.id-certificate",
+            "id": agent_id,
+            "domain": DOMAIN,
+            "parent": {"kind": "identity", "id": human.principal},
+            "kind": "agent",
             "issuer_key": holder.did_key,
             "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
@@ -57,13 +65,17 @@ async def test_direct_child_handoff_distinguishes_unusable_status_from_failed_re
         }
         bundle = {"v": 1, "type": "aweb.id-chain", "certificates": [human.identity, signed]}
         await human.client.register_id_certificate(
-            bundle, signer=lambda payload: (agent.did_key, agent.member_key.sign(payload).signature),
-            expected_head=None, invitation_id=None,
+            bundle,
+            signer=lambda payload: (agent.did_key, agent.member_key.sign(payload).signature),
+            expected_head=None,
+            invitation_id=None,
         )
         await registry.add_certificate(agent.certificate(), team_key=agent.team_key)
 
         team_cache = AWIDTeamCache(
-            registry_url=REGISTRY_URL, ttl_seconds=60, service_token=SERVICE_TOKEN,
+            registry_url=REGISTRY_URL,
+            ttl_seconds=60,
+            service_token=SERVICE_TOKEN,
             transport=registry.transport,
         )
         store = HandoffStore(handoff_db)
@@ -81,25 +93,37 @@ async def test_direct_child_handoff_distinguishes_unusable_status_from_failed_re
             assert response.status_code == 200
             return status_response
 
-        async with aclosing(CachedRegistryClient(
-            REGISTRY_URL, redis, transport=registry.transport, service_token=SERVICE_TOKEN,
-            domain_verifier=namespace.authority,
-        )) as cache:
+        async with aclosing(
+            CachedRegistryClient(
+                REGISTRY_URL,
+                redis,
+                transport=registry.transport,
+                service_token=SERVICE_TOKEN,
+                domain_verifier=namespace.authority,
+            )
+        ) as cache:
             app = FastAPI()
-            app.include_router(handoff_start_router(
-                store=store, principal=principal, session_start=start_session,
-                requester_parent=requester_parent(cache),
-                limiter=LoginLimiter(
-                    handoff_db, client_identity=ClientIdentity(),
-                    limit=50, window=timedelta(minutes=1),
-                ),
-            ))
+            app.include_router(
+                handoff_start_router(
+                    store=store,
+                    principal=principal,
+                    session_start=start_session,
+                    requester_parent=requester_parent(cache),
+                    limiter=LoginLimiter(
+                        handoff_db,
+                        client_identity=ClientIdentity(),
+                        limit=50,
+                        window=timedelta(minutes=1),
+                    ),
+                )
+            )
             body = start_body(purpose="session")
             body["scope"]["principal"] = human.principal
             raw = json.dumps(body).encode()
             chain_header = encode_id_chain_header(bundle)
             transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
             async with httpx.AsyncClient(transport=transport, base_url=API) as client:
+
                 async def start_handoff():
                     headers = agent.headers(aud=API, method="POST", path="/handoffs", body=raw)
                     headers.update({"Content-Type": "application/json", CHAIN_HEADER: chain_header})
@@ -114,9 +138,17 @@ async def test_direct_child_handoff_distinguishes_unusable_status_from_failed_re
                     response = await start_handoff()
                     assert response.status_code == expected_status, response.text
                     assert response.json() == {"detail": code}
-                    assert await handoff_db.fetch_value("SELECT count(*) FROM {{tables.console_handoffs}}") == 0
+                    assert (
+                        await handoff_db.fetch_value(
+                            "SELECT count(*) FROM {{tables.console_handoffs}}"
+                        )
+                        == 0
+                    )
 
                 registry.transport.fault = None
                 valid = await start_handoff()
                 assert valid.status_code == 201, valid.text
-                assert await handoff_db.fetch_value("SELECT count(*) FROM {{tables.console_handoffs}}") == 1
+                assert (
+                    await handoff_db.fetch_value("SELECT count(*) FROM {{tables.console_handoffs}}")
+                    == 1
+                )

@@ -1,6 +1,6 @@
 """Strict canonical JSON and strict base64 for aweb's domain-separated signatures.
 
-The rules match the Go authority in ``cli/go/strictjson`` byte for byte:
+The rules match the Go authority in ``cli/go/internal/strictjson`` byte for byte:
 printable-ASCII strings, safe-range integers, no floats or nulls, no duplicate
 keys, nesting at most eight deep, and exactly one spelling of every signature
 and base64url field. Every refusal carries the same code as in Go.

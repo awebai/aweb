@@ -99,7 +99,9 @@ class ConnectionScope:
             if self.closed or self._discarded:
                 await self._release()
             else:
-                self._idle_park = asyncio.get_running_loop().call_later(IDLE_PARK_SECONDS, self._park_when_idle)
+                self._idle_park = asyncio.get_running_loop().call_later(
+                    IDLE_PARK_SECONDS, self._park_when_idle
+                )
 
     def _cancel_idle_park(self) -> None:
         if self._idle_park is not None:
@@ -131,7 +133,9 @@ class ConnectionScope:
             await self._pool.release(connection)
 
 
-_active_scope: ContextVar[Optional[ConnectionScope]] = ContextVar("aweb_connection_scope", default=None)
+_active_scope: ContextVar[Optional[ConnectionScope]] = ContextVar(
+    "aweb_connection_scope", default=None
+)
 
 
 @asynccontextmanager
@@ -224,6 +228,12 @@ class ConnectionScopeMiddleware:
             except DatabaseUnavailable as exc:
                 if response_started:
                     raise
-                await JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)(
-                    scope, receive, send,
+                await JSONResponse(
+                    {"detail": exc.detail},
+                    status_code=exc.status_code,
+                    headers=exc.headers,
+                )(
+                    scope,
+                    receive,
+                    send,
                 )

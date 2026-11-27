@@ -18,7 +18,6 @@ import textwrap
 import unittest
 import zipfile
 from unittest.mock import patch
-from email.message import Message
 from pathlib import Path
 
 from fixture_repo import fixture_env, init_fixture_repo, run_fixture
@@ -38,7 +37,6 @@ def load(name: str, path: str):
 CANDIDATE = load("release_candidate", "scripts/release_candidate.py")
 PUBLISH = load("publish_release", "scripts/publish_release.py")
 VERSIONS = sys.modules["release_versions"]
-NAAPP_PACKAGE = load("check_naapp_lib_package", "scripts/check-naapp-lib-package.py")
 
 
 def command(root: Path, *argv: str) -> str:
@@ -48,29 +46,50 @@ def command(root: Path, *argv: str) -> str:
 class TagContractTest(unittest.TestCase):
     def test_gateway_failure_cleanup_preserves_stderr_before_removal(self):
         source = (ROOT / "scripts/e2e-a2a-gateway-docker.sh").read_text()
-        cleanup = source[source.index("cleanup() {"):source.index("\ntrap cleanup EXIT")]
+        cleanup = source[
+            source.index("cleanup() {") : source.index("\ntrap cleanup EXIT")
+        ]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime = root / "runtime"
             runtime.mkdir()
             calls = root / "docker-calls"
             docker = root / "docker"
-            docker.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$DOCKER_CALLS"\n'
-                              'case "$1" in\ninspect) echo running;;\n'
-                              'logs) echo gateway-stdout; echo gateway-stderr >&2;;\nesac\n')
+            docker.write_text(
+                '#!/bin/bash\nprintf "%s\\n" "$*" >> "$DOCKER_CALLS"\n'
+                'case "$1" in\ninspect) echo running;;\n'
+                "logs) echo gateway-stdout; echo gateway-stderr >&2;;\nesac\n"
+            )
             docker.chmod(0o755)
-            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
-                       DOCKER_CALLS=str(calls), TMP_ROOT=str(runtime),
-                       GATEWAY_CONTAINER="fixture-gateway", GATEWAY_IMAGE="fixture-image",
-                       PROJECT="fixture-project", ENV_FILE="fixture.env", COMPOSE_FILE="fixture.yml")
-            result = run_fixture(["bash", "-c", "set -euo pipefail\nfail=1; pass=0\n" + cleanup + "\ncleanup"],
-                                    env=env, text=True, capture_output=True)
+            env = dict(
+                os.environ,
+                PATH=str(root) + os.pathsep + os.environ["PATH"],
+                DOCKER_CALLS=str(calls),
+                TMP_ROOT=str(runtime),
+                GATEWAY_CONTAINER="fixture-gateway",
+                GATEWAY_IMAGE="fixture-image",
+                PROJECT="fixture-project",
+                ENV_FILE="fixture.env",
+                COMPOSE_FILE="fixture.yml",
+            )
+            result = run_fixture(
+                [
+                    "bash",
+                    "-c",
+                    "set -euo pipefail\nfail=1; pass=0\n" + cleanup + "\ncleanup",
+                ],
+                env=env,
+                text=True,
+                capture_output=True,
+            )
             self.assertEqual(result.returncode, 1)
             self.assertIn("gateway-stdout", result.stdout)
             self.assertIn("gateway-stderr", result.stdout)
             operations = calls.read_text().splitlines()
-            self.assertLess(operations.index("logs fixture-gateway"),
-                            operations.index("rm -f fixture-gateway"))
+            self.assertLess(
+                operations.index("logs fixture-gateway"),
+                operations.index("rm -f fixture-gateway"),
+            )
             self.assertFalse(runtime.exists())
 
     def test_federation_wheel_mode_accepts_rc_before_docker_build(self):
@@ -82,29 +101,55 @@ class TagContractTest(unittest.TestCase):
             bind.mkdir()
             binary = root / "docker"
             reached = root / "build-reached"
-            binary.write_text('#!/bin/bash\nif [[ "$1" == compose && " $* " == *" build "* ]]; then\n'
-                              '  echo build > "$BUILD_REACHED"; exit 86\nfi\nexit 0\n')
+            binary.write_text(
+                '#!/bin/bash\nif [[ "$1" == compose && " $* " == *" build "* ]]; then\n'
+                '  echo build > "$BUILD_REACHED"; exit 86\nfi\nexit 0\n'
+            )
             binary.chmod(0o755)
-            for version in ("1.27.34rc1", "1.27.34", "1.27.34rc0", "1.27.34rcbad", "1.27.34-rc.1"):
+            for version in (
+                "1.27.34rc1",
+                "1.27.34",
+                "1.27.34rc0",
+                "1.27.34rcbad",
+                "1.27.34-rc.1",
+            ):
                 with self.subTest(version=version):
                     wheel = root / f"aweb-{version}-py3-none-any.whl"
-                    wheel.write_bytes(b"validation-only fixture; Docker build is intercepted")
+                    wheel.write_bytes(
+                        b"validation-only fixture; Docker build is intercepted"
+                    )
                     reached.unlink(missing_ok=True)
-                    env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
-                               BUILD_REACHED=str(reached), AWEB_DOCKER_BIND_ROOT=str(bind),
-                               AWEB_FED_E2E_SERVER_MODE="wheel", AWEB_FED_E2E_KEEP="0",
-                               AWEB_FED_E2E_BUILD="1", AWEB_FED_E2E_MCP_VERSION="1.0.0")
+                    env = dict(
+                        os.environ,
+                        PATH=str(root) + os.pathsep + os.environ["PATH"],
+                        BUILD_REACHED=str(reached),
+                        AWEB_DOCKER_BIND_ROOT=str(bind),
+                        AWEB_FED_E2E_SERVER_MODE="wheel",
+                        AWEB_FED_E2E_KEEP="0",
+                        AWEB_FED_E2E_BUILD="1",
+                        AWEB_FED_E2E_MCP_VERSION="1.0.0",
+                    )
                     for side in ("ALPHA", "BETA"):
                         env[f"AWEB_{side}_WHEEL"] = str(wheel)
-                        env[f"AWEB_{side}_WHEEL_SHA256"] = hashlib.sha256(wheel.read_bytes()).hexdigest()
+                        env[f"AWEB_{side}_WHEEL_SHA256"] = hashlib.sha256(
+                            wheel.read_bytes()
+                        ).hexdigest()
                         env[f"AWEB_{side}_VERSION"] = version
-                    result = run_fixture(["bash", str(ROOT / "scripts/e2e-oss-federation.sh")],
-                                            env=env, text=True, capture_output=True)
+                    result = run_fixture(
+                        ["bash", str(ROOT / "scripts/e2e-oss-federation.sh")],
+                        env=env,
+                        text=True,
+                        capture_output=True,
+                    )
                     if version in ("1.27.34rc1", "1.27.34"):
                         self.assertTrue(reached.exists(), result.stdout + result.stderr)
-                        self.assertEqual(result.returncode, 86, result.stdout + result.stderr)
+                        self.assertEqual(
+                            result.returncode, 86, result.stdout + result.stderr
+                        )
                     else:
-                        self.assertFalse(reached.exists(), result.stdout + result.stderr)
+                        self.assertFalse(
+                            reached.exists(), result.stdout + result.stderr
+                        )
                         self.assertIn("wheel version", result.stderr)
                         self.assertNotEqual(result.returncode, 0)
 
@@ -113,8 +158,15 @@ class TagContractTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         command(root, "git", "tag", "server-v1.2.3")
         command(root, "git", "tag", "server-v99.0.0rc10")
-        self.assertEqual(command(root, sys.executable, str(ROOT / "scripts/next_tag_version.py"),
-                                 "server-v"), "1.2.4")
+        self.assertEqual(
+            command(
+                root,
+                sys.executable,
+                str(ROOT / "scripts/next_tag_version.py"),
+                "server-v",
+            ),
+            "1.2.4",
+        )
 
     def repository(self):
         temporary = tempfile.TemporaryDirectory()
@@ -130,14 +182,6 @@ class TagContractTest(unittest.TestCase):
         (root / "awid/pyproject.toml").write_text(
             '[project]\nname = "awid-service"\nversion = "2.3.4"\n', encoding="utf-8"
         )
-        (root / "naapp-lib").mkdir()
-        (root / "naapp-lib/pyproject.toml").write_text(
-            '[project]\nname = "aweb-naapp"\nversion = "0.1.0"\n', encoding="utf-8"
-        )
-        (root / "naapp-lib/testing").mkdir()
-        (root / "naapp-lib/testing/pyproject.toml").write_text(
-            '[project]\nname = "aweb-naapp-testing"\nversion = "0.1.0"\n', encoding="utf-8"
-        )
         for directory, version in (
             ("channel", "3.4.5"),
             ("pi-extension", "4.5.6"),
@@ -151,16 +195,18 @@ class TagContractTest(unittest.TestCase):
         command(root, "git", "add", ".")
         # Build a real RC tree and its version-only final, rather than relying
         # on the now-refused final-without-RC path in neighboring tests.
-        manifests = [root / path for path in ("server/pyproject.toml", "awid/pyproject.toml",
-                                             "naapp-lib/pyproject.toml", "naapp-lib/testing/pyproject.toml")]
+        manifests = [
+            root / path for path in ("server/pyproject.toml", "awid/pyproject.toml")
+        ]
         stable = {path: path.read_text() for path in manifests}
         for path in manifests:
             value = stable[path]
             import re
-            path.write_text(re.sub(r'(version = "[^"]+)(")', r'\g<1>rc1\2', value))
+
+            path.write_text(re.sub(r'(version = "[^"]+)(")', r"\g<1>rc1\2", value))
         command(root, "git", "add", ".")
         command(root, "git", "commit", "-qm", "RC")
-        for tag in ("server-v1.2.3rc1", "awid-service-v2.3.4rc1", "aweb-naapp-v0.1.0rc1", "aw-v1.2.3-rc.1"):
+        for tag in ("server-v1.2.3rc1", "awid-service-v2.3.4rc1", "aw-v1.2.3-rc.1"):
             command(root, "git", "tag", tag)
         for path, value in stable.items():
             path.write_text(value)
@@ -172,11 +218,11 @@ class TagContractTest(unittest.TestCase):
         temporary, root = self.repository()
         self.addCleanup(temporary.cleanup)
         source, versions = CANDIDATE.validate_tags(
-            root, ["server-v1.2.3", "awid-service-v2.3.4", "aweb-naapp-v0.1.0", "channel-v3.4.5"]
+            root, ["server-v1.2.3", "awid-service-v2.3.4", "channel-v3.4.5"]
         )
         self.assertEqual(len(source), 40)
         self.assertEqual(versions["server-v"], "1.2.3")
-        self.assertEqual(versions["aweb-naapp-v"], "0.1.0")
+        self.assertEqual(versions["channel-v"], "3.4.5")
         with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "does not match"):
             CANDIDATE.validate_tags(root, ["server-v1.2.4"])
 
@@ -197,17 +243,22 @@ class TagContractTest(unittest.TestCase):
         # The registry image lane carries rc versions in awid's Python spelling;
         # the other image lanes keep final-only tags.
         self.assertEqual(VERSIONS.tag_parts("awid-v0.5.40rc2"), ("awid-v", "0.5.40rc2"))
-        for tag in ("awid-v0.5.40-rc.2", "awid-v0.5.40rc0", "secrets-v1.2.3rc1", "logs-v1.2.3rc1", "a2a-gw-v1.2.3rc1"):
+        for tag in ("awid-v0.5.40-rc.2", "awid-v0.5.40rc0", "a2a-gw-v1.2.3rc1"):
             with self.subTest(tag=tag), self.assertRaises(VERSIONS.VersionRefusal):
                 VERSIONS.tag_parts(tag)
         temporary, root = self.repository()
         self.addCleanup(temporary.cleanup)
         manifest = root / "awid" / "pyproject.toml"
         import re
-        manifest.write_text(re.sub(r'version = "[^"]+"', 'version = "2.3.4rc2"', manifest.read_text()))
+
+        manifest.write_text(
+            re.sub(r'version = "[^"]+"', 'version = "2.3.4rc2"', manifest.read_text())
+        )
         command(root, "git", "commit", "-qam", "registry rc")
         command(root, "git", "tag", "awid-v2.3.4rc2")
-        self.assertEqual(PUBLISH.tag_identity(root, "awid-v2.3.4rc2")[:2], ("awid-v", "2.3.4rc2"))
+        self.assertEqual(
+            PUBLISH.tag_identity(root, "awid-v2.3.4rc2")[:2], ("awid-v", "2.3.4rc2")
+        )
         command(root, "git", "tag", "awid-v2.3.4rc3")
         with self.assertRaisesRegex(PUBLISH.PublishRefusal, "does not match"):
             PUBLISH.tag_identity(root, "awid-v2.3.4rc3")
@@ -215,45 +266,66 @@ class TagContractTest(unittest.TestCase):
     def test_python_rc_tags_preserve_manifest_equality(self):
         temporary, root = self.repository()
         self.addCleanup(temporary.cleanup)
-        for path, version in (("server", "1.2.3rc1"), ("awid", "2.3.4rc2"),
-                              ("naapp-lib", "0.1.0rc1"), ("naapp-lib/testing", "0.1.0rc1")):
+        for path, version in (("server", "1.2.3rc1"), ("awid", "2.3.4rc2")):
             manifest = root / path / "pyproject.toml"
             value = manifest.read_text()
             import re
-            manifest.write_text(re.sub(r'version = "[^"]+"', f'version = "{version}"', value))
+
+            manifest.write_text(
+                re.sub(r'version = "[^"]+"', f'version = "{version}"', value)
+            )
         command(root, "git", "commit", "-qam", "RC versions")
         for tag in command(root, "git", "tag", "--list").splitlines():
             command(root, "git", "tag", "-d", tag)
-        tags = ["server-v1.2.3rc1", "awid-service-v2.3.4rc2", "aweb-naapp-v0.1.0rc1", "aw-v1.2.3-rc.1"]
+        tags = ["server-v1.2.3rc1", "awid-service-v2.3.4rc2", "aw-v1.2.3-rc.1"]
         _source, versions = CANDIDATE.validate_tags(root, tags)
         self.assertEqual(versions["server-v"], "1.2.3rc1")
         for tag in tags:
             command(root, "git", "tag", tag)
-            self.assertEqual(PUBLISH.tag_identity(root, tag)[1], VERSIONS.tag_parts(tag)[1])
+            self.assertEqual(
+                PUBLISH.tag_identity(root, tag)[1], VERSIONS.tag_parts(tag)[1]
+            )
         with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "does not match"):
             CANDIDATE.validate_tags(root, ["server-v1.2.3rc2"])
 
     def test_rc_spelling_and_positive_number_are_strict(self):
-        for tag in ("server-v1.2.3rc0", "server-v1.2.3rc01", "server-v1.2.3-rc.1",
-                    "aw-v1.2.3rc1", "aw-v1.2.3-rc.0", "aw-v1.2.3-rc.01",
-                    "server-v01.2.3rc1", "aw-v1.2.3-beta.1", "channel-v1.2.3-rc.1"):
-            with self.subTest(tag=tag), self.assertRaisesRegex(VERSIONS.VersionRefusal, "unsupported"):
+        for tag in (
+            "server-v1.2.3rc0",
+            "server-v1.2.3rc01",
+            "server-v1.2.3-rc.1",
+            "aw-v1.2.3rc1",
+            "aw-v1.2.3-rc.0",
+            "aw-v1.2.3-rc.01",
+            "server-v01.2.3rc1",
+            "aw-v1.2.3-beta.1",
+            "channel-v1.2.3-rc.1",
+        ):
+            with (
+                self.subTest(tag=tag),
+                self.assertRaisesRegex(VERSIONS.VersionRefusal, "unsupported"),
+            ):
                 VERSIONS.tag_parts(tag)
 
     def test_final_without_prior_rc_is_accepted_by_candidate_and_publisher(self):
         # One gate qualifies the exact tree that is tagged; no published RC is required.
-        for tag in ("server-v1.2.3", "awid-service-v2.3.4", "aweb-naapp-v0.1.0", "aw-v1.2.3"):
+        for tag in ("server-v1.2.3", "awid-service-v2.3.4", "aw-v1.2.3"):
             with self.subTest(tag=tag):
                 temporary, root = self.repository()
                 self.addCleanup(temporary.cleanup)
-                for rc_tag in command(root, "git", "tag", "--list", "*rc*").splitlines():
+                for rc_tag in command(
+                    root, "git", "tag", "--list", "*rc*"
+                ).splitlines():
                     command(root, "git", "tag", "-d", rc_tag)
                 with self.subTest(entry="candidate"):
                     _source, versions = CANDIDATE.validate_tags(root, [tag])
-                    self.assertEqual(versions[VERSIONS.tag_parts(tag)[0]], VERSIONS.tag_parts(tag)[1])
+                    self.assertEqual(
+                        versions[VERSIONS.tag_parts(tag)[0]], VERSIONS.tag_parts(tag)[1]
+                    )
                 command(root, "git", "tag", tag)
                 with self.subTest(entry="publisher"):
-                    self.assertEqual(PUBLISH.tag_identity(root, tag)[1], VERSIONS.tag_parts(tag)[1])
+                    self.assertEqual(
+                        PUBLISH.tag_identity(root, tag)[1], VERSIONS.tag_parts(tag)[1]
+                    )
 
     def test_pi_publisher_requires_its_declared_aw_floor_to_be_public(self):
         temporary, root = self.repository()
@@ -286,264 +358,271 @@ class TagContractTest(unittest.TestCase):
             PUBLISH.require_pi_aw_floor(root, timeout_seconds=0)
 
 
+def release_assets(directory: Path, normalized: str, version: str) -> dict[str, str]:
+    """Write one sdist and one wheel shaped like uv's output; return name -> sha256."""
+    directory.mkdir(parents=True, exist_ok=True)
+    metadata = (
+        f"Metadata-Version: 2.1\nName: {normalized}\nVersion: {version}\n".encode()
+    )
+    sdist = directory / f"{normalized}-{version}.tar.gz"
+    with tarfile.open(sdist, "w:gz") as archive:
+        info = tarfile.TarInfo(f"{normalized}-{version}/PKG-INFO")
+        info.size = len(metadata)
+        archive.addfile(info, io.BytesIO(metadata))
+    wheel = directory / f"{normalized}-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(f"{normalized}-{version}.dist-info/METADATA", metadata)
+    return {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (wheel, sdist)
+    }
+
+
+def locked_message(tag: str, files: dict[str, str]) -> str:
+    return f"{tag}\n\n" + "".join(
+        f"{digest}  {name}\n" for name, digest in files.items()
+    )
+
+
 class PypiLaneContractTest(unittest.TestCase):
     def test_each_pypi_lane_publishes_the_package_its_manifest_names(self):
         import tomllib
 
-        for prefix, (_needs_awid, packages) in PUBLISH.PYPI_LANES.items():
+        self.assertEqual(set(PUBLISH.PYPI_PACKAGES), {"server-v", "awid-service-v"})
+        for prefix, package in PUBLISH.PYPI_PACKAGES.items():
             manifest = PUBLISH.MANIFESTS[prefix]
-            primary = Path(manifest).parent.as_posix()
-            self.assertIn(primary, [directory for _, directory in packages], prefix)
             self.assertEqual(CANDIDATE.MANIFESTS[prefix], manifest, prefix)
-            lockstep = [f"{directory}/pyproject.toml" for _, directory in packages if directory != primary]
-            self.assertEqual(CANDIDATE.LOCKSTEP.get(prefix, []), lockstep, prefix)
-            if prefix == "aweb-secrets-runner-v":
-                names = [package for package, _ in packages]
-                self.assertLess(names.index("aweb-secrets-values"), names.index("aweb-secrets-runner"))
-            for package, directory in packages:
-                project = tomllib.loads((ROOT / directory / "pyproject.toml").read_text(encoding="utf-8"))["project"]
-                self.assertEqual(project["name"], package, prefix)
+            project = tomllib.loads((ROOT / manifest).read_text(encoding="utf-8"))[
+                "project"
+            ]
+            self.assertEqual(project["name"], package, prefix)
 
-    def test_the_aweb_naapp_lane_waits_for_awid_then_builds_naapp_lib(self):
-        temporary, root = TagContractTest.repository(self)
+    def setUp(self):
+        temporary, self.root = TagContractTest.repository(self)
         self.addCleanup(temporary.cleanup)
-        originals = (PUBLISH.run, PUBLISH.request_json, os.environ.get("UV_PUBLISH_TOKEN"))
+        self.source = command(self.root, "git", "rev-parse", "HEAD")
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.scratch = Path(scratch.name)
+        self.assets = self.scratch / "assets"
+        self.locked = release_assets(self.assets, "aweb", "1.2.3")
+        command(
+            self.root,
+            "git",
+            "tag",
+            "-a",
+            "server-v1.2.3",
+            "-m",
+            locked_message("server-v1.2.3", self.locked),
+        )
 
-        def restore():
-            PUBLISH.run, PUBLISH.request_json = originals[0], originals[1]
-            if originals[2] is None:
-                os.environ.pop("UV_PUBLISH_TOKEN", None)
-            else:
-                os.environ["UV_PUBLISH_TOKEN"] = originals[2]
+    def verify(self):
+        PUBLISH.verify_release_assets(
+            self.assets, PUBLISH.locked_files(self.root, "server-v1.2.3")
+        )
 
-        self.addCleanup(restore)
-        os.environ["UV_PUBLISH_TOKEN"] = "test-token-not-a-secret"
-        asked: list[str] = []
-        built: list[tuple[str, ...]] = []
+    def test_assets_equal_to_the_tag_message_are_accepted(self):
+        self.assertEqual(PUBLISH.locked_files(self.root, "server-v1.2.3"), self.locked)
+        self.verify()
 
-        class Built(Exception):
-            pass
+    def test_an_asset_with_another_sha256_refuses(self):
+        wheel = self.assets / "aweb-1.2.3-py3-none-any.whl"
+        wheel.write_bytes(wheel.read_bytes() + b"rebuilt")
+        with self.assertRaisesRegex(
+            PUBLISH.PublishRefusal, "aweb-1.2.3-py3-none-any.whl.*sha256"
+        ):
+            self.verify()
+
+    def test_an_extra_asset_refuses(self):
+        (self.assets / "aweb-1.2.3-py3-none-manylinux_2_17_x86_64.whl").write_bytes(
+            b"unlocked"
+        )
+        with self.assertRaisesRegex(
+            PUBLISH.PublishRefusal, "not in the tag.*manylinux"
+        ):
+            self.verify()
+
+    def test_a_missing_asset_refuses(self):
+        (self.assets / "aweb-1.2.3.tar.gz").unlink()
+        with self.assertRaisesRegex(
+            PUBLISH.PublishRefusal, "missing.*aweb-1.2.3.tar.gz"
+        ):
+            self.verify()
+
+    def test_a_tag_without_locked_files_refuses(self):
+        command(self.root, "git", "tag", "-a", "awid-service-v2.3.4", "-m", "tested")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "lists no release files"):
+            PUBLISH.locked_files(self.root, "awid-service-v2.3.4")
+
+    def test_a_lightweight_tag_refuses(self):
+        command(self.root, "git", "tag", "awid-service-v2.3.4")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "not an annotated tag"):
+            PUBLISH.locked_files(self.root, "awid-service-v2.3.4")
+
+    def test_a_file_listed_twice_refuses(self):
+        name, digest = next(iter(self.locked.items()))
+        command(
+            self.root,
+            "git",
+            "tag",
+            "-a",
+            "awid-service-v2.3.4",
+            "-m",
+            locked_message("x", self.locked) + f"{'0' * 64}  {name}\n",
+        )
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "more than once"):
+            PUBLISH.locked_files(self.root, "awid-service-v2.3.4")
+
+    def uploads(self, observed=(404, {})):
+        """Run the PyPI lane with only uv publish and the PyPI readback intercepted."""
+        real_run, uploaded, asked = PUBLISH.run, [], []
+
+        def run(root, *argv, **kwargs):
+            if argv[:2] == ("uv", "publish"):
+                uploaded.append(argv)
+                return ""
+            if "verify-published" in argv:
+                return ""
+            return real_run(root, *argv, **kwargs)
 
         def request_json(url):
             asked.append(url)
-            return 200, {}
+            return (200, {}) if "/awid-service/" in url else observed
 
-        def run(_root, *argv, **_kwargs):
-            built.append(argv)
-            raise Built
+        patcher = patch.multiple(PUBLISH, run=run, request_json=request_json)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        token = patch.dict(os.environ, {"UV_PUBLISH_TOKEN": "test-token-not-a-secret"})
+        token.start()
+        self.addCleanup(token.stop)
+        return uploaded, asked
 
-        PUBLISH.request_json, PUBLISH.run = request_json, run
-        with self.assertRaises(Built):
-            PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0")
-        self.assertEqual(asked, ["https://pypi.org/pypi/awid-service/2.3.4/json"])
-        self.assertEqual(built[0][:2], ("uv", "build"))
-        self.assertEqual(built[0][-1], "naapp-lib")
-
-
-    def _recording_publisher(self):
-        originals = (PUBLISH.run, PUBLISH.request_json, os.environ.get("UV_PUBLISH_TOKEN"))
-
-        def restore():
-            PUBLISH.run, PUBLISH.request_json = originals[0], originals[1]
-            if originals[2] is None:
-                os.environ.pop("UV_PUBLISH_TOKEN", None)
-            else:
-                os.environ["UV_PUBLISH_TOKEN"] = originals[2]
-
-        self.addCleanup(restore)
-        os.environ["UV_PUBLISH_TOKEN"] = "test-token-not-a-secret"
-        commands: list[tuple[str, ...]] = []
-
-        def run(_root, *argv, **_kwargs):
-            commands.append(argv)
-            return ""
-
-        PUBLISH.run, PUBLISH.request_json = run, lambda _url: (200, {})
-        return commands
-
-    def test_the_aweb_naapp_lane_publishes_naapp_lib_then_its_testing_package(self):
-        temporary, root = TagContractTest.repository(self)
-        self.addCleanup(temporary.cleanup)
-        commands = self._recording_publisher()
-        PUBLISH.publish_pypi(root, "aweb-naapp-v", "0.1.0")
-        built = [argv[-1] for argv in commands if argv[:2] == ("uv", "build")]
-        inspected = [argv[argv.index("--package") + 1] for argv in commands if "inspect-staged" in argv]
-        self.assertEqual(built, ["naapp-lib", "naapp-lib/testing"])
-        self.assertEqual(inspected, ["aweb-naapp", "aweb-naapp-testing"])
-
-    def test_a_lane_package_at_another_version_refuses_the_tag(self):
-        temporary, root = TagContractTest.repository(self)
-        self.addCleanup(temporary.cleanup)
-        (root / "naapp-lib/testing/pyproject.toml").write_text(
-            '[project]\nname = "aweb-naapp-testing"\nversion = "0.0.9"\n', encoding="utf-8"
+    def test_the_lane_uploads_exactly_the_locked_files_and_never_builds(self):
+        uploaded, asked = self.uploads()
+        PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
+        self.assertEqual(
+            asked,
+            [
+                "https://pypi.org/pypi/awid-service/2.3.4/json",
+                "https://pypi.org/pypi/aweb/1.2.3/json",
+            ],
         )
-        command(root, "git", "commit", "-qam", "drifted")
-        with self.assertRaisesRegex(CANDIDATE.CandidateRefusal, "naapp-lib/testing"):
-            CANDIDATE.validate_tags(root, ["aweb-naapp-v0.1.0"])
-        command(root, "git", "tag", "-a", "aweb-naapp-v0.1.0", "-m", "tested")
-        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "naapp-lib/testing"):
-            PUBLISH.tag_identity(root, "aweb-naapp-v0.1.0")
+        self.assertEqual(len(uploaded), 1)
+        self.assertEqual(uploaded[0][:2], ("uv", "publish"))
+        self.assertEqual(
+            sorted(Path(path).name for path in uploaded[0][2:]), sorted(self.locked)
+        )
 
+    def test_a_rerun_uploads_only_the_files_pypi_lacks(self):
+        wheel = "aweb-1.2.3-py3-none-any.whl"
+        uploaded, _asked = self.uploads(
+            (
+                200,
+                {
+                    "urls": [
+                        {"filename": wheel, "digests": {"sha256": self.locked[wheel]}}
+                    ]
+                },
+            )
+        )
+        PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
+        self.assertEqual(
+            [Path(path).name for path in uploaded[0][2:]], ["aweb-1.2.3.tar.gz"]
+        )
 
-class NaappPackageRcContractTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        temporary = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(temporary.cleanup)
-        root = Path(temporary.name)
-        cls.wheels = []
-        for directory in ("naapp-lib", "naapp-lib/testing"):
-            source, project = ROOT / directory, root / directory
-            project.mkdir(parents=True)
-            shutil.copytree(source / "src", project / "src", ignore=shutil.ignore_patterns("__pycache__"))
-            if (source / "README.md").exists():
-                shutil.copy2(source / "README.md", project / "README.md")
-            value = (source / "pyproject.toml").read_text()
-            value = re.sub(r'(?m)^version = "[^"]+"', 'version = "0.5.0rc1"', value)
-            value = re.sub(r'(aweb-naapp\[[^\]]+\]==)[^"\s]+', r'\g<1>0.5.0rc1', value)
-            value = re.sub(r'(awid-service>=)[^"\s]+', r'\g<1>0.5.32rc1', value)
-            (project / "pyproject.toml").write_text(value)
-            wheel = NAAPP_PACKAGE._build(project, root / "dist" / project.name)
-            cls.wheels.append((project, wheel, NAAPP_PACKAGE._metadata(wheel)))
-
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.awid = Path(temporary.name)
-        original = NAAPP_PACKAGE.AWID
-        NAAPP_PACKAGE.AWID = self.awid
-        self.addCleanup(setattr, NAAPP_PACKAGE, "AWID", original)
-        self.set_awid_version("0.5.32rc1")
-
-    def set_awid_version(self, version):
-        (self.awid / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
-
-    def test_real_rc_wheels_pass_contents_and_dependency_checks(self):
-        for project, wheel, metadata in self.wheels:
-            with self.subTest(package=metadata["Name"]):
-                self.assertEqual(metadata["Version"], "0.5.0rc1")
-                NAAPP_PACKAGE._check_contents(project, wheel)
-                NAAPP_PACKAGE._check_requirements(
-                    wheel, metadata,
-                    aweb_naapp_version="0.5.0rc1" if metadata["Name"] == "aweb-naapp-testing" else None,
+    def test_the_lane_refuses_without_a_pypi_token_before_upload(self):
+        uploaded, _asked = self.uploads()
+        with patch.dict(os.environ, {"UV_PUBLISH_TOKEN": ""}):
+            with self.assertRaisesRegex(PUBLISH.PublishRefusal, "UV_PUBLISH_TOKEN"):
+                PUBLISH.publish_pypi(
+                    self.root, "server-v1.2.3", self.source, self.assets
                 )
+        self.assertEqual(uploaded, [])
 
-    def test_rc_exact_pin_is_checked_with_a_final_awid_neighbor(self):
-        self.set_awid_version("0.5.32")
-        _project, wheel, metadata = self.wheels[1]
-        NAAPP_PACKAGE._check_requirements(wheel, metadata, aweb_naapp_version="0.5.0rc1")
-        with self.assertRaisesRegex(NAAPP_PACKAGE.PackageRefusal, "must require exactly"):
-            NAAPP_PACKAGE._check_requirements(wheel, metadata, aweb_naapp_version="0.5.0rc2")
+    def test_a_wrong_asset_uploads_nothing(self):
+        uploaded, _asked = self.uploads()
+        (self.assets / "aweb-1.2.3.tar.gz").write_bytes(b"rebuilt")
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "sha256"):
+            PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, self.assets)
+        self.assertEqual(uploaded, [])
 
-    def test_awid_floor_uses_rc_before_final_and_numeric_rc_order(self):
-        for available, floor, accepted in (
-            ("0.5.32rc1", "0.5.32rc1", True),
-            ("0.5.32rc10", "0.5.32rc2", True),
-            ("0.5.32rc1", "0.5.32rc2", False),
-            ("0.5.32rc1", "0.5.32", False),
-            ("0.5.32", "0.5.32rc1", True),
-            ("0.5.32", "0.5.32", True),
-            ("0.5.31", "0.5.32rc1", False),
-        ):
-            with self.subTest(available=available, floor=floor):
-                self.set_awid_version(available)
-                metadata = Message()
-                metadata["Requires-Dist"] = "awid-service>=" + floor
-                if accepted:
-                    NAAPP_PACKAGE._check_requirements(Path("fixture.whl"), metadata, aweb_naapp_version=None)
-                else:
-                    with self.assertRaisesRegex(NAAPP_PACKAGE.PackageRefusal, "newer than"):
-                        NAAPP_PACKAGE._check_requirements(Path("fixture.whl"), metadata, aweb_naapp_version=None)
-
-    def test_missing_floor_direct_reference_and_malformed_rc_still_refuse(self):
-        self.set_awid_version("0.5.32")
-        for requirement in ("awid-service==0.5.32rc1", "awid-service>=0.5.32rc1junk",
-                            "awid-service @ file:///tmp/awid", "awid-service>=0.5.32rc01"):
-            with self.subTest(requirement=requirement):
-                metadata = Message()
-                metadata["Requires-Dist"] = requirement
-                with self.assertRaises(NAAPP_PACKAGE.PackageRefusal):
-                    NAAPP_PACKAGE._check_requirements(Path("fixture.whl"), metadata, aweb_naapp_version=None)
-
-
-class MatchedRcSiblingInstallTest(unittest.TestCase):
-    """Real wheels and uv: a matched RC set is explicit, its floors still bind."""
-
-    @classmethod
-    def setUpClass(cls):
-        temporary = tempfile.TemporaryDirectory()
-        cls.addClassCleanup(temporary.cleanup)
-        root = Path(temporary.name)
-
-        def build(label, name, version, module, dependencies, body):
-            project = root / label
-            source = project / 'src' / module
-            source.mkdir(parents=True)
-            (source / '__init__.py').write_text(body)
-            (project / 'pyproject.toml').write_text(
-                f'[project]\nname = "{name}"\nversion = "{version}"\n'
-                f'dependencies = {json.dumps(dependencies)}\n'
-                '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
-                f'[tool.hatch.build.targets.wheel]\npackages = ["src/{module}"]\n')
-            wheel = NAAPP_PACKAGE._build(project, root / 'dist' / label)
-            return project, wheel, NAAPP_PACKAGE._metadata(wheel)
-
-        cls.awid = build('awid', 'awid-service', '0.5.40rc1', 'awid', [], 'LOCAL_RC = True\n')
-        stable = build('stable', 'awid-service', '0.5.39', 'awid', [], 'LOCAL_RC = False\n')
-        cls.naapp = build('naapp', 'aweb-naapp', '0.5.2rc1', 'aweb_naapp',
-                          ['awid-service>=0.5.40rc1'], 'from awid import LOCAL_RC\nassert LOCAL_RC\n')
-        cls.server = build('server', 'aweb', '1.27.51rc1', 'aweb',
-                           ['awid-service>=0.5.40rc1'], 'from awid import LOCAL_RC\nassert LOCAL_RC\n')
-        cls.testing = build('testing', 'aweb-naapp-testing', '0.5.2rc1', 'aweb_naapp_testing',
-                            ['aweb-naapp==0.5.2rc1', 'aweb>=1.27.51rc1'],
-                            'import aweb_naapp\nimport aweb\n')
-        cls.newer = build('newer', 'aweb-naapp', '0.5.2rc1', 'aweb_naapp',
-                          ['awid-service>=0.5.40rc2'], 'import awid\n')
-        cls.links = [row[1].parent for row in (cls.awid, cls.naapp, cls.server)]
-        # The older stable neighbor models the index without network access.
-        # Its presence prevents uv's only-prereleases-available exception.
-        index = root / 'index' / 'awid-service'
-        index.mkdir(parents=True)
-        (index / 'index.html').write_text(f'<a href="{stable[1].as_uri()}">{stable[1].name}</a>')
-        cls.environment = dict(UV_NO_INDEX='0', UV_INDEX_URL=(root / 'index').as_uri())
-
-    def test_matched_rc_siblings_install_and_import(self):
-        with patch.dict(os.environ, self.environment):
-            for row in (self.naapp, self.testing):
-                with self.subTest(package=row[2]['Name']):
-                    NAAPP_PACKAGE._check_install(*row, self.links)
-
-    def test_floor_newer_than_local_rc_still_refuses(self):
-        with patch.dict(os.environ, self.environment):
-            with self.assertRaisesRegex(NAAPP_PACKAGE.PackageRefusal, '0.5.40rc2'):
-                NAAPP_PACKAGE._check_install(*self.newer, self.links)
-
-
-class CandidateBrowserImageContractTest(unittest.TestCase):
-    def test_integration_image_installs_the_locked_headless_shell(self):
-        dockerfile = (ROOT / "candidate-gate/Dockerfile").read_text()
-        commands = " ".join(dockerfile.replace("\\\n", " ").split())
-        self.assertIn("ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright", dockerfile)
-        sync = "uv sync --frozen --project naapp-lib"
-        install = (
-            "uv run --frozen --no-sync --project naapp-lib "
-            "playwright install --with-deps --only-shell chromium"
+    def test_locked_files_of_another_package_refuse_before_upload(self):
+        uploaded, _asked = self.uploads()
+        other = self.scratch / "other"
+        locked = release_assets(other, "awid_service", "2.3.4")
+        command(
+            self.root,
+            "git",
+            "tag",
+            "-a",
+            "-f",
+            "server-v1.2.3",
+            "-m",
+            locked_message("server-v1.2.3", locked),
         )
-        self.assertIn(sync, commands)
-        self.assertIn(install, commands)
-        self.assertLess(commands.index(sync), commands.index(install))
-        self.assertIn("chmod -R a+rX /opt/ms-playwright", commands)
-        for project in ("awid", "naapp-lib"):
-            self.assertIn(f"COPY {project} {project}", dockerfile)
-        wrapper = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
-        self.assertIn('-f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout"', wrapper)
+        with self.assertRaisesRegex(
+            PUBLISH.PublishRefusal, "exactly one sdist and one wheel"
+        ):
+            PUBLISH.publish_pypi(self.root, "server-v1.2.3", self.source, other)
+        self.assertEqual(uploaded, [])
 
-    def test_integration_home_override_keeps_the_image_browser_path(self):
-        wrapper = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
-        runner = wrapper.split("set +e\ndocker run --rm --init", 1)[1]
-        runner = runner.split('bash scripts/candidate-suite.sh "$pending"', 1)[0]
-        self.assertIn('-e HOME="$checkout/.candidate-home"', runner)
-        self.assertIn("-e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright", runner)
+    def test_the_pypi_lane_refuses_without_release_assets(self):
+        with (
+            patch.object(PUBLISH, "publish_pypi") as pypi,
+            patch.object(PUBLISH, "publish_oci") as oci,
+        ):
+            with self.assertRaisesRegex(PUBLISH.PublishRefusal, "--assets"):
+                PUBLISH.publish(self.root, "server-v1.2.3", only="pypi")
+            pypi.assert_not_called()
+            oci.assert_not_called()
+
+    def test_workflow_publishes_release_assets_on_release_and_never_on_tag_push(self):
+        source = (ROOT / ".github/workflows/pypi-release.yml").read_text()
+        self.assertIn("release:\n    types: [published]", source)
+        self.assertNotIn("push:", source)
+        self.assertIn("UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}", source)
+        self.assertNotIn("uv build", source)
+        self.assertNotIn("id-token", source)
+        self.assertIn('gh release download "$TAG" --dir "$ASSETS"', source)
+        self.assertIn(
+            'git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"', source
+        )
+        self.assertIn(
+            'python3 scripts/publish_release.py --only pypi --assets "$ASSETS" "$TAG"',
+            source,
+        )
+
+
+class CandidateGateDeadlineTest(unittest.TestCase):
+    def test_gate_that_outlasts_the_command_bound_still_tags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            init_fixture_repo(root)
+            command(root, "git", "config", "user.name", "fixture")
+            command(root, "git", "config", "user.email", "fixture@example.test")
+            (root / "scripts").mkdir()
+            gate = root / "scripts/candidate-docker-gate.sh"
+            # The Docker gate takes longer than the bound on ordinary commands.
+            gate.write_text("#!/bin/sh\nsleep 2\n")
+            gate.chmod(0o755)
+            command(root, "git", "add", ".")
+            command(root, "git", "commit", "-qm", "candidate")
+            command(root, "git", "remote", "add", "origin", ".")
+            with (
+                patch.object(CANDIDATE, "COMMAND_TIMEOUT_SECONDS", 1),
+                patch("sys.stdout", new_callable=io.StringIO),
+            ):
+                source_sha = CANDIDATE.create_candidate(root, ["aw-v1.2.3"])
+            self.assertEqual(
+                command(root, "git", "rev-parse", "refs/tags/aw-v1.2.3^{commit}"),
+                source_sha,
+            )
+
+    def test_ordinary_commands_keep_their_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(CANDIDATE, "COMMAND_TIMEOUT_SECONDS", 1):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    CANDIDATE.run(Path(directory), "sleep", "3")
 
 
 class NpmRcContractTest(unittest.TestCase):
@@ -569,34 +648,65 @@ class NpmRcContractTest(unittest.TestCase):
             command(root, "git", "commit", "-qam", "final")
             command(root, "git", "remote", "add", "origin", ".")
             result = run_fixture(
-                [sys.executable, str(ROOT / "scripts/release_candidate.py"),
-                 "--stage-aw-final", "aw-v1.2.3"],
-                cwd=root, capture_output=True, text=True,
+                [
+                    sys.executable,
+                    str(ROOT / "scripts/release_candidate.py"),
+                    "--stage-aw-final",
+                    "aw-v1.2.3",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            message = command(root, "git", "tag", "-l", "aw-v1.2.3", "--format=%(contents)")
+            message = command(
+                root, "git", "tag", "-l", "aw-v1.2.3", "--format=%(contents)"
+            )
             self.assertIn("Npm-Publish-Channel: next", message)
 
     def test_exact_publisher_routes_staged_rc_to_next_and_final_to_latest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             npm = root / "npm"
-            npm.write_text('#!/bin/sh\nset -eu\n'
-                           'test "$NPM_CONFIG_UPDATE_NOTIFIER" = false\n'
-                           'test "$npm_config_update_notifier" = false\n'
-                           'printf "%s\\n" "$@" > "$CAPTURE_NPM"\n')
+            npm.write_text(
+                "#!/bin/sh\nset -eu\n"
+                'test "$NPM_CONFIG_UPDATE_NOTIFIER" = false\n'
+                'test "$npm_config_update_notifier" = false\n'
+                'printf "%s\\n" "$@" > "$CAPTURE_NPM"\n'
+            )
             npm.chmod(0o755)
-            environment = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"], "CAPTURE_NPM": str(root / "args"),
-                           "NPM_CONFIG_UPDATE_NOTIFIER": "true", "npm_config_update_notifier": "true"}
-            for version, expected, staged in (("1.2.3-rc.1", "next", False), ("1.2.3", "latest", False), ("1.2.3", "next", True)):
+            environment = {
+                **os.environ,
+                "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                "CAPTURE_NPM": str(root / "args"),
+                "NPM_CONFIG_UPDATE_NOTIFIER": "true",
+                "npm_config_update_notifier": "true",
+            }
+            for version, expected, staged in (
+                ("1.2.3-rc.1", "next", False),
+                ("1.2.3", "latest", False),
+                ("1.2.3", "next", True),
+            ):
                 archive = root / "staged.tgz"
                 raw = json.dumps({"name": "@awebai/aw", "version": version}).encode()
                 with tarfile.open(archive, "w:gz") as tar:
                     entry = tarfile.TarInfo("package/package.json")
                     entry.size = len(raw)
                     tar.addfile(entry, io.BytesIO(raw))
-                result = run_fixture(["bash", "scripts/npm-exact-publish.sh", "publish-exact", "--tgz", str(archive)] + (["--staged-final"] if staged else []),
-                                        cwd=ROOT, env=environment, text=True, capture_output=True)
+                result = run_fixture(
+                    [
+                        "bash",
+                        "scripts/npm-exact-publish.sh",
+                        "publish-exact",
+                        "--tgz",
+                        str(archive),
+                    ]
+                    + (["--staged-final"] if staged else []),
+                    cwd=ROOT,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 args = (root / "args").read_text().splitlines()
                 self.assertEqual(args[args.index("--tag") + 1], expected)
@@ -606,6 +716,7 @@ class NpmRcContractTest(unittest.TestCase):
         # Real publisher, npm and platform archives; uploads stay inside an
         # owned loopback registry, including the new exact readback boundary.
         from test_npm_readback import Registry
+
         with tempfile.TemporaryDirectory() as directory, Registry().serve() as registry:
             root = Path(directory)
             npm_root, artifacts = root / "npm", root / "artifacts"
@@ -613,28 +724,54 @@ class NpmRcContractTest(unittest.TestCase):
             artifacts.mkdir()
             init_fixture_repo(root)
             # A release checkout has a commit: the publisher records it as each package's gitHead.
-            command(root, "git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.test",
-                    "commit", "--allow-empty", "-qm", "source")
+            command(
+                root,
+                "git",
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "source",
+            )
             shutil.copyfile(ROOT / "cli/go/npm/publish.sh", npm_root / "publish.sh")
             shutil.copyfile(ROOT / "cli/go/npm/readback.py", npm_root / "readback.py")
             helper = ROOT / "cli/go/npm/publication.py"
             if helper.exists():
                 shutil.copyfile(helper, npm_root / helper.name)
-            platforms = {"linux_amd64": "linux-x64", "linux_arm64": "linux-arm64",
-                         "darwin_amd64": "darwin-x64", "darwin_arm64": "darwin-arm64",
-                         "windows_amd64": "windows-x64", "windows_arm64": "windows-arm64"}
-            for package in ["aw"] + ["aw-" + platform for platform in platforms.values()]:
+            platforms = {
+                "linux_amd64": "linux-x64",
+                "linux_arm64": "linux-arm64",
+                "darwin_amd64": "darwin-x64",
+                "darwin_arm64": "darwin-arm64",
+                "windows_amd64": "windows-x64",
+                "windows_arm64": "windows-arm64",
+            }
+            for package in ["aw"] + [
+                "aw-" + platform for platform in platforms.values()
+            ]:
                 (npm_root / package).mkdir()
-                shutil.copyfile(ROOT / "cli/go/npm" / package / "package.json", npm_root / package / "package.json")
+                shutil.copyfile(
+                    ROOT / "cli/go/npm" / package / "package.json",
+                    npm_root / package / "package.json",
+                )
             for platform in platforms:
                 windows = platform.startswith("windows")
-                binary_names = ["aw.exe", "aweb-a2a-gw.exe"] if windows else ["aw", "aweb-a2a-gw"]
+                binary_names = (
+                    ["aw.exe", "aweb-a2a-gw.exe"] if windows else ["aw", "aweb-a2a-gw"]
+                )
                 if windows:
-                    with zipfile.ZipFile(artifacts / (platform + ".zip"), "w") as archive:
+                    with zipfile.ZipFile(
+                        artifacts / (platform + ".zip"), "w"
+                    ) as archive:
                         for name in binary_names:
                             archive.writestr(name, "fixture binary")
                 else:
-                    with tarfile.open(artifacts / (platform + ".tar.gz"), "w:gz") as archive:
+                    with tarfile.open(
+                        artifacts / (platform + ".tar.gz"), "w:gz"
+                    ) as archive:
                         for name in binary_names:
                             data = b"fixture binary"
                             info = tarfile.TarInfo(name)
@@ -646,27 +783,45 @@ class NpmRcContractTest(unittest.TestCase):
                 # same existing publisher on the author's macOS host.
                 (root / "bin/sed").symlink_to(shutil.which("gsed") or "/usr/bin/sed")
             config = root / "npmrc"
-            config.write_text(f"registry={registry.url}\n//{registry.url.split('//')[1]}/:_authToken=disposable-fixture\n")
+            config.write_text(
+                f"registry={registry.url}\n//{registry.url.split('//')[1]}/:_authToken=disposable-fixture\n"
+            )
             origin = root / "origin.git"
             command(root, "git", "init", "--bare", "-q", str(origin))
             command(root, "git", "remote", "add", "origin", str(origin))
             for version, expected, staged in (
-                ("1.2.3-rc.1", "next", False), ("1.2.3", "latest", False),
-                ("1.2.3", "next", True), ("1.2.4", "next", "tag"),
-                ("1.2.5", "next", "checkout"), ("1.2.6", "latest", "ci-final"),
-                ("1.2.7-rc.1", "next", "ci-rc"), ("1.2.8", None, "ci-missing"),
+                ("1.2.3-rc.1", "next", False),
+                ("1.2.3", "latest", False),
+                ("1.2.3", "next", True),
+                ("1.2.4", "next", "tag"),
+                ("1.2.5", "next", "checkout"),
+                ("1.2.6", "latest", "ci-final"),
+                ("1.2.7-rc.1", "next", "ci-rc"),
+                ("1.2.8", None, "ci-missing"),
             ):
                 registry.published.clear()
-                environment = {k: v for k, v in os.environ.items() if not k.startswith(("NPM_", "npm_", "NODE_AUTH"))}
-                environment.update(PATH=str(root / "bin") + os.pathsep + os.environ["PATH"],
-                                   GITHUB_REF_NAME="v" + version, GITHUB_ACTIONS="false",
-                                   NPM_CONFIG_USERCONFIG=str(config), NPM_CONFIG_REGISTRY=registry.url)
+                environment = {
+                    k: v
+                    for k, v in os.environ.items()
+                    if not k.startswith(("NPM_", "npm_", "NODE_AUTH"))
+                }
+                environment.update(
+                    PATH=str(root / "bin") + os.pathsep + os.environ["PATH"],
+                    GITHUB_REF_NAME="v" + version,
+                    GITHUB_ACTIONS="false",
+                    NPM_CONFIG_USERCONFIG=str(config),
+                    NPM_CONFIG_REGISTRY=registry.url,
+                )
                 tag = "v" + version
                 if staged in ("tag", "checkout", "ci-final", "ci-rc"):
                     command(root, "git", "config", "user.name", "fixture")
                     command(root, "git", "config", "user.email", "fixture@example.test")
                     command(root, "git", "commit", "--allow-empty", "-qm", "fixture")
-                    marker = "\n\nNpm-Publish-Channel: next" if staged in ("tag", "checkout") else ""
+                    marker = (
+                        "\n\nNpm-Publish-Channel: next"
+                        if staged in ("tag", "checkout")
+                        else ""
+                    )
                     command(root, "git", "tag", "-a", tag, "-m", "release" + marker)
                 if staged in ("checkout", "ci-final", "ci-rc"):
                     command(root, "git", "push", "-q", "origin", "refs/tags/" + tag)
@@ -674,30 +829,66 @@ class NpmRcContractTest(unittest.TestCase):
                         # Actual checkout@v4 sequence from release run41529254431:
                         # its commit-specific fetch replaces the fetched annotation.
                         commit = command(root, "git", "rev-parse", tag + "^{commit}")
-                        command(root, "git", "fetch", "--force", "--no-tags", "origin",
-                                "+" + commit + ":refs/tags/" + tag)
-                        self.assertEqual(command(root, "git", "cat-file", "-t", "refs/tags/" + tag), "commit")
+                        command(
+                            root,
+                            "git",
+                            "fetch",
+                            "--force",
+                            "--no-tags",
+                            "origin",
+                            "+" + commit + ":refs/tags/" + tag,
+                        )
+                        self.assertEqual(
+                            command(root, "git", "cat-file", "-t", "refs/tags/" + tag),
+                            "commit",
+                        )
                 if staged in ("checkout", "ci-final", "ci-rc", "ci-missing"):
                     environment["GITHUB_ACTIONS"] = "true"
-                result = run_fixture(["bash", str(npm_root / "publish.sh")] + (["--staged-final"] if staged is True else []), env=environment,
-                                        text=True, capture_output=True)
+                result = run_fixture(
+                    ["bash", str(npm_root / "publish.sh")]
+                    + (["--staged-final"] if staged is True else []),
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                )
                 if staged == "ci-missing":
                     self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertEqual(registry.published, [], "missing CI tag reached npm")
+                    self.assertEqual(
+                        registry.published, [], "missing CI tag reached npm"
+                    )
                     continue
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(len(registry.published), 7)
-                self.assertTrue(all(tags == {expected: version} for _, _, tags in registry.published), registry.published)
+                self.assertTrue(
+                    all(
+                        tags == {expected: version} for _, _, tags in registry.published
+                    ),
+                    registry.published,
+                )
                 if staged == "checkout":
-                    self.assertEqual(command(root, "git", "cat-file", "-t", "refs/tags/" + tag), "tag")
+                    self.assertEqual(
+                        command(root, "git", "cat-file", "-t", "refs/tags/" + tag),
+                        "tag",
+                    )
                 wrapper = json.loads((npm_root / "aw/package.json").read_text())
-                self.assertEqual(set(wrapper["optionalDependencies"].values()), {version})
+                self.assertEqual(
+                    set(wrapper["optionalDependencies"].values()), {version}
+                )
 
     def test_upstream_tag_guard_accepts_only_final_or_aw_rc_spelling(self):
         workflow = (ROOT / ".github/workflows/aw-release.yml").read_text()
-        guard = next(line.strip() for line in workflow.splitlines() if '[[ "$version" =~' in line)
-        for version, accepted in (("1.2.3-rc.1", True), ("1.2.3", True), ("1.2.3rc1", False), ("1.2.3-rc.0", False)):
-            result = run_fixture(["bash", "-c", 'version="$1"\n' + guard, "guard", version])
+        guard = next(
+            line.strip() for line in workflow.splitlines() if '[[ "$version" =~' in line
+        )
+        for version, accepted in (
+            ("1.2.3-rc.1", True),
+            ("1.2.3", True),
+            ("1.2.3rc1", False),
+            ("1.2.3-rc.0", False),
+        ):
+            result = run_fixture(
+                ["bash", "-c", 'version="$1"\n' + guard, "guard", version]
+            )
             self.assertEqual(result.returncode == 0, accepted, version)
 
     def test_aw_workflow_checks_rc_and_final_tags_before_downstream_clone(self):
@@ -713,34 +904,56 @@ class NpmRcContractTest(unittest.TestCase):
                 command(root, "git", "config", "user.email", "test@example.com")
                 (root / "scripts").mkdir()
                 for script in ("release_versions.py", "publish_release.py"):
-                    shutil.copyfile(ROOT / "scripts" / script, root / "scripts" / script)
+                    shutil.copyfile(
+                        ROOT / "scripts" / script, root / "scripts" / script
+                    )
                 (root / "cli/go/npm/aw").mkdir(parents=True)
-                shutil.copyfile(ROOT / "cli/go/npm/publication.py", root / "cli/go/npm/publication.py")
+                shutil.copyfile(
+                    ROOT / "cli/go/npm/publication.py",
+                    root / "cli/go/npm/publication.py",
+                )
                 manifest = root / "cli/go/npm/aw/package.json"
-                manifest.write_text(json.dumps({"name": "@awebai/aw", "version": "1.36.48-rc.1"}))
+                manifest.write_text(
+                    json.dumps({"name": "@awebai/aw", "version": "1.36.48-rc.1"})
+                )
                 (root / "cli/go/implementation.go").write_text("package main\n")
                 command(root, "git", "add", ".")
                 command(root, "git", "commit", "-qm", "RC")
                 if case != "final-without-rc":
                     command(root, "git", "tag", "aw-v1.36.48-rc.1")
                 if case != "rc":
-                    manifest.write_text(json.dumps({"name": "@awebai/aw", "version": "1.36.48"}))
+                    manifest.write_text(
+                        json.dumps({"name": "@awebai/aw", "version": "1.36.48"})
+                    )
                     command(root, "git", "commit", "-qam", "final")
                     command(root, "git", "tag", "aw-v1.36.48")
                 side_effect = root / "downstream-side-effect"
                 with tempfile.TemporaryDirectory() as binaries:
                     spy = Path(binaries) / "git"
-                    spy.write_text('#!/bin/sh\nif [ "$1" = clone ]; then\n'
-                                   '  printf "clone\\n" > "$SIDE_EFFECT"\n  exit 86\nfi\n'
-                                   'exec "$REAL_GIT" "$@"\n')
+                    spy.write_text(
+                        '#!/bin/sh\nif [ "$1" = clone ]; then\n'
+                        '  printf "clone\\n" > "$SIDE_EFFECT"\n  exit 86\nfi\n'
+                        'exec "$REAL_GIT" "$@"\n'
+                    )
                     spy.chmod(0o755)
-                    environment = {**os.environ, "REAL_GIT": shutil.which("git"),
-                                   "PATH": binaries + os.pathsep + os.environ["PATH"],
-                                   "SIDE_EFFECT": str(side_effect), "RUNNER_TEMP": str(root / "runner"),
-                                   "AW_REPO_TOKEN": "test-boundary-not-a-secret",
-                                   "GITHUB_REF_NAME": "aw-v1.36.48-rc.1" if case == "rc" else "aw-v1.36.48"}
-                    result = run_fixture(["bash", "-c", shell], cwd=root, env=environment,
-                                            text=True, capture_output=True)
+                    environment = {
+                        **os.environ,
+                        "REAL_GIT": shutil.which("git"),
+                        "PATH": binaries + os.pathsep + os.environ["PATH"],
+                        "SIDE_EFFECT": str(side_effect),
+                        "RUNNER_TEMP": str(root / "runner"),
+                        "AW_REPO_TOKEN": "test-boundary-not-a-secret",
+                        "GITHUB_REF_NAME": "aw-v1.36.48-rc.1"
+                        if case == "rc"
+                        else "aw-v1.36.48",
+                    }
+                    result = run_fixture(
+                        ["bash", "-c", shell],
+                        cwd=root,
+                        env=environment,
+                        text=True,
+                        capture_output=True,
+                    )
                 # One gate qualifies the tagged tree; a final needs no prior RC.
                 self.assertEqual(result.returncode, 86, result.stderr)
                 self.assertEqual(side_effect.read_text(), "clone\n")
@@ -750,7 +963,11 @@ class NpmRcContractTest(unittest.TestCase):
         shell = textwrap.dedent(workflow.split("        run: |\n", 1)[1])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            upstream, seed, remote = root / "upstream", root / "seed", root / "remote.git"
+            upstream, seed, remote = (
+                root / "upstream",
+                root / "seed",
+                root / "remote.git",
+            )
             for repo in (upstream, seed):
                 repo.mkdir()
                 init_fixture_repo(repo)
@@ -764,8 +981,11 @@ class NpmRcContractTest(unittest.TestCase):
             (upstream / "scripts").mkdir()
             for name in ("publish_release.py", "release_versions.py"):
                 shutil.copyfile(ROOT / "scripts" / name, upstream / "scripts" / name)
-            shutil.copytree(ROOT / "cli/go/npm", upstream / "cli/go/npm",
-                            ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(
+                ROOT / "cli/go/npm",
+                upstream / "cli/go/npm",
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
             manifest = upstream / "cli/go/npm/aw/package.json"
             package = json.loads(manifest.read_text())
             package["version"] = "1.2.3-rc.1"
@@ -776,36 +996,54 @@ class NpmRcContractTest(unittest.TestCase):
             package["version"] = "1.2.3"
             manifest.write_text(json.dumps(package))
             command(upstream, "git", "commit", "-qam", "final")
-            command(upstream, "git", "tag", "-a", "aw-v1.2.3", "-m",
-                    "staged final\n\nNpm-Publish-Channel: next")
+            command(
+                upstream,
+                "git",
+                "tag",
+                "-a",
+                "aw-v1.2.3",
+                "-m",
+                "staged final\n\nNpm-Publish-Channel: next",
+            )
             binaries = root / "bin"
             binaries.mkdir()
             spy = binaries / "git"
-            spy.write_text('#!/usr/bin/env python3\nimport os,sys\nargs=sys.argv[1:]\n'
-                           'if args[0]=="clone": args=["clone","--branch","main",os.environ["OWN_REMOTE"],args[-1]]\n'
-                           'os.execv(os.environ["REAL_GIT"],[os.environ["REAL_GIT"],*args])\n')
+            spy.write_text(
+                "#!/usr/bin/env python3\nimport os,sys\nargs=sys.argv[1:]\n"
+                'if args[0]=="clone": args=["clone","--branch","main",os.environ["OWN_REMOTE"],args[-1]]\n'
+                'os.execv(os.environ["REAL_GIT"],[os.environ["REAL_GIT"],*args])\n'
+            )
             spy.chmod(0o755)
             (root / "runner").mkdir()
-            env = {**os.environ, "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
-                   "REAL_GIT": shutil.which("git"), "OWN_REMOTE": str(remote),
-                   "RUNNER_TEMP": str(root / "runner"), "GITHUB_REF_NAME": "aw-v1.2.3",
-                   "AW_REPO_TOKEN": "fixture-not-a-secret"}
-            result = run_fixture(["bash", "-c", shell], cwd=upstream, env=env,
-                                    text=True, capture_output=True)
+            env = {
+                **os.environ,
+                "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
+                "REAL_GIT": shutil.which("git"),
+                "OWN_REMOTE": str(remote),
+                "RUNNER_TEMP": str(root / "runner"),
+                "GITHUB_REF_NAME": "aw-v1.2.3",
+                "AW_REPO_TOKEN": "fixture-not-a-secret",
+            }
+            result = run_fixture(
+                ["bash", "-c", shell],
+                cwd=upstream,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            annotation = command(root, "git", "--git-dir", str(remote), "tag", "-l", "v1.2.3", "--format=%(contents)")
+            annotation = command(
+                root,
+                "git",
+                "--git-dir",
+                str(remote),
+                "tag",
+                "-l",
+                "v1.2.3",
+                "--format=%(contents)",
+            )
             self.assertIn("Npm-Publish-Channel: next", annotation)
             self.assertTrue((root / "runner/aw/.github/fixture").exists())
-
-    def test_dispatch_refuses_bad_rc_spellings(self):
-        for version in ("1.2.3rc1", "1.2.3-rc.0", "1.2.3-rc.01", "01.2.3", "1.2.3-beta.1"):
-            with self.subTest(version=version):
-                result = run_fixture(["bash", "scripts/npm-exact-publish.sh", "validate-inputs", "--version", version],
-                                        cwd=ROOT, text=True, capture_output=True)
-                self.assertNotEqual(result.returncode, 0)
-        result = run_fixture(["bash", "scripts/npm-exact-publish.sh", "validate-inputs", "--version", "1.2.3-rc.1"],
-                                cwd=ROOT, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class ReleaseStampContractTest(unittest.TestCase):
@@ -814,7 +1052,7 @@ class ReleaseStampContractTest(unittest.TestCase):
             fake_go = Path(directory) / "go"
             fake_go.write_text(
                 "#!/usr/bin/env bash\n"
-                "if [[ \"$1 $2\" == \"env GOVERSION\" ]]; then\n"
+                'if [[ "$1 $2" == "env GOVERSION" ]]; then\n'
                 "  printf 'go1.26.11\\n'\n"
                 "  exit 0\n"
                 "fi\n"
@@ -841,130 +1079,62 @@ class ReleaseStampContractTest(unittest.TestCase):
         self.assertNotIn("no such file or directory", result.stderr.lower())
 
 
-class CustomerReleaseContractTest(unittest.TestCase):
-    """Customer lanes use the real tag/manifest/promotion boundary, without publishing."""
+class AppLaneRefusalTest(unittest.TestCase):
+    """The apps release from their own repository; aweb opens and publishes none of their lanes."""
 
-    def repository(self):
-        temporary = tempfile.TemporaryDirectory()
+    APP_TAGS = (
+        "aweb-naapp-v0.1.0",
+        "aweb-secrets-runner-v0.1.0",
+        "secrets-v0.1.0",
+        "logs-v0.1.0",
+    )
+
+    def test_release_candidate_refuses_an_app_tag_before_gating(self):
+        temporary, root = TagContractTest.repository(self)
         self.addCleanup(temporary.cleanup)
-        root = Path(temporary.name)
-        init_fixture_repo(root)
-        command(root, "git", "config", "user.name", "test")
-        command(root, "git", "config", "user.email", "test@example.com")
-        self.projects = {
-            "naapp/secrets": ("aweb-secrets", "0.1.0"),
-            "naapp/logs": ("aweb-logs", "0.1.0"),
-            "naapp/secrets/values": ("aweb-secrets-values", "0.1.0rc1"),
-            "naapp/secrets/runner": ("aweb-secrets-runner", "0.1.0rc1"),
-        }
-        for directory, (name, version) in self.projects.items():
-            path = root / directory
-            path.mkdir(parents=True, exist_ok=True)
-            dependencies = (
-                '["aweb-secrets-values==0.1.0rc1"]' if name == "aweb-secrets-runner" else "[]"
-            )
-            (path / "pyproject.toml").write_text(
-                f'[project]\nname = "{name}"\nversion = "{version}"\n'
-                f'dependencies = {dependencies}\n'
-            )
-        values = root / "naapp/secrets/values/src/aweb_secrets_values"
-        values.mkdir(parents=True)
-        (values / "__init__.py").write_text('CODEC_VERSION = 1\n')
-        command(root, "git", "add", ".")
-        command(root, "git", "commit", "-qm", "customer RC source")
-        return root
+        real_run, commands = CANDIDATE.run, []
 
-    def test_customer_candidates_bind_each_image_and_runner_to_its_version(self):
-        root = self.repository()
-        source, versions = CANDIDATE.validate_tags(
-            root, ["secrets-v0.1.0", "logs-v0.1.0", "aweb-secrets-runner-v0.1.0rc1"]
-        )
-        self.assertEqual(source, command(root, "git", "rev-parse", "HEAD"))
-        self.assertEqual(versions, {
-            "secrets-v": "0.1.0", "logs-v": "0.1.0", "aweb-secrets-runner-v": "0.1.0rc1",
-        })
+        def run(cwd, *argv, **kwargs):
+            commands.append(argv)
+            if argv[:2] == ("git", "fetch"):
+                return ""
+            return real_run(cwd, *argv, **kwargs)
 
-    def test_customer_image_version_mismatch_refuses(self):
-        root = self.repository()
-        CANDIDATE.validate_tags(root, ["secrets-v0.1.0", "logs-v0.1.0"])
-        for tag in ("secrets-v0.1.1", "logs-v0.1.1"):
-            with self.subTest(tag=tag), self.assertRaises(CANDIDATE.CandidateRefusal):
-                CANDIDATE.validate_tags(root, [tag])
+        with patch.object(CANDIDATE, "run", run):
+            for tag in self.APP_TAGS:
+                with self.subTest(tag=tag):
+                    commands.clear()
+                    with self.assertRaisesRegex(
+                        CANDIDATE.CandidateRefusal, "unsupported release tag"
+                    ):
+                        CANDIDATE.create_candidate(root, ["server-v1.2.3", tag])
+                    self.assertNotIn(("scripts/candidate-docker-gate.sh",), commands)
+                    self.assertEqual(
+                        command(root, "git", "tag", "--list", "server-v1.2.3"), ""
+                    )
 
-    def test_runner_values_version_mismatch_refuses_candidate_and_publisher(self):
-        root = self.repository()
-        tag = "aweb-secrets-runner-v0.1.0rc1"
-        CANDIDATE.validate_tags(root, [tag])
-        values = root / "naapp/secrets/values/pyproject.toml"
-        values.write_text(values.read_text().replace('version = "0.1.0rc1"', 'version = "0.1.1rc1"'))
-        command(root, "git", "commit", "-qam", "mismatched values")
-        with self.assertRaises(CANDIDATE.CandidateRefusal):
-            CANDIDATE.validate_tags(root, [tag])
-        command(root, "git", "tag", "-a", tag, "-m", "candidate")
-        with self.assertRaises(PUBLISH.PublishRefusal):
-            PUBLISH.tag_identity(root, tag)
-
-    def test_customer_publisher_uses_tagged_source_not_later_manifests(self):
-        root = self.repository()
-        source = command(root, "git", "rev-parse", "HEAD")
-        tags = ("secrets-v0.1.0", "logs-v0.1.0", "aweb-secrets-runner-v0.1.0rc1")
-        for tag in tags:
-            command(root, "git", "tag", "-a", tag, "-m", "candidate")
-        for directory in self.projects:
-            manifest = root / directory / "pyproject.toml"
-            manifest.write_text(re.sub(r'version = "[^"]+"', 'version = "9.9.9"', manifest.read_text()))
-        command(root, "git", "commit", "-qam", "later unrelated release")
-        for tag in tags:
+    def test_the_publisher_refuses_an_app_tag(self):
+        temporary, root = TagContractTest.repository(self)
+        self.addCleanup(temporary.cleanup)
+        for tag in self.APP_TAGS:
             with self.subTest(tag=tag):
-                prefix, version, observed = PUBLISH.tag_identity(root, tag)
-                self.assertEqual((prefix, version), VERSIONS.tag_parts(tag))
-                self.assertEqual(observed, source)
+                command(root, "git", "tag", "-a", tag, "-m", "app")
+                with self.assertRaisesRegex(
+                    PUBLISH.PublishRefusal, "unsupported release tag"
+                ):
+                    PUBLISH.publish(root, tag)
 
-    def test_equal_versions_with_wrong_values_dependency_refuse(self):
-        root = self.repository()
-        tag = "aweb-secrets-runner-v0.1.0rc1"
-        CANDIDATE.validate_tags(root, [tag])
-        manifest = root / "naapp/secrets/runner/pyproject.toml"
-        manifest.write_text(manifest.read_text().replace(
-            'aweb-secrets-values==0.1.0rc1', 'aweb-secrets-values==0.0.9'
-        ))
-        command(root, "git", "commit", "-qam", "wrong dependency with equal package versions")
-        with self.assertRaises(CANDIDATE.CandidateRefusal):
-            CANDIDATE.validate_tags(root, [tag])
-        command(root, "git", "tag", "-a", tag, "-m", "bad dependency")
-        with self.assertRaises(PUBLISH.PublishRefusal):
-            PUBLISH.tag_identity(root, tag)
-
-    def test_runner_final_needs_no_prior_rc_and_keeps_lockstep_values(self):
-        root = self.repository()
-        for directory in ("naapp/secrets/values", "naapp/secrets/runner"):
-            manifest = root / directory / "pyproject.toml"
-            manifest.write_text(manifest.read_text().replace("0.1.0rc1", "0.1.0"))
-        command(root, "git", "commit", "-qam", "final versions")
-        _source, versions = CANDIDATE.validate_tags(root, ["aweb-secrets-runner-v0.1.0"])
-        self.assertEqual(versions["aweb-secrets-runner-v"], "0.1.0")
-        runner = root / "naapp/secrets/runner/pyproject.toml"
-        runner.write_text(runner.read_text().replace("aweb-secrets-values==0.1.0", "aweb-secrets-values==0.0.9"))
-        command(root, "git", "commit", "-qam", "runner pins another values release")
-        with self.assertRaises(VERSIONS.VersionRefusal):
-            CANDIDATE.validate_tags(root, ["aweb-secrets-runner-v0.1.0"])
-
-    def test_built_runner_requires_the_exact_values_release_and_toolkit_floor(self):
-        from email.parser import BytesParser
-        import tomllib
-
-        version = tomllib.loads((ROOT / "naapp/secrets/values/pyproject.toml").read_text())["project"]["version"]
-        with tempfile.TemporaryDirectory() as directory:
-            command(ROOT, "uv", "build", "--wheel", "--no-sources", "--out-dir", directory,
-                    "naapp/secrets/runner")
-            wheels = list(Path(directory).glob("*.whl"))
-            self.assertEqual(len(wheels), 1)
-            with zipfile.ZipFile(wheels[0]) as wheel:
-                names = [name for name in wheel.namelist() if name.endswith(".dist-info/METADATA")]
-                self.assertEqual(len(names), 1)
-                requirements = BytesParser().parsebytes(wheel.read(names[0])).get_all("Requires-Dist")
-            self.assertIn(f"aweb-secrets-values=={version}", requirements)
-            self.assertIn("aweb-naapp[pages]>=0.5.1", requirements)
+    def test_no_release_workflow_opens_an_app_lane(self):
+        for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+            source = workflow.read_text()
+            for prefix in (
+                "aweb-naapp-v",
+                "aweb-secrets-runner-v",
+                "secrets-v",
+                "logs-v",
+            ):
+                with self.subTest(workflow=workflow.name, prefix=prefix):
+                    self.assertIsNone(re.search(rf"(?<![\w-]){prefix}", source))
 
 
 if __name__ == "__main__":

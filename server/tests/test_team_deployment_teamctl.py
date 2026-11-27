@@ -21,7 +21,11 @@ def test_stop_stops_the_bundle_and_keeps_every_volume(tmp_path):
     assert result.returncode == 0, result.stderr
     made = calls(tmp_path)
     assert [call for call in made if " stop " in f" {call} "], made
-    assert not [call for call in made if "--volumes" in call or " down " in f" {call} " or "volume rm" in call]
+    assert not [
+        call
+        for call in made
+        if "--volumes" in call or " down " in f" {call} " or "volume rm" in call
+    ]
 
 
 def test_destroy_refuses_unless_the_project_is_named(tmp_path):
@@ -34,15 +38,27 @@ def test_destroy_refuses_unless_the_project_is_named(tmp_path):
 
 def test_destroy_removes_only_the_bundles_containers_and_named_volumes(tmp_path):
     path = deployment(tmp_path, EXAMPLE)
-    result = run(tmp_path, "destroy", path, "--confirm", "teamrun", command=TEAMCTL, docker_ok=True,
-                 answers={"config --volumes": "postgres_data\nredis_data\n"})
+    result = run(
+        tmp_path,
+        "destroy",
+        path,
+        "--confirm",
+        "teamrun",
+        command=TEAMCTL,
+        docker_ok=True,
+        answers={"config --volumes": "postgres_data\nredis_data\n"},
+    )
     assert result.returncode == 0, result.stderr
     made = calls(tmp_path)
     assert [call for call in made if " rm --stop --force" in call], made
-    removed = [call.split("volume rm ")[1].split() for call in made if "volume rm " in call]
+    removed = [
+        call.split("volume rm ")[1].split() for call in made if "volume rm " in call
+    ]
     assert removed == [["teamrun_postgres_data"], ["teamrun_redis_data"]]
     # Never the project as a whole: the test world beside it is not the bundle's.
-    assert not [call for call in made if " down " in f" {call} " or "--remove-orphans" in call]
+    assert not [
+        call for call in made if " down " in f" {call} " or "--remove-orphans" in call
+    ]
 
 
 def test_destroy_ignores_the_compose_files_run_beside_the_bundle(tmp_path):
@@ -51,8 +67,17 @@ def test_destroy_ignores_the_compose_files_run_beside_the_bundle(tmp_path):
     beside = tmp_path / "compose.beside.yaml"
     beside.write_text("services: {}\n", encoding="utf-8")
     path = deployment(tmp_path, EXAMPLE)
-    result = run(tmp_path, "destroy", path, "--confirm", "teamrun", command=TEAMCTL, docker_ok=True,
-                 extra_files=str(beside), answers={"config --volumes": "postgres_data\n"})
+    result = run(
+        tmp_path,
+        "destroy",
+        path,
+        "--confirm",
+        "teamrun",
+        command=TEAMCTL,
+        docker_ok=True,
+        extra_files=str(beside),
+        answers={"config --volumes": "postgres_data\n"},
+    )
     assert result.returncode == 0, result.stderr
     made = calls(tmp_path)
     assert [call for call in made if " rm --stop --force" in call], made
@@ -62,16 +87,38 @@ def test_destroy_ignores_the_compose_files_run_beside_the_bundle(tmp_path):
 def test_destroy_fails_when_it_cannot_list_the_bundles_volumes(tmp_path):
     # A failed listing is not an empty one: destroy must not report the volumes gone.
     path = deployment(tmp_path, EXAMPLE)
-    result = run(tmp_path, "destroy", path, "--confirm", "teamrun", command=TEAMCTL, docker_ok=True,
-                 fails={"config --volumes": 77})
-    assert result.returncode != 0 and "could not list the bundle's volumes" in result.stderr
+    result = run(
+        tmp_path,
+        "destroy",
+        path,
+        "--confirm",
+        "teamrun",
+        command=TEAMCTL,
+        docker_ok=True,
+        fails={"config --volumes": 77},
+    )
+    assert (
+        result.returncode != 0
+        and "could not list the bundle's volumes" in result.stderr
+    )
 
 
 def test_backup_refuses_while_a_writer_runs(tmp_path):
     path = deployment(tmp_path, EXAMPLE)
-    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True,
-                 answers={"--status running --services": "postgres\naweb\n"})
-    assert result.returncode == 1 and "aweb" in result.stderr and "teamctl stop" in result.stderr
+    result = run(
+        tmp_path,
+        "backup",
+        path,
+        str(tmp_path / "backup"),
+        command=TEAMCTL,
+        docker_ok=True,
+        answers={"--status running --services": "postgres\naweb\n"},
+    )
+    assert (
+        result.returncode == 1
+        and "aweb" in result.stderr
+        and "teamctl stop" in result.stderr
+    )
     assert not (tmp_path / "backup").exists()
     assert not [call for call in calls(tmp_path) if "pg_dump" in call]
 
@@ -79,9 +126,19 @@ def test_backup_refuses_while_a_writer_runs(tmp_path):
 def test_backup_stops_when_it_cannot_list_the_running_services(tmp_path):
     # A failed listing is not an empty one: no writer is known to be stopped.
     path = deployment(tmp_path, EXAMPLE)
-    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True,
-                 fails={"--status running --services": 78})
-    assert result.returncode != 0 and "could not list the running services" in result.stderr
+    result = run(
+        tmp_path,
+        "backup",
+        path,
+        str(tmp_path / "backup"),
+        command=TEAMCTL,
+        docker_ok=True,
+        fails={"--status running --services": 78},
+    )
+    assert (
+        result.returncode != 0
+        and "could not list the running services" in result.stderr
+    )
     assert not (tmp_path / "backup").exists()
     assert not [call for call in calls(tmp_path) if "pg_dump" in call]
 
@@ -89,8 +146,15 @@ def test_backup_stops_when_it_cannot_list_the_running_services(tmp_path):
 def test_backup_fails_when_it_cannot_list_the_databases(tmp_path):
     # A failed query is not an empty database list: no manifest says the backup is whole.
     path = deployment(tmp_path, EXAMPLE)
-    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True,
-                 fails={"select datname": 79})
+    result = run(
+        tmp_path,
+        "backup",
+        path,
+        str(tmp_path / "backup"),
+        command=TEAMCTL,
+        docker_ok=True,
+        fails={"select datname": 79},
+    )
     assert result.returncode != 0 and "could not list the databases" in result.stderr
     assert not (tmp_path / "backup" / "manifest.json").exists()
     assert not [call for call in calls(tmp_path) if "pg_dump" in call]
@@ -99,14 +163,30 @@ def test_backup_fails_when_it_cannot_list_the_databases(tmp_path):
 def test_backup_refuses_an_existing_directory(tmp_path):
     path = deployment(tmp_path, EXAMPLE)
     (tmp_path / "backup").mkdir()
-    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True)
+    result = run(
+        tmp_path,
+        "backup",
+        path,
+        str(tmp_path / "backup"),
+        command=TEAMCTL,
+        docker_ok=True,
+    )
     assert result.returncode == 1 and "exists" in result.stderr
     assert calls(tmp_path) == []
 
 
 def test_backup_refuses_an_operators_own_database_server(tmp_path):
-    path = deployment(tmp_path, {**EXAMPLE, "postgres": {"bundled": False, "host": "db.internal"}})
-    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True)
+    path = deployment(
+        tmp_path, {**EXAMPLE, "postgres": {"bundled": False, "host": "db.internal"}}
+    )
+    result = run(
+        tmp_path,
+        "backup",
+        path,
+        str(tmp_path / "backup"),
+        command=TEAMCTL,
+        docker_ok=True,
+    )
     assert result.returncode == 1 and "bundled PostgreSQL" in result.stderr
     assert not (tmp_path / "backup").exists()
 
@@ -114,7 +194,14 @@ def test_backup_refuses_an_operators_own_database_server(tmp_path):
 def test_restore_fails_closed_without_the_lab_rehearsal_scope(tmp_path):
     path = deployment(tmp_path, EXAMPLE)
     (tmp_path / "backup").mkdir()
-    result = run(tmp_path, "restore", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True)
+    result = run(
+        tmp_path,
+        "restore",
+        path,
+        str(tmp_path / "backup"),
+        command=TEAMCTL,
+        docker_ok=True,
+    )
     assert result.returncode == 1
     for task in ("aweb-acyp", "aweb-acgh.16.23", "aweb-acxy.4"):
         assert task in result.stderr
@@ -130,8 +217,16 @@ def test_start_checks_the_fronts_certificate_before_anything_starts(tmp_path):
     result = run(tmp_path, "start", path, command=TEAMCTL)
     assert result.returncode == 1
     made = calls(tmp_path)
-    assert len(made) == 1 and made[0].startswith("run --rm --user 0 --network none") and "certificate.pem" in made[0]
-    assert (tmp_path / "run" / "front" / "Caddyfile").read_text().startswith("{\n  auto_https off\n")
+    assert (
+        len(made) == 1
+        and made[0].startswith("run --rm --user 0 --network none")
+        and "certificate.pem" in made[0]
+    )
+    assert (
+        (tmp_path / "run" / "front" / "Caddyfile")
+        .read_text()
+        .startswith("{\n  auto_https off\n")
+    )
 
 
 def test_reload_tls_refuses_a_deployment_without_a_front(tmp_path):
@@ -141,13 +236,19 @@ def test_reload_tls_refuses_a_deployment_without_a_front(tmp_path):
     assert calls(tmp_path) == []
 
 
-def test_render_writes_the_env_file_and_the_fronts_configuration_and_starts_nothing(tmp_path):
+def test_render_writes_the_env_file_and_the_fronts_configuration_and_starts_nothing(
+    tmp_path,
+):
     path = deployment(tmp_path, {**EXAMPLE, "front": FRONT})
     result = run(tmp_path, "render", path, command=TEAMCTL)
     assert result.returncode == 0, result.stderr
     env = (tmp_path / "run" / ".env").read_text()
     assert f"FRONT_CONFIG_DIR={tmp_path / 'run' / 'front'}\n" in env
-    assert (tmp_path / "run" / "front" / "Caddyfile").read_text().startswith("{\n  auto_https off\n")
+    assert (
+        (tmp_path / "run" / "front" / "Caddyfile")
+        .read_text()
+        .startswith("{\n  auto_https off\n")
+    )
     assert calls(tmp_path) == []
 
 
@@ -158,9 +259,18 @@ def test_backup_leaves_the_agents_harness_login_out_of_the_secrets_archive(tmp_p
     (secrets / "agents").mkdir(parents=True)
     config = {**EXAMPLE, "compose": {**EXAMPLE["compose"], "secretsDir": str(secrets)}}
     path = deployment(tmp_path, config)
-    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True)
+    result = run(
+        tmp_path,
+        "backup",
+        path,
+        str(tmp_path / "backup"),
+        command=TEAMCTL,
+        docker_ok=True,
+    )
     assert result.returncode == 0, result.stderr
-    archived = [call for call in calls(tmp_path) if "tarfile" in call and "/source:ro" in call]
+    archived = [
+        call for call in calls(tmp_path) if "tarfile" in call and "/source:ro" in call
+    ]
     assert len(archived) == 1 and "./agents" in archived[0].split(), archived
 
 
@@ -184,9 +294,15 @@ def test_start_reloads_the_running_front_with_the_rendered_sites(tmp_path):
     made = calls(tmp_path)
     up = next(i for i, call in enumerate(made) if " up -d " in call)
     reloads = [i for i, call in enumerate(made) if "caddy reload" in call]
-    assert len(reloads) == 1 and reloads[0] > up and "--force" in made[reloads[0]].split(), made
-    served = [call for call in made[reloads[0] + 1:] if call.startswith("run --rm --user 0 --network teamrun_services")]
-    assert len(served) == 1 and "certificate.pem" in served[0], made[reloads[0]:]
+    assert (
+        len(reloads) == 1 and reloads[0] > up and "--force" in made[reloads[0]].split()
+    ), made
+    served = [
+        call
+        for call in made[reloads[0] + 1 :]
+        if call.startswith("run --rm --user 0 --network teamrun_services")
+    ]
+    assert len(served) == 1 and "certificate.pem" in served[0], made[reloads[0] :]
 
 
 def agents_deployment(tmp_path: Path, team: dict) -> str:
@@ -198,36 +314,69 @@ def agents_deployment(tmp_path: Path, team: dict) -> str:
     from tests.test_team_deployment_render_env import AGENTS, APPS, EGRESS
 
     oats = tmp_path / "oats"
-    for fragment in ("container/agent/compose.agent.yaml", "container/agent/egress/compose.egress.yaml"):
+    for fragment in (
+        "container/agent/compose.agent.yaml",
+        "container/agent/egress/compose.egress.yaml",
+    ):
         (oats / fragment).parent.mkdir(parents=True, exist_ok=True)
         (oats / fragment).write_text("services: {}\n", encoding="utf-8")
     # The agent's acceptance passes, as a stand-in for the image's own.
     accept = oats / "container" / "agent" / "accept.sh"
     accept.write_text("#!/bin/sh\necho '[live-lab] PASS'\n", encoding="utf-8")
     accept.chmod(0o755)
-    git = ["git", "-C", str(oats), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    git = [
+        "git",
+        "-C",
+        str(oats),
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+    ]
     subprocess.run(["git", "init", "-q", str(oats)], check=True)
     subprocess.run([*git, "add", "."], check=True)
     subprocess.run([*git, "commit", "-q", "-m", "fragments"], check=True)
     agents = {**AGENTS, "compose": {**AGENTS["compose"], "oatsSource": str(oats)}}
-    return deployment(tmp_path, {**EXAMPLE, "team": {**team, "namespaceAuthorities": [{"domain": "example.com", "controllerDidKey": CONTROLLER}]}, "agents": agents, "egress": EGRESS,
-                                 **APPS})
+    return deployment(
+        tmp_path,
+        {
+            **EXAMPLE,
+            "team": {
+                **team,
+                "namespaceAuthorities": [
+                    {"domain": "example.com", "controllerDidKey": CONTROLLER}
+                ],
+            },
+            "agents": agents,
+            "egress": EGRESS,
+            **APPS,
+        },
+    )
 
 
 BASE_SERVICES = ["postgres", "redis", "aweb", "secrets", "logs", "egress", "agent"]
 PUBLIC_REGISTRY_ADDRESSES = ["104.21.0.10", "172.67.0.10"]
 
 
-def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry: list[str],
-                      egress_log: str | None = None, follower_seconds: int = 0, inspected: str | None = None,
-                      fails: dict[str, int] | None = None):
+def start_with_agents(
+    tmp_path: Path,
+    team: dict,
+    services: list[str],
+    registry: list[str],
+    egress_log: str | None = None,
+    follower_seconds: int = 0,
+    inspected: str | None = None,
+    fails: dict[str, int] | None = None,
+):
     # The stub docker answers what start asks before the ingress probe: the
     # services, the origins' addresses seen from aweb, the agents network's
     # isolation, a first line from each followed log, and the probe's pass.
     import json
 
-    resolved = {"origins": {role: ["172.31.0.250"] for role in ("aweb", "secrets", "logs")},
-                "backends": {"postgres": "172.31.0.3", "redis": "172.31.0.4"}}
+    resolved = {
+        "origins": {role: ["172.31.0.250"] for role in ("aweb", "secrets", "logs")},
+        "backends": {"postgres": "172.31.0.3", "redis": "172.31.0.4"},
+    }
     resolved["origins"]["registry"] = registry
     answers = {
         "config --services": "\n".join(services) + "\n",
@@ -243,7 +392,16 @@ def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry:
         answers["com.docker.compose.project"] = inspected
     path = agents_deployment(tmp_path, team)
     holds = {"--timestamps --follow": follower_seconds} if follower_seconds else None
-    return run(tmp_path, "start", path, command=TEAMCTL, docker_ok=True, answers=answers, holds=holds, fails=fails)
+    return run(
+        tmp_path,
+        "start",
+        path,
+        command=TEAMCTL,
+        docker_ok=True,
+        answers=answers,
+        holds=holds,
+        fails=fails,
+    )
 
 
 def followed(tmp_path: Path) -> list[str]:
@@ -258,24 +416,45 @@ def probes(made: list[str]) -> list[str]:
     return [call for call in made if "probe-ingress.mjs" in call]
 
 
-def test_start_probes_the_public_registry_as_an_external_route_with_no_backend_log(tmp_path):
+def test_start_probes_the_public_registry_as_an_external_route_with_no_backend_log(
+    tmp_path,
+):
     # The default registry is the public one, which is no service of the
     # deployment: before the external route, teamctl refused to probe it.
-    result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES)
-    assert "ingress probe: exit 0, OATS_EGRESS_INGRESS_PASS" in result.stdout, result.stdout + result.stderr
+    result = start_with_agents(
+        tmp_path,
+        {"id": "devteam:example.com"},
+        BASE_SERVICES,
+        PUBLIC_REGISTRY_ADDRESSES,
+    )
+    assert "ingress probe: exit 0, OATS_EGRESS_INGRESS_PASS" in result.stdout, (
+        result.stdout + result.stderr
+    )
     made = calls(tmp_path)
     assert followed(tmp_path) == ["aweb", "logs", "secrets"]
     assert len(probes(made)) == 1 and "--human-log /logs/secrets.log" in probes(made)[0]
-    routes = json.loads((tmp_path / "run" / "ingress-logs" / "route-logs.json").read_text())
+    routes = json.loads(
+        (tmp_path / "run" / "ingress-logs" / "route-logs.json").read_text()
+    )
     assert routes["registry"] == {"path": "/health", "external": True}
 
 
 def test_start_probes_a_local_registry_through_its_own_log(tmp_path):
-    team = {"id": "devteam:example.com", "registryUrl": "https://registry.example.com", "registryRoute": "local"}
-    result = start_with_agents(tmp_path, team, [*BASE_SERVICES, "registry"], ["172.31.0.250"])
-    assert "ingress probe: exit 0, OATS_EGRESS_INGRESS_PASS" in result.stdout, result.stdout + result.stderr
+    team = {
+        "id": "devteam:example.com",
+        "registryUrl": "https://registry.example.com",
+        "registryRoute": "local",
+    }
+    result = start_with_agents(
+        tmp_path, team, [*BASE_SERVICES, "registry"], ["172.31.0.250"]
+    )
+    assert "ingress probe: exit 0, OATS_EGRESS_INGRESS_PASS" in result.stdout, (
+        result.stdout + result.stderr
+    )
     assert followed(tmp_path) == ["aweb", "logs", "registry", "secrets"]
-    routes = json.loads((tmp_path / "run" / "ingress-logs" / "route-logs.json").read_text())
+    routes = json.loads(
+        (tmp_path / "run" / "ingress-logs" / "route-logs.json").read_text()
+    )
     assert routes["registry"] == {"path": "/health", "log": "/logs/registry.log"}
 
 
@@ -283,17 +462,44 @@ def test_start_probes_a_local_registry_through_its_own_log(tmp_path):
     ("team", "services", "registry", "refusal"),
     [
         # A missing local registry never becomes an external route.
-        ({"id": "devteam:example.com", "registryUrl": "https://registry.example.com", "registryRoute": "local"},
-         BASE_SERVICES, ["172.31.0.250"], "registry: the ingress probe needs its backend log"),
-        ({"id": "devteam:example.com"}, [*BASE_SERVICES, "registry"], PUBLIC_REGISTRY_ADDRESSES,
-         "registry is a service of this deployment; set team.registryRoute: local"),
-        ({"id": "devteam:example.com", "registryUrl": "https://registry.example.com", "registryRoute": "local"},
-         [*BASE_SERVICES, "registry"], PUBLIC_REGISTRY_ADDRESSES,
-         "104.21.0.10 is not one of the deployment's private ingress addresses"),
-        ({"id": "devteam:example.com"}, BASE_SERVICES, ["172.31.0.250"],
-         "172.31.0.250 is one of the deployment's own addresses"),
-        ({"id": "devteam:example.com"}, [s for s in BASE_SERVICES if s != "logs"], PUBLIC_REGISTRY_ADDRESSES,
-         "logs: the ingress probe needs its backend log"),
+        (
+            {
+                "id": "devteam:example.com",
+                "registryUrl": "https://registry.example.com",
+                "registryRoute": "local",
+            },
+            BASE_SERVICES,
+            ["172.31.0.250"],
+            "registry: the ingress probe needs its backend log",
+        ),
+        (
+            {"id": "devteam:example.com"},
+            [*BASE_SERVICES, "registry"],
+            PUBLIC_REGISTRY_ADDRESSES,
+            "registry is a service of this deployment; set team.registryRoute: local",
+        ),
+        (
+            {
+                "id": "devteam:example.com",
+                "registryUrl": "https://registry.example.com",
+                "registryRoute": "local",
+            },
+            [*BASE_SERVICES, "registry"],
+            PUBLIC_REGISTRY_ADDRESSES,
+            "104.21.0.10 is not one of the deployment's private ingress addresses",
+        ),
+        (
+            {"id": "devteam:example.com"},
+            BASE_SERVICES,
+            ["172.31.0.250"],
+            "172.31.0.250 is one of the deployment's own addresses",
+        ),
+        (
+            {"id": "devteam:example.com"},
+            [s for s in BASE_SERVICES if s != "logs"],
+            PUBLIC_REGISTRY_ADDRESSES,
+            "logs: the ingress probe needs its backend log",
+        ),
     ],
 )
 def test_start_holds_the_agents_when_a_declared_route_does_not_match_the_deployment(
@@ -301,28 +507,45 @@ def test_start_holds_the_agents_when_a_declared_route_does_not_match_the_deploym
 ):
     result = start_with_agents(tmp_path, team, services, registry)
     assert result.returncode == 1
-    assert "teamctl: no ingress probe: " in result.stderr and refusal in result.stderr, result.stderr
+    assert (
+        "teamctl: no ingress probe: " in result.stderr and refusal in result.stderr
+    ), result.stderr
     assert "agents held: the ingress refusal probe did not pass" in result.stderr
     made = calls(tmp_path)
     assert followed(tmp_path) == [] and probes(made) == []
 
 
-LATER_LINE = "2099-01-01T00:00:00.000000000Z [INFO] 172.30.0.10:4000 - 1 \"A IN denied-x.invalid. udp 40 false 512\" NXDOMAIN"
+LATER_LINE = '2099-01-01T00:00:00.000000000Z [INFO] 172.30.0.10:4000 - 1 "A IN denied-x.invalid. udp 40 false 512" NXDOMAIN'
 EARLIER_LINE = "2000-01-01T00:00:00.000000000Z [INFO] replayed history"
 
 
-INSPECTED = "sha256:" + "e" * 64 + "|teamrun|egress|json-file|2026-11-13T18:00:00.000000000Z"
+INSPECTED = (
+    "sha256:" + "e" * 64 + "|teamrun|egress|json-file|2026-11-13T18:00:00.000000000Z"
+)
 
 
-def egress_capture(tmp_path: Path, line: str, monkeypatch, follower_seconds: int = 4,
-                   inspected: str | None = INSPECTED, fails: dict[str, int] | None = None):
+def egress_capture(
+    tmp_path: Path,
+    line: str,
+    monkeypatch,
+    follower_seconds: int = 4,
+    inspected: str | None = INSPECTED,
+    fails: dict[str, int] | None = None,
+):
     log = tmp_path / "capture" / "agent-egress-refusals.log"
     log.parent.mkdir()
     monkeypatch.setenv("TEAM_DEPLOYMENT_EGRESS_LOG", str(log))
     monkeypatch.setenv("TEAM_DEPLOYMENT_CAPTURE_SECONDS", "2")
-    result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES,
-                               egress_log=line + "\n", follower_seconds=follower_seconds, inspected=inspected,
-                               fails=fails)
+    result = start_with_agents(
+        tmp_path,
+        {"id": "devteam:example.com"},
+        BASE_SERVICES,
+        PUBLIC_REGISTRY_ADDRESSES,
+        egress_log=line + "\n",
+        follower_seconds=follower_seconds,
+        inspected=inspected,
+        fails=fails,
+    )
     return result, log
 
 
@@ -330,7 +553,9 @@ def index_of(made: list[str], fragment: str) -> int:
     return next(i for i, call in enumerate(made) if fragment in call)
 
 
-def test_the_egress_capture_starts_after_egress_and_before_any_probe_or_the_agent(tmp_path, monkeypatch):
+def test_the_egress_capture_starts_after_egress_and_before_any_probe_or_the_agent(
+    tmp_path, monkeypatch
+):
     # The agent's first lookup cannot precede the capture: its follower is
     # attached, and seen streaming, before the agent container exists.
     result, log = egress_capture(tmp_path, LATER_LINE, monkeypatch)
@@ -341,16 +566,25 @@ def test_the_egress_capture_starts_after_egress_and_before_any_probe_or_the_agen
     # teamctl starts the agent only after both probes; this stub world stops
     # at the boundary probe, so the agent is checked never to precede them.
     assert egress_up < follower < index_of(made, "probe-ingress.mjs")
-    assert all(i > follower for i, call in enumerate(made) if call.rstrip().endswith(" agent"))
+    assert all(
+        i > follower for i, call in enumerate(made) if call.rstrip().endswith(" agent")
+    )
     assert log.read_text() == LATER_LINE + "\n"
     receipt = json.loads(log.with_name(log.name + ".receipt.json").read_text())
     assert receipt["container"] == "egress-container-id" and receipt["follower_pid"] > 0
     assert receipt["attached_at"] < receipt["witness_at"]
     # The follower's identity, so its owner stops this process and no other
     # that reused the PID.
-    assert "docker logs --timestamps --follow egress-container-id" in receipt["follower_command"]
+    assert (
+        "docker logs --timestamps --follow egress-container-id"
+        in receipt["follower_command"]
+    )
     assert receipt["follower_started"]
-    assert (receipt["image"], receipt["project"], receipt["service"]) == ("sha256:" + "e" * 64, "teamrun", "egress")
+    assert (receipt["image"], receipt["project"], receipt["service"]) == (
+        "sha256:" + "e" * 64,
+        "teamrun",
+        "egress",
+    )
 
 
 def held_before_probes(result, tmp_path: Path, message: str) -> None:
@@ -361,35 +595,57 @@ def held_before_probes(result, tmp_path: Path, message: str) -> None:
     assert not [call for call in made if call.rstrip().endswith(" agent")]
 
 
-def test_a_follower_that_prints_a_fresh_line_and_exits_holds_the_agent(tmp_path, monkeypatch):
+def test_a_follower_that_prints_a_fresh_line_and_exits_holds_the_agent(
+    tmp_path, monkeypatch
+):
     # A fresh line is not enough: the follower must still be streaming.
-    result, _ = egress_capture(tmp_path, LATER_LINE, monkeypatch, follower_seconds=0,
-                               fails={"--timestamps --follow": 1})
+    result, _ = egress_capture(
+        tmp_path,
+        LATER_LINE,
+        monkeypatch,
+        follower_seconds=0,
+        fails={"--timestamps --follow": 1},
+    )
     held_before_probes(result, tmp_path, "egress capture: the follower exited")
 
 
 @pytest.mark.parametrize(
     ("inspected", "fails"),
-    [(None, {"com.docker.compose.project": 1}),
-     ("sha256:" + "e" * 64 + "|otherproject|egress|json-file|t", None),
-     ("|teamrun|egress|json-file|t", None)],
+    [
+        (None, {"com.docker.compose.project": 1}),
+        ("sha256:" + "e" * 64 + "|otherproject|egress|json-file|t", None),
+        ("|teamrun|egress|json-file|t", None),
+    ],
 )
-def test_a_capture_whose_egress_cannot_be_identified_holds_the_agent(tmp_path, monkeypatch, inspected, fails):
+def test_a_capture_whose_egress_cannot_be_identified_holds_the_agent(
+    tmp_path, monkeypatch, inspected, fails
+):
     # docker inspect failing, or naming another project or no image: no
     # receipt is written, and the follower is stopped.
-    result, log = egress_capture(tmp_path, LATER_LINE, monkeypatch, inspected=inspected, fails=fails)
+    result, log = egress_capture(
+        tmp_path, LATER_LINE, monkeypatch, inspected=inspected, fails=fails
+    )
     held_before_probes(result, tmp_path, "egress capture: no receipt")
     assert not log.with_name(log.name + ".receipt.json").exists()
 
 
 @pytest.mark.parametrize("which", ["log", "receipt"])
-def test_a_capture_refuses_a_dangling_symlink_and_leaves_its_target_alone(tmp_path, monkeypatch, which):
+def test_a_capture_refuses_a_dangling_symlink_and_leaves_its_target_alone(
+    tmp_path, monkeypatch, which
+):
     log = tmp_path / "capture" / "agent-egress-refusals.log"
     log.parent.mkdir()
     target = tmp_path / "elsewhere"
-    (log if which == "log" else log.with_name(log.name + ".receipt.json")).symlink_to(target)
+    (log if which == "log" else log.with_name(log.name + ".receipt.json")).symlink_to(
+        target
+    )
     monkeypatch.setenv("TEAM_DEPLOYMENT_EGRESS_LOG", str(log))
-    result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES)
+    result = start_with_agents(
+        tmp_path,
+        {"id": "devteam:example.com"},
+        BASE_SERVICES,
+        PUBLIC_REGISTRY_ADDRESSES,
+    )
     assert result.returncode == 1 and "already exists" in result.stderr
     assert not target.exists()
 
@@ -398,7 +654,9 @@ def test_a_capture_that_shows_no_new_line_holds_the_agent(tmp_path, monkeypatch)
     # Replayed history alone does not show the follower streaming.
     result, log = egress_capture(tmp_path, EARLIER_LINE, monkeypatch)
     assert result.returncode == 1
-    assert "egress capture: no line after the follower attached" in result.stderr, result.stderr
+    assert "egress capture: no line after the follower attached" in result.stderr, (
+        result.stderr
+    )
     made = calls(tmp_path)
     assert not [call for call in made if "probe-ingress.mjs" in call]
     assert not [call for call in made if call.rstrip().endswith(" agent")]
@@ -409,13 +667,23 @@ def test_a_capture_refuses_a_log_file_that_exists(tmp_path, monkeypatch):
     log.parent.mkdir()
     log.write_text("earlier\n")
     monkeypatch.setenv("TEAM_DEPLOYMENT_EGRESS_LOG", str(log))
-    result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES)
+    result = start_with_agents(
+        tmp_path,
+        {"id": "devteam:example.com"},
+        BASE_SERVICES,
+        PUBLIC_REGISTRY_ADDRESSES,
+    )
     assert result.returncode == 1 and "already exists" in result.stderr
     assert log.read_text() == "earlier\n"
 
 
 def test_without_a_capture_path_start_attaches_no_follower(tmp_path):
-    start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES)
+    start_with_agents(
+        tmp_path,
+        {"id": "devteam:example.com"},
+        BASE_SERVICES,
+        PUBLIC_REGISTRY_ADDRESSES,
+    )
     assert not [call for call in calls(tmp_path) if "--timestamps --follow" in call]
 
 
@@ -428,7 +696,9 @@ def fake_node(tmp_path: Path, probe_seconds: int) -> Path:
         "#!/bin/sh\n"
         'case "$1" in -e) exit 0;; esac\n'
         f"sleep {probe_seconds}\n"
-        "echo OATS_EGRESS_BOUNDARY_PASS\n", encoding="utf-8")
+        "echo OATS_EGRESS_BOUNDARY_PASS\n",
+        encoding="utf-8",
+    )
     node.chmod(0o755)
     return node
 
@@ -437,11 +707,17 @@ def agent_started(made: list[str]) -> bool:
     return any("--no-deps --wait --wait-timeout 300 agent" in call for call in made)
 
 
-def test_a_capture_still_live_after_the_probes_lets_the_agent_start(tmp_path, monkeypatch):
+def test_a_capture_still_live_after_the_probes_lets_the_agent_start(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("TEAM_DEPLOYMENT_NODE", str(fake_node(tmp_path, 0)))
     result, _ = egress_capture(tmp_path, LATER_LINE, monkeypatch, follower_seconds=20)
-    assert "boundary probe: exit 0, OATS_EGRESS_BOUNDARY_PASS" in result.stdout, result.stdout + result.stderr
-    assert "egress capture: still streaming before the agent starts" in result.stdout, result.stdout + result.stderr
+    assert "boundary probe: exit 0, OATS_EGRESS_BOUNDARY_PASS" in result.stdout, (
+        result.stdout + result.stderr
+    )
+    assert "egress capture: still streaming before the agent starts" in result.stdout, (
+        result.stdout + result.stderr
+    )
     assert agent_started(calls(tmp_path))
 
 
@@ -450,8 +726,12 @@ def test_a_capture_that_dies_during_the_probes_holds_the_agent(tmp_path, monkeyp
     # would otherwise start with nothing capturing its egress.
     monkeypatch.setenv("TEAM_DEPLOYMENT_NODE", str(fake_node(tmp_path, 6)))
     result, _ = egress_capture(tmp_path, LATER_LINE, monkeypatch, follower_seconds=3)
-    assert "boundary probe: exit 0, OATS_EGRESS_BOUNDARY_PASS" in result.stdout, result.stdout + result.stderr
+    assert "boundary probe: exit 0, OATS_EGRESS_BOUNDARY_PASS" in result.stdout, (
+        result.stdout + result.stderr
+    )
     assert result.returncode == 1
-    assert "egress capture: the follower is no longer streaming" in result.stderr, result.stderr
+    assert "egress capture: the follower is no longer streaming" in result.stderr, (
+        result.stderr
+    )
     assert "agents held: egress's log is not being captured" in result.stderr
     assert not agent_started(calls(tmp_path))

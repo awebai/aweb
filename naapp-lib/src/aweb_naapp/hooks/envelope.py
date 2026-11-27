@@ -1,7 +1,7 @@
 """The ``aweb.hook-event/1`` envelope: its signing bytes, signature and checks.
 
 This is the Python reading of the contract in ``docs/hook-events.md``; the Go
-authority in ``cli/go/hookevent`` pins the bytes, and both pass the same
+authority in ``cli/go/internal/hookevent`` pins the bytes, and both pass the same
 public vector. ``verify`` proves self-consistency: the envelope is well
 formed, belongs to the expected team, and was signed by the key it names as
 its producer. Authority comes from resolving the producer's registered key

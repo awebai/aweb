@@ -46,7 +46,9 @@ async def _connect_global_member(env, *, actor, team_id: str, stable_did: str) -
     return certificate
 
 
-async def _call_tool(env, *, actor, stable_did: str, name: str, certificate=None, team_id=TEAM):
+async def _call_tool(
+    env, *, actor, stable_did: str, name: str, certificate=None, team_id=TEAM
+):
     body = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -78,7 +80,9 @@ async def _call_tool(env, *, actor, stable_did: str, name: str, certificate=None
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("membership_count", [1, 2], ids=["one-team", "two-teams"])
-async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app, membership_count):
+async def test_global_identity_reads_use_same_auth_for_http_and_mcp(
+    privacy_app, membership_count
+):
     # Source model: Global And Local Identities (docs/identity-messaging-contract.md:124-144)
     # and Continuations (docs/identity-messaging-contract.md:282-296). A global
     # participant is one DID; two memberships do not require a team choice
@@ -88,7 +92,9 @@ async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app,
     async with registry_listener(env) as (registry, _):
         stable = (await registry.register_did(actor.did, actor.sk)).did_aw
         certificates = {
-            TEAM: await _connect_global_member(env, actor=actor, team_id=TEAM, stable_did=stable)
+            TEAM: await _connect_global_member(
+                env, actor=actor, team_id=TEAM, stable_did=stable
+            )
         }
         if membership_count == 2:
             # Namespace control is fixture provisioning; team creation and
@@ -132,9 +138,13 @@ async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app,
                 )
                 assert selected["team_id"] == team_id
                 assert selected["agent_id"]
-            mail = await _call_tool(env, actor=actor, stable_did=stable, name="check_mail")
+            mail = await _call_tool(
+                env, actor=actor, stable_did=stable, name="check_mail"
+            )
             assert "error" not in mail, mail
-            identity = await _call_tool(env, actor=actor, stable_did=stable, name="whoami")
+            identity = await _call_tool(
+                env, actor=actor, stable_did=stable, name="whoami"
+            )
             assert identity["did_aw"] == stable
             if membership_count == 2:
                 assert identity["team_id"] is None

@@ -179,13 +179,17 @@ async def _token(client, creds, *, auth: str = "basic", secret: str | None = Non
 
 
 @pytest.mark.parametrize("auth", ["basic", "post"])
-async def test_the_token_endpoint_issues_a_token_that_the_resource_accepts(client, creds, auth) -> None:
+async def test_the_token_endpoint_issues_a_token_that_the_resource_accepts(
+    client, creds, auth
+) -> None:
     issued = await _token(client, creds, auth=auth)
     assert issued.status_code == 200, issued.text
     body = issued.json()
     assert body["token_type"].lower() == "bearer"
     assert body["expires_in"] > 60
-    echo = await client.get("/oauth2/echo", headers={"Authorization": f"Bearer {body['access_token']}"})
+    echo = await client.get(
+        "/oauth2/echo", headers={"Authorization": f"Bearer {body['access_token']}"}
+    )
     assert echo.status_code == 200
     assert echo.json()["scheme"] == "oauth2-client-credentials"
 
@@ -299,7 +303,9 @@ async def test_a_sigv4_request_without_a_payload_hash_header_passes(client, cred
     assert (await _sigv4_send(client, headers, body)).status_code == 200
 
 
-async def test_a_sigv4_payload_hash_header_that_does_not_match_the_body_fails(client, creds) -> None:
+async def test_a_sigv4_payload_hash_header_that_does_not_match_the_body_fails(
+    client, creds
+) -> None:
     headers = _sigv4_headers(creds)
     headers["X-Amz-Content-SHA256"] = hashlib.sha256(b"other").hexdigest()
     assert (await _sigv4_send(client, headers)).status_code == 401

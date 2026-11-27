@@ -11,10 +11,20 @@ from redis.asyncio import Redis
 from .coordination.roles import ROLE_MAX_LENGTH, is_valid_role, normalize_role
 
 DEFAULT_PRESENCE_TTL_SECONDS = 1800  # 30 minutes
-_PRESENCE_PROJECTION_FIELDS = frozenset({
-    "program", "model", "human_name", "repo_id", "member_email", "status",
-    "current_branch", "role", "canonical_origin", "timezone",
-})
+_PRESENCE_PROJECTION_FIELDS = frozenset(
+    {
+        "program",
+        "model",
+        "human_name",
+        "repo_id",
+        "member_email",
+        "status",
+        "current_branch",
+        "role",
+        "canonical_origin",
+        "timezone",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -130,7 +140,11 @@ async def refresh_agent_presence(
     supplied = projection if projection is not None else {}
     if supplied.keys() - _PRESENCE_PROJECTION_FIELDS:
         raise ValueError("Unknown field in the workspace presence projection")
-    fields = {name: value for name, value in supplied.items() if value is not None and value != ""}
+    fields = {
+        name: value
+        for name, value in supplied.items()
+        if value is not None and value != ""
+    }
     if role := fields.pop("role", None):
         if len(role) <= ROLE_MAX_LENGTH and is_valid_role(role):
             fields["role"] = normalize_role(role)
@@ -140,7 +154,9 @@ async def refresh_agent_presence(
         alias=alias,
         last_seen=datetime.now(timezone_mod.utc).isoformat(),
     )
-    return await _store_presence_fields(redis, workspace_id=workspace_id, fields=fields, ttl_seconds=ttl_seconds)
+    return await _store_presence_fields(
+        redis, workspace_id=workspace_id, fields=fields, ttl_seconds=ttl_seconds
+    )
 
 
 _STORE_PRESENCE = """
@@ -197,11 +213,21 @@ async def _store_presence_fields(
 ) -> dict[str, str]:
     """Commit one metadata generation and its current indices atomically."""
     arguments = [entry for item in fields.items() for entry in item]
-    reply = await cast(Awaitable[list[str | bytes]], redis.eval(
-        _STORE_PRESENCE, 2, _presence_key(workspace_id), _presence_coordinates_key(workspace_id),
-        workspace_id, ttl_seconds, *arguments,
-    ))
-    values = [value.decode("utf-8") if isinstance(value, bytes) else value for value in reply]
+    reply = await cast(
+        Awaitable[list[str | bytes]],
+        redis.eval(
+            _STORE_PRESENCE,
+            2,
+            _presence_key(workspace_id),
+            _presence_coordinates_key(workspace_id),
+            workspace_id,
+            ttl_seconds,
+            *arguments,
+        ),
+    )
+    values = [
+        value.decode("utf-8") if isinstance(value, bytes) else value for value in reply
+    ]
     return dict(zip(values[::2], values[1::2], strict=True))
 
 

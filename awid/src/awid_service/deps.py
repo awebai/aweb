@@ -18,11 +18,6 @@ async def get_db(request: Request) -> Any:
     return request.app.state.db
 
 
-async def get_redis(request: Request) -> Any:
-    """Return the Redis handle from `app.state` (if configured)."""
-    return request.app.state.redis
-
-
 async def get_domain_verifier() -> DomainVerifier:
     """Return the DNS domain verifier. Override via app.dependency_overrides in tests."""
     return _real_verify_domain

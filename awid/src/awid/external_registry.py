@@ -209,7 +209,9 @@ class StrictExternalRegistry:
         )
         namespace_domain = namespace.get("domain")
         namespace_controller = namespace.get("controller_did")
-        if not isinstance(namespace_domain, str) or not isinstance(namespace_controller, str):
+        if not isinstance(namespace_domain, str) or not isinstance(
+            namespace_controller, str
+        ):
             raise FederationAuthorityError("sender_address_did_mismatch")
         try:
             canonical_namespace_domain = canonical_protocol_domain(namespace_domain)
@@ -219,7 +221,10 @@ class StrictExternalRegistry:
             raise FederationAuthorityError("sender_address_did_mismatch")
         if not validate_did(namespace_controller):
             raise FederationAuthorityError("sender_registry_protocol_invalid")
-        if authority.selection == "dns" and namespace_controller != authority.controller_did:
+        if (
+            authority.selection == "dns"
+            and namespace_controller != authority.controller_did
+        ):
             # Preserve inherited same-key namespaces without a delegation witness.
             if not authority.inherited or not namespace_authority_valid(
                 domain,
@@ -272,7 +277,9 @@ class StrictExternalRegistry:
             raise FederationAuthorityError("sender_registry_protocol_invalid") from exc
         delivery = address_row.get("delivery")
         delivery_origin = (
-            delivery.get("origin") if isinstance(delivery, dict) else address_row.get("delivery_origin")
+            delivery.get("origin")
+            if isinstance(delivery, dict)
+            else address_row.get("delivery_origin")
         )
         if not isinstance(delivery_origin, str) or not delivery_origin:
             raise FederationAuthorityError("sender_route_missing", did_aw=did_aw)
@@ -317,7 +324,10 @@ class StrictExternalRegistry:
                     bypass_cache=bypass_cache,
                 )
             except FederationAuthorityError as exc:
-                if exc.reason in {"sender_identity_not_found", "sender_registry_unavailable"}:
+                if exc.reason in {
+                    "sender_identity_not_found",
+                    "sender_registry_unavailable",
+                }:
                     raise FederationAuthorityError(
                         "sender_identity_unverifiable", did_aw=did_aw
                     ) from exc
@@ -367,9 +377,7 @@ class StrictExternalRegistry:
         return value
 
     async def expire_generation(self, authority_generation: int) -> None:
-        expired = [
-            key for key in self._clients if key[2] == authority_generation
-        ]
+        expired = [key for key in self._clients if key[2] == authority_generation]
         for key in expired:
             client = self._clients.pop(key)
             await client.aclose()

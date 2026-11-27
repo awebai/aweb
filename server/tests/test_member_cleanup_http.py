@@ -9,12 +9,17 @@ import pytest
 from aweb.events import team_events_channel_name
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app
-from test_workspace_liveness_http import _connect_registered_member, _send_member_request
+from test_workspace_liveness_http import (
+    _connect_registered_member,
+    _send_member_request,
+)
 
 __all__ = ["privacy_app"]
 
 
-async def _acquire_lock(env, *, alias: str, resource_key: str, team_id: str = TEAM) -> None:
+async def _acquire_lock(
+    env, *, alias: str, resource_key: str, team_id: str = TEAM
+) -> None:
     response = await _send_member_request(
         env,
         alias=alias,
@@ -53,7 +58,9 @@ async def _connect_repo_workspaces(env, *aliases: str) -> UUID:
 
 
 @pytest.mark.asyncio
-async def test_repo_delete_applies_self_or_stale_rule_and_reports_live_peer_skipped(privacy_app, monkeypatch):
+async def test_repo_delete_applies_self_or_stale_rule_and_reports_live_peer_skipped(
+    privacy_app, monkeypatch
+):
     """Antares 9a131b85: repo deletion obeys the single-workspace cleanup rule."""
     env = privacy_app
     monkeypatch.setenv("AWEB_PRESENCE_TTL_SECONDS", "10")
@@ -65,7 +72,11 @@ async def test_repo_delete_applies_self_or_stale_rule_and_reports_live_peer_skip
     for alias in ("bob", "carol"):
         await _acquire_lock(env, alias=alias, resource_key=f"repo-delete/{alias}")
     task = await _send_member_request(
-        env, alias="bob", method="POST", path="/v1/tasks", body={"title": "Stale member claim"}
+        env,
+        alias="bob",
+        method="POST",
+        path="/v1/tasks",
+        body={"title": "Stale member claim"},
     )
     assert task.status_code == 200, task.text
     claimed = await _send_member_request(
@@ -121,14 +132,17 @@ async def test_repo_delete_applies_self_or_stale_rule_and_reports_live_peer_skip
     assert audit is not None and audit["actor_did_key"] == env.actors["alice"].did
     assert (
         await env.db.fetch_value(
-            "SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1", TEAM
+            "SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1",
+            TEAM,
         )
         > 0
     )
 
 
 @pytest.mark.asyncio
-async def test_emergency_revoke_records_member_and_notifies_every_affected_holder(privacy_app):
+async def test_emergency_revoke_records_member_and_notifies_every_affected_holder(
+    privacy_app,
+):
     """Any member may revoke; Antares 9a131b85 requires an attributable release."""
     env = privacy_app
     for alias in ("bob", "carol"):
@@ -149,8 +163,15 @@ async def test_emergency_revoke_records_member_and_notifies_every_affected_holde
             body={"prefix": "emergency/"},
         )
         assert response.status_code == 200, response.text
-        assert sorted(response.json()["revoked_keys"]) == ["emergency/bob", "emergency/carol"]
-        released = [context for event, context in env.dispatched if event == "reservation.released"]
+        assert sorted(response.json()["revoked_keys"]) == [
+            "emergency/bob",
+            "emergency/carol",
+        ]
+        released = [
+            context
+            for event, context in env.dispatched
+            if event == "reservation.released"
+        ]
         assert {context["resource_key"] for context in released} == {
             "emergency/bob",
             "emergency/carol",
@@ -196,7 +217,9 @@ async def test_emergency_revoke_records_member_and_notifies_every_affected_holde
 
 
 @pytest.mark.asyncio
-async def test_failed_emergency_revoke_audit_preserves_lock_and_emits_no_release(privacy_app):
+async def test_failed_emergency_revoke_audit_preserves_lock_and_emits_no_release(
+    privacy_app,
+):
     """The required audit and lock release commit together (docs/operator-audit.md)."""
     env = privacy_app
     await _acquire_lock(env, alias="bob", resource_key="audit-rollback/bob")
@@ -221,7 +244,11 @@ async def test_failed_emergency_revoke_audit_preserves_lock_and_emits_no_release
             )
             == 1
         )
-        assert not [context for event, context in env.dispatched if event == "reservation.released"]
+        assert not [
+            context
+            for event, context in env.dispatched
+            if event == "reservation.released"
+        ]
     finally:
         await env.db.execute(
             "ALTER TABLE {{tables.audit_log}} DROP CONSTRAINT reject_emergency_revoke_audit"
@@ -229,19 +256,26 @@ async def test_failed_emergency_revoke_audit_preserves_lock_and_emits_no_release
 
 
 @pytest.mark.asyncio
-async def test_empty_prefix_emergency_revoke_keeps_another_teams_reservations(privacy_app):
+async def test_empty_prefix_emergency_revoke_keeps_another_teams_reservations(
+    privacy_app,
+):
     """A team's emergency override has the authenticated team's exact bound."""
     env = privacy_app
     for alias in ("bob", "carol"):
         await _acquire_lock(env, alias=alias, resource_key=f"all/{alias}")
     other_team = "cleanup-neighbor:example.test"
     await env.app.state.awid_registry_client.register_team(
-        domain="example.test", name="cleanup-neighbor", display_name="Cleanup neighbor",
-        team_did_key=env.team_did, visibility="public",
+        domain="example.test",
+        name="cleanup-neighbor",
+        display_name="Cleanup neighbor",
+        team_did_key=env.team_did,
+        visibility="public",
         namespace_controller_signing_key=env.namespace_sk,
     )
     await _connect_registered_member(env, alias="other", team_id=other_team)
-    await _acquire_lock(env, alias="other", resource_key="all/other", team_id=other_team)
+    await _acquire_lock(
+        env, alias="other", resource_key="all/other", team_id=other_team
+    )
     response = await _send_member_request(
         env,
         alias="alice",
@@ -259,11 +293,14 @@ async def test_empty_prefix_emergency_revoke_keeps_another_teams_reservations(pr
     )
     assert (
         await env.db.fetch_value(
-            "SELECT resource_key FROM {{tables.reservations}} WHERE team_id=$1", other_team
+            "SELECT resource_key FROM {{tables.reservations}} WHERE team_id=$1",
+            other_team,
         )
         == "all/other"
     )
-    events = [context for event, context in env.dispatched if event == "reservation.released"]
+    events = [
+        context for event, context in env.dispatched if event == "reservation.released"
+    ]
     assert {context["resource_key"] for context in events} == {"all/bob", "all/carol"}
     assert (
         await env.db.fetch_value(

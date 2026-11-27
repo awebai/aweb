@@ -74,7 +74,9 @@ class TeamImportRequest:
     def verify_signature(self, *, signer_did_key: str, signature: str) -> None:
         try:
             verify_did_key_signature(
-                did_key=signer_did_key, payload=self.signing_bytes(), signature_b64=signature
+                did_key=signer_did_key,
+                payload=self.signing_bytes(),
+                signature_b64=signature,
             )
         except (ValueError, TypeError) as exc:
             raise TeamControlSignatureError(

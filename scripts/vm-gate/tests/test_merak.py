@@ -34,6 +34,19 @@ class MerakTests(unittest.TestCase):
         }
         self.assertEqual(installed, ranges | {DEPRECATED_6TO4_RELAY})
 
+    def test_the_guest_gets_every_cpu_and_the_memory_the_host_spares(self):
+        for cpus, memory_mib in [(4, 16384), (10, 32768), (12, 63488), (16, 65536), (64, 262144)]:
+            with self.subTest(cpus=cpus, memory_mib=memory_mib):
+                guest_cpus, guest_memory = merak_host.guest_size(cpus, memory_mib)
+                self.assertEqual(guest_cpus, cpus)
+                spared = memory_mib - guest_memory - merak_host.QEMU_OVERHEAD_MIB
+                self.assertGreaterEqual(spared, max(memory_mib // 8, 2048))
+                self.assertLess(spared, max(memory_mib // 8, 2048) + 1)
+        for cpus, memory_mib in [(0, 65536), (4, 4096), (4.0, 65536)]:
+            with self.subTest(cpus=cpus, memory_mib=memory_mib):
+                with self.assertRaises(ValueError):
+                    merak_host.guest_size(cpus, memory_mib)
+
     def test_dispatch_defaults_and_explicit_machine(self):
         config = {"default_target": "merak"}
         for args, expected in [
@@ -91,8 +104,14 @@ class MerakTests(unittest.TestCase):
                     merak_host.remove_guest(job)
             self.assertTrue(job.is_dir())
             with (
-                patch.object(merak_host, "docker", side_effect=["abcd", "", "", "", "", "network", "", ""]),
-                patch.object(merak_host, "firewall", return_value={"present": False}) as firewall,
+                patch.object(
+                    merak_host,
+                    "docker",
+                    side_effect=["abcd", "", "", "", "", "network", "", ""],
+                ),
+                patch.object(
+                    merak_host, "firewall", return_value={"present": False}
+                ) as firewall,
             ):
                 receipt = merak_host.remove_guest(job)
             firewall.assert_called_once_with("remove", run)

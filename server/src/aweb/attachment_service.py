@@ -400,7 +400,9 @@ def _attachment_retry_conflict() -> HTTPException:
     )
 
 
-async def confirm_accepted_attachment_refs(db, *, kind: MessageKind, message_id: UUID) -> None:
+async def confirm_accepted_attachment_refs(
+    db, *, kind: MessageKind, message_id: UUID
+) -> None:
     """Confirm only ordered refs after the send owner proves the accepted artifact."""
     if not isinstance(kind, MessageKind):
         raise TypeError("Select a named MessageKind before confirming attachment refs.")

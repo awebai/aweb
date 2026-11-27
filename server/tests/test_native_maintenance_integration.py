@@ -43,7 +43,9 @@ async def test_serving_timer_reconciles_presence_without_viewers(
             online = await _read_event(stream)
             assert (online["type"], online["alias"]) == ("agent.online", "alice")
             deleted = await request_as(
-                env, alias="alice", method="DELETE",
+                env,
+                alias="alice",
+                method="DELETE",
                 path=f"/v1/workspaces/{env.actors['alice'].workspace}",
             )
             assert deleted.status_code == 200, deleted.text

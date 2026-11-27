@@ -73,34 +73,20 @@ class ProjectPreparation(unittest.TestCase):
                 self.root, "a" * 40, ["server", "naapp/folio"], mode, self.receipt
             )
 
-    def test_preparation_uses_each_project_lock_and_one_pinned_browser_install(self):
+    def test_preparation_syncs_each_project_lock_and_installs_no_browser(self):
+        # The image installs the locked browser and its system libraries once,
+        # as root; preparation runs as UID 1000 and only syncs.
         self.invoke("prepare")
         syncs = [args for args, _ in self.commands if args[:2] == ["uv", "sync"]]
         self.assertEqual(
             [args[-1] for args in syncs],
             [str(self.root / name) for name in ("server", "naapp/folio")],
         )
-        installs = [args for args, _ in self.commands if "install" in args]
-        self.assertEqual(len(installs), 1)
-        self.assertIn("--no-sync", installs[0])
-        self.assertEqual(
-            installs[0][-4:], ["install", "--with-deps", "--only-shell", "chromium"]
-        )
+        self.assertEqual([args for args, _ in self.commands if "install" in args], [])
         self.assertTrue(
             all(kwargs["env"]["UV_OFFLINE"] == "0" for _, kwargs in self.commands)
         )
         self.assertEqual(json.loads(self.receipt.read_text())["status"], "PASS")
-
-    def test_distinct_locked_browser_versions_each_use_their_own_project_installer(
-        self,
-    ):
-        self.invoke("prepare", versions={"server": "1.63.0", "naapp/folio": "1.64.0"})
-        installers = [args for args, _ in self.commands if "install" in args]
-        self.assertEqual(len(installers), 2)
-        self.assertEqual(
-            [args[args.index("--project") + 1] for args in installers],
-            [str(self.root / name) for name in ("server", "naapp/folio")],
-        )
 
     def test_offline_verification_uses_fresh_environments_and_launches_the_browser(
         self,
@@ -457,7 +443,11 @@ class SourceImagePreparation(unittest.TestCase):
                 "COPY --chmod=0644 package-environment.py /opt/package-environment.py",
                 builds[0],
             )
-            self.assertIn("USER 1000:1000\nRUN python3 -c", builds[0])
+            self.assertIn("USER 1000:1000\nRUN python3 /opt/package-environment.py", builds[0])
+            self.assertIn("RUN python3 -c", builds[0])
+            # Preparation runs as UID 1000, so nothing changes owner afterwards.
+            self.assertNotIn("chown", builds[0])
+            self.assertNotIn("chmod -R", builds[0])
             self.assertIn("package-helper-readable.json", builds[0])
             # The Dockerfile instruction stays one physical line despite Python's multiline code.
             verify_line = next(
@@ -477,6 +467,30 @@ class SourceImagePreparation(unittest.TestCase):
             self.assertNotIn("1243", builds[0])
             self.assertNotIn("2.41.5", builds[0])
             self.assertTrue((evidence / "package-preparation-tool.sha256").is_file())
+            # In a gate run the image starts from the gate's image, which is
+            # already in the engine, and the engine's own builder builds it.
+            builds.clear()
+            calls = []
+
+            def recorded(args, **kwargs):
+                calls.append((args, kwargs))
+                return invoke(args, **kwargs)
+
+            gate_env = dict(
+                os.environ, BUILDX_BUILDER="run-builder", AWEB_CANDIDATE_RESOURCE_LABEL="run-label"
+            )
+            with (
+                patch.object(images.subprocess, "run", side_effect=recorded),
+                patch.object(images, "__file__", str(tools / "package_image.py")),
+                patch.dict(os.environ, gate_env, clear=True),
+            ):
+                (evidence / "gate").mkdir()
+                images.prepare_image(root, evidence / "gate", "owned-image", base="gate-image:run")
+            self.assertTrue(builds[0].startswith("FROM gate-image:run\n"), builds[0][:80])
+            self.assertNotIn("FROM python:3.12", builds[0])
+            args, kwargs = next(c for c in calls if c[0][:2] == ["docker", "build"])
+            self.assertNotIn("BUILDX_BUILDER", kwargs["env"])
+            self.assertEqual(args[args.index("--label") + 1], "aweb.candidate-gate=run-label")
 
 
 if __name__ == "__main__":

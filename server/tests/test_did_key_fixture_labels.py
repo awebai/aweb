@@ -27,14 +27,18 @@ def _labelled_literals() -> list[tuple[str, str, str]]:
 def test_each_labelled_key_literal_is_its_named_key():
     found = _labelled_literals()
     assert found
-    assert [(name, key, label) for name, key, label in found if named_did_key(label) != key] == []
+    assert [
+        (name, key, label) for name, key, label in found if named_did_key(label) != key
+    ] == []
 
 
 def test_every_named_key_in_sql_text_carries_its_label():
     named = {named_did_key(label) for _, _, label in _labelled_literals()}
     unlabelled = []
     for path in sorted(TESTS.glob("*.py")):
-        for match in re.finditer(r"'(did:key:z[1-9A-HJ-NP-Za-km-z]+)'(?! /\*)", path.read_text()):
+        for match in re.finditer(
+            r"'(did:key:z[1-9A-HJ-NP-Za-km-z]+)'(?! /\*)", path.read_text()
+        ):
             if match.group(1) in named:
                 unlabelled.append((path.name, match.group(1)))
     assert unlabelled == []

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { runOATS } from "../../cli/go/wake/oats_command.js";
+import { runOATS } from "../../cli/go/internal/wake/oats_command.js";
 
 const childProcesses = () => process.getActiveResourcesInfo().filter((type) => type === "ProcessWrap").length;
 

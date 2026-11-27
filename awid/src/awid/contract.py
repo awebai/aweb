@@ -39,23 +39,9 @@ class ResolvedIdentityContract:
         return self.identity_scope == "global"
 
     @property
-    def can_have_address(self) -> bool:
-        return self.is_global
-
-    @property
     def lifetime(self) -> str:
         """Deprecated compatibility alias for older callers."""
         return "persistent" if self.is_global else "ephemeral"
-
-    @property
-    def is_ephemeral(self) -> bool:
-        """Deprecated compatibility alias for older callers."""
-        return self.is_local
-
-    @property
-    def is_persistent(self) -> bool:
-        """Deprecated compatibility alias for older callers."""
-        return self.is_global
 
 
 def resolve_identity_contract(
@@ -70,7 +56,9 @@ def resolve_identity_contract(
     did = (did or "").strip() or None
     public_key = (public_key or "").strip() or None
     custody = (custody or "").strip() or None
-    scope = normalize_identity_scope(identity_scope if identity_scope is not None else lifetime)
+    scope = normalize_identity_scope(
+        identity_scope if identity_scope is not None else lifetime
+    )
 
     if (did is None) != (public_key is None):
         raise ValueError("did and public_key must be provided together")
@@ -89,7 +77,9 @@ def resolve_identity_contract(
     if namespace is not None and namespace.strip() and scope != "global":
         raise ValueError("Only global identities may own or publish addresses")
 
-    stable_id = stable_id_from_did_key(did) if did is not None and scope == "global" else None
+    stable_id = (
+        stable_id_from_did_key(did) if did is not None and scope == "global" else None
+    )
     return ResolvedIdentityContract(
         did=did,
         public_key=public_key,

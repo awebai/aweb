@@ -8,7 +8,7 @@ transport.
 
 Load it as a pytest plugin next to pgdbm's fixtures::
 
-    pytest_plugins = ("awid_service.testing_postgres", "aweb_naapp_testing.server")
+    pytest_plugins = ("pgdbm.fixtures.conftest", "aweb_naapp_testing.server")
 
 The ``coordination`` fixture sets the server's environment with
 ``monkeypatch``, as the server reads its configuration from there. AWID and
@@ -117,7 +117,7 @@ def awid_dns(registry: Registry):
     record at all (tests never reach real DNS)."""
 
     async def verify(domain: str) -> DomainAuthority:
-        return await fixture_domain_authority(registry.app, domain)
+        return await fixture_domain_authority(registry.app.dependency_overrides, domain)
 
     return verify
 

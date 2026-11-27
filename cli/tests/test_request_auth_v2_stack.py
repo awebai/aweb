@@ -2,6 +2,7 @@
 
 Run from server with PYTHONPATH=tests and its locked environment.
 """
+
 import asyncio
 import base64
 import json
@@ -15,20 +16,30 @@ from conftest import aw_cli_binary, shared_test_pool  # noqa: F401
 from conftest import shared_test_database as shared_test_database
 from awid.did import stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
-from awid_service.testing import check_suite_refuses_an_unnamed_server
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_messages_http import _signed_identity_headers
 
-pytest_plugins = ("awid_service.testing_postgres",)
+pytest_plugins = ("pgdbm.fixtures.conftest",)
 ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="session")
 def request_auth_driver(tmp_path_factory):
-    binary = tmp_path_factory.mktemp("v2-driver") / ("driver.exe" if os.name == "nt" else "driver")
+    binary = tmp_path_factory.mktemp("v2-driver") / (
+        "driver.exe" if os.name == "nt" else "driver"
+    )
     build = subprocess.run(
-        ["go", "build", "-o", str(binary), str(Path(__file__).with_name("request_auth_v2_driver.go"))],
-        cwd=ROOT / "cli/go", text=True, capture_output=True, timeout=120,
+        [
+            "go",
+            "build",
+            "-o",
+            str(binary),
+            str(Path(__file__).with_name("request_auth_v2_driver.go")),
+        ],
+        cwd=ROOT / "cli/go",
+        text=True,
+        capture_output=True,
+        timeout=120,
     )
     assert build.returncode == 0, build.stdout + build.stderr
     return binary
@@ -36,7 +47,9 @@ def request_auth_driver(tmp_path_factory):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("family", ["certificate", "identity-local", "identity-global"])
-async def test_sdk_json_and_streaming_v2_against_real_stack(privacy_app, request_auth_driver, tmp_path, family):
+async def test_sdk_json_and_streaming_v2_against_real_stack(
+    privacy_app, request_auth_driver, tmp_path, family
+):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     actor = env.actors["alice"]
@@ -51,16 +64,27 @@ async def test_sdk_json_and_streaming_v2_against_real_stack(privacy_app, request
         content = json.dumps(session_body).encode()
         headers = _signed_identity_headers(actor.sk, actor.did, stable_id, content)
         headers["Content-Type"] = "application/json"
-        session = await env.client.post("/v1/chat/sessions", content=content, headers=headers)
+        session = await env.client.post(
+            "/v1/chat/sessions", content=content, headers=headers
+        )
     else:
-        session = await _request(env, "alice", "POST", "/v1/chat/sessions", session_body)
+        session = await _request(
+            env, "alice", "POST", "/v1/chat/sessions", session_body
+        )
     assert session.status_code == 200, session.text
     session_id = session.json()["session_id"]
-    for table, column in (("conversation_participants", "conversation_id"), ("chat_participants", "session_id")):
+    for table, column in (
+        ("conversation_participants", "conversation_id"),
+        ("chat_participants", "session_id"),
+    ):
         participants = await env.db.fetch_all(
-            f"SELECT did FROM {{{{tables.{table}}}}} WHERE {column}=$1::uuid", session_id,
+            f"SELECT did FROM {{{{tables.{table}}}}} WHERE {column}=$1::uuid",
+            session_id,
         )
-        assert {row["did"] for row in participants} == {stable_id or actor.did, env.actors["bob"].did}
+        assert {row["did"] for row in participants} == {
+            stable_id or actor.did,
+            env.actors["bob"].did,
+        }
     certificate = ""
     if family == "certificate":
         cert = json.loads(base64.b64decode(actor.certificate))
@@ -69,15 +93,26 @@ async def test_sdk_json_and_streaming_v2_against_real_stack(privacy_app, request
         cert["signature"] = sign_message(env.team_sk, canonical_json_bytes(cert))
         certificate = base64.b64encode(json.dumps(cert).encode()).decode()
     authority = tmp_path / "authority.json"
-    authority.write_text(json.dumps(dict(
-        URL=str(env.client.base_url).rstrip("/"), DID=actor.did, StableID=stable_id,
-        Key=base64.b64encode(actor.sk).decode(), Certificate=certificate,
-        SessionID=session_id, Recipient=env.actors["bob"].did,
-    )))
+    authority.write_text(
+        json.dumps(
+            dict(
+                URL=str(env.client.base_url).rstrip("/"),
+                DID=actor.did,
+                StableID=stable_id,
+                Key=base64.b64encode(actor.sk).decode(),
+                Certificate=certificate,
+                SessionID=session_id,
+                Recipient=env.actors["bob"].did,
+            )
+        )
+    )
     authority.chmod(0o600)
     try:
         process = await asyncio.create_subprocess_exec(
-            str(request_auth_driver), str(authority), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            str(request_auth_driver),
+            str(authority),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
         assert process.returncode == 0, stderr.decode()
@@ -87,7 +122,9 @@ async def test_sdk_json_and_streaming_v2_against_real_stack(privacy_app, request
 
 
 @pytest.mark.asyncio
-async def test_production_cli_connect_and_event_stream_use_v2(privacy_app, aw_cli_binary, tmp_path, monkeypatch):
+async def test_production_cli_connect_and_event_stream_use_v2(
+    privacy_app, aw_cli_binary, tmp_path, monkeypatch
+):
     from aweb.auth_metrics import LEGACY_REQUEST_AUTH_ACCEPTED
     from aweb.presence import clear_workspace_presence
 
@@ -105,28 +142,58 @@ async def test_production_cli_connect_and_event_stream_use_v2(privacy_app, aw_cl
     membership = dict(team_id=TEAM, alias="alice", cert_path=cert_path)
     monkeypatch.setenv("AWEB_DATABASE_URL", env.db.config.get_dsn())
     monkeypatch.setenv("AWEB_DISCOVERY_ORIGIN", str(env.client.base_url).rstrip("/"))
-    (home / "teams.yaml").write_text(json.dumps(dict(active_team=TEAM, memberships=[membership])))
-    (home / "workspace.yaml").write_text(json.dumps(dict(aweb_url=str(env.client.base_url), memberships=[membership])))
-    (home / "signing.key").write_text("-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(actor.sk).decode() + "\n-----END ED25519 PRIVATE KEY-----\n")
+    (home / "teams.yaml").write_text(
+        json.dumps(dict(active_team=TEAM, memberships=[membership]))
+    )
+    (home / "workspace.yaml").write_text(
+        json.dumps(dict(aweb_url=str(env.client.base_url), memberships=[membership]))
+    )
+    (home / "signing.key").write_text(
+        "-----BEGIN ED25519 PRIVATE KEY-----\n"
+        + base64.b64encode(actor.sk).decode()
+        + "\n-----END ED25519 PRIVATE KEY-----\n"
+    )
     (home / "signing.key").chmod(0o600)
     child = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
     child.update(HOME=str(tmp_path), AW_NO_UPDATE_CHECK="1")
-    counters = [LEGACY_REQUEST_AUTH_ACCEPTED.labels("certificate", "POST", "/v1/connect", "dev"),
-                LEGACY_REQUEST_AUTH_ACCEPTED.labels("certificate", "GET", "/v1/events/stream", "dev")]
+    counters = [
+        LEGACY_REQUEST_AUTH_ACCEPTED.labels(
+            "certificate", "POST", "/v1/connect", "dev"
+        ),
+        LEGACY_REQUEST_AUTH_ACCEPTED.labels(
+            "certificate", "GET", "/v1/events/stream", "dev"
+        ),
+    ]
     before = [counter._value.get() for counter in counters]
     try:
-        for args in (("workspace", "connect", "--service", str(env.client.base_url), "--team", TEAM, "--json"),
-                     ("events", "stream", "--timeout", "1", "--json")):
-            process = await asyncio.create_subprocess_exec(str(aw_cli_binary), *args, cwd=tmp_path, env=child,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        for args in (
+            (
+                "workspace",
+                "connect",
+                "--service",
+                str(env.client.base_url),
+                "--team",
+                TEAM,
+                "--json",
+            ),
+            ("events", "stream", "--timeout", "1", "--json"),
+        ):
+            process = await asyncio.create_subprocess_exec(
+                str(aw_cli_binary),
+                *args,
+                cwd=tmp_path,
+                env=child,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
             stdout, stderr = await asyncio.wait_for(process.communicate(), 30)
             assert process.returncode == 0, stderr.decode()
             assert stdout
         assert [counter._value.get() for counter in counters] == before
     finally:
-        rows = await env.db.fetch_all("SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1", actor.id)
-        await clear_workspace_presence(env.redis, [str(row["workspace_id"]) for row in rows])
-
-
-def test_an_unnamed_database_server_is_refused(request, tmp_path):
-    check_suite_refuses_an_unnamed_server(request, tmp_path)
+        rows = await env.db.fetch_all(
+            "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1", actor.id
+        )
+        await clear_workspace_presence(
+            env.redis, [str(row["workspace_id"]) for row in rows]
+        )

@@ -138,10 +138,16 @@ async def acquire_session_lease(
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=payload.ttl_seconds)
         live = bool(row and row["expires_at"] > now)
-        same_session = bool(row and _matches(row, payload.session_id, payload.session_key))
+        same_session = bool(
+            row and _matches(row, payload.session_id, payload.session_key)
+        )
         if live and not same_session:
             return _conflict(row)
-        generation = (row["generation"] if live and same_session else row["generation"] + 1) if row else 1
+        generation = (
+            (row["generation"] if live and same_session else row["generation"] + 1)
+            if row
+            else 1
+        )
         if row:
             await tx.execute(
                 """
@@ -150,8 +156,13 @@ async def acquire_session_lease(
                     acquired_at = $6, expires_at = $7
                 WHERE team_id = $1 AND principal_agent_id = $2
                 """,
-                identity.team_id, identity.agent_id, payload.session_id,
-                _key_hash(payload.session_key), generation, now, expires_at,
+                identity.team_id,
+                identity.agent_id,
+                payload.session_id,
+                _key_hash(payload.session_key),
+                generation,
+                now,
+                expires_at,
             )
         else:
             await tx.execute(
@@ -161,12 +172,22 @@ async def acquire_session_lease(
                      generation, acquired_at, expires_at)
                 VALUES ($1, $2, $3, $4, 1, $5, $6)
                 """,
-                identity.team_id, identity.agent_id, payload.session_id,
-                _key_hash(payload.session_key), now, expires_at,
+                identity.team_id,
+                identity.agent_id,
+                payload.session_id,
+                _key_hash(payload.session_key),
+                now,
+                expires_at,
             )
-    return LeaseView(status="acquired", team_id=identity.team_id,
-                     principal_agent_id=identity.agent_id, session_id=payload.session_id,
-                     generation=generation, acquired_at=now.isoformat(), expires_at=expires_at.isoformat())
+    return LeaseView(
+        status="acquired",
+        team_id=identity.team_id,
+        principal_agent_id=identity.agent_id,
+        session_id=payload.session_id,
+        generation=generation,
+        acquired_at=now.isoformat(),
+        expires_at=expires_at.isoformat(),
+    )
 
 
 @router.post("/renew")
@@ -181,12 +202,19 @@ async def renew_session_lease(
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=payload.ttl_seconds)
         if not row or row["expires_at"] <= now:
-            raise HTTPException(status_code=404, detail="session admission lease not found or expired")
+            raise HTTPException(
+                status_code=404, detail="session admission lease not found or expired"
+            )
         if not _matches(row, payload.session_id, payload.session_key):
-            raise HTTPException(status_code=409, detail="session admission lease is held by another session")
+            raise HTTPException(
+                status_code=409,
+                detail="session admission lease is held by another session",
+            )
         await tx.execute(
             "UPDATE {{tables.session_admission_leases}} SET expires_at = $3 WHERE team_id = $1 AND principal_agent_id = $2",
-            identity.team_id, identity.agent_id, expires_at,
+            identity.team_id,
+            identity.agent_id,
+            expires_at,
         )
     row = dict(row)
     row["expires_at"] = expires_at
@@ -203,12 +231,18 @@ async def release_session_lease(
     async with manager.transaction() as tx:
         row = await _locked_row(tx, identity)
         if not row:
-            raise HTTPException(status_code=404, detail="session admission lease not found")
+            raise HTTPException(
+                status_code=404, detail="session admission lease not found"
+            )
         if not _matches(row, payload.session_id, payload.session_key):
-            raise HTTPException(status_code=409, detail="session admission lease is held by another session")
+            raise HTTPException(
+                status_code=409,
+                detail="session admission lease is held by another session",
+            )
         await tx.execute(
             "DELETE FROM {{tables.session_admission_leases}} WHERE team_id = $1 AND principal_agent_id = $2",
-            identity.team_id, identity.agent_id,
+            identity.team_id,
+            identity.agent_id,
         )
     return {"status": "released", "session_id": payload.session_id}
 
@@ -235,8 +269,13 @@ async def take_over_session_lease(
                     acquired_at = $6, expires_at = $7
                 WHERE team_id = $1 AND principal_agent_id = $2
                 """,
-                identity.team_id, identity.agent_id, payload.session_id,
-                _key_hash(payload.session_key), generation, now, expires_at,
+                identity.team_id,
+                identity.agent_id,
+                payload.session_id,
+                _key_hash(payload.session_key),
+                generation,
+                now,
+                expires_at,
             )
         else:
             await tx.execute(
@@ -246,18 +285,36 @@ async def take_over_session_lease(
                      generation, acquired_at, expires_at)
                 VALUES ($1, $2, $3, $4, 1, $5, $6)
                 """,
-                identity.team_id, identity.agent_id, payload.session_id,
-                _key_hash(payload.session_key), now, expires_at,
+                identity.team_id,
+                identity.agent_id,
+                payload.session_id,
+                _key_hash(payload.session_key),
+                now,
+                expires_at,
             )
         await tx.execute(
             """
             INSERT INTO {{tables.audit_log}} (team_id, alias, event_type, resource, details)
             VALUES ($1, $2, 'session_lease.takeover', $3, $4::jsonb)
             """,
-            identity.team_id, identity.alias, identity.agent_id,
-            json.dumps({"old_session_id": old_session_id, "new_session_id": payload.session_id,
-                        "generation": generation, "reason": payload.reason}),
+            identity.team_id,
+            identity.alias,
+            identity.agent_id,
+            json.dumps(
+                {
+                    "old_session_id": old_session_id,
+                    "new_session_id": payload.session_id,
+                    "generation": generation,
+                    "reason": payload.reason,
+                }
+            ),
         )
-    return LeaseView(status="taken_over", team_id=identity.team_id,
-                     principal_agent_id=identity.agent_id, session_id=payload.session_id,
-                     generation=generation, acquired_at=now.isoformat(), expires_at=expires_at.isoformat())
+    return LeaseView(
+        status="taken_over",
+        team_id=identity.team_id,
+        principal_agent_id=identity.agent_id,
+        session_id=payload.session_id,
+        generation=generation,
+        acquired_at=now.isoformat(),
+        expires_at=expires_at.isoformat(),
+    )

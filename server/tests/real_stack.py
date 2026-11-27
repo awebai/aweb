@@ -92,7 +92,12 @@ class RealStack:
         return team_key
 
     async def publish_server(
-        self, team_id: str, team_key: SigningKey, *, server_url: str = AWEB_URL, issued_at: datetime | None = None
+        self,
+        team_id: str,
+        team_key: SigningKey,
+        *,
+        server_url: str = AWEB_URL,
+        issued_at: datetime | None = None,
     ) -> None:
         """Publish the team's aweb.team-server/1 record through AWID's own route."""
         name, domain = team_id.split(":", 1)
@@ -102,15 +107,25 @@ class RealStack:
             "team_id": team_id,
             "team_did_key": did_from_public_key(bytes(team_key.verify_key)),
             "server_url": server_url,
-            "issued_at": (issued_at or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "issued_at": (issued_at or datetime.now(timezone.utc)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
         }
-        body = {"record": record, "signature": sign_message(bytes(team_key), record_signing_bytes(record))}
+        body = {
+            "record": record,
+            "signature": sign_message(bytes(team_key), record_signing_bytes(record)),
+        }
         async with httpx.AsyncClient(transport=self.awid) as client:
-            response = await client.put(f"{REGISTRY_URL}/v1/namespaces/{domain}/teams/{name}/server", json=body)
+            response = await client.put(
+                f"{REGISTRY_URL}/v1/namespaces/{domain}/teams/{name}/server", json=body
+            )
         response.raise_for_status()
 
     def directory(
-        self, *, clock: Callable[[], float] | None = None, ttl_seconds: int | None = None
+        self,
+        *,
+        clock: Callable[[], float] | None = None,
+        ttl_seconds: int | None = None,
     ) -> TeamServerDirectory:
         """Team-server discovery against the stack's AWID."""
 
@@ -118,18 +133,26 @@ class RealStack:
             return None
 
         team_cache = AWIDTeamCache(
-            registry_url=REGISTRY_URL, ttl_seconds=60, service_token=self.service_token, transport=self.awid
+            registry_url=REGISTRY_URL,
+            ttl_seconds=60,
+            service_token=self.service_token,
+            transport=self.awid,
         )
         options: dict = {} if clock is None else {"clock": clock}
         if ttl_seconds is not None:
             options["ttl_seconds"] = ttl_seconds
         return TeamServerDirectory(
-            team_cache=team_cache, transport=self.awid, registry_override=no_registry_override, **options
+            team_cache=team_cache,
+            transport=self.awid,
+            registry_override=no_registry_override,
+            **options,
         )
 
 
 @pytest_asyncio.fixture
-async def real_stack(aweb_cloud_db, test_db_factory, monkeypatch) -> AsyncIterator[RealStack]:
+async def real_stack(
+    aweb_cloud_db, test_db_factory, monkeypatch
+) -> AsyncIterator[RealStack]:
     service_token = os.environ["AWID_SERVICE_TOKEN"]
     awid_database = await test_db_factory.create_db(suffix="aweb_real_stack_awid")
     infra = AwidDatabaseInfra(schema="awid")

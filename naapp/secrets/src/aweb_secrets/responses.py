@@ -46,7 +46,9 @@ class BrokeredResult:
     headers: list[tuple[str, str]]
     body: bytes | None
     disposition: Literal["returned", "withheld"]
-    withheld_reason: Literal["credential_shaped", "content_encoded", "content_type_not_allowed"] | None
+    withheld_reason: (
+        Literal["credential_shaped", "content_encoded", "content_type_not_allowed"] | None
+    )
     undeclared_credential: bool
     redaction_count: int
     truncated: bool
@@ -124,10 +126,9 @@ def _project(body: bytes, projection: Sequence[str], *, complete: bool) -> tuple
                 value = _resolve(document, tokens)
                 if value is not _MISSING:
                     projected[pointer] = value
-                    names_credential |= (
-                        any(is_credential_field(token) for token in tokens)
-                        and has_credential_value(value)
-                    )
+                    names_credential |= any(
+                        is_credential_field(token) for token in tokens
+                    ) and has_credential_value(value)
     encoded = json.dumps(projected, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return encoded, names_credential
 
@@ -163,7 +164,9 @@ def handle_response(
             # Issued credentials are not yet known values. Inspect headers
             # independently of body projection/withholding; URL-decode names
             # such as access%5Ftoken as well as the raw header value.
-            if has_credential_shape(value.encode()) or has_credential_shape(unquote(value).encode()):
+            if has_credential_shape(value.encode()) or has_credential_shape(
+                unquote(value).encode()
+            ):
                 continue
             passed.append((name, value))
 

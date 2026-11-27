@@ -144,7 +144,7 @@ async def _serve_authority(app: ReleaseApp) -> asyncio.Server:
                 pass
             domain = httpx.URL(request_line.split()[1]).path.lstrip("/")
             try:
-                authority = await fixture_domain_authority(app, domain)
+                authority = await fixture_domain_authority(app.dependency_overrides, domain)
                 status, body = "200 OK", dataclasses.asdict(authority)
             except DnsVerificationError as refused:
                 status, body = "404 Not Found", {"refused": str(refused)}

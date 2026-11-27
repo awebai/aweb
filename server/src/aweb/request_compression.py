@@ -51,17 +51,24 @@ class RequestDecompressionMiddleware:
                 # Set rather than append: nested OSS/embedding apps advertise once.
                 message = dict(message)
                 message["headers"] = [
-                    (k, v) for k, v in message.get("headers", [])
+                    (k, v)
+                    for k, v in message.get("headers", [])
                     if k.lower() != b"accept-encoding"
                 ] + [(b"accept-encoding", b"gzip")]
                 started = True
             await send(message)
 
         async def refuse(status: int, detail: str) -> None:
-            await PlainTextResponse(detail, status_code=status)(scope, receive, advertised_send)
+            await PlainTextResponse(detail, status_code=status)(
+                scope, receive, advertised_send
+            )
 
         try:
-            codings = [v.strip().lower() for k, v in scope["headers"] if k.lower() == b"content-encoding"]
+            codings = [
+                v.strip().lower()
+                for k, v in scope["headers"]
+                if k.lower() == b"content-encoding"
+            ]
             if not codings or codings == [b"identity"]:
                 await self.app(scope, receive, advertised_send)
                 return
@@ -73,8 +80,10 @@ class RequestDecompressionMiddleware:
                 return
             scope = dict(scope)
             scope["headers"] = [
-                (k, v) for k, v in scope["headers"]
-                if k.lower() not in {b"content-encoding", b"content-length", b"transfer-encoding"}
+                (k, v)
+                for k, v in scope["headers"]
+                if k.lower()
+                not in {b"content-encoding", b"content-length", b"transfer-encoding"}
             ] + [(b"content-length", str(len(body)).encode("ascii"))]
             replayed = False
 
@@ -116,7 +125,9 @@ class RequestDecompressionMiddleware:
                     # RFC 1952 permits concatenated members. All share one cap.
                     decoder = zlib.decompressobj(wbits=31)
                 try:
-                    chunk = decoder.decompress(data, self.max_body_bytes - len(decoded) + 1)
+                    chunk = decoder.decompress(
+                        data, self.max_body_bytes - len(decoded) + 1
+                    )
                 except zlib.error as exc:
                     raise _DecodeRefusal(400, "Invalid gzip request body") from exc
                 if len(decoded) + len(chunk) > self.max_body_bytes:

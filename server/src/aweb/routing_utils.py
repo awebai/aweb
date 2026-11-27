@@ -6,7 +6,11 @@ from starlette.routing import Mount
 
 def move_mount_before_spa_fallback(app: FastAPI, mount_path: str) -> None:
     """Ensure mounted sub-app routes win over the catch-all SPA fallback."""
-    mounts = [route for route in app.router.routes if isinstance(route, Mount) and route.path == mount_path]
+    mounts = [
+        route
+        for route in app.router.routes
+        if isinstance(route, Mount) and route.path == mount_path
+    ]
     if not mounts:
         return
 
@@ -21,4 +25,6 @@ def move_mount_before_spa_fallback(app: FastAPI, mount_path: str) -> None:
     except StopIteration:
         fallback_idx = len(routes_wo_mounts)
 
-    app.router.routes = routes_wo_mounts[:fallback_idx] + mounts + routes_wo_mounts[fallback_idx:]
+    app.router.routes = (
+        routes_wo_mounts[:fallback_idx] + mounts + routes_wo_mounts[fallback_idx:]
+    )

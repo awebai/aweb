@@ -75,7 +75,9 @@ async def test_rotation_keeps_a_verifiable_controller_act(controller_app, coveri
     record = response.json()
     assert record["team_id"] == "base:local"
     assert record["team_did_key"] == new_did_key
-    act = verify_team_key_act(record, domain="local", name="base", team_did_key=new_did_key)
+    act = verify_team_key_act(
+        record, domain="local", name="base", team_did_key=new_did_key
+    )
     assert act.signer_did_key == env.controller[1]
     assert before <= act.signed_at <= datetime.now(timezone.utc)
 
@@ -135,11 +137,15 @@ async def test_a_private_team_act_is_read_anonymously(controller_app):
 
     assert team.status_code != 200
     assert act.status_code == 200, act.text
-    assert verify_team_key_act(act.json(), domain="local", name="base", team_did_key=new_did_key)
+    assert verify_team_key_act(
+        act.json(), domain="local", name="base", team_did_key=new_did_key
+    )
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_team_and_a_team_without_an_act_answer_the_same_404(controller_app):
+async def test_an_unknown_team_and_a_team_without_an_act_answer_the_same_404(
+    controller_app,
+):
     env = controller_app
     unknown = await env.client.get("/v1/namespaces/local/teams/nobody/key-act")
     without_act = await env.client.get(ACT_PATH)
@@ -208,7 +214,8 @@ def test_verifier_refuses_an_act_without_a_zoned_timestamp(timestamp):
 
 
 @pytest.mark.parametrize(
-    "record", [{}, {"signer_did_key": "x", "signed_payload": "!!", "signature": "y"}, None]
+    "record",
+    [{}, {"signer_did_key": "x", "signed_payload": "!!", "signature": "y"}, None],
 )
 def test_verifier_refuses_a_malformed_record(record):
     with pytest.raises(TeamKeyActError) as refused:
@@ -227,12 +234,16 @@ class TXTAnswers:
 
 
 def _dns(name: str, controller: str) -> TXTAnswers:
-    return TXTAnswers({name: DNSLookup("record", (f"awid=v1; controller={controller};",))})
+    return TXTAnswers(
+        {name: DNSLookup("record", (f"awid=v1; controller={controller};",))}
+    )
 
 
 def _example_act(signer, team, timestamp=None):
     return _legacy_act(
-        signer, _claims(domain="team.example.com", new_team_did_key=team), timestamp=timestamp
+        signer,
+        _claims(domain="team.example.com", new_team_did_key=team),
+        timestamp=timestamp,
     )
 
 
@@ -252,7 +263,9 @@ async def _change(record, team, *, resolver, pinned_at=None):
 async def test_change_is_accepted_from_the_controller_dns_names(dns_name):
     signer = keypair()
     _, team = keypair()
-    act = await _change(_example_act(signer, team), team, resolver=_dns(dns_name, signer[1]))
+    act = await _change(
+        _example_act(signer, team), team, resolver=_dns(dns_name, signer[1])
+    )
     assert act.signer_did_key == signer[1]
 
 
@@ -276,7 +289,9 @@ async def test_change_signed_by_a_controller_dns_does_not_name_is_refused():
 async def test_change_without_a_dns_controller_is_refused(lookup):
     signer = keypair()
     _, team = keypair()
-    resolver = TXTAnswers({"_awid.team.example.com": lookup, "_awid.example.com": lookup})
+    resolver = TXTAnswers(
+        {"_awid.team.example.com": lookup, "_awid.example.com": lookup}
+    )
     with pytest.raises(TeamKeyActError) as refused:
         await _change(_example_act(signer, team), team, resolver=resolver)
     assert refused.value.reason == "controller_unavailable"
@@ -293,7 +308,9 @@ async def test_change_must_be_newer_than_the_act_behind_the_pin():
         with pytest.raises(TeamKeyActError) as refused:
             await _change(record, team, resolver=resolver, pinned_at=pinned_at)
         assert refused.value.reason == "not_newer"
-    act = await _change(record, team, resolver=resolver, pinned_at=signed_at - timedelta(seconds=1))
+    act = await _change(
+        record, team, resolver=resolver, pinned_at=signed_at - timedelta(seconds=1)
+    )
     assert act.signed_at == signed_at
 
 
@@ -302,10 +319,14 @@ async def test_registry_client_reads_the_served_act(controller_app):
     env = controller_app
     _, new_did_key = keypair()
     await _rotate(env, new_did_key)
-    client = RegistryClient(registry_url=ORIGIN, transport=httpx.ASGITransport(app=env.app))
+    client = RegistryClient(
+        registry_url=ORIGIN, transport=httpx.ASGITransport(app=env.app)
+    )
     try:
         record = await client.get_team_key_act("local", "base")
-        verify_team_key_act(record, domain="local", name="base", team_did_key=new_did_key)
+        verify_team_key_act(
+            record, domain="local", name="base", team_did_key=new_did_key
+        )
         await env.db.execute("DELETE FROM {{tables.team_key_acts}}")
         assert await client.get_team_key_act("local", "base") is None
     finally:
@@ -316,7 +337,9 @@ async def test_registry_client_reads_the_served_act(controller_app):
 async def test_a_typed_client_rotation_keeps_a_verifiable_act(controller_app):
     env = controller_app
     _, new_did_key = keypair()
-    client = RegistryClient(registry_url=ORIGIN, transport=httpx.ASGITransport(app=env.app))
+    client = RegistryClient(
+        registry_url=ORIGIN, transport=httpx.ASGITransport(app=env.app)
+    )
     try:
         rotated = await client.rotate_team_key(
             "local",
@@ -326,9 +349,13 @@ async def test_a_typed_client_rotation_keeps_a_verifiable_act(controller_app):
         )
         assert rotated["key_changed"] is True
         record = await client.get_team_key_act("local", "base")
-        verify_team_key_act(record, domain="local", name="base", team_did_key=new_did_key)
+        verify_team_key_act(
+            record, domain="local", name="base", team_did_key=new_did_key
+        )
         with pytest.raises(TeamKeyActError):
-            verify_team_key_act(record, domain="local", name="base", team_did_key=env.team[1])
+            verify_team_key_act(
+                record, domain="local", name="base", team_did_key=env.team[1]
+            )
     finally:
         await client.aclose()
 
@@ -350,7 +377,12 @@ async def test_a_team_never_seen_is_pinned_to_the_first_key():
     resolver = TXTAnswers({})
     assert (
         await pinned_team_key(
-            TEAM_ID, team, pins=pins, fetch_act=_fetch(None), resolver=resolver, enforce=True
+            TEAM_ID,
+            team,
+            pins=pins,
+            fetch_act=_fetch(None),
+            resolver=resolver,
+            enforce=True,
         )
         == team
     )
@@ -377,12 +409,16 @@ async def test_a_different_key_without_any_act_is_refused():
             enforce=True,
         )
     assert refused.value.reason == "no_act"
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None, admitted_at=initial_pin.admitted_at)
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(
+        pinned, None, admitted_at=initial_pin.admitted_at
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("enforce", [True, False])
-async def test_a_served_key_the_registry_act_does_not_name_keeps_the_pin(enforce, caplog):
+async def test_a_served_key_the_registry_act_does_not_name_keeps_the_pin(
+    enforce, caplog
+):
     """The registry serves K1 while its latest act names the pinned K0: a
     substituted key beside a genuine old act. The pin stays and K0 is used."""
     pins = MemoryTeamKeyPins()
@@ -400,7 +436,9 @@ async def test_a_served_key_the_registry_act_does_not_name_keeps_the_pin(enforce
             enforce=enforce,
         )
     assert key == pinned
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None, admitted_at=initial_pin.admitted_at)
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(
+        pinned, None, admitted_at=initial_pin.admitted_at
+    )
     assert [r.getMessage() for r in caplog.records] == [
         f"team_key_pin_kept team={TEAM_ID} pinned={pinned} served={served} reason=key_mismatch",
     ]
@@ -420,7 +458,12 @@ async def test_a_process_still_served_the_old_key_uses_the_rotated_pin(enforce):
     record = _example_act(controller, new)
     assert (
         await pinned_team_key(
-            TEAM_ID, new, pins=pins, fetch_act=_fetch(record), resolver=resolver, enforce=enforce
+            TEAM_ID,
+            new,
+            pins=pins,
+            fetch_act=_fetch(record),
+            resolver=resolver,
+            enforce=enforce,
         )
         == new
     )
@@ -429,7 +472,12 @@ async def test_a_process_still_served_the_old_key_uses_the_rotated_pin(enforce):
 
     assert (
         await pinned_team_key(
-            TEAM_ID, old, pins=pins, fetch_act=_fetch(record), resolver=resolver, enforce=enforce
+            TEAM_ID,
+            old,
+            pins=pins,
+            fetch_act=_fetch(record),
+            resolver=resolver,
+            enforce=enforce,
         )
         == new
     )
@@ -452,7 +500,12 @@ async def test_two_rotations_never_move_the_pin_to_the_middle_key(enforce):
 
     assert (
         await pinned_team_key(
-            TEAM_ID, middle, pins=pins, fetch_act=_fetch(latest), resolver=resolver, enforce=enforce
+            TEAM_ID,
+            middle,
+            pins=pins,
+            fetch_act=_fetch(latest),
+            resolver=resolver,
+            enforce=enforce,
         )
         == first
     )
@@ -462,7 +515,12 @@ async def test_two_rotations_never_move_the_pin_to_the_middle_key(enforce):
 
     assert (
         await pinned_team_key(
-            TEAM_ID, last, pins=pins, fetch_act=_fetch(latest), resolver=resolver, enforce=enforce
+            TEAM_ID,
+            last,
+            pins=pins,
+            fetch_act=_fetch(latest),
+            resolver=resolver,
+            enforce=enforce,
         )
         == last
     )
@@ -471,7 +529,12 @@ async def test_two_rotations_never_move_the_pin_to_the_middle_key(enforce):
     assert recorded_pin.team_did_key == last
     assert (
         await pinned_team_key(
-            TEAM_ID, middle, pins=pins, fetch_act=_fetch(latest), resolver=resolver, enforce=enforce
+            TEAM_ID,
+            middle,
+            pins=pins,
+            fetch_act=_fetch(latest),
+            resolver=resolver,
+            enforce=enforce,
         )
         == last
     )
@@ -498,7 +561,9 @@ async def test_without_enforcement_an_act_for_the_served_key_from_no_dns_control
         enforce=False,
     )
     assert key == served
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(served, None, admitted_at=initial_pin.admitted_at)
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(
+        served, None, admitted_at=initial_pin.admitted_at
+    )
 
 
 @pytest.mark.asyncio
@@ -559,7 +624,9 @@ async def test_a_pin_that_moved_elsewhere_meanwhile_is_not_overwritten():
 
 
 @pytest.mark.asyncio
-async def test_without_enforcement_a_mismatch_is_logged_served_and_moves_the_pin(caplog):
+async def test_without_enforcement_a_mismatch_is_logged_served_and_moves_the_pin(
+    caplog,
+):
     pins = MemoryTeamKeyPins()
     _, pinned = keypair()
     _, served = keypair()
@@ -575,7 +642,9 @@ async def test_without_enforcement_a_mismatch_is_logged_served_and_moves_the_pin
         )
     assert key == served
     # The served key is the team's one current key on this server.
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(served, None, admitted_at=initial_pin.admitted_at)
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(
+        served, None, admitted_at=initial_pin.admitted_at
+    )
     assert [r.getMessage() for r in caplog.records] == [
         f"team_key_pin_mismatch team={TEAM_ID} pinned={pinned} served={served} reason=no_act enforced=false",
         f"team_key_pin_moved_without_act team={TEAM_ID} from={pinned} to={served} reason=no_act",
@@ -597,7 +666,12 @@ async def test_a_move_without_an_act_keeps_the_time_of_the_last_accepted_act():
     )
 
     await pinned_team_key(
-        TEAM_ID, served, pins=pins, fetch_act=_fetch(None), resolver=TXTAnswers({}), enforce=False
+        TEAM_ID,
+        served,
+        pins=pins,
+        fetch_act=_fetch(None),
+        resolver=TXTAnswers({}),
+        enforce=False,
     )
 
     assert await pins.pin(TEAM_ID) == TeamKeyPin(

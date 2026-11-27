@@ -210,10 +210,6 @@ async def _mount_mcp_app(
     logger.info("MCP endpoint mounted at /mcp/")
 
 
-
-
-
-
 class _RegistryClientOptions(TypedDict):
     registry_url: str
     service_token: str | None

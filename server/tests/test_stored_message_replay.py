@@ -43,7 +43,9 @@ class StoredArtifactReader:
 
 def signed_artifact(kind):
     key, _ = generate_keypair()
-    payload = canonical_json_bytes({"type": kind.value, "body": "accepted body"}).decode()
+    payload = canonical_json_bytes(
+        {"type": kind.value, "body": "accepted body"}
+    ).decode()
     signature = sign_message(key, payload.encode())
     claim = StoredMessageClaim(
         kind=kind,
@@ -87,9 +89,13 @@ async def test_signed_retry_uses_one_exact_artifact_rule_for_mail_and_chat(kind)
         {"content_mode": "encrypted_v2"},
     ],
 )
-async def test_changed_sender_conversation_or_proof_never_acknowledges_a_retry(kind, row_change):
+async def test_changed_sender_conversation_or_proof_never_acknowledges_a_retry(
+    kind, row_change
+):
     claim, row = signed_artifact(kind)
-    result = await read_stored_message(StoredArtifactReader({**row, **row_change}), claim=claim)
+    result = await read_stored_message(
+        StoredArtifactReader({**row, **row_change}), claim=claim
+    )
     assert result.state is StoredMessageState.CONFLICT
     assert result.message is None
     with pytest.raises(ConflictError) as refused:
@@ -103,7 +109,9 @@ async def test_changed_sender_conversation_or_proof_never_acknowledges_a_retry(k
 @pytest.mark.parametrize("kind", [MessageKind.MAIL, MessageKind.CHAT])
 async def test_unsigned_id_reuse_is_not_a_stored_signed_proof(kind):
     claim, row = signed_artifact(kind)
-    claim = replace(claim, artifact=PlaintextReplayArtifact(signature=None, signed_payload=None))
+    claim = replace(
+        claim, artifact=PlaintextReplayArtifact(signature=None, signed_payload=None)
+    )
     row.update(signature=None, signed_payload=None)
     result = await read_stored_message(StoredArtifactReader(row), claim=claim)
     assert result.state is StoredMessageState.CONFLICT
@@ -139,7 +147,9 @@ async def test_encrypted_retry_compares_the_complete_stored_envelope_and_sender(
         StoredArtifactReader(
             {
                 **row,
-                "encrypted_envelope": json.dumps({**envelope, "ciphertext": "changed bytes"}),
+                "encrypted_envelope": json.dumps(
+                    {**envelope, "ciphertext": "changed bytes"}
+                ),
             }
         ),
         claim=claim,
@@ -163,7 +173,10 @@ async def test_unnamed_message_kind_is_refused_before_the_stored_read(kind):
     claim, _ = signed_artifact(MessageKind.MAIL)
     with pytest.raises(TypeError) as refused:
         await read_stored_message(LookupTrap(), claim=replace(claim, kind=kind))
-    assert str(refused.value) == "Select a named MessageKind before reading a stored message."
+    assert (
+        str(refused.value)
+        == "Select a named MessageKind before reading a stored message."
+    )
 
 
 @pytest.mark.parametrize("kind", [MessageKind.MAIL, MessageKind.CHAT])
@@ -174,16 +187,25 @@ def test_established_receipt_uses_the_same_identity_rule_before_age_and_commit(k
         envelope_hash="sha256:accepted",
         storage_kind=kind.value,
         legacy_unreplayable=False,
-        canonical_metadata=json.dumps({"kind": kind.value, "sender_address": "example.test/alice"}),
-        established_result=json.dumps({"message_id": str(MESSAGE_ID), "status": "delivered"}),
+        canonical_metadata=json.dumps(
+            {"kind": kind.value, "sender_address": "example.test/alice"}
+        ),
+        established_result=json.dumps(
+            {"message_id": str(MESSAGE_ID), "status": "delivered"}
+        ),
     )
-    accepted = established_federation_receipt(row, envelope_hash="sha256:accepted", kind=kind)
+    accepted = established_federation_receipt(
+        row, envelope_hash="sha256:accepted", kind=kind
+    )
     assert accepted.metadata["sender_address"] == "example.test/alice"
     assert accepted.result == {
         "message_id": "00000000-0000-0000-0000-000000000001",
         "status": "delivered",
     }
-    assert established_federation_receipt(None, envelope_hash="sha256:accepted", kind=kind) is None
+    assert (
+        established_federation_receipt(None, envelope_hash="sha256:accepted", kind=kind)
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -239,7 +261,9 @@ async def test_unnamed_mail_id_availability_cannot_select_a_storage_path(availab
     )
     with pytest.raises(TypeError) as refused:
         await store_mail(LookupTrap(), message=message)
-    assert str(refused.value) == "Choose a named MailIdAvailability before storing mail."
+    assert (
+        str(refused.value) == "Choose a named MailIdAvailability before storing mail."
+    )
 
 
 @pytest.mark.asyncio
@@ -290,7 +314,9 @@ async def test_changed_persisted_chat_controls_are_not_the_same_accepted_message
     row.update(sender_leaving=False, hang_on=False, reply_to=None)
     exact = await read_stored_message(StoredArtifactReader(row), claim=claim)
     assert exact.state is StoredMessageState.EXACT
-    changed = await read_stored_message(StoredArtifactReader({**row, **change}), claim=claim)
+    changed = await read_stored_message(
+        StoredArtifactReader({**row, **change}), claim=claim
+    )
     assert changed.state is StoredMessageState.CONFLICT
 
 
@@ -381,7 +407,9 @@ async def test_same_artifact_with_different_resolved_parties_never_advises_a_new
         StoredChatParties(row),
         claim=replace(
             claim,
-            chat_participant_dids=frozenset({"did:key:accepted-sender", "did:aw:different-form"}),
+            chat_participant_dids=frozenset(
+                {"did:key:accepted-sender", "did:aw:different-form"}
+            ),
         ),
     )
     with pytest.raises(ConflictError) as refused:
@@ -405,7 +433,9 @@ async def test_registered_party_matches_its_original_local_key_only_while_curren
     claim, row = signed_artifact(MessageKind.CHAT)
     claim = replace(
         claim,
-        chat_participant_dids=frozenset({"did:key:accepted-sender", "did:aw:registered-recipient"}),
+        chat_participant_dids=frozenset(
+            {"did:key:accepted-sender", "did:aw:registered-recipient"}
+        ),
         chat_participant_current_keys={"did:aw:registered-recipient": current_key},
     )
     observed = await read_stored_message(StoredChatParties(row), claim=claim)

@@ -170,11 +170,17 @@ def _enabled() -> bool:
 
 
 def _request_id(request: Request) -> str:
-    return request.headers.get("X-Request-ID") or request.headers.get("X-AWEB-Request-ID") or uuid.uuid4().hex
+    return (
+        request.headers.get("X-Request-ID")
+        or request.headers.get("X-AWEB-Request-ID")
+        or uuid.uuid4().hex
+    )
 
 
 def _error(status_code: int, code: str, message: str) -> HTTPException:
-    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+    return HTTPException(
+        status_code=status_code, detail={"code": code, "message": message}
+    )
 
 
 def _now() -> datetime:
@@ -263,26 +269,40 @@ def _verify_timestamp(value: str) -> None:
     try:
         enforce_timestamp_skew(value)
     except HTTPException as exc:
-        raise _error(401, _TIMESTAMP_STALE, "timestamp outside allowed skew window") from exc
+        raise _error(
+            401, _TIMESTAMP_STALE, "timestamp outside allowed skew window"
+        ) from exc
 
 
-def _validate_lifetime(*, start_text: str, expires_text: str) -> tuple[datetime, datetime]:
+def _validate_lifetime(
+    *, start_text: str, expires_text: str
+) -> tuple[datetime, datetime]:
     try:
         start = parse_contract_time(start_text, field_name="timestamp")
         expires = parse_contract_time(expires_text, field_name="expires_at")
     except ValueError as exc:
         raise _error(422, _PAYLOAD_CANONICALIZATION, str(exc)) from exc
     if expires <= start:
-        raise _error(422, _PAYLOAD_CANONICALIZATION, "expires_at must be after assertion timestamp")
+        raise _error(
+            422,
+            _PAYLOAD_CANONICALIZATION,
+            "expires_at must be after assertion timestamp",
+        )
     if expires - start > _MAX_ROUTE_LIFETIME:
-        raise _error(422, _PAYLOAD_CANONICALIZATION, "expires_at must be within 90 days")
+        raise _error(
+            422, _PAYLOAD_CANONICALIZATION, "expires_at must be within 90 days"
+        )
     return start, expires
 
 
-def _verify_signature(*, did_key: str, payload: bytes, signature: str, code: str, message: str) -> None:
+def _verify_signature(
+    *, did_key: str, payload: bytes, signature: str, code: str, message: str
+) -> None:
     try:
         decode_raw_standard_b64(signature, field_name="signature")
-        verify_did_key_signature(did_key=did_key, payload=payload, signature_b64=signature)
+        verify_did_key_signature(
+            did_key=did_key, payload=payload, signature_b64=signature
+        )
     except Exception as exc:
         raise _error(401, code, message) from exc
 
@@ -334,7 +354,11 @@ def _validate_publication_authority(fields: A2APublicationFields) -> None:
                 f"expected authority_source self_identity_key for self publication, got {fields.authority_source}",
             )
         if fields.signer_did != fields.current_did_key:
-            raise _error(401, _IDENTITY_SIGNATURE_INVALID, "self publication must be signed by current did:key")
+            raise _error(
+                401,
+                _IDENTITY_SIGNATURE_INVALID,
+                "self publication must be signed by current did:key",
+            )
         return
     if fields.identity_custody == CUSTODY_HOSTED:
         if fields.authority_source != A2A_AUTHORITY_HOSTED_SESSION:
@@ -375,7 +399,9 @@ async def _fetch_registered_address(tx, *, address: str):
     )
 
 
-async def _ensure_address_matches(tx, *, address: str, did_aw: str, current_did_key: str) -> None:
+async def _ensure_address_matches(
+    tx, *, address: str, did_aw: str, current_did_key: str
+) -> None:
     row = await _fetch_registered_address(tx, address=address)
     if row is None:
         domain, _ = address.split("/", 1)
@@ -384,13 +410,27 @@ async def _ensure_address_matches(tx, *, address: str, did_aw: str, current_did_
             domain,
         )
         if ns is None:
-            raise _error(404, _NAMESPACE_NOT_REGISTERED, "namespace must exist before A2A publication")
-        raise _error(404, _ADDRESS_NOT_REGISTERED, "address must be registered before A2A publication")
+            raise _error(
+                404,
+                _NAMESPACE_NOT_REGISTERED,
+                "namespace must exist before A2A publication",
+            )
+        raise _error(
+            404,
+            _ADDRESS_NOT_REGISTERED,
+            "address must be registered before A2A publication",
+        )
     if row["did_aw"] != did_aw or row["current_did_key"] != current_did_key:
-        raise _error(409, _ADDRESS_NOT_REGISTERED, "address is registered to a different identity")
+        raise _error(
+            409,
+            _ADDRESS_NOT_REGISTERED,
+            "address is registered to a different identity",
+        )
 
 
-async def _ensure_identity_key_history(tx, *, did_aw: str, current_did_key: str) -> None:
+async def _ensure_identity_key_history(
+    tx, *, did_aw: str, current_did_key: str
+) -> None:
     rows = await tx.fetch_all(
         """
         SELECT seq, operation, previous_did_key, new_did_key, prev_entry_hash,
@@ -402,18 +442,34 @@ async def _ensure_identity_key_history(tx, *, did_aw: str, current_did_key: str)
         did_aw,
     )
     if not rows:
-        raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history is missing")
+        raise _error(
+            409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history is missing"
+        )
 
     previous_hash = None
     latest_key = None
     for index, row in enumerate(rows, start=1):
         if row["seq"] != index:
-            raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history sequence is not contiguous")
+            raise _error(
+                409,
+                _IDENTITY_KEY_HISTORY_INVALID,
+                "identity key history sequence is not contiguous",
+            )
         if row["prev_entry_hash"] != previous_hash:
-            raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history hash chain is broken")
-        expected_state_hash = awid_identity_state_hash(did_aw=did_aw, current_did_key=row["new_did_key"])
+            raise _error(
+                409,
+                _IDENTITY_KEY_HISTORY_INVALID,
+                "identity key history hash chain is broken",
+            )
+        expected_state_hash = awid_identity_state_hash(
+            did_aw=did_aw, current_did_key=row["new_did_key"]
+        )
         if row["state_hash"] != expected_state_hash:
-            raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history state hash mismatch")
+            raise _error(
+                409,
+                _IDENTITY_KEY_HISTORY_INVALID,
+                "identity key history state hash mismatch",
+            )
         payload = log_entry_payload(
             did_aw=did_aw,
             seq=row["seq"],
@@ -426,7 +482,11 @@ async def _ensure_identity_key_history(tx, *, did_aw: str, current_did_key: str)
             timestamp=row["timestamp"],
         )
         if awid_sha256_hex(payload) != row["entry_hash"]:
-            raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history entry hash mismatch")
+            raise _error(
+                409,
+                _IDENTITY_KEY_HISTORY_INVALID,
+                "identity key history entry hash mismatch",
+            )
         try:
             verify_did_key_signature(
                 did_key=row["authorized_by"],
@@ -434,12 +494,20 @@ async def _ensure_identity_key_history(tx, *, did_aw: str, current_did_key: str)
                 signature_b64=row["signature"],
             )
         except Exception as exc:
-            raise _error(401, _IDENTITY_KEY_HISTORY_INVALID, "identity key history signature invalid") from exc
+            raise _error(
+                401,
+                _IDENTITY_KEY_HISTORY_INVALID,
+                "identity key history signature invalid",
+            ) from exc
         previous_hash = row["entry_hash"]
         latest_key = row["new_did_key"]
 
     if latest_key != current_did_key:
-        raise _error(409, _IDENTITY_KEY_HISTORY_INVALID, "identity key history head does not match current did:key")
+        raise _error(
+            409,
+            _IDENTITY_KEY_HISTORY_INVALID,
+            "identity key history head does not match current did:key",
+        )
 
 
 def _row_delegation_digest(row) -> str:
@@ -449,7 +517,9 @@ def _row_delegation_digest(row) -> str:
 @router.post(
     "/a2a/delegations",
     response_model=A2AWriteResponse,
-    dependencies=[Depends(rate_limit_dep("a2a_delegation_publish", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("a2a_delegation_publish", allow_trusted_service=True))
+    ],
 )
 async def publish_a2a_delegation(
     request: Request,
@@ -462,7 +532,9 @@ async def publish_a2a_delegation(
     fields = _body_to_delegation_fields(body)
     _validate_delegation_authority(fields)
     _verify_timestamp(fields.issued_at)
-    issued_at, expires_at = _validate_lifetime(start_text=fields.issued_at, expires_text=fields.expires_at)
+    issued_at, expires_at = _validate_lifetime(
+        start_text=fields.issued_at, expires_text=fields.expires_at
+    )
     canonical = a2a_delegation_canonical(fields)
     _verify_signature(
         did_key=fields.signer_did,
@@ -474,7 +546,9 @@ async def publish_a2a_delegation(
     try:
         assertion_digest = signed_assertion_digest(canonical, body.signature)
     except ValueError as exc:
-        raise _error(401, _DELEGATION_SIGNATURE_INVALID, "A2A delegation signature invalid") from exc
+        raise _error(
+            401, _DELEGATION_SIGNATURE_INVALID, "A2A delegation signature invalid"
+        ) from exc
 
     db = db_infra.get_manager("aweb")
     async with db.transaction() as tx:
@@ -510,8 +584,16 @@ async def publish_a2a_delegation(
                     "route_id",
                 ):
                     if existing[field_name] != getattr(fields, field_name):
-                        raise _error(409, _DELEGATION_DIGEST_MISMATCH, f"delegation {field_name} mismatch")
-                revoked_at = parse_contract_time(fields.revoked_at, field_name="revoked_at") if fields.revoked_at else _now()
+                        raise _error(
+                            409,
+                            _DELEGATION_DIGEST_MISMATCH,
+                            f"delegation {field_name} mismatch",
+                        )
+                revoked_at = (
+                    parse_contract_time(fields.revoked_at, field_name="revoked_at")
+                    if fields.revoked_at
+                    else _now()
+                )
                 await tx.execute(
                     """
                     UPDATE {{tables.a2a_bridge_delegations}}
@@ -547,10 +629,18 @@ async def publish_a2a_delegation(
                     assertion_digest=assertion_digest,
                     address=fields.address,
                     route_id=fields.route_id,
+                )
+            raise _error(
+                409,
+                _DELEGATION_DIGEST_MISMATCH,
+                "delegation id exists with different assertion digest",
             )
-            raise _error(409, _DELEGATION_DIGEST_MISMATCH, "delegation id exists with different assertion digest")
         if fields.status == A2A_STATUS_REVOKED:
-            raise _error(409, _DELEGATION_MISSING, "cannot revoke a delegation that is not registered")
+            raise _error(
+                409,
+                _DELEGATION_MISSING,
+                "cannot revoke a delegation that is not registered",
+            )
 
         await tx.execute(
             """
@@ -590,7 +680,9 @@ async def publish_a2a_delegation(
             assertion_digest,
             issued_at,
             expires_at,
-            parse_contract_time(fields.revoked_at, field_name="revoked_at") if fields.revoked_at else None,
+            parse_contract_time(fields.revoked_at, field_name="revoked_at")
+            if fields.revoked_at
+            else None,
         )
 
     logger.info(
@@ -612,7 +704,9 @@ async def publish_a2a_delegation(
 @router.post(
     "/a2a/publications",
     response_model=A2AWriteResponse,
-    dependencies=[Depends(rate_limit_dep("a2a_publication_publish", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("a2a_publication_publish", allow_trusted_service=True))
+    ],
 )
 async def publish_a2a_route(
     request: Request,
@@ -625,7 +719,9 @@ async def publish_a2a_route(
     fields = _body_to_publication_fields(body)
     _validate_publication_authority(fields)
     _verify_timestamp(fields.published_at)
-    published_at, expires_at = _validate_lifetime(start_text=fields.published_at, expires_text=fields.expires_at)
+    published_at, expires_at = _validate_lifetime(
+        start_text=fields.published_at, expires_text=fields.expires_at
+    )
     canonical = a2a_publication_canonical(fields)
     _verify_signature(
         did_key=fields.signer_did,
@@ -637,7 +733,9 @@ async def publish_a2a_route(
     try:
         assertion_digest = signed_assertion_digest(canonical, body.signature)
     except ValueError as exc:
-        raise _error(401, _IDENTITY_SIGNATURE_INVALID, "A2A publication signature invalid") from exc
+        raise _error(
+            401, _IDENTITY_SIGNATURE_INVALID, "A2A publication signature invalid"
+        ) from exc
 
     db = db_infra.get_manager("aweb")
     async with db.transaction() as tx:
@@ -653,7 +751,11 @@ async def publish_a2a_route(
             current_did_key=fields.current_did_key,
         )
         if fields.gateway_identity != fields.did_aw and not fields.delegation_id:
-            raise _error(409, _DELEGATION_MISSING, "delegated gateway publication requires a delegation")
+            raise _error(
+                409,
+                _DELEGATION_MISSING,
+                "delegated gateway publication requires a delegation",
+            )
         delegation = None
         if fields.delegation_id:
             delegation = await tx.fetch_one(
@@ -666,7 +768,9 @@ async def publish_a2a_route(
                 fields.delegation_id,
             )
             if delegation is None:
-                raise _error(409, _DELEGATION_MISSING, "A2A bridge delegation is missing")
+                raise _error(
+                    409, _DELEGATION_MISSING, "A2A bridge delegation is missing"
+                )
 
         existing_assertion = await tx.fetch_one(
             """
@@ -681,16 +785,28 @@ async def publish_a2a_route(
         withdrawing = fields.status == A2A_STATUS_REVOKED
         if delegation is not None:
             terminal_error = None
-            if delegation["status"] == A2A_STATUS_REVOKED or delegation["revoked_at"] is not None:
-                terminal_error = (_DELEGATION_REVOKED, "A2A bridge delegation is revoked")
+            if (
+                delegation["status"] == A2A_STATUS_REVOKED
+                or delegation["revoked_at"] is not None
+            ):
+                terminal_error = (
+                    _DELEGATION_REVOKED,
+                    "A2A bridge delegation is revoked",
+                )
             elif delegation["expires_at"] <= _now():
-                terminal_error = (_DELEGATION_EXPIRED, "A2A bridge delegation is expired")
+                terminal_error = (
+                    _DELEGATION_EXPIRED,
+                    "A2A bridge delegation is expired",
+                )
 
             if terminal_error is not None:
                 if not withdrawing or existing_assertion is None:
                     raise _error(409, *terminal_error)
                 # Revocation replaces the delegation's digest, so bind the withdrawal to the stored reference.
-                if (existing_assertion["delegation_id"], existing_assertion["delegation_digest"]) != (
+                if (
+                    existing_assertion["delegation_id"],
+                    existing_assertion["delegation_digest"],
+                ) != (
                     fields.delegation_id,
                     fields.delegation_digest,
                 ):
@@ -701,19 +817,47 @@ async def publish_a2a_route(
                         "Use the delegation ID and digest recorded in the publication.",
                     )
             elif _row_delegation_digest(delegation) != fields.delegation_digest:
-                raise _error(409, _DELEGATION_DIGEST_MISMATCH, "A2A bridge delegation digest mismatch")
-            for field_name in ("address", "route_id", "card_url", "rpc_url", "card_digest"):
+                raise _error(
+                    409,
+                    _DELEGATION_DIGEST_MISMATCH,
+                    "A2A bridge delegation digest mismatch",
+                )
+            for field_name in (
+                "address",
+                "route_id",
+                "card_url",
+                "rpc_url",
+                "card_digest",
+            ):
                 if delegation[field_name] != getattr(fields, field_name):
-                    code = _CARD_DIGEST_MISMATCH if field_name == "card_digest" else _DELEGATION_DIGEST_MISMATCH
+                    code = (
+                        _CARD_DIGEST_MISMATCH
+                        if field_name == "card_digest"
+                        else _DELEGATION_DIGEST_MISMATCH
+                    )
                     raise _error(409, code, f"A2A delegation {field_name} mismatch")
             if delegation["delegated_gateway_identity"] != fields.gateway_identity:
-                raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_GATEWAY, "gateway identity mismatch")
+                raise _error(
+                    409,
+                    _PUBLICATION_EXISTS_DIFFERENT_GATEWAY,
+                    "gateway identity mismatch",
+                )
 
         if existing_assertion is not None:
             if withdrawing:
-                for field_name in ("address", "did_aw", "current_did_key", "gateway_identity", "route_id"):
+                for field_name in (
+                    "address",
+                    "did_aw",
+                    "current_did_key",
+                    "gateway_identity",
+                    "route_id",
+                ):
                     if existing_assertion[field_name] != getattr(fields, field_name):
-                        raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, f"publication {field_name} mismatch")
+                        raise _error(
+                            409,
+                            _PUBLICATION_EXISTS_DIFFERENT_DIGEST,
+                            f"publication {field_name} mismatch",
+                        )
                 await tx.execute(
                     """
                     UPDATE {{tables.a2a_route_publications}}
@@ -745,9 +889,17 @@ async def publish_a2a_route(
                     address=fields.address,
                     route_id=fields.route_id,
                 )
-            raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "publication id exists with different digest")
+            raise _error(
+                409,
+                _PUBLICATION_EXISTS_DIFFERENT_DIGEST,
+                "publication id exists with different digest",
+            )
         if withdrawing:
-            raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "cannot revoke a publication that is not registered")
+            raise _error(
+                409,
+                _PUBLICATION_EXISTS_DIFFERENT_DIGEST,
+                "cannot revoke a publication that is not registered",
+            )
 
         if fields.status == A2A_STATUS_ACTIVE:
             active_route = await tx.fetch_one(
@@ -765,12 +917,24 @@ async def publish_a2a_route(
             )
             if active_route is not None:
                 if active_route["gateway_identity"] != fields.gateway_identity:
-                    raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_GATEWAY, "active route uses different gateway")
+                    raise _error(
+                        409,
+                        _PUBLICATION_EXISTS_DIFFERENT_GATEWAY,
+                        "active route uses different gateway",
+                    )
                 if active_route["card_digest"] != fields.card_digest:
-                    raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, "active route uses different card digest")
+                    raise _error(
+                        409,
+                        _PUBLICATION_EXISTS_DIFFERENT_DIGEST,
+                        "active route uses different card digest",
+                    )
                 for field_name in ("card_url", "rpc_url", "card_revision"):
                     if active_route[field_name] != getattr(fields, field_name):
-                        raise _error(409, _PUBLICATION_EXISTS_DIFFERENT_DIGEST, f"active route uses different {field_name}")
+                        raise _error(
+                            409,
+                            _PUBLICATION_EXISTS_DIFFERENT_DIGEST,
+                            f"active route uses different {field_name}",
+                        )
                 return A2AWriteResponse(
                     status="already_applied",
                     assertion_id=active_route["assertion_id"],
@@ -842,7 +1006,9 @@ async def publish_a2a_route(
     "/namespaces/{domain}/addresses/{name}/a2a",
     response_model=A2AAddressDirectoryResponse,
     response_model_exclude_none=True,
-    dependencies=[Depends(rate_limit_dep("a2a_publication_get", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("a2a_publication_get", allow_trusted_service=True))
+    ],
 )
 async def get_a2a_publication(
     request: Request,
@@ -912,4 +1078,6 @@ async def get_a2a_publication(
             published_at=row["published_at_text"],
             expires_at=row["expires_at_text"],
         )
-    return A2AAddressDirectoryResponse(address=address, did_aw=validate_stable_id(row["address_did_aw"]), a2a=entry)
+    return A2AAddressDirectoryResponse(
+        address=address, did_aw=validate_stable_id(row["address_did_aw"]), a2a=entry
+    )

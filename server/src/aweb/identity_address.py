@@ -39,7 +39,9 @@ class AddressResolution:
         }
         if len(addresses) != 1:
             return self
-        return replace(self, stored_binding_verified=True, stored_address=addresses.pop())
+        return replace(
+            self, stored_binding_verified=True, stored_address=addresses.pop()
+        )
 
 
 def require_address_evidence(auth) -> None:

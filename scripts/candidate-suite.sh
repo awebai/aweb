@@ -4,7 +4,14 @@
 set -euo pipefail
 
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
+# A gate lane names its own summary file; the wrapper merges it when the lane
+# ends. An argument, not the environment: targets that run this script
+# themselves (the gate's own tests) must write their own log directory.
 summary="$log_dir/summary.tsv"
+if [[ "${1:-}" == "--summary" ]]; then
+  summary="${2:?--summary needs a path}"
+  shift 2
+fi
 
 target_result() {
   local target="$1" verdict="$2" elapsed="$3" note="${4:-}"
@@ -40,31 +47,49 @@ run() {
   run_step "$1" make "$1"
 }
 
-if [[ "${1:-}" == "--isolated-suites" ]]; then
+# The unit suites. Each Naapp package is its own suite. scripts/test-egress/docker.py
+# runs every suite concurrently in its own runner, with its own Postgres and Redis.
+naapp_packages() {
+  make -s --no-print-directory naapp-packages
+}
+naapp_suite() {
+  printf 'test-%s\n' "$(printf '%s' "$1" | tr / -)"
+}
+unit_suites() {
+  local package
+  printf '%s\n' test-server test-awid test-key-holder
+  for package in $(naapp_packages); do
+    naapp_suite "$package"
+  done
+  printf '%s\n' test-cli test-cli-auth-v2 _candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi
+}
+if [[ "${1:-}" == "--list-unit-suites" ]]; then
+  unit_suites
+  exit
+fi
+if [[ "${1:-}" == "--isolated-suite" ]]; then
   export TEST_EGRESS_RUNNER=
   stage=unit
-  target_log=test-egress/suite.log
+  suite="${2:?--isolated-suite needs a suite name}"
+  [[ " $(unit_suites | tr '\n' ' ') " == *" $suite "* ]] || { echo "unknown unit suite: $suite" >&2; exit 2; }
+  target_log="test-egress/$suite/suite.log"
   stage_status=0
   : > "$summary"
-  run test-server
-  run test-awid
-  run test-key-holder
-  run test-hermes-aweb-platform
-  run test-naapp
-  run test-cli
-  run test-cli-auth-v2
-  run _candidate-unit-channel
-  run test-channel-name-live-contract
-  run _candidate-unit-channel-core
-  run _candidate-unit-pi
+  for package in $(naapp_packages); do
+    if [[ "$(naapp_suite "$package")" == "$suite" ]]; then
+      run_step "$suite" make test-naapp NAAPP_PACKAGES="$package"
+      exit "$stage_status"
+    fi
+  done
+  run "$suite"
   exit "$stage_status"
 fi
 
-all_stages="checks user-paths unit artifacts integration"
+all_stages="static checks user-paths unit artifacts integration"
 requested="${1:-$all_stages}"
 selected=" "
 for stage in $requested; do
-  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
+  case "$stage" in static|checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
   selected+="$stage "
 done
 
@@ -73,50 +98,45 @@ host_published_port() {
   return "${CANDIDATE_HOST_PORT_STATUS:-0}"
 }
 
+# Source safeguards of what ships: minutes, no services. A failure here stops
+# the run before any later stage starts. Type checks run in pull-request CI.
+static() {
+  run test-identity-primitives
+  run test-sot-source-inventories
+  run test-vector-provenance
+  run check-private-boundary
+  run check-secrets-shards
+}
 checks() {
   run check-product-table-writes
-  run check-secrets-shards
   run_step host-published-port host_published_port
   run check-generated-copies
   run test-generated-copies
-  run check-private-boundary
   run _candidate-gate-docker-boundaries
-  run test-egress-controls
-  run _candidate-test-docker-dns
   run _candidate-gate-compose-adoption
   run test-shipping
-  run test-page-renderer
+  run check-page-renderer-bundle
   run check-aw-commit-repo-stamp
   run check-cli-go-tidy
   run check-cli-release-vcs-stamps
   run test-python-locks
-  run lint-naapp
-  run test-sot-source-inventories
-  run test-identity-primitives
-  run test-vector-provenance
   run test-federation-error-reference
   run test-federation-authority-mutations
   run test-federation-harness
+  run test-hermes-platform-source
   run test-cli-reference
   run test-mcp-tools-reference
   run _candidate-channel-version
   run check-a2a-copy-guardrails
   run test-go-vulnerability-audit
   run check-go-vulnerability-audit
-  run test-release-cli-version
 }
 user-paths() {
   run e2e-user-paths
 }
 unit() {
-  # Keep source controls first, and keep collecting the independent results
-  # when one of them finds a defect.
-  run test-identity-primitives
-  run test-vector-provenance
-  run test-sot-source-inventories
-  run test-python-locks
-  run lint-naapp
   prepare_node
+  run _candidate-unit-aw
   run _candidate-unit-suites
   if [[ -f "$log_dir/test-egress/summary.tsv" ]]; then
     cat "$log_dir/test-egress/summary.tsv" >> "$summary"
@@ -129,12 +149,10 @@ artifacts() {
   run _candidate-artifact-server
   run _candidate-artifact-awid-package
   run _candidate-artifact-awid-image
-  run _candidate-artifact-naapp-package
   run _candidate-artifact-channel
   run _candidate-artifact-pi
   run _candidate-artifact-skills
   run _candidate-artifact-a2a-image
-  run_step prune-builder prune_builder
 }
 integration() {
   prepare_node
@@ -156,14 +174,6 @@ integration() {
   run test-oci-exact-publish
 }
 
-prune_builder() {
-  if [[ -z "${BUILDX_BUILDER:-}" ]]; then
-    echo 'BUILDX_BUILDER is required' >&2
-    return 2
-  fi
-  docker buildx prune --all --force --keep-storage=10GB --builder "$BUILDX_BUILDER"
-}
-
 prepare_node() {
   if ! grep -Eq '^(unit|artifacts|integration)/_candidate-node-deps'$'\t' "$summary"; then
     run _candidate-node-deps
@@ -178,9 +188,15 @@ prepare_cli() {
 }
 
 suite_status=0
+static_failed=0
 : > "$summary"
 for stage in $all_stages; do
   [[ "$selected" == *" $stage "* ]] || continue
+  if [[ "$static_failed" == 1 ]]; then
+    printf 'candidate: %s NOT-RUN (static FAILED)\n' "$stage"
+    printf '%s\tNOT-RUN\t-\t0s\tstatic FAILED\n' "$stage" >> "$summary"
+    continue
+  fi
   started=$SECONDS
   target_log="$stage.log"
   set +e
@@ -194,6 +210,7 @@ for stage in $all_stages; do
   else
     result=FAILED
     if [[ "$suite_status" == 0 ]]; then suite_status=$status; fi
+    if [[ "$stage" == static ]]; then static_failed=1; fi
   fi
   coverage=""
   if [[ "$stage" == user-paths && -f "$log_dir/user-paths/coverage-summary.txt" ]]; then
@@ -201,6 +218,8 @@ for stage in $all_stages; do
     printf 'user-paths coverage: %s\n' "$coverage"
   fi
   printf '%s\t%s\t%s.log\t%ss\t%s\n' "$stage" "$result" "$stage" "$((SECONDS-started))" "$coverage" >> "$summary"
+  # The wrapper records a passed stage in the ledger when it reads this line.
+  printf 'candidate stage-verdict: %s %s\n' "$stage" "$result"
 done
 if [[ "$suite_status" == 0 ]]; then
   printf '\ncandidate suite PASSED\n'

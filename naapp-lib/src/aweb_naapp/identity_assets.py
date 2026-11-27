@@ -33,7 +33,11 @@ def mount_identity_routes(app: FastAPI) -> None:
         if result is None:
             raise HTTPException(404, "Asset not found")
         content, media_type = result
-        return Response(content, media_type=media_type, headers={
-            "X-Content-Type-Options": "nosniff",
-            "Cache-Control": "public, max-age=31536000, immutable",
-        })
+        return Response(
+            content,
+            media_type=media_type,
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "public, max-age=31536000, immutable",
+            },
+        )

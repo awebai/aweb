@@ -36,7 +36,12 @@ from conftest import build_signed_headers
 from identity_support import register_identity, request_rotation
 
 VECTORS = json.loads(
-    (Path(__file__).resolve().parents[2] / "docs" / "vectors" / "id-certificates-v1.json").read_text()
+    (
+        Path(__file__).resolve().parents[2]
+        / "docs"
+        / "vectors"
+        / "id-certificates-v1.json"
+    ).read_text()
 )
 DOMAIN = "example.com"
 ORIGIN = "https://registry.example.com"
@@ -89,32 +94,62 @@ def consumes(*names: str):
     CONSUMED.update(names)
 
     def decorate(test):
-        return pytest.mark.asyncio(pytest.mark.parametrize("case", cases, ids=list(names))(test))
+        return pytest.mark.asyncio(
+            pytest.mark.parametrize("case", cases, ids=list(names))(test)
+        )
 
     return decorate
 
 
 def key_name_for(identity: str) -> str:
-    [name] = [name for name, key in KEYS.items() if identity in (key["did_aw"], key["did_key"])]
+    [name] = [
+        name
+        for name, key in KEYS.items()
+        if identity in (key["did_aw"], key["did_key"])
+    ]
     return name
 
 
 def sign(fields: dict, signer: str) -> dict:
     """A certificate the test itself issues with a synthetic vector key."""
-    signature = SigningKey(seed(signer)).sign(id_certificate_signing_bytes(fields)).signature
-    return {"certificate": fields, "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode()}
+    signature = (
+        SigningKey(seed(signer)).sign(id_certificate_signing_bytes(fields)).signature
+    )
+    return {
+        "certificate": fields,
+        "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode(),
+    }
 
 
 def covering_headers(
-    signer: str, *, method: str, path: str, body: bytes, domain: str, operation: str,
-    new_key_signer: str | None = None, **claims,
+    signer: str,
+    *,
+    method: str,
+    path: str,
+    body: bytes,
+    domain: str,
+    operation: str,
+    new_key_signer: str | None = None,
+    **claims,
 ) -> dict:
     """A covering-v2 request signed by ``signer``, and by ``new_key_signer`` in the new-key header."""
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     payload = {
-        "v": 2, "type": REQUEST_TYPE, "aud": ORIGIN, "method": method, "path": path,
-        "body_sha256": hashlib.sha256(body).hexdigest(), "timestamp": timestamp,
-        "domain": domain, "operation": operation, **claims,
+        "v": 2,
+        "type": REQUEST_TYPE,
+        "aud": ORIGIN,
+        "method": method,
+        "path": path,
+        "body_sha256": hashlib.sha256(body).hexdigest(),
+        "timestamp": timestamp,
+        "domain": domain,
+        "operation": operation,
+        **claims,
     }
     raw = canonical_json_bytes(payload)
     headers = {
@@ -131,7 +166,9 @@ def covering_headers(
 
 
 def chain_header(chain: list[dict]) -> str:
-    return encode_id_chain_header({"v": 1, "type": "aweb.id-chain", "certificates": chain})
+    return encode_id_chain_header(
+        {"v": 1, "type": "aweb.id-chain", "certificates": chain}
+    )
 
 
 def did_registration_entry(key_name: str) -> dict:
@@ -139,14 +176,21 @@ def did_registration_entry(key_name: str) -> dict:
     target = did_aw(key_name)
     for fixture in VECTORS["status_fixtures"].values():
         for identity in fixture["identities"]:
-            if identity["id"] == target and identity["key_history"][0]["entry"]["operation"] == "register_did":
+            if (
+                identity["id"] == target
+                and identity["key_history"][0]["entry"]["operation"] == "register_did"
+            ):
                 return identity["key_history"][0]["entry"]
     raise KeyError(key_name)
 
 
 def ed25519_vector_key(name: str) -> str:
     """The did:key of a frozen ed25519_verification public key, such as a small-order one."""
-    [case] = [case for case in VECTORS["ed25519_verification"]["cases"] if case["name"] == name]
+    [case] = [
+        case
+        for case in VECTORS["ed25519_verification"]["cases"]
+        if case["name"] == name
+    ]
     return did_from_public_key(bytes.fromhex(case["public_key_hex"]))
 
 
@@ -161,10 +205,16 @@ class MixedOrderController:
 
     def __init__(self) -> None:
         torsion = bytes.fromhex(
-            [c for c in VECTORS["ed25519_verification"]["cases"] if c["name"] == "small-order-A-1"][0]["public_key_hex"]
+            [
+                c
+                for c in VECTORS["ed25519_verification"]["cases"]
+                if c["name"] == "small-order-A-1"
+            ][0]["public_key_hex"]
         )
         self._scalar = crypto_core_ed25519_scalar_reduce(os.urandom(64))
-        self._public = crypto_core_ed25519_add(crypto_scalarmult_ed25519_base_noclamp(self._scalar), torsion)
+        self._public = crypto_core_ed25519_add(
+            crypto_scalarmult_ed25519_base_noclamp(self._scalar), torsion
+        )
         self.did_key = did_from_public_key(self._public)
 
     @property
@@ -180,41 +230,73 @@ class MixedOrderController:
         """Legacy DIDKey headers over {domain, operation, timestamp, **extra}."""
 
         def payload(timestamp: str) -> bytes:
-            return canonical_json_bytes({"domain": domain, "operation": operation, "timestamp": timestamp, **extra})
+            return canonical_json_bytes(
+                {
+                    "domain": domain,
+                    "operation": operation,
+                    "timestamp": timestamp,
+                    **extra,
+                }
+            )
 
         timestamp, _, signature = self._sign_with_divisible_challenge(payload)
-        return {"Authorization": f"DIDKey {self.did_key} {signature}", "X-AWEB-Timestamp": timestamp}
+        return {
+            "Authorization": f"DIDKey {self.did_key} {signature}",
+            "X-AWEB-Timestamp": timestamp,
+        }
 
-    def covering_headers(self, *, method: str, path: str, body: bytes, domain: str, operation: str) -> dict:
+    def covering_headers(
+        self, *, method: str, path: str, body: bytes, domain: str, operation: str
+    ) -> dict:
         """Covering-v2 headers signed by this key."""
 
         def payload(timestamp: str) -> bytes:
-            return canonical_json_bytes({
-                "v": 2, "type": REQUEST_TYPE, "aud": ORIGIN, "method": method, "path": path,
-                "body_sha256": hashlib.sha256(body).hexdigest(), "timestamp": timestamp,
-                "domain": domain, "operation": operation,
-            })
+            return canonical_json_bytes(
+                {
+                    "v": 2,
+                    "type": REQUEST_TYPE,
+                    "aud": ORIGIN,
+                    "method": method,
+                    "path": path,
+                    "body_sha256": hashlib.sha256(body).hexdigest(),
+                    "timestamp": timestamp,
+                    "domain": domain,
+                    "operation": operation,
+                }
+            )
 
         timestamp, raw, signature = self._sign_with_divisible_challenge(payload)
         return {
             "Authorization": f"DIDKey {self.did_key} {signature}",
             "X-AWEB-Timestamp": timestamp,
-            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(raw).rstrip(b"=").decode(),
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(raw)
+            .rstrip(b"=")
+            .decode(),
             "Content-Type": "application/json",
         }
 
     def _sign_with_divisible_challenge(self, payload) -> tuple[str, bytes, str]:
         base = datetime.now(timezone.utc).replace(microsecond=0)
         for offset in range(0, 240):
-            timestamp = (base - timedelta(seconds=offset)).isoformat().replace("+00:00", "Z")
+            timestamp = (
+                (base - timedelta(seconds=offset)).isoformat().replace("+00:00", "Z")
+            )
             raw = payload(timestamp)
             nonce = crypto_core_ed25519_scalar_reduce(os.urandom(64))
             commitment = crypto_scalarmult_ed25519_base_noclamp(nonce)
-            challenge = crypto_core_ed25519_scalar_reduce(hashlib.sha512(commitment + self._public + raw).digest())
+            challenge = crypto_core_ed25519_scalar_reduce(
+                hashlib.sha512(commitment + self._public + raw).digest()
+            )
             if int.from_bytes(challenge, "little") % 8:
                 continue
-            response = crypto_core_ed25519_scalar_add(nonce, crypto_core_ed25519_scalar_mul(challenge, self._scalar))
-            return timestamp, raw, base64.b64encode(commitment + response).rstrip(b"=").decode()
+            response = crypto_core_ed25519_scalar_add(
+                nonce, crypto_core_ed25519_scalar_mul(challenge, self._scalar)
+            )
+            return (
+                timestamp,
+                raw,
+                base64.b64encode(commitment + response).rstrip(b"=").decode(),
+            )
         raise AssertionError("no timestamp gave a challenge divisible by 8")
 
 
@@ -226,14 +308,18 @@ class Tree:
         self.clock = clock
         client.app.state.awid_public_origins = (ORIGIN,)
 
-    def dns(self, controller: str | None, *, inherited: bool = False, domain: str = DOMAIN) -> None:
+    def dns(
+        self, controller: str | None, *, inherited: bool = False, domain: str = DOMAIN
+    ) -> None:
         """Answer DNS for ``domain`` with ``controller``'s key, or fail when it is None."""
 
         async def _verify(queried: str) -> DomainAuthority:
             if queried != domain or controller is None:
                 raise DnsVerificationError(f"DNS lookup failed for _awid.{queried}")
             return DomainAuthority(
-                controller_did=did_key(controller), registry_url=ORIGIN, dns_name=f"_awid.{queried}",
+                controller_did=did_key(controller),
+                registry_url=ORIGIN,
+                dns_name=f"_awid.{queried}",
                 inherited=inherited,
             )
 
@@ -242,24 +328,38 @@ class Tree:
     def exact_dns(self, controller: str, domain: str = DOMAIN) -> None:
         self.dns(controller, domain=domain)
 
-    async def register_namespace(self, controller: str = "root", *, domain: str = DOMAIN, headers=None):
+    async def register_namespace(
+        self, controller: str = "root", *, domain: str = DOMAIN, headers=None
+    ):
         """POST /v1/namespaces signed by ``controller``; DNS answers as last set."""
-        signed = build_signed_headers(seed(controller), did_key(controller), domain=domain, operation="register")
-        return await self.client.post("/v1/namespaces", json={"domain": domain}, headers={**signed, **(headers or {})})
+        signed = build_signed_headers(
+            seed(controller), did_key(controller), domain=domain, operation="register"
+        )
+        return await self.client.post(
+            "/v1/namespaces",
+            json={"domain": domain},
+            headers={**signed, **(headers or {})},
+        )
 
     async def root(self, *, controller: str = "root", domain: str = DOMAIN) -> None:
         self.exact_dns(controller, domain)
         resp = await self.register_namespace(controller, domain=domain)
         assert resp.status_code == 200, resp.text
 
-    async def replace_controller(self, new_controller: str, *, domain: str = DOMAIN, headers=None):
+    async def replace_controller(
+        self, new_controller: str, *, domain: str = DOMAIN, headers=None
+    ):
         """PUT /v1/namespaces/{domain}, the new-key-only recovery path."""
         signed = build_signed_headers(
-            seed(new_controller), did_key(new_controller), domain=domain,
-            operation="rotate_controller", new_controller_did=did_key(new_controller),
+            seed(new_controller),
+            did_key(new_controller),
+            domain=domain,
+            operation="rotate_controller",
+            new_controller_did=did_key(new_controller),
         )
         return await self.client.put(
-            f"/v1/namespaces/{domain}", json={"new_controller_did": did_key(new_controller)},
+            f"/v1/namespaces/{domain}",
+            json={"new_controller_did": did_key(new_controller)},
             headers={**signed, **(headers or {})},
         )
 
@@ -269,8 +369,15 @@ class Tree:
         assert resp.status_code == 200, resp.text
 
     async def delete_namespace(self, controller: str = "root", *, domain: str = DOMAIN):
-        headers = build_signed_headers(seed(controller), did_key(controller), domain=domain, operation="delete_namespace")
-        return await self.client.request("DELETE", f"/v1/namespaces/{domain}", headers=headers)
+        headers = build_signed_headers(
+            seed(controller),
+            did_key(controller),
+            domain=domain,
+            operation="delete_namespace",
+        )
+        return await self.client.request(
+            "DELETE", f"/v1/namespaces/{domain}", headers=headers
+        )
 
     async def reverify(self, *, domain: str = DOMAIN):
         return await self.client.post(f"/v1/namespaces/{domain}/reverify")
@@ -281,9 +388,22 @@ class Tree:
     async def vector_did(self, key_name: str) -> None:
         """Register ``key_name``'s did:aw with its frozen log entry, witnessed at that entry's time."""
         entry = did_registration_entry(key_name)
-        fields = ("did_aw", "new_did_key", "operation", "previous_did_key", "prev_entry_hash", "seq",
-                  "state_hash", "authorized_by", "timestamp")
-        body = {"did_aw": did_aw(key_name), **{field: entry[field] for field in fields[1:]}, "proof": entry["signature"]}
+        fields = (
+            "did_aw",
+            "new_did_key",
+            "operation",
+            "previous_did_key",
+            "prev_entry_hash",
+            "seq",
+            "state_hash",
+            "authorized_by",
+            "timestamp",
+        )
+        body = {
+            "did_aw": did_aw(key_name),
+            **{field: entry[field] for field in fields[1:]},
+            "proof": entry["signature"],
+        }
         signed_at = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
         self.clock.now = signed_at
         real_now = dns_auth._utc_now
@@ -296,13 +416,23 @@ class Tree:
 
     async def rotate_did(self, key_name: str, new_key_name: str) -> None:
         resp = await request_rotation(
-            self.client, seed(key_name), did_aw(key_name), did_key(key_name), did_key(new_key_name),
+            self.client,
+            seed(key_name),
+            did_aw(key_name),
+            did_key(key_name),
+            did_key(new_key_name),
         )
         assert resp.status_code == 200, resp.text
 
     async def register(
-        self, chain: list[dict], *, signer: str | None = None, expected_head: str | None = None,
-        invitation_id: str | None = None, when: datetime | None = None, header_chain: list[dict] | None = None,
+        self,
+        chain: list[dict],
+        *,
+        signer: str | None = None,
+        expected_head: str | None = None,
+        invitation_id: str | None = None,
+        when: datetime | None = None,
+        header_chain: list[dict] | None = None,
     ):
         """POST the leaf of ``chain`` with ``chain`` as its supporting header."""
         if when is not None:
@@ -310,29 +440,54 @@ class Tree:
         leaf = chain[-1]["certificate"]
         signer = signer or key_name_for(leaf["id"])
         body = json.dumps(
-            {"certificate": chain[-1], "expected_head": expected_head, "invitation_id": invitation_id},
+            {
+                "certificate": chain[-1],
+                "expected_head": expected_head,
+                "invitation_id": invitation_id,
+            },
             separators=(",", ":"),
         ).encode()
         headers = covering_headers(
-            signer, method="POST", path=REGISTER_PATH, body=body,
-            domain=leaf["domain"], operation="register_id_certificate",
+            signer,
+            method="POST",
+            path=REGISTER_PATH,
+            body=body,
+            domain=leaf["domain"],
+            operation="register_id_certificate",
         )
-        headers["X-AWID-ID-Chain"] = chain_header(header_chain if header_chain is not None else chain)
+        headers["X-AWID-ID-Chain"] = chain_header(
+            header_chain if header_chain is not None else chain
+        )
         return await self.client.post(REGISTER_PATH, content=body, headers=headers)
 
     async def revoke(
-        self, actor: str, subject: str, *, expected_head: str | None, effective_from: str | None = None,
+        self,
+        actor: str,
+        subject: str,
+        *,
+        expected_head: str | None,
+        effective_from: str | None = None,
         when: datetime | None = None,
     ):
         """POST a revocation of ``subject`` signed by ``actor``'s current key."""
         if when is not None:
             self.clock.now = when
         body = json.dumps(
-            {"domain": DOMAIN, "id": did_aw(subject), "expected_head": expected_head, "effective_from": effective_from},
+            {
+                "domain": DOMAIN,
+                "id": did_aw(subject),
+                "expected_head": expected_head,
+                "effective_from": effective_from,
+            },
             separators=(",", ":"),
         ).encode()
         headers = covering_headers(
-            actor, method="POST", path=REVOKE_PATH, body=body, domain=DOMAIN, operation="revoke_id_certificate",
+            actor,
+            method="POST",
+            path=REVOKE_PATH,
+            body=body,
+            domain=DOMAIN,
+            operation="revoke_id_certificate",
         )
         return await self.client.post(REVOKE_PATH, content=body, headers=headers)
 

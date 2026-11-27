@@ -8,27 +8,19 @@ commit.
 |---|---|
 | `server-vX.Y.Z` | PyPI `aweb`, and the `ghcr.io/awebai/aweb-server` image |
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
-| `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`, then its dev-only test support `aweb-naapp-testing` (`naapp-lib/testing/`) at the same version |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
 | `aw-vX.Y.Z` | `aw` CLI distributions and npm platform packages |
 | `channel-vX.Y.Z` | npm Claude channel; the unpinned marketplace resolves the public package |
 | `pi-vX.Y.Z` | npm Pi extension |
 | `skills-vX.Y.Z` | npm skills package, unpinned marketplace source, and resumable hosted ZIP assets |
 | `a2a-gw-vX.Y.Z` | `ghcr.io/awebai/a2a-gateway` image |
-| `secrets-vX.Y.Z` | `ghcr.io/awebai/secrets` image |
-| `logs-vX.Y.Z` | `ghcr.io/awebai/logs` image |
-| `aweb-secrets-runner-vX.Y.Z` | PyPI `aweb-secrets-values`, then `aweb-secrets-runner`, at the same version |
 
-Manifest-backed tags must equal the version in their package manifest. A tag
-that publishes two packages (`aweb-naapp-v`) requires both manifests at the tag
-version, and `aweb-naapp-testing` requires exactly that `aweb-naapp`. CLI and
+Manifest-backed tags must equal the version in their package manifest. CLI and
 A2A gateway versions are explicit in their tags.
 
-The [customer Secrets/Logs/runner procedure](../naapp/secrets/deploy/RELEASE.md)
-uses these same entry points and additionally requires the full Secrets gate.
-The runner and values manifests must have equal versions, and the runner must
-require exactly that values version. Neither image recipe nor these tag mappings
-alone qualifies a customer release or a target platform.
+The naapp applications and their packages (`aweb-naapp`, the Secrets and Logs
+images, the Secrets runner) release from `github.com/awebai/naapp`, not from
+this repository: the release tools refuse their tags before any gate runs.
 
 ## Approval service SDK check
 
@@ -40,12 +32,10 @@ service startup. The key holder always builds against this checkout's `awid`.
 ## Release candidate spellings
 
 Python lanes also accept strict `X.Y.ZrcN` versions, with `N >= 1`:
-`server-v1.27.34rc1`, `awid-service-v0.5.32rc1`, and
-`aweb-naapp-v0.4.1rc1`, or `aweb-secrets-runner-v0.1.0rc1`, for example. The
+`server-v1.27.34rc1` and `awid-service-v0.5.32rc1`, for example. The
 registry image lane, whose version is awid's manifest, uses the same spelling:
 `awid-v0.5.40rc2`.
-The manifest versions, including `aweb-naapp-testing` or the runner's lockstep
-values package, must equal the tag. The aw spelling is SemVer:
+The manifest version must equal the tag. The aw spelling is SemVer:
 `aw-v1.36.48-rc.1`. Other artifact lanes continue to accept final versions only.
 
 RCs are optional: a final needs no prior RC. One full gate qualifies the exact
@@ -132,12 +122,45 @@ resources and records stage verdicts (checks, user-paths, unit, artifacts,
 integration) and their `stage/target` results in one host ledger,
 `~/.cache/aweb-oss/candidate-gate-ledger.tsv`. The run's `summary.tsv` has both
 row types. Target rows include the duration, log and any failure or skip
-reason. A failed target leaves its stage red while independent targets and
-later stages continue. Integration skips the OATS and naapp targets if the
-runner's shared CLI build fails, and names that prerequisite in their rows.
-Other journeys build their own inputs or use no stage artifact. Only passing
-stages are reusable. Only after all stages pass does the command create the
-requested annotated tags locally on the exact tested SHA.
+reason. A failed target leaves its stage red while the stage's independent
+targets continue. Integration skips the OATS and naapp targets if its lane's
+CLI build fails, and names that prerequisite in their rows. Other journeys
+build their own inputs or use no stage artifact. Only passing stages are
+reusable. Each stage is recorded as soon as it passes, so a run killed later
+keeps its completed stages. Only after all stages pass does the command create
+the requested annotated tags locally on the exact tested SHA.
+
+After static, every pending stage runs at once, each in its own lane: its own
+runner, its own workspace volume seeded from the same clean clone, and its own
+PostgreSQL and Redis. Lanes share the Docker daemon, the run's resource label
+and bind root (mktemp paths only), and the run's builder and its cache. Nothing
+prunes the builder while lanes build; cleanup removes it, with its cache, after
+the last lane ends. No stage reads what another writes:
+integration builds its own CLI in its own workspace, as it does when artifacts
+is reused. The first red stage stops the others. A stopped stage is reported
+STOPPED and records no stage row; target rows and stage rows already written
+stay. The wrapper is the only writer of `summary.tsv`: each lane writes its own
+summary, merged when the lane ends.
+
+The gate is sized from its budget, `GATE_CPUS` and `GATE_MEMORY_MIB`, which
+default to the Docker engine's CPU count and memory (`scripts/gate_budget.py`).
+One rule divides it (`scripts/vm-gate/vm_gate/budget.py`): whole CPUs in
+proportion to measured work, each share at least 1, summing to the budget. The
+weights are `candidate-gate/measured-work.json`, taken from a named receipt.
+After static, the pending lanes share the budget, and each lane's runner and
+sibling containers are capped at its share; with fewer CPUs than lanes they run
+one at a time, each with the budget. Unit's share is divided between the server
+suite, naapp-lib and a pool for the serial suites; a scheduler starts a suite
+only when its slots are free, so the running suites' caps never exceed the
+share. A parallel suite's xdist workers are its slots. The unit stage first
+builds aw once (`_candidate-unit-aw`, its own target row), and every suite uses
+that binary by path (`AW_TEST_CLI_BINARY`); a parallel server worker refuses to
+build its own. The
+budget sizes a run and is not a gate input: it is recorded in the run's
+`budget.tsv` and stays out of the ledger key.
+The release command puts no deadline on the gate. The machine that runs it
+bounds the run and stops it with TERM, which lets the gate clean up and record
+its verdict.
 
 Integration includes `make e2e-folio-wakes`, the same real document-change and
 browser-wake acceptance script run by Folio CI. Its services share a private
@@ -149,13 +172,20 @@ they create and remove their own bounded builder when none is supplied.
 
 `make candidate-gate`, direct `scripts/candidate-docker-gate.sh` calls and the
 release command use that same ledger. The key includes the source tree,
-effective CLI/A2A versions, external Library/blueprint revisions, and non-default
-resource settings. Commit metadata, stage selection and log paths do not create
-another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
+effective CLI/A2A versions, external Library/blueprint revisions, explicit
+per-container resource overrides, and the content of synchronized main's product-table write
+ceilings, the only part of main a stage reads. Commit metadata, main's commit,
+stage selection and log paths do not create another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
 retained logs; all callers must share them.
 
+The static stage runs first: the identity and source-of-truth inventories,
+vector provenance, the private boundary and the Secrets shard manifest. When it
+fails, no later stage starts; they are reported as NOT-RUN and nothing is
+recorded for them. The gate checks neither types nor style: pull-request CI
+type-checks the naapp packages (`make typecheck-naapp`).
+
 For focused pre-landing checks, use `AWEB_CANDIDATE_STAGES='checks unit' make
-candidate-gate`. Release candidates always require all five stages, even if that
+candidate-gate`. Release candidates always require all six stages, even if that
 environment variable is set. Passes are reused across callers with equal inputs.
 A recorded failure blocks every stage for those inputs: fix the code and gate
 the changed tree. For infrastructure failures only, the coordinator removes the
@@ -163,27 +193,30 @@ failed stage ledger lines and supplies `GATE_RERUN_REASON='<reason>'`; the next 
 result retains that reason. A refusal lists all failed stages and their retained
 logs. Cleanup failures also block reuse. After an interruption, completed stages
 are reusable only if the wrapper records successful cleanup. A missing cleanup
-verdict is recorded as a cleanup failure.
+verdict is recorded as a cleanup failure. A run killed outright records no
+cleanup verdict, so the stages it recorded before the kill stay reusable.
 
-On the ccx33 unit profile, the Secrets package uses two whole-module shards
-on separate Postgres and Redis pairs already owned by the isolated runner. The
-measured partition is in `candidate-gate/secrets-shards.json`. The checks stage
+Given AWEB_SECRETS_SHARD_SERVICES, the Secrets package target runs two
+whole-module shards on two Postgres and Redis pairs. The candidate
+gate runs it unsharded, as one of the serial suites in unit's pool. The
+measured partition is in `candidate-gate/secrets-shards.json`. The static stage
 qualifies it by collecting tests without starting services. It reports modules
 missing from collection and collected modules missing from the manifest. The
 runner compares the ordered shard collections to the unsharded collection under the
 same unit selector before it executes either shard. Both shard outcomes and
-logs reach the unit stage. The portable profile and the standalone package
-target still run the complete Secrets unit suite in one process.
+logs reach the unit stage. A serial budget and the standalone package
+target run the complete Secrets unit suite in one process.
 
 `main` may move while the gate runs. The tested SHA and its local tags do not.
 
 Before allocating Docker resources, the gate waits for the critical free-space
-floor plus one gate's peak budget on Docker's backing host filesystem. Defaults
-are `AWEB_GATE_MIN_FREE_GB=50` and `AWEB_GATE_RESERVE_GB=30`, requiring 80 GiB
-free. The reserve covers the measured 20–28 GB peak of the private builder cache,
-tool/suite images, workspace and runner; it is separate from the critical floor.
-Both settings accept nonnegative integer GiB values, including a smaller reserve
-for a deliberately smaller fixture. Before any self-test or Docker test,
+floor plus one gate's peak on Docker's backing host filesystem: a 50 GiB
+critical floor and a 60 GiB gate reserve, 110 GiB free in all. The reserve is
+the measured peak of a parallel gate (vm-3f1940bd: 53 GB of builder cache,
+images, lane workspaces and containers), rounded up. `AWEB_GATE_MIN_FREE_GB` and
+`AWEB_GATE_RESERVE_GB` may raise either value; a lower value is refused. `make
+test-server-local` checks the same critical floor with its own measured need,
+2 GiB for one local server run (`--check-disk local-server`), so 52 GiB free. Before any self-test or Docker test,
 `make release-candidate` and `make candidate-gate` check this floor once and
 refuse with the measured free space and required floor when it is not met.
 They do not spend the ledger self-test's 900-second timeout waiting for disk.
@@ -205,8 +238,8 @@ checkout or dependency-cache tree is mounted. The wrapper records nested
 builders and Compose projects before creation, and cleanup runs on success,
 failure, SIGINT, and SIGTERM. It removes only run-owned resources, verifies
 absence, and removes the temporary root and buildx configuration. It never
-prunes or restarts shared Docker. The suite's existing 10GB prune applies only
-to its own builder during the run; that builder is removed at the end.
+prunes or restarts shared Docker. The run's own builder is removed, with its
+cache, at the end.
 
 Evidence stays in a directory created for the invocation under
 `/tmp/aweb-candidate-gate-<SHA>-<run-id>/` by default. A caller with its own
@@ -232,13 +265,6 @@ Recovery keeps up to four numbered samples (`host-after-1.json` through
 `host-after-4.json`, with their raw snapshots), 15 seconds apart. It stops at
 the first passing sample and records its number in `host-recovery.json`;
 `host-after.json` mirrors the last sample. Four failures make recovery fail.
-The focused macOS control uses an installed `python:3.12-slim` image and an owned
-bind mount to hold host files through the production discovery/settle path:
-`AWEB_TEST_DOCKER_VM_RECOVERY=1 python3 scripts/test_candidate_cleanup.py`.
-It requires failure while files are held and recovery after guest close/unlink
-and container removal. Set `AWEB_VM_RECOVERY_EVIDENCE` to an empty directory to
-retain its raw snapshots and receipts. This control never pulls images or
-restarts shared Docker.
 For interruption, signal the gate's process group: a signal sent only to the
 Bash PID can wait for its foreground Docker command before running the trap.
 A cleanup or recovery failure makes the gate fail even when the suite passes;
@@ -256,7 +282,8 @@ git push origin refs/tags/awid-v0.5.19
 
 Each tag starts only its owning thin publisher. Publishers rebuild or stage the
 exact tagged source, publish or adopt exact bytes, verify registry readback,
-and stop. They do not run product suites, move a branch, infer changed
+and stop. The PyPI lane is the exception: it never builds (see
+[PyPI publication](#pypi-publication)). They do not run product suites, move a branch, infer changed
 artifacts, create another aweb tag, or contact AC.
 
 Npm readback allows **25 minutes** after publishing or adopting exact staged
@@ -292,11 +319,54 @@ the complete release action—there is no marketplace-pointer commit or follow-u
 command.
 
 GitHub omits tag-push events when more than three tags are pushed together, so
-never batch this step. When `awid-service` moves together with `aweb` or
-`aweb-naapp`, push each tag separately, `awid-service` first. The `aweb` and
-`aweb-naapp` publishers wait for the in-repo AWID version to become public
-before publishing their package, and `make check-naapp-lib-package` refuses an
-`aweb-naapp` whose `awid-service` floor is newer than the in-repo AWID.
+never batch this step.
+
+## PyPI publication
+
+PyPI receives the gated files themselves, never a rebuild. aweb releases its
+Python packages with its own command, from a clean aweb checkout:
+
+```sh
+make release SHA=<reviewed commit> MACHINE=merak PACKAGES=aweb
+```
+
+It keeps a receipt in `~/.local/state/aweb/releases/<SHA>` and continues from
+its first unfinished step on a rerun:
+
+1. builds each package once from `SHA`, refusing a version PyPI already has;
+2. runs one `vm-gate run --project aweb --intent train --files <dir>` at
+   `SHA`: the gate installs the built server wheel in the federation journey
+   and rebuilds the files from `SHA`, and the receipt must show both;
+3. once `origin/main` contains `SHA` (it lands unchanged, as a fast-forward,
+   after that gate), creates the annotated tag at `SHA`. Its message holds one
+   line per gated file in `sha256sum` format, the lowercase sha256, two
+   spaces and the file's basename: exactly the package's wheel and sdist, so
+   `git tag -l --format='%(contents)' <tag> | grep -E '^[0-9a-f]{64}  ' | sha256sum -c`
+   checks a local copy;
+4. pushes the tag and runs `gh release create <tag> --verify-tag` with exactly
+   those two files attached;
+5. waits, with a deadline that names the workflow run, until PyPI serves
+   exactly those files, then checks them against its own digests.
+
+Until the release gate installs a new `awid-service` wheel under test, the
+command refuses any release that needs an unpublished `awid-service` version.
+
+Publishing the release starts `.github/workflows/pypi-release.yml`; a tag push
+alone publishes nothing to PyPI. The workflow fetches the annotated tag object,
+downloads every release asset and runs
+`publish_release.py --only pypi --assets <dir> <tag>`. That refuses unless the
+tag is annotated, its message lists files, and the assets are exactly those
+files with those sha256 digests: a missing file, an extra file or a different
+digest refuses before anything is uploaded. It then requires one sdist and one
+wheel of the tag's package and version, uploads only the files PyPI does not
+yet serve, with the repository's `PYPI_TOKEN` secret, so a rerun after a partial upload
+adopts what is there, and reads PyPI back. A file PyPI already serves with
+other bytes refuses permanently.
+
+The `aweb` upload first waits up to three minutes for the in-repo
+`awid-service` version to be public, so release `awid-service` first and wait
+for PyPI to serve it before releasing `aweb`. The PyPI token lives only in
+that GitHub secret, never on the operator's machine.
 
 ## Runnerless publication
 
@@ -304,19 +374,19 @@ Every registry-backed tag can publish from the operator machine using the same
 tag dispatcher:
 
 ```sh
-make release-publish TAG=server-v1.35.0
 make release-publish TAG=channel-v1.2.3
 make release-publish TAG=awid-v0.5.19
 ```
 
 Provide the credential required by the destination:
 
-- PyPI: `UV_PUBLISH_TOKEN`
 - npm: `NODE_AUTH_TOKEN` or `NPM_TOKEN`
 - GHCR: `GHCR_USERNAME` and `GHCR_TOKEN`
 
 The runnerless path builds from a detached worktree at the local tag and
-refuses a same-version byte conflict. `aw-v` can publish all npm platform
+refuses a same-version byte conflict. PyPI is not runnerless: only the release
+workflow uploads, with the repository's PyPI secret, so a runnerless `server-v` uses
+`python3 scripts/publish_release.py --only oci <tag>`. `aw-v` can publish all npm platform
 packages directly; hosted binary assets remain resumable when GitHub returns.
 Skills ZIPs are likewise resumable hosted assets after the npm package is safe.
 
@@ -399,7 +469,7 @@ sibling client, and checks that one journey cannot resolve the other's service.
 Run its focused proof in an approved Docker slot:
 
 ```sh
-AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeAdoptionTests ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests -v
+AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeAdoptionTests ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests NetworkLinkGuardDockerTests -v
 ```
 
 The diagnostic commits preceding this change demonstrated a possible socket and
@@ -431,8 +501,9 @@ and failure cleanup use the same record reader.
 
 A `server-v*` tag dispatches both the Python and image publishers. The PyPI
 workflow selects `--only pypi`; the service image workflow selects `--only oci`,
-so each needs only its own registry credentials. Runnerless publication without
-`--only` publishes both. Both selectors still validate the tagged manifest
+so each needs only its own registry credentials. The PyPI lane runs on the
+published release, not on the tag push, and needs the downloaded release
+files (`--assets`). Both selectors still validate the tagged manifest
 version before checking out that exact commit.
 
 A server tag publishes `ghcr.io/awebai/aweb-server`, the coordination server,

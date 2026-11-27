@@ -1470,7 +1470,9 @@ async def update_task(
         # workspace lock. In particular, a child writer can finish even when
         # it shares the parent's claimant workspace.
         parent_id = (
-            resolved_parent_task_id if isinstance(resolved_parent_task_id, UUID) else None
+            resolved_parent_task_id
+            if isinstance(resolved_parent_task_id, UUID)
+            else None
         )
         locked_tasks = await tx.fetch_all(
             """
@@ -1682,7 +1684,9 @@ async def update_task(
         # because a released workspace keeps its focus only on an open task.
         for row in auto_closed:
             descendant_claim_releases.append(
-                await release_task_claims_on(tx, team_id=team_id, task_ref=row["task_ref"])
+                await release_task_claims_on(
+                    tx, team_id=team_id, task_ref=row["task_ref"]
+                )
             )
         if (
             status is not None
@@ -1706,7 +1710,9 @@ async def update_task(
     old_status = current["status"]
     status_changed = status is not None and status != old_status
     if status_changed or released_claim_workspace_ids:
-        context_type = TaskStatusChangedContext if status_changed else TaskClaimReplacedContext
+        context_type = (
+            TaskStatusChangedContext if status_changed else TaskClaimReplacedContext
+        )
         await fire_mutation_callback(
             on_mutation,
             context_type.event_type.value,

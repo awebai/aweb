@@ -27,10 +27,14 @@ from awid.registry import RegistryClient, RegistryError
     [(4.999, False), (0.25, False), (4.999, True)],
     ids=["reconnect-before-server-deadline", "reuse-short-idle", "caller-owned-pool"],
 )
-async def test_registry_pool_idle_close(tmp_path, monkeypatch, idle_seconds, custom_transport):
+async def test_registry_pool_idle_close(
+    tmp_path, monkeypatch, idle_seconds, custom_transport
+):
     ca = trustme.CA()
     certificate = ca.issue_cert("127.0.0.1")
-    cert_path, key_path, ca_path = (tmp_path / name for name in ("cert.pem", "key.pem", "ca.pem"))
+    cert_path, key_path, ca_path = (
+        tmp_path / name for name in ("cert.pem", "key.pem", "ca.pem")
+    )
     certificate.cert_chain_pems[0].write_to_path(cert_path)
     certificate.private_key_pem.write_to_path(key_path)
     ca.cert_pem.write_to_path(ca_path)
@@ -48,7 +52,13 @@ async def test_registry_pool_idle_close(tmp_path, monkeypatch, idle_seconds, cus
                 break
         if scope["path"] == "/write":
             writes.append(body)
-        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"2")]})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-length", b"2")],
+            }
+        )
         await send({"type": "http.response.body", "body": b"{}"})
 
     class Protocol(H11Protocol):
@@ -60,10 +70,18 @@ async def test_registry_pool_idle_close(tmp_path, monkeypatch, idle_seconds, cus
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     origin = f"https://127.0.0.1:{sock.getsockname()[1]}"
-    server = uvicorn.Server(uvicorn.Config(
-        app, http=Protocol, lifespan="off", ws="none", access_log=False,
-        log_level="warning", ssl_certfile=str(cert_path), ssl_keyfile=str(key_path),
-    ))
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            http=Protocol,
+            lifespan="off",
+            ws="none",
+            access_log=False,
+            log_level="warning",
+            ssl_certfile=str(cert_path),
+            ssl_keyfile=str(key_path),
+        )
+    )
     task = asyncio.create_task(server.serve(sockets=[sock]))
     registry = None
     try:
@@ -74,7 +92,9 @@ async def test_registry_pool_idle_close(tmp_path, monkeypatch, idle_seconds, cus
                 await asyncio.sleep(0.01)
         # Override only HTTPcore's idle clock, not asyncio/Uvicorn's clock.
         clock = SimpleNamespace(now=0.0)
-        monkeypatch.setattr(http11, "time", SimpleNamespace(monotonic=lambda: clock.now))
+        monkeypatch.setattr(
+            http11, "time", SimpleNamespace(monotonic=lambda: clock.now)
+        )
         send_headers = http11.AsyncHTTP11Connection._send_request_headers
 
         async def at_selection(connection, request):
@@ -93,7 +113,9 @@ async def test_registry_pool_idle_close(tmp_path, monkeypatch, idle_seconds, cus
                     assert connection is fault.client
             return await send_headers(connection, request)
 
-        monkeypatch.setattr(http11.AsyncHTTP11Connection, "_send_request_headers", at_selection)
+        monkeypatch.setattr(
+            http11.AsyncHTTP11Connection, "_send_request_headers", at_selection
+        )
         transport = None
         if custom_transport:
             transport = httpx.AsyncHTTPTransport(
@@ -106,13 +128,20 @@ async def test_registry_pool_idle_close(tmp_path, monkeypatch, idle_seconds, cus
         clock.now = idle_seconds
         if custom_transport:
             with pytest.raises(RegistryError) as unavailable:
-                await registry._request_json("POST", "/write", content=b"exact operation bytes")
+                await registry._request_json(
+                    "POST", "/write", content=b"exact operation bytes"
+                )
             assert unavailable.value.code == "unavailable"
             assert isinstance(unavailable.value.__cause__, httpx.RemoteProtocolError)
             assert fault.fired
             assert writes == []
         else:
-            assert await registry._request_json("POST", "/write", content=b"exact operation bytes") == {}
+            assert (
+                await registry._request_json(
+                    "POST", "/write", content=b"exact operation bytes"
+                )
+                == {}
+            )
             assert writes == [b"exact operation bytes"]
             assert not fault.fired
         assert fault.attempts == 1  # No transport error is replayed as another write.

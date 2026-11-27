@@ -1,4 +1,5 @@
 """Addressless global sender verification using real apps and the public CLI."""
+
 from identity_binding_support import register_global_identity
 
 import asyncio
@@ -16,7 +17,11 @@ import uvicorn
 from awid.did import stable_id_from_did_key
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message
-from aweb.e2ee_messages import encrypt_e2ee_mail, encrypt_e2ee_chat, generate_x25519_keypair
+from aweb.e2ee_messages import (
+    encrypt_e2ee_mail,
+    encrypt_e2ee_chat,
+    generate_x25519_keypair,
+)
 from test_cli_human_reply import _cli, _pem, _reply_context
 from test_messages_http import _make_keypair, _make_certificate, _signed_team_headers
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
@@ -45,62 +50,139 @@ async def _registry_http(app):
 
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
-@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, False), (True, True)])
-async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_resident, grant):
+@pytest.mark.parametrize(
+    "global_resident,grant",
+    [(False, False), (False, True), (True, False), (True, True)],
+)
+async def test_addressless_global_sender_verified(
+    privacy_app, tmp_path, global_resident, grant
+):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     now = datetime.now(timezone.utc)
     identities = {}
-    for name, custody in (("alice", "hosted_custodial"), ("bob", "self"), ("carol", "self")):
+    for name, custody in (
+        ("alice", "hosted_custodial"),
+        ("bob", "self"),
+        ("carol", "self"),
+    ):
         actor = env.actors[name]
         private, public = generate_x25519_keypair()
         address = "example.test/bob" if global_resident and name == "bob" else ""
-        stable_id = stable_id_from_did_key(actor.did) if address or name == "alice" else ""
+        stable_id = (
+            stable_id_from_did_key(actor.did) if address or name == "alice" else ""
+        )
         if stable_id:
             assert await register_global_identity(env, actor, address) == stable_id
-            await env.db.execute("UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2, did_aw_verified_key=did_key WHERE agent_id = $3",
-                                 stable_id, address, actor.id)
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2, did_aw_verified_key=did_key WHERE agent_id = $3",
+                stable_id,
+                address,
+                actor.id,
+            )
         assertion = build_encryption_key_assertion(
-            signing_key=actor.sk, identity_did=actor.did, identity_stable_id=stable_id,
-            encryption_public_key=public, custody=custody, now=now,
+            signing_key=actor.sk,
+            identity_did=actor.did,
+            identity_stable_id=stable_id,
+            encryption_public_key=public,
+            custody=custody,
+            now=now,
         )
-        identities[name] = dict(address=address, did=actor.did, stable_id=stable_id, team_id=TEAM,
-                                signing_key=actor.sk, private_key=private, encryption_key=assertion)
-    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id = $1", env.actors["alice"].id)
+        identities[name] = dict(
+            address=address,
+            did=actor.did,
+            stable_id=stable_id,
+            team_id=TEAM,
+            signing_key=actor.sk,
+            private_key=private,
+            encryption_key=assertion,
+        )
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id = $1",
+        env.actors["alice"].id,
+    )
     human, agent = identities["alice"], identities["bob"]
     peer = identities["carol"]
     peer_body = json.dumps(peer["encryption_key"]).encode()
     peer_actor = env.actors["carol"]
-    peer_headers = _signed_team_headers(peer_actor.sk, peer_actor.did, TEAM, peer_actor.certificate, peer_body)
+    peer_headers = _signed_team_headers(
+        peer_actor.sk, peer_actor.did, TEAM, peer_actor.certificate, peer_body
+    )
     peer_headers["Content-Type"] = "application/json"
-    published = await env.client.put("/v1/agents/me/encryption-key", content=peer_body, headers=peer_headers)
+    published = await env.client.put(
+        "/v1/agents/me/encryption-key", content=peer_body, headers=peer_headers
+    )
     assert published.status_code == 200, published.text
-    await env.app.state.awid_registry_client.register_did(human["did"], human["signing_key"])
-    await env.db.execute("UPDATE {{tables.agents}} SET certificate_id='privacy-alice', accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$1", env.actors["alice"].id)
+    await env.app.state.awid_registry_client.register_did(
+        human["did"], human["signing_key"]
+    )
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET certificate_id='privacy-alice', accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$1",
+        env.actors["alice"].id,
+    )
     message_id, conversation_id = str(uuid4()), str(uuid4())
-    source = encrypt_e2ee_mail(sender=human, recipients=[agent], subject="Human question",
-                              body="Human private text", message_id=message_id,
-                              conversation_id=conversation_id, created_at=now)
-    sent = await _request(env, "alice", "POST", "/v1/messages", {
-        "to_did": agent["did"], "message_id": message_id, "conversation_id": conversation_id,
-        "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": source,
-    })
+    source = encrypt_e2ee_mail(
+        sender=human,
+        recipients=[agent],
+        subject="Human question",
+        body="Human private text",
+        message_id=message_id,
+        conversation_id=conversation_id,
+        created_at=now,
+    )
+    sent = await _request(
+        env,
+        "alice",
+        "POST",
+        "/v1/messages",
+        {
+            "to_did": agent["did"],
+            "message_id": message_id,
+            "conversation_id": conversation_id,
+            "content_mode": "encrypted_v2",
+            "message_version": 2,
+            "encrypted_envelope": source,
+        },
+    )
     assert sent.status_code == 200, sent.text
     assert source["sender_encryption_key"]["custody"] == "hosted_custodial"
 
     chat_id, chat_message_id = str(uuid4()), str(uuid4())
-    chat_source = encrypt_e2ee_chat(sender=human, recipients=[agent], body="Human chat",
-                                   message_id=chat_message_id, conversation_id=chat_id, created_at=now)
-    chat_sent = await _request(env, "alice", "POST", "/v1/chat/sessions", {
-        "to_dids": [agent["did"]], "session_id": chat_id, "message": "",
-        "message_id": chat_message_id, "timestamp": chat_source["created_at"],
-        "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": chat_source,
-    })
+    chat_source = encrypt_e2ee_chat(
+        sender=human,
+        recipients=[agent],
+        body="Human chat",
+        message_id=chat_message_id,
+        conversation_id=chat_id,
+        created_at=now,
+    )
+    chat_sent = await _request(
+        env,
+        "alice",
+        "POST",
+        "/v1/chat/sessions",
+        {
+            "to_dids": [agent["did"]],
+            "session_id": chat_id,
+            "message": "",
+            "message_id": chat_message_id,
+            "timestamp": chat_source["created_at"],
+            "content_mode": "encrypted_v2",
+            "message_version": 2,
+            "encrypted_envelope": chat_source,
+        },
+    )
     assert chat_sent.status_code == 200, chat_sent.text
 
-    for table, stored_id in (("messages", message_id), ("chat_messages", chat_message_id)):
+    for table, stored_id in (
+        ("messages", message_id),
+        ("chat_messages", chat_message_id),
+    ):
         stored = await env.db.fetch_one(
-            "SELECT from_address, from_alias FROM {{tables." + table + "}} WHERE message_id=$1", UUID(stored_id),
+            "SELECT from_address, from_alias FROM {{tables."
+            + table
+            + "}} WHERE message_id=$1",
+            UUID(stored_id),
         )
         assert not stored["from_address"]
         assert stored["from_alias"] == "alice"
@@ -110,21 +192,47 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
     # API-key local init intentionally omits identity.yaml. Neither root nor
     # grant custody may require it or manufacture global identity state.
     if global_resident:
-        (identity_home / "identity.yaml").write_text(json.dumps({
-            "did": agent["did"], "stable_id": agent["stable_id"], "address": agent["address"],
-            "custody": "self", "identity_scope": "global", "created_at": now.isoformat(),
-        }))
+        (identity_home / "identity.yaml").write_text(
+            json.dumps(
+                {
+                    "did": agent["did"],
+                    "stable_id": agent["stable_id"],
+                    "address": agent["address"],
+                    "custody": "self",
+                    "identity_scope": "global",
+                    "created_at": now.isoformat(),
+                }
+            )
+        )
     else:
         assert not (identity_home / "identity.yaml").exists()
     team_sk, _, team_did = _make_keypair()
-    await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
-    await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
+    await env.db.execute(
+        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2",
+        team_did,
+        TEAM,
+    )
+    await env.registry_db.execute(
+        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2",
+        team_did,
+        TEAM.split(":", 1)[0],
+    )
     # The team has always had this key: its members were accepted under it.
     await env.db.execute(
-        "UPDATE {{tables.agents}} SET accepted_team_did_key = $1 WHERE team_id = $2", team_did, TEAM,
+        "UPDATE {{tables.agents}} SET accepted_team_did_key = $1 WHERE team_id = $2",
+        team_did,
+        TEAM,
     )
-    cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
-                             member_did_aw=agent["stable_id"], member_address=agent["address"])
+    cert = _make_certificate(
+        team_sk,
+        team_did,
+        agent["did"],
+        team_id=TEAM,
+        alias="bob",
+        identity_scope="global" if global_resident else "local",
+        member_did_aw=agent["stable_id"],
+        member_address=agent["address"],
+    )
     # Match the CLI wire format: absent optional local fields, not empty strings.
     cert.pop("signature")
     if not global_resident:
@@ -136,100 +244,233 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
     (identity_home / cert_path).write_text(json.dumps(cert))
     (identity_home / cert_path).chmod(0o600)
     membership = {"team_id": TEAM, "alias": "bob", "cert_path": cert_path}
-    (identity_home / "teams.yaml").write_text(json.dumps({"active_team": TEAM, "memberships": [membership]}))
-    (identity_home / "workspace.yaml").write_text(json.dumps({
-        "aweb_url": str(env.client.base_url), "memberships": [{**membership, "workspace_id": str(env.actors["bob"].workspace)}],
-    }))
+    (identity_home / "teams.yaml").write_text(
+        json.dumps({"active_team": TEAM, "memberships": [membership]})
+    )
+    (identity_home / "workspace.yaml").write_text(
+        json.dumps(
+            {
+                "aweb_url": str(env.client.base_url),
+                "memberships": [
+                    {**membership, "workspace_id": str(env.actors["bob"].workspace)}
+                ],
+            }
+        )
+    )
     _pem(identity_home / "signing.key", "ED25519 PRIVATE KEY", agent["signing_key"])
     _pem(identity_home / "encryption.key", "X25519 PRIVATE KEY", agent["private_key"])
     assertion = agent["encryption_key"]
     (identity_home / "assertion.json").write_text(json.dumps(assertion))
-    (identity_home / "encryption.yaml").write_text(json.dumps({
-        "active_key_id": assertion["encryption_key_id"], "keys": [{
-            "key_id": assertion["encryption_key_id"], "public_key": assertion["encryption_public_key"],
-            "private_key_path": "encryption.key",
-            "assertion_path": "assertion.json",
-            **{key: assertion[key] for key in ("created_at", "not_before", "expires_at")},
-            "published_at": now.isoformat(),
-        }],
-    }))
+    (identity_home / "encryption.yaml").write_text(
+        json.dumps(
+            {
+                "active_key_id": assertion["encryption_key_id"],
+                "keys": [
+                    {
+                        "key_id": assertion["encryption_key_id"],
+                        "public_key": assertion["encryption_public_key"],
+                        "private_key_path": "encryption.key",
+                        "assertion_path": "assertion.json",
+                        **{
+                            key: assertion[key]
+                            for key in ("created_at", "not_before", "expires_at")
+                        },
+                        "published_at": now.isoformat(),
+                    }
+                ],
+            }
+        )
+    )
     binary = Path(os.environ["AW_TEST_CLI_BINARY"])
-    child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
-    child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
-                     HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"),
-                     AWID_REGISTRY_URL=str(env.client.base_url))
+    child_env = {
+        k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))
+    }
+    child_env.update(
+        AWEB_IDENTITY_HOME=str(identity_home),
+        AWEB_URL=str(env.client.base_url),
+        HOME=str(tmp_path),
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
+        AWID_REGISTRY_URL=str(env.client.base_url),
+    )
     async with _registry_http(env.registry_app) as (registry_url, registry_server):
         child_env["AWID_REGISTRY_URL"] = registry_url
-        async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
+        async with _reply_context(
+            binary, tmp_path, child_env, grant, agent["address"]
+        ) as (command_dir, command_env):
+
             async def read_both(expected):
-                for args in (("mail", "show", "--message-id", message_id),
-                             ("chat", "history", "--session-id", chat_id)):
-                    result = await _cli(binary, command_dir, command_env, *args, "--json")
+                for args in (
+                    ("mail", "show", "--message-id", message_id),
+                    ("chat", "history", "--session-id", chat_id),
+                ):
+                    result = await _cli(
+                        binary, command_dir, command_env, *args, "--json"
+                    )
                     shown = result["messages"][0]
                     assert shown["verification_status"] == expected, {
-                        k: shown.get(k) for k in ("verification_status", "from_address", "sender_membership")
+                        k: shown.get(k)
+                        for k in (
+                            "verification_status",
+                            "from_address",
+                            "sender_membership",
+                        )
                     }
                     assert shown["from_stable_id"] == human["stable_id"]
                     assert not shown.get("from_address")
+
             await read_both("verified")
             if global_resident:
                 # Own-sent addressless reads retain verified authorship for both
                 # root and grant clients, without registry proof of ourselves.
                 own_id, own_conversation = str(uuid4()), str(uuid4())
-                own = encrypt_e2ee_mail(sender={**agent, "address": ""}, recipients=[peer],
-                    subject="Own message", body="Own control", message_id=own_id,
-                    conversation_id=own_conversation, created_at=now)
-                own_sent = await _request(env, "bob", "POST", "/v1/messages", {
-                    "to_did": peer["did"], "message_id": own_id, "conversation_id": own_conversation,
-                    "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": own,
-                })
+                own = encrypt_e2ee_mail(
+                    sender={**agent, "address": ""},
+                    recipients=[peer],
+                    subject="Own message",
+                    body="Own control",
+                    message_id=own_id,
+                    conversation_id=own_conversation,
+                    created_at=now,
+                )
+                own_sent = await _request(
+                    env,
+                    "bob",
+                    "POST",
+                    "/v1/messages",
+                    {
+                        "to_did": peer["did"],
+                        "message_id": own_id,
+                        "conversation_id": own_conversation,
+                        "content_mode": "encrypted_v2",
+                        "message_version": 2,
+                        "encrypted_envelope": own,
+                    },
+                )
                 assert own_sent.status_code == 200, own_sent.text
-                own_read = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", own_id, "--json")
+                own_read = await _cli(
+                    binary,
+                    command_dir,
+                    command_env,
+                    "mail",
+                    "show",
+                    "--message-id",
+                    own_id,
+                    "--json",
+                )
                 assert own_read["messages"][0]["verification_status"] == "verified"
                 # A persisted incoming envelope claiming our stable ID is not
                 # our authorship: it was signed by the human's different key.
                 claiming = {**human, "stable_id": agent["stable_id"]}
                 claiming["encryption_key"] = build_encryption_key_assertion(
-                    signing_key=human["signing_key"], identity_did=human["did"],
+                    signing_key=human["signing_key"],
+                    identity_did=human["did"],
                     identity_stable_id=agent["stable_id"],
-                    encryption_public_key=base64.b64decode(human["encryption_key"]["encryption_public_key"] + "="),
-                    custody="hosted_custodial", now=now,
+                    encryption_public_key=base64.b64decode(
+                        human["encryption_key"]["encryption_public_key"] + "="
+                    ),
+                    custody="hosted_custodial",
+                    now=now,
                 )
-                forged_claim = encrypt_e2ee_mail(sender=claiming, recipients=[agent],
-                    subject="Claimed identity", body="Wrong signer", message_id=message_id,
-                    conversation_id=conversation_id, created_at=now)
-                await env.db.execute("UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2",
-                                     json.dumps(forged_claim), UUID(message_id))
-                incoming = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", message_id, "--json")
-                assert incoming["messages"][0]["verification_status"] == "identity_mismatch"
-                await env.db.execute("UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2",
-                                     json.dumps(source), UUID(message_id))
+                forged_claim = encrypt_e2ee_mail(
+                    sender=claiming,
+                    recipients=[agent],
+                    subject="Claimed identity",
+                    body="Wrong signer",
+                    message_id=message_id,
+                    conversation_id=conversation_id,
+                    created_at=now,
+                )
+                await env.db.execute(
+                    "UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2",
+                    json.dumps(forged_claim),
+                    UUID(message_id),
+                )
+                incoming = await _cli(
+                    binary,
+                    command_dir,
+                    command_env,
+                    "mail",
+                    "show",
+                    "--message-id",
+                    message_id,
+                    "--json",
+                )
+                assert (
+                    incoming["messages"][0]["verification_status"]
+                    == "identity_mismatch"
+                )
+                await env.db.execute(
+                    "UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2",
+                    json.dumps(source),
+                    UUID(message_id),
+                )
             # Read-time metadata must not promote a forged encrypted signature.
-            stored = await env.db.fetch_value("SELECT encrypted_envelope FROM {{tables.messages}} WHERE message_id=$1", UUID(message_id))
+            stored = await env.db.fetch_value(
+                "SELECT encrypted_envelope FROM {{tables.messages}} WHERE message_id=$1",
+                UUID(message_id),
+            )
             envelope = json.loads(stored) if isinstance(stored, str) else dict(stored)
-            damaged = dict(envelope, signature=sign_message(env.actors["carol"].sk, b"wrong message"))
-            await env.db.execute("UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2", json.dumps(damaged), UUID(message_id))
-            refused = await asyncio.create_subprocess_exec(str(binary), "mail", "show", "--message-id", message_id, "--json",
-                cwd=command_dir, env=command_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            damaged = dict(
+                envelope,
+                signature=sign_message(env.actors["carol"].sk, b"wrong message"),
+            )
+            await env.db.execute(
+                "UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2",
+                json.dumps(damaged),
+                UUID(message_id),
+            )
+            refused = await asyncio.create_subprocess_exec(
+                str(binary),
+                "mail",
+                "show",
+                "--message-id",
+                message_id,
+                "--json",
+                cwd=command_dir,
+                env=command_env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
             _, error = await asyncio.wait_for(refused.communicate(), 30)
             assert refused.returncode != 0, error.decode()
-            await env.db.execute("UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2", json.dumps(envelope), UUID(message_id))
-            await env.db.execute("UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1", env.actors["alice"].id)
+            await env.db.execute(
+                "UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2",
+                json.dumps(envelope),
+                UUID(message_id),
+            )
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1",
+                env.actors["alice"].id,
+            )
             await read_both("verification_stale")
-            await env.db.execute("UPDATE {{tables.agents}} SET certificate_id='privacy-alice', accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$1", env.actors["alice"].id)
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET certificate_id='privacy-alice', accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$1",
+                env.actors["alice"].id,
+            )
             # A second CLI process restores the registry-scoped checkpoint.
             await read_both("verified")
-            await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", env.actors["alice"].id)
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1",
+                env.actors["alice"].id,
+            )
             await read_both("identity_mismatch")
-            await env.db.execute("UPDATE {{tables.agents}} SET status='active' WHERE agent_id=$1", env.actors["alice"].id)
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET status='active' WHERE agent_id=$1",
+                env.actors["alice"].id,
+            )
             # Real signed registry rotation: old messages remain signed correctly,
             # but the current key must no longer match the old signer.
             rotated_sk, _, rotated_did = _make_keypair()
-            await env.app.state.awid_registry_client.rotate_key(human["stable_id"], rotated_did, human["signing_key"], rotated_sk)
+            await env.app.state.awid_registry_client.rotate_key(
+                human["stable_id"], rotated_did, human["signing_key"], rotated_sk
+            )
             await read_both("identity_mismatch")
             registry_server.should_exit = True
             for _ in range(100):
-                if not registry_server.started or not registry_server.servers[0].is_serving():
+                if (
+                    not registry_server.started
+                    or not registry_server.servers[0].is_serving()
+                ):
                     break
                 await asyncio.sleep(0.02)
             await read_both("verification_stale")

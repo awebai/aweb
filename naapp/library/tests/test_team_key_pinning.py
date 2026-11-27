@@ -5,6 +5,7 @@ real AWID team routes. The registry operator is modelled by writing the
 registry's own tables, exactly the power the threat gives it; rotation goes
 through the real route. DNS is the one answer the test supplies.
 """
+
 from __future__ import annotations
 
 import base64
@@ -28,6 +29,7 @@ from library import api as library_api
 from library import auth
 from library.config import Settings
 
+pytest_plugins = ("pgdbm.fixtures.conftest",)
 TEAM_ID = "backend:example.com"
 ORIGIN = "https://library.example.com"
 REGISTRY = "https://registry.example"
@@ -42,16 +44,26 @@ def _member_headers(team_key: SigningKey, alias: str) -> dict[str, str]:
     member_key = SigningKey.generate()
     timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     cert = {
-        "version": 1, "certificate_id": f"{alias}-cert", "team_id": TEAM_ID,
-        "team_did_key": _did(team_key), "member_did_key": _did(member_key),
-        "alias": alias, "issued_at": timestamp,
+        "version": 1,
+        "certificate_id": f"{alias}-cert",
+        "team_id": TEAM_ID,
+        "team_did_key": _did(team_key),
+        "member_did_key": _did(member_key),
+        "alias": alias,
+        "issued_at": timestamp,
     }
     cert["signature"] = sign_message(bytes(team_key), canonical_json_bytes(cert))
-    payload = canonical_json_bytes({
-        "v": 2, "aud": ORIGIN, "method": "GET", "path": "/v1/shelf",
-        "team_id": TEAM_ID, "timestamp": timestamp,
-        "body_sha256": hashlib.sha256(b"").hexdigest(),
-    })
+    payload = canonical_json_bytes(
+        {
+            "v": 2,
+            "aud": ORIGIN,
+            "method": "GET",
+            "path": "/v1/shelf",
+            "team_id": TEAM_ID,
+            "timestamp": timestamp,
+            "body_sha256": hashlib.sha256(b"").hexdigest(),
+        }
+    )
     return {
         "Authorization": f"DIDKey {_did(member_key)} {sign_message(bytes(member_key), payload)}",
         "X-AWEB-Timestamp": timestamp,
@@ -76,16 +88,23 @@ async def world(test_db_factory, monkeypatch):
     team_key = SigningKey.generate()
     await db.execute(
         "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
-        "VALUES ('example.com', $1, 'verified')", _did(NAMESPACE_KEY),
+        "VALUES ('example.com', $1, 'verified')",
+        _did(NAMESPACE_KEY),
     )
     await db.execute(
         "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) "
-        "VALUES ('example.com', 'backend', $1, 'public')", _did(team_key),
+        "VALUES ('example.com', 'backend', $1, 'public')",
+        _did(team_key),
     )
     client_type = httpx.AsyncClient
-    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda **kw: client_type(
-        transport=httpx.ASGITransport(app=registry), **kw,
-    ))
+    monkeypatch.setattr(
+        auth.httpx,
+        "AsyncClient",
+        lambda **kw: client_type(
+            transport=httpx.ASGITransport(app=registry),
+            **kw,
+        ),
+    )
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
     app_db = await test_db_factory.create_db(suffix="pin_library")
     # Library connects by its DSN alone, so the DSN names the test database's
@@ -102,32 +121,50 @@ async def world(test_db_factory, monkeypatch):
         await db.execute(
             "INSERT INTO {{tables.team_certificates}} (team_uuid, certificate_id, member_did_key, alias, issued_at) "
             "SELECT team_uuid, $1, $2, $3, now() FROM {{tables.teams}} WHERE name = 'backend'",
-            cert["certificate_id"], cert["member_did_key"], alias,
+            cert["certificate_id"],
+            cert["member_did_key"],
+            alias,
         )
         return headers
 
     async def rotate(new_key: SigningKey) -> None:
         timestamp = datetime.now(UTC).isoformat()
-        claims = {"domain": "example.com", "operation": "rotate_team_key", "name": "backend",
-                  "new_team_did_key": _did(new_key)}
-        signature = sign_message(bytes(NAMESPACE_KEY), canonical_json_bytes({**claims, "timestamp": timestamp}))
-        async with client_type(transport=httpx.ASGITransport(app=registry), base_url=REGISTRY) as http:
+        claims = {
+            "domain": "example.com",
+            "operation": "rotate_team_key",
+            "name": "backend",
+            "new_team_did_key": _did(new_key),
+        }
+        signature = sign_message(
+            bytes(NAMESPACE_KEY), canonical_json_bytes({**claims, "timestamp": timestamp})
+        )
+        async with client_type(
+            transport=httpx.ASGITransport(app=registry), base_url=REGISTRY
+        ) as http:
             response = await http.post(
-                "/v1/namespaces/example.com/teams/backend/rotate", json={"new_team_did_key": _did(new_key)},
-                headers={"Authorization": f"DIDKey {_did(NAMESPACE_KEY)} {signature}", "X-AWEB-Timestamp": timestamp},
+                "/v1/namespaces/example.com/teams/backend/rotate",
+                json={"new_team_did_key": _did(new_key)},
+                headers={
+                    "Authorization": f"DIDKey {_did(NAMESPACE_KEY)} {signature}",
+                    "X-AWEB-Timestamp": timestamp,
+                },
             )
         assert response.status_code == 200, response.text
 
     try:
         async with app.router.lifespan_context(app):
-            async with client_type(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
+            async with client_type(
+                transport=httpx.ASGITransport(app=app), base_url=ORIGIN
+            ) as client:
                 yield client, db, app_db, team_key, certify, rotate
     finally:
         await infra.close()
 
 
 async def _pinned_key(app_db) -> str | None:
-    return await app_db.fetch_value("SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID)
+    return await app_db.fetch_value(
+        "SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID
+    )
 
 
 async def _shelf(client, headers):
@@ -138,7 +175,10 @@ async def test_substituted_registry_team_key_does_not_admit_a_forged_member(worl
     client, db, app_db, team_key, certify, _ = world
     assert (await _shelf(client, await certify(team_key, "alice"))).status_code == 200
     forger_team_key = SigningKey.generate()
-    await db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = 'backend'", _did(forger_team_key))
+    await db.execute(
+        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = 'backend'",
+        _did(forger_team_key),
+    )
 
     forged = await _shelf(client, await certify(forger_team_key, "mallory"))
 
@@ -159,7 +199,9 @@ async def test_rotation_signed_by_the_dns_controller_moves_the_pin(world):
     assert await _pinned_key(app_db) == _did(next_key)
 
 
-async def test_a_served_key_the_act_does_not_name_keeps_the_pin_with_one_act_read(world, monkeypatch):
+async def test_a_served_key_the_act_does_not_name_keeps_the_pin_with_one_act_read(
+    world, monkeypatch
+):
     client, db, app_db, team_key, certify, rotate = world
     current_key = SigningKey.generate()
     await rotate(current_key)
@@ -167,9 +209,13 @@ async def test_a_served_key_the_act_does_not_name_keeps_the_pin_with_one_act_rea
     # The registry serves another key beside its genuine latest act, whose
     # signed bytes name the pinned key.
     substituted = _did(SigningKey.generate())
-    await db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = 'backend'", substituted)
     await db.execute(
-        "UPDATE {{tables.team_key_acts}} SET team_did_key = $1 WHERE team_did_key = $2", substituted, _did(current_key),
+        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = 'backend'", substituted
+    )
+    await db.execute(
+        "UPDATE {{tables.team_key_acts}} SET team_did_key = $1 WHERE team_did_key = $2",
+        substituted,
+        _did(current_key),
     )
     act_reads = []
 
@@ -178,10 +224,15 @@ async def test_a_served_key_the_act_does_not_name_keeps_the_pin_with_one_act_rea
             act_reads.append(request.url.path)
 
     make_client = auth.httpx.AsyncClient
-    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda **kw: make_client(event_hooks={"request": [count]}, **kw))
+    monkeypatch.setattr(
+        auth.httpx, "AsyncClient", lambda **kw: make_client(event_hooks={"request": [count]}, **kw)
+    )
 
     # Each request is a member not seen before, so each reads the served key.
-    statuses = [(await _shelf(client, await certify(current_key, f"member-{n}"))).status_code for n in range(5)]
+    statuses = [
+        (await _shelf(client, await certify(current_key, f"member-{n}"))).status_code
+        for n in range(5)
+    ]
 
     assert statuses == [200] * 5
     assert len(act_reads) == 1

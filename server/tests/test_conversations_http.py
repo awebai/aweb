@@ -17,7 +17,11 @@ from httpx import ASGITransport, AsyncClient
 
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.auth_context import GrantContext
-from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER, MessagingAuth, get_messaging_auth
+from aweb.identity_auth_deps import (
+    IDENTITY_DID_AW_HEADER,
+    MessagingAuth,
+    get_messaging_auth,
+)
 from aweb.routes.conversations import router as conversations_router
 
 
@@ -26,7 +30,9 @@ async def aweb_cloud_db(privacy_app):
     env = privacy_app
     env.stable = {}
     for alias, actor in env.actors.items():
-        env.stable[alias] = await register_global_identity(env, actor, "acme.com/" + alias)
+        env.stable[alias] = await register_global_identity(
+            env, actor, "acme.com/" + alias
+        )
     return SimpleNamespace(aweb_db=env.db, env=env)
 
 
@@ -77,7 +83,9 @@ def _build_test_app(aweb_db, registry):
                 message = await original_receive()
                 if message["type"] == "http.disconnect":
                     return message
-                if message["type"] == "http.request" and not message.get("more_body", False):
+                if message["type"] == "http.request" and not message.get(
+                    "more_body", False
+                ):
                     continue
                 return message
 
@@ -92,7 +100,10 @@ def _build_test_app(aweb_db, registry):
 
 @pytest.mark.asyncio
 async def test_conversations_lists_identity_scoped_mail_by_local_did(aweb_cloud_db):
-    bob_sk, bob_did_key = aweb_cloud_db.env.actors["bob"].sk, aweb_cloud_db.env.actors["bob"].did
+    bob_sk, bob_did_key = (
+        aweb_cloud_db.env.actors["bob"].sk,
+        aweb_cloud_db.env.actors["bob"].did,
+    )
 
     await aweb_cloud_db.aweb_db.execute(
         f"\n        INSERT INTO {{{{tables.messages}}}} (\n            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at\n        )\n        VALUES (\n            '11111111-1111-1111-1111-111111111111',\n            '{aweb_cloud_db.env.stable['alice']}',\n            $1,\n            'alice',\n            'bob',\n            'hello',\n            'hi',\n            'normal',\n            NOW()\n        )\n        ",
@@ -102,7 +113,9 @@ async def test_conversations_lists_identity_scoped_mail_by_local_did(aweb_cloud_
     app = aweb_cloud_db.env.app
 
     headers = _signed_identity_headers(bob_sk, bob_did_key, "")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/conversations", headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -110,14 +123,21 @@ async def test_conversations_lists_identity_scoped_mail_by_local_did(aweb_cloud_
     assert len(conversations) == 1
     assert conversations[0]["conversation_type"] == "mail"
     assert conversations[0]["conversation_id"] is None
-    assert conversations[0]["legacy_message_id"] == "11111111-1111-1111-1111-111111111111"
+    assert (
+        conversations[0]["legacy_message_id"] == "11111111-1111-1111-1111-111111111111"
+    )
     assert conversations[0]["last_message_from"] == "alice"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("encrypted_first", [False, True])
-async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db, encrypted_first):
-    bob_sk, bob_did_key = aweb_cloud_db.env.actors["bob"].sk, aweb_cloud_db.env.actors["bob"].did
+async def test_conversations_groups_mail_by_conversation_id(
+    aweb_cloud_db, encrypted_first
+):
+    bob_sk, bob_did_key = (
+        aweb_cloud_db.env.actors["bob"].sk,
+        aweb_cloud_db.env.actors["bob"].did,
+    )
 
     await aweb_cloud_db.aweb_db.execute(
         f"\n        INSERT INTO {{{{tables.conversations}}}} (\n            conversation_id, conversation_type, created_by_did, created_at, updated_at\n        )\n        VALUES (\n            '55555555-5555-4555-8555-555555555555',\n            'mail',\n            '{aweb_cloud_db.env.stable['alice']}',\n            NOW() - INTERVAL '2 minutes',\n            NOW()\n        )\n        "
@@ -144,8 +164,12 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db, encry
 
     app = aweb_cloud_db.env.app
 
-    headers = _signed_identity_headers(bob_sk, bob_did_key, aweb_cloud_db.env.stable["bob"])
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    headers = _signed_identity_headers(
+        bob_sk, bob_did_key, aweb_cloud_db.env.stable["bob"]
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/conversations", headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -153,7 +177,9 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db, encry
     assert len(conversations) == 1
     assert conversations[0]["conversation_id"] == "55555555-5555-4555-8555-555555555555"
     assert conversations[0]["title"] == ("" if encrypted_first else "first")
-    assert conversations[0]["first_message_id"] == "11111111-1111-1111-1111-111111111111"
+    assert (
+        conversations[0]["first_message_id"] == "11111111-1111-1111-1111-111111111111"
+    )
     assert conversations[0]["subject"] == "second"
     assert conversations[0]["last_message_preview"] == "two"
     assert conversations[0]["unread_count"] == 2
@@ -164,7 +190,10 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db, encry
 async def test_conversations_lists_legacy_mail_messages_without_conversation_id_separately(
     aweb_cloud_db,
 ):
-    bob_sk, bob_did_key = aweb_cloud_db.env.actors["bob"].sk, aweb_cloud_db.env.actors["bob"].did
+    bob_sk, bob_did_key = (
+        aweb_cloud_db.env.actors["bob"].sk,
+        aweb_cloud_db.env.actors["bob"].did,
+    )
 
     await aweb_cloud_db.aweb_db.execute(
         f"\n        INSERT INTO {{{{tables.messages}}}} (\n            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at\n        )\n        VALUES\n            (\n                '11111111-1111-1111-1111-111111111111',\n                '{aweb_cloud_db.env.stable['alice']}',\n                $1,\n                'alice',\n                'bob',\n                'first',\n                'one',\n                'normal',\n                NOW() - INTERVAL '1 minute'\n            ),\n            (\n                '44444444-4444-4444-4444-444444444444',\n                '{aweb_cloud_db.env.stable['alice']}',\n                $1,\n                'alice',\n                'bob',\n                'second',\n                'two',\n                'normal',\n                NOW()\n            )\n        ",
@@ -174,7 +203,9 @@ async def test_conversations_lists_legacy_mail_messages_without_conversation_id_
     app = aweb_cloud_db.env.app
 
     headers = _signed_identity_headers(bob_sk, bob_did_key, "")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/conversations", headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -220,8 +251,12 @@ async def test_conversations_lists_mail_for_sender_identity(aweb_cloud_db):
 
     app = aweb_cloud_db.env.app
 
-    headers = _signed_identity_headers(alice_sk, alice_did_key, aweb_cloud_db.env.stable["alice"])
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    headers = _signed_identity_headers(
+        alice_sk, alice_did_key, aweb_cloud_db.env.stable["alice"]
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/conversations", headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -229,7 +264,8 @@ async def test_conversations_lists_mail_for_sender_identity(aweb_cloud_db):
     assert len(conversations) == 1
     assert conversations[0]["conversation_id"] == "55555555-5555-4555-8555-555555555555"
     assert (
-        "legacy_message_id" not in conversations[0] or conversations[0]["legacy_message_id"] is None
+        "legacy_message_id" not in conversations[0]
+        or conversations[0]["legacy_message_id"] is None
     )
     assert conversations[0]["subject"] == "sender-visible"
 
@@ -324,7 +360,9 @@ async def test_conversations_lists_mail_by_authoritative_participant(aweb_cloud_
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/conversations")
 
     assert resp.status_code == 200, resp.text
@@ -332,7 +370,10 @@ async def test_conversations_lists_mail_by_authoritative_participant(aweb_cloud_
     assert len(conversations) == 1
     assert conversations[0]["conversation_id"] == "55555555-5555-4555-8555-555555555555"
     assert conversations[0]["participant_dids"] == ["did:aw:alice", "did:aw:bob"]
-    assert conversations[0]["participant_addresses"] == ["acme.com/alice", "acme.com/bob"]
+    assert conversations[0]["participant_addresses"] == [
+        "acme.com/alice",
+        "acme.com/bob",
+    ]
     assert conversations[0]["subject"] == "participant-visible"
 
 
@@ -457,7 +498,9 @@ async def test_conversations_filters_mail_by_participant_before_limit(aweb_cloud
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first_page = await client.get("/v1/conversations?limit=100")
         by_address = await client.get(
             "/v1/conversations?conversation_type=mail&participant_address=acme.com/bob"
@@ -502,8 +545,12 @@ async def test_conversations_mail_isolation_excludes_other_identities(aweb_cloud
 
     app = aweb_cloud_db.env.app
 
-    headers = _signed_identity_headers(carol_sk, carol_did_key, aweb_cloud_db.env.stable["carol"])
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    headers = _signed_identity_headers(
+        carol_sk, carol_did_key, aweb_cloud_db.env.stable["carol"]
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/conversations", headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -622,7 +669,9 @@ async def test_grant_conversations_require_type_specific_read_scopes(aweb_cloud_
 
     app.dependency_overrides[get_messaging_auth] = _grant_auth_override
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         mail_allowed = await client.get("/v1/conversations?conversation_type=mail")
         counts_allowed = await client.get(
             "/v1/conversations/unread-counts?participant_did=did:aw:bob"
@@ -638,7 +687,9 @@ async def test_grant_conversations_require_type_specific_read_scopes(aweb_cloud_
         )
 
     assert mail_allowed.status_code == 200, mail_allowed.text
-    assert [item["conversation_type"] for item in mail_allowed.json()["conversations"]] == ["mail"]
+    assert [
+        item["conversation_type"] for item in mail_allowed.json()["conversations"]
+    ] == ["mail"]
     assert counts_allowed.status_code == 200, counts_allowed.text
     assert counts_allowed.json() == {
         "counts": [{"participant_did": "did:aw:bob", "unread_count": 1}]
@@ -650,7 +701,9 @@ async def test_grant_conversations_require_type_specific_read_scopes(aweb_cloud_
     assert unfiltered_denied.status_code == 403
     assert unfiltered_denied.json()["detail"] == "outside grant scope"
     assert unfiltered_allowed.status_code == 200, unfiltered_allowed.text
-    assert {item["conversation_type"] for item in unfiltered_allowed.json()["conversations"]} == {
+    assert {
+        item["conversation_type"] for item in unfiltered_allowed.json()["conversations"]
+    } == {
         "mail",
         "chat",
     }
@@ -658,8 +711,13 @@ async def test_grant_conversations_require_type_specific_read_scopes(aweb_cloud_
 
 
 @pytest.mark.asyncio
-async def test_conversations_lists_identity_scoped_chat_by_participant_did(aweb_cloud_db):
-    bob_sk, bob_did_key = aweb_cloud_db.env.actors["bob"].sk, aweb_cloud_db.env.actors["bob"].did
+async def test_conversations_lists_identity_scoped_chat_by_participant_did(
+    aweb_cloud_db,
+):
+    bob_sk, bob_did_key = (
+        aweb_cloud_db.env.actors["bob"].sk,
+        aweb_cloud_db.env.actors["bob"].did,
+    )
 
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -677,8 +735,12 @@ async def test_conversations_lists_identity_scoped_chat_by_participant_did(aweb_
 
     app = aweb_cloud_db.env.app
 
-    headers = _signed_identity_headers(bob_sk, bob_did_key, aweb_cloud_db.env.stable["bob"])
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    headers = _signed_identity_headers(
+        bob_sk, bob_did_key, aweb_cloud_db.env.stable["bob"]
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/conversations", headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -711,7 +773,9 @@ class _RowCountingManager:
 
 
 @pytest.mark.asyncio
-async def test_conversations_listing_reads_page_sized_rows_not_whole_history(aweb_cloud_db):
+async def test_conversations_listing_reads_page_sized_rows_not_whole_history(
+    aweb_cloud_db,
+):
     """A listing must not materialize history it will never return.
 
     Forty conversations of three messages each stand in for an accumulated
@@ -816,7 +880,9 @@ async def test_conversations_listing_reads_page_sized_rows_not_whole_history(awe
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get(f"/v1/conversations?limit={limit}")
 
     assert resp.status_code == 200, resp.text

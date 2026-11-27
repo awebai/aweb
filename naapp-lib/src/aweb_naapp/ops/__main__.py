@@ -70,7 +70,11 @@ def run(args: argparse.Namespace) -> dict:
         )
     if args.command == "wait":
         return render.wait(
-            client, config, deploy_id=args.deploy_id, commit=args.commit, timeout_seconds=args.timeout
+            client,
+            config,
+            deploy_id=args.deploy_id,
+            commit=args.commit,
+            timeout_seconds=args.timeout,
         )
     if args.command == "verify":
         return render.verify(client, config, deploy_id=args.deploy_id, commit=args.commit)

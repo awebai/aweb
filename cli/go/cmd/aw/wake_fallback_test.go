@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/awebai/aw/wake"
+	"github.com/awebai/aw/internal/wake"
 )
 
 func TestWakeMutationFallbackRequiresAndHoldsDaemonLock(t *testing.T) {

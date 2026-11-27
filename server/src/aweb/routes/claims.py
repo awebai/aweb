@@ -39,9 +39,15 @@ class ClaimsResponse(BaseModel):
 @router.get("/claims")
 async def list_claims(
     request: Request,
-    workspace_id: Optional[str] = Query(None, description="Filter to specific workspace"),
-    limit: Optional[int] = Query(None, description="Maximum items per page", ge=1, le=200),
-    cursor: Optional[str] = Query(None, description="Pagination cursor from previous response"),
+    workspace_id: Optional[str] = Query(
+        None, description="Filter to specific workspace"
+    ),
+    limit: Optional[int] = Query(
+        None, description="Maximum items per page", ge=1, le=200
+    ),
+    cursor: Optional[str] = Query(
+        None, description="Pagination cursor from previous response"
+    ),
     db_infra: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ClaimsResponse:
@@ -83,7 +89,9 @@ async def list_claims(
         try:
             cursor_timestamp = datetime.fromisoformat(cursor_data["claimed_at"])
         except (ValueError, TypeError) as e:
-            raise HTTPException(status_code=422, detail=f"Invalid cursor timestamp: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"Invalid cursor timestamp: {e}"
+            )
     rows = await list_active_claims(
         db_infra,
         team_id=team_id,

@@ -67,7 +67,9 @@ def _request_with_headers(headers: dict[str, str]) -> Request:
             "method": "GET",
             "path": "/mcp",
             "query_string": b"",
-            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+            "headers": [
+                (key.lower().encode(), value.encode()) for key, value in headers.items()
+            ],
             "scheme": "http",
             "server": ("testserver", 80),
             "client": ("127.0.0.1", 12345),
@@ -90,7 +92,9 @@ def _request_with_app_state(
             "path": "/v1/tasks",
             "raw_path": b"/v1/tasks",
             "query_string": b"",
-            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+            "headers": [
+                (key.lower().encode(), value.encode()) for key, value in headers.items()
+            ],
             "scheme": "https",
             "server": ("local.example", 443),
             "client": ("127.0.0.1", 12345),
@@ -172,20 +176,26 @@ async def _admitted_cert_info(env, *, alias):
         "/v1/connect",
         content=b"{}",
         headers={
-            **_signed_team_headers(member.sk, member.did, TEAM, member.certificate, b"{}"),
+            **_signed_team_headers(
+                member.sk, member.did, TEAM, member.certificate, b"{}"
+            ),
             "Content-Type": "application/json",
         },
     )
     assert connected.status_code == 200, connected.text
     team_key = await registry.get_team_public_key("example.test", TEAM_NAME)
     revoked = await registry.get_team_revocations("example.test", TEAM_NAME)
-    registered = await registry.list_team_certificates("example.test", TEAM_NAME, active_only=False)
+    registered = await registry.list_team_certificates(
+        "example.test", TEAM_NAME, active_only=False
+    )
     cert_info = parse_and_verify_certificate(
         member.certificate,
         request_did_key=member.did,
         team_did_key=team_key,
         revoked_certificate_ids=revoked,
-        registered_certificate_ids={certificate.certificate_id for certificate in registered},
+        registered_certificate_ids={
+            certificate.certificate_id for certificate in registered
+        },
     )
     cert_info["verified_team_did_key"] = team_key
     return member, cert_info
@@ -235,13 +245,16 @@ class TestResolveTeamIdentity:
             assert binding.fresh_observation
             queries = []
             async with env.db.transaction() as tx:
-                with tx.connection.query_logger(lambda event: queries.append(event.query)):
+                with tx.connection.query_logger(
+                    lambda event: queries.append(event.query)
+                ):
                     identity = await resolve_team_identity(tx, cert_info)
                     assert await tx.fetch_value("SELECT 1") == 1
             assert any("FOR SHARE OF t FOR UPDATE OF a" in query for query in queries)
             assert (
                 await env.db.fetch_value(
-                    "SELECT accepted_team_did_key FROM {{tables.agents}} WHERE agent_id=$1", bob.id
+                    "SELECT accepted_team_did_key FROM {{tables.agents}} WHERE agent_id=$1",
+                    bob.id,
                 )
                 == env.team_did
             )
@@ -274,31 +287,44 @@ class TestResolveTeamIdentity:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("locked_row", ["member", "team"])
-    async def test_warm_certificate_reads_complete_while_update_lock_is_held(self, privacy_app, locked_row):
+    async def test_warm_certificate_reads_complete_while_update_lock_is_held(
+        self, privacy_app, locked_row
+    ):
         from test_dashboard_privacy import TEAM
         from test_messages_http import _signed_team_headers
 
         env = privacy_app
         member, _ = await _admitted_cert_info(env, alias="bob")
-        headers = _signed_team_headers(member.sk, member.did, TEAM, member.certificate, b"")
+        headers = _signed_team_headers(
+            member.sk, member.did, TEAM, member.certificate, b""
+        )
         async with env.db.transaction() as writer:
             # PostgreSQL takes this row lock for an UPDATE of non-key columns.
             if locked_row == "member":
-                assert await writer.fetch_value(
-                    "SELECT agent_id FROM {{tables.agents}} WHERE agent_id = $1 FOR NO KEY UPDATE",
-                    member.id,
-                ) == member.id
+                assert (
+                    await writer.fetch_value(
+                        "SELECT agent_id FROM {{tables.agents}} WHERE agent_id = $1 FOR NO KEY UPDATE",
+                        member.id,
+                    )
+                    == member.id
+                )
             else:
-                assert await writer.fetch_value(
-                    "SELECT team_id FROM {{tables.teams}} WHERE team_id = $1 FOR NO KEY UPDATE", TEAM,
-                ) == TEAM
+                assert (
+                    await writer.fetch_value(
+                        "SELECT team_id FROM {{tables.teams}} WHERE team_id = $1 FOR NO KEY UPDATE",
+                        TEAM,
+                    )
+                    == TEAM
+                )
             async with asyncio.timeout(3):
                 for path in ("/v1/agents", "/v1/messages/inbox"):
                     response = await env.client.get(path, headers=headers)
                     assert response.status_code == 200, response.text
 
     @pytest.mark.asyncio
-    async def test_reads_the_exact_native_snapshot_in_an_existing_transaction(self, privacy_app):
+    async def test_reads_the_exact_native_snapshot_in_an_existing_transaction(
+        self, privacy_app
+    ):
         from aweb.member_team_key import read_member_projection
         from aweb.team_auth_deps import resolve_team_identity
 
@@ -316,13 +342,19 @@ class TestResolveTeamIdentity:
                 assert await tx.fetch_value("SELECT 1") == 1
         assert identity.agent_id == str(member.id)
         member_reads = [
-            query for query in queries if "agents" in query.lower() and "select" in query.lower()
+            query
+            for query in queries
+            if "agents" in query.lower() and "select" in query.lower()
         ]
         assert len(member_reads) == 1, member_reads
-        assert "FOR SHARE" not in member_reads[0] and "FOR UPDATE" not in member_reads[0]
+        assert (
+            "FOR SHARE" not in member_reads[0] and "FOR UPDATE" not in member_reads[0]
+        )
 
     @pytest.mark.asyncio
-    async def test_warm_admission_takes_one_statement_on_the_request_connection(self, privacy_app):
+    async def test_warm_admission_takes_one_statement_on_the_request_connection(
+        self, privacy_app
+    ):
         from aweb.connection_scope import connection_scope
         from aweb.member_team_key import read_member_projection
         from aweb.team_auth_deps import resolve_team_identity
@@ -345,7 +377,9 @@ class TestResolveTeamIdentity:
         assert "FOR SHARE" not in admission[0] and "FOR UPDATE" not in admission[0]
 
     @pytest.mark.asyncio
-    async def test_mounted_snapshot_reads_member_and_overlay_together(self, privacy_app):
+    async def test_mounted_snapshot_reads_member_and_overlay_together(
+        self, privacy_app
+    ):
         from dataclasses import replace
 
         from aweb.connection_scope import connection_scope
@@ -370,14 +404,23 @@ class TestResolveTeamIdentity:
                 assert not connection.is_in_transaction()
             with connection.query_logger(lambda event: queries.append(event.query)):
                 snapshot = await read_team_member_snapshot(
-                    env.db, cert_info, request=request, overlay_sql=overlay,
+                    env.db,
+                    cert_info,
+                    request=request,
+                    overlay_sql=overlay,
                 )
                 wrapped_request = Request(dict(request.scope))
                 admitted = await resolve_team_membership(
-                    env.db, cert_info, request=wrapped_request, snapshot=snapshot,
+                    env.db,
+                    cert_info,
+                    request=wrapped_request,
+                    snapshot=snapshot,
                 )
                 assert await env.db.fetch_value("SELECT 1") == 1
-            assert admitted_member_projection(wrapped_request, admitted.identity) is snapshot.member
+            assert (
+                admitted_member_projection(wrapped_request, admitted.identity)
+                is snapshot.member
+            )
             for changed in (
                 {"team_id": "other:example.test"},
                 {"agent_id": str(uuid.uuid4())},
@@ -386,16 +429,29 @@ class TestResolveTeamIdentity:
                 {"verified_team_did_key": "other-controller"},
                 {"certificate_verified": False},
             ):
-                assert admitted_member_projection(wrapped_request, replace(admitted.identity, **changed)) is None
-            assert admitted_member_projection(_request_with_headers({}), admitted.identity) is None
+                assert (
+                    admitted_member_projection(
+                        wrapped_request, replace(admitted.identity, **changed)
+                    )
+                    is None
+                )
+            assert (
+                admitted_member_projection(_request_with_headers({}), admitted.identity)
+                is None
+            )
             with pytest.raises(ValueError, match="different request or certificate"):
                 await resolve_team_membership(
-                    env.db, cert_info, request=_request_with_headers({}), snapshot=snapshot,
+                    env.db,
+                    cert_info,
+                    request=_request_with_headers({}),
+                    snapshot=snapshot,
                 )
             with pytest.raises(ValueError, match="different request or certificate"):
                 await resolve_team_membership(
-                    env.db, {**cert_info, "certificate_id": "another-certificate"},
-                    request=wrapped_request, snapshot=snapshot,
+                    env.db,
+                    {**cert_info, "certificate_id": "another-certificate"},
+                    request=wrapped_request,
+                    snapshot=snapshot,
                 )
 
         assert admitted.identity.agent_id == str(member.id)
@@ -411,17 +467,24 @@ class TestResolveTeamIdentity:
         assert "FOR SHARE" not in admission[0] and "FOR UPDATE" not in admission[0]
         assert admitted_member_projection(request, admitted.identity) is None
         with pytest.raises(ValueError, match="different request or certificate"):
-            await resolve_team_membership(env.db, cert_info, request=request, snapshot=snapshot)
+            await resolve_team_membership(
+                env.db, cert_info, request=request, snapshot=snapshot
+            )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("remove_before_retry", [False, True])
     async def test_mounted_reacceptance_checks_host_policy_on_the_update_reread(
-        self, privacy_app, remove_before_retry,
+        self,
+        privacy_app,
+        remove_before_retry,
     ):
         from aweb.application_state import application_registry_client
         from aweb.connection_scope import connection_scope
         from aweb.lifecycle_agent import AgentDisposition, apply_agent_disposition_on
-        from aweb.member_team_key import CurrentMembershipRequired, read_member_projection
+        from aweb.member_team_key import (
+            CurrentMembershipRequired,
+            read_member_projection,
+        )
         from aweb.team_auth_deps import (
             admitted_member_projection,
             read_team_member_snapshot,
@@ -435,14 +498,22 @@ class TestResolveTeamIdentity:
         member, first = await _admitted_cert_info(env, alias="bob")
         registry = application_registry_client(env.app.state)
         await registry.revoke_team_certificate(
-            "example.test", TEAM_NAME,
-            team_controller_signing_key=env.team_sk, certificate_id=first["certificate_id"],
+            "example.test",
+            TEAM_NAME,
+            team_controller_signing_key=env.team_sk,
+            certificate_id=first["certificate_id"],
         )
         replacement_id = str(uuid.uuid4())
-        replacement = _encode_certificate(_make_certificate(
-            env.team_sk, env.team_did, member.did,
-            certificate_id=replacement_id, team_id=TEAM, alias=first["alias"],
-        ))
+        replacement = _encode_certificate(
+            _make_certificate(
+                env.team_sk,
+                env.team_did,
+                member.did,
+                certificate_id=replacement_id,
+                team_id=TEAM,
+                alias=first["alias"],
+            )
+        )
         await _register_fixture_certificate(env, replacement)
         request = _request_with_headers(
             _signed_team_headers(member.sk, member.did, TEAM, replacement, b"")
@@ -450,10 +521,15 @@ class TestResolveTeamIdentity:
         request.scope["app"] = env.app
         checked = await verify_request_certificate(request, env.infra, fresh=True)
         snapshot = await read_team_member_snapshot(
-            env.db, checked, request=request,
+            env.db,
+            checked,
+            request=request,
             overlay_sql="SELECT certificate_id AS previous_certificate_id FROM native_member",
         )
-        assert snapshot.member is not None and snapshot.member["certificate_id"] == first["certificate_id"]
+        assert (
+            snapshot.member is not None
+            and snapshot.member["certificate_id"] == first["certificate_id"]
+        )
         assert snapshot.host_row == {"previous_certificate_id": first["certificate_id"]}
 
         rereads = []
@@ -464,21 +540,37 @@ class TestResolveTeamIdentity:
 
         with pytest.raises(HTTPException, match="Host policy refused"):
             await resolve_team_membership(
-                env.db, checked, request=request, snapshot=snapshot, before_write=refuse,
+                env.db,
+                checked,
+                request=request,
+                snapshot=snapshot,
+                before_write=refuse,
             )
         assert len(rereads) == 1 and rereads[0] is not snapshot
-        assert rereads[0].member == snapshot.member and rereads[0].host_row == snapshot.host_row
-        assert await read_member_projection(env.db, agent_id=member.id) == snapshot.member
+        assert (
+            rereads[0].member == snapshot.member
+            and rereads[0].host_row == snapshot.host_row
+        )
+        assert (
+            await read_member_projection(env.db, agent_id=member.id) == snapshot.member
+        )
 
         if remove_before_retry:
             async with env.db.transaction() as tx:
                 await apply_agent_disposition_on(
-                    tx, team_id=TEAM, agent_ids=[member.id],
-                    disposition=AgentDisposition.PREPARED_REMOVAL, deleted_at=datetime.now(timezone.utc),
+                    tx,
+                    team_id=TEAM,
+                    agent_ids=[member.id],
+                    disposition=AgentDisposition.PREPARED_REMOVAL,
+                    deleted_at=datetime.now(timezone.utc),
                 )
             with pytest.raises(CurrentMembershipRequired):
                 await resolve_team_membership(
-                    env.db, checked, request=request, snapshot=snapshot, before_write=rereads.append,
+                    env.db,
+                    checked,
+                    request=request,
+                    snapshot=snapshot,
+                    before_write=rereads.append,
                 )
             assert len(rereads) == 1
             removed = await read_member_projection(env.db, agent_id=member.id)
@@ -488,12 +580,21 @@ class TestResolveTeamIdentity:
 
         async with connection_scope():
             admitted = await resolve_team_membership(
-                env.db, checked, request=request, snapshot=snapshot, before_write=rereads.append,
+                env.db,
+                checked,
+                request=request,
+                snapshot=snapshot,
+                before_write=rereads.append,
             )
-            assert admitted_member_projection(request, admitted.identity) is admitted.snapshot.member
+            assert (
+                admitted_member_projection(request, admitted.identity)
+                is admitted.snapshot.member
+            )
         assert len(rereads) == 2
         assert admitted.identity.certificate_id == replacement_id
-        assert admitted.snapshot.member == await read_member_projection(env.db, agent_id=member.id)
+        assert admitted.snapshot.member == await read_member_projection(
+            env.db, agent_id=member.id
+        )
         assert admitted.snapshot.member["certificate_id"] == replacement_id
 
     @pytest.mark.asyncio
@@ -509,25 +610,40 @@ class TestResolveTeamIdentity:
 
         env = privacy_app
         private_key, _, did_key = _make_keypair()
-        certificate = _encode_certificate(_make_certificate(
-            env.team_sk, env.team_did, did_key, certificate_id=str(uuid.uuid4()),
-            team_id=TEAM, alias="awaiting-connect", identity_scope="local",
-        ))
+        certificate = _encode_certificate(
+            _make_certificate(
+                env.team_sk,
+                env.team_did,
+                did_key,
+                certificate_id=str(uuid.uuid4()),
+                team_id=TEAM,
+                alias="awaiting-connect",
+                identity_scope="local",
+            )
+        )
         await _register_fixture_certificate(env, certificate)
-        request = _request_with_headers(_signed_team_headers(private_key, did_key, TEAM, certificate, b""))
+        request = _request_with_headers(
+            _signed_team_headers(private_key, did_key, TEAM, certificate, b"")
+        )
         request.scope["app"] = env.app
         checked = await verify_request_certificate(request, env.infra)
         snapshot = await read_team_member_snapshot(
-            env.db, checked, request=request,
+            env.db,
+            checked,
+            request=request,
             overlay_sql="SELECT team_id AS host_team_id FROM {{tables.teams}} WHERE team_id=$1",
         )
         assert snapshot.member is None
         assert snapshot.host_row == {"host_team_id": TEAM}
         with pytest.raises(CurrentMembershipRequired, match="Agent not connected"):
-            await resolve_team_membership(env.db, checked, request=request, snapshot=snapshot)
+            await resolve_team_membership(
+                env.db, checked, request=request, snapshot=snapshot
+            )
 
     @pytest.mark.asyncio
-    async def test_another_members_snapshot_requires_the_exact_native_lookup(self, privacy_app):
+    async def test_another_members_snapshot_requires_the_exact_native_lookup(
+        self, privacy_app
+    ):
         from aweb.member_team_key import read_member_projection
         from aweb.team_auth_deps import resolve_team_identity
         from test_dashboard_privacy import TEAM
@@ -544,15 +660,20 @@ class TestResolveTeamIdentity:
                 assert await tx.fetch_value("SELECT 1") == 1
         assert identity.agent_id == str(member.id)
         member_reads = [
-            query for query in queries if "agents" in query.lower() and "select" in query.lower()
+            query
+            for query in queries
+            if "agents" in query.lower() and "select" in query.lower()
         ]
         assert len(member_reads) == 2, member_reads
-        assert "FOR SHARE" not in member_reads[-1] and "FOR UPDATE" not in member_reads[-1]
+        assert (
+            "FOR SHARE" not in member_reads[-1] and "FOR UPDATE" not in member_reads[-1]
+        )
 
 
 @pytest.mark.asyncio
 async def test_mounted_certificate_retains_routing_after_its_verified_address_is_withdrawn(
-    privacy_app, monkeypatch,
+    privacy_app,
+    monkeypatch,
 ):
     from aweb import identity_auth_deps, team_auth_deps
     from aweb.application_state import application_registry_client
@@ -579,20 +700,32 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
     assert resolution.id_tree is not None and not resolution.id_tree.enrolled
 
     def certificate_for(certificate_id, address=""):
-        return _encode_certificate(make_certificate(
-            env.team_sk, env.team_did, member.did,
-            team_id=TEAM, alias="bob", certificate_id=certificate_id,
-            member_did_aw=stable, member_address=address, identity_scope="global",
-        ))
+        return _encode_certificate(
+            make_certificate(
+                env.team_sk,
+                env.team_did,
+                member.did,
+                team_id=TEAM,
+                alias="bob",
+                certificate_id=certificate_id,
+                member_did_aw=stable,
+                member_address=address,
+                identity_scope="global",
+            )
+        )
 
     def headers(certificate, body=b""):
-        return {**_signed_team_headers(member.sk, member.did, TEAM, certificate, body),
-                "Content-Type": "application/json"}
+        return {
+            **_signed_team_headers(member.sk, member.did, TEAM, certificate, body),
+            "Content-Type": "application/json",
+        }
 
     first_id, addressed_id = str(uuid.uuid4()), str(uuid.uuid4())
     first = certificate_for(first_id)
     await _register_fixture_certificate(env, first)
-    connected = await env.client.post("/v1/connect", headers=headers(first, b"{}"), content=b"{}")
+    connected = await env.client.post(
+        "/v1/connect", headers=headers(first, b"{}"), content=b"{}"
+    )
     assert connected.status_code == 200, connected.text
     control = await env.client.get("/v1/agents", headers=headers(first))
     assert control.status_code == 200, control.text
@@ -603,16 +736,23 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
     await env.registry.ensure_namespace(domain=domain, controller=env.namespace_sk)
     await registry.register_address(domain, name, stable, env.namespace_sk, member.did)
     await registry.revoke_team_certificate(
-        "example.test", TEAM_NAME, team_controller_signing_key=env.team_sk, certificate_id=first_id,
+        "example.test",
+        TEAM_NAME,
+        team_controller_signing_key=env.team_sk,
+        certificate_id=first_id,
     )
     addressed = certificate_for(addressed_id, f"{domain}/{name}")
     await _register_fixture_certificate(env, addressed)
-    connected = await env.client.post("/v1/connect", headers=headers(addressed, b"{}"), content=b"{}")
+    connected = await env.client.post(
+        "/v1/connect", headers=headers(addressed, b"{}"), content=b"{}"
+    )
     assert connected.status_code == 200, connected.text
     await registry.delete_address(domain, name, env.namespace_sk)
     assert await registry.resolve_address_fresh(domain, name) is None
     identity_binding_cache(env.app.state).clear()
-    refused = await env.client.post("/v1/connect", headers=headers(addressed, b"{}"), content=b"{}")
+    refused = await env.client.post(
+        "/v1/connect", headers=headers(addressed, b"{}"), content=b"{}"
+    )
     assert refused.status_code == 403, refused.text
     assert refused.json()["detail"] == "identity_binding_mismatch"
     strict = await env.client.get("/v1/agents", headers=headers(addressed))
@@ -620,12 +760,19 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
 
     async def mounted_member(request: Request):
         checked = await team_auth_deps.verify_request_certificate(
-            request, env.infra, identity_evidence=team_auth_deps.IdentityEvidencePolicy.PREFER_LIVE,
+            request,
+            env.infra,
+            identity_evidence=team_auth_deps.IdentityEvidencePolicy.PREFER_LIVE,
         )
-        snapshot = await team_auth_deps.read_team_member_snapshot(env.db, checked, request=request)
+        snapshot = await team_auth_deps.read_team_member_snapshot(
+            env.db, checked, request=request
+        )
         try:
             resolved = await team_auth_deps.resolve_team_membership(
-                env.db, checked, request=request, snapshot=snapshot,
+                env.db,
+                checked,
+                request=request,
+                snapshot=snapshot,
             )
         except CurrentMembershipRequired as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -648,7 +795,11 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
             "id_chain": request.state.id_chain,
             "id_chain_result": request.state.id_chain_result,
             "verified_human": is_verified_human(resolved.snapshot.member),
-            "stored_attribution": [attribution["did_aw"], attribution["address"], attribution["human_verified_key"]],
+            "stored_attribution": [
+                attribution["did_aw"],
+                attribution["address"],
+                attribution["human_verified_key"],
+            ],
         }
 
     started = len(env.registry.transport.calls)
@@ -658,12 +809,21 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
     )
     assert malformed.status_code == 403, malformed.text
     assert malformed.json()["detail"] == "invalid_encoding"
-    served = await env.client.get("/_test/mounted-certificate", headers=headers(addressed))
+    served = await env.client.get(
+        "/_test/mounted-certificate", headers=headers(addressed)
+    )
     assert served.status_code == 200, served.text
     assert served.json() == {
-        "key": member.did, "did_aw": stable, "address": "", "verified_did_aw": "",
-        "verified_address": "", "verified_key": "", "kind": None, "id_chain": None,
-        "id_chain_result": None, "verified_human": False,
+        "key": member.did,
+        "did_aw": stable,
+        "address": "",
+        "verified_did_aw": "",
+        "verified_address": "",
+        "verified_key": "",
+        "kind": None,
+        "id_chain": None,
+        "id_chain_result": None,
+        "verified_human": False,
         "stored_attribution": [stable, f"{domain}/{name}", None],
     }
     routes = [request.url.path for request in env.registry.transport.calls[started:]]
@@ -671,10 +831,13 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
     assert routes.count(f"/v1/did/{stable}/key") == 1
     assert sum(path.endswith(f"/addresses/{name}") for path in routes) == 1
     stored = await env.db.fetch_one(
-        "SELECT did_aw, address, did_aw_verified_key FROM {{tables.agents}} WHERE agent_id = $1", member.id,
+        "SELECT did_aw, address, did_aw_verified_key FROM {{tables.agents}} WHERE agent_id = $1",
+        member.id,
     )
     assert dict(stored) == {
-        "did_aw": stable, "address": f"{domain}/{name}", "did_aw_verified_key": member.did,
+        "did_aw": stable,
+        "address": f"{domain}/{name}",
+        "did_aw_verified_key": member.did,
     }
 
     # The embedding hook supplies actual verified membership to the native
@@ -684,9 +847,12 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
         return resolved.identity
 
     monkeypatch.setattr(identity_auth_deps, "get_team_identity", mounted_team_identity)
-    event_route = next(route for route in env.app.routes if route.path == "/v1/events/stream")
+    event_route = next(
+        route for route in env.app.routes if route.path == "/v1/events/stream"
+    )
     event_auth = next(
-        dependency.call for dependency in event_route.dependant.dependencies
+        dependency.call
+        for dependency in event_route.dependant.dependencies
         if getattr(dependency.call, "_aweb_grant_scope", None) == "events.read"
     )
     env.app.dependency_overrides[event_auth] = mounted_team_identity
@@ -695,36 +861,51 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
     await start_agent_wakes(env.app, env.redis)
     try:
         async with env.client.stream(
-            "GET", "/v1/events/stream",
-            params={"deadline": (datetime.now(timezone.utc) + timedelta(seconds=15)).isoformat()},
+            "GET",
+            "/v1/events/stream",
+            params={
+                "deadline": (
+                    datetime.now(timezone.utc) + timedelta(seconds=15)
+                ).isoformat()
+            },
             headers=headers(addressed),
         ) as stream:
             assert stream.status_code == 200, await stream.aread()
             async with aclosing(_http_frames(stream.aiter_lines())) as frames:
                 await _next_named(frames, "connected")
                 incoming = await _send_member_request(
-                    env, alias="alice", method="POST", path="/v1/messages",
+                    env,
+                    alias="alice",
+                    method="POST",
+                    path="/v1/messages",
                     body={"to_did": stable, "subject": "stable inbox", "body": "hello"},
                 )
                 assert incoming.status_code == 200, incoming.text
                 message_id = incoming.json()["message_id"]
-                assert (await _next_named(frames, "actionable_mail"))["message_id"] == message_id
+                assert (await _next_named(frames, "actionable_mail"))[
+                    "message_id"
+                ] == message_id
     finally:
         await stop_agent_wakes(env.app)
 
     inbox = await env.client.get("/v1/messages/inbox", headers=headers(addressed))
     assert inbox.status_code == 200, inbox.text
-    assert [(item["message_id"], item["to_did"]) for item in inbox.json()["messages"]] == [
-        (message_id, stable)
-    ]
+    assert [
+        (item["message_id"], item["to_did"]) for item in inbox.json()["messages"]
+    ] == [(message_id, stable)]
     chat = await _send_member_request(
-        env, alias="alice", method="POST", path="/v1/chat/sessions",
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/chat/sessions",
         body={"to_dids": [stable], "message": "stable pending"},
     )
     assert chat.status_code == 200, chat.text
     pending = await env.client.get("/v1/chat/pending", headers=headers(addressed))
     assert pending.status_code == 200, pending.text
-    assert chat.json()["session_id"] in {item["session_id"] for item in pending.json()["pending"]}
+    assert chat.json()["session_id"] in {
+        item["session_id"] for item in pending.json()["pending"]
+    }
 
     alice = env.actors["alice"]
     signed_mail = {
@@ -735,17 +916,31 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
         "body": "reply",
         "from_did": member.did,
     }
-    signed = canonical_json_bytes({
-        **signed_mail, "type": "mail", "from_stable_id": stable, "to_did": alice.did,
-    })
-    payload = json.dumps({
-        **signed_mail, "to_did": alice.did, "signature": sign_message(member.sk, signed),
-        "signed_payload": signed.decode(),
-    }).encode()
-    sent = await env.client.post("/v1/messages", headers=headers(addressed, payload), content=payload)
+    signed = canonical_json_bytes(
+        {
+            **signed_mail,
+            "type": "mail",
+            "from_stable_id": stable,
+            "to_did": alice.did,
+        }
+    )
+    payload = json.dumps(
+        {
+            **signed_mail,
+            "to_did": alice.did,
+            "signature": sign_message(member.sk, signed),
+            "signed_payload": signed.decode(),
+        }
+    ).encode()
+    sent = await env.client.post(
+        "/v1/messages", headers=headers(addressed, payload), content=payload
+    )
     assert sent.status_code == 200, sent.text
     received = await _send_member_request(
-        env, alias="alice", method="GET", path=f"/v1/messages/{sent.json()['message_id']}",
+        env,
+        alias="alice",
+        method="GET",
+        path=f"/v1/messages/{sent.json()['message_id']}",
     )
     assert received.status_code == 200, received.text
     assert received.json()["from_stable_id"] == stable
@@ -753,12 +948,17 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
     assert received.json().get("from_address") != f"{domain}/{name}"
 
     human = await admit_messaging_actor(
-        env, alias="mounted-human", team_id=TEAM, address="example.test/mounted-human",
+        env,
+        alias="mounted-human",
+        team_id=TEAM,
+        address="example.test/mounted-human",
         kind=IdentityKind.HUMAN,
     )
     human_response = await env.client.get(
         "/_test/mounted-certificate",
-        headers=_signed_team_headers(human.signing_key, human.did_key, TEAM, human.certificate),
+        headers=_signed_team_headers(
+            human.signing_key, human.did_key, TEAM, human.certificate
+        ),
     )
     assert human_response.status_code == 200, human_response.text
     assert human_response.json()["did_aw"] == human.stable_id
@@ -767,11 +967,19 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
     assert human_response.json()["kind"] == "human"
     assert human_response.json()["id_chain"] is None
 
-    claimed_only = _encode_certificate(make_certificate(
-        env.team_sk, env.team_did, alice.did, team_id=TEAM, alias="alice",
-        certificate_id=str(uuid.uuid4()), member_did_aw=stable,
-        member_address=f"{domain}/{name}", identity_scope="global",
-    ))
+    claimed_only = _encode_certificate(
+        make_certificate(
+            env.team_sk,
+            env.team_did,
+            alice.did,
+            team_id=TEAM,
+            alias="alice",
+            certificate_id=str(uuid.uuid4()),
+            member_did_aw=stable,
+            member_address=f"{domain}/{name}",
+            identity_scope="global",
+        )
+    )
     mismatched_claim = await env.client.get(
         "/_test/mounted-certificate",
         headers=_signed_team_headers(alice.sk, alice.did, TEAM, claimed_only),
@@ -781,7 +989,8 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
 
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
     unregistered = await env.client.get(
-        "/_test/mounted-certificate", headers=headers(certificate_for(str(uuid.uuid4()))),
+        "/_test/mounted-certificate",
+        headers=headers(certificate_for(str(uuid.uuid4()))),
     )
     assert unregistered.status_code == 401, unregistered.text
     wrong_signer = await env.client.get(
@@ -790,30 +999,51 @@ async def test_mounted_certificate_retains_routing_after_its_verified_address_is
     )
     assert wrong_signer.status_code == 401, wrong_signer.text
     wrong_team_key, _, wrong_team_did = _make_keypair()
-    wrong_controller = _encode_certificate(make_certificate(
-        wrong_team_key, wrong_team_did, member.did, team_id=TEAM, alias="bob",
-        certificate_id=str(uuid.uuid4()), identity_scope="global",
-    ))
+    wrong_controller = _encode_certificate(
+        make_certificate(
+            wrong_team_key,
+            wrong_team_did,
+            member.did,
+            team_id=TEAM,
+            alias="bob",
+            certificate_id=str(uuid.uuid4()),
+            identity_scope="global",
+        )
+    )
     rejected_team_key = await env.client.get(
-        "/_test/mounted-certificate", headers=headers(wrong_controller),
+        "/_test/mounted-certificate",
+        headers=headers(wrong_controller),
     )
     assert rejected_team_key.status_code == 401, rejected_team_key.text
     assert rejected_team_key.json()["detail"]["code"] == "team_key_not_current"
 
     await registry.revoke_team_certificate(
-        "example.test", TEAM_NAME, team_controller_signing_key=env.team_sk, certificate_id=addressed_id,
+        "example.test",
+        TEAM_NAME,
+        team_controller_signing_key=env.team_sk,
+        certificate_id=addressed_id,
     )
-    revoked = await env.client.get("/_test/mounted-certificate", headers=headers(addressed))
+    revoked = await env.client.get(
+        "/_test/mounted-certificate", headers=headers(addressed)
+    )
     assert revoked.status_code == 401, revoked.text
     assert revoked.json()["detail"]["code"] == "certificate_revoked"
     replacement = certificate_for(str(uuid.uuid4()))
     await _register_fixture_certificate(env, replacement)
     async with env.db.transaction() as tx:
-        assert await apply_agent_disposition_on(
-            tx, agent_ids=[member.id], team_id=TEAM,
-            disposition=AgentDisposition.DELETED, deleted_at=datetime.now(timezone.utc),
-        ) == 1
-    removed = await env.client.get("/_test/mounted-certificate", headers=headers(replacement))
+        assert (
+            await apply_agent_disposition_on(
+                tx,
+                agent_ids=[member.id],
+                team_id=TEAM,
+                disposition=AgentDisposition.DELETED,
+                deleted_at=datetime.now(timezone.utc),
+            )
+            == 1
+        )
+    removed = await env.client.get(
+        "/_test/mounted-certificate", headers=headers(replacement)
+    )
     assert removed.status_code == 403, removed.text
 
 
@@ -824,7 +1054,11 @@ async def test_team_and_messaging_dependencies_use_registered_identity(privacy_a
     from identity_binding_support import register_global_identity
     from test_cli_never_grants import registry_listener
     from test_dashboard_privacy import TEAM, TEAM_NAME
-    from test_messages_http import _encode_certificate, _make_certificate, _signed_team_headers
+    from test_messages_http import (
+        _encode_certificate,
+        _make_certificate,
+        _signed_team_headers,
+    )
 
     env = privacy_app
     signing_key, _, did_key = _make_keypair()
@@ -932,7 +1166,10 @@ async def test_identity_auth_refuses_corrupt_duplicate_local_memberships(privacy
     with pytest.raises(HTTPException) as refused:
         await get_messaging_auth(request, env.db)
     assert refused.value.status_code == 409
-    assert "Select the intended team with a current team certificate" in refused.value.detail
+    assert (
+        "Select the intended team with a current team certificate"
+        in refused.value.detail
+    )
     assert (
         await env.db.fetch_value(
             "SELECT count(*) FROM {{tables.agents}} WHERE did_key=$1 AND team_id=ANY($2::text[])",
@@ -965,16 +1202,22 @@ async def test_verify_request_certificate_returns_coded_422_for_unusable_registr
     certificate = _make_certificate(team_key, team_did, member_did, team_id=team_id)
     timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     payload = compact_team_auth_payload(
-        team_id=team_id, timestamp=timestamp, body_sha256=hashlib.sha256(b"").hexdigest()
+        team_id=team_id,
+        timestamp=timestamp,
+        body_sha256=hashlib.sha256(b"").hexdigest(),
     )
-    request = _request_with_app_state({
-        "Authorization": f"DIDKey {member_did} {sign_message(member_key, payload)}",
-        "X-AWEB-Timestamp": timestamp,
-        "X-AWID-Team-Certificate": _encode_certificate(certificate),
-    })
+    request = _request_with_app_state(
+        {
+            "Authorization": f"DIDKey {member_did} {sign_message(member_key, payload)}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWID-Team-Certificate": _encode_certificate(certificate),
+        }
+    )
 
     transport = ASGITransport(app=registry)
-    async with aclosing(RegistryClient("http://registry.test", transport=transport)) as client:
+    async with aclosing(
+        RegistryClient("http://registry.test", transport=transport)
+    ) as client:
         request.app.state.awid_registry_client = client
         with pytest.raises(HTTPException) as refused:
             await verify_request_certificate(request, db=object())
@@ -993,7 +1236,9 @@ async def test_verify_request_certificate_returns_coded_422_for_unusable_registr
 @pytest.mark.parametrize(
     "certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys()
 )
-async def test_verify_request_certificate_refuses_a_hostile_certificate_with_401(certificate):
+async def test_verify_request_certificate_refuses_a_hostile_certificate_with_401(
+    certificate,
+):
     from aweb.team_auth_deps import verify_request_certificate
 
     timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -1043,7 +1288,9 @@ async def test_certificate_auth_refuses_a_nonactive_row_without_a_deletion_times
     async def team_read():
         return await env.client.get(
             "/v1/team",
-            headers=_signed_team_headers(member.sk, member.did, TEAM, member.certificate, b""),
+            headers=_signed_team_headers(
+                member.sk, member.did, TEAM, member.certificate, b""
+            ),
         )
 
     floor = await team_read()

@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 // signedFields holds the identity fields attached to outgoing messages

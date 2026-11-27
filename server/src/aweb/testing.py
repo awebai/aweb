@@ -74,7 +74,9 @@ async def running_server(
             public_origin=public_origin,
         )
         async with app.router.lifespan_context(app):
-            yield Server(app=app, db=infra, transport=ServiceTransport(app), url=public_origin)
+            yield Server(
+                app=app, db=infra, transport=ServiceTransport(app), url=public_origin
+            )
     finally:
         await infra.close()
         await pool.close()

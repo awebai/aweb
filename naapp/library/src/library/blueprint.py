@@ -84,7 +84,9 @@ def _as_str_list(value: Any) -> list[str]:
     return [str(item) for item in value] if isinstance(value, list) else []
 
 
-def _profile_payload_files(blueprint_files: list[dict[str, str]], profile_id: str) -> list[dict[str, str]]:
+def _profile_payload_files(
+    blueprint_files: list[dict[str, str]], profile_id: str
+) -> list[dict[str, str]]:
     """The profile's files re-relativized to PROFILE-relative paths (the form the
     profile digest hashes)."""
     prefix = f"profiles/{profile_id}/"
@@ -222,7 +224,9 @@ class MergeResult:
     preserved_parts: list[str]  # parts kept as ours (locally evolved, upstream change declined)
 
 
-def _resource_entries(category: str, present_paths: set[str], *docs: dict[str, Any]) -> list[dict[str, str]]:
+def _resource_entries(
+    category: str, present_paths: set[str], *docs: dict[str, Any]
+) -> list[dict[str, str]]:
     """Rebuild profile.yaml's skills/artifacts list from the merged file set, carrying
     each entry's ``kind`` from whichever source profile declared it (ours first)."""
     kinds: dict[str, Any] = {}
@@ -291,13 +295,17 @@ def three_way_merge(
 
     merged_doc["version"] = target_version
     merged_doc["skills"] = _resource_entries("skills", set(merged_files_map), ours_doc, theirs_doc)
-    merged_doc["artifacts"] = _resource_entries("artifacts", set(merged_files_map), ours_doc, theirs_doc)
+    merged_doc["artifacts"] = _resource_entries(
+        "artifacts", set(merged_files_map), ours_doc, theirs_doc
+    )
 
     profile_yaml = yaml.safe_dump(merged_doc, sort_keys=False, allow_unicode=True)
     merged_files = [_payload_file("profile.yaml", profile_yaml)]
     merged_files.extend(merged_files_map.values())
     merged_files.sort(key=lambda entry: entry["path"])
-    return MergeResult(files=merged_files, updated_parts=sorted(updated), preserved_parts=sorted(preserved))
+    return MergeResult(
+        files=merged_files, updated_parts=sorted(updated), preserved_parts=sorted(preserved)
+    )
 
 
 def _payload_file(path: str, content_utf8: str) -> dict[str, str]:
@@ -345,7 +353,11 @@ def build_blueprint_payload(
         for f in content_files
         if f["path"].startswith("profiles/") and f["path"].endswith("/profile.yaml")
     )
-    blueprint_doc: dict[str, Any] = {"id": blueprint_ref, "version": blueprint_version, "name": name}
+    blueprint_doc: dict[str, Any] = {
+        "id": blueprint_ref,
+        "version": blueprint_version,
+        "name": name,
+    }
     if summary is not None:
         blueprint_doc["summary"] = summary
     if description is not None:
@@ -354,7 +366,11 @@ def build_blueprint_payload(
         blueprint_doc["first_mission_examples"] = first_mission_examples
     blueprint_doc["profiles"] = [{"id": pid} for pid in profile_ids]
 
-    files = [_payload_file("blueprint.yaml", yaml.safe_dump(blueprint_doc, sort_keys=False, allow_unicode=True))]
+    files = [
+        _payload_file(
+            "blueprint.yaml", yaml.safe_dump(blueprint_doc, sort_keys=False, allow_unicode=True)
+        )
+    ]
     if readme is not None:
         files.append(_payload_file("README.md", readme))
     files.extend(content_files)
@@ -369,7 +385,11 @@ def import_return(blueprint: ParsedBlueprint) -> dict[str, Any]:
         "blueprint_ref": blueprint.blueprint_ref,
         "version": blueprint.version,
         "profiles": [
-            {"profile_ref": profile.profile_ref, "version": profile.version, "digest": profile.digest}
+            {
+                "profile_ref": profile.profile_ref,
+                "version": profile.version,
+                "digest": profile.digest,
+            }
             for profile in blueprint.profiles
         ],
     }
@@ -393,7 +413,9 @@ def _skill_name(skill_path: str) -> str:
     return skill_path.split("/")[1]
 
 
-def _compose_agents_md(doc: dict[str, Any], *, profile_ref: str, instructions: str, provenance: str) -> str:
+def _compose_agents_md(
+    doc: dict[str, Any], *, profile_ref: str, instructions: str, provenance: str
+) -> str:
     """The composed AGENTS.md: a single human-readable rendering of the profile, in
     source order. Empty components omit their whole section (title included)."""
     name = str(doc.get("name") or profile_ref)
@@ -418,7 +440,9 @@ def _compose_agents_md(doc: dict[str, Any], *, profile_ref: str, instructions: s
         mode = memory_policy.get("mode", "")
         target = memory_policy.get("proposal_target", "")
         boilerplate = _MEMORY_BOILERPLATE.format(target=target)
-        blocks.append(f"## Memory and learning\n\nMode: {mode}\nProposal target: {target}\n\n{boilerplate}")
+        blocks.append(
+            f"## Memory and learning\n\nMode: {mode}\nProposal target: {target}\n\n{boilerplate}"
+        )
     skill_names = [_skill_name(str(skill["path"])) for skill in doc.get("skills") or []]
     if skill_names:
         blocks.append(f"## Skills\n\n{_SKILLS_BOILERPLATE}\n\n{_bullets(skill_names)}")
@@ -478,7 +502,9 @@ def materialize_home(
     by_path = {f["path"]: f for f in files}
     doc = yaml.safe_load(by_path["profile.yaml"]["content_utf8"]) or {}
     instructions_path = str(doc.get("instructions") or "instructions.md")
-    instructions = by_path[instructions_path]["content_utf8"] if instructions_path in by_path else ""
+    instructions = (
+        by_path[instructions_path]["content_utf8"] if instructions_path in by_path else ""
+    )
     provenance = (
         f"blueprint {source_blueprint_ref} v{source_blueprint_version}"
         if source_blueprint_ref
@@ -543,7 +569,9 @@ def materialize_home(
     artifact_paths = [str(artifact["path"]) for artifact in doc.get("artifacts") or []]
     resource_paths.update(path for path in artifact_paths if path in by_path)
     for path in sorted(resource_paths):
-        entries.append({"path": path, "kind": "file", "content_utf8": by_path[path]["content_utf8"]})
+        entries.append(
+            {"path": path, "kind": "file", "content_utf8": by_path[path]["content_utf8"]}
+        )
     if runtime_kind == "claude-code":
         for _, skill_name in skill_dirs:
             link_path = f".claude/skills/{skill_name}"

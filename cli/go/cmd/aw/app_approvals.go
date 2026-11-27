@@ -189,11 +189,6 @@ type skippedGrantApp struct {
 	RecoveryCommand []string `json:"recovery_command,omitempty"`
 }
 
-func selectGrantAppSnapshots(home, teamID string, explicit bool, values, deniedOrigins []string) (map[string]grantAppSnapshot, error) {
-	apps, _, err := prepareGrantAppSnapshots(home, teamID, explicit, values, deniedOrigins)
-	return apps, err
-}
-
 // Catalog failures narrow this mint's authority without preventing unrelated
 // communication. Explicit legacy selections and corrupt resident state fail.
 func prepareGrantAppSnapshots(home, teamID string, explicit bool, values, deniedOrigins []string) (map[string]grantAppSnapshot, []skippedGrantApp, error) {

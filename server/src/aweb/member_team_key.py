@@ -47,6 +47,7 @@ from aweb.team_scope import member_team_scope as member_team_scope
 
 logger = logging.getLogger(__name__)
 
+
 class MemberReadLock(Enum):
     """Row protection requested inside the caller's existing transaction."""
 
@@ -55,9 +56,7 @@ class MemberReadLock(Enum):
     UPDATE = auto()
 
 
-RECIPIENT_RECONNECT_DETAIL = (
-    "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
-)
+RECIPIENT_RECONNECT_DETAIL = "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
 
 
 CURRENT_MEMBERSHIP_REQUIRED_DETAIL = (
@@ -138,13 +137,17 @@ class MemberProjection(Mapping[str, Any]):
         columns = (*_MEMBER_COLUMNS, "current_team_did_key")
         missing = [column for column in columns if column not in source]
         if missing:
-            raise ValueError("Incomplete native member projection: " + ", ".join(missing))
+            raise ValueError(
+                "Incomplete native member projection: " + ", ".join(missing)
+            )
         values = {column: source[column] for column in columns}
         for column in columns:
             if column in ("agent_id", "deleted_at"):
                 continue
             if values[column] is not None and not isinstance(values[column], str):
-                raise ValueError(f"Native member projection column {column} must be text or NULL")
+                raise ValueError(
+                    f"Native member projection column {column} must be text or NULL"
+                )
         # PostgreSQL row_to_json/to_jsonb encodes UUIDs/timestamps as strings.
         # A host's joined snapshot and the native SELECT have one public shape.
         values["agent_id"] = UUID(str(values["agent_id"]))
@@ -155,8 +158,12 @@ class MemberProjection(Mapping[str, Any]):
             values["deleted_at"] = datetime.fromisoformat(
                 values["deleted_at"].replace("Z", "+00:00")
             )
-        if values["deleted_at"] is not None and not isinstance(values["deleted_at"], datetime):
-            raise ValueError("Native member projection deleted_at must be a timestamp or NULL")
+        if values["deleted_at"] is not None and not isinstance(
+            values["deleted_at"], datetime
+        ):
+            raise ValueError(
+                "Native member projection deleted_at must be a timestamp or NULL"
+            )
         object.__setattr__(self, "_row", MappingProxyType(values))
 
     @classmethod
@@ -192,14 +199,18 @@ async def read_member_projection(
     verified new certificate may reaccept a row under a new team key. It also
     returns deleted/inactive rows so actor resolvers can distinguish an absent
     actor from a refused one. Key selection requires its explicit team; agent
-    IDs are globally unique and can optionally be constrained by team.
+    IDs are globally unique and can optionally be constrained by team. A team
+    may hold archived rows beside the live row for one key: the live row is
+    returned, else the most recently created archived row.
     """
     if (did_key is None) == (agent_id is None) or (did_key is not None and not team_id):
         raise ValueError("Select a native member by team and did_key, or by agent_id")
     selector = "a.agent_id=$1::uuid" if agent_id is not None else "a.did_key=$1"
     selected = UUID(str(agent_id)) if agent_id is not None else did_key
     row = await db.fetch_one(
-        _member_projection_select(selector + " AND ($2::text IS NULL OR a.team_id=$2)", read_lock),
+        _member_projection_select(
+            selector + " AND ($2::text IS NULL OR a.team_id=$2)", read_lock
+        ),
         selected,
         team_id,
     )
@@ -225,6 +236,9 @@ def _member_projection_select(selector: str, read_lock: MemberReadLock) -> str:
         + join_sql
         + " WHERE "
         + selector
+        # A team keeps archived rows beside the one live row for the same
+        # key. Select the live row, else the most recent archived one.
+        + " ORDER BY (a.deleted_at IS NOT NULL), a.created_at DESC LIMIT 1"
         + lock_sql
     )
 
@@ -244,7 +258,9 @@ async def read_member_with_overlay(
     and the three bound credential arguments. The native projection is
     returned independently of the overlay, and may be absent.
     """
-    member_select = _member_projection_select("a.team_id=$1 AND a.did_key=$2", read_lock)
+    member_select = _member_projection_select(
+        "a.team_id=$1 AND a.did_key=$2", read_lock
+    )
     row = await db.fetch_one(
         f"""
         WITH native_member AS MATERIALIZED ({member_select}),
@@ -262,10 +278,14 @@ async def read_member_with_overlay(
     member = row.pop("native_member_projection")
     if isinstance(member, str):
         member = json.loads(member)
-    return MemberProjection.from_row(member) if member is not None else None, MappingProxyType(row)
+    return MemberProjection.from_row(
+        member
+    ) if member is not None else None, MappingProxyType(row)
 
 
-async def lock_member_projections(tx, *, agent_ids: list[UUID]) -> list[MemberProjection]:
+async def lock_member_projections(
+    tx, *, agent_ids: list[UUID]
+) -> list[MemberProjection]:
     """Read complete native actor facts under caller-owned row locks.
 
     Actor-ID ordering preserves the public embedding transaction contract.
@@ -306,8 +326,15 @@ def member_key_current(row, *, checked_key: str | None = None) -> bool:
     """Whether the member ``row`` (an agents row read with
     member_key_columns_sql) was accepted under its team's current key. A row
     read without those columns is not."""
-    accepted = checked_key if checked_key is not None else str(row.get("accepted_team_did_key") or "").strip()
-    return bool(accepted) and accepted == str(row.get("current_team_did_key") or "").strip()
+    accepted = (
+        checked_key
+        if checked_key is not None
+        else str(row.get("accepted_team_did_key") or "").strip()
+    )
+    return (
+        bool(accepted)
+        and accepted == str(row.get("current_team_did_key") or "").strip()
+    )
 
 
 def member_row_active(row: Mapping[str, Any] | None) -> bool:
@@ -316,10 +343,16 @@ def member_row_active(row: Mapping[str, Any] | None) -> bool:
     migrations/aweb/001_initial.sql:42-45 defines native row state separately
     from any certificate proof.
     """
-    return bool(row and row.get("status") == MemberStatus.ACTIVE and row.get("deleted_at") is None)
+    return bool(
+        row
+        and row.get("status") == MemberStatus.ACTIVE
+        and row.get("deleted_at") is None
+    )
 
 
-def current_member(row: Mapping[str, Any] | None, *, checked_key: str | None = None) -> bool:
+def current_member(
+    row: Mapping[str, Any] | None, *, checked_key: str | None = None
+) -> bool:
     """An active live member admitted under the team's current key.
 
     Migration 052:1-4 and docs/design/team-room-v1.md:16-21 require current
@@ -432,7 +465,9 @@ async def read_participant_identity_projection(
     projections = [MemberProjection.from_row(row) for row in rows]
     if not projections:
         return None
-    identities = {(row.verified_identity().get("did_aw"), row["did_key"]) for row in projections}
+    identities = {
+        (row.verified_identity().get("did_aw"), row["did_key"]) for row in projections
+    }
     if len(identities) != 1:
         raise ConflictError(
             "Participant identity is ambiguous. Reconnect with current identity credentials."
@@ -461,7 +496,9 @@ class CertificateStanding:
     def require_active(self) -> None:
         if self.state is CertificateStandingState.UNAVAILABLE:
             if self.unavailable_cause is None:
-                raise RuntimeError("Unavailable certificate standing requires an acquisition error")
+                raise RuntimeError(
+                    "Unavailable certificate standing requires an acquisition error"
+                )
             raise self.unavailable_cause
         if self.state is not CertificateStandingState.ACTIVE:
             raise TeamCertificateError(self.state.value)
@@ -491,18 +528,26 @@ async def read_certificate_standings(
         return {}
     try:
         revoked = await revoked_certificates(
-            registry_client, team_id, certificate_ids=sorted(selected), evidence=revocation_evidence,
+            registry_client,
+            team_id,
+            certificate_ids=sorted(selected),
+            evidence=revocation_evidence,
         )
     except HTTPException as exc:
         if exc.status_code < 500:
             raise
-        return {cid: CertificateStanding(CertificateStandingState.UNAVAILABLE, exc) for cid in selected}
+        return {
+            cid: CertificateStanding(CertificateStandingState.UNAVAILABLE, exc)
+            for cid in selected
+        }
     result = {
         cid: CertificateStanding(CertificateStandingState.REVOKED)
         for cid in selected
         if evaluate_team_certificate_standing(
-            revoked=cid in revoked, registered=None,
-        ) is TeamCertificateStanding.REVOKED
+            revoked=cid in revoked,
+            registered=None,
+        )
+        is TeamCertificateStanding.REVOKED
     }
     remaining = selected - result.keys()
     if not remaining:
@@ -510,14 +555,26 @@ async def read_certificate_standings(
     if mode is None:
         mode = configured_registration_mode()
         if mode is RegistrationMode.NOT_REQUIRED and registrations is None:
-            decision = RegistrationDecision(mode=mode, state=RegistrationState.NOT_OBSERVED)
-            result.update({
-                cid: CertificateStanding(CertificateStandingState.ACTIVE, registration=decision)
-                for cid in remaining
-            })
+            decision = RegistrationDecision(
+                mode=mode, state=RegistrationState.NOT_OBSERVED
+            )
+            result.update(
+                {
+                    cid: CertificateStanding(
+                        CertificateStandingState.ACTIVE, registration=decision
+                    )
+                    for cid in remaining
+                }
+            )
             return result
-    snapshot = registrations if registrations is not None else await observe_certificate_registrations(
-        registry_client=registry_client, team_id=team_id, mode=mode,
+    snapshot = (
+        registrations
+        if registrations is not None
+        else await observe_certificate_registrations(
+            registry_client=registry_client,
+            team_id=team_id,
+            mode=mode,
+        )
     )
     for certificate_id in sorted(remaining):
         observation = snapshot
@@ -530,35 +587,50 @@ async def read_certificate_standings(
         ):
             try:
                 standing = await refresh_certificate_standing(
-                    registry_client, team_id, certificate_id=certificate_id,
+                    registry_client,
+                    team_id,
+                    certificate_id=certificate_id,
                 )
             except HTTPException as exc:
                 if exc.status_code < 500:
                     raise
-                result[certificate_id] = CertificateStanding(CertificateStandingState.UNAVAILABLE, exc)
+                result[certificate_id] = CertificateStanding(
+                    CertificateStandingState.UNAVAILABLE, exc
+                )
                 continue
             if standing is TeamCertificateStanding.REVOKED:
-                result[certificate_id] = CertificateStanding(CertificateStandingState.REVOKED)
+                result[certificate_id] = CertificateStanding(
+                    CertificateStandingState.REVOKED
+                )
                 continue
             if standing is TeamCertificateStanding.ACTIVE:
                 observation = CertificateRegistrationObservation(
-                    team_id=team_id, registered_certificate_ids={certificate_id},
+                    team_id=team_id,
+                    registered_certificate_ids={certificate_id},
                 )
                 refreshed = True
         registration = record_certificate_registration(
-            request, observation=observation, certificate_id=certificate_id, mode=mode,
+            request,
+            observation=observation,
+            certificate_id=certificate_id,
+            mode=mode,
         )
         if registration.allows_registration:
             result[certificate_id] = CertificateStanding(
-                CertificateStandingState.ACTIVE, registration=registration, refreshed_after_miss=refreshed,
+                CertificateStandingState.ACTIVE,
+                registration=registration,
+                refreshed_after_miss=refreshed,
             )
         elif registration.state is RegistrationState.UNAVAILABLE:
             result[certificate_id] = CertificateStanding(
-                CertificateStandingState.UNAVAILABLE, registration.unavailable_cause, registration,
+                CertificateStandingState.UNAVAILABLE,
+                registration.unavailable_cause,
+                registration,
             )
         else:
             result[certificate_id] = CertificateStanding(
-                CertificateStandingState.UNREGISTERED, registration=registration,
+                CertificateStandingState.UNREGISTERED,
+                registration=registration,
             )
     return result
 
@@ -570,16 +642,27 @@ async def current_membership(
     if not row or not (team_id := str(row.get("team_id") or "").strip()):
         return row
     if not current_member(row):
-        return _strip_team_context(row, team_id, "the member is inactive or was accepted under a superseded key")
+        return _strip_team_context(
+            row,
+            team_id,
+            "the member is inactive or was accepted under a superseded key",
+        )
     certificate_id = str(row.get("certificate_id") or "").strip()
     if not certificate_id:
         return row
-    standings = await read_certificate_standings(registry_client, team_id, [certificate_id], request=request)
-    return _with_certificate_standing(row, team_id, certificate_id, standings[certificate_id])
+    standings = await read_certificate_standings(
+        registry_client, team_id, [certificate_id], request=request
+    )
+    return _with_certificate_standing(
+        row, team_id, certificate_id, standings[certificate_id]
+    )
 
 
 def _with_certificate_standing(
-    row: Mapping[str, Any], team_id: str, certificate_id: str, standing: CertificateStanding,
+    row: Mapping[str, Any],
+    team_id: str,
+    certificate_id: str,
+    standing: CertificateStanding,
 ) -> Mapping[str, Any]:
     if standing.state is CertificateStandingState.ACTIVE:
         return row
@@ -590,21 +673,21 @@ def _with_certificate_standing(
             status_code=503,
             detail="Certificate registration is unavailable. Retry in a moment.",
         ) from standing.unavailable_cause
-    return _strip_team_context(row, team_id, f"certificate {certificate_id} is {standing.state}")
-
-
-def _strip_team_context(row: Mapping[str, Any], team_id: str, reason: str) -> Mapping[str, Any]:
-    logger.warning("Team context stripped for alias %r in %s: %s", row.get("alias"), team_id, reason)
-    return {**row, "team_id": None, "alias": None, "agent_id": None}
-
-
-async def current_member_team_ids_for_identity(
-    db, dids: list[str], *, registry_client, read_lock: MemberReadLock = MemberReadLock.NONE
-) -> set[str]:
-    (teams,) = await current_member_team_ids_for_identities(
-        db, dids, registry_client=registry_client, read_lock=read_lock
+    return _strip_team_context(
+        row, team_id, f"certificate {certificate_id} is {standing.state}"
     )
-    return teams
+
+
+def _strip_team_context(
+    row: Mapping[str, Any], team_id: str, reason: str
+) -> Mapping[str, Any]:
+    logger.warning(
+        "Team context stripped for alias %r in %s: %s",
+        row.get("alias"),
+        team_id,
+        reason,
+    )
+    return {**row, "team_id": None, "alias": None, "agent_id": None}
 
 
 async def current_member_team_ids_for_identities(
@@ -619,11 +702,15 @@ async def current_member_team_ids_for_identities(
     admitted membership under the current key. The caller's lock covers the
     combined selection, while each identity keeps its own membership set.
     """
-    scopes = [{did.strip() for did in dids if did and did.strip()} for dids in identities]
+    scopes = [
+        {did.strip() for did in dids if did and did.strip()} for dids in identities
+    ]
     selected = set().union(*scopes)
     if not selected:
         return tuple(set() for _ in scopes)
-    rows = await current_member_projections(db, dids=sorted(selected), read_lock=read_lock)
+    rows = await current_member_projections(
+        db, dids=sorted(selected), read_lock=read_lock
+    )
     projected = [
         (row.verified_identity(), str(row["certificate_id"] or "").strip())
         for row in rows
@@ -635,7 +722,9 @@ async def current_member_team_ids_for_identities(
     # Read after the row selection and any caller-held locks. Each team keeps
     # its own registry origin and each certificate its own standing decision.
     standings_by_team = {
-        team_id: await read_certificate_standings(registry_client, team_id, certificate_ids)
+        team_id: await read_certificate_standings(
+            registry_client, team_id, certificate_ids
+        )
         for team_id, certificate_ids in certificates_by_team.items()
     }
     results = []

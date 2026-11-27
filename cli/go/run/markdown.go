@@ -35,10 +35,6 @@ func renderAssistantText(providerName string, text string, out io.Writer, starts
 	}
 }
 
-func renderCodexAssistantText(text string) string {
-	return prefixAssistantDisplayText(renderCodexAssistantTextWithOptions(text, false, nil), true)
-}
-
 func renderCodexAssistantTextWithOptions(text string, supportsANSI bool, out io.Writer) string {
 	if text == "" {
 		return ""

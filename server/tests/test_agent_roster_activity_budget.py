@@ -12,7 +12,10 @@ from redis.asyncio.client import Pipeline
 
 from aweb import connection_scope
 from aweb.embedding import OutboxRecoveryOwnership
-from aweb.grant_liveness import GrantLivenessFailurePolicy, valid_grant_liveness_by_workspace
+from aweb.grant_liveness import (
+    GrantLivenessFailurePolicy,
+    valid_grant_liveness_by_workspace,
+)
 from aweb.lifecycle_agent import AgentDisposition, apply_agent_disposition_on
 from aweb.presence import clear_workspace_presence, update_agent_presence
 from awid.identity_observation import IdentityKind
@@ -34,7 +37,9 @@ from test_workspace_liveness_http import (
 @pytest_asyncio.fixture
 async def roster_stack(shared_test_pool, monkeypatch, request):
     async with privacy_stack(
-        shared_test_pool, monkeypatch, outbox_recovery=OutboxRecoveryOwnership.HOST,
+        shared_test_pool,
+        monkeypatch,
+        outbox_recovery=OutboxRecoveryOwnership.HOST,
         workspace_counts=getattr(request, "param", None),
     ) as env:
         yield env
@@ -90,26 +95,44 @@ async def test_warm_roster_uses_three_statements_and_one_pool_checkout(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("roster_stack", [{"alice": 2}], indirect=True)
-async def test_roster_projects_presence_for_listed_agent_workspaces(roster_stack, monkeypatch):
+async def test_roster_projects_presence_for_listed_agent_workspaces(
+    roster_stack, monkeypatch
+):
     env = roster_stack
     await admit_room_member(env, alias="alice")
     await admit_room_member(env, alias="carol")
     async with env.db.transaction() as tx:
-        assert await apply_agent_disposition_on(
-            tx, agent_ids=[env.actors["carol"].id], team_id=TEAM,
-            disposition=AgentDisposition.DELETED, deleted_at=datetime.now(UTC),
-        ) == 1
+        assert (
+            await apply_agent_disposition_on(
+                tx,
+                agent_ids=[env.actors["carol"].id],
+                team_id=TEAM,
+                disposition=AgentDisposition.DELETED,
+                deleted_at=datetime.now(UTC),
+            )
+            == 1
+        )
     alice_workspace, alternate_workspace = map(str, env.actors["alice"].workspace_ids)
     hidden = await admit_messaging_actor(
-        env, team_id=TEAM, alias="roster-human", kind=IdentityKind.HUMAN,
+        env,
+        team_id=TEAM,
+        alias="roster-human",
+        kind=IdentityKind.HUMAN,
     )
     await update_agent_presence(
-        env.redis, workspace_id=hidden.workspace_id, alias="roster-human",
-        team_id=TEAM, status="active",
+        env.redis,
+        workspace_id=hidden.workspace_id,
+        alias="roster-human",
+        team_id=TEAM,
+        status="active",
     )
     seen = await update_agent_presence(
-        env.redis, workspace_id=alternate_workspace, alias="alice", team_id=TEAM,
-        status="listening", role="alternate-role",
+        env.redis,
+        workspace_id=alternate_workspace,
+        alias="alice",
+        team_id=TEAM,
+        status="listening",
+        role="alternate-role",
     )
     await env.redis.hset(f"presence:{alternate_workspace}", "unshown_blob", "x" * 4096)
     presence_reads = []
@@ -117,7 +140,8 @@ async def test_roster_projects_presence_for_listed_agent_workspaces(roster_stack
 
     async def observe_execute(pipeline, *args, **kwargs):
         presence_reads.extend(
-            command for command, _ in pipeline.command_stack
+            command
+            for command, _ in pipeline.command_stack
             if command[0] in ("HMGET", "HGETALL") and command[1].startswith("presence:")
         )
         return await execute(pipeline, *args, **kwargs)
@@ -135,7 +159,8 @@ async def test_roster_projects_presence_for_listed_agent_workspaces(roster_stack
     assert {f"presence:{alice_workspace}", f"presence:{alternate_workspace}"} <= keys
     assert all(
         command[0] == "HMGET"
-        and set(command[2:]) == {"workspace_id", "team_id", "last_seen", "status", "role"}
+        and set(command[2:])
+        == {"workspace_id", "team_id", "last_seen", "status", "role"}
         for command in presence_reads
     )
 
@@ -161,21 +186,33 @@ async def test_roster_checks_distinct_grant_issuer_with_configured_registration(
     catalogs = client_type.list_team_certificates
     checked_ids, active_views = [], []
 
-    async def observe_revocations(client, domain, name, certificate_ids, *, fresh=False):
+    async def observe_revocations(
+        client, domain, name, certificate_ids, *, fresh=False
+    ):
         if client is sdk:
             checked_ids.extend(certificate_ids)
         return await revocations(client, domain, name, certificate_ids, fresh=fresh)
 
-    async def observe_catalog(client, domain, name, *, active_only=True, signing_key=None):
+    async def observe_catalog(
+        client, domain, name, *, active_only=True, signing_key=None
+    ):
         if client is sdk:
             active_views.append(active_only)
-        return await catalogs(client, domain, name, active_only=active_only, signing_key=signing_key)
+        return await catalogs(
+            client, domain, name, active_only=active_only, signing_key=signing_key
+        )
 
-    monkeypatch.setattr(client_type, "get_team_revocations_for_certificates", observe_revocations)
+    monkeypatch.setattr(
+        client_type, "get_team_revocations_for_certificates", observe_revocations
+    )
     monkeypatch.setattr(client_type, "list_team_certificates", observe_catalog)
-    response = await _send_member_request(env, alias="bob", method="GET", path="/v1/agents")
+    response = await _send_member_request(
+        env, alias="bob", method="GET", path="/v1/agents"
+    )
     assert response.status_code == 200, response.text
-    alice = next(agent for agent in response.json()["agents"] if agent["alias"] == "alice")
+    alice = next(
+        agent for agent in response.json()["agents"] if agent["alias"] == "alice"
+    )
     assert datetime.fromisoformat(alice["last_seen"]) == grant_seen
     assert checked_ids == [viewer["certificate_id"], issuer["certificate_id"]]
     assert active_views == ([False, False] if required else [])
@@ -184,20 +221,26 @@ async def test_roster_checks_distinct_grant_issuer_with_configured_registration(
     checked_ids.clear()
     active_views.clear()
     agents = await roster(env)
-    assert datetime.fromisoformat(next(
-        agent["last_seen"] for agent in agents if agent["alias"] == "alice"
-    )) == grant_seen
+    assert (
+        datetime.fromisoformat(
+            next(agent["last_seen"] for agent in agents if agent["alias"] == "alice")
+        )
+        == grant_seen
+    )
     assert checked_ids == [issuer["certificate_id"]]
     assert active_views == ([False] if required else [])
 
     await sdk.revoke_team_certificate(
-        domain, name,
+        domain,
+        name,
         team_controller_signing_key=env.team_sk,
         certificate_id=issuer["certificate_id"],
     )
     checked_ids.clear()
     active_views.clear()
-    response = await _send_member_request(env, alias="bob", method="GET", path="/v1/agents")
+    response = await _send_member_request(
+        env, alias="bob", method="GET", path="/v1/agents"
+    )
     assert response.status_code == 200, response.text
     assert checked_ids == [viewer["certificate_id"], issuer["certificate_id"]]
     assert all(
@@ -209,11 +252,13 @@ async def test_roster_checks_distinct_grant_issuer_with_configured_registration(
 
 async def _publish_grant_liveness(env, actor):
     session_key, session_did = _session_keypair()
-    body = json.dumps({
-        "grant_did_key": session_did,
-        "scopes": ["presence.write"],
-        "ttl_seconds": 600,
-    }).encode()
+    body = json.dumps(
+        {
+            "grant_did_key": session_did,
+            "scopes": ["presence.write"],
+            "ttl_seconds": 600,
+        }
+    ).encode()
     minted = await env.client.post(
         "/v1/identity-grants",
         content=body,
@@ -242,7 +287,9 @@ async def _publish_grant_liveness(env, actor):
 
 
 @pytest.mark.asyncio
-async def test_liveness_batches_twenty_two_live_issuers_by_team(roster_stack, monkeypatch):
+async def test_liveness_batches_twenty_two_live_issuers_by_team(
+    roster_stack, monkeypatch
+):
     env = roster_stack
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
     other_team = f"budget-{uuid4().hex[:12]}:example.test"
@@ -253,11 +300,18 @@ async def test_liveness_batches_twenty_two_live_issuers_by_team(roster_stack, mo
         certificate_ids[team] = set()
         for index in range(size):
             actor = await admit_messaging_actor(
-                env, team_id=team, alias=f"budget-{index}", local=True,
+                env,
+                team_id=team,
+                alias=f"budget-{index}",
+                local=True,
             )
             grants[team][actor.workspace_id] = await _publish_grant_liveness(env, actor)
-            certificate_ids[team].add(json.loads(base64.b64decode(actor.certificate))["certificate_id"])
-    workspace_ids = [workspace for team_grants in grants.values() for workspace in team_grants]
+            certificate_ids[team].add(
+                json.loads(base64.b64decode(actor.certificate))["certificate_id"]
+            )
+    workspace_ids = [
+        workspace for team_grants in grants.values() for workspace in team_grants
+    ]
 
     sdk = env.app.state.awid_registry_client
     client_type = type(sdk)
@@ -273,8 +327,12 @@ async def test_liveness_batches_twenty_two_live_issuers_by_team(roster_stack, mo
                 raise RegistryError("fixture authority suspended", status_code=503)
         return await get_revocations(client, domain, name, ids, fresh=fresh)
 
-    monkeypatch.setattr(client_type, "get_team_revocations_for_certificates", observe_revocations)
-    result = await valid_grant_liveness_by_workspace(env.db, workspace_ids, registry_client=sdk)
+    monkeypatch.setattr(
+        client_type, "get_team_revocations_for_certificates", observe_revocations
+    )
+    result = await valid_grant_liveness_by_workspace(
+        env.db, workspace_ids, registry_client=sdk
+    )
     assert {workspace: str(row["grant_id"]) for workspace, row in result.items()} == (
         grants[TEAM] | grants[other_team]
     )
@@ -282,13 +340,19 @@ async def test_liveness_batches_twenty_two_live_issuers_by_team(roster_stack, mo
 
     unavailable = True
     reads.clear()
-    result = await valid_grant_liveness_by_workspace(env.db, workspace_ids, registry_client=sdk)
-    assert {workspace: str(row["grant_id"]) for workspace, row in result.items()} == grants[TEAM]
+    result = await valid_grant_liveness_by_workspace(
+        env.db, workspace_ids, registry_client=sdk
+    )
+    assert {
+        workspace: str(row["grant_id"]) for workspace, row in result.items()
+    } == grants[TEAM]
     assert sorted(reads) == sorted(certificate_ids.items())
 
     with pytest.raises(HTTPException) as refusal:
         await valid_grant_liveness_by_workspace(
-            env.db, workspace_ids, registry_client=sdk,
+            env.db,
+            workspace_ids,
+            registry_client=sdk,
             failure_policy=GrantLivenessFailurePolicy.REQUIRE_KNOWN,
         )
     assert refusal.value.status_code == 503
@@ -314,8 +378,11 @@ async def test_listening_roster_keeps_the_newest_activity_source(roster_stack, n
                 )
             elif name == "redis":
                 await update_agent_presence(
-                    env.redis, workspace_id=str(actor.workspace), alias="alice",
-                    team_id=TEAM, status="listening",
+                    env.redis,
+                    workspace_id=str(actor.workspace),
+                    alias="alice",
+                    team_id=TEAM,
+                    status="listening",
                 )
                 times[name] = datetime.fromisoformat(
                     await env.redis.hget(f"presence:{actor.workspace}", "last_seen")

@@ -1,8 +1,10 @@
-.PHONY: test lint
+.PHONY: test lint typecheck
 
 test:
 	uv run pytest -q
 
-lint:
+lint: typecheck
 	uv run ruff check .
+
+typecheck:
 	uv run mypy src

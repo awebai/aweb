@@ -34,17 +34,29 @@ def identity_vectors():
 
 @pytest.fixture
 def register_vector(identity_vectors):
-    return next(entry for entry in identity_vectors["entries"] if entry["name"] == "register_did")
+    return next(
+        entry
+        for entry in identity_vectors["entries"]
+        if entry["name"] == "register_did"
+    )
 
 
 def _register_body(register_vector: dict) -> dict:
-    return {**register_vector["entry_payload"], "proof": register_vector["signature_b64"]}
+    return {
+        **register_vector["entry_payload"],
+        "proof": register_vector["signature_b64"],
+    }
 
 
 def _signed_get_headers(identity_vectors: dict, path: str) -> dict[str, str]:
     seed = bytes.fromhex(identity_vectors["key_seeds"]["initial_seed_hex"])
     did_key = identity_vectors["mapping"]["initial_did_key"]
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     payload = f"{timestamp}\nGET\n{path}".encode("utf-8")
     return {
         "Authorization": f"DIDKey {did_key} {sign_message(seed, payload)}",
@@ -106,8 +118,14 @@ async def test_register_did_accepts_identity_only_vector(
         authorized_by=body["authorized_by"],
         timestamp=body["timestamp"],
     )
-    assert expected_entry_payload.decode("utf-8") == register_vector["canonical_entry_payload"]
-    assert hashlib.sha256(expected_entry_payload).hexdigest() == register_vector["entry_hash"]
+    assert (
+        expected_entry_payload.decode("utf-8")
+        == register_vector["canonical_entry_payload"]
+    )
+    assert (
+        hashlib.sha256(expected_entry_payload).hexdigest()
+        == register_vector["entry_hash"]
+    )
 
     response = await client.post("/v1/did", json=body)
     assert response.status_code == 200, response.text
@@ -129,7 +147,9 @@ async def test_register_did_accepts_identity_only_vector(
     assert mapping["did_aw"] == body["did_aw"]
     assert mapping["current_did_key"] == body["new_did_key"]
 
-    expected_state_hash = identity_state_hash(did_aw=body["did_aw"], current_did_key=body["new_did_key"])
+    expected_state_hash = identity_state_hash(
+        did_aw=body["did_aw"], current_did_key=body["new_did_key"]
+    )
     assert expected_state_hash == register_vector["state_hash"]
 
     log_entry = await db.fetch_one(
@@ -180,7 +200,9 @@ async def test_register_did_accepts_identity_only_vector(
 
 
 @pytest.mark.asyncio
-async def test_register_did_is_idempotent_for_same_pair(client, awid_db_infra, register_vector):
+async def test_register_did_is_idempotent_for_same_pair(
+    client, awid_db_infra, register_vector
+):
     body = _register_body(register_vector)
 
     first = await client.post("/v1/did", json=body)
@@ -212,7 +234,9 @@ async def test_register_did_conflicts_for_existing_did_aw_with_different_key(
     conflict_body["new_did_key"] = identity_vectors["mapping"]["rotated_did_key"]
     conflict_body["authorized_by"] = identity_vectors["mapping"]["rotated_did_key"]
     conflict_body["state_hash"] = next(
-        entry["state_hash"] for entry in identity_vectors["entries"] if entry["name"] == "rotate_key"
+        entry["state_hash"]
+        for entry in identity_vectors["entries"]
+        if entry["name"] == "rotate_key"
     )
     conflict_body["proof"] = "not-checked-for-conflict"
 
@@ -281,14 +305,18 @@ async def test_publish_identity_encryption_key_and_resolve_from_key_endpoint(
     assert register.status_code == 200, register.text
 
     body = _encryption_assertion_body(identity_vectors)
-    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    publish = await client.post(
+        f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body
+    )
     assert publish.status_code == 200, publish.text
     assert publish.json() == body
 
     key_response = await client.get(f"/v1/did/{body['identity_stable_id']}/key")
     assert key_response.status_code == 200, key_response.text
     key_payload = key_response.json()
-    assert key_payload["encryption_key"]["encryption_key_id"] == body["encryption_key_id"]
+    assert (
+        key_payload["encryption_key"]["encryption_key_id"] == body["encryption_key_id"]
+    )
     assert key_payload["encryption_key"]["identity_did"] == body["identity_did"]
     assert key_payload["encryption_key"]["signature"] == body["signature"]
 
@@ -303,7 +331,9 @@ async def test_publish_identity_encryption_key_preserves_signed_custody(
     assert register.status_code == 200, register.text
 
     body = _encryption_assertion_body(identity_vectors, custody="self")
-    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    publish = await client.post(
+        f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body
+    )
     assert publish.status_code == 200, publish.text
     assert publish.json()["custody"] == "self"
 
@@ -324,7 +354,9 @@ async def test_publish_identity_encryption_key_rejects_unsigned_custody_mutation
     body = _encryption_assertion_body(identity_vectors)
     body["custody"] = "self"
 
-    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    publish = await client.post(
+        f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body
+    )
     assert publish.status_code == 422, publish.text
     assert "invalid signature" in publish.text
 
@@ -351,16 +383,25 @@ async def test_replayed_older_encryption_key_does_not_roll_back_current_key(
         not_before="2026-05-26T00:01:00Z",
     )
 
-    first = await client.post(f"/v1/did/{older['identity_stable_id']}/encryption-key", json=older)
+    first = await client.post(
+        f"/v1/did/{older['identity_stable_id']}/encryption-key", json=older
+    )
     assert first.status_code == 200, first.text
-    second = await client.post(f"/v1/did/{newer['identity_stable_id']}/encryption-key", json=newer)
+    second = await client.post(
+        f"/v1/did/{newer['identity_stable_id']}/encryption-key", json=newer
+    )
     assert second.status_code == 200, second.text
-    replay = await client.post(f"/v1/did/{older['identity_stable_id']}/encryption-key", json=older)
+    replay = await client.post(
+        f"/v1/did/{older['identity_stable_id']}/encryption-key", json=older
+    )
     assert replay.status_code == 200, replay.text
 
     key_response = await client.get(f"/v1/did/{older['identity_stable_id']}/key")
     assert key_response.status_code == 200, key_response.text
-    assert key_response.json()["encryption_key"]["encryption_key_id"] == newer["encryption_key_id"]
+    assert (
+        key_response.json()["encryption_key"]["encryption_key_id"]
+        == newer["encryption_key_id"]
+    )
 
 
 @pytest.mark.asyncio
@@ -376,7 +417,9 @@ async def test_publish_identity_encryption_key_rejects_controller_substitution(
     body["identity_did"] = identity_vectors["mapping"]["rotated_did_key"]
     body["signature"] = "invalid"
 
-    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    publish = await client.post(
+        f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body
+    )
     assert publish.status_code == 422, publish.text
     assert "identity_did must match current did:key" in publish.text
 
@@ -397,7 +440,9 @@ async def test_publish_identity_encryption_key_rejects_key_id_mismatch(
         canonical_json_bytes({k: v for k, v in body.items() if k != "signature"}),
     )
 
-    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    publish = await client.post(
+        f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body
+    )
     assert publish.status_code == 422, publish.text
     assert "encryption_key_id does not match" in publish.text
 
@@ -412,6 +457,8 @@ async def test_publish_identity_encryption_key_rejects_expired_assertion(
     assert register.status_code == 200, register.text
 
     body = _encryption_assertion_body(identity_vectors, expired=True)
-    publish = await client.post(f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body)
+    publish = await client.post(
+        f"/v1/did/{body['identity_stable_id']}/encryption-key", json=body
+    )
     assert publish.status_code == 422, publish.text
     assert "expired" in publish.text

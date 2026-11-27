@@ -36,9 +36,14 @@ async def test_empty_signing_key_and_empty_marker_cannot_attribute_global_metada
         assert before[str(actor.id)]["address"] == address
         member = await read_member_projection(env.db, agent_id=actor.id)
         assert member is not None
-        historical = MemberProjection.from_row({
-            **dict(member), "did_key": "", "did_aw_verified_key": "", "address": "identity.test/forged-claim",
-        })
+        historical = MemberProjection.from_row(
+            {
+                **dict(member),
+                "did_key": "",
+                "did_aw_verified_key": "",
+                "address": "identity.test/forged-claim",
+            }
+        )
         assert historical.verified_identity()["did_aw"] is None
         assert historical.verified_identity()["address"] is None
 
@@ -49,6 +54,9 @@ async def test_empty_signing_key_and_empty_marker_cannot_attribute_global_metada
                        {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address
                 FROM (VALUES ($1::text, $2::text, $3::text, $4::text))
                    AS history(did_key, did_aw_verified_key, did_aw, address)""",
-            historical["did_key"], historical["did_aw_verified_key"], historical["did_aw"], historical["address"],
+            historical["did_key"],
+            historical["did_aw_verified_key"],
+            historical["did_aw"],
+            historical["address"],
         )
         assert dict(projected) == {"did_aw": None, "address": None}

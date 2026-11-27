@@ -60,7 +60,8 @@ async def test_retired_identity_continuation_refuses_new_alias_mail_reaches_repl
     assert detail["message"] == f"bob has moved; start a new mail to bob in {TEAM}"
     assert (
         await env.db.fetch_val(
-            "SELECT count(*) FROM {{tables.messages}} WHERE conversation_id=$1", UUID(cid)
+            "SELECT count(*) FROM {{tables.messages}} WHERE conversation_id=$1",
+            UUID(cid),
         )
         == 1
     )
@@ -84,14 +85,19 @@ async def test_retired_identity_continuation_refuses_new_alias_mail_reaches_repl
 
 
 @pytest.mark.asyncio
-async def test_mcp_retired_continuation_keeps_original_thread_and_does_not_sign(mail_server):
+async def test_mcp_retired_continuation_keeps_original_thread_and_does_not_sign(
+    mail_server,
+):
     env = mail_server
     first = await env.mcp_mail(to="human", plaintext=True)
     await env.db.execute(
-        "UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE agent_id=$1", UUID(env.human)
+        "UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE agent_id=$1",
+        UUID(env.human),
     )
     count = len(env.custody.payloads)
-    refused = await env.mcp_mail(conversation_id=first["conversation_id"], plaintext=True)
+    refused = await env.mcp_mail(
+        conversation_id=first["conversation_id"], plaintext=True
+    )
     assert isinstance(refused.get("error"), dict), refused
     assert refused["error"]["code"] == "participant_retired", refused
     assert len(env.custody.payloads) == count
@@ -99,7 +105,9 @@ async def test_mcp_retired_continuation_keeps_original_thread_and_does_not_sign(
 
 
 @pytest.mark.asyncio
-async def test_deleted_membership_does_not_retire_a_still_live_identity(addressed_human):
+async def test_deleted_membership_does_not_retire_a_still_live_identity(
+    addressed_human,
+):
     env = addressed_human.env
     actor = env.actors["bob"]
 
@@ -110,7 +118,9 @@ async def test_deleted_membership_does_not_retire_a_still_live_identity(addresse
             content=content,
             headers={
                 "Content-Type": "application/json",
-                **_signed_identity_headers(actor.sk, actor.did, env.stable["bob"], content),
+                **_signed_identity_headers(
+                    actor.sk, actor.did, env.stable["bob"], content
+                ),
             },
         )
 
@@ -119,7 +129,8 @@ async def test_deleted_membership_does_not_retire_a_still_live_identity(addresse
     )
     assert first.status_code == 200, first.text
     await env.db.execute(
-        "UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE agent_id=$1", env.actors["alice"].id
+        "UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE agent_id=$1",
+        env.actors["alice"].id,
     )
     continued = await send(
         {"conversation_id": first.json()["conversation_id"], "body": "same identity"}

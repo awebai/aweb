@@ -62,7 +62,9 @@ class LedgerLease:
         rows = delta.splitlines(keepends=True)
         for row in rows:
             fields = row.rstrip(b"\n").split(b"\t")
-            if len(fields) != 10 or not fields[0].startswith((self.tree + "-").encode()):
+            if len(fields) != 10 or not fields[0].startswith(
+                (self.tree + "-").encode()
+            ):
                 raise Infrastructure(
                     "VM ledger appended malformed or unrelated-tree rows"
                 )

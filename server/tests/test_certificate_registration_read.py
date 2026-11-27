@@ -27,7 +27,9 @@ async def test_registration_unavailability_preserves_the_configured_requirement(
         mode=mode,
     )
     decision = evaluate_certificate_registration(
-        observation=facts, certificate_id="member", mode=mode,
+        observation=facts,
+        certificate_id="member",
+        mode=mode,
     )
     assert decision.state is RegistrationState.UNAVAILABLE
     assert decision.unavailable_cause is not None

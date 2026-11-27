@@ -24,7 +24,7 @@ from awid_service.db import AwidDatabaseInfra
 from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app
 
-pytest_plugins = ("awid_service.testing_postgres",)
+pytest_plugins = ("pgdbm.fixtures.conftest",)
 
 os.environ.setdefault("APP_ENV", "testing")
 os.environ.setdefault("ENVIRONMENT", "testing")
@@ -107,13 +107,20 @@ async def client(awid_db_infra, fake_redis, fake_domain_verifier):
     app.dependency_overrides[get_domain_verifier] = lambda: fake_domain_verifier
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as test_client:
             yield test_client
 
 
 def build_signed_headers(signing_key, did_key, *, domain, operation, **extra):
     """Build DIDKey Authorization + Timestamp headers for a signed request."""
-    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    ts = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     payload = {"domain": domain, "operation": operation, "timestamp": ts}
     payload.update(extra)
     sig = sign_message(signing_key, canonical_json_bytes(payload))
@@ -145,13 +152,15 @@ async def clocked_client(awid_db_infra, fake_redis, fake_domain_verifier, manual
     app.state.id_tree_clock = manual_clock
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as test_client:
             test_client.app = app
             yield test_client
 
 
-CONTROLLER_ORIGIN = 'http://registry.test'
-CONTROLLER_REQUEST_TYPE = 'aweb.awid-controller-request'
+CONTROLLER_ORIGIN = "http://registry.test"
+CONTROLLER_REQUEST_TYPE = "aweb.awid-controller-request"
 
 
 def controller_keypair():
@@ -159,48 +168,114 @@ def controller_keypair():
     return key, did_from_public_key(public)
 
 
-def controller_request_headers(key, did, claims, method, path, body=b'', *, covering=True, overrides=None, parent=False):
+def controller_request_headers(
+    key,
+    did,
+    claims,
+    method,
+    path,
+    body=b"",
+    *,
+    covering=True,
+    overrides=None,
+    parent=False,
+):
     timestamp = datetime.now(timezone.utc).isoformat()
-    payload = {**claims, 'timestamp': timestamp}
+    payload = {**claims, "timestamp": timestamp}
     if covering:
-        payload.update(v=2, type=CONTROLLER_REQUEST_TYPE, aud=CONTROLLER_ORIGIN, method=method, path=path, body_sha256=hashlib.sha256(body).hexdigest())
+        payload.update(
+            v=2,
+            type=CONTROLLER_REQUEST_TYPE,
+            aud=CONTROLLER_ORIGIN,
+            method=method,
+            path=path,
+            body_sha256=hashlib.sha256(body).hexdigest(),
+        )
     payload.update(overrides or {})
     canonical = canonical_json_bytes(payload)
-    prefix = 'X-AWEB-Parent-' if parent else 'X-AWEB-'
+    prefix = "X-AWEB-Parent-" if parent else "X-AWEB-"
     result = {
-        'X-AWEB-Parent-Authorization' if parent else 'Authorization': f'DIDKey {did} {sign_message(key, canonical)}',
-        prefix + 'Timestamp': timestamp,
+        "X-AWEB-Parent-Authorization"
+        if parent
+        else "Authorization": f"DIDKey {did} {sign_message(key, canonical)}",
+        prefix + "Timestamp": timestamp,
     }
     if covering:
-        result[prefix + 'Signed-Payload'] = base64.urlsafe_b64encode(canonical).rstrip(b'=').decode()
+        result[prefix + "Signed-Payload"] = (
+            base64.urlsafe_b64encode(canonical).rstrip(b"=").decode()
+        )
     return result
 
 
-async def send_controller_request(env, method, path, claims, body=None, *, signer=None, covering=True, overrides=None):
-    content = json.dumps(body, separators=(',', ':'), ensure_ascii=False).encode() if body is not None else b''
+async def send_controller_request(
+    env, method, path, claims, body=None, *, signer=None, covering=True, overrides=None
+):
+    content = (
+        json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode()
+        if body is not None
+        else b""
+    )
     key, did = signer or env.controller
-    signed = controller_request_headers(key, did, claims, method, path, content, covering=covering, overrides=overrides)
-    return await env.client.request(method, path, content=content, headers={**signed, 'Content-Type': 'application/json'})
+    signed = controller_request_headers(
+        key, did, claims, method, path, content, covering=covering, overrides=overrides
+    )
+    return await env.client.request(
+        method,
+        path,
+        content=content,
+        headers={**signed, "Content-Type": "application/json"},
+    )
 
 
 @pytest_asyncio.fixture
 async def controller_app(awid_db_infra):
     # Real limiter and isolated client-IP bucket; remove only this fixture's keys.
-    ip = '127.' + '.'.join(str(n) for n in os.urandom(3))
-    async with Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'), decode_responses=True) as redis:
+    ip = "127." + ".".join(str(n) for n in os.urandom(3))
+    async with Redis.from_url(
+        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+    ) as redis:
         await redis.ping()
         app = create_app(db_infra=awid_db_infra, redis=redis)
         app.state.awid_public_origins = (CONTROLLER_ORIGIN,)
         async with app.router.lifespan_context(app):
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=(ip, 12345)), base_url=CONTROLLER_ORIGIN) as client:
-                env = SimpleNamespace(app=app, client=client, db=awid_db_infra.get_manager(), controller=controller_keypair(), team=controller_keypair())
-                response = await send_controller_request(env, 'POST', '/v1/namespaces', {'domain': 'local', 'operation': 'register'}, {'domain': 'local'}, covering=False)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app, client=(ip, 12345)),
+                base_url=CONTROLLER_ORIGIN,
+            ) as client:
+                env = SimpleNamespace(
+                    app=app,
+                    client=client,
+                    db=awid_db_infra.get_manager(),
+                    controller=controller_keypair(),
+                    team=controller_keypair(),
+                )
+                response = await send_controller_request(
+                    env,
+                    "POST",
+                    "/v1/namespaces",
+                    {"domain": "local", "operation": "register"},
+                    {"domain": "local"},
+                    covering=False,
+                )
                 assert response.status_code == 200, response.text
-                response = await send_controller_request(env, 'POST', '/v1/namespaces/local/teams', {'domain': 'local', 'operation': 'create_team', 'name': 'base'}, {'name': 'base', 'team_did_key': env.team[1], 'visibility': 'public'}, covering=False)
+                response = await send_controller_request(
+                    env,
+                    "POST",
+                    "/v1/namespaces/local/teams",
+                    {"domain": "local", "operation": "create_team", "name": "base"},
+                    {
+                        "name": "base",
+                        "team_did_key": env.team[1],
+                        "visibility": "public",
+                    },
+                    covering=False,
+                )
                 assert response.status_code == 200, response.text
                 try:
                     yield env
                 finally:
-                    owned = [key async for key in redis.scan_iter(match=f'aweb:rl:*:{ip}:*')]
+                    owned = [
+                        key async for key in redis.scan_iter(match=f"aweb:rl:*:{ip}:*")
+                    ]
                     if owned:
                         await redis.delete(*owned)

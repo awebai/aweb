@@ -23,7 +23,14 @@ def test_stack_follows_the_allocation_a_gate_passes_in() -> None:
 
     assert stack.awid_url == "http://aweb-docker.test:41001"
     assert stack.postgres_url == "postgresql://folio:folio@aweb-docker.test:41002/folio"
-    assert stack.compose == ["docker", "compose", "-p", "gate-run-folio", "-f", "docker-compose.e2e.yml"]
+    assert stack.compose == [
+        "docker",
+        "compose",
+        "-p",
+        "gate-run-folio",
+        "-f",
+        "docker-compose.e2e.yml",
+    ]
 
 
 def test_candidate_stack_uses_its_owned_compose_network() -> None:
@@ -38,6 +45,16 @@ def test_candidate_stack_uses_its_owned_compose_network() -> None:
     )
 
     assert stack.awid_url == f"http://{candidate_hostname('gate-run-folio', 'awid')}:8010"
-    assert stack.postgres_url == f"postgresql://folio:folio@{candidate_hostname('gate-run-folio', 'postgres')}:5432/folio"
+    assert (
+        stack.postgres_url
+        == f"postgresql://folio:folio@{candidate_hostname('gate-run-folio', 'postgres')}:5432/folio"
+    )
     assert stack.redis_url == f"redis://{candidate_hostname('gate-run-folio', 'redis')}:6379/0"
-    assert stack.compose == ["docker", "compose", "-p", "gate-run-folio", "-f", "docker-compose.e2e.yml"]
+    assert stack.compose == [
+        "docker",
+        "compose",
+        "-p",
+        "gate-run-folio",
+        "-f",
+        "docker-compose.e2e.yml",
+    ]

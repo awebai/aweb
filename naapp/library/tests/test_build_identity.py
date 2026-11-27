@@ -30,9 +30,9 @@ def test_health_reports_render_build_commit(monkeypatch: pytest.MonkeyPatch) -> 
     _clear_build_environment(monkeypatch)
     monkeypatch.setenv("RENDER_GIT_COMMIT", _SHA_A)
 
-    response = TestClient(
-        create_app(Settings(public_origin="https://library.aweb.ai"))
-    ).get("/health")
+    response = TestClient(create_app(Settings(public_origin="https://library.aweb.ai"))).get(
+        "/health"
+    )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -51,9 +51,9 @@ def test_health_reports_automatic_render_deployment_identity(
     monkeypatch.setenv("RENDER_REGION", "oregon")
     monkeypatch.setenv("RENDER_API_KEY", "must-not-be-public")
 
-    response = TestClient(
-        create_app(Settings(public_origin="https://library.aweb.ai"))
-    ).get("/health")
+    response = TestClient(create_app(Settings(public_origin="https://library.aweb.ai"))).get(
+        "/health"
+    )
 
     assert response.status_code == 200
     assert response.json() == {

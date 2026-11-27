@@ -78,7 +78,9 @@ def _request(sent: datetime) -> Request:
         (b"authorization", b"DIDKey did:key:z6Mkhx c2lnbmF0dXJl"),
         (b"x-aweb-timestamp", sent.strftime("%Y-%m-%dT%H:%M:%SZ").encode()),
     ]
-    return Request({"type": "http", "method": "GET", "path": "/", "query_string": b"", "headers": headers})
+    return Request(
+        {"type": "http", "method": "GET", "path": "/", "query_string": b"", "headers": headers}
+    )
 
 
 @pytest.mark.asyncio
@@ -124,7 +126,9 @@ def test_a_setting_past_its_limit_stops_the_service_from_starting(
     monkeypatch.setenv(f"LIBRARY_{setting.upper()}", str(limit * 10))
     with pytest.raises(ValidationError) as from_env:
         Settings()
-    assert setting in str(from_env.value) and f"less than or equal to {limit}" in str(from_env.value)
+    assert setting in str(from_env.value) and f"less than or equal to {limit}" in str(
+        from_env.value
+    )
 
 
 def test_a_cache_cannot_be_made_to_keep_team_facts_longer_than_the_limit() -> None:

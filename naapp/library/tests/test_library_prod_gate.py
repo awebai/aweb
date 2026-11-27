@@ -162,7 +162,9 @@ def test_recovery_rejects_unrelated_nonzero_exit(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
     with pytest.raises(gate.GateError, match="expected schema rejection"):
-        gate.require_recovery_rejection(Path("/usr/bin/false"), home, "pi", tmp_path, expected_ref="developer")
+        gate.require_recovery_rejection(
+            Path("/usr/bin/false"), home, "pi", tmp_path, expected_ref="developer"
+        )
 
 
 def test_recovery_accepts_only_exact_schema_rejection(
@@ -180,7 +182,9 @@ def test_recovery_accepts_only_exact_schema_rejection(
     monkeypatch.setattr(gate.subprocess, "run", expected_failure)
     home = tmp_path / "home"
     home.mkdir()
-    result = gate.require_recovery_rejection(Path("/released/aw"), home, "pi", tmp_path, expected_ref="developer")
+    result = gate.require_recovery_rejection(
+        Path("/released/aw"), home, "pi", tmp_path, expected_ref="developer"
+    )
     assert result["exit"] == 1
 
 
@@ -260,9 +264,7 @@ def test_materialized_ref_rejects_broken_or_escaping_symlinks(tmp_path: Path) ->
         )
 
 
-def test_released_aw_version_is_exact(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_released_aw_version_is_exact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     binary = tmp_path / "aw"
     binary.write_bytes(b"reviewed aw fixture")
 
@@ -313,7 +315,9 @@ def test_wrong_interpreter_or_entrypoint_artifact_is_refused(tmp_path: Path) -> 
 
 def test_harness_artifact_overrides_are_not_exposed() -> None:
     with pytest.raises(SystemExit):
-        gate.parser().parse_args(["candidate", "--expected-profile-ref", "developer", "--pi-bin", "/tmp/fake-pi"])
+        gate.parser().parse_args(
+            ["candidate", "--expected-profile-ref", "developer", "--pi-bin", "/tmp/fake-pi"]
+        )
 
 
 def test_fake_pi_printing_expected_lines_is_refused(tmp_path: Path) -> None:
@@ -447,10 +451,7 @@ def test_origin_connect_tunnel_routes_only_the_canonical_authority() -> None:
             origin_url=f"https://127.0.0.1:{upstream.server_address[1]}",
         ) as tunnel:
             with socket.create_connection(tunnel.address, timeout=2) as client:
-                client.sendall(
-                    b"CONNECT 127.0.0.2:443 HTTP/1.1\r\n"
-                    b"Host: 127.0.0.2:443\r\n\r\n"
-                )
+                client.sendall(b"CONNECT 127.0.0.2:443 HTTP/1.1\r\nHost: 127.0.0.2:443\r\n\r\n")
                 response = client.recv(4096)
                 assert response.startswith(b"HTTP/1.1 200 Connection Established\r\n")
                 client.sendall(b"origin probe")
@@ -462,8 +463,7 @@ def test_origin_connect_tunnel_routes_only_the_canonical_authority() -> None:
 
             with socket.create_connection(tunnel.address, timeout=2) as client:
                 client.sendall(
-                    b"CONNECT attacker.example:443 HTTP/1.1\r\n"
-                    b"Host: attacker.example:443\r\n\r\n"
+                    b"CONNECT attacker.example:443 HTTP/1.1\r\nHost: attacker.example:443\r\n\r\n"
                 )
                 assert client.recv(4096).startswith(b"HTTP/1.1 403 Forbidden\r\n")
             assert tunnel.connection_attempts == 2
@@ -506,12 +506,9 @@ def test_origin_connect_tunnel_uses_only_startup_dns(
             startup_complete = True
             with socket.create_connection(tunnel.address, timeout=2) as client:
                 client.sendall(
-                    b"CONNECT public.invalid:443 HTTP/1.1\r\n"
-                    b"Host: public.invalid:443\r\n\r\n"
+                    b"CONNECT public.invalid:443 HTTP/1.1\r\nHost: public.invalid:443\r\n\r\n"
                 )
-                assert client.recv(4096).startswith(
-                    b"HTTP/1.1 200 Connection Established\r\n"
-                )
+                assert client.recv(4096).startswith(b"HTTP/1.1 200 Connection Established\r\n")
                 client.sendall(b"pinned DNS")
                 assert client.recv(1024) == b"pinned DNS"
             assert tunnel.peer_ip == "127.0.0.1"
@@ -1003,9 +1000,7 @@ def test_current_incumbent_make_target_does_not_shell_interpolate_identity() -> 
         capture_output=True,
     )
     assert "INJECTED" not in completed.stdout
-    recipe_lines = [
-        line for line in completed.stdout.splitlines() if not line.startswith("make[")
-    ]
+    recipe_lines = [line for line in completed.stdout.splitlines() if not line.startswith("make[")]
     assert recipe_lines == ["uv run python scripts/library_prod_gate.py current-incumbent"]
 
 
@@ -1075,16 +1070,28 @@ def test_shelf_pin_recomputes_created_profile_digest_from_actual_source_files(ru
     from library.digest import PROFILE_PAYLOAD_SCHEMA, payload_digest
 
     files = [
-        {"path": "profile.yaml", "content_utf8": "id: operations\nname: Operations\nversion: 0.1.6\ninstructions: instructions.md\n"},
+        {
+            "path": "profile.yaml",
+            "content_utf8": "id: operations\nname: Operations\nversion: 0.1.6\ninstructions: instructions.md\n",
+        },
         {"path": "instructions.md", "content_utf8": "Operate the service.\n"},
     ]
     for item in files:
         item["sha256"] = "sha256:" + hashlib.sha256(item["content_utf8"].encode()).hexdigest()
     digest = payload_digest(files, PROFILE_PAYLOAD_SCHEMA)
-    home_files = materialize_home(files, profile_ref="operations", profile_version="0.1.6",
-        profile_digest=digest, source_blueprint_ref=None, source_blueprint_version=None,
-        source_blueprint_digest=None, runtime_kind=runtime)
+    home_files = materialize_home(
+        files,
+        profile_ref="operations",
+        profile_version="0.1.6",
+        profile_digest=digest,
+        source_blueprint_ref=None,
+        source_blueprint_version=None,
+        source_blueprint_digest=None,
+        runtime_kind=runtime,
+    )
     value = {"home_files": home_files}
     assert gate.source_profile_digest(value) == digest
-    next(item for item in home_files if item["path"] == ".aw/profile/instructions.md")["content_utf8"] = "Changed"
+    next(item for item in home_files if item["path"] == ".aw/profile/instructions.md")[
+        "content_utf8"
+    ] = "Changed"
     assert gate.source_profile_digest(value) != digest

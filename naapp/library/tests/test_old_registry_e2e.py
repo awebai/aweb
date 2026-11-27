@@ -1,4 +1,5 @@
 """Real pre-status AWID refuses private-team verification without fallback."""
+
 from __future__ import annotations
 
 import os
@@ -55,4 +56,7 @@ def test_private_certificate_refused_by_real_pre_status_registry(aw_workspace):
         assert "Unknown AWID certificate" in result.stdout
     with _running_library(awid_service_token=None) as app:
         result = _aw_request(team, "GET", f"{app.origin}/v1/proposals")
-        assert _assert_aw_success(result, context="same certificate on current registry").strip() == "[]"
+        assert (
+            _assert_aw_success(result, context="same certificate on current registry").strip()
+            == "[]"
+        )

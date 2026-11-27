@@ -16,6 +16,7 @@ from awid.dns_verify import DomainAuthority
 from awid.id_certificates import id_certificate_signing_bytes
 from awid.registry import RegistryClient
 from awid.signing import sign_message
+from awid_service.deps import get_domain_verifier
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry
 
 from aweb_naapp_testing import Member
@@ -95,6 +96,7 @@ async def human_namespace(registry: Registry, domain: str) -> AsyncGenerator[Hum
     controller_did = did_key_from_signing_key(controller_seed)
     authority = registry.namespace_authority
 
+    registry.app.dependency_overrides[get_domain_verifier] = lambda: authority
     registry.app.state.awid_public_origins = (REGISTRY_URL,)
     async with aclosing(
         RegistryClient(

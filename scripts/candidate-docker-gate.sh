@@ -9,11 +9,31 @@ refuse() { printf 'candidate gate refused: %s\n' "$*" >&2; exit 2; }
 # Probe the backing host filesystem without pulling an image or starting a
 # container. Desktop's Linux DockerRootDir lives inside its sparse disk image.
 # Keep the critical floor free after this gate's measured peak allocation.
+# The critical floor nothing may use, and one parallel gate's peak. The
+# reserve is measured: in vm-3f1940bd (12 CPUs, all lanes at once) the guest
+# went from 7.0 to 60.0 GB used, a 53 GB peak: builder cache 28.5, images
+# 18.8, lane workspaces 5.9, containers 2.7. 60 GiB rounds it up.
+CRITICAL_FREE_GB=50
+GATE_RESERVE_GB=60
+# One local server run (make test-server-local: the server and registry suites,
+# Postgres and Redis on tmpfs) measured on a Mac: free space fell by at most
+# 1.34 GiB while 5800 server and 2656 registry tests passed. 2 GiB rounds it up.
+LOCAL_SERVER_RESERVE_GB=2
 wait_for_disk() {
-  local mode="${1:-wait}"
-  local floor="${AWEB_GATE_MIN_FREE_GB:-50}" reserve="${AWEB_GATE_RESERVE_GB:-30}" path available
+  local mode="${1:-wait}" need="${2:-gate}" measured label
+  case "$need" in
+    gate) measured="$GATE_RESERVE_GB" label="gate reserve" ;;
+    local-server) measured="$LOCAL_SERVER_RESERVE_GB" label="local server reserve" ;;
+    *) refuse "unknown disk need: $need" ;;
+  esac
+  local floor="${AWEB_GATE_MIN_FREE_GB:-$CRITICAL_FREE_GB}" reserve="${AWEB_GATE_RESERVE_GB:-$measured}" path available
   [[ "$floor" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_MIN_FREE_GB must be a nonnegative integer"
   [[ "$reserve" =~ ^[0-9]+$ ]] || refuse "AWEB_GATE_RESERVE_GB must be a nonnegative integer"
+  # An override may raise either value, never lower it.
+  (( floor >= CRITICAL_FREE_GB )) \
+    || refuse "AWEB_GATE_MIN_FREE_GB=$floor would lower the $CRITICAL_FREE_GB GiB critical floor"
+  (( reserve >= measured )) \
+    || refuse "AWEB_GATE_RESERVE_GB=$reserve would lower the measured $measured GiB $label"
   path="$(docker info --format '{{.DockerRootDir}}')" || refuse "docker daemon is unavailable"
   if [[ "$(uname -s)" == Darwin ]]; then
     path="$(python3 - <<'PY'
@@ -38,19 +58,19 @@ PY
       return
     fi
     if [[ "$mode" == check ]]; then
-      refuse "$(awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" \
-        'BEGIN {printf "Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s gate reserve). Free space before retrying.", path, free / 1024 / 1024, floor + reserve, floor, reserve}')"
+      refuse "$(awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" -v label="$label" \
+        'BEGIN {printf "Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s %s). Free space before retrying.", path, free / 1024 / 1024, floor + reserve, floor, reserve, label}')"
     fi
-    awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" \
-      'BEGIN {printf "candidate gate waiting: Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s gate reserve); retrying in 60s\n", path, free / 1024 / 1024, floor + reserve, floor, reserve}'
+    awk -v free="$available" -v floor="$floor" -v reserve="$reserve" -v path="$path" -v label="$label" \
+      'BEGIN {printf "candidate gate waiting: Docker data volume %s has %.1f GiB free; need %.0f GiB (%s critical + %s %s); retrying in 60s\n", path, free / 1024 / 1024, floor + reserve, floor, reserve, label}'
     sleep 60
   done
 }
 
 # Release prerequisites refuse immediately rather than timing out inside a
 # nested self-test. Direct gates retain their operator-visible waiting mode.
-if [[ "${1:-}" == --check-disk && "$#" == 1 ]]; then
-  wait_for_disk check
+if [[ "${1:-}" == --check-disk && "$#" -le 2 ]]; then
+  wait_for_disk check "${2:-gate}"
   exit 0
 fi
 # The direct waiting probe uses the same floor and measurement.
@@ -86,8 +106,9 @@ LOG_DIR="${log_root%/}/aweb-candidate-gate-$SOURCE_SHA-$run_id"
   || refuse "source checkout HEAD differs from selected SHA"
 # Focused pre-landing proof uses the same stages and ledger. Release candidates
 # always request the complete list and retain the origin/main requirement.
+CANDIDATE_STAGES="static checks user-paths unit artifacts integration"
 STAGES="${AWEB_CANDIDATE_STAGES:-}"
-REQUESTED="${STAGES:-checks user-paths unit artifacts integration}"
+REQUESTED="${STAGES:-$CANDIDATE_STAGES}"
 if [[ -z "$STAGES" ]]; then
   git -C "$ROOT" fetch --quiet origin main
   git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
@@ -115,8 +136,24 @@ USER_PATHS_LATEST_METADATA="$(python3 "$ROOT/scripts/fetch_released_aw.py" --fre
 USER_PATHS_RESOLVE_SECONDS=$((SECONDS - resolve_started))
 released_identity="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$USER_PATHS_LATEST_METADATA")"
 USER_PATHS_LATEST_SHA256="$released_identity"
-external_inputs+="SYNCHRONIZED_MAIN_SHA=$SYNCHRONIZED_MAIN_SHA"$'\n'
+# Main's commit is not itself a gate input: the product-table check reads only
+# main's reviewed ceilings, so an unchanged tree reuses its pass until they change.
+REVIEWED_PRODUCT_TABLE_CEILINGS="$(python3 "$ROOT/scripts/product_table_writes.py" --root "$ROOT" --reviewed-identity)" \
+  || refuse "cannot read synchronized main's product-table ceilings. Synchronize main and start a new gate invocation."
+external_inputs+="REVIEWED_PRODUCT_TABLE_CEILINGS=$REVIEWED_PRODUCT_TABLE_CEILINGS"$'\n'
 external_inputs+="RELEASED_AW=$released_identity"$'\n'
+# A release gate takes the release command's built files: the integration lane
+# installs their server wheel under test. Their digests are a gate input, so a
+# pass with other files, or with none, is never reused for them.
+RELEASE_FILES="${AWEB_CANDIDATE_RELEASE_FILES:-}"
+release_listing=""
+if [[ -n "$RELEASE_FILES" ]]; then
+  [[ "$RELEASE_FILES" == /* && -d "$RELEASE_FILES" ]] \
+    || refuse "AWEB_CANDIDATE_RELEASE_FILES must be an existing absolute directory"
+  release_listing="$(python3 "$ROOT/scripts/release_files.py" listing "$RELEASE_FILES")" \
+    || refuse "AWEB_CANDIDATE_RELEASE_FILES is not one release's built files"
+  external_inputs+="RELEASE_FILES=$(printf '%s\n' "$release_listing" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"$'\n'
+fi
 input_identity() {
   local name="$1" path="$2" default="$3" repo sha relative
   repo="$(git -C "$path" rev-parse --show-toplevel)"
@@ -139,20 +176,32 @@ gate_setting() {
   printf -v "$name" '%s' "$value"
   [[ "$value" == "$default" ]] || external_inputs+="$name=$value"$'\n'
 }
-gate_setting AWEB_CANDIDATE_RUNNER_CPUS 2
+# The budget (GATE_CPUS, GATE_MEMORY_MIB, else the Docker engine's own size)
+# sizes the run. It is not a gate input: a pass at one size is the same pass at
+# another, so it stays out of the key and goes into the run's evidence.
+read_budget() {
+  local name value
+  while IFS='=' read -r name value; do
+    case "$name" in
+      GATE_CPUS|GATE_MEMORY_MIB|GATE_BUDGET_SOURCE|GATE_UNIT_CPUS|GATE_UNIT_MEMORY_MIB|GATE_LANE_SHARE_[A-Z_]*)
+        [[ "$value" =~ ^[A-Za-z0-9=,._-]+$ ]] || refuse "unexpected gate budget value for $name"
+        printf -v "$name" '%s' "$value" ;;
+      *) refuse "unexpected gate budget output: $name" ;;
+    esac
+  done
+}
+budget_assignments="$(python3 "$ROOT/scripts/gate_budget.py")" \
+  || refuse "the gate budget is invalid or unreadable"
+read_budget <<<"$budget_assignments"
 gate_setting AWEB_CANDIDATE_RUNNER_MEMORY 8g
 gate_setting AWEB_CANDIDATE_RUNNER_PIDS 2048
-gate_setting AWEB_CANDIDATE_BUILDER_CPUS 2
 gate_setting AWEB_CANDIDATE_BUILDER_MEMORY 6g
 gate_setting AWEB_CANDIDATE_BUILDER_MEMORY_SWAP "$AWEB_CANDIDATE_BUILDER_MEMORY"
 gate_setting AWEB_CANDIDATE_BUILDER_PIDS 2048
-gate_setting AWEB_CANDIDATE_SERVICE_CPUS 1
 gate_setting AWEB_CANDIDATE_SERVICE_MEMORY 1g
 gate_setting AWEB_CANDIDATE_SERVICE_PIDS 512
-gate_setting AWEB_CANDIDATE_REDIS_CPUS 0.5
 gate_setting AWEB_CANDIDATE_REDIS_MEMORY 256m
 gate_setting AWEB_CANDIDATE_REDIS_PIDS 256
-gate_setting AWEB_CANDIDATE_SIBLING_CPUS 2
 gate_setting AWEB_CANDIDATE_SIBLING_MEMORY 4g
 gate_setting AWEB_CANDIDATE_SIBLING_PIDS 1024
 KEY="$TREE-$(printf '%s' "$external_inputs" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
@@ -186,7 +235,7 @@ if [[ -n "$failed" ]]; then
 fi
 pending=""
 for stage in $REQUESTED; do
-  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
+  [[ " $CANDIDATE_STAGES " == *" $stage "* ]] || refuse "unknown stage '$stage'"
   if [[ "$(recorded "$stage" | cut -f3)" == passed ]]; then
     printf 'gate: tree %s already passed %s; original log %s\n' "$TREE" "$stage" "$(recorded "$stage" | cut -f6)"
     if [[ "$stage" == user-paths ]]; then
@@ -222,22 +271,20 @@ IMAGE="aweb-candidate-gate:$gate_run_id"
 builder_name="$gate_run_id"
 buildx_config="$work/buildx"
 docker_bind_root="$work/docker-bind"
-runner_cpus="${AWEB_CANDIDATE_RUNNER_CPUS:-2}"
-runner_memory="${AWEB_CANDIDATE_RUNNER_MEMORY:-8g}"
-runner_pids="${AWEB_CANDIDATE_RUNNER_PIDS:-2048}"
-builder_cpus="${AWEB_CANDIDATE_BUILDER_CPUS:-2}"
-builder_memory="${AWEB_CANDIDATE_BUILDER_MEMORY:-6g}"
-builder_memory_swap="${AWEB_CANDIDATE_BUILDER_MEMORY_SWAP:-$builder_memory}"
-builder_pids="${AWEB_CANDIDATE_BUILDER_PIDS:-2048}"
-service_cpus="${AWEB_CANDIDATE_SERVICE_CPUS:-1}"
-service_memory="${AWEB_CANDIDATE_SERVICE_MEMORY:-1g}"
-service_pids="${AWEB_CANDIDATE_SERVICE_PIDS:-512}"
-redis_cpus="${AWEB_CANDIDATE_REDIS_CPUS:-0.5}"
-redis_memory="${AWEB_CANDIDATE_REDIS_MEMORY:-256m}"
-redis_pids="${AWEB_CANDIDATE_REDIS_PIDS:-256}"
-sibling_cpus="${AWEB_CANDIDATE_SIBLING_CPUS:-2}"
-sibling_memory="${AWEB_CANDIDATE_SIBLING_MEMORY:-4g}"
-sibling_pids="${AWEB_CANDIDATE_SIBLING_PIDS:-1024}"
+# gate_setting assigned every limit above, from the budget or an override.
+# No container's CPU is capped or weighted: every container runs at Docker's
+# default, and the engine's CPUs are the bound.
+runner_memory="$AWEB_CANDIDATE_RUNNER_MEMORY"
+runner_pids="$AWEB_CANDIDATE_RUNNER_PIDS"
+builder_memory="$AWEB_CANDIDATE_BUILDER_MEMORY"
+builder_memory_swap="$AWEB_CANDIDATE_BUILDER_MEMORY_SWAP"
+builder_pids="$AWEB_CANDIDATE_BUILDER_PIDS"
+service_memory="$AWEB_CANDIDATE_SERVICE_MEMORY"
+service_pids="$AWEB_CANDIDATE_SERVICE_PIDS"
+redis_memory="$AWEB_CANDIDATE_REDIS_MEMORY"
+redis_pids="$AWEB_CANDIDATE_REDIS_PIDS"
+sibling_memory="$AWEB_CANDIDATE_SIBLING_MEMORY"
+sibling_pids="$AWEB_CANDIDATE_SIBLING_PIDS"
 suite_projects=(
   "$gate_run_id-channel"
   "$gate_run_id-user"
@@ -249,6 +296,20 @@ suite_projects=(
 : > "$LOG_DIR/owned-resources.tsv"
 printf '%s\n' "$run_id" > "$LOG_DIR/run-id"
 printf '%s\n' "$SYNCHRONIZED_MAIN_SHA" > "$LOG_DIR/synchronized-main-sha"
+# The run's plan: every lane after static runs at once, its containers
+# weighted by its measured CPU-seconds (candidate-gate/measured-work.json);
+# the same budget, not measured again.
+plan_assignments="$(GATE_LANES="${pending/static/}" GATE_CPUS="$GATE_CPUS" GATE_MEMORY_MIB="$GATE_MEMORY_MIB" \
+  python3 "$ROOT/scripts/gate_budget.py")" || refuse "the gate's CPU plan is invalid"
+read_budget <<<"$plan_assignments"
+{
+  printf 'cpus\t%s\nmemory_mib\t%s\nsource\t%s\n' \
+    "$GATE_CPUS" "$GATE_MEMORY_MIB" "$GATE_BUDGET_SOURCE"
+  for lane in ${pending/static/}; do
+    share="GATE_LANE_SHARE_$(printf '%s' "$lane" | tr 'a-z-' 'A-Z_')"
+    printf 'lane_share\t%s\t%s\n' "$lane" "${!share}"
+  done
+} > "$LOG_DIR/budget.tsv"
 source "$ROOT/scripts/candidate-cleanup.sh"
 trap 'cleanup "$?"' EXIT
 trap 'cleanup 130' INT
@@ -329,7 +390,7 @@ BUILDX_CONFIG="$buildx_config" docker buildx create \
   "unix:///var/run/docker.sock" --bootstrap >/dev/null \
   || refuse "could not provision the run-owned release builder"
 builder_container="buildx_buildkit_${builder_name}0"
-docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$builder_memory_swap" --pids-limit "$builder_pids" \
+docker update --memory "$builder_memory" --memory-swap "$builder_memory_swap" --pids-limit "$builder_pids" \
   "$builder_container" >/dev/null \
   || refuse "could not apply candidate builder resource limits"
 
@@ -349,71 +410,109 @@ base_digest="$(docker image inspect "$base_ref" --format '{{join .RepoDigests ",
 locks_digest="$(git -C "$checkout" ls-files -s -- '*uv.lock' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())')"
 printf 'base\t%s\t%s\nlocks\t%s\n' "$base_ref" "$base_digest" "$locks_digest" > "$LOG_DIR/inputs.tsv"
 printf 'synchronized-main\t%s\n' "$SYNCHRONIZED_MAIN_SHA" >> "$LOG_DIR/inputs.tsv"
-printf 'runner\tcpus=%s\tmemory=%s\tpids=%s\nbuilder\tcpus=%s\tmemory=%s\tmemory_swap=%s\tpids=%s\nservice\tcpus=%s\tmemory=%s\tpids=%s\nredis\tcpus=%s\tmemory=%s\tpids=%s\nsibling\tcpus=%s\tmemory=%s\tpids=%s\n' \
-  "$runner_cpus" "$runner_memory" "$runner_pids" \
-  "$builder_cpus" "$builder_memory" "$builder_memory_swap" "$builder_pids" \
-  "$service_cpus" "$service_memory" "$service_pids" \
-  "$redis_cpus" "$redis_memory" "$redis_pids" \
-  "$sibling_cpus" "$sibling_memory" "$sibling_pids" > "$LOG_DIR/resource-limits.tsv"
+printf 'runner\tmemory=%s\tpids=%s\nbuilder\tmemory=%s\tmemory_swap=%s\tpids=%s\nservice\tmemory=%s\tpids=%s\nredis\tmemory=%s\tpids=%s\nsibling\tmemory=%s\tpids=%s\n' \
+  "$runner_memory" "$runner_pids" \
+  "$builder_memory" "$builder_memory_swap" "$builder_pids" \
+  "$service_memory" "$service_pids" \
+  "$redis_memory" "$redis_pids" \
+  "$sibling_memory" "$sibling_pids" > "$LOG_DIR/resource-limits.tsv"
 owned_network="$gate_run_id-network"
 docker network create --label "aweb.candidate-gate=$resource_label" "$owned_network" >/dev/null
-pg_name="${owned_network}-postgres"
-redis_name="${owned_network}-redis"
-docker volume create --label "aweb.candidate-gate=$resource_label" "$pg_name-data" >/dev/null
-docker volume create --label "aweb.candidate-gate=$resource_label" "$redis_name-data" >/dev/null
-pg_id="$(docker run --detach --network "$owned_network" --name "$pg_name" \
-  --label "aweb.candidate-gate=$resource_label" \
-  --cpus "$service_cpus" --memory "$service_memory" --pids-limit "$service_pids" \
-  -v "$pg_name-data:/var/lib/postgresql/data" \
-  --env POSTGRES_USER=postgres --env POSTGRES_PASSWORD=postgres --env POSTGRES_DB=postgres \
-  --health-cmd 'pg_isready -U postgres -d postgres' \
-  --health-interval 2s --health-timeout 5s --health-retries 45 postgres:17)"
-redis_id="$(docker run --detach --network "$owned_network" --name "$redis_name" \
-  --label "aweb.candidate-gate=$resource_label" \
-  --cpus "$redis_cpus" --memory "$redis_memory" --pids-limit "$redis_pids" \
-  -v "$redis_name-data:/data" \
-  --health-cmd 'redis-cli ping' --health-interval 2s --health-timeout 5s --health-retries 45 redis:7)"
-for container in "$pg_id" "$redis_id"; do
-  for _ in $(seq 1 60); do
-    [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] && break
-    sleep 1
+
+# Each stage runs in its own lane: its own runner, workspace volume, Postgres
+# and Redis. Lanes share only the Docker daemon, this run's label and bind
+# root (mktemp paths), and the run's builder, whose cache they share. Nothing
+# prunes it while lanes build: cleanup removes it, with its cache, after the
+# last lane ends. Static runs first and alone. A stage writes its summary
+# rows to its own file; this wrapper, the one writer of summary.tsv and of the
+# recorder's stream, merges them when the stage ends.
+start_lane_services() {
+  local lane="$1" pg redis container db ext_schema applied
+  pg="$owned_network-$lane-postgres"
+  redis="$owned_network-$lane-redis"
+  docker volume create --label "aweb.candidate-gate=$resource_label" "$pg-data" >/dev/null
+  docker volume create --label "aweb.candidate-gate=$resource_label" "$redis-data" >/dev/null
+  pg_id="$(docker run --detach --network "$owned_network" --name "$pg" \
+    --label "aweb.candidate-gate=$resource_label" \
+    --memory "$service_memory" --pids-limit "$service_pids" \
+    -v "$pg-data:/var/lib/postgresql/data" \
+    --env POSTGRES_USER=postgres --env POSTGRES_PASSWORD=postgres --env POSTGRES_DB=postgres \
+    --health-cmd 'pg_isready -U postgres -d postgres' \
+    --health-interval 2s --health-timeout 5s --health-retries 45 postgres:17)"
+  redis_id="$(docker run --detach --network "$owned_network" --name "$redis" \
+    --label "aweb.candidate-gate=$resource_label" \
+    --memory "$redis_memory" --pids-limit "$redis_pids" \
+    -v "$redis-data:/data" \
+    --health-cmd 'redis-cli ping' --health-interval 2s --health-timeout 5s --health-retries 45 redis:7)"
+  for container in "$pg_id" "$redis_id"; do
+    for _ in $(seq 1 60); do
+      [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] && break
+      sleep 1
+    done
+    [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] \
+      || refuse "gate service failed health: $container"
   done
-  [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] \
-    || refuse "gate service failed health: $container"
-done
 
-# Production parity: the app role there carries search_path=pg_catalog as its
-# role default; the gate's role must too, or an unqualified reference passes
-# locally and fails in production. Applied and read back; refuse if unset.
-docker exec "$pg_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
-  -c 'ALTER ROLE postgres SET search_path = pg_catalog' >/dev/null \
-  || refuse "could not apply the production search_path role default"
-# Verified BY CONNECTING: a fresh session must report the default with
-# source='user' - a statement applied to a role that exists but is not the
-# connecting one succeeds and changes nothing.
-applied="$(docker exec "$pg_id" psql -At -U postgres -d postgres \
-  -c "SELECT setting || '|' || source FROM pg_settings WHERE name = 'search_path'")"
-[[ "$applied" == "pg_catalog|user" ]] \
-  || refuse "search_path role default not in effect for the connecting role: $applied"
+  # Production parity: the app role there carries search_path=pg_catalog as its
+  # role default; the gate's role must too, or an unqualified reference passes
+  # locally and fails in production. Applied and read back; refuse if unset.
+  docker exec "$pg_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+    -c 'ALTER ROLE postgres SET search_path = pg_catalog' >/dev/null \
+    || refuse "could not apply the production search_path role default"
+  # Verified BY CONNECTING: a fresh session must report the default with
+  # source='user' - a statement applied to a role that exists but is not the
+  # connecting one succeeds and changes nothing.
+  applied="$(docker exec "$pg_id" psql -At -U postgres -d postgres \
+    -c "SELECT setting || '|' || source FROM pg_settings WHERE name = 'search_path'")"
+  [[ "$applied" == "pg_catalog|user" ]] \
+    || refuse "search_path role default not in effect for the connecting role: $applied"
 
-# Pre-provision pgcrypto in public in template1 and the default database:
-# per-test databases are created fresh and inherit template1, and migration
-# 001's unqualified CREATE EXTENSION IF NOT EXISTS then no-ops instead of
-# colliding with pg_catalog's built-in gen_random_uuid under the pinned
-# search_path - matching production, where the extension already exists.
-for db in postgres template1; do
-  docker exec "$pg_id" psql -v ON_ERROR_STOP=1 -U postgres -d "$db" \
-    -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public' >/dev/null \
-    || refuse "could not pre-provision pgcrypto in $db"
-  ext_schema="$(docker exec "$pg_id" psql -At -U postgres -d "$db" \
-    -c "SELECT extnamespace::regnamespace::text FROM pg_extension WHERE extname = 'pgcrypto'")"
-  [[ "$ext_schema" == "public" ]] \
-    || refuse "pgcrypto pre-provision did not land in public for $db: '$ext_schema'"
-done
-mkdir -p "$docker_bind_root" "$checkout/.candidate-home"
+  # Pre-provision pgcrypto in public in template1 and the default database:
+  # per-test databases are created fresh and inherit template1, and migration
+  # 001's unqualified CREATE EXTENSION IF NOT EXISTS then no-ops instead of
+  # colliding with pg_catalog's built-in gen_random_uuid under the pinned
+  # search_path - matching production, where the extension already exists.
+  for db in postgres template1; do
+    docker exec "$pg_id" psql -v ON_ERROR_STOP=1 -U postgres -d "$db" \
+      -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public' >/dev/null \
+      || refuse "could not pre-provision pgcrypto in $db"
+    ext_schema="$(docker exec "$pg_id" psql -At -U postgres -d "$db" \
+      -c "SELECT extnamespace::regnamespace::text FROM pg_extension WHERE extname = 'pgcrypto'")"
+    [[ "$ext_schema" == "public" ]] \
+      || refuse "pgcrypto pre-provision did not land in public for $db: '$ext_schema'"
+  done
+}
+
+# Copy the exact checkout and inputs through the Docker API. The host checkout
+# is never mounted into a container; extracted dependency trees stay in Docker.
+seed_lane_workspace() {
+  local lane="$1" seed="$seed_name-$1"
+  docker volume create --label "aweb.candidate-gate=$resource_label" "$workspace_volume-$lane" >/dev/null
+  docker create --name "$seed" --label "aweb.candidate-gate=$resource_label" \
+    --memory "$runner_memory" --pids-limit "$runner_pids" \
+    -v "$workspace_volume-$lane:$work" "$IMAGE" chown -R "$(id -u):$(id -g)" "$work" >/dev/null
+  docker cp "$work/." "$seed:$work"
+  docker start --attach "$seed"
+  [[ "$(docker inspect --format '{{.State.ExitCode}}' "$seed")" == 0 ]] \
+    || refuse "could not initialize Docker-owned workspace permissions"
+  docker rm -v "$seed" >/dev/null
+}
+
+mkdir -p "$docker_bind_root" "$checkout/.candidate-home" "$LOG_DIR/lanes"
+# The lanes read the release files from the run's log directory, which each
+# runner mounts; the copy is the same bytes the key names.
+lane_release_files=""
+if [[ -n "$release_listing" ]]; then
+  lane_release_files="$LOG_DIR/release-files"
+  mkdir -p "$lane_release_files"
+  cp -p "$RELEASE_FILES"/* "$lane_release_files"/
+  [[ "$(python3 "$ROOT/scripts/release_files.py" listing "$lane_release_files")" == "$release_listing" ]] \
+    || refuse "the lanes' copy of the release files differs from the gated files"
+  printf '%s\n' "$release_listing" > "$LOG_DIR/release-files.sha256"
+fi
 socket_gid="$(docker run --rm \
   --label "aweb.candidate-gate=$resource_label" \
-  --cpus "$redis_cpus" --memory "$redis_memory" --pids-limit "$redis_pids" \
+  --memory "$redis_memory" --pids-limit "$redis_pids" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
 naapp_packages_text="$(make -s --no-print-directory -C "$ROOT" naapp-e2e-packages)"
@@ -423,94 +522,177 @@ for package in "${naapp_packages[@]}"; do
   # These are container ports; no host socket is allocated or published.
   naapp_e2e_allocations+="$package $gate_run_id-naapp-${package##*/} 8010 5432"$'\n'
 done
+for lane in $pending; do
+  start_lane_services "$lane"
+  seed_lane_workspace "$lane"
+done
 
-# Copy the exact checkout and inputs through the Docker API. The host checkout
-# is never mounted into a container; extracted dependency trees stay in Docker.
-docker volume create --label "aweb.candidate-gate=$resource_label" "$workspace_volume" >/dev/null
-docker create --name "$seed_name" --label "aweb.candidate-gate=$resource_label" \
-  --cpus "$runner_cpus" --memory "$runner_memory" --pids-limit "$runner_pids" \
-  -v "$workspace_volume:$work" "$IMAGE" chown -R "$(id -u):$(id -g)" "$work" >/dev/null
-docker cp "$work/." "$seed_name:$work"
-docker start --attach "$seed_name"
-[[ "$(docker inspect --format '{{.State.ExitCode}}' "$seed_name")" == 0 ]] \
-  || refuse "could not initialize Docker-owned workspace permissions"
-docker rm -v "$seed_name" >/dev/null
+# Runs one stage in its lane. The exit file is how the wrapper learns it ended,
+# so it is written whatever the runner's exit.
+run_lane() {
+  local lane="$1" name="$runner_name-$1" builder="$builder_name" lane_status=0
+  local pg="$owned_network-$1-postgres" redis="$owned_network-$1-redis"
+  printf 'runner\t%s\n' "$name" >> "$LOG_DIR/owned-resources.tsv"
+  docker run --rm --init \
+    --name "$name" \
+    --label "aweb.candidate-gate=$resource_label" \
+    --memory "$runner_memory" \
+    --pids-limit "$runner_pids" \
+    --network "$owned_network" \
+    --user "$(id -u):$(id -g)" \
+    --group-add "$socket_gid" \
+    -e HOME="$checkout/.candidate-home" \
+    -e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    -e PATH="$checkout/candidate-gate/bin:/usr/local/go/bin:/opt/uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    -e AWEB_CANDIDATE_REAL_DOCKER=/usr/bin/docker \
+    -e AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" \
+    -e GATE_CPUS="$GATE_CPUS" \
+    -e GATE_MEMORY_MIB="$GATE_MEMORY_MIB" \
+    -e GATE_UNIT_CPUS="${GATE_UNIT_CPUS:-}" \
+    -e GATE_UNIT_MEMORY_MIB="${GATE_UNIT_MEMORY_MIB:-}" \
+    -e AWEB_CANDIDATE_SIBLING_MEMORY="$sibling_memory" \
+    -e AWEB_CANDIDATE_SIBLING_PIDS="$sibling_pids" \
+    -e DOCKER_BUILDKIT=1 \
+    -e COMPOSE_DOCKER_CLI_BUILD=1 \
+    -e COMPOSE_BAKE=true \
+    -e CANDIDATE_SOURCE_SHA="$SOURCE_SHA" \
+    -e CANDIDATE_RUNNER_NAME="$name" \
+    -e CANDIDATE_CHECKOUT_ROOT="$checkout" \
+    -e GIT_CONFIG_COUNT=1 \
+    -e GIT_CONFIG_KEY_0=safe.directory \
+    -e GIT_CONFIG_VALUE_0="$checkout" \
+    -e CLI_VERSION="${CLI_VERSION:-}" \
+    -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
+    -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
+    -e CANDIDATE_LOG_DIR="$LOG_DIR" \
+    -e AWEB_CANDIDATE_RELEASE_FILES="$lane_release_files" \
+    -e CANDIDATE_HOST_PORT_STATUS="$host_port_status" \
+    -e USER_PATHS_LATEST_METADATA="${USER_PATHS_LATEST_METADATA:-}" \
+    -e USER_PATHS_LATEST_SHA256="${USER_PATHS_LATEST_SHA256:-}" \
+    -e USER_PATHS_RESOLVE_SECONDS="${USER_PATHS_RESOLVE_SECONDS:-0}" \
+    -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \
+    -e BUILDX_CONFIG="$buildx_config" \
+    -e BUILDX_BUILDER="$builder" \
+    -e CANDIDATE_GATE_IMAGE="$IMAGE" \
+    -e UV_LINK_MODE=copy \
+    -e GOCACHE=/tmp/go-build \
+    -e GOMODCACHE="$go_mod_cache" \
+    -e GOFLAGS=-modcacherw \
+    -e NPM_CONFIG_CACHE=/tmp/npm-cache \
+    -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
+    -e AWEB_CHANNEL_E2E_PROJECT="${suite_projects[0]}" \
+    -e AWEB_E2E_PROJECT="${suite_projects[1]}" \
+    -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \
+    -e AWEB_FED_E2E_PROJECT="${suite_projects[3]}" \
+    -e LIBRARY_E2E_PROJECT="${suite_projects[4]}" \
+    -e NAAPP_E2E_CONTAINER_NETWORK=1 \
+    -e NAAPP_E2E_ALLOCATIONS="$naapp_e2e_allocations" \
+    -e TEST_DB_HOST="$pg" \
+    -e TEST_DB_PORT=5432 \
+    -e TEST_DB_USER=postgres \
+    -e TEST_DB_PASSWORD=postgres \
+    -e PGHOST="$pg" \
+    -e PGPORT=5432 \
+    -e PGUSER=postgres \
+    -e PGPASSWORD=postgres \
+    -e PGDATABASE=postgres \
+    -e REDIS_URL="redis://$redis:6379/0" \
+    -e CANDIDATE_GATE_IMAGE="$IMAGE" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v "$workspace_volume-$lane:$work" \
+    -v "$docker_bind_root:$docker_bind_root" \
+    -v "$LOG_DIR:$LOG_DIR" \
+    -w "$checkout" \
+    "$IMAGE" \
+    bash scripts/candidate-suite.sh --summary "$LOG_DIR/lanes/$lane.tsv" "$lane" > "$LOG_DIR/lanes/$lane.out" 2>&1 || lane_status=$?
+  printf '%s\n' "$lane_status" > "$LOG_DIR/lanes/$lane.exit"
+}
 
-set +e
-docker run --rm --init \
-  --name "$runner_name" \
-  --label "aweb.candidate-gate=$resource_label" \
-  --cpus "$runner_cpus" \
-  --memory "$runner_memory" \
-  --pids-limit "$runner_pids" \
-  --network "$owned_network" \
-  --user "$(id -u):$(id -g)" \
-  --group-add "$socket_gid" \
-  -e HOME="$checkout/.candidate-home" \
-  -e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
-  -e PATH="$checkout/candidate-gate/bin:/usr/local/go/bin:/opt/uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
-  -e AWEB_CANDIDATE_REAL_DOCKER=/usr/bin/docker \
-  -e AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" \
-  -e AWEB_GATE_UNIT_PROFILE="${AWEB_GATE_UNIT_PROFILE:-portable}" \
-  -e AWEB_CANDIDATE_SIBLING_CPUS="$sibling_cpus" \
-  -e AWEB_CANDIDATE_SIBLING_MEMORY="$sibling_memory" \
-  -e AWEB_CANDIDATE_SIBLING_PIDS="$sibling_pids" \
-  -e DOCKER_BUILDKIT=1 \
-  -e COMPOSE_DOCKER_CLI_BUILD=1 \
-  -e COMPOSE_BAKE=true \
-  -e CANDIDATE_SOURCE_SHA="$SOURCE_SHA" \
-  -e CANDIDATE_RUNNER_NAME="$runner_name" \
-  -e CANDIDATE_CHECKOUT_ROOT="$checkout" \
-  -e GIT_CONFIG_COUNT=1 \
-  -e GIT_CONFIG_KEY_0=safe.directory \
-  -e GIT_CONFIG_VALUE_0="$checkout" \
-  -e CLI_VERSION="${CLI_VERSION:-}" \
-  -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
-  -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
-  -e CANDIDATE_LOG_DIR="$LOG_DIR" \
-  -e CANDIDATE_HOST_PORT_STATUS="$host_port_status" \
-  -e USER_PATHS_LATEST_METADATA="${USER_PATHS_LATEST_METADATA:-}" \
-  -e USER_PATHS_LATEST_SHA256="${USER_PATHS_LATEST_SHA256:-}" \
-  -e USER_PATHS_RESOLVE_SECONDS="${USER_PATHS_RESOLVE_SECONDS:-0}" \
-  -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \
-  -e BUILDX_CONFIG="$buildx_config" \
-  -e BUILDX_BUILDER="$builder_name" \
-  -e UV_LINK_MODE=copy \
-  -e GOCACHE=/tmp/go-build \
-  -e GOMODCACHE="$go_mod_cache" \
-  -e GOFLAGS=-modcacherw \
-  -e NPM_CONFIG_CACHE=/tmp/npm-cache \
-  -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
-  -e AWEB_SKEW_PROJECT_TOKEN="${suite_projects[0]}" \
-  -e AWEB_E2E_PROJECT="${suite_projects[1]}" \
-  -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \
-  -e AWEB_FED_E2E_PROJECT="${suite_projects[3]}" \
-  -e LIBRARY_E2E_PROJECT="${suite_projects[4]}" \
-  -e NAAPP_E2E_CONTAINER_NETWORK=1 \
-  -e NAAPP_E2E_ALLOCATIONS="$naapp_e2e_allocations" \
-  -e TEST_DB_HOST="$pg_name" \
-  -e TEST_DB_PORT=5432 \
-  -e TEST_DB_USER=postgres \
-  -e TEST_DB_PASSWORD=postgres \
-  -e PGHOST="$pg_name" \
-  -e PGPORT=5432 \
-  -e PGUSER=postgres \
-  -e PGPASSWORD=postgres \
-  -e PGDATABASE=postgres \
-  -e REDIS_URL="redis://$redis_name:6379/0" \
-  -e CANDIDATE_GATE_IMAGE="$IMAGE" \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$workspace_volume:$work" \
-  -v "$docker_bind_root:$docker_bind_root" \
-  -v "$LOG_DIR:$LOG_DIR" \
-  -w "$checkout" \
-  "$IMAGE" \
-  bash scripts/candidate-suite.sh "$pending" \
-  2>&1 | (trap '' INT TERM; exec tee "$LOG_DIR/gate.log") &
-runner_job=$!
-wait "$runner_job"
-status=$?
-set -e
+# Merges an ended lane's rows and reports its targets and stage verdict on the
+# recorder's stream. A lane stopped before its stage row reports STOPPED: it
+# did not fail, and it records no stage row.
+finish_lane() {
+  local lane="$1" stopped_by="$2" status
+  status="$(cat "$LOG_DIR/lanes/$lane.exit")"
+  [[ ! -f "$LOG_DIR/lanes/$lane.tsv" ]] || cat "$LOG_DIR/lanes/$lane.tsv" >> "$LOG_DIR/summary.tsv"
+  grep -E '^(candidate: |user-paths coverage: )' "$LOG_DIR/lanes/$lane.out" || true
+  printf 'gate lane %s: exit %s in %ss\n' "$lane" "$status" "$(( SECONDS - lane_started ))"
+  if grep -q "^$lane"$'\t' "$LOG_DIR/lanes/$lane.tsv" 2>/dev/null; then
+    grep "^candidate stage-verdict: $lane " "$LOG_DIR/lanes/$lane.out" || true
+    return
+  fi
+  if [[ -n "$stopped_by" ]]; then
+    printf 'candidate: %s STOPPED (after %s FAILED)\n' "$lane" "$stopped_by"
+    printf '%s\tSTOPPED\t-\t%ss\tafter %s FAILED\n' "$lane" "$(( SECONDS - lane_started ))" "$stopped_by" >> "$LOG_DIR/summary.tsv"
+    printf 'candidate stage-verdict: %s STOPPED\n' "$lane"
+  else
+    printf '%s\tFAILED\t%s.log\t%ss\tlane exit %s\n' "$lane" "$lane" "$(( SECONDS - lane_started ))" "$status" >> "$LOG_DIR/summary.tsv"
+    printf 'candidate stage-verdict: %s FAILED\n' "$lane"
+  fi
+}
+
+lane_passed() {
+  grep -q "^$1"$'\tPASSED\t' "$LOG_DIR/lanes/$1.tsv" 2>/dev/null && [[ "$(cat "$LOG_DIR/lanes/$1.exit")" == 0 ]]
+}
+
+: > "$LOG_DIR/summary.tsv"
+status=0
+lanes="$pending"
+lane_started=$SECONDS
+if [[ " $pending " == *" static "* ]]; then
+  run_lane static
+  finish_lane static ""
+  lanes="${pending/static/}"
+  if ! lane_passed static; then
+    status=1
+    for lane in $lanes; do
+      printf 'candidate: %s NOT-RUN (static FAILED)\n' "$lane"
+      printf '%s\tNOT-RUN\t-\t0s\tstatic FAILED\n' "$lane" >> "$LOG_DIR/summary.tsv"
+    done
+    lanes=""
+  fi
+fi
+lane_started=$SECONDS
+declare -A lane_ended=() lane_pid=()
+# Every lane starts now, whatever the machine's size: weights share the CPUs.
+for lane in $lanes; do
+  run_lane "$lane" &
+  lane_pid[$lane]=$!
+done
+first_red=""
+remaining="$(wc -w <<<"$lanes")"
+while (( remaining > 0 )); do
+  sleep 2
+  for lane in $lanes; do
+    [[ -z "${lane_ended[$lane]:-}" ]] || continue
+    # A lane process that died without its exit file is an infrastructure end.
+    if [[ ! -f "$LOG_DIR/lanes/$lane.exit" ]] && ! kill -0 "${lane_pid[$lane]}" 2>/dev/null; then
+      [[ -f "$LOG_DIR/lanes/$lane.exit" ]] || printf '70\n' > "$LOG_DIR/lanes/$lane.exit"
+    fi
+    [[ -f "$LOG_DIR/lanes/$lane.exit" ]] || continue
+    lane_ended[$lane]=1
+    remaining=$(( remaining - 1 ))
+    if [[ -z "$first_red" ]]; then
+      finish_lane "$lane" ""
+      if ! lane_passed "$lane"; then
+        # The first red stops every other lane: the run fails fast.
+        first_red="$lane"
+        status=1
+        for other in $lanes; do
+          [[ -n "${lane_ended[$other]:-}" || -z "${lane_pid[$other]:-}" ]] || docker kill --signal TERM "$runner_name-$other" >/dev/null 2>&1 || true
+        done
+        stop_deadline=$(( SECONDS + 120 ))
+      fi
+    else
+      finish_lane "$lane" "$first_red"
+    fi
+  done
+  if [[ -n "$first_red" ]] && (( remaining > 0 && SECONDS > stop_deadline )); then
+    for other in $lanes; do
+      [[ -n "${lane_ended[$other]:-}" || -z "${lane_pid[$other]:-}" ]] || docker kill --signal KILL "$runner_name-$other" >/dev/null 2>&1 || true
+    done
+  fi
+done
 
 if [[ "$status" -ne 0 ]]; then
   printf 'candidate gate FAILED; logs: %s\n' "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
@@ -521,8 +703,9 @@ printf 'candidate gate PASSED at %s; logs: %s\n' \
 
 }
 
-# The child owns Docker cleanup. Its output reader survives group signals;
-# the lock holder waits for cleanup before recording reusable proof.
+# The child owns Docker cleanup. Its output reader survives group signals and
+# records each stage as it passes; the lock holder waits for cleanup before
+# recording the rest of the run's verdict.
 source "$ROOT/scripts/candidate-record.sh"
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"
@@ -535,7 +718,7 @@ if [[ -n "${AWEB_GATE_RUN_REGISTRY:-}" ]]; then
 fi
 trap 'candidate_interrupted 130 INT' INT
 trap 'candidate_interrupted 143 TERM' TERM
-(trap '' INT TERM; exec tee "$run_log") < "$output_pipe" &
+(trap '' INT TERM; record_stages_as_they_pass) < "$output_pipe" &
 candidate_writer=$!
 run_candidate > "$output_pipe" 2>&1 &
 candidate_job=$!

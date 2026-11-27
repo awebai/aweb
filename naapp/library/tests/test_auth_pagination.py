@@ -1,4 +1,5 @@
 """Real AWID routes/PostgreSQL and app authentication; no fake registry responses."""
+
 from __future__ import annotations
 
 import base64
@@ -24,6 +25,7 @@ from pgdbm import AsyncMigrationManager
 from library import auth
 from library.config import Settings
 
+pytest_plugins = ("pgdbm.fixtures.conftest",)
 TEAM_ID = "backend:example.com"
 ORIGIN = "https://app.example.com"
 
@@ -34,22 +36,36 @@ def signed_headers():
     member_did = did_from_public_key(bytes(member_key.verify_key))
     timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     cert = {
-        "version": 1, "certificate_id": "target", "team_id": TEAM_ID,
-        "team_did_key": team_did, "member_did_key": member_did,
-        "alias": "target", "issued_at": timestamp,
+        "version": 1,
+        "certificate_id": "target",
+        "team_id": TEAM_ID,
+        "team_did_key": team_did,
+        "member_did_key": member_did,
+        "alias": "target",
+        "issued_at": timestamp,
     }
     cert["signature"] = sign_message(bytes(team_key), canonical_json_bytes(cert))
-    payload = canonical_json_bytes({
-        "v": 2, "aud": ORIGIN, "method": "GET", "path": "/protected",
-        "team_id": TEAM_ID, "timestamp": timestamp,
-        "body_sha256": hashlib.sha256(b"").hexdigest(),
-    })
-    return team_did, member_did, {
-        "Authorization": f"DIDKey {member_did} {sign_message(bytes(member_key), payload)}",
-        "X-AWEB-Timestamp": timestamp,
-        "X-AWID-Team-Certificate": base64.b64encode(json.dumps(cert).encode()).decode(),
-        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode(),
-    }
+    payload = canonical_json_bytes(
+        {
+            "v": 2,
+            "aud": ORIGIN,
+            "method": "GET",
+            "path": "/protected",
+            "team_id": TEAM_ID,
+            "timestamp": timestamp,
+            "body_sha256": hashlib.sha256(b"").hexdigest(),
+        }
+    )
+    return (
+        team_did,
+        member_did,
+        {
+            "Authorization": f"DIDKey {member_did} {sign_message(bytes(member_key), payload)}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWID-Team-Certificate": base64.b64encode(json.dumps(cert).encode()).decode(),
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode(),
+        },
+    )
 
 
 @pytest_asyncio.fixture
@@ -69,7 +85,9 @@ async def real_registry(test_db_factory, monkeypatch, request):
     visibility = getattr(request, "param", "public")
     team = await db.fetch_one(
         "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) "
-        "VALUES ('example.com', 'backend', $1, $2) RETURNING team_uuid", team_did, visibility,
+        "VALUES ('example.com', 'backend', $1, $2) RETURNING team_uuid",
+        team_did,
+        visibility,
     )
     # 201 real rows: target is beyond both AWID's default 50 and the client's 200.
     await db.execute(
@@ -77,16 +95,21 @@ async def real_registry(test_db_factory, monkeypatch, request):
         "(team_uuid, certificate_id, member_did_key, alias, issued_at) "
         "SELECT $1, 'filler-' || n, $2, 'filler-' || n, "
         "'2026-01-01'::timestamptz + n * interval '1 second' "
-        "FROM generate_series(1, 200) AS n", team["team_uuid"], member_did,
+        "FROM generate_series(1, 200) AS n",
+        team["team_uuid"],
+        member_did,
     )
     await db.execute(
         "INSERT INTO {{tables.team_certificates}} "
         "(team_uuid, certificate_id, member_did_key, alias, issued_at) "
-        "VALUES ($1, 'target', $2, 'target', '2026-01-02')", team["team_uuid"], member_did,
+        "VALUES ($1, 'target', $2, 'target', '2026-01-02')",
+        team["team_uuid"],
+        member_did,
     )
     app_db = await test_db_factory.create_db(suffix="pagination_app")
     await AsyncMigrationManager(
-        app_db, migrations_path=str(Path(auth.__file__).parent / "migrations"),
+        app_db,
+        migrations_path=str(Path(auth.__file__).parent / "migrations"),
         module_name="library",
     ).apply_pending_migrations()
     calls = []
@@ -131,15 +154,26 @@ async def real_registry(test_db_factory, monkeypatch, request):
             payload["certificates"][0].pop("revoked_at")
         elif fault == "missing_certificate_id":
             payload["certificates"][0].pop("certificate_id")
-        elif fault in ("missing_cursor", "blank_cursor", "invalid_cursor", "repeated_cursor", "cycling_cursor"):
+        elif fault in (
+            "missing_cursor",
+            "blank_cursor",
+            "invalid_cursor",
+            "repeated_cursor",
+            "cycling_cursor",
+        ):
             payload["has_more"] = True
-            if fault == "cycling_cursor" and response.request.url.params["cursor"] == faults["first_cursor"]:
+            if (
+                fault == "cycling_cursor"
+                and response.request.url.params["cursor"] == faults["first_cursor"]
+            ):
                 prior = decode_cursor(faults["first_cursor"])
                 prior["issued_at"] = "2025-12-31T00:00:00+00:00"
                 payload["next_cursor"] = encode_cursor(prior)
             else:
                 payload["next_cursor"] = {
-                    "missing_cursor": None, "blank_cursor": " ", "invalid_cursor": 1,
+                    "missing_cursor": None,
+                    "blank_cursor": " ",
+                    "invalid_cursor": 1,
                 }.get(fault, faults["first_cursor"])
         elif fault == "private":
             response.status_code = 403
@@ -147,16 +181,27 @@ async def real_registry(test_db_factory, monkeypatch, request):
         response._content = json.dumps(payload).encode()
 
     # Only replace transport selection: every request reaches real AWID handlers.
-    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda **kw: client_type(
-        transport=httpx.ASGITransport(app=registry), event_hooks={"request": [record], "response": [inject_fault]}, **kw,
-    ))
-    cache = auth.AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=60, service_token=token)
+    monkeypatch.setattr(
+        auth.httpx,
+        "AsyncClient",
+        lambda **kw: client_type(
+            transport=httpx.ASGITransport(app=registry),
+            event_hooks={"request": [record], "response": [inject_fault]},
+            **kw,
+        ),
+    )
+    cache = auth.AWIDTeamCache(
+        registry_url="https://registry.example", ttl_seconds=60, service_token=token
+    )
     app = FastAPI()
 
     @app.get("/protected")
     async def protected(request: Request):
         principal = await auth.authenticate_request(
-            request, settings=Settings(public_origin=ORIGIN), team_cache=cache, db=app_db,
+            request,
+            settings=Settings(public_origin=ORIGIN),
+            team_cache=cache,
+            db=app_db,
         )
         return {"certificate_id": principal.certificate_id}
 
@@ -181,8 +226,13 @@ async def test_certificate_beyond_first_page(real_registry, revoked):
     pages = [r for r in calls if r.url.path.endswith("/certificates")]
     assert len(pages) == 2
     assert pages[1].url.params["cursor"]
-    assert all(r.headers.get("X-AWID-Service-Token") == "pagination-test-service-token-32-bytes" for r in calls)
-    assert cache._cache[TEAM_ID].revoked_certificate_ids == (frozenset({"target"}) if revoked else frozenset())
+    assert all(
+        r.headers.get("X-AWID-Service-Token") == "pagination-test-service-token-32-bytes"
+        for r in calls
+    )
+    assert cache._cache[TEAM_ID].revoked_certificate_ids == (
+        frozenset({"target"}) if revoked else frozenset()
+    )
 
 
 @pytest.mark.asyncio
@@ -227,23 +277,26 @@ async def exceed_page_bound(db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fault,detail", [
-    ("payload", "AWID registry unavailable"),
-    ("json", "AWID registry unavailable"),
-    ("missing_has_more", "AWID certificate revocation response is incomplete"),
-    ("has_more", "AWID certificate revocation response is incomplete"),
-    ("certificates", "AWID certificate revocation response is incomplete"),
-    ("row", "AWID certificate revocation response is incomplete"),
-    ("missing_revoked_at", "AWID certificate revocation response is incomplete"),
-    ("missing_certificate_id", "AWID certificate revocation response is incomplete"),
-    ("missing_cursor", "AWID certificate pagination did not advance"),
-    ("repeated_cursor", "AWID certificate pagination did not advance"),
-    ("blank_cursor", "AWID certificate pagination did not advance"),
-    ("invalid_cursor", "AWID certificate pagination did not advance"),
-    ("cycling_cursor", "AWID certificate pagination did not advance"),
-    ("http", "AWID certificate revocation lookup unavailable"),
-    ("transport", "AWID registry unavailable"),
-])
+@pytest.mark.parametrize(
+    "fault,detail",
+    [
+        ("payload", "AWID registry unavailable"),
+        ("json", "AWID registry unavailable"),
+        ("missing_has_more", "AWID certificate revocation response is incomplete"),
+        ("has_more", "AWID certificate revocation response is incomplete"),
+        ("certificates", "AWID certificate revocation response is incomplete"),
+        ("row", "AWID certificate revocation response is incomplete"),
+        ("missing_revoked_at", "AWID certificate revocation response is incomplete"),
+        ("missing_certificate_id", "AWID certificate revocation response is incomplete"),
+        ("missing_cursor", "AWID certificate pagination did not advance"),
+        ("repeated_cursor", "AWID certificate pagination did not advance"),
+        ("blank_cursor", "AWID certificate pagination did not advance"),
+        ("invalid_cursor", "AWID certificate pagination did not advance"),
+        ("cycling_cursor", "AWID certificate pagination did not advance"),
+        ("http", "AWID certificate revocation lookup unavailable"),
+        ("transport", "AWID registry unavailable"),
+    ],
+)
 async def test_later_page_fault_fails_closed(real_registry, fault, detail, caplog):
     client, headers, cache, _db, calls, faults = real_registry
     faults["kind"] = fault

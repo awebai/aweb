@@ -85,7 +85,9 @@ class LedgerTests(unittest.TestCase):
             skipped = row(stage="integration/e2e-naapp", status="skipped")
             self.assertEqual(lease.import_rows(before, before + skipped), 1)
             with self.assertRaisesRegex(Infrastructure, "invalid verdict"):
-                lease.import_rows(before, before + row(stage="integration", status="skipped"))
+                lease.import_rows(
+                    before, before + row(stage="integration", status="skipped")
+                )
         self.assertEqual(self.path.read_bytes(), before + skipped)
 
 

@@ -20,12 +20,18 @@ def _networks(spec: str) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network,
         return ()
     try:
         text = spec.strip()
-        tokens = json.loads(text) if text.startswith("[") else text.replace("|", ",").split(",")
+        tokens = (
+            json.loads(text)
+            if text.startswith("[")
+            else text.replace("|", ",").split(",")
+        )
         if not isinstance(tokens, list) or not tokens:
             raise ValueError("expected a nonempty CIDR list")
         if not all(isinstance(value, str) and value.strip() for value in tokens):
             raise ValueError("expected CIDR strings")
-        return tuple(ipaddress.ip_network(value.strip(), strict=False) for value in tokens)
+        return tuple(
+            ipaddress.ip_network(value.strip(), strict=False) for value in tokens
+        )
     except (ValueError, TypeError):
         logger.warning("Invalid client-IP CIDR configuration; using the socket peer")
         return ()
@@ -63,7 +69,9 @@ def resolve_client_ip(request: Request) -> str:
         lines = request.headers.getlist("x-forwarded-for")
         if not lines:
             return peer
-        chain = tuple(ipaddress.ip_address(value.strip()) for value in ",".join(lines).split(","))
+        chain = tuple(
+            ipaddress.ip_address(value.strip()) for value in ",".join(lines).split(",")
+        )
     except ValueError:
         return peer
     if not any(chain[-1] in network for network in cf_edges):

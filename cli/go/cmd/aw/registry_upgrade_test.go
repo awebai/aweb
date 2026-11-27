@@ -213,17 +213,41 @@ func testLegacyLocalRegistryUpgrade(t *testing.T) {
 		cmd.Env = append(testCommandEnv(home), "AW_NO_UPDATE_CHECK=1", "AWEB_API_KEY=", "AWEB_URL="+registry.URL)
 		return cmd
 	}
-	released, err := filepath.Abs("../../../../.cache/released-aw/1.36.58/" + awBinaryNameForTest())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(released); err != nil {
-		t.Fatalf("released aw 1.36.58 is missing; run make released-aw-sync: %v", err)
-	}
-	init := command(released, "init", "--new-team", "--name", "alice", "--do-not-touch-agents-md", "--json")
-	init.Env = append(init.Env, "AWID_REGISTRY_URL="+registry.URL)
-	if out, err := init.CombinedOutput(); err != nil {
-		t.Fatalf("released implicit init: %v\n%s", err, out)
+	if released := os.Getenv("AW_TEST_AW_13658"); released != "" {
+		cmd := command(released, "init", "--new-team", "--name", "alice", "--do-not-touch-agents-md", "--json")
+		cmd.Env = append(cmd.Env, "AWID_REGISTRY_URL="+registry.URL)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("released implicit init: %v\n%s", err, out)
+		}
+	} else {
+		// Use the released wire shape in routine tests. Set AW_TEST_AW_13658
+		// to exercise the actual released writer against the same endpoints.
+		t.Setenv("AWID_REGISTRY_URL", registry.URL)
+		if _, err := runImplicitLocalInit(implicitLocalInitRequest{WorkingDir: root, AwebURL: registry.URL, RegistryURL: registry.URL, Alias: "alice"}); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AWID_REGISTRY_URL", "")
+		controllerPath, err := awconfig.ControllerMetaPath("local")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{controllerPath, awconfig.TeamStatePath(root)} {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var legacy []string
+			for _, line := range strings.Split(string(data), "\n") {
+				field := strings.TrimSpace(line)
+				if strings.HasPrefix(field, "registry_operator_origin:") || (path != controllerPath && strings.HasPrefix(field, "registry_url:")) {
+					continue
+				}
+				legacy = append(legacy, line)
+			}
+			if err := os.WriteFile(path, []byte(strings.Join(legacy, "\n")), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	state, err := awconfig.LoadTeamState(root)
 	if err != nil {

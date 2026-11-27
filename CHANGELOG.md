@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
+  `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
+  of the documented Go library and are now internal to the `aw` module, under
+  `cli/go/internal/`. The documented library is `aw`, `awid`, `awconfig`,
+  `chat` and `run`; none of its exported API changes. An outside importer of
+  the moved packages must vendor the code it needs.
+
+- Certificate requests from a member that left a team and reconnected with
+  the same key are admitted again. Since server 1.27.51 the native member read
+  could return the archived row instead of the live one for that key and
+  refuse the request as not connected. The read now returns the live row, and
+  the most recent archived row only when no live one exists. Server 1.27.55
+  carries this change.
+
+- After a timeout or unavailable response, optional identity-chain checks skip
+  live status refreshes for that registry and domain for five seconds. Fresh
+  cached status and strict verification still apply. awid-service 0.5.43 and
+  server 1.27.54 carry this change; server 1.27.54 requires
+  `awid-service>=0.5.43`.
+
 - awid-service 0.5.42 remembers the result of the Ed25519 point check for
   public keys and certificate signatures it has already checked, which removes
   most of the processor time of identity-chain checks.

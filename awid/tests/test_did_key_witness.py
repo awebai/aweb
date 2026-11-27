@@ -37,7 +37,9 @@ async def _log_times(awid_db_infra, did_aw):
 
 @pytest.mark.asyncio
 async def test_registration_and_rotation_times_come_from_the_tree_clock(
-    clocked_client, awid_db_infra, manual_clock,
+    clocked_client,
+    awid_db_infra,
+    manual_clock,
 ):
     key, did_key = _keypair()
     did_aw = stable_id_from_did_key(did_key)
@@ -48,11 +50,16 @@ async def test_registration_and_rotation_times_come_from_the_tree_clock(
     _, new_did_key = _keypair()
     await rotate_identity(clocked_client, key, did_aw, did_key, new_did_key)
 
-    assert await _log_times(awid_db_infra, did_aw) == [(1, registered), (2, manual_clock.now)]
+    assert await _log_times(awid_db_infra, did_aw) == [
+        (1, registered),
+        (2, manual_clock.now),
+    ]
 
 
 @pytest.mark.asyncio
-async def test_rotation_time_follows_the_previous_key_epoch(clocked_client, awid_db_infra, manual_clock):
+async def test_rotation_time_follows_the_previous_key_epoch(
+    clocked_client, awid_db_infra, manual_clock
+):
     key, did_key = _keypair()
     did_aw = stable_id_from_did_key(did_key)
     await register_identity(clocked_client, key, did_key)
@@ -62,12 +69,17 @@ async def test_rotation_time_follows_the_previous_key_epoch(clocked_client, awid
     _, new_did_key = _keypair()
     await rotate_identity(clocked_client, key, did_aw, did_key, new_did_key)
 
-    assert await _log_times(awid_db_infra, did_aw) == [(1, registered), (2, registered + MICROSECOND)]
+    assert await _log_times(awid_db_infra, did_aw) == [
+        (1, registered),
+        (2, registered + MICROSECOND),
+    ]
 
 
 @pytest.mark.asyncio
 async def test_rotation_waits_for_the_mapping_lock_and_witnesses_after_it(
-    clocked_client, awid_db_infra, manual_clock,
+    clocked_client,
+    awid_db_infra,
+    manual_clock,
 ):
     key, did_key = _keypair()
     did_aw = stable_id_from_did_key(did_key)
@@ -93,7 +105,8 @@ async def test_rotation_waits_for_the_mapping_lock_and_witnesses_after_it(
 
 @pytest.mark.asyncio
 async def test_concurrent_rotations_from_one_head_serialize_on_the_mapping(
-    clocked_client, awid_db_infra,
+    clocked_client,
+    awid_db_infra,
 ):
     key, did_key = _keypair()
     did_aw = stable_id_from_did_key(did_key)
@@ -106,7 +119,9 @@ async def test_concurrent_rotations_from_one_head_serialize_on_the_mapping(
             did_aw,
         )
         rotations = [
-            asyncio.create_task(request_rotation(clocked_client, key, did_aw, did_key, _keypair()[1]))
+            asyncio.create_task(
+                request_rotation(clocked_client, key, did_aw, did_key, _keypair()[1])
+            )
             for _ in range(2)
         ]
         gathered = asyncio.gather(*rotations)

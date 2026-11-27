@@ -7,7 +7,11 @@ these fields refuse it as awid.dns_auth.validate_did_key does.
 from __future__ import annotations
 
 import pytest
-from nacl.bindings import crypto_core_ed25519_add, crypto_scalarmult_ed25519_base_noclamp, crypto_core_ed25519_scalar_reduce
+from nacl.bindings import (
+    crypto_core_ed25519_add,
+    crypto_scalarmult_ed25519_base_noclamp,
+    crypto_core_ed25519_scalar_reduce,
+)
 from pydantic import ValidationError
 
 from awid.did import did_from_public_key, generate_keypair
@@ -25,7 +29,9 @@ _ORDER_TWO = bytes([0xEC]) + bytes([0xFF] * 30) + bytes([0x7F])
 
 
 def _mixed_order() -> bytes:
-    honest = crypto_scalarmult_ed25519_base_noclamp(crypto_core_ed25519_scalar_reduce(bytes(range(64))))
+    honest = crypto_scalarmult_ed25519_base_noclamp(
+        crypto_core_ed25519_scalar_reduce(bytes(range(64)))
+    )
     return crypto_core_ed25519_add(honest, _ORDER_TWO)
 
 
@@ -45,12 +51,17 @@ def test_a_grant_cannot_be_minted_for_a_degenerate_key(name):
 def test_a_grant_can_be_minted_for_an_honest_key():
     _, public = generate_keypair()
     did_key = did_from_public_key(public)
-    assert GrantMintRequest(grant_did_key=did_key, scopes=["mail.read"]).grant_did_key == did_key
+    assert (
+        GrantMintRequest(grant_did_key=did_key, scopes=["mail.read"]).grant_did_key
+        == did_key
+    )
 
 
 @pytest.mark.parametrize("name", DEGENERATE)
 def test_a_federation_envelope_cannot_name_a_degenerate_target_key(name):
     signing_key, public = generate_keypair()
-    envelope = _envelope(did_from_public_key(public)) | {"target_current_did_key": DEGENERATE[name]}
+    envelope = _envelope(did_from_public_key(public)) | {
+        "target_current_did_key": DEGENERATE[name]
+    }
     with pytest.raises(ValidationError):
         verify_federation_envelope(envelope, _sign(envelope, signing_key))

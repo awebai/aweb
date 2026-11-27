@@ -250,23 +250,20 @@ subjects prevented command parsing. Remote command dispatch is now forbidden;
 current probes check content-only delivery and local prompt refusal instead.
 The earlier comparison did not exercise model inference.
 
-Candidate unit tests run the local package contract files against the checked
-v0.23.1 revision. The gate prepares the locked Hermes environment before
-isolating the runner. For a standalone run, prepare the server lock with
-`uv sync --frozen --project server`, then use `make hermes-test-sync` and
-`make test-hermes-aweb-platform`. The live model check runs in Cloud's Hermes
-stage. The package's opt-in transport probes use the fixtures below.
+`make test-hermes-platform`, from the aweb repository root, runs the plugin's
+tests on Hermes's own locked environment at the supported revision
+(`HERMES_SOURCE_SHA` in the Makefile). It builds that environment once under
+the user's cache directory, from a checkout at that revision with
+`uv sync --frozen --python 3.14`. The plugin's Hermes-free controls run in
+`make test` and the aweb gate (`make test-hermes-platform-source`).
 
-For a Hermes upgrade, inspect those boundaries at the new commit and run the
-following targeted checks before advancing the supported version:
+For a Hermes upgrade, inspect those boundaries at the new commit, move
+`HERMES_SOURCE_SHA` together with Cloud's `candidate-gate/Dockerfile.hermes`,
+and run `make test-hermes-platform` before advancing the supported version.
+The live probes are opt-in:
 
 ```bash
 export HERMES_AGENT_SOURCE=/path/to/supported/hermes-agent
-python -m unittest discover -s packages/hermes-aweb-platform/tests \
-  -p test_hermes_lifecycle.py -v
-python -m unittest discover -s packages/hermes-aweb-platform/tests \
-  -p test_content_boundary.py -v
-
 export HERMES_LIVE_RECEIVER_HOME=/path/to/local-hermes-workspace
 export HERMES_LIVE_SENDER_HOME=/path/to/local-alice-workspace
 export HERMES_LIVE_POSTGRES_CONTAINER=hermes-acft1-postgres-1
@@ -289,8 +286,9 @@ control-boundary behavior, not model inference.
 ## Releases
 
 The package in [the aweb monorepo](https://github.com/awebai/aweb/tree/main/packages/hermes-aweb-platform)
-is the source. After a plugin change lands there with review and a real-gateway
-probe, integrations mirrors that package and the repository LICENSE as one
+is the source. After a plugin change lands there with review, a real-gateway
+probe and a passing `make test-hermes-platform` at the exact source SHA,
+integrations mirrors that package and the repository LICENSE as one
 commit onto [the release channel](https://github.com/awebai/hermes-aweb-platform)
 main. A reviewer verifies tree identity at the exact source and mirror SHAs
 before the push. The mirror commit is tagged `vX.Y.Z` using the version in

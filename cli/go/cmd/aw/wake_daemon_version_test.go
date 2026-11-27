@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/awebai/aw/wake"
+	"github.com/awebai/aw/internal/wake"
 )
 
 // serveOneWakeStatus answers the real control protocol (one JSON line in, one

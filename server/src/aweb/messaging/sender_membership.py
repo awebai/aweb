@@ -7,7 +7,10 @@ from uuid import UUID
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from aweb.application_state import RegistryClientUnavailable, application_registry_client
+from aweb.application_state import (
+    RegistryClientUnavailable,
+    application_registry_client,
+)
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 from aweb.member_team_key import (
     CertificateStandingState,
@@ -47,7 +50,9 @@ async def sender_memberships(
     ``member_rows`` are the senders' agent rows when the caller read them with
     its messages; otherwise they are read here.
     """
-    keys = {(str(r.get("team_id") or ""), str(r.get("from_agent_id") or "")) for r in rows}
+    keys = {
+        (str(r.get("team_id") or ""), str(r.get("from_agent_id") or "")) for r in rows
+    }
     result = {key: SenderMembership(team_id=key[0]) for key in keys}
     if request is None:
         return result

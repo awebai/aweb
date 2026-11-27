@@ -82,12 +82,15 @@ async def test_a_teams_whole_log_exports_as_a_bundle_that_verifies(db) -> None:
     assert all(line.endswith(b"\n") for line in lines)
     assert kinds(lines) == [
         "genesis",
-        *["event", "receipt"] * 3, "checkpoint", "checkpoint",
-        "genesis", "event", "receipt", "checkpoint",
+        *["event", "receipt"] * 3,
+        "checkpoint",
+        "checkpoint",
+        "genesis",
+        "event",
+        "receipt",
+        "checkpoint",
     ]
-    report = verified(
-        lines, witness_receipts=receipts, witness_checkpoints=[first, final, second]
-    )
+    report = verified(lines, witness_receipts=receipts, witness_checkpoints=[first, final, second])
     assert report["intact"] is True
     assert [(e["chain_epoch"], e["linked"], e.get("anchored_to")) for e in report["epochs"]] == [
         (1, True, 3),

@@ -14,7 +14,11 @@ from fastapi import Depends, Request
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError
 
-from aweb.presence import clear_workspace_presence, refresh_agent_presence, update_agent_presence
+from aweb.presence import (
+    clear_workspace_presence,
+    refresh_agent_presence,
+    update_agent_presence,
+)
 from test_dashboard_privacy import privacy_app as privacy_app
 
 __all__ = ["privacy_app"]
@@ -122,10 +126,14 @@ async def test_clear_workspace_presence_uses_all_historical_coordinates_after_pr
 
 
 @pytest.mark.asyncio
-async def test_clear_workspace_presence_removes_workspace_and_agent_heartbeat_ids(world):
+async def test_clear_workspace_presence_removes_workspace_and_agent_heartbeat_ids(
+    world,
+):
     redis = world.redis
     await _heartbeat(world)
-    await update_agent_presence(redis, agent_id=world.agent, alias="worker", team_id=world.team)
+    await update_agent_presence(
+        redis, agent_id=world.agent, alias="worker", team_id=world.team
+    )
     assert await clear_workspace_presence(redis, [world.workspace, world.agent]) == 2
     await _assert_absent(world)
     assert not await redis.sismember("idx:all_workspaces", world.agent)
@@ -155,7 +163,9 @@ async def test_clear_workspace_presence_recovers_pre_coordinate_indices(world):
 
 
 @pytest.mark.asyncio
-async def test_pre_coordinate_enumeration_failure_is_non_success_then_retryable(world, monkeypatch):
+async def test_pre_coordinate_enumeration_failure_is_non_success_then_retryable(
+    world, monkeypatch
+):
     await _pre_coordinate_presence(world)
     real_scan = world.redis.scan_iter
     failed = False
@@ -173,7 +183,9 @@ async def test_pre_coordinate_enumeration_failure_is_non_success_then_retryable(
         patch.setattr(world.redis, "scan_iter", fail_once)
         with pytest.raises(ConnectionError, match="enumeration unavailable"):
             await clear_workspace_presence(world.redis, [world.workspace])
-        assert await world.redis.sismember(f"idx:team_workspaces:{world.team}", world.workspace)
+        assert await world.redis.sismember(
+            f"idx:team_workspaces:{world.team}", world.workspace
+        )
         assert not await world.redis.exists(f"presence_coordinates:{world.workspace}")
         assert await clear_workspace_presence(world.redis, [world.workspace]) == 0
     await _assert_absent(world)
@@ -198,7 +210,9 @@ async def test_pre_coordinate_map_commit_response_loss_is_retryable(world, monke
         with pytest.raises(ConnectionError, match="fallback map commit"):
             await clear_workspace_presence(world.redis, [world.workspace])
         assert await world.redis.exists(f"presence_coordinates:{world.workspace}")
-        assert await world.redis.sismember(f"idx:team_workspaces:{world.team}", world.workspace)
+        assert await world.redis.sismember(
+            f"idx:team_workspaces:{world.team}", world.workspace
+        )
         assert await clear_workspace_presence(world.redis, [world.workspace]) == 0
     await _assert_absent(world)
     assert await world.redis.get(world.alias) is None
@@ -248,77 +262,140 @@ async def test_clear_workspace_presence_preserves_concurrently_reused_alias(worl
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("branch", ["feat/slash", "literal%", "remote:branch", "with space", "é/分支"])
-async def test_presence_refresh_renews_the_encoded_index_for_supplied_and_retained_branches(world, branch):
+@pytest.mark.parametrize(
+    "branch", ["feat/slash", "literal%", "remote:branch", "with space", "é/分支"]
+)
+async def test_presence_refresh_renews_the_encoded_index_for_supplied_and_retained_branches(
+    world, branch
+):
     redis = world.redis
     await update_agent_presence(
-        redis, workspace_id=world.workspace, alias="worker", team_id=world.team,
-        repo_id=world.repo, current_branch=branch, program="aw", model="test-model",
-        status="busy", timezone="Europe/Madrid", ttl_seconds=30,
+        redis,
+        workspace_id=world.workspace,
+        alias="worker",
+        team_id=world.team,
+        repo_id=world.repo,
+        current_branch=branch,
+        program="aw",
+        model="test-model",
+        status="busy",
+        timezone="Europe/Madrid",
+        ttl_seconds=30,
     )
     index = f"idx:branch_workspaces:{world.repo}:{quote(branch, safe='')}"
     assert await redis.sismember(index, world.workspace)
     await redis.expire(index, 5)
     retained = await refresh_agent_presence(
-        redis, workspace_id=world.workspace, alias="worker", team_id=world.team,
-        ttl_seconds=30, projection={"program": None, "model": ""},
+        redis,
+        workspace_id=world.workspace,
+        alias="worker",
+        team_id=world.team,
+        ttl_seconds=30,
+        projection={"program": None, "model": ""},
     )
     assert retained["repo_id"] == world.repo
     assert retained["current_branch"] == branch
-    assert (retained["status"], retained["program"], retained["model"], retained["timezone"]) == (
-        "busy", "aw", "test-model", "Europe/Madrid",
+    assert (
+        retained["status"],
+        retained["program"],
+        retained["model"],
+        retained["timezone"],
+    ) == (
+        "busy",
+        "aw",
+        "test-model",
+        "Europe/Madrid",
     )
     assert 5 < await redis.ttl(index) <= 60
 
     await redis.expire(index, 5)
     changed = await refresh_agent_presence(
-        redis, workspace_id=world.workspace, alias="worker", team_id=world.team,
-        ttl_seconds=30, projection={"current_branch": "next"},
+        redis,
+        workspace_id=world.workspace,
+        alias="worker",
+        team_id=world.team,
+        ttl_seconds=30,
+        projection={"current_branch": "next"},
     )
     assert changed["current_branch"] == "next"
     assert 0 < await redis.ttl(index) <= 5
-    assert await redis.sismember(f"idx:branch_workspaces:{world.repo}:next", world.workspace)
+    assert await redis.sismember(
+        f"idx:branch_workspaces:{world.repo}:next", world.workspace
+    )
 
     last_seen = await update_agent_presence(
-        redis, workspace_id=world.workspace, alias="worker", team_id=world.team,
-        program="", current_branch="", ttl_seconds=30,
+        redis,
+        workspace_id=world.workspace,
+        alias="worker",
+        team_id=world.team,
+        program="",
+        current_branch="",
+        ttl_seconds=30,
     )
     stored = await redis.hgetall(f"presence:{world.workspace}")
-    assert (stored["program"], stored["current_branch"], stored["status"], stored["last_seen"]) == (
-        "", "", "busy", last_seen,
+    assert (
+        stored["program"],
+        stored["current_branch"],
+        stored["status"],
+        stored["last_seen"],
+    ) == (
+        "",
+        "",
+        "busy",
+        last_seen,
     )
     await clear_workspace_presence(redis, [world.workspace])
     assert not await redis.sismember(index, world.workspace)
-    assert not await redis.sismember(f"idx:branch_workspaces:{world.repo}:next", world.workspace)
+    assert not await redis.sismember(
+        f"idx:branch_workspaces:{world.repo}:next", world.workspace
+    )
 
 
 @pytest.mark.asyncio
 async def test_twenty_concurrent_presence_writers_retain_one_complete_generation(world):
     await _heartbeat(world)
     redis = world.redis
-    results = await asyncio.gather(*(
-        refresh_agent_presence(
-            redis, workspace_id=world.workspace, alias="worker", team_id=world.team,
-            projection={"program": f"worker-{index}"},
+    results = await asyncio.gather(
+        *(
+            refresh_agent_presence(
+                redis,
+                workspace_id=world.workspace,
+                alias="worker",
+                team_id=world.team,
+                projection={"program": f"worker-{index}"},
+            )
+            for index in range(20)
         )
-        for index in range(20)
-    ))
-    assert {result["program"] for result in results} == {f"worker-{index}" for index in range(20)}
-    assert {(result["repo_id"], result["current_branch"], result["status"]) for result in results} == {
+    )
+    assert {result["program"] for result in results} == {
+        f"worker-{index}" for index in range(20)
+    }
+    assert {
+        (result["repo_id"], result["current_branch"], result["status"])
+        for result in results
+    } == {
         (world.repo, "main", "active"),
     }
-    assert await redis.sismember(f"idx:branch_workspaces:{world.repo}:main", world.workspace)
+    assert await redis.sismember(
+        f"idx:branch_workspaces:{world.repo}:main", world.workspace
+    )
 
 
 @pytest.mark.asyncio
-async def test_presence_cleanup_racing_an_atomic_writer_leaves_only_the_winning_generation(world):
+async def test_presence_cleanup_racing_an_atomic_writer_leaves_only_the_winning_generation(
+    world,
+):
     await _heartbeat(world)
     redis = world.redis
     await asyncio.gather(
         clear_workspace_presence(redis, [world.workspace]),
         update_agent_presence(
-            redis, workspace_id=world.workspace, alias="worker-next", team_id=world.team,
-            repo_id=world.next_repo, current_branch="next",
+            redis,
+            workspace_id=world.workspace,
+            alias="worker-next",
+            team_id=world.team,
+            repo_id=world.next_repo,
+            current_branch="next",
         ),
     )
     stored = await redis.hgetall(f"presence:{world.workspace}")
@@ -328,15 +405,21 @@ async def test_presence_cleanup_racing_an_atomic_writer_leaves_only_the_winning_
     assert stored["repo_id"] == world.next_repo
     assert stored["current_branch"] == "next"
     assert await redis.get(world.next_alias) == world.workspace
-    assert await redis.sismember(f"idx:branch_workspaces:{world.next_repo}:next", world.workspace)
+    assert await redis.sismember(
+        f"idx:branch_workspaces:{world.next_repo}:next", world.workspace
+    )
     await clear_workspace_presence(redis, [world.workspace])
     await _assert_absent(world)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("expired", [False, True])
-@pytest.mark.parametrize("hosted_scope", ["none", "exact", "wrong-team", "wrong-workspace"])
-async def test_native_heartbeat_writes_presence_once(privacy_app, monkeypatch, expired, hosted_scope):
+@pytest.mark.parametrize(
+    "hosted_scope", ["none", "exact", "wrong-team", "wrong-workspace"]
+)
+async def test_native_heartbeat_writes_presence_once(
+    privacy_app, monkeypatch, expired, hosted_scope
+):
     from aweb.deps import get_db
     from aweb.presence import HostedHeartbeatPresence
     from test_dashboard_privacy import TEAM
@@ -345,25 +428,39 @@ async def test_native_heartbeat_writes_presence_once(privacy_app, monkeypatch, e
 
     env = privacy_app
     member, _ = await _admitted_cert_info(env, alias="bob")
-    workspace = str(await env.db.fetch_value(
-        "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1 AND deleted_at IS NULL",
-        member.id,
-    ))
+    workspace = str(
+        await env.db.fetch_value(
+            "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=$1 AND deleted_at IS NULL",
+            member.id,
+        )
+    )
     assert workspace != "None"
     await update_agent_presence(
-        env.redis, workspace_id=workspace, alias="bob", team_id=TEAM, program="rich", status="busy",
+        env.redis,
+        workspace_id=workspace,
+        alias="bob",
+        team_id=TEAM,
+        program="rich",
+        status="busy",
     )
     key = f"presence:{workspace}"
     if expired:
         await env.redis.pexpire(key, 0)
     if hosted_scope != "none":
         path = "/v1/agents/heartbeat"
-        route = next(item for item in env.app.routes if getattr(item, "path", None) == path)
-        authenticate = next(dep.call for dep in route.dependant.dependencies if dep.name == "identity")
+        route = next(
+            item for item in env.app.routes if getattr(item, "path", None) == path
+        )
+        authenticate = next(
+            dep.call for dep in route.dependant.dependencies if dep.name == "identity"
+        )
         projection = {
-            "canonical_origin": "example.test/repo", "current_branch": "feature/x",
-            "human_name": "Fixture", "member_email": "seat@example.test",
-            "repo_id": str(uuid4()), "role": "analyst",
+            "canonical_origin": "example.test/repo",
+            "current_branch": "feature/x",
+            "human_name": "Fixture",
+            "member_email": "seat@example.test",
+            "repo_id": str(uuid4()),
+            "role": "analyst",
         }
         hosted = HostedHeartbeatPresence(
             str(uuid4()) if hosted_scope == "wrong-workspace" else workspace,
@@ -376,7 +473,9 @@ async def test_native_heartbeat_writes_presence_once(privacy_app, monkeypatch, e
             request.state.hosted_heartbeat_presence = hosted
             return identity
 
-        monkeypatch.setitem(env.app.dependency_overrides, authenticate, embedded_identity)
+        monkeypatch.setitem(
+            env.app.dependency_overrides, authenticate, embedded_identity
+        )
     calls = []
     execute = env.redis.execute_command
 
@@ -386,14 +485,23 @@ async def test_native_heartbeat_writes_presence_once(privacy_app, monkeypatch, e
 
     with monkeypatch.context() as patch:
         patch.setattr(env.redis, "execute_command", observe)
-        response = await env.client.post("/v1/agents/heartbeat", headers=_signed_team_headers(
-            member.sk, member.did, TEAM, member.certificate, b"",
-        ))
+        response = await env.client.post(
+            "/v1/agents/heartbeat",
+            headers=_signed_team_headers(
+                member.sk,
+                member.did,
+                TEAM,
+                member.certificate,
+                b"",
+            ),
+        )
     assert response.status_code == 200, response.text
     assert [command for command, args in calls if key in args] == ["EVAL"]
     stored = await env.redis.hgetall(key)
     assert stored["last_seen"] == response.json()["last_seen_at"]
-    assert (stored.get("program"), stored["status"]) == ((None, "active") if expired else ("rich", "busy"))
+    assert (stored.get("program"), stored["status"]) == (
+        (None, "active") if expired else ("rich", "busy")
+    )
     if hosted_scope != "none":
         assert {key: stored.get(key) for key in projection} == (
             projection if hosted_scope == "exact" else dict.fromkeys(projection)

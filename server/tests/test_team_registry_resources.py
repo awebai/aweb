@@ -60,10 +60,16 @@ async def test_explicit_team_key_reader_uses_borrowed_sdk_strength_and_one_pin_o
             team_id="team:example.test",
             pin_memo=memo,
         )
-        assert await read_team_key(**arguments, evidence=EvidenceMode.CACHED) == cached_key
+        assert (
+            await read_team_key(**arguments, evidence=EvidenceMode.CACHED) == cached_key
+        )
         key[0] = fresh_key
-        assert await read_team_key(**arguments, evidence=EvidenceMode.CACHED) == cached_key
-        assert await read_team_key(**arguments, evidence=EvidenceMode.FRESH) == fresh_key
+        assert (
+            await read_team_key(**arguments, evidence=EvidenceMode.CACHED) == cached_key
+        )
+        assert (
+            await read_team_key(**arguments, evidence=EvidenceMode.FRESH) == fresh_key
+        )
         assert len(reads) == 2
         for admission in admissions:
             assert admission["db"] is db
@@ -78,7 +84,10 @@ async def test_explicit_team_key_reader_uses_borrowed_sdk_strength_and_one_pin_o
 async def test_request_registration_uses_the_resource_client_over_the_outer_slot():
     """Unit wiring only: an empty transport response proves no admission rule."""
     from aweb.application_state import application_registry_client
-    from aweb.certificate_registration import RegistrationMode, observe_certificate_registrations
+    from aweb.certificate_registration import (
+        RegistrationMode,
+        observe_certificate_registrations,
+    )
     from awid.registry import RegistryClient
     from fastapi import FastAPI
     from starlette.requests import Request
@@ -91,7 +100,9 @@ async def test_request_registration_uses_the_resource_client_over_the_outer_slot
 
     app = FastAPI()
     async with aclosing(
-        RegistryClient(registry_url="https://serving.example", transport=httpx.MockTransport(reply))
+        RegistryClient(
+            registry_url="https://serving.example", transport=httpx.MockTransport(reply)
+        )
     ) as client:
         app.state.native_resources = SimpleNamespace(registry_client=client)
         app.state.awid_registry_client = object()
@@ -125,8 +136,12 @@ async def test_request_pin_refresh_uses_the_same_borrowed_native_resources(monke
     native.state.public_origin = "https://native.example"
     native.state.awid_txt_resolver = resolver
     outer.state.public_origin = "https://unused-outer.example"
-    async with aclosing(RegistryClient(registry_url="https://serving.example")) as client:
-        outer.state.native_resources = SimpleNamespace(api_app=native, registry_client=client)
+    async with aclosing(
+        RegistryClient(registry_url="https://serving.example")
+    ) as client:
+        outer.state.native_resources = SimpleNamespace(
+            api_app=native, registry_client=client
+        )
         request = Request({"type": "http", "app": outer})
         assert owner.request_auth_audiences(request) == ["https://native.example"]
         assert (

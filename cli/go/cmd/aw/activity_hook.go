@@ -21,7 +21,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/atomicfile"
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 	"github.com/spf13/cobra"
 )
 

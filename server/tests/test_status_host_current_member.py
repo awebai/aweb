@@ -47,7 +47,9 @@ async def test_superseded_status_host_is_inactive_until_it_reconnects(pinning):
     )
 
     host_member = (host.sk, host.did, "bob")
-    host.certificate = _certificate(next_key, next_did, host_member, "bob-status-current")
+    host.certificate = _certificate(
+        next_key, next_did, host_member, "bob-status-current"
+    )
     restored = await _connect(env, host_member, host.certificate)
     assert restored.status_code == 200, restored.text
     shown = await _team_request(env, "alice", "GET", "/v1/agents/me/status-host")

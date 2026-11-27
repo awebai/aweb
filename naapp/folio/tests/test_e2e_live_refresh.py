@@ -1,4 +1,5 @@
 """Real aw/AWID/PostgreSQL and two Chromium editors, without adapter stubs."""
+
 from __future__ import annotations
 
 import pytest
@@ -17,7 +18,9 @@ __all__ = ["folio", "aw_workspace_factory"]
 pytestmark = pytest.mark.e2e
 
 
-def test_live_views_follow_cli_and_human_saves_without_losing_a_draft(folio, aw_workspace_factory, tmp_path):
+def test_live_views_follow_cli_and_human_saves_without_losing_a_draft(
+    folio, aw_workspace_factory, tmp_path
+):
     team = _provision_team(aw_workspace_factory("live-refresh"), folio=folio, alias="writer")
     _create_document(folio, team, slug="live", title="Live document", body="# First version")
     edit = _mint_present(folio, team, slug="live", editable=True)
@@ -25,10 +28,16 @@ def test_live_views_follow_cli_and_human_saves_without_losing_a_draft(folio, aw_
         browser = p.chromium.launch()
         try:
             clean, dirty, other = [browser.new_page(ignore_https_errors=True) for _ in range(3)]
-            for page, link in [(clean, edit), (dirty, _mint_present(folio, team, slug="live", editable=True)), (other, _mint_present(folio, team, slug="live", editable=True))]:
+            for page, link in [
+                (clean, edit),
+                (dirty, _mint_present(folio, team, slug="live", editable=True)),
+                (other, _mint_present(folio, team, slug="live", editable=True)),
+            ]:
                 page.goto(link["url"])
             dirty.locator("#body").fill("Retained local draft")
-            _append_version(folio, team, slug="live", body="# CLI second version", tmp_path=tmp_path)
+            _append_version(
+                folio, team, slug="live", body="# CLI second version", tmp_path=tmp_path
+            )
             expect(clean.locator("#body")).to_have_value("# CLI second version", timeout=12000)
             expect(other.locator("#body")).to_have_value("# CLI second version", timeout=12000)
             expect(dirty.locator("#load-latest")).to_be_visible(timeout=12000)

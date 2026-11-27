@@ -1,0 +1,94 @@
+import TrustWeb.Properties
+
+/-!
+# Each operation belongs to a team
+
+The general form of "an admin asks": leaving a key holder, like every other
+operation on an organisation, belongs to a team that the organisation decides.
+
+So there is one mechanism. An organisation assigns each kind of operation to
+one of its teams. The admin team is the default. `adminRule` is the case where
+every operation is assigned to the admin team.
+
+How an organisation changes the assignment is not modelled: it is given.
+-/
+
+namespace TrustWeb
+
+/-- Which team of an organisation may ask for each kind of operation. -/
+abbrev Assignment := Org → ActKind → Team
+
+/-- The rule that follows an assignment: a valid member of the organisation
+who holds a certificate of the team the operation is assigned to may ask. -/
+def teamRule (assign : Assignment) : AskRule :=
+  fun s o act k => ⟨o, assign o act, k⟩ ∈ s.members ∧ ∃ kind, Valid s o k kind
+
+/-- **The admin rule is the team rule with everything assigned to the admin team.** -/
+theorem adminRule_is_teamRule : adminRule = teamRule (fun _ _ => .admin) := rfl
+
+/-- **Whatever the assignment, a key is given back when a member of the
+assigned team asks**, with the approvals the policy names, and nothing else
+changes. -/
+theorem assigned_team_can_take_key_back {assign : Assignment} {s : State} {key : OrgKey}
+    {a : Key} {kind : Kind} (hheld : key ∈ s.held)
+    (hteam : HasTeamCert s key.org (assign key.org .release) a) (hv : Valid s key.org a kind)
+    {approvals : List Key} (happ : Approved s key.org .release approvals) :
+    ∃ s', Step (teamRule assign) s (.id a) s' ∧ key ∉ s'.held ∧
+      s'.certs = s.certs ∧ s'.revoked = s.revoked ∧ s'.members = s.members := by
+  refine ⟨_, Step.release (approvals := approvals) hheld
+    (.inr ⟨hheld, a, rfl, ⟨hteam, kind, hv⟩, happ⟩), ?_, rfl, rfl, rfl⟩
+  intro hmem
+  have := (List.mem_filter.mp hmem).2
+  simp at this
+
+/-- **Whatever the assignment, a member of another team cannot ask.** A key
+leaves its holder only by the domain's owner, or by a valid member holding a
+certificate of the assigned team. -/
+theorem only_assigned_team_takes_key_back {assign : Assignment} {s s' : State} {who : Party}
+    {key : OrgKey} (hstep : Step (teamRule assign) s who s')
+    (hin : key ∈ s.held) (hout : key ∉ s'.held) :
+    who = .dns key.org ∨
+      ∃ k, who = .id k ∧ HasTeamCert s key.org (assign key.org .release) k ∧
+        ∃ kind, Valid s key.org k kind := by
+  rcases key_leaves_holder_only_two_ways hstep hin hout with h | ⟨k, hw, hask⟩
+  · exact .inl h
+  · exact .inr ⟨k, hw, hask.1, hask.2⟩
+
+/-- **A warning the model gives.** The admin team is protected: no ordinary
+admission and no invitation leads into it. Any other team is not. If an
+operation is assigned to a named team, an invitation to that team is enough
+to gain the operation.
+
+Here: taking the root key back is assigned to team 1. An agent of the
+organisation that is in no team uses an invitation to team 1, then asks, and
+the key leaves its holder. -/
+theorem invitation_reaches_an_assigned_team :
+    ∃ (assign : Assignment) (s s1 s2 : State),
+      (∀ t, ¬ HasTeamCert s 0 t 1) ∧ OrgKey.root 0 ∈ s.held ∧
+      Step (teamRule assign) s (.bearer 5) s1 ∧
+      Step (teamRule assign) s1 (.id 1) s2 ∧ OrgKey.root 0 ∉ s2.held := by
+  let assign : Assignment := fun _ act => if act = .release then .named 1 else .admin
+  let c : Cert := ⟨0, 1, .agent, .root⟩
+  let i : Invite := ⟨5, 0, .named 1⟩
+  let s : State := ⟨[0], [c], [], [], [], [], [.root 0], [], [i], []⟩
+  let s1 : State :=
+    { s with members := ⟨i.org, i.team, 1⟩ :: s.members,
+             invites := s.invites.filter (fun x => decide (x ≠ i)) }
+  have hv : Valid s1 0 1 .agent :=
+    .agentOfRoot (c := c) (by simp [s1, s]) rfl rfl rfl rfl (by simp [s1, s])
+  have hheld : OrgKey.root 0 ∈ s1.held := by simp [s1, s]
+  let s2 : State := { s1 with held := s1.held.filter (fun k => decide (k ≠ OrgKey.root 0)) }
+  refine ⟨assign, s, s1, s2, ?_, by simp [s], ?_, ?_, ?_⟩
+  · intro t h
+    simp [HasTeamCert, s] at h
+  · exact Step.redeem (i := i) (k := 1) (by simp [s]) (by simp [i]) (.inl ⟨c, by simp [s], rfl⟩)
+  · refine Step.release (key := .root 0) (approvals := []) hheld
+      (.inr ⟨hheld, 1, rfl, ⟨?_, .agent, hv⟩, ?_⟩)
+    · simp [assign, OrgKey.org, s1, s, i]
+    · intro r hr
+      simp [s1, s] at hr
+  · intro hmem
+    have := (List.mem_filter.mp hmem).2
+    simp at this
+
+end TrustWeb

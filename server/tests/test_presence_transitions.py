@@ -97,7 +97,9 @@ async def test_presence_is_published_once_with_concurrent_maintenance_and_no_das
         assert await _through_barrier(env, stream) == []
 
         deleted = await request_as(
-            env, alias="alice", method="DELETE",
+            env,
+            alias="alice",
+            method="DELETE",
             path=f"/v1/workspaces/{env.actors['alice'].workspace}",
         )
         assert deleted.status_code == 200, deleted.text

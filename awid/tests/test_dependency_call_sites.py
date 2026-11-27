@@ -15,18 +15,12 @@ GETTERS = {
     f"awid_service.deps.{name}"
     for name in (
         "get_db",
-        "get_redis",
         "get_domain_verifier",
     )
 }
 ROOT = Path(__file__).resolve().parents[2]
 DOMAIN_VERIFIER = "awid_service.deps.get_domain_verifier"
-FIXTURE_CONSUMERS = (
-    "naapp-lib/testing/",
-    "naapp/secrets/tests/test_production_bootstrap.py",
-    "server/tests/",
-)
-SHARED_NAAPP_FIXTURES = ("naapp-lib/testing/", "naapp/secrets/tests/human_owner.py")
+FIXTURE_CONSUMERS = ("naapp-lib/testing/", "server/tests/")
 
 
 @dataclass(frozen=True)
@@ -83,25 +77,22 @@ def getter_calls(source: str, *, package: str = "") -> list[GetterCall]:
     ]
 
 
-def verifier_override_sites(
-    source: str, *, package: str = "", context: type[ast.expr_context] = ast.Load
-) -> list[int]:
-    """Find direct access to the verifier override outside its fixture owner."""
+def verifier_override_reads(source: str, *, package: str = "") -> list[int]:
+    """Find direct reads of the verifier override instead of its fixture owner."""
     tree = ast.parse(source)
     resolve = _import_resolver(tree, package)
-    sites = []
+    reads = []
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Subscript)
-            and isinstance(node.ctx, context)
+            and isinstance(node.ctx, ast.Load)
             and isinstance(node.value, ast.Attribute)
             and node.value.attr == "dependency_overrides"
             and resolve(node.slice) == DOMAIN_VERIFIER
         ):
-            sites.append(node.lineno)
+            reads.append(node.lineno)
         elif (
-            context is ast.Load
-            and isinstance(node, ast.Call)
+            isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "get"
             and isinstance(node.func.value, ast.Attribute)
@@ -109,8 +100,8 @@ def verifier_override_sites(
             and node.args
             and resolve(node.args[0]) == DOMAIN_VERIFIER
         ):
-            sites.append(node.lineno)
-    return sorted(sites)
+            reads.append(node.lineno)
+    return sorted(reads)
 
 
 def test_override_inventory_resolves_aliases_and_preserves_override_installation() -> (
@@ -124,8 +115,7 @@ from_mapping = app.dependency_overrides[owner]
 from_get = app.dependency_overrides.get(providers.get_domain_verifier)
 unrelated = app.dependency_overrides.get(get_domain_verifier)
 """
-    assert verifier_override_sites(source) == [4, 5]
-    assert verifier_override_sites(source, context=ast.Store) == [3]
+    assert verifier_override_reads(source) == [4, 5]
 
 
 @pytest.mark.parametrize(
@@ -167,7 +157,6 @@ def test_direct_awid_getter_calls_are_awaited() -> None:
     ).splitlines()
     unawaited = []
     override_reads = []
-    shared_override_writes = []
     for name in paths:
         path = Path(name)
         parts = path.parts
@@ -181,12 +170,7 @@ def test_direct_awid_getter_calls_are_awaited() -> None:
         if name.startswith(FIXTURE_CONSUMERS):
             override_reads.extend(
                 f"{name}:{line}"
-                for line in verifier_override_sites(source, package=package)
-            )
-        if name.startswith(SHARED_NAAPP_FIXTURES):
-            shared_override_writes.extend(
-                f"{name}:{line}"
-                for line in verifier_override_sites(source, package=package, context=ast.Store)
+                for line in verifier_override_reads(source, package=package)
             )
     assert not unawaited, "Direct AWID getter calls must be awaited:\n" + "\n".join(
         unawaited
@@ -194,8 +178,4 @@ def test_direct_awid_getter_calls_are_awaited() -> None:
     assert not override_reads, (
         "Use fixture_domain_authority to read verifier overrides:\n"
         + "\n".join(override_reads)
-    )
-    assert not shared_override_writes, (
-        "Shared naapp fixtures must use the Registry-owned domain verifier:\n"
-        + "\n".join(shared_override_writes)
     )

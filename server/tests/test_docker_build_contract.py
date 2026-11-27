@@ -8,11 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def sync_commands(dockerfile: str) -> list[str]:
-    return [
-        line.strip()
-        for line in dockerfile.splitlines()
-        if "uv sync" in line
-    ]
+    return [line.strip() for line in dockerfile.splitlines() if "uv sync" in line]
 
 
 def test_server_image_installs_from_committed_lock():
@@ -20,8 +16,8 @@ def test_server_image_installs_from_committed_lock():
 
     assert "COPY server/pyproject.toml server/uv.lock server/README.md ./" in dockerfile
     assert sync_commands(dockerfile) == [
-        'RUN uv sync --frozen --no-dev --no-install-project',
-        'RUN uv sync --frozen --no-dev',
+        "RUN uv sync --frozen --no-dev --no-install-project",
+        "RUN uv sync --frozen --no-dev",
     ]
 
 
@@ -60,6 +56,7 @@ def test_service_image_runs_as_numeric_non_root_user(path):
 
     assert re.fullmatch(r"[1-9][0-9]*:[1-9][0-9]*", user), f"{path}: USER {user}"
 
+
 def healthcheck_probes(text: str, port: int) -> list[str]:
     return re.findall(rf"http://localhost:{port}(/[a-z/]*)", text)
 
@@ -94,7 +91,9 @@ def customer_compose() -> dict:
     import yaml
 
     return yaml.safe_load(
-        (REPO_ROOT / "server" / "docker-compose.customer.yml").read_text(encoding="utf-8")
+        (REPO_ROOT / "server" / "docker-compose.customer.yml").read_text(
+            encoding="utf-8"
+        )
     )
 
 
@@ -119,7 +118,9 @@ def test_customer_compose_runs_aweb_against_the_public_registry_with_member_keys
     environment = aweb_service()["environment"]
     assert "AWID_SERVICE_TOKEN" not in environment
     assert environment["AWID_MEMBER_KEYS_FILE"] == "/run/secrets/aweb/member-keys.json"
-    assert environment["AWID_REGISTRY_URL"] == "${AWID_REGISTRY_URL:-https://api.awid.ai}"
+    assert (
+        environment["AWID_REGISTRY_URL"] == "${AWID_REGISTRY_URL:-https://api.awid.ai}"
+    )
 
 
 def test_customer_compose_takes_every_credential_from_a_read_only_file():
@@ -129,10 +130,15 @@ def test_customer_compose_takes_every_credential_from_a_read_only_file():
     services = customer_compose()["services"]
     required = "${SECRETS_DIR:?SECRETS_DIR is required, the directory that holds aweb/ and postgres/}"
     assert services["aweb"]["volumes"] == [f"{required}/aweb:/run/secrets/aweb:ro"]
-    assert f"{required}/postgres:/run/secrets/postgres:ro" in services["postgres"]["volumes"]
+    assert (
+        f"{required}/postgres:/run/secrets/postgres:ro"
+        in services["postgres"]["volumes"]
+    )
     aweb, postgres = aweb_service()["environment"], services["postgres"]["environment"]
     assert aweb["AWEB_DATABASE_URL_FILE"] == "/run/secrets/aweb/database-url"
     assert postgres["POSTGRES_PASSWORD_FILE"] == "/run/secrets/postgres/password"
     for environment in (aweb, postgres):
-        assert not {"AWEB_DATABASE_URL", "DATABASE_URL", "POSTGRES_PASSWORD"} & set(environment)
+        assert not {"AWEB_DATABASE_URL", "DATABASE_URL", "POSTGRES_PASSWORD"} & set(
+            environment
+        )
         assert not any("PASSWORD}" in str(value) for value in environment.values())

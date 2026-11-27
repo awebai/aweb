@@ -10,7 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from aweb.hook_bindings import BINDING_COLUMNS, PRODUCTION, REGISTRATION, HookBinding, binding_from_row
+from aweb.hook_bindings import (
+    BINDING_COLUMNS,
+    PRODUCTION,
+    REGISTRATION,
+    HookBinding,
+    binding_from_row,
+)
 
 # The key purposes a production's keys are listed for: the event signature and
 # the delivery credential. Any other purpose is never listed.
@@ -57,7 +63,9 @@ async def holds_active_binding(
     return row is not None
 
 
-async def active_bindings(db, *, team_id: str, kind: str, selector: HookSelector) -> list[HookBinding]:
+async def active_bindings(
+    db, *, team_id: str, kind: str, selector: HookSelector
+) -> list[HookBinding]:
     """The team's active bindings of ``kind`` for the hook, oldest activation first."""
     rows = await db.fetch_all(
         f"""
@@ -91,7 +99,11 @@ async def hook_keys(db, binding: HookBinding) -> list[HookKey]:
         list(HOOK_KEY_PURPOSES),
     )
     return [
-        HookKey(kid=row["key_id"], did_key=row["did_key"], purposes=tuple(sorted(row["purposes"])))
+        HookKey(
+            kid=row["key_id"],
+            did_key=row["did_key"],
+            purposes=tuple(sorted(row["purposes"])),
+        )
         for row in rows
     ]
 

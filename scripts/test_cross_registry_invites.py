@@ -1,4 +1,5 @@
 """Sensitivity controls for the real journey's admission-condition assertion."""
+
 import json
 from pathlib import Path
 import re
@@ -21,8 +22,17 @@ class InviteConditionAssertionTests(unittest.TestCase):
         ]:
             with self.subTest(invite=invite, expected=expected):
                 result = subprocess.run(
-                    ["bash", "-c", match[0] + '\nassert_invite_human "$1"', "check", expected],
-                    input=json.dumps(invite), text=True, capture_output=True, check=False,
+                    [
+                        "bash",
+                        "-c",
+                        match[0] + '\nassert_invite_human "$1"',
+                        "check",
+                        expected,
+                    ],
+                    input=json.dumps(invite),
+                    text=True,
+                    capture_output=True,
+                    check=False,
                 )
                 self.assertEqual(result.returncode == 0, accepts, result.stderr)
 

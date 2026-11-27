@@ -103,19 +103,24 @@ async def test_registration_under_a_key_with_no_controller_act_is_refused(regist
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dry_run", [False, True])
 async def test_registration_refuses_a_served_key_that_does_not_match_the_admitted_key(
-    registering, dry_run,
+    registering,
+    dry_run,
 ):
     env = registering
     await register_namespace_controller(env, env.namespace_did)
     assert (await _register(env, env.team_sk)).status_code == 200
     stale_sk, _, stale_did = _make_keypair()
     await rotate_team_key(env, env.namespace_sk, env.namespace_did, stale_did)
-    async with aclosing(CachedRegistryClient(
-        registry_url=f"http://registration-cache-{dry_run}.test".lower(),
-        redis_client=env.redis,
-        transport=env.registry.transport,
-    )) as registry:
-        assert await registry.get_team_public_key("example.test", TEAM_NAME) == stale_did
+    async with aclosing(
+        CachedRegistryClient(
+            registry_url=f"http://registration-cache-{dry_run}.test".lower(),
+            redis_client=env.redis,
+            transport=env.registry.transport,
+        )
+    ) as registry:
+        assert (
+            await registry.get_team_public_key("example.test", TEAM_NAME) == stale_did
+        )
         env.app.state.awid_registry_client = registry
         # Another real rotation leaves the SDK cache behind the live act. The
         # server never admitted the intermediate key.

@@ -98,7 +98,9 @@ def test_load_raw_bytes(case: dict[str, Any]) -> None:
 def test_invocation_context(case: dict[str, Any]) -> None:
     manifest = load_manifest(_manifest_bytes(case), reserved_names=RESERVED)
     raw = case["attestation"]
-    attestation = None if raw is None else Attestation(verified=raw["verified"], payload=raw.get("payload"))
+    attestation = (
+        None if raw is None else Attestation(verified=raw["verified"], payload=raw.get("payload"))
+    )
     try:
         manifest.check_invocation_context(case["tool"], attestation)
         got = "context_allowed"
@@ -137,11 +139,18 @@ def test_select_variant(case: dict[str, Any]) -> None:
         return
     variant = select_variant(case["origin"], case["supported_versions"], fetch)
     assert (variant.source, variant.manifest_version, variant.url, variant.digest) == (
-        expected["source"], expected["manifest_version"], expected["url"], expected["digest"]
+        expected["source"],
+        expected["manifest_version"],
+        expected["url"],
+        expected["digest"],
     )
     selected_path = variant.url.removeprefix(case["origin"])
     assert variant.data == case["responses"][selected_path]["body"].encode("utf-8")
-    assert set(fetched) <= {"/.well-known/aweb-app-versions.json", "/.well-known/aweb-app.json", selected_path}
+    assert set(fetched) <= {
+        "/.well-known/aweb-app-versions.json",
+        "/.well-known/aweb-app.json",
+        selected_path,
+    }
 
 
 @pytest.mark.parametrize("case", DISCOVERY["lint_cases"], ids=lambda c: c["name"])
@@ -183,9 +192,26 @@ def test_route_reach_check_is_prompt() -> None:
 def test_role_names_follow_the_designatable_role_grammar() -> None:
     # The manifest accepts exactly the names aweb_naapp.roles accepts.
     roles = pytest.importorskip("aweb_naapp.roles")
-    names = ["fixture.approver", "a.b", "secrets.owner", "x-1.y_2.z", "fixture." + "x" * 120,
-             "fixture." + "x" * 121, "owner", "Secrets.owner", "secrets:owner", "secrets..owner",
-             "secrets.owner.", " secrets.owner", ".secrets.owner", "-a.b", "a.-b", "a.b c", "é.b", ""]
+    names = [
+        "fixture.approver",
+        "a.b",
+        "secrets.owner",
+        "x-1.y_2.z",
+        "fixture." + "x" * 120,
+        "fixture." + "x" * 121,
+        "owner",
+        "Secrets.owner",
+        "secrets:owner",
+        "secrets..owner",
+        "secrets.owner.",
+        " secrets.owner",
+        ".secrets.owner",
+        "-a.b",
+        "a.-b",
+        "a.b c",
+        "é.b",
+        "",
+    ]
     base = V2["base_manifests"]["v2"]
     for name in names:
         doc = copy.deepcopy(base)

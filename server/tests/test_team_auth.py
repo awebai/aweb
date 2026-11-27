@@ -92,7 +92,10 @@ class TestCertificateSignature:
             alias="alice",
         )
 
-        assert self._check(cert, team_did_key, agent_did_key)["certificate_id"] == "cert-001"
+        assert (
+            self._check(cert, team_did_key, agent_did_key)["certificate_id"]
+            == "cert-001"
+        )
 
     def test_invalid_signature_rejected(self):
         _, _, team_did_key = _make_keypair()
@@ -350,7 +353,9 @@ class TestDashboardJWT:
             "team_ids": ["backend:acme.com"],
             "exp": int(time.time()) + 3600,
         }
-        token = jwt.encode(payload, "real-secret-at-least-thirty-two-bytes!", algorithm="HS256")
+        token = jwt.encode(
+            payload, "real-secret-at-least-thirty-two-bytes!", algorithm="HS256"
+        )
 
         with pytest.raises(ValueError, match="invalid"):
             verify_dashboard_token(token, "wrong-secret-at-least-thirty-two-bytes!")
@@ -365,7 +370,9 @@ class TestDashboardJWT:
         }
         token = jwt.encode(payload, _JWT_SECRET, algorithm="HS256")
 
-        result = verify_dashboard_token(token, _JWT_SECRET, required_team="backend:acme.com")
+        result = verify_dashboard_token(
+            token, _JWT_SECRET, required_team="backend:acme.com"
+        )
         assert result["user_id"] == "user-123"
 
     def test_team_id_unauthorized(self):
@@ -379,7 +386,9 @@ class TestDashboardJWT:
         token = jwt.encode(payload, _JWT_SECRET, algorithm="HS256")
 
         with pytest.raises(ValueError, match="not authorized"):
-            verify_dashboard_token(token, _JWT_SECRET, required_team="frontend:acme.com")
+            verify_dashboard_token(
+                token, _JWT_SECRET, required_team="frontend:acme.com"
+            )
 
     def test_empty_secret_rejected(self):
         import warnings
@@ -409,7 +418,9 @@ class TestCertificateWithALoneSurrogate:
         team_sk, _, team_did_key = _make_keypair()
         _, _, agent_did_key = _make_keypair()
         cert = _make_certificate(team_sk, team_did_key, agent_did_key)
-        text = json.dumps(cert).replace('"version": 1', '"note": "\\ud800", "version": 1')
+        text = json.dumps(cert).replace(
+            '"version": 1', '"note": "\\ud800", "version": 1'
+        )
         with pytest.raises(ValueError) as refused:
             parse_and_verify_certificate(
                 base64.b64encode(text.encode()).decode(),

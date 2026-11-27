@@ -146,7 +146,13 @@ def test_kids_and_purposes_come_from_the_file_and_keys_from_configuration(
     manifest = load_manifest(served_manifest(key_files, origin=ORIGIN))
 
     assert {kid: list(purposes) for kid, _, purposes in manifest.app_keys} == template_keys
-    for purpose in (RECEIPT_PURPOSE, CHECKPOINT_PURPOSE, "hook-resolve", "app-grant-read", "hook-event"):
+    for purpose in (
+        RECEIPT_PURPOSE,
+        CHECKPOINT_PURPOSE,
+        "hook-resolve",
+        "app-grant-read",
+        "hook-event",
+    ):
         key = load_app_key(settings, manifest, purpose)
         assert purpose in template_keys[key.kid]
         assert key.did_key == did_key_of(key_files[key.kid])

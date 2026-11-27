@@ -161,7 +161,10 @@ async def test_removed_participant_cannot_reuse_session(privacy_app):
     from messaging_actor_support import remove_messaging_agent_from_sessions
 
     await remove_messaging_agent_from_sessions(
-        env.db, env.redis, team_id=TEAM, agent_id=env.actors["alice"].id,
+        env.db,
+        env.redis,
+        team_id=TEAM,
+        agent_id=env.actors["alice"].id,
         registry_client=application_registry_client(env.app.state),
     )
     before = await _snapshot(env)
@@ -280,7 +283,9 @@ async def test_mail_participant_cannot_convert_their_thread_to_chat(privacy_app)
 
 
 @pytest.mark.asyncio
-async def test_legacy_reuse_projects_only_stored_participants(pre_chat_coverage_privacy_app, chat_coverage_upgrade):
+async def test_legacy_reuse_projects_only_stored_participants(
+    pre_chat_coverage_privacy_app, chat_coverage_upgrade
+):
     env = pre_chat_coverage_privacy_app
     thread = uuid4()
     await env.db.execute(

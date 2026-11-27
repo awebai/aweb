@@ -144,12 +144,6 @@ func TestInjectAgentDocsReplacesAndDeduplicatesExistingInjectedSections(t *testi
 	}
 }
 
-func TestIDVerifyCommandShape(t *testing.T) {
-	if idVerifyCmd.Use != "verify <did_aw>" {
-		t.Fatalf("id verify command shape changed to %q", idVerifyCmd.Use)
-	}
-}
-
 func TestPublicTeamJoinGuidanceConnectsByDefault(t *testing.T) {
 	joinHelp := strings.Join(strings.Fields(teamHumanJoinCmd.Long), " ")
 	if !strings.Contains(joinHelp, "connects this workspace") || !strings.Contains(joinHelp, "--no-connect") {

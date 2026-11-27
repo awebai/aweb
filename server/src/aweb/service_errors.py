@@ -77,7 +77,10 @@ class IdentityBindingError(ServiceError):
     """Native binding refusal; HTTP and MCP adapters retain its reason and retry hint."""
 
     def __init__(
-        self, code: IdentityBindingCode, *, headers: dict[str, str] | None = None,
+        self,
+        code: IdentityBindingCode,
+        *,
+        headers: dict[str, str] | None = None,
         address_missing: bool = False,
     ):
         self.code = IdentityBindingCode(code)

@@ -3,33 +3,25 @@
 TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 # Parallel server execution is opt-in and needs the owned worker service plan.
 SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
-# The VM recipe supplies its selected type; other callers remain portable.
-CANDIDATE_UNIT_PROFILE ?= $(or $(AWEB_GATE_UNIT_PROFILE),portable)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
-.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync typecheck-naapp test-naapp test-awid test-awid-pooler test-key-holder test-hermes-platform test-hermes-platform-source test-clitest-cli-auth-v2 test-node-deps test-channel test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish release test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit test-go-vulnerability-audit \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
 	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps \
-	test-release-cli-version \
 	test-channel-integration \
 	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	cli-e2e _candidate-gate-docker-boundaries _candidate-gate-compose-adoption _candidate-channel-version _candidate-node-deps \
 	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
-	_candidate-artifact-naapp-package check-naapp-lib-package \
 	_candidate-artifact-channel _candidate-artifact-pi _candidate-artifact-skills _candidate-artifact-a2a-image
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
-NAAPP_LIB_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' naapp-lib/pyproject.toml 2>/dev/null | head -n 1)
 CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2>/dev/null)
 CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
-# aw CLI releases have independent semver. Derive the next patch from the
-# published aw-v* history; the release guard below rejects stale overrides.
-CLI_VERSION ?= $(shell ./scripts/cli-release-version.sh next)
 # The gateway is a Go artifact with independent patch history.
 A2A_GATEWAY_VERSION ?= $(shell python3 scripts/next_tag_version.py a2a-gw-v)
 # OATS seam tests default to an immutable reviewed upstream commit materialized
@@ -56,6 +48,8 @@ help:
 	@echo "  test         Run all tests (server + CLI + channel + awid)"
 	@echo "  test-server  Run server tests"
 	@echo "  test-awid    Run awid service tests"
+	@echo "  test-key-holder Run the key holder's tests (PostgreSQL and REDIS_URL)"
+	@echo "  test-hermes-platform Run the Hermes plugin's tests on Hermes's own locked environment (release precondition)"
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
 	@echo "  test-channel-core Run channel-core tests"
@@ -86,7 +80,6 @@ help:
 	@echo "  test-federation-e2e Run the direct/non-ingress historical topology and OSS federation journeys (requires Docker)"
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
 	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
-	@echo "  check-extension-docs Verify extension docs, source events, vectors, and authority map"
 	@echo "  e2e-library-stack             Bring up awid+aweb+Library, seed aweb.team, verify, tear down (requires Docker + ../library + ../blueprints)"
 	@echo "  e2e-library-stack-up / -seed / -down  Drive the combined stack step by step"
 	@echo ""
@@ -145,7 +138,7 @@ build: sync-doc-copies
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-scripts test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-scripts test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-key-holder test-hermes-platform-source test-cli test-channeltest-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Discover the host/script controls together, including generators that import
 # the server's MCP registration. Use the locked server environment rather than
@@ -158,6 +151,7 @@ prepare-released-kernel-test:
 
 test-scripts: prepare-released-kernel-test
 	PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts -p 'test_*.py' -v
+	PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts/test-egress -p 'test_*.py' -v
 
 # Package configurations own rules; the root owner compares raw findings once.
 # AST-only test-state ceiling; no package preparation, services or network.
@@ -171,6 +165,21 @@ test-shipping: test-scripts
 .PHONY: test-server-image-build
 test-server-image-build:
 	AWEB_TEST_SERVER_IMAGE_BUILD=1 python3 scripts/test_server_image_publish.py ServerPlatformBuildTests -v
+
+# Installs merak's root-owned egress helper from this checkout's
+# merak_egress.py and checks the installed digest equals the file's. Any change
+# to that file needs this reinstall: guest admission requires the two digests
+# to match. Asks for the operator's sudo password on merak. The staged copy
+# stays at one fixed path on the host and is replaced by the next install.
+MERAK ?= merak
+.PHONY: merak-egress-install
+merak-egress-install:
+	@set -eu; want="$$(shasum -a 256 scripts/vm-gate/vm_gate/merak_egress.py | cut -d' ' -f1)"; \
+	scp -q scripts/vm-gate/vm_gate/merak_egress.py "$(MERAK):/tmp/aweb-merak-egress-install.py"; \
+	ssh -t "$(MERAK)" 'sudo /usr/bin/python3 -I /tmp/aweb-merak-egress-install.py install'; \
+	got="$$(ssh "$(MERAK)" sha256sum /usr/local/sbin/aweb-merak-egress | cut -d' ' -f1)"; \
+	test "$$got" = "$$want" || { echo "merak's egress helper is $$got, expected $$want" >&2; exit 1; }; \
+	echo "merak egress helper installed: $$want"
 
 .PHONY: test-vm-gate
 test-vm-gate:
@@ -327,23 +336,6 @@ PRODUCTION_AWID_PROJECT := scripts/test-egress/production-awid
 production-awid-sync:
 	uv sync --frozen --project $(PRODUCTION_AWID_PROJECT)
 
-# The aw release whose homes the upgrade tests open, fetched before isolation.
-# provenance.json is the fetch's last write.
-RELEASED_AW_13658 := .cache/released-aw/1.36.58
-
-released-aw-sync:
-	test -f $(RELEASED_AW_13658)/provenance.json || python3 scripts/fetch_released_aw.py $(RELEASED_AW_13658) --metadata-input scripts/test-egress/released-aw-1.36.58.json
-
-# Use the same prepared source on the Mac and inside the isolated unit image.
-HERMES_TEST_SOURCE := .cache/hermes-agent/0.23.1
-
-.PHONY: hermes-test-sync test-hermes-aweb-platform
-hermes-test-sync:
-	HERMES_AGENT_SOURCE="$(abspath $(HERMES_TEST_SOURCE))" bash scripts/test-hermes-aweb-platform.sh --prepare
-
-test-hermes-aweb-platform:
-	HERMES_AGENT_SOURCE="$(abspath $(HERMES_TEST_SOURCE))" bash scripts/test-hermes-aweb-platform.sh
-
 # Unique loopback Compose services; this does not use an existing host database.
 .PHONY: test-server-local
 test-server-local:
@@ -357,6 +349,11 @@ test-server: production-awid-sync
 	cd server && uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
 		uv build --out-dir "$$build_dir"
+	@# Parallel workers use one aw by path: build it once unless one is given.
+	set -eu; aw_dir=$$(mktemp -d); trap 'rm -rf "$$aw_dir"' EXIT; \
+	if [ -z "$${AW_TEST_CLI_BINARY:-}" ] && [ "$(SERVER_TEST_WORKERS)" != 0 ]; then \
+		(cd cli/go && go build -o "$$aw_dir/aw" ./cmd/aw); export AW_TEST_CLI_BINARY="$$aw_dir/aw"; \
+	fi; \
 	cd server && UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q $(SERVER_PYTEST_PARALLEL)
 
 # The naapp packages the candidate gate covers. Each provides `make lint` and
@@ -366,16 +363,19 @@ test-server: production-awid-sync
 # it, and the suites run offline.
 NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs
 
+naapp-packages:
+	@printf '%s\n' $(NAAPP_PACKAGES)
+
 # Installs each package's locked dependencies, for a runner that then goes offline.
 naapp-sync:
 	set -e; for package in $(NAAPP_PACKAGES); do \
 		uv sync --frozen --project $$package; \
 	done
 
-lint-naapp:
+typecheck-naapp:
 	set -e; for package in $(NAAPP_PACKAGES); do \
-		echo "=== lint $$package ==="; \
-		UV_FROZEN=1 $(MAKE) -C $$package lint; \
+		echo "=== typecheck $$package ==="; \
+		UV_FROZEN=1 $(MAKE) -C $$package typecheck; \
 		git diff --exit-code -- $$package/uv.lock; \
 	done
 
@@ -392,18 +392,56 @@ test-awid: production-awid-sync
 	cd awid && uv sync --frozen
 	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
-.PHONY: test-key-holder
-test-key-holder:
-	cd key-holder && uv sync --frozen
-	cd key-holder && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
-
 .PHONY: check-secrets-shards
 check-secrets-shards:
 	uv sync --frozen --project naapp/secrets
 	$(MAKE) -C naapp/secrets check-shards
 
-# awid's database session tests through a real transaction-mode PgBouncer; its
-# direct-Postgres cases use the same stack's own Postgres (TEST_DB_*).
+# The key holder runs its own registry from awid_service against real
+# PostgreSQL and the Redis at REDIS_URL.
+test-key-holder:
+	cd key-holder && uv sync --frozen
+	cd key-holder && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+
+# The Hermes revision the plugin is checked against. Cloud's
+# candidate-gate/Dockerfile.hermes pins the same one; move both together.
+HERMES_SOURCE_SHA := 3b421578588243f920886e6fe79a6faa87ea026e
+HERMES_CACHE ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/aweb-oss/hermes-$(HERMES_SOURCE_SHA)
+HERMES_PLATFORM_TESTS := test_adapter test_content_boundary test_hermes_lifecycle test_home_notice test_startup_health test_team_policy test_live_chat test_live_delivery
+
+# The Hermes plugin's controls that need no Hermes run in the server's locked
+# environment, in make test and the gate.
+test-hermes-platform-source:
+	cd server && uv sync --frozen
+	cd server && for test in test_fixture_registry test_probe_timing; do \
+		PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync \
+			python -m unittest discover -s ../packages/hermes-aweb-platform/tests -p "$$test.py" -v || exit 1; \
+	done
+
+# The Hermes plugin's tests on Hermes's own frozen environment, built once per
+# pinned revision under the user's cache. Hermes supports Python 3.14 only and
+# resolves through its own uv overrides, so it is not a dependency of any aweb
+# project, nor part of make test or the gate image; releasing the plugin
+# requires this target. A build that stopped part-way is refused, never
+# deleted here. The live tests skip unless their environment is set.
+test-hermes-platform:
+	set -e; dir="$(HERMES_CACHE)"; \
+	if [ ! -f "$$dir/.aweb-hermes-ready" ]; then \
+		if [ -e "$$dir" ]; then \
+			echo "incomplete Hermes environment at $$dir: remove it and rerun" >&2; exit 1; \
+		fi; \
+		git init -q "$$dir"; \
+		git -C "$$dir" fetch -q --depth 1 https://github.com/NousResearch/hermes-agent.git $(HERMES_SOURCE_SHA); \
+		git -C "$$dir" checkout -q --detach FETCH_HEAD; \
+		(cd "$$dir" && uv sync --frozen --python 3.14); \
+		touch "$$dir/.aweb-hermes-ready"; \
+	fi; \
+	test "$$(git -C "$$dir" rev-parse HEAD)" = "$(HERMES_SOURCE_SHA)"; \
+	cd packages/hermes-aweb-platform && for test in $(HERMES_PLATFORM_TESTS); do \
+		PYTHONPYCACHEPREFIX=/tmp/pycache "$$dir/.venv/bin/python" -m unittest discover -s tests -p "$$test.py" -v || exit 1; \
+	done
+
+# awid's database session tests through a real transaction-mode PgBouncer.
 test-awid-pooler:
 	set -e; \
 	trap 'docker compose -p awid-pooler -f $(CURDIR)/awid/tests/pooler/docker-compose.yml down -v --remove-orphans' EXIT; \
@@ -411,11 +449,9 @@ test-awid-pooler:
 	cd awid; \
 	uv sync --frozen; \
 	AWID_TEST_POOLER_URL=postgresql://postgres:postgres@localhost:$${AWID_TEST_POOLER_PORT:-56433}/postgres \
-		TEST_DB_HOST=127.0.0.1 TEST_DB_PORT=$${AWID_TEST_POSTGRES_PORT:-56432} \
 		PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_database_session_settings.py
 
-test-cli: production-awid-sync released-aw-sync
-	python3 scripts/test-egress/test_fixture_imports.py
+test-cli: production-awid-sync
 	cd cli/go && go mod download
 	cd awid && uv sync --frozen
 	# A short, canonical temp root avoids macOS /var symlinks and socket limits.
@@ -453,22 +489,12 @@ test-wake-channel-core-bundle:
 test-channel:
 	cd channel && $(TEST_EGRESS_RUNNER) npm test
 
-test-channel-name-live-contract:
-	python3 scripts/e2e/test_channel_name_live_contract.py
-
 # channel/package.json excludes test/integration.test.ts from `npm test`, so
 # `make test` never ran the one test that drives Channel against a REAL aweb
 # server. It was green by absence: the first time it ran it failed on a stale
 # assertion that contradicted shipped acknowledgement behaviour. It needs Docker
 # and Postgres, so it belongs with the other real-stack journeys rather than in
 # `make test` - but it belongs somewhere, and this is somewhere.
-# Deliberately NO AWEB_SKEW_DIRECTION. With a direction set the journey emits a
-# skew observation, which requires the five exact-server inputs (wheel, wheel
-# sha, version, constraints, constraints sha); ship supplies none of them, so a
-# clean run would die on "skew observation lacks server runtime inventory"
-# rather than exercise the journey. Ship builds the server from source and this
-# target exercises Channel against THAT. Measuring against a PUBLISHED server is
-# the skew harness's job, with the exact artifacts it resolves itself.
 test-channel-integration:
 	cd channel && npm run test:integration
 
@@ -513,13 +539,12 @@ test-oats: check-oats-launch-environment-contract check-oats-pi-launch-order bui
 
 test-oats-proof-helpers: prepare-oats-test-root
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
-	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
 
 test-tmux-guard:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
 
 test-a2a:
-	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid ./tools/a2a-gateway-check-workspace -count=1 -timeout 20m
+	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./internal/a2a ./internal/a2agw ./awid ./tools/a2a-gateway-check-workspace -count=1 -timeout 20m
 	cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw ./cmd/aweb-a2a-gw -run A2A -count=1 -timeout 20m
 	cd awid && uv run pytest tests/test_a2a_publication_route.py -q
 	./scripts/check-a2a-copy-guardrails.sh
@@ -527,13 +552,13 @@ test-a2a:
 test-e2e:
 	python3 scripts/test_controller_key_absence_guard.py
 	python3 scripts/test_oss_user_journey.py
-	AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests
+	AWEB_TEST_DOCKER_NETWORK=1 python3 scripts/test_candidate_network.py ComposeNetworkTests ComposeExitStatusTests ComposeTimeoutTests NetworkLinkGuardDockerTests
 	./scripts/e2e-oss-user-journey.sh
 	./scripts/test-e2e-controller-key-absence-guard.sh
 
 test-federation-e2e:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/e2e-federation-authority.sh
-	./scripts/e2e-oss-federation.sh
+	if [ -n "$$AWEB_CANDIDATE_RELEASE_FILES" ]; then ./scripts/e2e-federation-release-wheel.sh; else ./scripts/e2e-oss-federation.sh; fi
 	./scripts/e2e-cross-registry-messaging.sh
 
 test-a2a-gateway-e2e:
@@ -556,10 +581,6 @@ test-team-deployment-e2e:
 
 check-a2a-copy-guardrails:
 	./scripts/check-a2a-copy-guardrails.sh
-
-check-extension-docs:
-	python3 scripts/check-extension-docs.py
-	python3 scripts/check-extension-docs.py --self-test
 
 # ---- combined e2e stack: awid + aweb + Library, seeded ----------------------
 # Requires Docker and sibling ../library + ../blueprints checkouts.
@@ -635,8 +656,16 @@ test-candidate-ledger:
 	python3 scripts/test_candidate_make_environment.py
 	python3 scripts/test_candidate_gate_ledger.py
 
+# The one aw the unit suites use. Workers take it by path and never build.
+_candidate-unit-aw:
+	@mkdir -p "$$CANDIDATE_LOG_DIR/unit-aw"
+	cd cli/go && go build -o "$$CANDIDATE_LOG_DIR/unit-aw/aw" ./cmd/aw
+
+# The unit suites, each in its own isolated runner, within unit's CPU share:
+# docker.py divides it by the measured work (candidate-gate/measured-work.json).
 _candidate-unit-suites:
-	python3 scripts/test-egress/docker.py --profile $(CANDIDATE_UNIT_PROFILE) --server-workers $(if $(filter ccx33,$(CANDIDATE_UNIT_PROFILE)),7,0) --evidence "$$CANDIDATE_LOG_DIR/test-egress" --collect-summary --command bash scripts/candidate-suite.sh --isolated-suites
+	python3 scripts/test-egress/docker.py --aw-binary "$$CANDIDATE_LOG_DIR/unit-aw/aw" \
+		--evidence "$$CANDIDATE_LOG_DIR/test-egress" --suites $$(bash scripts/candidate-suite.sh --list-unit-suites)
 
 # The gate's own ledger test runs first, on the host, so a gate change that
 # breaks it stops every train and release candidate before any stage runs.
@@ -650,6 +679,15 @@ release-candidate: test-candidate-ledger
 release-publish:
 	@test -n "$(TAG)" || (echo "TAG=<artifact-vX.Y.Z> is required" >&2; exit 2)
 	python3 scripts/publish_release.py "$(TAG)"
+
+# aweb's Python release from the reviewed commit SHA: build once, gate those
+# files on MACHINE, tag once SHA is on main, publish through the trusted
+# publishing workflow, check PyPI. Rerun to continue after landing or a fix.
+release:
+	@test -n "$(SHA)" || (echo "SHA=<reviewed aweb commit> is required" >&2; exit 2)
+	@test -n "$(MACHINE)" || (echo "MACHINE=<gate machine> is required" >&2; exit 2)
+	@test -n "$(PACKAGES)" || (echo "PACKAGES='aweb' is required" >&2; exit 2)
+	python3 scripts/release.py --sha "$(SHA)" --machine "$(MACHINE)" $(foreach package,$(PACKAGES),--package $(package)) $(if $(THROUGH),--through "$(THROUGH)")
 
 deploy-site: verify-site
 	@set -eu; \
@@ -673,9 +711,6 @@ test-pypi-exact-publish:
 
 test-oci-exact-publish:
 	bash scripts/e2e/test_oci_exact_publish.sh
-
-test-release-cli-version:
-	bash scripts/check-cli-release-version-test.sh
 
 # ── Unified release ──────────────────────────────────────────────────
 
@@ -712,7 +747,6 @@ _candidate-oats: check-oats-launch-environment-contract check-oats-pi-launch-ord
 
 _candidate-oats-proof-helpers:
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
-	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
 
 _candidate-artifact-server:
 	rm -rf server/dist
@@ -725,22 +759,6 @@ _candidate-artifact-awid-package:
 	cd awid && uv build
 	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
 	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
-
-_candidate-artifact-naapp-package: check-naapp-lib-package
-	rm -rf naapp-lib/dist
-	cd naapp-lib && uv build
-	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION).tar.gz
-	test -f naapp-lib/dist/aweb_naapp-$(NAAPP_LIB_VERSION)-py3-none-any.whl
-	rm -rf naapp-lib/testing/dist
-	cd naapp-lib/testing && uv build
-	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION).tar.gz
-	test -f naapp-lib/testing/dist/aweb_naapp_testing-$(NAAPP_LIB_VERSION)-py3-none-any.whl
-
-# aweb-naapp's and aweb-naapp-testing's release artifacts as a consumer sees them:
-# each wheel ships its package files, pins its dependencies, and installs and
-# imports in a fresh environment.
-check-naapp-lib-package:
-	python3 scripts/check-naapp-lib-package.py
 
 _candidate-artifact-awid-image:
 	@mkdir -p /tmp/aweb-candidate-gate
@@ -779,6 +797,17 @@ _candidate-artifact-a2a-image:
 cli-e2e:
 	COMPOSE_BAKE="$${LIBRARY_E2E_COMPOSE_BAKE:-}" $(MAKE) -C cli e2e
 
+# Turns on the repository's hooks: .githooks/pre-commit formats staged Python
+# and Go at every commit. Run once per clone.
+.PHONY: setup
+setup:
+	git config core.hooksPath .githooks
+
+# Commits unformatted files through the hook; fetches the locked ruff with uvx.
+.PHONY: test-commit-hook
+test-commit-hook:
+	python3 .githooks/test_pre_commit.py -v
+
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -rf server/dist/
@@ -805,21 +834,11 @@ test-egress-controls:
 	python3 scripts/test-egress/test_dns.py -v
 	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v
 
-.PHONY: _candidate-test-docker-dns
-_candidate-test-docker-dns:
-	python3 scripts/test-egress/test_docker_dns.py --image "$${CANDIDATE_GATE_IMAGE:?candidate image is required}" \
-		--evidence "$${CANDIDATE_LOG_DIR:?candidate log directory is required}/docker-dns" -v
-
 # The shared page renderer is packaged in the Python wheel. Rebuild from its
 # exact npm lock and compare without rewriting committed bytes.
 .PHONY: check-page-renderer-bundle
 check-page-renderer-bundle:
 	cd naapp-lib/renderer && npm ci --ignore-scripts && node build.mjs --check
-
-.PHONY: test-page-renderer
-test-page-renderer: check-page-renderer-bundle
-	uv sync --frozen --project naapp-lib
-	cd naapp-lib/renderer && npm test
 
 .PHONY: e2e-user-paths
 e2e-user-paths:

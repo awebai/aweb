@@ -11,7 +11,8 @@ def test_ended_grant_stream_explains_issuer_and_configured_oats_renewal():
     payload = json.loads(event.split("data: ", 1)[1])
     assert payload["type"] == "grant_issuer_revoked"
     assert (
-        "This grant was issued from a certificate that is no longer current." in payload["detail"]
+        "This grant was issued from a certificate that is no longer current."
+        in payload["detail"]
     )
     assert payload["detail"].endswith(
         "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."

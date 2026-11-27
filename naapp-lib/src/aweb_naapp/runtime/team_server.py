@@ -104,7 +104,11 @@ class TeamServerDirectory:
         record, signature = await self._stored_record(domain, name)
         try:
             verified = verify_team_server_record(
-                record, signature, team_id=team_id, current_team_did_key=team_did_key, now=datetime.now(UTC)
+                record,
+                signature,
+                team_id=team_id,
+                current_team_did_key=team_did_key,
+                now=datetime.now(UTC),
             )
         except TeamServerRecordError as exc:
             logger.warning("Team server record for %s refused: %s", team_id, exc.code)

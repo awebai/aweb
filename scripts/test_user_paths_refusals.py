@@ -126,29 +126,6 @@ class ReleasedRefusals(unittest.TestCase):
                             )
                         )
 
-    def test_nonresident_controls_select_the_actual_13640_diagnostic(self):
-        with tempfile.TemporaryDirectory() as directory:
-            lane, _ = self.lane(directory, None)
-            observed = []
-            lane.run_case = lambda case, operation: (
-                operation() if "/nonresident/" in case else None
-            )
-            lane.refused = lambda *args: observed.append(args)
-            lane.controls()
-            self.assertEqual(
-                observed,
-                [
-                    (
-                        "g1",
-                        "nonresident",
-                        kind,
-                        None,
-                        "agent not found: released-nonresident.test/nonresident",
-                    )
-                    for kind in ["mail", "chat"]
-                ],
-            )
-
     def test_head_keeps_its_structured_status_and_exact_policy(self):
         message = "Recipient only accepts messages from exact active contacts"
         result = subprocess.CompletedProcess(

@@ -15,13 +15,23 @@ from redis.asyncio import Redis
 from aweb.api import create_app
 from aweb.db import DatabaseInfra
 from aweb.federation.delivery import deliver_federated_phase_b
-from aweb.outbox_recovery import recover_outboxes, start_outbox_recovery, stop_outbox_recovery
-from tests.test_federation_activation_delivery import _DB, _envelope, _seed_recipient_and_authority
+from aweb.outbox_recovery import (
+    recover_outboxes,
+    start_outbox_recovery,
+    stop_outbox_recovery,
+)
+from tests.test_federation_activation_delivery import (
+    _DB,
+    _envelope,
+    _seed_recipient_and_authority,
+)
 
 
 @pytest_asyncio.fixture
 async def redis():
-    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as client:
+    async with Redis.from_url(
+        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+    ) as client:
         await client.ping()
         yield client
 
@@ -38,8 +48,11 @@ async def _leave_undelivered_federation_row(aweb_db) -> str:
     envelope = _envelope()
     recipient, token = await _seed_recipient_and_authority(aweb_db, envelope)
     await deliver_federated_phase_b(
-        _DB(aweb_db), envelope=envelope, signature="signed-message",
-        recipient=recipient, authority_token=token,
+        _DB(aweb_db),
+        envelope=envelope,
+        signature="signed-message",
+        recipient=recipient,
+        authority_token=token,
         registry_client=None,
     )
     return envelope.message_id
@@ -55,7 +68,8 @@ async def _leave_undelivered_lifecycle_rows(aweb_db, count: int) -> None:
                jsonb_build_object('workspace_ids', jsonb_build_array(gen_random_uuid()::text))
         FROM generate_series(1, $2) g
         """,
-        uuid4(), count,
+        uuid4(),
+        count,
     )
 
 
@@ -93,7 +107,9 @@ def _mounted_host(db_infra, redis, on_mutation, **create_app_options):
 
 
 @pytest.mark.asyncio
-async def test_a_mounted_app_without_lifespan_recovers_after_its_first_request(db_infra, redis, monkeypatch):
+async def test_a_mounted_app_without_lifespan_recovers_after_its_first_request(
+    db_infra, redis, monkeypatch
+):
     aweb_db = db_infra.get_manager("aweb")
     message_id = await _leave_undelivered_federation_row(aweb_db)
     await _leave_undelivered_lifecycle_rows(aweb_db, 1)
@@ -101,7 +117,9 @@ async def test_a_mounted_app_without_lifespan_recovers_after_its_first_request(d
     host, aweb_app = _mounted_host(db_infra, redis, on_mutation)
 
     try:
-        async with AsyncClient(transport=ASGITransport(app=host), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=host), base_url="http://test"
+        ) as client:
             assert (await client.get("/coordination/health")).status_code == 200
         for _ in range(40):
             if await _undelivered(aweb_db) == (0, 0):
@@ -116,7 +134,9 @@ async def test_a_mounted_app_without_lifespan_recovers_after_its_first_request(d
 
 @pytest.mark.asyncio
 async def test_reads_on_a_mounted_app_scan_the_outbox_once_per_cycle_not_per_request(
-    db_infra, redis, monkeypatch,
+    db_infra,
+    redis,
+    monkeypatch,
 ):
     import asyncpg.connection
 
@@ -133,7 +153,9 @@ async def test_reads_on_a_mounted_app_scan_the_outbox_once_per_cycle_not_per_req
 
     monkeypatch.setattr(asyncpg.connection.Connection, "_execute", observed_execute)
     try:
-        async with AsyncClient(transport=ASGITransport(app=host), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=host), base_url="http://test"
+        ) as client:
             for _ in range(10):
                 assert (await client.get("/coordination/health")).status_code == 200
         await asyncio.sleep(0.3)
@@ -144,14 +166,20 @@ async def test_reads_on_a_mounted_app_scan_the_outbox_once_per_cycle_not_per_req
 
 
 @pytest.mark.asyncio
-async def test_a_host_that_runs_recovery_itself_gets_none_from_requests(db_infra, redis, monkeypatch):
+async def test_a_host_that_runs_recovery_itself_gets_none_from_requests(
+    db_infra, redis, monkeypatch
+):
     aweb_db = db_infra.get_manager("aweb")
     await _leave_undelivered_federation_row(aweb_db)
     await _leave_undelivered_lifecycle_rows(aweb_db, 1)
     delivered, on_mutation = _recording_hook()
-    host, _ = _mounted_host(db_infra, redis, on_mutation, host_runs_outbox_recovery=True)
+    host, _ = _mounted_host(
+        db_infra, redis, on_mutation, host_runs_outbox_recovery=True
+    )
 
-    async with AsyncClient(transport=ASGITransport(app=host), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=host), base_url="http://test"
+    ) as client:
         for _ in range(3):
             assert (await client.get("/coordination/health")).status_code == 200
     await asyncio.sleep(0.3)
@@ -177,7 +205,9 @@ async def test_recovery_delivers_the_rows_writers_left_behind(db_infra, redis):
 async def test_recovery_runs_on_a_timer_until_stopped(db_infra, redis):
     aweb_db = db_infra.get_manager("aweb")
     delivered, on_mutation = _recording_hook()
-    app = SimpleNamespace(state=SimpleNamespace(db=db_infra, redis=redis, on_mutation=on_mutation))
+    app = SimpleNamespace(
+        state=SimpleNamespace(db=db_infra, redis=redis, on_mutation=on_mutation)
+    )
 
     start_outbox_recovery(app, interval_seconds=0.05)
     try:

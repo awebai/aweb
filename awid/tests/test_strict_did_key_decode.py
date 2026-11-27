@@ -26,7 +26,8 @@ from awid.signing import (
 from id_tree_support import VECTORS, MixedOrderController, ed25519_vector_key
 
 DEGENERATE = [
-    case["name"] for case in VECTORS["ed25519_verification"]["cases"]
+    case["name"]
+    for case in VECTORS["ed25519_verification"]["cases"]
     if case["name"].startswith(("small-order-A-", "noncanonical-A-", "mixed-order-A-"))
 ]
 
@@ -58,10 +59,18 @@ def test_a_degenerate_public_key_never_verifies(name):
     message = bytes.fromhex(case["message_hex"])
     signature = bytes.fromhex(case["signature_hex"])
     encoded = base64.b64encode(signature).rstrip(b"=").decode()
-    assert verify_signature_with_public_key(public, message, encoded) == VerifyResult.FAILED
-    assert verify_signature(did_from_public_key(public), message, encoded) == VerifyResult.FAILED
+    assert (
+        verify_signature_with_public_key(public, message, encoded)
+        == VerifyResult.FAILED
+    )
+    assert (
+        verify_signature(did_from_public_key(public), message, encoded)
+        == VerifyResult.FAILED
+    )
     with pytest.raises(ValueError):
-        verify_did_key_signature(did_key=did_from_public_key(public), payload=message, signature_b64=encoded)
+        verify_did_key_signature(
+            did_key=did_from_public_key(public), payload=message, signature_b64=encoded
+        )
 
 
 def test_a_mixed_order_signature_that_libsodium_accepts_is_refused():
@@ -69,9 +78,13 @@ def test_a_mixed_order_signature_that_libsodium_accepts_is_refused():
     controller = MixedOrderController()
     headers = controller.signed_headers(domain="example.com", operation="register")
     _, did_key, signature = headers["Authorization"].split(" ")
-    payload = canonical_json_bytes({
-        "domain": "example.com", "operation": "register", "timestamp": headers["X-AWEB-Timestamp"],
-    })
+    payload = canonical_json_bytes(
+        {
+            "domain": "example.com",
+            "operation": "register",
+            "timestamp": headers["X-AWEB-Timestamp"],
+        }
+    )
     assert verify_signature(did_key, payload, signature) == VerifyResult.FAILED
 
 

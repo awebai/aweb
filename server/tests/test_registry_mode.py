@@ -3,7 +3,11 @@ import pytest
 from awid.registry import CachedRegistryClient
 
 from aweb.api import _build_awid_registry_client, create_app
-from aweb.config import DEFAULT_AWID_REGISTRY_URL, get_awid_registry_url, get_awid_service_token
+from aweb.config import (
+    DEFAULT_AWID_REGISTRY_URL,
+    get_awid_registry_url,
+    get_awid_service_token,
+)
 
 
 class _StubRedis:
@@ -24,7 +28,9 @@ def test_registry_url_defaults_to_remote(monkeypatch):
 def test_local_registry_url_is_rejected(monkeypatch):
     monkeypatch.setenv("AWID_REGISTRY_URL", "local")
 
-    with pytest.raises(ValueError, match="AWID_REGISTRY_URL=local is no longer supported"):
+    with pytest.raises(
+        ValueError, match="AWID_REGISTRY_URL=local is no longer supported"
+    ):
         get_awid_registry_url()
 
 
@@ -43,7 +49,9 @@ def test_registry_url_whitespace_falls_back_to_default(monkeypatch):
 def test_registry_url_local_detection_is_rejected_case_insensitively(monkeypatch):
     monkeypatch.setenv("AWID_REGISTRY_URL", "  LOCAL  ")
 
-    with pytest.raises(ValueError, match="AWID_REGISTRY_URL=local is no longer supported"):
+    with pytest.raises(
+        ValueError, match="AWID_REGISTRY_URL=local is no longer supported"
+    ):
         get_awid_registry_url()
 
 
@@ -52,7 +60,9 @@ def test_aweb_registry_client_rejects_missing_credentials(monkeypatch):
     monkeypatch.delenv("AWID_MEMBER_KEYS_FILE", raising=False)
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
 
-    with pytest.raises(ValueError, match="AWID_SERVICE_TOKEN or AWID_MEMBER_KEYS_FILE is required") as caught:
+    with pytest.raises(
+        ValueError, match="AWID_SERVICE_TOKEN or AWID_MEMBER_KEYS_FILE is required"
+    ) as caught:
         _build_awid_registry_client(create_app(), redis=None)
 
     assert "openssl rand -hex 32" in str(caught.value)
@@ -80,7 +90,9 @@ async def test_aweb_registry_client_receives_configured_service_token(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_aweb_cached_registry_client_receives_configured_service_token(monkeypatch):
+async def test_aweb_cached_registry_client_receives_configured_service_token(
+    monkeypatch,
+):
     """redis=None is the branch no deployment runs: docker-compose and production
     both configure Redis, so _build_awid_registry_client returns the cached class
     there. Cover the branch that boots the server."""

@@ -2998,14 +2998,6 @@ func didFromRegistryAuthHeader(t *testing.T, r *http.Request) string {
 	return parts[1]
 }
 
-func cloneStringMap(src map[string]string) map[string]string {
-	out := make(map[string]string, len(src))
-	for key, value := range src {
-		out[key] = value
-	}
-	return out
-}
-
 func writeLocalIdentityWorkspaceForIDTest(t *testing.T, workingDir, serverURL, teamID, alias string, signingKey ed25519.PrivateKey) string {
 	t.Helper()
 	workspace := workspaceBinding(serverURL, teamID, alias, "workspace-1")

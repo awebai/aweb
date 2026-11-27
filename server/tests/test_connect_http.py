@@ -74,20 +74,25 @@ async def _register_controller(env, team_did_key, team_id="backend:acme.com"):
     await env.registry_db.execute(
         """INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility)
            VALUES ($1, $2, $3, 'public')""",
-        domain, name, team_did_key,
+        domain,
+        name,
+        team_did_key,
     )
 
 
 def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
     """Build signed headers. Signs {body_sha256, team_id, timestamp}."""
     import hashlib
+
     timestamp = datetime.now(timezone.utc).isoformat()
     body_sha256 = hashlib.sha256(body_bytes).hexdigest()
-    payload_bytes = canonical_json_bytes({
-        "body_sha256": body_sha256,
-        "team_id": team_id,
-        "timestamp": timestamp,
-    })
+    payload_bytes = canonical_json_bytes(
+        {
+            "body_sha256": body_sha256,
+            "team_id": team_id,
+            "timestamp": timestamp,
+        }
+    )
     sig = sign_message(agent_sk, payload_bytes)
     return {
         "Authorization": f"DIDKey {agent_did_key} {sig}",
@@ -103,7 +108,9 @@ async def test_connect_http_first_time(connect_app):
     agent_sk, _, agent_did_key = _make_keypair()
 
     cert = _make_certificate(
-        team_sk, team_did_key, agent_did_key,
+        team_sk,
+        team_did_key,
+        agent_did_key,
         team_id="backend:acme.com",
         alias="alice",
         identity_scope="global",
@@ -126,7 +133,11 @@ async def test_connect_http_first_time(connect_app):
     await _register_controller(connect_app, team_did_key)
 
     client = connect_app.client
-    resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+    resp = await client.post(
+        "/v1/connect",
+        content=body_bytes,
+        headers={**headers, "Content-Type": "application/json"},
+    )
 
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
     data = resp.json()
@@ -135,23 +146,34 @@ async def test_connect_http_first_time(connect_app):
     assert data["agent_id"]
     assert data["workspace_id"]
     assert data["role"] == "developer"
-    assert await connect_app.db.fetch_value(
-        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
-        UUID(data["workspace_id"]),
-    ) is not None
+    assert (
+        await connect_app.db.fetch_value(
+            "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
+            UUID(data["workspace_id"]),
+        )
+        is not None
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "contact",
-    [WorkspaceContact.NONE, WorkspaceContact.PERSON_SESSION, WorkspaceContact.OBSERVED_REFRESH],
+    [
+        WorkspaceContact.NONE,
+        WorkspaceContact.PERSON_SESSION,
+        WorkspaceContact.OBSERVED_REFRESH,
+    ],
     ids=["reserve", "refresh-existing", "refresh-observed"],
 )
-async def test_reservation_stays_unseen_until_signed_connect_and_preserves_contact(connect_app, contact):
+async def test_reservation_stays_unseen_until_signed_connect_and_preserves_contact(
+    connect_app, contact
+):
     team_id = "backend:acme.com"
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
-    cert = _make_certificate(team_sk, team_did_key, agent_did_key, identity_scope="local")
+    cert = _make_certificate(
+        team_sk, team_did_key, agent_did_key, identity_scope="local"
+    )
     await _register_controller(connect_app, team_did_key)
 
     planned = PlannedIdentityIds(agent_id=uuid4(), workspace_id=uuid4())
@@ -185,13 +207,19 @@ async def test_reservation_stays_unseen_until_signed_connect_and_preserves_conta
     await reserve()
     assert await last_seen() is None
     await reserve()
-    assert (await last_seen() is not None) == (contact == WorkspaceContact.PERSON_SESSION)
+    assert (await last_seen() is not None) == (
+        contact == WorkspaceContact.PERSON_SESSION
+    )
 
-    body = json.dumps({**profile, "hostname": "terminal", "workspace_path": "/work"}).encode()
+    body = json.dumps(
+        {**profile, "hostname": "terminal", "workspace_path": "/work"}
+    ).encode()
     headers = _signed_request(agent_sk, agent_did_key, team_id, body)
     headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
     headers["Content-Type"] = "application/json"
-    response = await connect_app.client.post("/v1/connect", content=body, headers=headers)
+    response = await connect_app.client.post(
+        "/v1/connect", content=body, headers=headers
+    )
     assert response.status_code == 200, response.text
     assert response.json()["workspace_id"] == str(planned.workspace_id)
     assert response.json()["agent_id"] == str(planned.agent_id)
@@ -212,7 +240,9 @@ async def test_connect_http_invalid_repo_origin_returns_422(connect_app):
     agent_sk, _, agent_did_key = _make_keypair()
 
     cert = _make_certificate(
-        team_sk, team_did_key, agent_did_key,
+        team_sk,
+        team_did_key,
+        agent_did_key,
         team_id="backend:acme.com",
         alias="alice",
         identity_scope="global",
@@ -235,7 +265,11 @@ async def test_connect_http_invalid_repo_origin_returns_422(connect_app):
     await _register_controller(connect_app, team_did_key)
 
     client = connect_app.client
-    resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+    resp = await client.post(
+        "/v1/connect",
+        content=body_bytes,
+        headers={**headers, "Content-Type": "application/json"},
+    )
 
     assert resp.status_code == 422, resp.text
 
@@ -301,7 +335,9 @@ async def test_connect_http_idempotent(connect_app):
     agent_sk, _, agent_did_key = _make_keypair()
 
     cert = _make_certificate(
-        team_sk, team_did_key, agent_did_key,
+        team_sk,
+        team_did_key,
+        agent_did_key,
         team_id="backend:acme.com",
         alias="bob",
     )
@@ -315,11 +351,19 @@ async def test_connect_http_idempotent(connect_app):
     client = connect_app.client
     headers1 = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers1["X-AWID-Team-Certificate"] = cert_header
-    resp1 = await client.post("/v1/connect", content=body_bytes, headers={**headers1, "Content-Type": "application/json"})
+    resp1 = await client.post(
+        "/v1/connect",
+        content=body_bytes,
+        headers={**headers1, "Content-Type": "application/json"},
+    )
 
     headers2 = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
     headers2["X-AWID-Team-Certificate"] = cert_header
-    resp2 = await client.post("/v1/connect", content=body_bytes, headers={**headers2, "Content-Type": "application/json"})
+    resp2 = await client.post(
+        "/v1/connect",
+        content=body_bytes,
+        headers={**headers2, "Content-Type": "application/json"},
+    )
 
     assert resp1.status_code == 200
     assert resp2.status_code == 200
@@ -353,7 +397,9 @@ async def test_connect_http_ephemeral_agents_store_no_stable_identity(connect_ap
 
     await _register_controller(connect_app, team_did_key, "default:local")
     client = connect_app.client
-    alice_headers = _signed_request(alice_sk, alice_did_key, "default:local", body_bytes)
+    alice_headers = _signed_request(
+        alice_sk, alice_did_key, "default:local", body_bytes
+    )
     alice_headers["X-AWID-Team-Certificate"] = _encode_certificate(alice_cert)
     alice_resp = await client.post(
         "/v1/connect",
@@ -395,7 +441,9 @@ async def test_connect_http_reuses_existing_agent_for_same_alias(connect_app):
     agent_sk, _, agent_did_key = _make_keypair()
 
     existing_cert = _make_certificate(
-        team_sk, team_did_key, agent_did_key,
+        team_sk,
+        team_did_key,
+        agent_did_key,
         team_id="backend:acme.com",
         alias="alice",
         identity_scope="global",
@@ -439,7 +487,11 @@ async def test_connect_http_reuses_existing_agent_for_same_alias(connect_app):
 
     await _register_controller(connect_app, team_did_key)
     client = connect_app.client
-    resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+    resp = await client.post(
+        "/v1/connect",
+        content=body_bytes,
+        headers={**headers, "Content-Type": "application/json"},
+    )
 
     assert resp.status_code == 200
     assert resp.json()["agent_id"] == str(existing_agent_id)
@@ -474,7 +526,11 @@ async def test_connect_http_missing_cert_returns_401(connect_app):
     await _register_controller(connect_app, team_did_key)
 
     client = connect_app.client
-    resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+    resp = await client.post(
+        "/v1/connect",
+        content=body_bytes,
+        headers={**headers, "Content-Type": "application/json"},
+    )
 
     assert resp.status_code == 401
 
@@ -488,7 +544,9 @@ async def test_connect_http_invalid_signature_returns_401(connect_app, mismatch)
     other_sk, _, other_did_key = _make_keypair()
 
     cert = _make_certificate(
-        team_sk, team_did_key, agent_did_key,
+        team_sk,
+        team_did_key,
+        agent_did_key,
         team_id="backend:acme.com",
         alias="eve",
     )
@@ -496,13 +554,24 @@ async def test_connect_http_invalid_signature_returns_401(connect_app, mismatch)
 
     body = {"hostname": "Mac.local"}
     body_bytes = json.dumps(body).encode()
-    headers = _signed_request(other_sk if mismatch == "request_signer" else agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers = _signed_request(
+        other_sk if mismatch == "request_signer" else agent_sk,
+        agent_did_key,
+        "backend:acme.com",
+        body_bytes,
+    )
     headers["X-AWID-Team-Certificate"] = cert_header
 
-    await _register_controller(connect_app, team_did_key if mismatch == "request_signer" else other_did_key)
+    await _register_controller(
+        connect_app, team_did_key if mismatch == "request_signer" else other_did_key
+    )
 
     client = connect_app.client
-    resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+    resp = await client.post(
+        "/v1/connect",
+        content=body_bytes,
+        headers={**headers, "Content-Type": "application/json"},
+    )
 
     assert resp.status_code == 401
 
@@ -515,12 +584,16 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(connect_
     second_sk, _, second_did_key = _make_keypair()
 
     existing_cert = _make_certificate(
-        team_sk, team_did_key, first_did_key,
+        team_sk,
+        team_did_key,
+        first_did_key,
         team_id="backend:acme.com",
         alias="alice",
     )
     new_cert = _make_certificate(
-        team_sk, team_did_key, second_did_key,
+        team_sk,
+        team_did_key,
+        second_did_key,
         team_id="backend:acme.com",
         alias="alice",
     )
@@ -568,7 +641,11 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(connect_
 
     await _register_controller(connect_app, team_did_key)
     client = connect_app.client
-    resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+    resp = await client.post(
+        "/v1/connect",
+        content=body_bytes,
+        headers={**headers, "Content-Type": "application/json"},
+    )
 
     assert resp.status_code == 409
     assert resp.json() == {
@@ -596,7 +673,9 @@ async def test_connect_http_rejects_alias_change_for_same_agent(connect_app):
     agent_sk, _, agent_did_key = _make_keypair()
 
     new_cert = _make_certificate(
-        team_sk, team_did_key, agent_did_key,
+        team_sk,
+        team_did_key,
+        agent_did_key,
         team_id="backend:acme.com",
         alias="bob",
     )
@@ -644,11 +723,17 @@ async def test_connect_http_rejects_alias_change_for_same_agent(connect_app):
 
     await _register_controller(connect_app, team_did_key)
     client = connect_app.client
-    resp = await client.post("/v1/connect", content=body_bytes, headers={**headers, "Content-Type": "application/json"})
+    resp = await client.post(
+        "/v1/connect",
+        content=body_bytes,
+        headers={**headers, "Content-Type": "application/json"},
+    )
 
     assert resp.status_code == 409
     assert resp.json()["detail"]["code"] == "alias_mismatch", resp.text
-    assert "already bound to alias 'alice'" in resp.json()["detail"]["message"], resp.text
+    assert "already bound to alias 'alice'" in resp.json()["detail"]["message"], (
+        resp.text
+    )
 
     workspace_rows = await connect_app.db.fetch_all(
         """
@@ -670,7 +755,9 @@ async def test_connect_http_allows_rejoin_after_soft_deleted_agent(connect_app):
     agent_sk, _, agent_did_key = _make_keypair()
 
     cert = _make_certificate(
-        team_sk, team_did_key, agent_did_key,
+        team_sk,
+        team_did_key,
+        agent_did_key,
         team_id="backend:acme.com",
         alias="alice",
         identity_scope="global",
@@ -742,7 +829,9 @@ async def test_connect_http_restores_soft_deleted_repo(connect_app):
     agent_sk, _, agent_did_key = _make_keypair()
 
     cert = _make_certificate(
-        team_sk, team_did_key, agent_did_key,
+        team_sk,
+        team_did_key,
+        agent_did_key,
         team_id="backend:acme.com",
         alias="alice",
         identity_scope="global",
@@ -758,7 +847,9 @@ async def test_connect_http_restores_soft_deleted_repo(connect_app):
     client = connect_app.client
 
     async def connect():
-        headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+        headers = _signed_request(
+            agent_sk, agent_did_key, "backend:acme.com", body_bytes
+        )
         headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
         return await client.post(
             "/v1/connect",
@@ -773,7 +864,8 @@ async def test_connect_http_restores_soft_deleted_repo(connect_app):
         "SELECT id FROM {{tables.repos}} WHERE team_id = $1", "backend:acme.com"
     )
     await connect_app.db.execute(
-        "UPDATE {{tables.workspaces}} SET deleted_at = NOW() WHERE repo_id = $1", repo["id"]
+        "UPDATE {{tables.workspaces}} SET deleted_at = NOW() WHERE repo_id = $1",
+        repo["id"],
     )
     await connect_app.db.execute(
         "UPDATE {{tables.repos}} SET deleted_at = NOW() WHERE id = $1", repo["id"]
@@ -783,7 +875,8 @@ async def test_connect_http_restores_soft_deleted_repo(connect_app):
     assert second.status_code == 200, second.text
 
     repos = await connect_app.db.fetch_all(
-        "SELECT id, deleted_at FROM {{tables.repos}} WHERE team_id = $1", "backend:acme.com"
+        "SELECT id, deleted_at FROM {{tables.repos}} WHERE team_id = $1",
+        "backend:acme.com",
     )
     assert [(row["id"], row["deleted_at"]) for row in repos] == [(repo["id"], None)]
     workspace = await connect_app.db.fetch_one(

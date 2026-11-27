@@ -31,11 +31,15 @@ class _DbInfra:
 @pytest.mark.asyncio
 async def test_health_hides_internal_exception_details(caplog):
     caplog.set_level(logging.ERROR, logger="aweb.api")
-    app = create_app(db_infra=_DbInfra(), redis=_FailingRedis(), host_runs_outbox_recovery=True)
+    app = create_app(
+        db_infra=_DbInfra(), redis=_FailingRedis(), host_runs_outbox_recovery=True
+    )
     app.state.db = _DbInfra()
     app.state.redis = _FailingRedis()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.get("/health")
 
     assert response.status_code == 503
@@ -62,6 +66,10 @@ async def test_cached_body_receive_terminates_after_replay():
     second = await receive()
     third = await receive()
 
-    assert first == {"type": "http.request", "body": b'{"hello":"world"}', "more_body": False}
+    assert first == {
+        "type": "http.request",
+        "body": b'{"hello":"world"}',
+        "more_body": False,
+    }
     assert second == {"type": "http.request", "body": b"", "more_body": False}
     assert third == {"type": "http.request", "body": b"", "more_body": False}

@@ -128,7 +128,8 @@ async def world(monkeypatch, aweb_cloud_db):
     for name in env.keys:
         assert (
             await aweb_cloud_db.aweb_db.fetch_value(
-                "SELECT count(*) FROM {{tables.teams}} WHERE team_id=$1", f"{name}:acme.com"
+                "SELECT count(*) FROM {{tables.teams}} WHERE team_id=$1",
+                f"{name}:acme.com",
             )
             == 0
         )
@@ -159,7 +160,13 @@ async def world(monkeypatch, aweb_cloud_db):
 
 
 async def _verify(
-    env, *, signer="new", name="backend", registry=None, cert_patch=None, headers_patch=None
+    env,
+    *,
+    signer="new",
+    name="backend",
+    registry=None,
+    cert_patch=None,
+    headers_patch=None,
 ):
     cert = _make_certificate(
         getattr(env, signer),
@@ -248,7 +255,9 @@ async def test_cooldown_is_shared_by_clients_and_independent_per_team(world):
     other_client = env.client()
     assert (await _refused(env))["code"] == "team_key_not_current"
     assert env.key_reads == 1
-    assert (await _refused(env, registry=other_client))["code"] == "team_key_not_current"
+    assert (await _refused(env, registry=other_client))[
+        "code"
+    ] == "team_key_not_current"
     assert env.key_reads == 1
     await _refused(env, name="other", registry=other_client)
     assert env.key_reads == 2
@@ -283,7 +292,9 @@ async def test_new_key_retry_reads_revocations_again(world):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [200, 500, 404])
-async def test_unchanged_or_failed_refresh_keeps_401_and_original_fact_age(world, status):
+async def test_unchanged_or_failed_refresh_keeps_401_and_original_fact_age(
+    world, status
+):
     env = world
     cache_key = env.registry._team_public_key_cache_key("acme.com", "backend")
     before = env.redis.values[cache_key]

@@ -76,7 +76,9 @@ def _reserved_app_ids_source_path() -> Path:
         candidate = parent / "test-vectors" / RESERVED_APP_IDS_ARTIFACT
         if candidate.is_file():
             return candidate
-    raise RuntimeError(f"missing reserved app ids artifact: test-vectors/{RESERVED_APP_IDS_ARTIFACT}")
+    raise RuntimeError(
+        f"missing reserved app ids artifact: test-vectors/{RESERVED_APP_IDS_ARTIFACT}"
+    )
 
 
 def _read_reserved_app_ids_artifact() -> str:
@@ -102,11 +104,15 @@ def reserved_app_ids() -> frozenset[str]:
         raise RuntimeError("reserved app ids artifact has unsupported schema")
     values = payload.get("reserved_app_ids")
     if not isinstance(values, list) or not values:
-        raise RuntimeError("reserved app ids artifact must contain a non-empty reserved_app_ids list")
+        raise RuntimeError(
+            "reserved app ids artifact must contain a non-empty reserved_app_ids list"
+        )
     ids: set[str] = set()
     for value in values:
         if not isinstance(value, str) or not APP_ID_RE.fullmatch(value):
-            raise RuntimeError(f"reserved app ids artifact contains invalid app id: {value!r}")
+            raise RuntimeError(
+                f"reserved app ids artifact contains invalid app id: {value!r}"
+            )
         ids.add(value)
     return frozenset(ids)
 
@@ -136,7 +142,11 @@ def normalize_origin(value: str) -> str:
         path = (parsed.path or "").rstrip("/")
         parsed_port = parsed.port
     except ValueError as exc:
-        detail = "origin port is invalid" if "port" in str(exc).lower() else "origin URL is invalid"
+        detail = (
+            "origin port is invalid"
+            if "port" in str(exc).lower()
+            else "origin URL is invalid"
+        )
         raise ValidationError(detail) from exc
 
     if scheme not in {"http", "https"}:
@@ -206,7 +216,9 @@ def normalize_local_event_type(value: str) -> str:
     if not LOCAL_EVENT_TYPE_RE.match(event_type):
         raise ValidationError("event type must be lower-case app-local text")
     if "/" in event_type:
-        raise ValidationError("manifest event type must be app-local, not app-qualified")
+        raise ValidationError(
+            "manifest event type must be app-local, not app-qualified"
+        )
     return event_type
 
 
@@ -242,7 +254,9 @@ def normalize_event_types(values: list[AppEventType]) -> list[AppEventType]:
         out.append(
             AppEventType(
                 type=event_type,
-                default_delivery_intent=normalize_delivery_intent(item.default_delivery_intent),
+                default_delivery_intent=normalize_delivery_intent(
+                    item.default_delivery_intent
+                ),
                 description=(item.description or "").strip()[:4096],
             )
         )
@@ -290,15 +304,23 @@ _ACTIVE_KEY_HISTORY_SQL = f"""
 """
 
 
-async def _key_identity_conflicts(tx, *, team_id: str, app_id: str, kid: str, did_key: str) -> bool:
-    return await tx.fetch_one(
-        f"""
+async def _key_identity_conflicts(
+    tx, *, team_id: str, app_id: str, kid: str, did_key: str
+) -> bool:
+    return (
+        await tx.fetch_one(
+            f"""
         SELECT 1 FROM ({_APP_KEY_HISTORY_SQL}) AS history
         WHERE team_id = $1 AND app_id = $2 AND key_id = $3 AND did_key <> $4
         LIMIT 1
         """,
-        team_id, app_id, kid, did_key,
-    ) is not None
+            team_id,
+            app_id,
+            kid,
+            did_key,
+        )
+        is not None
+    )
 
 
 def _revocation_carried_across_digests() -> str:
@@ -355,9 +377,15 @@ async def _write_team_registrations(
         )
     for emit_key in emit_keys:
         if await _key_identity_conflicts(
-            tx, team_id=team_id, app_id=app_id, kid=emit_key.kid, did_key=emit_key.did_key
+            tx,
+            team_id=team_id,
+            app_id=app_id,
+            kid=emit_key.kid,
+            did_key=emit_key.did_key,
         ):
-            raise ConflictError("emit key id is already registered with a different key")
+            raise ConflictError(
+                "emit key id is already registered with a different key"
+            )
         await tx.execute(
             f"""
             INSERT INTO {{{{tables.team_app_emit_keys}}}} AS registered (
@@ -420,7 +448,9 @@ def _parse_manifest(manifest: bytes) -> dict:
     return parsed
 
 
-def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: str) -> ManifestRegistration:
+def manifest_registration(
+    manifest: bytes, *, app_id: str, origin: str, digest: str
+) -> ManifestRegistration:
     """Read an install's event declarations and keys from its pinned bytes.
 
     The bytes must hash to the pinned digest, be valid to the one manifest
@@ -451,8 +481,12 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
         event_type = str(event.get("type") or "").strip()
         event_types.append(
             AppEventType(
-                type=event_type[len(prefix):] if event_type.startswith(prefix) else event_type,
-                default_delivery_intent=normalize_delivery_intent(event.get("default_delivery_intent")),
+                type=event_type[len(prefix) :]
+                if event_type.startswith(prefix)
+                else event_type,
+                default_delivery_intent=normalize_delivery_intent(
+                    event.get("default_delivery_intent")
+                ),
                 description=str(event.get("description") or ""),
             )
         )
@@ -464,7 +498,10 @@ def manifest_registration(manifest: bytes, *, app_id: str, origin: str, digest: 
         app_keys: list[AppKey] = []
     else:
         emit_keys = []
-        app_keys = [AppKey(kid=kid, did_key=did_key, purposes=tuple(purposes)) for kid, did_key, purposes in resolved.app_keys]
+        app_keys = [
+            AppKey(kid=kid, did_key=did_key, purposes=tuple(purposes))
+            for kid, did_key, purposes in resolved.app_keys
+        ]
     return ManifestRegistration(
         app_version=normalize_app_version(str(app.get("version") or "")),
         manifest_version=resolved.manifest_version,
@@ -498,7 +535,9 @@ async def reseed_app_registrations(db, *, origin: str, manifest: bytes) -> Resee
     origin = normalize_origin(origin)
     app_id = normalize_app_id(str(_parse_manifest(manifest)["app"].get("id") or ""))
     digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
-    registration = manifest_registration(manifest, app_id=app_id, origin=origin, digest=digest)
+    registration = manifest_registration(
+        manifest, app_id=app_id, origin=origin, digest=digest
+    )
     installs = await db.fetch_all(
         """
         SELECT team_id FROM {{tables.team_app_installs}}
@@ -579,13 +618,18 @@ async def next_installation_generation_on(tx, *, team_id: str, app_id: str) -> i
            ON CONFLICT (team_id, app_id) DO UPDATE
                SET last_generation = c.last_generation + 1
            RETURNING last_generation""",
-        team_id, app_id,
+        team_id,
+        app_id,
     )
     return int(generation)
 
 
 async def get_installation_on(
-    tx, *, team_id: str, app_id: str, for_update: bool = False,
+    tx,
+    *,
+    team_id: str,
+    app_id: str,
+    for_update: bool = False,
 ) -> dict[str, Any] | None:
     """Read current installation authority in the caller's transaction.
 
@@ -603,8 +647,10 @@ async def get_installation_on(
                   i.origin, i.digest, i.granted_scopes, i.origin_verified, i.installed_at,
                   i.app_version, i.manifest_version, i.origin_verification_error
            FROM {{tables.team_app_installs}} AS i
-           WHERE i.team_id = $1 AND i.app_id = $2""" + lock,
-        team_id, app_id,
+           WHERE i.team_id = $1 AND i.app_id = $2"""
+        + lock,
+        team_id,
+        app_id,
     )
     return dict(row) if row is not None else None
 
@@ -635,15 +681,19 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
             manifest_version=row["manifest_version"],
             digest=row["digest"],
             granted_scopes=list(row["granted_scopes"] or []),
-            installation_id=row["installation_id"], generation=row["generation"],
-            state=row["state"], origin_verified=row["origin_verified"],
+            installation_id=row["installation_id"],
+            generation=row["generation"],
+            state=row["state"],
+            origin_verified=row["origin_verified"],
             origin_verification_error=row["origin_verification_error"],
         )
         for row in rows
     ]
 
 
-async def get_installed_app(db, *, team_id: str, app_id: str, digest: str) -> AppInstall | None:
+async def get_installed_app(
+    db, *, team_id: str, app_id: str, digest: str
+) -> AppInstall | None:
     """The team's installation of ``app_id``, only while it is pinned to ``digest``."""
     row = await get_installation_on(db, team_id=team_id, app_id=app_id)
     if row is None or row["digest"] != normalize_digest(digest):
@@ -713,7 +763,8 @@ async def get_active_app_key(
           AND k.did_key = $4
           AND $5 = ANY(k.purposes)
           AND k.revoked_at IS NULL
-          AND """ + _ACTIVE_KEY_HISTORY_SQL,
+          AND """
+        + _ACTIVE_KEY_HISTORY_SQL,
         team_id,
         app_id,
         kid,
@@ -748,7 +799,8 @@ async def get_active_app_emit_key(
           AND k.key_id = $3
           AND k.did_key = $4
           AND k.revoked_at IS NULL
-          AND """ + _ACTIVE_KEY_HISTORY_SQL,
+          AND """
+        + _ACTIVE_KEY_HISTORY_SQL,
         team_id,
         app_id,
         kid,

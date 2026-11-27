@@ -107,7 +107,11 @@ def _report(*, apply: bool, released: bool) -> dict:
         "released_claims": 4 if released else 0,
         "teams": {
             BACKEND: {"tasks": 2, "claims": 3, "released_claims": 3 if released else 0},
-            FRONTEND: {"tasks": 1, "claims": 1, "released_claims": 1 if released else 0},
+            FRONTEND: {
+                "tasks": 1,
+                "claims": 1,
+                "released_claims": 1 if released else 0,
+            },
         },
     }
 
@@ -185,10 +189,14 @@ async def test_cli_reports_by_default_and_releases_with_apply(test_db_factory):
 
         async def run_cli(*args: str) -> dict:
             process = await asyncio.create_subprocess_exec(
-                sys.executable, "-c", "from aweb.cli import app; app()",
-                "release-closed-task-claims", *args,
+                sys.executable,
+                "-c",
+                "from aweb.cli import app; app()",
+                "release-closed-task-claims",
+                *args,
                 env={**os.environ, "AWEB_DATABASE_URL": base.config.get_dsn()},
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), 20)
             assert process.returncode == 0, stderr.decode()

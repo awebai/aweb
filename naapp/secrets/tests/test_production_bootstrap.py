@@ -26,7 +26,9 @@ from aweb_naapp_testing.owner_acts import AUDIENCE, TeamOwner
 from aweb_naapp_testing.smtp import SmtpServer
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.did import did_from_public_key
-from awid_service.testing import SERVICE_TOKEN, fixture_domain_authority
+from awid.dns_verify import DnsVerificationError
+from awid_service.deps import get_domain_verifier
+from awid_service.testing import SERVICE_TOKEN
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from nacl.signing import SigningKey
 
@@ -67,7 +69,10 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
     async def domain_authority(domain):
         # Forward the test registry's actual namespace authority, never a
         # fabricated record or fallback to the public example.com DNS.
-        return await fixture_domain_authority(registry.app, domain)
+        configured = registry.app.dependency_overrides.get(get_domain_verifier)
+        if configured is None:
+            raise DnsVerificationError("the test registry has no namespace verifier")
+        return await configured()(domain)
 
     private = options.get("private_team", False)
     async with authority(
@@ -91,7 +96,9 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
                     certificate_id="secrets-service",
                     alias="secrets-service",
                 )
-                await registry.add_certificate(service_member.certificate(), team_key=service_member.team_key)
+                await registry.add_certificate(
+                    service_member.certificate(), team_key=service_member.team_key
+                )
                 key_file = tmp_path / "service-member.key"
                 key_file.write_text(
                     "-----BEGIN ED25519 PRIVATE KEY-----\n"
@@ -316,7 +323,9 @@ async def test_a_canonical_component_holder_logs_into_the_production_console(roo
             while any(dns.queries[query] == 0 for query in expected_queries):
                 await asyncio.sleep(0.01)
     except TimeoutError:
-        pytest.fail(f"Expected DNS queries {expected_queries!r} within 5s. Observed {dict(dns.queries)!r}")
+        pytest.fail(
+            f"Expected DNS queries {expected_queries!r} within 5s. Observed {dict(dns.queries)!r}"
+        )
 
 
 async def test_the_production_console_serves_the_access_view_only_to_its_current_owner(root):

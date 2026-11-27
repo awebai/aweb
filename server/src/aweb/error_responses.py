@@ -4,7 +4,11 @@ import logging
 from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from aweb.messaging.refusals import DeliveryRefusal, DeliveryRefusalCode, RecipientAddressNotFound
+from aweb.messaging.refusals import (
+    DeliveryRefusal,
+    DeliveryRefusalCode,
+    RecipientAddressNotFound,
+)
 from aweb.federation.errors import FederationPolicyRefused, authority_error_body
 from aweb.messaging.delivery_policy import DeliveryPolicyRefused
 from aweb.service_errors import (

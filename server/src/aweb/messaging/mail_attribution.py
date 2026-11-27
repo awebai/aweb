@@ -112,11 +112,13 @@ async def has_authored_mail(*, db, auth: "MessagingAuth") -> bool:
     """
     from aweb.identity_auth_deps import participant_dids
 
-    return bool(await db.fetch_value(
-        f"""SELECT EXISTS (
+    return bool(
+        await db.fetch_value(
+            f"""SELECT EXISTS (
             SELECT 1 FROM {{{{tables.messages}}}} m
-            WHERE {readable_mail_sql(dids_parameter='$1')}
-              AND {mail_identity_sql(field='from_did', dids_parameter='$1')}
+            WHERE {readable_mail_sql(dids_parameter="$1")}
+              AND {mail_identity_sql(field="from_did", dids_parameter="$1")}
         )""",
-        participant_dids(auth),
-    ))
+            participant_dids(auth),
+        )
+    )

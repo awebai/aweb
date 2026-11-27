@@ -32,11 +32,20 @@ ORIGIN = "https://logs.example"
 MOVED_ORIGIN = "https://logs.moved.example"
 
 RECORD = HookBindingDeclaration(
-    kind=REGISTRATION, catalog_id="aweb.hooks", catalog_version=1, hook="post-secret-use-hook",
-    tool="ingest", method="POST", path="/hooks/ingest", scopes=("logs:write", "logs:append"),
+    kind=REGISTRATION,
+    catalog_id="aweb.hooks",
+    catalog_version=1,
+    hook="post-secret-use-hook",
+    tool="ingest",
+    method="POST",
+    path="/hooks/ingest",
+    scopes=("logs:write", "logs:append"),
 )
 EMIT = HookBindingDeclaration(
-    kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook="post-governance-hook",
+    kind=PRODUCTION,
+    catalog_id="aweb.hooks",
+    catalog_version=1,
+    hook="post-governance-hook",
     reads=("search", "export"),
 )
 
@@ -45,25 +54,51 @@ def _digest(label: str) -> str:
     return "sha256:" + hashlib.sha256(label.encode()).hexdigest()
 
 
-async def _install(db, *, team_id: str = TEAM, app_id: str = "logs", digest: str, origin: str = ORIGIN) -> None:
+async def _install(
+    db, *, team_id: str = TEAM, app_id: str = "logs", digest: str, origin: str = ORIGIN
+) -> None:
     await seed_pending_installation(
-        db, team_id=team_id, app_id=app_id, origin=origin, app_version="1.0.0",
-        manifest_version=1, digest=digest, granted_scopes=[],
+        db,
+        team_id=team_id,
+        app_id=app_id,
+        origin=origin,
+        app_version="1.0.0",
+        manifest_version=1,
+        digest=digest,
+        granted_scopes=[],
     )
 
 
-async def _write(db, *, team_id=TEAM, app_id="logs", digest, installation_id="inst-1", generation=1,
-                 declarations=(RECORD, EMIT), origin=ORIGIN):
+async def _write(
+    db,
+    *,
+    team_id=TEAM,
+    app_id="logs",
+    digest,
+    installation_id="inst-1",
+    generation=1,
+    declarations=(RECORD, EMIT),
+    origin=ORIGIN,
+):
     async with db.transaction() as tx:
         return await write_pending_bindings(
-            tx, team_id=team_id, app_id=app_id, origin=origin, digest=digest,
-            installation_id=installation_id, generation=generation, declarations=list(declarations),
+            tx,
+            team_id=team_id,
+            app_id=app_id,
+            origin=origin,
+            digest=digest,
+            installation_id=installation_id,
+            generation=generation,
+            declarations=list(declarations),
         )
 
 
 def _check_refused():
     """The schema's CHECK constraint, not some other failure, refused the write."""
-    return pytest.raises(QueryError, check=lambda exc: isinstance(exc.__cause__, asyncpg.CheckViolationError))
+    return pytest.raises(
+        QueryError,
+        check=lambda exc: isinstance(exc.__cause__, asyncpg.CheckViolationError),
+    )
 
 
 async def _make_active(db, binding_id) -> None:
@@ -76,7 +111,8 @@ async def _make_active(db, binding_id) -> None:
             activation_act_sha256 = $2
         WHERE binding_id = $1
         """,
-        binding_id, "ab" * 32,
+        binding_id,
+        "ab" * 32,
     )
 
 
@@ -100,14 +136,33 @@ async def test_an_install_writes_one_pending_binding_per_declaration(db):
         (PRODUCTION, "post-governance-hook", "pending"),
     ]
     registration, production = written
-    assert (registration.tool, registration.method, registration.path) == ("ingest", "POST", "/hooks/ingest")
+    assert (registration.tool, registration.method, registration.path) == (
+        "ingest",
+        "POST",
+        "/hooks/ingest",
+    )
     assert registration.scopes == ("logs:append", "logs:write")
     assert registration.reads == ()
-    assert (production.tool, production.method, production.path, production.scopes) == (None, None, None, ())
+    assert (production.tool, production.method, production.path, production.scopes) == (
+        None,
+        None,
+        None,
+        (),
+    )
     assert production.reads == ("export", "search")
     for binding in written:
-        assert (binding.installation_id, binding.generation, binding.digest) == ("inst-1", 1, digest)
-        assert binding.activated_at is binding.active_from is binding.revoked_at is binding.ended_by is None
+        assert (binding.installation_id, binding.generation, binding.digest) == (
+            "inst-1",
+            1,
+            digest,
+        )
+        assert (
+            binding.activated_at
+            is binding.active_from
+            is binding.revoked_at
+            is binding.ended_by
+            is None
+        )
     assert await list_app_bindings(db, team_id=TEAM, app_id="logs") == written
 
 
@@ -121,11 +176,15 @@ async def test_rewriting_the_same_generation_keeps_its_bindings(db):
     again = await _write(db, digest=digest)
 
     assert [b.binding_id for b in again] == [b.binding_id for b in first]
-    assert [b.state for b in await list_app_bindings(db, team_id=TEAM, app_id="logs")] == ["active", "pending"]
+    assert [
+        b.state for b in await list_app_bindings(db, team_id=TEAM, app_id="logs")
+    ] == ["active", "pending"]
 
 
 @pytest.mark.asyncio
-async def test_a_new_generation_supersedes_every_earlier_binding_and_inherits_no_activation(db):
+async def test_a_new_generation_supersedes_every_earlier_binding_and_inherits_no_activation(
+    db,
+):
     old, new = _digest("v1"), _digest("v2")
     await _install(db, digest=old)
     first = await _write(db, digest=old)
@@ -134,13 +193,19 @@ async def test_a_new_generation_supersedes_every_earlier_binding_and_inherits_no
 
     second = await _write(db, digest=new, generation=2)
 
-    rows = {b.binding_id: b for b in await list_app_bindings(db, team_id=TEAM, app_id="logs")}
+    rows = {
+        b.binding_id: b
+        for b in await list_app_bindings(db, team_id=TEAM, app_id="logs")
+    }
     for binding in first:
         ended = rows[binding.binding_id]
         assert (ended.state, ended.ended_by) == ("superseded", "generation")
         assert ended.revoked_at is not None
     assert {b.binding_id for b in second}.isdisjoint({b.binding_id for b in first})
-    assert [(b.state, b.generation, b.digest) for b in second] == [("pending", 2, new), ("pending", 2, new)]
+    assert [(b.state, b.generation, b.digest) for b in second] == [
+        ("pending", 2, new),
+        ("pending", 2, new),
+    ]
 
 
 @pytest.mark.asyncio
@@ -155,22 +220,39 @@ async def test_uninstall_revokes_the_live_bindings_and_leaves_ended_ones(db):
     async with db.transaction() as tx:
         assert await revoke_uninstalled_bindings(tx, team_id=TEAM, app_id="logs") == 2
 
-    rows = {b.binding_id: b for b in await list_app_bindings(db, team_id=TEAM, app_id="logs")}
-    assert {(rows[b.binding_id].state, rows[b.binding_id].ended_by) for b in second} == {("revoked", "uninstall")}
-    assert {(rows[b.binding_id].state, rows[b.binding_id].ended_by) for b in first} == {("superseded", "generation")}
+    rows = {
+        b.binding_id: b
+        for b in await list_app_bindings(db, team_id=TEAM, app_id="logs")
+    }
+    assert {
+        (rows[b.binding_id].state, rows[b.binding_id].ended_by) for b in second
+    } == {("revoked", "uninstall")}
+    assert {(rows[b.binding_id].state, rows[b.binding_id].ended_by) for b in first} == {
+        ("superseded", "generation")
+    }
 
 
 async def _assert_fresh_pending(db, written, ended, *, digest, ended_state, ended_by):
-    rows = {b.binding_id: b for b in await list_app_bindings(db, team_id=TEAM, app_id="logs")}
+    rows = {
+        b.binding_id: b
+        for b in await list_app_bindings(db, team_id=TEAM, app_id="logs")
+    }
     assert len(written) == 2
     assert {b.binding_id for b in written}.isdisjoint({b.binding_id for b in ended})
-    assert [(b.state, b.digest) for b in written] == [("pending", digest), ("pending", digest)]
-    assert {(rows[b.binding_id].state, rows[b.binding_id].ended_by) for b in ended} == {(ended_state, ended_by)}
+    assert [(b.state, b.digest) for b in written] == [
+        ("pending", digest),
+        ("pending", digest),
+    ]
+    assert {(rows[b.binding_id].state, rows[b.binding_id].ended_by) for b in ended} == {
+        (ended_state, ended_by)
+    }
     assert len(rows) == 4
 
 
 @pytest.mark.asyncio
-async def test_before_installation_identity_a_new_digest_gets_fresh_pending_bindings(db):
+async def test_before_installation_identity_a_new_digest_gets_fresh_pending_bindings(
+    db,
+):
     old, new = _digest("v1"), _digest("v2")
     await _install(db, digest=old)
     first = await _write(db, digest=old, installation_id=None, generation=None)
@@ -178,7 +260,9 @@ async def test_before_installation_identity_a_new_digest_gets_fresh_pending_bind
 
     second = await _write(db, digest=new, installation_id=None, generation=None)
 
-    await _assert_fresh_pending(db, second, first, digest=new, ended_state="superseded", ended_by="generation")
+    await _assert_fresh_pending(
+        db, second, first, digest=new, ended_state="superseded", ended_by="generation"
+    )
 
 
 @pytest.mark.asyncio
@@ -191,7 +275,9 @@ async def test_a_reinstall_after_uninstall_gets_fresh_pending_bindings(db):
 
     second = await _write(db, digest=digest, installation_id=None, generation=None)
 
-    await _assert_fresh_pending(db, second, first, digest=digest, ended_state="revoked", ended_by="uninstall")
+    await _assert_fresh_pending(
+        db, second, first, digest=digest, ended_state="revoked", ended_by="uninstall"
+    )
 
 
 @pytest.mark.asyncio
@@ -202,13 +288,23 @@ async def test_an_origin_change_supersedes_the_old_origins_bindings(db):
     await _install(db, team_id=OTHER_TEAM, digest=digest, origin=MOVED_ORIGIN)
     await db.execute(
         "UPDATE {{tables.team_app_installs}} SET origin = $1 WHERE team_id = $2 AND app_id = 'logs'",
-        MOVED_ORIGIN, TEAM,
+        MOVED_ORIGIN,
+        TEAM,
     )
 
-    second = await _write(db, digest=digest, installation_id=None, generation=None, origin=MOVED_ORIGIN)
+    second = await _write(
+        db, digest=digest, installation_id=None, generation=None, origin=MOVED_ORIGIN
+    )
 
     assert {b.origin for b in second} == {MOVED_ORIGIN}
-    await _assert_fresh_pending(db, second, first, digest=digest, ended_state="superseded", ended_by="generation")
+    await _assert_fresh_pending(
+        db,
+        second,
+        first,
+        digest=digest,
+        ended_state="superseded",
+        ended_by="generation",
+    )
 
 
 @pytest.mark.asyncio
@@ -223,7 +319,11 @@ async def test_an_older_generation_of_the_same_installation_is_refused(db):
     with pytest.raises(ValidationError, match="generation"):
         await _write(db, digest=old, generation=1)
 
-    live = [b for b in await list_app_bindings(db, team_id=TEAM, app_id="logs") if b.state == "pending"]
+    live = [
+        b
+        for b in await list_app_bindings(db, team_id=TEAM, app_id="logs")
+        if b.state == "pending"
+    ]
     assert live == current
 
 
@@ -256,15 +356,27 @@ async def test_concurrent_writes_for_one_install_wait_for_each_other(db):
     await _install(db, team_id=OTHER_TEAM, digest=new)
     async with db.transaction() as first:
         await write_pending_bindings(
-            first, team_id=TEAM, app_id="logs", origin=ORIGIN, digest=old,
-            installation_id="inst-1", generation=1, declarations=[RECORD],
+            first,
+            team_id=TEAM,
+            app_id="logs",
+            origin=ORIGIN,
+            digest=old,
+            installation_id="inst-1",
+            generation=1,
+            declarations=[RECORD],
         )
         async with db.transaction() as second:
             await second.execute("SET LOCAL lock_timeout = '200ms'")
             with pytest.raises(asyncpg.LockNotAvailableError):
                 await write_pending_bindings(
-                    second, team_id=TEAM, app_id="logs", origin=ORIGIN, digest=new,
-                    installation_id="inst-1", generation=2, declarations=[RECORD],
+                    second,
+                    team_id=TEAM,
+                    app_id="logs",
+                    origin=ORIGIN,
+                    digest=new,
+                    installation_id="inst-1",
+                    generation=2,
+                    declarations=[RECORD],
                 )
 
 
@@ -275,7 +387,9 @@ async def test_another_team_and_another_app_are_untouched(db):
     await _install(db, team_id=OTHER_TEAM, digest=digest)
     await _install(db, app_id="secrets", digest=digest)
     other_team = await _write(db, team_id=OTHER_TEAM, digest=digest)
-    other_app = await _write(db, app_id="secrets", digest=digest, installation_id=None, generation=None)
+    other_app = await _write(
+        db, app_id="secrets", digest=digest, installation_id=None, generation=None
+    )
     await _write(db, digest=digest, installation_id=None, generation=None)
     await _install(db, digest=_digest("v2"))
     await _write(db, digest=_digest("v2"), generation=2)
@@ -303,21 +417,81 @@ async def test_bindings_before_installation_identity_exist_once_and_cannot_activ
 @pytest.mark.parametrize(
     "declaration, message",
     [
-        (HookBindingDeclaration(kind=REGISTRATION, catalog_id="aweb.hooks", catalog_version=1, hook="h",
-                                tool="ingest", method="POST", path="/i", scopes=("a", "a")), "scopes"),
-        (HookBindingDeclaration(kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook="h",
-                                reads=("x", "x")), "reads"),
-        (HookBindingDeclaration(kind=REGISTRATION, catalog_id="aweb.hooks", catalog_version=1, hook="h"), "tool"),
-        (HookBindingDeclaration(kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook="h",
-                                tool="ingest", method="POST", path="/i"), "tool"),
-        (HookBindingDeclaration(kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook="h",
-                                scopes=("a",)), "scopes"),
-        (HookBindingDeclaration(kind=REGISTRATION, catalog_id="aweb.hooks", catalog_version=1, hook="h",
-                                tool="ingest", method="POST", path="/i", reads=("x",)), "reads"),
-        (HookBindingDeclaration(kind="consumer", catalog_id="aweb.hooks", catalog_version=1, hook="h"), "kind"),
+        (
+            HookBindingDeclaration(
+                kind=REGISTRATION,
+                catalog_id="aweb.hooks",
+                catalog_version=1,
+                hook="h",
+                tool="ingest",
+                method="POST",
+                path="/i",
+                scopes=("a", "a"),
+            ),
+            "scopes",
+        ),
+        (
+            HookBindingDeclaration(
+                kind=PRODUCTION,
+                catalog_id="aweb.hooks",
+                catalog_version=1,
+                hook="h",
+                reads=("x", "x"),
+            ),
+            "reads",
+        ),
+        (
+            HookBindingDeclaration(
+                kind=REGISTRATION, catalog_id="aweb.hooks", catalog_version=1, hook="h"
+            ),
+            "tool",
+        ),
+        (
+            HookBindingDeclaration(
+                kind=PRODUCTION,
+                catalog_id="aweb.hooks",
+                catalog_version=1,
+                hook="h",
+                tool="ingest",
+                method="POST",
+                path="/i",
+            ),
+            "tool",
+        ),
+        (
+            HookBindingDeclaration(
+                kind=PRODUCTION,
+                catalog_id="aweb.hooks",
+                catalog_version=1,
+                hook="h",
+                scopes=("a",),
+            ),
+            "scopes",
+        ),
+        (
+            HookBindingDeclaration(
+                kind=REGISTRATION,
+                catalog_id="aweb.hooks",
+                catalog_version=1,
+                hook="h",
+                tool="ingest",
+                method="POST",
+                path="/i",
+                reads=("x",),
+            ),
+            "reads",
+        ),
+        (
+            HookBindingDeclaration(
+                kind="consumer", catalog_id="aweb.hooks", catalog_version=1, hook="h"
+            ),
+            "kind",
+        ),
     ],
 )
-async def test_a_malformed_declaration_is_refused_and_nothing_is_written(db, declaration, message):
+async def test_a_malformed_declaration_is_refused_and_nothing_is_written(
+    db, declaration, message
+):
     digest = _digest("v1")
     await _install(db, digest=digest)
 
@@ -336,21 +510,42 @@ async def test_a_malformed_declaration_is_refused_and_nothing_is_written(db, dec
         ("production", "tool = 'ingest'"),
         ("production", "scopes = ARRAY['a']"),
         ("registration", "reads = ARRAY['x']"),
-        ("registration", "state = 'active', activated_at = NOW(), active_from = NOW() + INTERVAL '60 seconds'"),
-        ("registration", "state = 'active', activated_at = NOW(), active_from = NOW(), activation_act_sha256 = '"
-         + "ab" * 32 + "'"),
+        (
+            "registration",
+            "state = 'active', activated_at = NOW(), active_from = NOW() + INTERVAL '60 seconds'",
+        ),
+        (
+            "registration",
+            "state = 'active', activated_at = NOW(), active_from = NOW(), activation_act_sha256 = '"
+            + "ab" * 32
+            + "'",
+        ),
         ("registration", "activation_act_sha256 = 'not-hex'"),
-        ("registration", "state = 'active', activated_at = NOW(), activation_act_sha256 = '" + "ab" * 32 + "'"),
+        (
+            "registration",
+            "state = 'active', activated_at = NOW(), activation_act_sha256 = '"
+            + "ab" * 32
+            + "'",
+        ),
         ("registration", "ended_by = 'uninstall'"),
         ("registration", "installation_id = ' '"),
         ("active", "state = 'revoked', ended_by = 'owner_act', revoked_at = NOW()"),
-        ("active", "state = 'revoked', ended_by = 'uninstall', revoked_at = NOW(), revocation_act_sha256 = '"
-         + "cd" * 32 + "'"),
-        ("active", "state = 'revoked', ended_by = 'owner_act', revoked_at = activated_at - INTERVAL '1 second',"
-         " revocation_act_sha256 = '" + "cd" * 32 + "'"),
+        (
+            "active",
+            "state = 'revoked', ended_by = 'uninstall', revoked_at = NOW(), revocation_act_sha256 = '"
+            + "cd" * 32
+            + "'",
+        ),
+        (
+            "active",
+            "state = 'revoked', ended_by = 'owner_act', revoked_at = activated_at - INTERVAL '1 second',"
+            " revocation_act_sha256 = '" + "cd" * 32 + "'",
+        ),
     ],
 )
-async def test_the_schema_refuses_rows_the_store_would_never_write(db, target, assignment):
+async def test_the_schema_refuses_rows_the_store_would_never_write(
+    db, target, assignment
+):
     digest = _digest("v1")
     await _install(db, digest=digest)
     registration, production = await _write(db, digest=digest)
@@ -360,7 +555,10 @@ async def test_the_schema_refuses_rows_the_store_would_never_write(db, target, a
 
     with _check_refused():
         await db.execute(
-            "UPDATE {{tables.app_hook_bindings}} SET " + assignment + " WHERE binding_id = $1", binding.binding_id,
+            "UPDATE {{tables.app_hook_bindings}} SET "
+            + assignment
+            + " WHERE binding_id = $1",
+            binding.binding_id,
         )
 
 
@@ -374,7 +572,8 @@ async def test_an_owner_revocation_records_its_act(db):
     await db.execute(
         "UPDATE {{tables.app_hook_bindings}} SET state = 'revoked', ended_by = 'owner_act', revoked_at = NOW(),"
         " revocation_act_sha256 = $2 WHERE binding_id = $1",
-        registration.binding_id, "cd" * 32,
+        registration.binding_id,
+        "cd" * 32,
     )
 
     revoked = (await list_app_bindings(db, team_id=TEAM, app_id="logs"))[0]
@@ -394,9 +593,14 @@ async def test_end_times_are_stored_at_millisecond_precision(db):
     ended = await list_app_bindings(db, team_id=TEAM, app_id="logs")
     assert {b.binding_id for b in ended} == {b.binding_id for b in first + second}
     for binding in ended:
-        assert binding.revoked_at is not None and binding.revoked_at.microsecond % 1000 == 0
+        assert (
+            binding.revoked_at is not None
+            and binding.revoked_at.microsecond % 1000 == 0
+        )
     created = await db.fetch_all("SELECT created_at FROM {{tables.app_hook_bindings}}")
-    assert len(created) == 4 and all(row["created_at"].microsecond % 1000 == 0 for row in created)
+    assert len(created) == 4 and all(
+        row["created_at"].microsecond % 1000 == 0 for row in created
+    )
 
 
 @pytest.mark.asyncio
@@ -408,13 +612,23 @@ async def test_server_startup_applies_the_kit_owner_act_migrations(shared_test_p
     await infra.initialize(shared_pool=shared_test_pool)
     db = infra.get_manager("aweb")
 
-    assert await db.fetch_value("SELECT to_regclass('aweb.owner_act_nonces') IS NOT NULL")
     assert await db.fetch_value(
-        "SELECT COUNT(*) FROM aweb.schema_migrations WHERE module_name = $1", MIGRATIONS_MODULE
-    ) == 2
+        "SELECT to_regclass('aweb.owner_act_nonces') IS NOT NULL"
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM aweb.schema_migrations WHERE module_name = $1",
+            MIGRATIONS_MODULE,
+        )
+        == 2
+    )
 
     restarted = DatabaseInfra()
     await restarted.initialize(shared_pool=shared_test_pool)
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM aweb.schema_migrations WHERE module_name = $1", MIGRATIONS_MODULE
-    ) == 2
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM aweb.schema_migrations WHERE module_name = $1",
+            MIGRATIONS_MODULE,
+        )
+        == 2
+    )

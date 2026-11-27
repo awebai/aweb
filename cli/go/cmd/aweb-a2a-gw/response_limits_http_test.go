@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/awebai/aw/a2a"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/a2a"
 )
 
 type responseLimitProbe struct {
