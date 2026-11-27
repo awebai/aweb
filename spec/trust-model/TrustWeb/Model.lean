@@ -14,8 +14,10 @@ been checked.
 
 ## What is built and what is design
 
-Everything here describes aweb as built, except one thing: the rule for who
-may ask a key holder. That rule is a parameter, `AskRule`, with two values.
+Everything here describes aweb as built, except the rule for who may ask a
+key holder and the four things listed below. That rule is a parameter, `AskRule`. Two values are
+here; `Operations.lean` adds a third, `teamRule`, the general form of the
+second.
 
 * `builtRule`: what the self-hosted key holder does today.
 * `adminRule`: the planned design, in which an organisation's members are
@@ -33,7 +35,9 @@ needs them. They are acts and checks under every rule, `builtRule` included:
 * An invitation never leading into the admin team. The registry does not
   know which team is the admin team.
 
-A result stated for any rule holds for both, and for any rule chosen later.
+A result stated for any rule holds for each of them, and for any rule chosen
+later. Results under `builtRule` are proved over acts that include the four
+planned things.
 
 ## Assumptions (taken as given, not proved)
 
@@ -462,7 +466,8 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
       Authorised ask s (.team m.org m.team) .admitAdmin who approvals →
       Step ask s who { s with members := m :: s.members }
   /-- Remove a member from a team, the admin team included. The team's key signs.
-  The removed member signs nothing. A key holder does not remove the last admin.
+  The removed member need not take part, though the policy may name it as an
+  approver. A key holder does not remove the last admin.
   Grants given from this team certificate end with it. -/
   | remove {s : State} {m : Membership} {who : Party} {approvals : List Key} :
       Authorised ask s (.team m.org m.team) .remove who approvals →

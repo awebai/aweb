@@ -9,15 +9,17 @@ shows a record the system reaches in which something works.
 
 namespace TrustWeb
 
-/-- **An organisation runs with no key holder and no hosted service.** There
-is a record the system reaches, under any rule, with no key held by anyone
-else, in which:
+/-- **An organisation runs with no key holder and no hosted service.** Under
+any rule, there is a record the system reaches in which:
 
-* a person made an agent, and that agent made an agent, with nobody asked;
-* the person answers for both;
-* an agent of another organisation is in one of the first organisation's
-  teams, is still a member of its own organisation, and is not a member of
-  the first. -/
+* no key is with a key holder;
+* 1 is a valid person of organisation 0, and 2 and 3 are valid agents of it;
+* 1 answers for 2 and for 3;
+* 9 is a valid agent of organisation 1, can act in team 7 of organisation 0,
+  and is not valid in organisation 0.
+
+In the construction 1 issues 2 and 2 issues 3, each with its own key; the
+statement does not say who issued whom. -/
 theorem runs_without_key_holder (ask : AskRule) :
     ∃ s, Reachable ask s ∧ s.held = [] ∧
       Valid s 0 1 .person ∧ Valid s 0 2 .agent ∧ Valid s 0 3 .agent ∧
@@ -85,9 +87,9 @@ theorem runs_without_key_holder (ask : AskRule) :
   simp [s7, s6] at hd
   rcases hd with rfl | rfl | rfl | rfl <;> simp [c1, c2, c3, c9] at hds hdo
 
-/-- **An organisation can require a person's approval.** Where its policy asks
-for a person's approval of a kind of act, approvals from anyone else do not
-satisfy it. -/
+/-- **An organisation can require a person's approval.** If `o`'s policy has a
+rule asking for any person's approval of a kind of act, and no approver is a
+valid person of `o`, the approvals are not approved for that act. -/
 theorem policy_requires_person {s : State} {o : Org} {act : ActKind} {r : Rule}
     (hr : r ∈ s.policy) (ho : r.org = o) (ha : r.act = act) (hp : r.approver = .anyPerson)
     {approvals : List Key} (hnone : ∀ k, k ∈ approvals → ¬ Valid s o k .person) :
@@ -97,8 +99,9 @@ theorem policy_requires_person {s : State} {o : Org} {act : ActKind} {r : Rule}
   rw [hp] at h
   exact agents_cannot_approve_as_person hnone h
 
-/-- **And a person's approval satisfies it.** Where the only rule for a kind
-of act asks for a person, one valid person's approval is enough. -/
+/-- **And a person's approval satisfies it.** If `p` is a valid person of `o`
+and every rule of `o` for a kind of act asks for any person, `p`'s approval
+alone is approved for that act. -/
 theorem person_approval_satisfies {s : State} {o : Org} {act : ActKind} {p : Key}
     (hv : Valid s o p .person)
     (hrules : ∀ r, r ∈ s.policy → r.org = o → r.act = act → r.approver = .anyPerson) :
@@ -108,9 +111,10 @@ theorem person_approval_satisfies {s : State} {o : Org} {act : ActKind} {p : Key
   exact ⟨p, List.mem_cons_self, hv⟩
 
 /-- **Design. A required approval can be given, and then the act goes
-through.** Where a key holder holds a team's key and the policy asks for a
-person's approval to admit, an admin with one valid person's approval admits
-a member. -/
+through.** If a named team's key is with a key holder, `a` is an admin, `p` is
+a valid person, `k` is registered or holds no team certificate, and every rule
+for admitting asks for any person, there is an accepted act under the admin
+rule that `a` asks for, after which `k` holds a certificate of that team. -/
 theorem approved_act_goes_through {s : State} {o : Org} {n : Nat} {a p k : Key}
     (hheld : OrgKey.team o (.named n) ∈ s.held) (ha : Admin s o a)
     (hv : Valid s o p .person) (hk : OneTeamIfLocal s k)
@@ -122,7 +126,8 @@ theorem approved_act_goes_through {s : State} {o : Org} {n : Nat} {a p k : Key}
 
 /-- **Design, in one act. Where the admin team's key is with a key holder and
 the organisation has no admin, no accepted act adds an admin-team
-certificate.** Nothing is proved here about several acts. -/
+certificate of it.** Over several acts it can get one back
+(`locked_organisation_unlocks_by_readmission`). -/
 theorem locked_without_admin {s s' : State} {who : Party} {o : Org}
     (hheld : OrgKey.team o .admin ∈ s.held) (hnone : ∀ k, ¬ Admin s o k)
     (hstep : Step adminRule s who s') {m : Membership}
@@ -245,8 +250,9 @@ theorem locked_organisation_unlocks_by_readmission :
     intro r hr; simp [R2, R1, L, s5, s4, s3, s2, s1, e] at hr
 
 /-- **Design. An organisation with no person at all can run.** There is a
-record the system reaches in which organisation 0 has no person, agent 1 is
-its admin, and agent 1 alone, with no approval, admits a member to a team. -/
+record the system reaches under the admin rule in which nobody is a person of
+organisation 0, and 1 is an admin and a valid agent of it; an act that 1 asks
+for is accepted, after which 2 holds a certificate of team 7 of 0. -/
 theorem agent_only_org_runs :
     ∃ s s', Reachable adminRule s ∧ (∀ k, ¬ Person s 0 k) ∧ Admin s 0 1 ∧
       Valid s 0 1 .agent ∧ Step adminRule s (.id 1) s' ∧
