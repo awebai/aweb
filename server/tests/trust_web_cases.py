@@ -462,7 +462,6 @@ class _Membership:
     team_id: str
     certificate_id: str
     certificate: dict
-    registered: bool = False
 
 
 @dataclass
@@ -512,8 +511,6 @@ class World:
                 return self.roots[controlled["root"]]
             team = controlled["team"]
             return self.team_keys[self.team_id(team["org"], team["team"])]
-        if "session" in who:
-            return self.grants[who["session"]].session
         raise NotRunnable(f"party {who!r} has no key in the runner")
 
     # -- wire prerequisites the model has no act for ----------------------
@@ -712,7 +709,6 @@ class World:
             ),
         )
         membership.certificate = certificate
-        membership.registered = True
         await self.connect(m["member"], membership.team_id)
 
     async def _act_remove(self, step: Step) -> None:
@@ -781,10 +777,13 @@ class World:
             )
         return await reader(observation.args)
 
-    async def _status(self, symbol: str) -> dict | None:
+    async def _status(self, symbol: str) -> dict:
         """The registry's own current answer for ``symbol``'s identity, uncached."""
         if symbol not in self.did_aws:
-            return None
+            # Identity status is asked by did:aw; a key with none cannot be asked.
+            raise NotRunnable(
+                f"{symbol} has no did:aw, so the registry cannot be asked about it"
+            )
         did_aw, org = self.did_aws[symbol]
         domain = self.domain(org)
         try:
@@ -806,8 +805,6 @@ class World:
     async def _read_cert(self, args: dict) -> dict | None:
         symbol = args["subject"]
         status = await self._status(symbol)
-        if status is None:
-            return None
         did_aw, org = self.did_aws[symbol]
         entry = self._entry(status, did_aw)
         if entry is None:
@@ -826,15 +823,19 @@ class World:
     async def _read_revoked(self, args: dict) -> bool:
         symbol = args["key"]
         status = await self._status(symbol)
-        entry = None if status is None else self._entry(status, self.did_aws[symbol][0])
+        entry = self._entry(status, self.did_aws[symbol][0])
         return entry is not None and entry["revocation"] is not None
 
     async def _read_valid(self, args: dict) -> bool:
         symbol = args["key"]
-        identity = self.identities.get(symbol)
-        if identity is None or identity.org != args["org"]:
-            return False
         status = await self._status(symbol)
+        did_aw, org = self.did_aws[symbol]
+        if self._entry(status, did_aw) is None:
+            # The registry holds no identity certificate for it.
+            return False
+        identity = self.identities[symbol]
+        if org != args["org"]:
+            return False
         verdict = verify_id_chain(
             {"v": 1, "type": "aweb.id-chain", "certificates": identity.chain},
             subject={"id": identity.did_aw, "did_key": self.did_key(symbol)},
@@ -867,7 +868,11 @@ class World:
 
     async def _read_grantLive(self, args: dict) -> bool:
         """Whether the server lets the grant's session key act now: a read the
-        grant's scopes allow, signed with that key, changing nothing."""
+        grant's scopes allow, signed with that key, changing nothing.
+
+        A session the server never answered with a grant id has no grant:
+        grant authentication names the grant by that id, so nothing can act
+        with it."""
         grant = self.grants.get(args["session"])
         if grant is None:
             return False
