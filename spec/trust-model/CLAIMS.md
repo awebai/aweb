@@ -44,8 +44,8 @@ One line for every sentence that says something about the model, apart from a th
 | One certificate each holds in every reachable record | result | Row 14 |
 | A row with no rule named holds for every `AskRule` | process | Such theorems quantify over `ask` |
 | As built is `builtRule`, Design is `adminRule`, a team rule is `teamRule`; a Design row claims nothing about `builtRule` | process | Reading convention |
-| Four parts are planned, not built | source | The source readings: the built key holder has no command to take a key in or give one back; the registry has no last-admin check and does not know the admin team; the built leave command leaves the certificate standing; the registry's certificate route registers a certificate for any team with the same checks, so nothing in it excludes the admin team (`awid/src/awid_service/routes/teams.py`, the function register_certificate, lines 1219 to 1246, at 5c2ee7bad3) |
-| They are present under every rule, `builtRule` included; under `builtRule` `release` is never accepted | definition | `entrust`, `release`, `leave` are constructors of `Step`; `KeepsAnAdmin`, `m.team ≠ .admin` and `i.team ≠ .admin` are premises of its constructors; `Step` takes any `ask`; `release` needs `key ∈ s.held`, so `Authorised`'s held branch, and `builtRule` never allows `.release` |
+| Five parts are planned, not built | source | The source readings: the built key holder has no command to take a key in or give one back; the registry has no last-admin check and does not know the admin team; the built leave command leaves the certificate standing; the registry's certificate route registers a certificate for any team with the same checks, so nothing in it excludes the admin team (`awid/src/awid_service/routes/teams.py`, the function register_certificate, lines 1219 to 1246, at 5c2ee7bad3); the same route checks the member's address ownership (the function _require_member_address_owned_by_did_aw, line 1235), not its validity in the organisation |
+| They are present under every rule, `builtRule` included; under `builtRule` `release` is never accepted | definition | `entrust`, `release`, `leave` are constructors of `Step`; `KeepsAnAdmin`, `m.team ≠ .admin`, `i.team ≠ .admin` and `admitAdmin`'s `Valid` are premises of its constructors; `Step` takes any `ask`; `release` needs `key ∈ s.held`, so `Authorised`'s held branch, and `builtRule` never allows `.release` |
 
 ### Evidence of how a person was enrolled
 
@@ -69,6 +69,7 @@ One line for every sentence that says something about the model, apart from a th
 | 5 | Nothing about a key with no identity certificate acting in a team | result | The statements are about valid members and admins |
 | 6 | So it is not an invitation's holder, in that act | result | `.bearer` is neither disjunct |
 | 6 | An invitation can still lead to an admin a step later, under a team rule | result | Row 48 |
+| 14 | Its clause on identities with no certificate rests on the planned premise of `admitAdmin` | result, source | `Step.localInOneTeam`'s proof uses `admitAdmin`'s `Valid` premise; that premise is planned |
 | 7 | (true in every reachable record, 14) | result | Row 14 |
 | 7 | Sending with its own key requires being able to act | act | `sendOwn` |
 | 8 | Its team certificates are not looked at | result | The statement |
@@ -116,7 +117,7 @@ One block per cell, in the table's order.
 | | A key with no identity certificate can act in a team on its team certificate alone | definition | `InTeam`; `CanAct`'s first disjunct |
 | | And so give a grant | act | `mintGrant` needs `InTeam` and a session key no current grant uses; some key is always unused (`unused_session_key`) |
 | | In a team or not, it can send attributed to itself | act | `sendOwn` needs only `CanAct` |
-| | By the planned `leave`, it can leave a team whose key is held | act, result | `leave` needs the certificate, the held key and `KeepsAnAdmin`, and no validity or registration; `KeepsAnAdmin` is vacuous outside the admin team, and a key with no identity certificate never holds an admin-team certificate in a reachable record (`admin_certificate_member_is_registered`, which rests on `new_admin_certificate_needs_valid_member` and `certificate_is_permanent`) |
+| | By the planned `leave`, it can leave a team whose key is held | act, result | `leave` needs the certificate, the held key and `KeepsAnAdmin`, and no validity or registration; `KeepsAnAdmin` is vacuous outside the admin team, and a key with no identity certificate never holds an admin-team certificate in a reachable record (`admin_certificate_member_is_registered`, which rests on `new_admin_certificate_needs_valid_member`, so on the planned premise of `admitAdmin`, and on `certificate_is_permanent`) |
 | | A team certificate counts without the root having set the team's key | definition | `InTeam`, `GrantLive` and `admit` have no premise about the root or `rekeyTeam` |
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule` (`Admin` needs `Valid`), `teamRule` |
 | A revoked member keeps authority | Proved in reachable records: not valid, not an admin, cannot act in a team, cannot send with its own key, no live grant | result | Rows 7, 20; `sendOwn` needs `CanAct` |
@@ -208,6 +209,8 @@ Each item pairs a sentence about the model with one about the real system.
 | The protocol tells them apart | source | the source readings |
 | Named-team certificates and invitations need no organisation to exist | act | No premise of `admit`, `redeem` or `invite` mentions `orgs` |
 | Nobody holds a member's own key for it | assumption | A7 |
+| Premises of built acts that the registry does not check: `Fresh`, re-admission's cut-off premise, `OneTeamIfLocal`, and an invitation's authority, unique secret and being unused | source | aweb 5c2ee7bad3 at the files and lines the item cites |
+| So one certificate each holds of the model, not of the registry | result, source | Row 14 rests on the `Fresh` premises; the registry gives superseding certificates |
 
 ### Not done
 
