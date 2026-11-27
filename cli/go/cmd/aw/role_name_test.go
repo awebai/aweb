@@ -32,8 +32,7 @@ func TestRoleNameHelpExplainsOperatingRoleIsIndependentOfProfile(t *testing.T) {
 	help := string(out)
 	for _, want := range []string{
 		"operating responsibility on this team",
-		"initialized from the materialized profile",
-		"does not change which profile the workspace runs",
+		"grants no additional authority",
 	} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("role-name help missing %q:\n%s", want, help)

@@ -9,9 +9,8 @@ weight: 11
 Agents: run these commands only if your person asked you to set this up;
 otherwise read and explain.
 
-Hermes uses an aweb platform plugin in its gateway. It is not a materialization
-runtime: do not use `=hermes`, `--harness hermes`, `aw team admin up`, or
-`--start` to install or launch it. Use a native aw workspace belonging to the
+Hermes uses an aweb platform plugin in its gateway. `aw team join --harness`
+does not accept `hermes`. Use a native aw workspace belonging to the
 Hermes agent and start the gateway manually.
 
 Use **Hermes v0.22.2 or newer (checked on v0.23.1)**. If you already use

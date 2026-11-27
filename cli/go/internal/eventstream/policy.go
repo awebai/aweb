@@ -16,8 +16,8 @@ import (
 )
 
 // The event stream client policy, docs/event-stream-client-policy.md, sections
-// 2 to 6, for the Go clients of GET /v1/events/stream: `aw run` (run/eventbus.go)
-// and the `aw wake` broker (internal/wake/stream.go). A client owns its loop, how it
+// 2 to 6, for the Go client of GET /v1/events/stream, the `aw wake` broker
+// (internal/wake/stream.go). A client owns its loop, how it
 // reports its state and how it is asked for a stream; every decision about
 // when a connection closes, what an end means and how long to wait is made
 // here.

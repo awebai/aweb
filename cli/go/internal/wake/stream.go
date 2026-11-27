@@ -12,7 +12,7 @@ import (
 
 // The broker's streams follow docs/event-stream-client-policy.md: when a
 // connection closes, what its end means and how long to wait are decided by
-// eventstream.StreamPolicy, the implementation `aw run` uses too. This file keeps
+// eventstream.StreamPolicy. This file keeps
 // what is the broker's own: one runner per identity, the phase it reports in
 // status, and the snapshot requests that reopen a live stream.
 //
@@ -317,8 +317,7 @@ func (s *streamRunner) consume(conn *eventstream.StreamConnection, source awid.E
 		}
 		switch ev.Type {
 		case awid.AgentEventConnected:
-			// Informational; the bus in cli/go/run drops it, and the broker
-			// wants it only as a log line (§2).
+			// Informational; the broker wants it only as a log line (§2).
 			s.log("stream connected identity_home=%s agent=%s", s.identityHome, ev.AgentID)
 			continue
 		case awid.AgentEventError:

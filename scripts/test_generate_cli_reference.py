@@ -28,7 +28,7 @@ Identity & Teams
   team        Manage teams
 
 Additional Commands:
-  blueprint   Inspect and manage Library blueprints
+  example     An ungrouped example command
   session     Session-scoped coordination
 
 Flags:
@@ -85,7 +85,7 @@ class CLIReferenceGeneratorTests(unittest.TestCase):
                 (
                     "Additional Commands",
                     [
-                        ("blueprint", "Inspect and manage Library blueprints"),
+                        ("example", "An ungrouped example command"),
                         ("session", "Session-scoped coordination"),
                     ],
                 ),

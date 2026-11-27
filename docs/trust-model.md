@@ -338,7 +338,7 @@ can authorize the explicit transition:
 ```bash
 aw team admin replace-key alice \
   --old-did-key did:key:OLD \
-  --home agents/instances/alice \
+  --home ~/agents/alice \
   --generate-new-key
 ```
 

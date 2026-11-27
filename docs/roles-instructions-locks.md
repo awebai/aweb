@@ -32,17 +32,15 @@ aw role-name set reviewer
 ```
 
 Roles are named playbooks such as developer, reviewer, or coordinator. A
-workspace's `role_name` is its current operating responsibility on this team. Team
-setup initializes it from the materialized profile, but it remains independently
-mutable: an agent running a developer profile can take the coordinator operating
-role without changing its pinned profile. Changing `role_name` selects different
+workspace's `role_name` is its current operating responsibility on this team. It
+is independently mutable: an agent can take the coordinator operating role and
+later return to another. Changing `role_name` selects different
 team guidance; it does not grant additional authority.
 
 This distinction also records responsibility changes in shared state. For example,
 an acting coordinator should select the coordinator role so peers see that active
 responsibility in `aw workspace status`. Multiple workspaces may legitimately hold
-the same role, and presence shows which are active or offline. The pinned profile
-remains recorded separately under `.aw/profile/ref.json`. Shared instructions
+the same role, and presence shows which are active or offline. Shared instructions
 apply across the team. Treat roles and instructions as operating guidance
 unless the team has attached an explicit enforcement mechanism elsewhere.
 

@@ -47,10 +47,6 @@ func InjectProvidedAgentDocs(repoRoot, body string) *injectDocsResult {
 	return writeProvidedAgentDocs(repoRoot, body, false)
 }
 
-func UpdateProvidedAgentDocs(repoRoot, body string) *injectDocsResult {
-	return writeProvidedAgentDocs(repoRoot, body, true)
-}
-
 func writeProvidedAgentDocs(repoRoot, body string, existingMarkedOnly bool) *injectDocsResult {
 	result := &injectDocsResult{}
 	canonicalRoot, err := canonicalAgentDocsTargetRoot(repoRoot)
@@ -160,40 +156,6 @@ func resolveAgentDocsCandidate(canonicalRoot, candidate, name string) (string, e
 		return "", fmt.Errorf("%s resolves outside requested directory %s: %s", name, requestedRoot, resolved)
 	}
 	return resolved, nil
-}
-
-func hasSingleMarkedAgentDocs(repoRoot string) (bool, error) {
-	canonicalRoot, err := canonicalAgentDocsTargetRoot(repoRoot)
-	if err != nil {
-		return false, fmt.Errorf("target directory: %w", err)
-	}
-	processed := map[string]bool{}
-	for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
-		path := filepath.Join(repoRoot, name)
-		_, err := os.Lstat(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return false, fmt.Errorf("%s: %w", name, err)
-		}
-		resolved, err := resolveAgentDocsCandidate(canonicalRoot, path, name)
-		if err != nil {
-			return false, err
-		}
-		if processed[resolved] {
-			continue
-		}
-		processed[resolved] = true
-		content, err := os.ReadFile(resolved)
-		if err != nil {
-			return false, fmt.Errorf("%s: %w", name, err)
-		}
-		if agentdocs.HasSingleMarkedBlock(string(content)) {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func loadTeamInstructionsBody(workingDir string) (string, error) {

@@ -973,8 +973,7 @@ activation.
 the agent — never on transport-send alone, and never withheld under a
 never-ack policy.** Presentation is surface-specific but always concrete: the
 Claude MCP channel notification is the presentation (ack at notification); Pi
-acks after `pi.sendMessage` accepts the injection; native `aw run` acks after a
-successful provider run. The failure mode is a rare host-drop between
+acks after `pi.sendMessage` accepts the injection. The failure mode is a rare host-drop between
 transport-send and presentation, and it splits into two sub-cases that recover
 differently. If the transport send itself fails, the ack is skipped, the message
 stays unread, and the next reconnect re-fetches it (the inbox pulls unread only)
@@ -1622,7 +1621,6 @@ relies on are:
 
 | Command | Purpose |
 |---------|---------|
-| `aw run <provider>` | Primary human entrypoint; guided onboarding + provider loop |
 | `aw init` | Bind the current workspace using the active certificate from `.aw/team-certs/` (`POST /v1/connect`) |
 | `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Unsupported bootstrap-token command retained for this release; use a dashboard setup key or `aw init --join-from` |
 | `aw id team create --name X --namespace Y` | Create team at awid |
@@ -1719,9 +1717,8 @@ identity-level team membership view. `workspace.yaml` is an aweb
 coordination binding only: it carries the aweb server URL, per-team
 workspace bindings such as `workspace_id` and `role_name`, and local
 repo/workspace metadata. `role_name` selects the workspace's current operating
-responsibility and team playbook. Setup may initialize it from a materialized
-profile ref, but it is independently mutable and does not change profile
-provenance or grant authority. It does not carry awid-specific URL fields,
+responsibility and team playbook. It is independently mutable and does not
+grant authority. It does not carry awid-specific URL fields,
 hosted-specific URL fields, identity key material, or the active team
 selection.
 

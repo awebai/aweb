@@ -144,7 +144,7 @@ func shouldSkipUpdateCheck(cmd *cobra.Command) bool {
 		return false
 	}
 	switch path[0] {
-	case "run", "heartbeat", "events", "notify", "control", "log", "instructions", "upgrade", "version":
+	case "heartbeat", "events", "notify", "control", "log", "instructions", "upgrade", "version":
 		return true
 	case "lock":
 		return len(path) > 1 && path[1] == "renew"

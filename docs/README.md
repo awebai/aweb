@@ -130,31 +130,16 @@ authority.
 
 These are working capabilities outside the first communication journey.
 Current optional and advanced helpers remain supported under their documented
-contracts; Library/profile services and runtime materialization are opt-in. An
-empty-profile, one-repository team is complete, and external orchestrators keep
-ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
+contracts. An empty-profile, one-repository team is complete, and external
+orchestrators keep ownership of definitions, homes, worktrees, runtimes,
+processes, and session UX.
 
 <details open>
-<summary>Profiles, runtime, coordination, integrations, and extension contracts</summary>
+<summary>Runtime, coordination, integrations, and extension contracts</summary>
 
-- [Profiles and blueprints](profiles-and-blueprints.md) — advanced optional
-  Library-backed profile helper; empty-profile teams need no profile service.
-- [Blueprint materialization contract](blueprint-materialization-contract.md) —
-  current advanced optional payload, pin, and provenance contract.
 - [Resource-pack template contract](resource-pack-template-contract.md) —
   current advanced optional harness-neutral operating assets.
-- [Orchestrate a local agent team](create-and-run-team.md) — current optional
-  materialized-team helper workflow.
-- [Orchestrate more local agents](grow-team.md) — current optional membership-growth
-  helper with operator-owned materialization and launch choices.
-- [Improve a profile](improve-profile.md) — optional Library-backed reviewed
-  profile-learning loop.
-- [Running materialized agents](running-agents.md) — advanced optional local
-  home/worktree and launch helpers, not an aweb-owned lifecycle.
-- [Runtime support](runtime-support.md) — current maintained wake integrations
-  and advanced optional materialize/launch helpers.
-- [Agent home composition contract](agent-home-composition-contract.md)
-  — current home-layout facts pending consolidation.
+- [Runtime support](runtime-support.md) — current maintained wake integrations.
 - [Start working in your team](start-working.md) — optional task-first workflow
   scheduled for repositioning.
 - [Tasks and work](tasks-and-work.md) — current optional shared work
@@ -165,8 +150,7 @@ ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
 - [MCP tutorial](mcp-tutorial.md) — optional MCP client journey scheduled for an
   OSS/hosted split.
 - [Add an AI tool to your team](add-ai-tool.md) — connect Claude Code, Pi,
-  Codex or Hermes and make it wake; the optional member/home/worktree/runtime
-  materialization workflow is its last section.
+  Codex or Hermes and make it wake.
 - [Connect a Hermes agent](hermes.md) — run Hermes with the aweb platform
   plugin in its gateway.
 - [Native operations for embedding hosts](native-embedding-operations.md) —
@@ -223,13 +207,6 @@ These paths remain for current users or because durable facts have not yet been
 consolidated. Prefer the canonical/current guide named in each document's status
 notice where one exists.
 
-- [`aw run`](aw-run.md) — opt-in, provider-specific launcher, and the supported
-  wake path for Codex today. It sits in this section because aweb does not
-  guarantee runtime lifecycle, not because the command is superseded.
-- [`aw team admin extend` command SOT](team-extend-sot.md) — shipped compatibility
-  contract preserving authority discovery, ambiguity, rollback, and batch
-  semantics; use the current growth guide and generated reference for everyday
-  operation.
 - [App authorization transition notes](human-assurance-contract.md) — which
   application approval paths remain until the application gates move to awsign.
 
@@ -272,8 +249,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   compatibility, readiness, evidence, and rollback procedure.
 - [Optional Library integration test stack](e2e-library-stack.md) — advanced
   cross-repository maintainer harness; unrelated to encrypted messaging.
-- [Per-team agent tmux cutover](agent-tmux-cutover.md) — specialized reviewed
-  runtime migration procedure.
 - [This repository in an OATS workspace](oats-workspace.md) — the maintainers'
   agent souls and knowledge base kept here, and the standalone view for
   contributors who cannot read the workspace host.

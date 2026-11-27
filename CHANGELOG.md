@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- aw's own agent orchestration is removed: `aw run`, `aw blueprint`,
+  `aw agent`, and `aw team admin up|adopt|refresh|add|extend` with their hidden
+  `aw team <command>` aliases. Materializing and launching agents is OATS's job.
+  `aw team admin create <name>` still creates a team workspace and its first
+  agent identity. Its `--agent`, `--profile`, `--blueprint`, `--home`,
+  `--runtime` and `--library-url` flags are gone, and so are the
+  `profile_mode`, `no_library`, `no_profile`, `identity_only` and
+  `profile_source` fields of its JSON output. `aw plugin library materialize`
+  no longer writes the returned profile into a local home; like every other
+  plugin verb, it prints the Library's answer. aw no longer installs
+  `~/.config/aw/guard-bin/tmux`. The reserved app ids lose `agent`, `blueprint`
+  and `run`. The Go package `github.com/awebai/aw/run` is removed from the
+  documented library, which is now `aw`, `awid`, `awconfig` and `chat`; the
+  event stream client policy the `aw wake` broker uses is in
+  `cli/go/internal/eventstream`. Dropping `run` also drops its terminal
+  rendering dependencies (glamour, lipgloss, goldmark) and the goldmark
+  vulnerability exception they carried. Released `aw` binaries keep their
+  commands; the server is unchanged.
+
 - Live agent activity is removed: `aw activity enable|disable|show`,
   `aw activity hook install --codex`, the activity publishers in the Claude
   channel, pi and channel-core, `POST /v1/agents/me/activity`, the chat

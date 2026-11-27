@@ -12,8 +12,7 @@ import (
 )
 
 const roleNameExplanation = "The role name is this workspace's operating responsibility on this team. It is\n" +
-	"initialized from the materialized profile during setup, but remains independently mutable.\n" +
-	"Changing it does not change which profile the workspace runs or grant additional authority."
+	"independently mutable, and changing it grants no additional authority."
 
 var roleNameCmd = &cobra.Command{
 	Use:   "role-name",

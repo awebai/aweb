@@ -17,52 +17,6 @@ import (
 	"time"
 )
 
-func TestMaterializedHomeDoesNotInstallOrRemoveNotifyHook(t *testing.T) {
-	withFakeClaudeOnPath(t)
-	withFakeClaudePluginRunner(t, nil)
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/instructions/active" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"document": map[string]any{"body_md": "Use aw."}})
-			return
-		}
-		if r.URL.Path == "/v1/agents/heartbeat" {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		t.Errorf("unexpected request %s", r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	for _, installed := range []bool{false, true} {
-		root := t.TempDir()
-		writeWorkspaceBindingForTest(t, root, workspaceBinding(server.URL, "backend:demo", "notify-home", "workspace-1"))
-		path := filepath.Join(root, ".claude", "settings.json")
-		var before []byte
-		if installed {
-			writeNotifySettings(t, root, `{"other":42}`)
-			result := SetupClaudeHooks(root, false)
-			if result.Error != nil {
-				t.Fatal(result.Error)
-			}
-			before, _ = os.ReadFile(path)
-		}
-		if err := configureMaterializedAgentHome(root); err != nil {
-			t.Fatal(err)
-		}
-		after, err := os.ReadFile(path)
-		if installed {
-			if err != nil || !bytes.Equal(before, after) {
-				t.Fatal("materialization changed explicit fallback")
-			}
-		} else if !os.IsNotExist(err) {
-			t.Fatalf("materialization installed hook: %s (%v)", after, err)
-		}
-		docs, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
-		if err != nil || !strings.Contains(string(docs), "Use aw.") {
-			t.Fatal("coordination instructions missing")
-		}
-	}
-}
-
 func TestGuidedClaudePollingFallbackExplainsLimitsAndRequiresOptIn(t *testing.T) {
 	for _, answer := range []string{"n\n\n", "n\ny\n"} {
 		root := t.TempDir()

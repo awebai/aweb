@@ -346,19 +346,6 @@ func resolveClientSelectionForDirWithTeamOverride(workingDir, teamIDOverride str
 	})
 }
 
-// buildClientSelectionForDir captures the command's selection inputs, but leaves
-// lastClient unchanged so a reload can build a client off the command goroutine.
-func buildClientSelectionForDir(ctx context.Context, workingDir, teamIDOverride string, baseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
-	home, err := identityHomeForDir(workingDir)
-	if err != nil {
-		return nil, nil, err
-	}
-	return newClient(ctx, clientRequest{
-		WorkingDir: workingDir, Home: home, TeamID: teamIDOverride, ServerName: serverFlag,
-		BaseURL: baseURL, Record: clientDetached,
-	})
-}
-
 func resolveClientSelectionAtIdentityHome(workingDir string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
 	return resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, "", identityHome)
 }

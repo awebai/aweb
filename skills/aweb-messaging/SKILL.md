@@ -124,7 +124,7 @@ Encrypted read paths such as `aw chat pending`, `aw chat history`, and channel l
 
 ## Harness surfaces
 
-Terminal agents, Pi, and Claude Code can use the `aw` CLI directly. Custodial MCP/OAuth agents may have equivalent MCP tools for mail/chat, but those hosted/server-side tool calls are server-readable hosted messaging unless plaintext and decryption stay fully outside AC/aweb. For Claude Code, do not use deprecated `aw run claude`; install the `aweb-channel` plugin for push events. Use the harness-native surface, but keep the same decision policy:
+Terminal agents, Pi, and Claude Code can use the `aw` CLI directly. Custodial MCP/OAuth agents may have equivalent MCP tools for mail/chat, but those hosted/server-side tool calls are server-readable hosted messaging unless plaintext and decryption stay fully outside AC/aweb. For Claude Code, install the `aweb-channel` plugin for push events. Use the harness-native surface, but keep the same decision policy:
 
 - async update → mail
 - synchronous blocker → chat
@@ -152,7 +152,7 @@ run `aw init --remove-notify-hook` to remove only the exact project's `aw notify
 Never infer working delivery merely from plugin installation or remove the
 fallback during ordinary init/upgrade.
 
-For E2E messages, channel/Pi/`aw run` may show plaintext only after local decryption in the user's workspace or client process. Server notifications and SSE payloads should be metadata-only for encrypted content. Recipient E2E capability and encryption keys must be identity-authorized; a service signature can assert route support only. If an event or tool error says an encryption key/capability is missing, stale, or mismatched, fail closed and report the error. Do not silently resend as plaintext. If the local channel/Pi process was upgraded from a pre-E2E version, run `aw id encryption-key setup` in the workspace before expecting it to receive encrypted messages.
+For E2E messages, channel/Pi may show plaintext only after local decryption in the user's workspace or client process. Server notifications and SSE payloads should be metadata-only for encrypted content. Recipient E2E capability and encryption keys must be identity-authorized; a service signature can assert route support only. If an event or tool error says an encryption key/capability is missing, stale, or mismatched, fail closed and report the error. Do not silently resend as plaintext. If the local channel/Pi process was upgraded from a pre-E2E version, run `aw id encryption-key setup` in the workspace before expecting it to receive encrypted messages.
 
 ## Control and work awakenings
 

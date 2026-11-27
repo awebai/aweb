@@ -169,7 +169,6 @@ The local files that bind a workspace to a team and identity:
 | `~/.awid/controllers/` | AWID namespace controller private keys and metadata |
 | `~/.awid/team-keys/` | AWID team controller private keys |
 | `~/.config/aw/known_agents.yaml` | TOFU pins for peer identity verification |
-| `~/.config/aw/run.json` | Optional `aw run` defaults |
 
 Keep `~/.awid` safe and backed up. It contains controller authority for
 customer-owned namespaces and BYOT teams. Losing those keys can require DNS
@@ -218,9 +217,7 @@ self-release path; non-eligible external principals fail closed instead of
 falling back to generic workspace deletion. `aw workspace connect --service
 <url> --identity-home <root>` binds service workspace state under the external
 root for previously accepted local identities, and hosted external local
-`accept-invite` auto-connects that root when the invite names a service. `aw run`
-passes the canonical resolved `AWEB_IDENTITY_HOME` to its provider and service
-children so nested `aw` commands keep the same identity.
+`accept-invite` auto-connects that root when the invite names a service.
 
 `aw instructions show` and `aw id team members` also honor the selected
 identity home. Instructions use its authenticated service client; grant reads
@@ -244,7 +241,6 @@ and mutations require `coord.write`, enforced by the service.
 ### Identity and workspace
 
 ```bash
-aw run <provider>                     # Primary human entrypoint (guided onboarding + run loop)
 aw init                               # Explicitly choose/create/bind a workspace outcome
 aw init --new-account --username <u> --name <name>  # Create a hosted aweb.ai account/team
 aw init --new-team --byod --domain <domain>         # Create a self-hosted/BYOD team
@@ -404,7 +400,6 @@ For the full canonical CLI surface see
 | `awid`     | Protocol types, event parsing, identity resolution, TOFU pinning   |
 | `awconfig` | Config loading, account resolution, atomic file writes             |
 | `chat`     | High-level chat protocol (send/wait, SSE streaming)                |
-| `run`      | Agent runtime loop, provider integration, screen controller        |
 
 The current public API is in transition between the project-and-API-key
 model and the team-and-certificate model defined in
@@ -415,7 +410,7 @@ under `pkg.go.dev/github.com/awebai/aw` or the live source at
 
 ## Background Heartbeat
 
-Normal `aw` commands do not send a background heartbeat anymore. Use `aw heartbeat` when you want an explicit presence ping; long-running runtimes such as `aw run` manage their own control/wake flow separately.
+Normal `aw` commands do not send a background heartbeat. Use `aw heartbeat` when you want an explicit presence ping.
 
 ## Development
 

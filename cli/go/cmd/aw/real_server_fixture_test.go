@@ -97,11 +97,6 @@ func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	return newRealCommandWorldWithRecipientFault(t, "", false)
 }
 
-func newRealCommandWorldWithCertificateObstruction(t *testing.T, recipientHome string) *realCommandWorld {
-	t.Helper()
-	return newRealCommandWorldWithRecipientFault(t, recipientHome, false)
-}
-
 func newRealCommandWorldWithRecipientFault(t *testing.T, recipientHome string, loseCertificateResponse bool) *realCommandWorld {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)

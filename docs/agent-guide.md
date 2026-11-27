@@ -207,7 +207,7 @@ must not be described as proof of local E2E behavior. Use the
 
 ## Optional coordination and advanced features
 
-Tasks, roles, instructions, locks, profiles, runtime launch helpers, A2A, and
+Tasks, roles, instructions, locks, A2A, and
 extensions remain available but are not prerequisites for the first durable
 round trip. Use the [documentation map](README.md) to enter those feature
 families deliberately.

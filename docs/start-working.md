@@ -32,10 +32,9 @@ Use the results to answer five questions:
 4. Is a teammate waiting for a reply?
 5. Are there shared instructions you need to read before acting?
 
-Your home contains identity and operating context. If the profile provides a
-separate `worktree/`, run git, tests, and builds there. Run `aw` from the home so
-it resolves the correct identity. Use `work-main/` only when your profile
-explicitly permits work against the main checkout.
+Your home contains identity and operating context. If your home has a
+separate worktree, run git, tests, and builds there. Run `aw` from the home so
+it resolves the correct identity.
 
 If `aw workspace status` says the directory is not connected, stop and tell the
 human which directory you are in and what is missing. Do not guess a username,

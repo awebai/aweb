@@ -5,19 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
-	blueprintpkg "github.com/awebai/aw/internal/blueprint"
-	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -29,29 +22,9 @@ var (
 	teamHumanCreateRegistryURL     string
 	teamHumanCreateAlias           string
 	teamHumanCreateUsername        string
-	teamHumanCreateHome            string
-	teamHumanCreateRuntime         string
-	teamHumanCreateLibraryURL      string
-	teamHumanCreateProfiles        []string
-	teamHumanCreateAgents          []string
-	teamHumanCreateBlueprint       string
 	teamHumanCreateFirstLocal      bool
 	teamHumanCreateFirstGlobal     bool
 	teamHumanInviteTeamID          string
-	teamHumanAddLocal              bool
-	teamHumanAddGlobal             bool
-	teamHumanAddLayoutOnly         bool
-	teamHumanAddStart              bool
-	teamHumanAddAttach             bool
-	teamHumanAddNoAttach           bool
-	teamHumanAddSession            string
-	teamHumanAddHome               string
-	teamHumanAddWorkDir            string
-	teamHumanAddRuntime            string
-	teamHumanAddLibraryURL         string
-	teamHumanAddBlueprint          string
-	teamHumanExtendAPIKey          string
-	teamHumanExtendTeamID          string
 	teamHumanRemoveTeamID          string
 	teamHumanAgentStatusTeamID     string
 	teamHumanRemoveRegistryURL     string
@@ -70,24 +43,23 @@ var teamHumanCmd = &cobra.Command{
 	Short: "Everyday team membership: invite, join, list, switch, and leave",
 	Long: "Everyday team membership commands.\n\n" +
 		"Use these commands to invite a member, join or leave a team, and inspect or\n" +
-		"switch this identity's installed memberships. Local agent orchestration, profile\n" +
-		"management, and owner/admin repair operations live under `aw team admin`.",
+		"switch this identity's installed memberships. Team creation and owner/admin\n" +
+		"repair operations live under `aw team admin`.",
 }
 
 const (
 	teamGroupMembership      = "membership"
 	teamGroupAdministration  = "administration"
-	teamAdminGroupLocal      = "local-orchestration"
 	teamAdminGroupOperations = "team-administration"
 )
 
 var teamAdminCmd = &cobra.Command{
 	Use:   "admin",
-	Short: "Experimental local orchestration and team administration",
-	Long: "Experimental local orchestration and team administration.\n\n" +
-		"Use this surface to materialize or launch local agent homes, manage their pinned\n" +
-		"profiles, or perform owner/admin inspection and repair. These operations are\n" +
-		"separate from the everyday invite, join, list, switch, and leave journey.",
+	Short: "Team creation and team administration",
+	Long: "Team creation and team administration.\n\n" +
+		"Use this surface to create a team, or to perform owner/admin inspection and\n" +
+		"repair. These operations are separate from the everyday invite, join, list,\n" +
+		"switch, and leave journey.",
 }
 
 // registerTeamAdminCommand makes the explicit admin path canonical while retaining
@@ -107,15 +79,9 @@ func registerTeamAdminCommand(cmd *cobra.Command, groupID string) {
 var teamHumanCreateCmd = &cobra.Command{
 	Annotations: map[string]string{hostHumanOrgAnnotation: "true"},
 	Use:         "create <name>",
-	Short:       "Create a local empty-profile team workspace",
-	Long: "Create a local empty-profile team workspace.\n\n" +
-		"This wraps aw init for the aw-local path. No --agent/--profile means no Library call\n" +
-		"and no profile materialization. --agent accepts [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]\n" +
-		"(or NAME[:local|global] for an empty-profile agent). Omitted names use the\n" +
-		"server-authoritative next classic name; omitted scope comes from profile.yaml.\n" +
-		"All --agent/--profile specs populate agents/instances for aw team admin up; only\n" +
-		"--home with a single spec uses that spec for the root workspace profile.\n" +
-		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.\n\n" +
+	Short:       "Create a team workspace",
+	Long: "Create a team workspace with its first agent identity.\n\n" +
+		"This wraps aw init for the aw-local path.\n\n" +
 		"With --org, create a hosted team using human CLI authorization and return an invite.\n" +
 		"This explicit mode creates no local identity or profile; accept the invite separately.\n\n" +
 		"In a fresh directory, a supplied AWEB_API_KEY uses the service's workspace bootstrap.",
@@ -123,21 +89,12 @@ var teamHumanCreateCmd = &cobra.Command{
 	RunE: runTeamHumanCreate,
 }
 
-var teamHumanAddCmd = &cobra.Command{
-	Use:   "add <agent-spec>...",
-	Short: "Add agents to this team's agents/instances layout",
-	Long:  "Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.\n\n" + creationAuthorityHelp,
-	Args:  cobra.MinimumNArgs(1),
-	RunE:  runTeamHumanAdd,
-}
-
 var teamHumanInviteCmd = &cobra.Command{
 	Use:   "invite",
 	Short: "Invite an agent or workspace to the active team",
 	Long: "Invite an agent or workspace to the active team.\n\n" +
 		"This creates an invite token using the current team's authority for a separate\n" +
-		"workspace or machine, then the joining workspace runs `aw team join <token>`.\n" +
-		"For local empty-profile homes under agents/instances/, use `aw team admin add`.",
+		"workspace or machine, then the joining workspace runs `aw team join <token>`.",
 	Args: cobra.NoArgs,
 	RunE: runTeamHumanInvite,
 }
@@ -234,25 +191,6 @@ var teamHumanRemoveAgentCmd = &cobra.Command{
 	RunE: runTeamHumanRemoveAgent,
 }
 
-func registerTeamMemberAddFlags(cmd *cobra.Command, includePlacementFlags bool) {
-	cmd.Flags().BoolVar(&teamHumanAddLocal, "local", false, "Add a local team-scoped agent identity (default)")
-	cmd.Flags().BoolVar(&teamHumanAddGlobal, "global", false, "Add a global AWID identity/address-backed agent")
-	if includePlacementFlags {
-		cmd.Flags().BoolVar(&teamHumanAddLayoutOnly, "layout-only", false, "Only create agents/instances/<name>; do not create identity state")
-	}
-	cmd.Flags().BoolVar(&teamHumanAddStart, "start", false, "Launch the added agent in tmux after materializing it")
-	cmd.Flags().BoolVar(&teamHumanAddAttach, "attach", true, "Attach or switch to the tmux session after --start launch")
-	cmd.Flags().BoolVar(&teamHumanAddNoAttach, "no-attach", false, "Do not attach or switch to the tmux session after --start launch")
-	cmd.Flags().StringVar(&teamHumanAddSession, "session", "", "tmux session name for --start (default: caller's session inside tmux, otherwise active team name or aw-team)")
-	if includePlacementFlags {
-		cmd.Flags().StringVar(&teamHumanAddHome, "home", "", "Agent home directory override for a single added agent (default: agents/instances/<name>)")
-	}
-	cmd.Flags().StringVar(&teamHumanAddWorkDir, "work-dir", "", "Git repo to use for the agent's worktree (default: repo containing the home, if any)")
-	cmd.Flags().StringVar(&teamHumanAddRuntime, "runtime", "", "Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)")
-	cmd.Flags().StringVar(&teamHumanAddLibraryURL, "library-url", "", "Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)")
-	cmd.Flags().StringVar(&teamHumanAddBlueprint, "blueprint", "", "Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)")
-}
-
 func init() {
 	teamHumanCmd.GroupID = groupIdentity
 	teamHumanCmd.AddGroup(
@@ -261,7 +199,6 @@ func init() {
 	)
 	teamAdminCmd.GroupID = teamGroupAdministration
 	teamAdminCmd.AddGroup(
-		&cobra.Group{ID: teamAdminGroupLocal, Title: "Local Agent Orchestration"},
 		&cobra.Group{ID: teamAdminGroupOperations, Title: "Team Administration"},
 	)
 
@@ -280,22 +217,7 @@ func init() {
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Deprecated alias for --first-agent-name")
 	markDeprecatedHiddenFlag(teamHumanCreateCmd, "alias", "first-agent-name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateUsername, "username", "", "Hosted username to create when founding through managed aweb onboarding")
-	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateHome, "home", "", "Agent home directory override for single-agent --profile create")
-	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateRuntime, "runtime", "", "Materialization runtime for agent/profile homes (claude-code|codex|pi|local-shell; default claude-code)")
-	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateLibraryURL, "library-url", "", "Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)")
-	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateAgents, "agent", nil, "Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]")
-	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Deprecated alias for --agent; use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]")
-	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateBlueprint, "blueprint", "", "With --agent/--profile, default public Library blueprint for profile-only selectors; without agents, materialize all profiles in a local blueprint directory")
-	registerTeamAdminCommand(teamHumanCreateCmd, teamAdminGroupLocal)
-
-	teamHumanAddAttach = true
-	registerTeamMemberAddFlags(teamHumanAddCmd, true)
-	registerTeamAdminCommand(teamHumanAddCmd, teamAdminGroupLocal)
-
-	teamHumanExtendCmd.Flags().StringVar(&teamHumanExtendAPIKey, "api-key", "", "Team API key for extending a team (overrides AWEB_API_KEY)")
-	teamHumanExtendCmd.Flags().StringVar(&teamHumanExtendTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to extend when discovery is ambiguous or when asserting an API key's team")
-	registerTeamMemberAddFlags(teamHumanExtendCmd, false)
-	registerTeamAdminCommand(teamHumanExtendCmd, teamAdminGroupLocal)
+	registerTeamAdminCommand(teamHumanCreateCmd, teamAdminGroupOperations)
 
 	teamHumanInviteCmd.Flags().String("for-human", "", "Admit agents whose verified nearest human is this did:aw person")
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
@@ -345,177 +267,21 @@ func init() {
 	rootCmd.AddCommand(teamHumanCmd)
 }
 
-type teamAgentSpec struct {
-	Raw               string
-	Name              string
-	Scope             string
-	Profile           *libraryProfileSelector
-	LocalBlueprintDir string
-	LayoutOnly        bool
-	RuntimeKind       string
-	ResolvedName      string
-}
-
-func teamHumanCreateAgentSpecs() ([]teamAgentSpec, error) {
-	raws := append([]string{}, teamHumanCreateAgents...)
-	if len(teamHumanCreateProfiles) > 0 {
-		for _, rawProfile := range teamHumanCreateProfiles {
-			rawProfile = strings.TrimSpace(rawProfile)
-			compat := rawProfile
-			if !strings.Contains(rawProfile, "@") {
-				profilePart := rawProfile
-				if before, _, ok := strings.Cut(profilePart, "="); ok {
-					profilePart = before
-				}
-				if before, _, ok := strings.Cut(profilePart, ":"); ok {
-					profilePart = before
-				}
-				if _, profileRef, ok := strings.Cut(profilePart, "/"); ok && isValidWorkspaceAlias(profileRef) {
-					compat = profileRef + "@" + rawProfile
-				}
-			}
-			raws = append(raws, compat)
-		}
-	}
-	localBlueprintDir := ""
-	if strings.TrimSpace(teamHumanCreateBlueprint) != "" && len(raws) == 0 {
-		absBlueprint, err := filepath.Abs(strings.TrimSpace(teamHumanCreateBlueprint))
-		if err != nil {
-			return nil, err
-		}
-		bp, err := blueprintpkg.LoadLocalDir(absBlueprint)
-		if err != nil {
-			return nil, fmt.Errorf("load blueprint: %w", err)
-		}
-		localBlueprintDir = absBlueprint
-		for _, profile := range bp.LoadedProfiles {
-			spec := bp.ID + "/" + profile.ID
-			if scope := strings.TrimSpace(profile.Scope); scope != "" {
-				spec += ":" + scope
-			}
-			raws = append(raws, spec)
-		}
-	}
-	specs := make([]teamAgentSpec, 0, len(raws))
-	for _, raw := range raws {
-		spec, err := parseTeamAgentSpec(raw)
-		if err != nil {
-			return nil, err
-		}
-		if localBlueprintDir != "" {
-			spec.LocalBlueprintDir = localBlueprintDir
-		}
-		if spec.Profile != nil {
-			parsed, err := applyMaterializeRuntimePolicy(*spec.Profile, teamHumanCreateRuntime)
-			if err != nil {
-				return nil, err
-			}
-			if localBlueprintDir == "" {
-				parsed, err = resolveLibraryProfileSelectorSource(parsed, teamHumanCreateLibraryURL, teamHumanCreateBlueprint)
-				if err != nil {
-					return nil, err
-				}
-			}
-			spec.Profile = &parsed
-			spec.RuntimeKind = parsed.RuntimeKind
-		}
-		specs = append(specs, spec)
-	}
-	return specs, nil
-}
-
-func parseTeamAgentSpec(raw string) (teamAgentSpec, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return teamAgentSpec{}, usageError("agent spec is required")
-	}
-	runtimeKind := ""
-	body := trimmed
-	if before, after, ok := strings.Cut(trimmed, "="); ok {
-		body = strings.TrimSpace(before)
-		runtimeKind = strings.TrimSpace(after)
-		if runtimeKind == "" {
-			return teamAgentSpec{}, usageError("runtime is required after =")
-		}
-		var err error
-		runtimeKind, err = normalizeMaterializeRuntimeKind(runtimeKind)
-		if err != nil {
-			return teamAgentSpec{}, err
-		}
-	}
-	name := ""
-	profilePart := body
-	if before, after, ok := strings.Cut(body, "@"); ok {
-		name = strings.TrimSpace(before)
-		profilePart = strings.TrimSpace(after)
-		if name == "" {
-			return teamAgentSpec{}, usageError("agent name is required before @")
-		}
-		if strings.Contains(name, "/") {
-			return teamAgentSpec{}, usageError("versioned Library profile selectors are not supported; @ now separates NAME from BLUEPRINT/PROFILE")
-		}
-		if !isValidWorkspaceAlias(name) {
-			return teamAgentSpec{}, usageError("invalid agent name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", name)
-		}
-	}
-	if strings.Contains(profilePart, "/") || name != "" {
-		selector, err := parseLibraryProfileSelector(profilePart)
-		if err != nil {
-			return teamAgentSpec{}, err
-		}
-		if runtimeKind != "" && strings.TrimSpace(selector.RuntimeKind) == "" {
-			selector.RuntimeKind = runtimeKind
-		}
-		return teamAgentSpec{Raw: trimmed, Name: name, Profile: &selector, RuntimeKind: selector.RuntimeKind, Scope: selector.IdentityScope}, nil
-	}
-	if runtimeKind != "" {
-		return teamAgentSpec{}, usageError("=RUNTIME is only valid with BLUEPRINT/PROFILE agent specs")
-	}
-	emptyName := profilePart
-	scope := ""
-	if before, after, ok := strings.Cut(profilePart, ":"); ok {
-		emptyName = strings.TrimSpace(before)
-		var err error
-		scope, err = normalizeTeamAgentScope(after)
-		if err != nil {
-			return teamAgentSpec{}, err
-		}
-	}
-	emptyName = strings.TrimSpace(emptyName)
-	if emptyName == "" {
-		return teamAgentSpec{}, usageError("empty-profile agent name is required")
-	}
-	if !isValidWorkspaceAlias(emptyName) {
-		return teamAgentSpec{}, usageError("invalid agent name %q: must start with an alphanumeric and contain only alphanumerics, dashes, or underscores (max 64 chars)", emptyName)
-	}
-	return teamAgentSpec{Raw: trimmed, Name: emptyName, Scope: scope}, nil
-}
-
 type teamHumanCreateOutput struct {
-	Status       string `json:"status"`
-	TeamName     string `json:"team_name"`
-	ProfileMode  string `json:"profile_mode"`
-	TeamID       string `json:"team_id,omitempty"`
-	Alias        string `json:"alias,omitempty"`
-	WorkspaceID  string `json:"workspace_id,omitempty"`
-	AwebURL      string `json:"aweb_url,omitempty"`
-	RegistryURL  string `json:"registry_url,omitempty"`
-	HomeDir      string `json:"home_dir,omitempty"`
-	NoLibrary    bool   `json:"no_library"`
-	NoProfile    bool   `json:"no_profile"`
-	IdentityOnly bool   `json:"identity_only"`
-	// ProfileSource states where the materialized profile came from, built from
-	// teamProfileSource.Describe.
-	ProfileSource string `json:"profile_source,omitempty"`
+	Status      string `json:"status"`
+	TeamName    string `json:"team_name"`
+	TeamID      string `json:"team_id,omitempty"`
+	Alias       string `json:"alias,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	AwebURL     string `json:"aweb_url,omitempty"`
+	RegistryURL string `json:"registry_url,omitempty"`
+	HomeDir     string `json:"home_dir,omitempty"`
 }
 
 type teamHumanCreateFoundingResult struct {
-	HomeDir           string
-	Selector          *libraryProfileSelector
-	LocalBlueprintDir string
-	HumanOutput       *teamHumanCreateOutput
-	TeamOutput        *teamCreateOutput
-	GuidedResult      *guidedOnboardingResult
+	HumanOutput  *teamHumanCreateOutput
+	TeamOutput   *teamCreateOutput
+	GuidedResult *guidedOnboardingResult
 }
 
 func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
@@ -526,10 +292,6 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if teamName == "" {
 		return usageError("team name is required")
 	}
-	agentSpecs, err := teamHumanCreateAgentSpecs()
-	if err != nil {
-		return err
-	}
 	wd, _ := os.Getwd()
 	home, err := identityHomeForDir(wd)
 	if err != nil {
@@ -538,73 +300,13 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if home.External() {
 		return usageError("team admin create creates a first-agent identity; refusing to change selected identity home %s; use id team create for a sibling team", home.Root)
 	}
-	printTeamCreateExtendNotice(wd)
-	createHomeOverride := ""
-	if strings.TrimSpace(teamHumanCreateHome) != "" {
-		if len(agentSpecs) == 0 {
-			return usageError("aw team admin create --home requires --profile/--agent")
-		}
-		if len(agentSpecs) > 1 {
-			return usageError("aw team admin create --home can only be used with a single --agent/--profile")
-		}
-		homeDir, err := filepath.Abs(strings.TrimSpace(teamHumanCreateHome))
-		if err != nil {
-			return err
-		}
-		if err := preflightProfileAgentHome(homeDir); err != nil {
-			return err
-		}
-		createHomeOverride = homeDir
-	}
-	rootSpecIsAgentHome := createHomeOverride != ""
-	var firstSpec teamAgentSpec
-	var selector *libraryProfileSelector
-	if rootSpecIsAgentHome && len(agentSpecs) > 0 {
-		firstSpec = agentSpecs[0]
-		if firstSpec.Profile != nil {
-			selector = firstSpec.Profile
-		}
-	}
-	rosterSpecs, err := teamHumanCreateRosterSpecs(agentSpecs, rootSpecIsAgentHome)
-	if err != nil {
-		return err
-	}
-	rosterSpecs, err = resolveTeamHumanCreateRosterScopes(rosterSpecs)
-	if err != nil {
-		return err
-	}
-	if err := preflightTeamHumanCreateRosterHomes(wd, rosterSpecs); err != nil {
-		return err
-	}
-	if err := preflightTeamHumanCreateRosterAuthority(wd, rosterSpecs); err != nil {
-		return err
-	}
 	firstAgentScope, err := resolveTeamHumanCreateFirstAgentScope()
 	if err != nil {
 		return err
 	}
-	if rootSpecIsAgentHome {
-		if scope := strings.TrimSpace(firstSpec.Scope); scope != "" {
-			if (teamHumanCreateFirstLocal || teamHumanCreateFirstGlobal) && scope != firstAgentScope {
-				return usageError("first agent scope %q conflicts with --first-agent-%s", scope, firstAgentScope)
-			}
-			firstAgentScope = scope
-		}
-	}
 	alias := strings.TrimSpace(teamHumanCreateAlias)
-	if rootSpecIsAgentHome {
-		if name := strings.TrimSpace(firstSpec.Name); name != "" {
-			if alias != "" && !strings.EqualFold(alias, name) {
-				return usageError("the first listed --agent is the first team member when --home is used; --first-agent-name cannot name a separate/additional agent for a single-home create")
-			}
-			alias = name
-		}
-	}
 	if alias == "" {
 		alias = strings.ToLower(teamName)
-	}
-	if err := preflightTeamHumanCreateRootAlias(alias, rosterSpecs); err != nil {
-		return err
 	}
 	if teamHumanCreateBYOT {
 		name := strings.TrimSpace(teamHumanCreateName)
@@ -621,7 +323,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			if !identityExists {
-				if err := bootstrapTeamCreateGlobalIdentity(globalIdentityBootstrap{WorkingDir: wd, Name: alias, Domain: domain, RegistryURL: strings.TrimSpace(teamHumanCreateRegistryURL), Purpose: globalIdentityForTeamFounding}); err != nil {
+				if err := bootstrapTeamCreateGlobalIdentity(globalIdentityBootstrap{WorkingDir: wd, Name: alias, Domain: domain, RegistryURL: strings.TrimSpace(teamHumanCreateRegistryURL)}); err != nil {
 					return err
 				}
 			}
@@ -630,33 +332,21 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HomeDir: wd, Selector: selector, LocalBlueprintDir: firstSpec.LocalBlueprintDir, TeamOutput: teamOut}, rosterSpecs)
+		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{TeamOutput: teamOut})
 	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
-		return usageError("aw team admin create does not use --namespace or --registry in the local empty-profile path")
-	}
-	if createHomeOverride != "" {
-		if err := os.MkdirAll(createHomeOverride, 0o755); err != nil {
-			return err
-		}
-		wd = createHomeOverride
-	}
-	if selector != nil {
-		if sel, err := resolveSelectionForDir(wd); err == nil && strings.TrimSpace(sel.TeamID) != "" {
-			out := teamHumanCreateOutput{Status: "created", TeamName: teamName, ProfileMode: "empty", TeamID: sel.TeamID, Alias: sel.Alias, WorkspaceID: sel.WorkspaceID, AwebURL: sel.AwebURL, HomeDir: wd, NoLibrary: true, NoProfile: true, IdentityOnly: true}
-			return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HomeDir: wd, Selector: selector, HumanOutput: &out}, nil)
-		}
+		return usageError("aw team admin create does not use --namespace or --registry without --byot")
 	}
 	identityExists, err := teamCreateHasIdentityMaterial(wd)
 	if err != nil {
 		return err
 	}
 	if identityExists {
-		teamOut, err := runTeamHumanCreateForExistingIdentity(existingIdentityTeamCreation{Founding: namespaceTeamFounding{WorkingDir: wd, Name: teamName, CreatorAlias: alias, DisplayName: strings.TrimSpace(teamHumanCreateDisplayName), CreatorScope: awid.IdentityScope(firstAgentScope)}, Profile: selector})
+		teamOut, err := foundTeamWithNamespaceControllerAuthority(namespaceTeamFounding{WorkingDir: wd, Name: teamName, CreatorAlias: alias, DisplayName: strings.TrimSpace(teamHumanCreateDisplayName), CreatorScope: awid.IdentityScope(firstAgentScope)})
 		if err != nil {
 			return err
 		}
-		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HomeDir: wd, TeamOutput: teamOut}, rosterSpecs)
+		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{TeamOutput: teamOut})
 	}
 	awebURL, err := resolveInitAwebURL()
 	if err != nil {
@@ -704,14 +394,14 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		out := teamHumanCreateOutputFromConnect(teamName, result, wd)
-		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HomeDir: wd, Selector: selector, HumanOutput: &out}, rosterSpecs)
+		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HumanOutput: &out})
 	}
 	if !initShouldUseImplicitLocalFlow(registryURL) {
 		guidedResult, err := runTeamHumanCreateHostedInitBundle(hostedTeamCreation{WorkingDir: wd, AwebURL: awebURL, RegistryURL: registryURL, Username: strings.TrimSpace(teamHumanCreateUsername), Alias: alias, Scope: awid.IdentityScope(firstAgentScope)})
 		if err != nil {
 			return err
 		}
-		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HomeDir: wd, Selector: selector, GuidedResult: guidedResult}, rosterSpecs)
+		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{GuidedResult: guidedResult})
 	}
 	if firstAgentScope == awid.IdentityModeGlobal {
 		return usageError("--first-agent-global requires an existing global identity or namespace/hosted context; run `aw id create`, pass --namespace with --byot, or use hosted onboarding")
@@ -732,49 +422,10 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	out := teamHumanCreateOutputFromConnect(teamName, result, wd)
-	return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HomeDir: wd, Selector: selector, HumanOutput: &out}, rosterSpecs)
+	return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HumanOutput: &out})
 }
 
-func finishTeamHumanCreateFounding(result teamHumanCreateFoundingResult, rosterSpecs []teamAgentSpec) error {
-	if result.Selector != nil {
-		if strings.TrimSpace(result.LocalBlueprintDir) != "" {
-			if _, _, err := applyLocalBlueprintProfileToHome(result.HomeDir, *result.Selector, result.LocalBlueprintDir, true); err != nil {
-				return err
-			}
-			if err := configureMaterializedAgentHome(result.HomeDir); err != nil {
-				return err
-			}
-			if result.HumanOutput != nil {
-				result.HumanOutput.ProfileSource = "local blueprint directory " + strings.TrimSpace(result.LocalBlueprintDir)
-			}
-		} else {
-			// The founding home already carries the team credential by this point, so
-			// it is what authorizes the shelf read.
-			source, err := resolveTeamProfileSource(result.HomeDir, *result.Selector)
-			if err != nil {
-				return err
-			}
-			if _, _, err := applyTeamLibraryProfileToHome(result.HomeDir, *result.Selector, &source, true); err != nil {
-				return err
-			}
-			// Configure explicitly rather than through the AndConfigure wrapper: the two
-			// materialize sites call it with DIFFERENT arguments - the roster path passes
-			// a target identity home, this one does not - and folding that into one helper
-			// would hide the asymmetry behind a parameter that exists only to carry it.
-			if err := configureMaterializedAgentHome(result.HomeDir); err != nil {
-				return err
-			}
-			if result.HumanOutput != nil {
-				result.HumanOutput.ProfileSource = source.Describe(*result.Selector)
-			}
-		}
-		if result.HumanOutput != nil {
-			result.HumanOutput.ProfileMode = "library"
-			result.HumanOutput.NoLibrary = false
-			result.HumanOutput.NoProfile = false
-			result.HumanOutput.IdentityOnly = false
-		}
-	}
+func finishTeamHumanCreateFounding(result teamHumanCreateFoundingResult) error {
 	if result.HumanOutput != nil {
 		if err := printOutput(*result.HumanOutput, formatTeamHumanCreate); err != nil {
 			return err
@@ -788,169 +439,20 @@ func finishTeamHumanCreateFounding(result teamHumanCreateFoundingResult, rosterS
 	if result.GuidedResult != nil && !jsonFlag {
 		initPrintGuidedOnboardingReady(result.GuidedResult)
 	}
-	return runTeamHumanCreateRosterAdd(rosterSpecs)
-}
-
-func teamHumanCreateRosterSpecs(agents []teamAgentSpec, rootSpecIsAgentHome bool) ([]teamAgentSpec, error) {
-	seenExplicit := map[string]bool{}
-	for _, agent := range agents {
-		name := strings.TrimSpace(agent.Name)
-		if name == "" {
-			continue
-		}
-		key := strings.ToLower(name)
-		if seenExplicit[key] {
-			return nil, usageError("duplicate roster agent name %q", name)
-		}
-		seenExplicit[key] = true
-	}
-	if len(agents) == 0 {
-		return nil, nil
-	}
-	if rootSpecIsAgentHome {
-		if len(agents) <= 1 {
-			return nil, nil
-		}
-		specs := make([]teamAgentSpec, 0, len(agents)-1)
-		specs = append(specs, agents[1:]...)
-		return specs, nil
-	}
-	return append([]teamAgentSpec(nil), agents...), nil
-}
-
-func preflightTeamHumanCreateRootAlias(rootAlias string, specs []teamAgentSpec) error {
-	rootAlias = strings.TrimSpace(rootAlias)
-	for _, spec := range specs {
-		name := strings.TrimSpace(spec.Name)
-		if name != "" && strings.EqualFold(name, rootAlias) {
-			return usageError("roster agent name %q conflicts with root operator alias %q; choose a different --agent name or set --first-agent-name to a distinct root alias", name, rootAlias)
-		}
-	}
 	return nil
 }
-
-func resolveTeamHumanCreateRosterScopes(specs []teamAgentSpec) ([]teamAgentSpec, error) {
-	resolved := append([]teamAgentSpec(nil), specs...)
-	for i := range resolved {
-		scope := strings.TrimSpace(resolved[i].Scope)
-		if scope == "" && resolved[i].Profile != nil {
-			if strings.TrimSpace(resolved[i].LocalBlueprintDir) != "" {
-				scope = awid.IdentityModeLocal
-			} else {
-				profile, profileScope, err := resolveLibraryProfileScopeAndCache(*resolved[i].Profile)
-				if err != nil {
-					return nil, fmt.Errorf("resolve agent %s identity scope: %w", teamHumanCreateRosterSpecName(resolved[i]), err)
-				}
-				resolved[i].Profile = &profile
-				scope = profileScope
-			}
-		}
-		if scope == "" {
-			scope = awid.IdentityModeLocal
-		}
-		resolved[i].Scope = scope
-	}
-	return resolved, nil
-}
-
-func preflightTeamHumanCreateRosterHomes(wd string, specs []teamAgentSpec) error {
-	agentsRoot := filepath.Join(resolveRepoRoot(wd), "agents", "instances")
-	for _, spec := range specs {
-		name := strings.TrimSpace(spec.Name)
-		if name == "" {
-			continue
-		}
-		homeDir := filepath.Join(agentsRoot, name)
-		if spec.Profile != nil {
-			if err := preflightProfileAgentHome(homeDir); err != nil {
-				return err
-			}
-		} else if err := preflightEmptyAgentHome(homeDir); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func preflightTeamHumanCreateRosterAuthority(wd string, specs []teamAgentSpec) error {
-	if initIsTTY() || teamHumanCreateBYOT || strings.TrimSpace(resolveInitAPIKey()) != "" {
-		return nil
-	}
-	identityExists, err := teamCreateHasIdentityMaterial(wd)
-	if err != nil {
-		return err
-	}
-	if identityExists {
-		return nil
-	}
-	registryURL, err := resolveInitAWIDRegistryURL()
-	if err != nil {
-		return err
-	}
-	if initShouldUseImplicitLocalFlow(registryURL) {
-		return nil
-	}
-	for _, spec := range specs {
-		if strings.TrimSpace(spec.Scope) != awid.IdentityModeGlobal {
-			continue
-		}
-		name := teamHumanCreateRosterSpecName(spec)
-		if spec.Profile == nil {
-			return usageError("agent %s resolves to global identity scope; global agents cannot be enrolled through non-interactive hosted create; pass %s:local (or use an API key/controller-authority flow that supports global identity enrollment)", name, name)
-		}
-		profileRef := strings.TrimSpace(spec.Profile.SourceBlueprintRef) + "/" + strings.TrimSpace(spec.Profile.ProfileRef)
-		override := name + "@" + profileRef + ":local"
-		if runtimeKind := strings.TrimSpace(spec.RuntimeKind); runtimeKind != "" {
-			override += "=" + runtimeKind
-		}
-		return usageError("agent %s resolves to global identity scope (from profile %s); global agents cannot be enrolled through non-interactive hosted create; pass %s (or use an API key/controller-authority flow that supports global identity enrollment)", name, profileRef, override)
-	}
-	return nil
-}
-
-func teamHumanCreateRosterSpecName(spec teamAgentSpec) string {
-	if name := strings.TrimSpace(spec.Name); name != "" {
-		return name
-	}
-	if spec.Profile != nil {
-		return strings.TrimSpace(spec.Profile.ProfileRef)
-	}
-	return strings.TrimSpace(spec.Raw)
-}
-
-func runTeamHumanCreateRosterAdd(specs []teamAgentSpec) error {
-	if len(specs) == 0 {
-		return nil
-	}
-	args := make([]string, 0, len(specs))
-	for _, spec := range specs {
-		args = append(args, spec.Raw)
-	}
-	return runTeamHumanAddWithOptions(nil, args, teamHumanAddRunOptions{Specs: append([]teamAgentSpec(nil), specs...)})
-}
-
-type globalIdentityBootstrapPurpose uint8
-
-const (
-	globalIdentityForTeamMember globalIdentityBootstrapPurpose = iota
-	globalIdentityForTeamFounding
-)
 
 type globalIdentityBootstrap struct {
 	WorkingDir  string
 	Name        string
 	Domain      string
 	RegistryURL string
-	Purpose     globalIdentityBootstrapPurpose
 }
 
 // bootstrapTeamCreateGlobalIdentity prepares the member's own durable identity;
 // namespace authority authorizes its address, not its later creator attribution
 // (docs/identity.md#1-claim-address).
 func bootstrapTeamCreateGlobalIdentity(input globalIdentityBootstrap) error {
-	if input.Purpose != globalIdentityForTeamMember && input.Purpose != globalIdentityForTeamFounding {
-		return errors.New("global identity bootstrap purpose is unknown")
-	}
 	domain := awconfig.NormalizeDomain(input.Domain)
 	alias := input.Name
 	if domain == "" {
@@ -961,10 +463,7 @@ func bootstrapTeamCreateGlobalIdentity(input globalIdentityBootstrap) error {
 		return err
 	}
 	if !exists {
-		if input.Purpose == globalIdentityForTeamFounding {
-			return usageError("--first-agent-global with --byot requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or use hosted onboarding", domain, domain, alias)
-		}
-		return usageError("global identity creation requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or run aw team admin extend from a fresh directory with --api-key <key>", domain, domain, alias)
+		return usageError("--first-agent-global with --byot requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or use hosted onboarding", domain, domain, alias)
 	}
 	_, err = executeIDCreate(input.WorkingDir, idCreateOptions{
 		Name:        alias,
@@ -1016,7 +515,7 @@ func runTeamHumanCreateHostedInitBundle(input hostedTeamCreation) (*guidedOnboar
 		RegistryURL:        input.RegistryURL,
 		ServerName:         serverFlag,
 		BYOD:               false,
-		Username:           strings.TrimSpace(firstNonEmptyLibraryValue(input.Username, initUsername)),
+		Username:           strings.TrimSpace(firstNonEmptyString(input.Username, initUsername)),
 		Domain:             strings.TrimSpace(initDomain),
 		Alias:              requestAlias,
 		Name:               requestName,
@@ -1048,18 +547,6 @@ func resolveTeamHumanCreateFirstAgentScope() (string, error) {
 		return awid.IdentityModeGlobal, nil
 	}
 	return awid.IdentityModeLocal, nil
-}
-
-type existingIdentityTeamCreation struct {
-	Founding namespaceTeamFounding
-	Profile  *libraryProfileSelector
-}
-
-func runTeamHumanCreateForExistingIdentity(input existingIdentityTeamCreation) (*teamCreateOutput, error) {
-	if input.Profile != nil {
-		return nil, usageError("aw team admin create --profile for an existing identity is not supported yet; use aw team admin add NAME@BLUEPRINT/PROFILE after creating the team")
-	}
-	return foundTeamWithNamespaceControllerAuthority(input.Founding)
 }
 
 type namespaceTeamFounding struct {
@@ -1161,24 +648,20 @@ func foundTeamWithNamespaceControllerAuthority(input namespaceTeamFounding) (*te
 
 func teamHumanCreateOutputFromConnect(teamName string, result connectOutput, homeDir string) teamHumanCreateOutput {
 	return teamHumanCreateOutput{
-		Status:       "created",
-		TeamName:     strings.TrimSpace(teamName),
-		ProfileMode:  "empty",
-		TeamID:       strings.TrimSpace(result.TeamID),
-		Alias:        strings.TrimSpace(result.Alias),
-		WorkspaceID:  strings.TrimSpace(result.WorkspaceID),
-		AwebURL:      strings.TrimSpace(result.AwebURL),
-		HomeDir:      strings.TrimSpace(homeDir),
-		NoLibrary:    true,
-		NoProfile:    true,
-		IdentityOnly: true,
+		Status:      "created",
+		TeamName:    strings.TrimSpace(teamName),
+		TeamID:      strings.TrimSpace(result.TeamID),
+		Alias:       strings.TrimSpace(result.Alias),
+		WorkspaceID: strings.TrimSpace(result.WorkspaceID),
+		AwebURL:     strings.TrimSpace(result.AwebURL),
+		HomeDir:     strings.TrimSpace(homeDir),
 	}
 }
 
 func formatTeamHumanCreate(v any) string {
 	out := v.(teamHumanCreateOutput)
 	var b strings.Builder
-	fmt.Fprintf(&b, "Created empty-profile team %s", out.TeamName)
+	fmt.Fprintf(&b, "Created team %s", out.TeamName)
 	if out.TeamID != "" {
 		fmt.Fprintf(&b, " (%s)", out.TeamID)
 	}
@@ -1189,1101 +672,7 @@ func formatTeamHumanCreate(v any) string {
 	if out.HomeDir != "" {
 		fmt.Fprintf(&b, "Agent home: %s\n", out.HomeDir)
 	}
-	if out.ProfileMode == "library" {
-		// Name the source rather than asserting a bare success: "adopted and
-		// materialized" is true of a team's own shelf profile and of the stock catalog
-		// copy alike, so on its own it cannot tell a reader which one landed.
-		//
-		// The word "Library" is dropped because a local blueprint directory is not a
-		// Library profile, and where it IS one the source already names which catalog -
-		// so the word carries no information where it is true and a false claim where
-		// it is not.
-		if src := strings.TrimSpace(out.ProfileSource); src != "" {
-			fmt.Fprintf(&b, "Profile materialized from %s\n", src)
-		} else {
-			// Unreachable today: every materialize branch sets a source. But nothing in
-			// the type system forbids the unset state - it took enumerating all the call
-			// sites to establish even the current-tense version - so this is reachable by
-			// the next branch that forgets, which is precisely how this defect arose.
-			//
-			// Deleting the branch and printing a plausible sentence fail the same way, in
-			// opposite directions: one goes silent, the other repeats the original false
-			// claim. So it says only what is known to be true - a profile was materialized
-			// - and announces the missing part rather than papering over it.
-			b.WriteString("BUG: a profile was materialized but no source was recorded, so this command cannot say where it came from.\n")
-		}
-	} else {
-		b.WriteString("No Library profile was adopted; no profile home was materialized.\n")
-	}
 	return b.String()
-}
-
-type teamHumanAddOutput struct {
-	Status        string                `json:"status"`
-	AgentsRoot    string                `json:"agents_root"`
-	TeamID        string                `json:"team_id,omitempty"`
-	AuthorityTier string                `json:"authority_tier,omitempty"`
-	HomeOverride  bool                  `json:"home_override,omitempty"`
-	LayoutOnly    bool                  `json:"layout_only"`
-	NoLibrary     bool                  `json:"no_library"`
-	NoProfile     bool                  `json:"no_profile"`
-	Agents        []teamHumanAddedAgent `json:"agents"`
-}
-
-const (
-	teamHumanRosterOutcomeCreated      = "created"
-	teamHumanRosterOutcomeFailed       = "failed"
-	teamHumanRosterOutcomeNotAttempted = "not_attempted"
-)
-
-type teamHumanAddedAgent struct {
-	ResumeMembership  *acceptedTeamInvite     `json:"-"`
-	Name              string                  `json:"name"`
-	HomeDir           string                  `json:"home_dir"`
-	ProfileMode       string                  `json:"profile_mode"`
-	Profile           *libraryProfileSelector `json:"-"`
-	LocalBlueprintDir string                  `json:"-"`
-	// Source is resolved in preflight and carried to materialization, so the bytes
-	// that were inspected are the bytes that land. Nil until the preflight runs.
-	Source *teamProfileSource `json:"-"`
-	// ProfileSource states where this agent's profile came from, built from
-	// Source.Describe so the reported line and the resolution cannot drift apart.
-	ProfileSource        string `json:"profile_source,omitempty"`
-	Scope                string `json:"scope,omitempty"`
-	Alias                string `json:"alias,omitempty"`
-	TeamID               string `json:"team_id,omitempty"`
-	CertPath             string `json:"cert_path,omitempty"`
-	Outcome              string `json:"outcome,omitempty"`
-	Reason               string `json:"reason,omitempty"`
-	ProfileRoleConnected bool   `json:"-"`
-}
-
-func resolveTeamHumanAddAgentSpecs(wd string, args []string, specs []teamAgentSpec) ([]teamAgentSpec, error) {
-	var client *aweb.Client
-	used := map[string]bool{}
-	inputSpecs := append([]teamAgentSpec(nil), specs...)
-	if inputSpecs == nil {
-		inputSpecs = make([]teamAgentSpec, 0, len(args))
-		for _, raw := range args {
-			spec, err := parseTeamAgentSpec(raw)
-			if err != nil {
-				return nil, err
-			}
-			inputSpecs = append(inputSpecs, spec)
-		}
-	}
-	resolved := make([]teamAgentSpec, 0, len(inputSpecs))
-	for _, spec := range inputSpecs {
-		scope := strings.TrimSpace(spec.Scope)
-		if spec.Profile != nil && teamHumanAddLayoutOnly {
-			return nil, usageError("aw team admin add --layout-only cannot be used with profile selector %s", spec.Raw)
-		}
-		if spec.Profile != nil {
-			parsed, err := applyMaterializeRuntimePolicy(*spec.Profile, teamHumanAddRuntime)
-			if err != nil {
-				return nil, err
-			}
-			if strings.TrimSpace(spec.LocalBlueprintDir) == "" {
-				parsed, err = resolveLibraryProfileSelectorSource(parsed, teamHumanAddLibraryURL, teamHumanAddBlueprint)
-				if err != nil {
-					return nil, err
-				}
-			}
-			spec.Profile = &parsed
-			if scope == "" {
-				if strings.TrimSpace(spec.LocalBlueprintDir) != "" {
-					scope = awid.IdentityModeLocal
-				} else {
-					parsed, scope, err = resolveLibraryProfileScopeAndCache(parsed)
-					if err != nil {
-						if !isMissingLibraryPluginError(err) {
-							return nil, err
-						}
-						scope = awid.IdentityModeLocal
-					}
-					spec.Profile = &parsed
-				}
-			}
-		}
-		if scope == "" {
-			scope = awid.IdentityModeLocal
-		}
-		if teamHumanAddGlobal {
-			scope = awid.IdentityModeGlobal
-		} else if teamHumanAddLocal {
-			scope = awid.IdentityModeLocal
-		}
-		if scope != awid.IdentityModeLocal && scope != awid.IdentityModeGlobal {
-			return nil, usageError("scope %q is not supported; use local or global", scope)
-		}
-		name := strings.TrimSpace(spec.Name)
-		var err error
-		if name == "" {
-			if client == nil {
-				var err error
-				client, _, err = resolveClientSelectionForDir(wd)
-				if err != nil {
-					return nil, err
-				}
-			}
-			name, err = suggestTeamHumanAgentName(client, scope, used)
-			if err != nil {
-				return nil, err
-			}
-		}
-		key := strings.ToLower(name)
-		if used[key] {
-			return nil, usageError("duplicate agent name %q", name)
-		}
-		used[key] = true
-		spec.ResolvedName = name
-		spec.Name = name
-		spec.Scope = scope
-		resolved = append(resolved, spec)
-	}
-	return resolved, nil
-}
-
-func suggestTeamHumanAgentName(client *aweb.Client, scope string, used map[string]bool) (string, error) {
-	exclude := make([]string, 0, len(used))
-	for name := range used {
-		exclude = append(exclude, name)
-	}
-	sort.Strings(exclude)
-	ctx, cancel := commandAPIContext(nil)
-	suggestion, err := client.SuggestAgentNames(ctx, awid.SuggestAgentNamesRequest{
-		Scope:   scope,
-		Exclude: exclude,
-		Count:   1,
-	})
-	cancel()
-	if err != nil {
-		return "", fmt.Errorf("suggest next name from server: %w", err)
-	}
-	for _, suggested := range suggestion.Names {
-		name := strings.TrimSpace(suggested.Name)
-		if name == "" || !isValidWorkspaceAlias(name) {
-			return "", fmt.Errorf("server returned invalid name suggestion %q", name)
-		}
-		if !used[strings.ToLower(name)] {
-			return name, nil
-		}
-	}
-	return "", fmt.Errorf("server returned no available names for %s agent", scope)
-}
-
-func preflightTeamHumanAddRosterAliases(wd string, freshSpecs []teamAgentSpec) error {
-	if len(freshSpecs) == 0 {
-		return nil
-	}
-	client, selection, err := resolveClientSelectionForDir(wd)
-	if err != nil || client == nil || client.Client == nil || selection == nil {
-		if err != nil {
-			debugLog("resolve team roster for agent-name preflight: %v", err)
-		}
-		return nil
-	}
-	ctx, cancel := commandAPIContext(nil)
-	roster, err := client.Client.ListAgents(ctx)
-	cancel()
-	if err != nil {
-		debugLog("list team roster for agent-name preflight: %v", err)
-		return nil
-	}
-	return teamHumanAddRosterCollisionError(roster.Agents, freshSpecs)
-}
-
-func teamHumanAddRosterCollisionError(agents []awid.AgentView, specs []teamAgentSpec) error {
-	existing := make(map[string]struct{}, len(agents))
-	for _, agent := range agents {
-		if alias := strings.TrimSpace(agent.Alias); alias != "" {
-			existing[strings.ToLower(alias)] = struct{}{}
-		}
-	}
-	for _, spec := range specs {
-		name := strings.TrimSpace(spec.Name)
-		if _, found := existing[strings.ToLower(name)]; found {
-			return usageError("agent name %q already appears in the current team roster; choose a different name and retry", name)
-		}
-	}
-	return nil
-}
-
-func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAgent, apiKey string) (*acceptedTeamInvite, error) {
-	apiKey = strings.TrimSpace(apiKey)
-	if apiKey == "" {
-		apiKey = resolveInitAPIKey()
-	}
-	if strings.TrimSpace(apiKey) == "" {
-		return nil, usageError("%s is required for API-key team add bootstrap", initAPIKeyEnvVar)
-	}
-	awebURL, err := resolveAPIKeyInitAwebURL()
-	if err != nil {
-		return nil, err
-	}
-	registryURL, err := resolveConfiguredInitAWIDRegistryURL()
-	if err != nil {
-		return nil, err
-	}
-	global := strings.TrimSpace(plan.Scope) == awid.IdentityModeGlobal
-	request := apiKeyInitRequest{
-		EncryptionPublication: encryptionPublicationRequiredService,
-		WorkingDir:            homeDir,
-		IdentityHome:          filepath.Join(filepath.Clean(homeDir), ".aw"),
-		AwebURL:               awebURL,
-		RegistryURL:           registryURL,
-		APIKey:                apiKey,
-		Role:                  teamHumanAddRoleForPlan(plan),
-		Global:                global,
-	}
-	if global {
-		request.Name = strings.TrimSpace(plan.Name)
-	} else {
-		request.Alias = strings.TrimSpace(plan.Name)
-	}
-	out, err := runAPIKeyBootstrapInit(request)
-	if err != nil {
-		return nil, apiKeyCreationRecoveryAdvice(request, err)
-	}
-	certPath := awconfig.TeamCertificatePath(homeDir, strings.TrimSpace(out.TeamID))
-	cert, err := awid.LoadTeamCertificate(certPath)
-	if err != nil {
-		return nil, fmt.Errorf("load API-key team add certificate: %w", err)
-	}
-	domain, teamName, _ := awid.ParseTeamID(strings.TrimSpace(out.TeamID))
-	acceptedAwebURL := strings.TrimSpace(out.AwebURL)
-	if acceptedAwebURL == "" {
-		acceptedAwebURL = strings.TrimSpace(awebURL)
-	}
-	return &acceptedTeamInvite{
-		Output: &teamAcceptInviteOutput{
-			Status:   "accepted",
-			TeamID:   strings.TrimSpace(out.TeamID),
-			Alias:    strings.TrimSpace(out.Alias),
-			CertPath: filepath.ToSlash(certPath),
-		},
-		Certificate: cert,
-		RegistryURL: strings.TrimSpace(registryURL),
-		AwebURL:     acceptedAwebURL,
-		Domain:      domain,
-		TeamName:    teamName,
-	}, nil
-}
-
-func teamHumanAddRoleForPlan(plan teamHumanAddedAgent) string {
-	if plan.Profile == nil {
-		return ""
-	}
-	return strings.TrimSpace(plan.Profile.ProfileRef)
-}
-
-func resolveOrCreateTeamMemberIdentity(input teamAgentMembershipPreparation) (*acceptedTeamInvite, error) {
-	plan := *input.Plan
-	if input.Authority.Mode == creationAuthorityAPI {
-		return bootstrapTeamHumanAddAgentWithAPIKey(plan.HomeDir, plan, input.APIKey)
-	}
-	return createProvisionedTeamMember(teamMemberCreation{SourceDir: input.SourceDir, HomeDir: plan.HomeDir, Name: plan.Name, Scope: awid.IdentityScope(plan.Scope)})
-}
-
-type teamIDAssertionSource string
-
-const (
-	teamIDAssertionSourceNone                teamIDAssertionSource = ""
-	teamIDAssertionSourceExplicitFlag        teamIDAssertionSource = "explicit-team-id"
-	teamIDAssertionSourceWorkspaceActiveTeam teamIDAssertionSource = "workspace-active-team"
-)
-
-type teamHumanAddRunOptions struct {
-	Creation              *creationAuthority
-	CWD                   string
-	InviteAnchorDir       string
-	AgentsRoot            string
-	WorktreeAnchorDir     string
-	APIKey                string
-	ExpectedTeamID        string
-	TeamIDAssertionSource teamIDAssertionSource
-	OutputStatus          string
-	OutputAuthorityTier   string
-	AuthorityTeamID       string
-	CommandName           string
-	Specs                 []teamAgentSpec
-}
-
-func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
-	return runTeamHumanAddWithOptions(cmd, args, teamHumanAddRunOptions{})
-}
-
-func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHumanAddRunOptions) error {
-	if teamHumanAddLocal && teamHumanAddGlobal {
-		return usageError("--local and --global cannot be used together")
-	}
-	if teamHumanAddStart && teamHumanAddLayoutOnly {
-		return usageError("aw team admin add --start cannot be used with --layout-only")
-	}
-	wd := strings.TrimSpace(opts.CWD)
-	var err error
-	if wd == "" {
-		wd, err = os.Getwd()
-		if err != nil {
-			return err
-		}
-	}
-	inviteAnchorDir := strings.TrimSpace(opts.InviteAnchorDir)
-	if inviteAnchorDir == "" {
-		inviteAnchorDir = wd
-	}
-	worktreeAnchorDir := strings.TrimSpace(opts.WorktreeAnchorDir)
-	if worktreeAnchorDir == "" {
-		worktreeAnchorDir = wd
-	}
-	homeOverride := strings.TrimSpace(teamHumanAddHome)
-	if homeOverride != "" && len(args) != 1 {
-		return usageError("aw team admin add --home can only be used with a single agent")
-	}
-	var explicitHome string
-	if homeOverride != "" {
-		explicitHome, err = filepath.Abs(homeOverride)
-		if err != nil {
-			return err
-		}
-	}
-	repoRoot := resolveRepoRoot(wd)
-	agentsRoot := strings.TrimSpace(opts.AgentsRoot)
-	if agentsRoot == "" {
-		agentsRoot = filepath.Join(repoRoot, "agents", "instances")
-	} else {
-		repoRoot = filepath.Dir(filepath.Dir(agentsRoot))
-	}
-	resolvedSpecs, err := resolveTeamHumanAddAgentSpecs(wd, args, opts.Specs)
-	if err != nil {
-		return err
-	}
-	apiKey := strings.TrimSpace(opts.APIKey)
-	if apiKey == "" {
-		apiKey = resolveInitAPIKey()
-	}
-	var creation creationAuthority
-	if opts.Creation != nil {
-		creation = *opts.Creation
-	} else {
-		base, err := resolveAPIKeyInitAwebURL()
-		if err != nil {
-			return err
-		}
-		creation, err = resolveAgentCreation(agentCreationRequest{WorkingDir: inviteAnchorDir, APIKey: apiKey, AwebURL: base, RequestedTeam: opts.ExpectedTeamID})
-		if err != nil {
-			return err
-		}
-	}
-	creatorHome, err := identityHomeForDir(inviteAnchorDir)
-	if err != nil {
-		return err
-	}
-	printCreationAuthority(creation)
-	apiKeyBootstrapMode := creation.Mode == creationAuthorityAPI
-	opts.APIKey = apiKey
-	plans := make([]teamHumanAddedAgent, 0, len(resolvedSpecs))
-	for _, spec := range resolvedSpecs {
-		if spec.Profile != nil && teamHumanAddLayoutOnly {
-			return usageError("aw team admin add --layout-only cannot be used with profile selector %s", spec.Raw)
-		}
-		profileMode := "empty"
-		if spec.Profile != nil {
-			profileMode = "library"
-		}
-		homeDir := filepath.Join(agentsRoot, spec.Name)
-		if explicitHome != "" {
-			homeDir = explicitHome
-		}
-		plans = append(plans, teamHumanAddedAgent{Name: spec.Name, HomeDir: homeDir, ProfileMode: profileMode, Profile: spec.Profile, Scope: spec.Scope, LocalBlueprintDir: spec.LocalBlueprintDir})
-	}
-	if teamHumanAddStart && len(plans) != 1 {
-		return usageError("aw team admin add --start requires exactly one agent")
-	}
-	expectedTeam := creation.SourceTeam
-	if creation.SelectedTeam != nil {
-		expectedTeam = creation.SelectedTeam.CanonicalTeamID
-	}
-	if expectedTeam == "" {
-		expectedTeam = opts.AuthorityTeamID
-	}
-	freshSpecs := make([]teamAgentSpec, 0, len(resolvedSpecs))
-	for index := range plans {
-		plan := &plans[index]
-		existing, err := existingProvisionedMember(provisionedMemberSelection{Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(plan.HomeDir)}, TeamID: expectedTeam, Name: plan.Name, Scope: awid.IdentityScope(plan.Scope)})
-		if err != nil {
-			return err
-		}
-		plan.ResumeMembership = existing
-		if existing != nil {
-			continue
-		}
-		if !apiKeyBootstrapMode && !teamHumanAddLayoutOnly && plan.Scope == awid.IdentityModeGlobal {
-			if err := preflightProfileAgentHome(plan.HomeDir); err != nil {
-				return err
-			}
-			path := filepath.Join(awconfig.WorktreeIdentityHome(plan.HomeDir), initInviteRecoveryFile)
-			recovery, err := loadRosterInviteRecovery(path, rosterInviteSelection(inviteAnchorDir, creatorHome.Root, expectedTeam, plan.Name))
-			if err != nil {
-				return err
-			}
-			if recovery != nil {
-				continue
-			}
-		}
-		freshSpecs = append(freshSpecs, resolvedSpecs[index])
-		if plan.Profile != nil {
-			if err := preflightProfileAgentHome(plan.HomeDir); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := preflightEmptyAgentHome(plan.HomeDir); err != nil {
-			return err
-		}
-	}
-	if err := preflightTeamHumanAddRosterAliases(wd, freshSpecs); err != nil {
-		return err
-	}
-	if err := preflightTeamHumanAddRosterAuthority(inviteAnchorDir, plans, apiKeyBootstrapMode, opts); err != nil {
-		return err
-	}
-	// Resolve where each profile comes from before any home is created, so a shelf
-	// that cannot be read fails the roster rather than half-building it from stock
-	// bytes. Authorized from the anchor, which holds the team credential - the target
-	// homes do not exist until the loop below.
-	if err := resolveTeamProfileSourcesForPlans(inviteAnchorDir, plans); err != nil {
-		return err
-	}
-	noLibrary, noProfile := teamHumanAddProfileModes(plans)
-	createdTeamID := ""
-	reportRosterFailure := func(failedIndex int, failure error) error {
-		failedPlans := teamHumanAddFailurePlans(plans, failedIndex, failure)
-		if err := printOutput(teamHumanAddOutput{
-			Status:        "failed",
-			AgentsRoot:    agentsRoot,
-			TeamID:        teamHumanAddResolvedTeamID(createdTeamID, failedPlans),
-			AuthorityTier: strings.TrimSpace(opts.OutputAuthorityTier),
-			HomeOverride:  explicitHome != "",
-			LayoutOnly:    teamHumanAddLayoutOnly,
-			NoLibrary:     noLibrary,
-			NoProfile:     noProfile,
-			Agents:        failedPlans,
-		}, formatTeamHumanAdd); err != nil {
-			return errors.Join(failure, err)
-		}
-		return failure
-	}
-	for i := range plans {
-		teamID, err := createAndSetUpTeamAgent(teamAgentSetup{
-			Membership:  teamAgentMembershipPreparation{SourceDir: inviteAnchorDir, Plan: &plans[i], Authority: creation, APIKey: opts.APIKey},
-			CreatorHome: creatorHome, WorktreeAnchorDir: worktreeAnchorDir, WorkDir: teamHumanAddWorkDir,
-			ExpectedTeamID: opts.ExpectedTeamID, AssertionSource: opts.TeamIDAssertionSource, LayoutOnly: teamHumanAddLayoutOnly,
-		})
-		if createdTeamID == "" {
-			createdTeamID = teamID
-		}
-		if err != nil {
-			return reportRosterFailure(i, err)
-		}
-	}
-	if teamHumanAddStart && len(plans) == 1 {
-		selection, err := resolveTeamUpSession(repoRoot, teamHumanAddSession)
-		if err != nil {
-			return err
-		}
-		attach := teamHumanAddAttach && !teamHumanAddNoAttach
-		if err := startTeamAddedAgent(cmd, plans[0], selection, attach); err != nil {
-			return err
-		}
-	}
-	status := strings.TrimSpace(opts.OutputStatus)
-	if status == "" {
-		status = "added"
-	}
-	outputTeamID := teamHumanAddResolvedTeamID(createdTeamID, plans)
-	if err := printOutput(teamHumanAddOutput{Status: status, AgentsRoot: agentsRoot, TeamID: outputTeamID, AuthorityTier: strings.TrimSpace(opts.OutputAuthorityTier), HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd); err != nil {
-		return err
-	}
-	return nil
-}
-
-func preflightTeamHumanAddRosterAuthority(inviteAnchorDir string, plans []teamHumanAddedAgent, apiKeyBootstrapMode bool, opts teamHumanAddRunOptions) error {
-	if apiKeyBootstrapMode {
-		return nil
-	}
-	var globalPlan *teamHumanAddedAgent
-	for i := range plans {
-		if strings.TrimSpace(plans[i].Scope) == awid.IdentityModeGlobal {
-			globalPlan = &plans[i]
-			break
-		}
-	}
-	if globalPlan == nil {
-		return nil
-	}
-	teamID := strings.TrimSpace(opts.AuthorityTeamID)
-	var domain string
-	if teamID != "" {
-		var err error
-		domain, _, err = awid.ParseTeamID(teamID)
-		if err != nil {
-			return err
-		}
-	} else {
-		teamName, resolvedDomain, _, _, err := resolveTeamInviteTarget(inviteAnchorDir)
-		if err != nil {
-			return err
-		}
-		domain = resolvedDomain
-		teamID = awid.BuildTeamID(domain, teamName)
-	}
-	controllerExists, err := awconfig.ControllerKeyExists(domain)
-	if err != nil {
-		return err
-	}
-	if controllerExists {
-		return nil
-	}
-	tier := strings.TrimSpace(opts.OutputAuthorityTier)
-	if tier == "" {
-		tier = teamExtendAuthorityTierCurrentWorkspace
-	}
-	commandName := strings.TrimSpace(opts.CommandName)
-	if commandName == "" {
-		commandName = "aw team admin add"
-	}
-	profileSource := ""
-	if globalPlan.Profile != nil && strings.TrimSpace(globalPlan.Profile.IdentityScope) == "" && !teamHumanAddGlobal {
-		profileSource = " (from profile " + strings.TrimSpace(globalPlan.Profile.SourceBlueprintRef) + "/" + strings.TrimSpace(globalPlan.Profile.ProfileRef) + ")"
-	}
-	apiKeyRecovery := "run from a fresh directory with --api-key <key>"
-	if commandName == "aw team admin add" {
-		apiKeyRecovery = "run aw team admin extend from a fresh directory with --api-key <key>"
-	}
-	return usageError("%s: agent %s resolves to global identity scope%s, but this workspace's authority (%s, team %s) cannot mint global identities.\n\nEither:\n  - %s, or\n  - use %s\n\nNo agents were created.", commandName, globalPlan.Name, profileSource, tier, teamID, apiKeyRecovery, teamHumanLocalOverrideSpec(*globalPlan))
-}
-
-func teamHumanLocalOverrideSpec(plan teamHumanAddedAgent) string {
-	if plan.Profile == nil {
-		return strings.TrimSpace(plan.Name) + ":local"
-	}
-	spec := strings.TrimSpace(plan.Name) + "@" + strings.TrimSpace(plan.Profile.SourceBlueprintRef) + "/" + strings.TrimSpace(plan.Profile.ProfileRef) + ":local"
-	if runtimeKind := strings.TrimSpace(plan.Profile.RuntimeKind); runtimeKind != "" {
-		spec += "=" + runtimeKind
-	}
-	return spec
-}
-
-func teamHumanAddProfileModes(plans []teamHumanAddedAgent) (noLibrary, noProfile bool) {
-	noLibrary = true
-	noProfile = true
-	for _, plan := range plans {
-		if plan.Profile != nil {
-			return false, false
-		}
-	}
-	return noLibrary, noProfile
-}
-
-func teamHumanAddResolvedTeamID(createdTeamID string, plans []teamHumanAddedAgent) string {
-	if teamID := strings.TrimSpace(createdTeamID); teamID != "" {
-		return teamID
-	}
-	for _, plan := range plans {
-		if teamID := strings.TrimSpace(plan.TeamID); teamID != "" {
-			return teamID
-		}
-	}
-	return ""
-}
-
-func teamHumanAddFailurePlans(plans []teamHumanAddedAgent, failedIndex int, failure error) []teamHumanAddedAgent {
-	reported := append([]teamHumanAddedAgent(nil), plans...)
-	for i := range reported {
-		switch {
-		case i < failedIndex:
-			reported[i].Outcome = teamHumanRosterOutcomeCreated
-		case i == failedIndex:
-			reported[i].Outcome = teamHumanRosterOutcomeFailed
-			if failure != nil {
-				reported[i].Reason = failure.Error()
-			}
-		default:
-			reported[i].Outcome = teamHumanRosterOutcomeNotAttempted
-		}
-	}
-	return reported
-}
-
-func teamIDAssertionMismatchError(expectedTeamID, apiKeyTeamID string, source teamIDAssertionSource) error {
-	if source == teamIDAssertionSourceWorkspaceActiveTeam {
-		return usageError("workspace active team %s does not match API key team %s", expectedTeamID, apiKeyTeamID)
-	}
-	return usageError("--team-id %s does not match API key team %s", expectedTeamID, apiKeyTeamID)
-}
-
-func startTeamAddedAgent(cmd *cobra.Command, plan teamHumanAddedAgent, selection teamUpSessionSelection, attach bool) error {
-	runtimeKind, err := readTeamUpRuntimeKind(plan.HomeDir)
-	if err != nil {
-		return fmt.Errorf("%s: %w", plan.Name, err)
-	}
-	command, err := teamUpCommandForRuntime(runtimeKind)
-	if err != nil {
-		return fmt.Errorf("%s: %w", plan.Name, err)
-	}
-	agent := teamUpAgentPlan{Name: plan.Name, HomeDir: plan.HomeDir, RuntimeKind: runtimeKind, Command: command, Action: teamUpActionStart}
-	proc, running, err := teamAddedAgentRunningProcess(plan.HomeDir)
-	if err != nil {
-		return err
-	}
-	if running {
-		agent.Action = teamUpActionSkip
-		agent.Reason = "process already has agent home as cwd"
-		agent.RunningPID = proc.PID
-		agent.RunningCmd = proc.Command
-	}
-	launchPlan := teamUpPlan{Session: selectedTeamUpSessionName(selection), Agents: []teamUpAgentPlan{agent}, TmuxContext: selection.TmuxContext}
-	if agent.Action == teamUpActionStart {
-		if err := preflightTeamUpCommands(launchPlan); err != nil {
-			return err
-		}
-	}
-	started, err := executeTeamUpPlan(cmd, launchPlan, false, false, false)
-	if err != nil {
-		return err
-	}
-	if err := confirmStartedClaudeChannelPromptsInContext(launchPlan.TmuxContext, launchPlan.Session, started); err != nil {
-		return err
-	}
-	if attach && teamUpSessionExistsInContext(launchPlan.TmuxContext, launchPlan.Session) {
-		return attachTeamUpSession(cmd, launchPlan.TmuxContext, launchPlan.Session)
-	}
-	return nil
-}
-
-func teamAddedAgentRunningProcess(homeDir string) (teamUpRunningProcess, bool, error) {
-	active, err := teamUpDetectActiveHomes(filepath.Dir(homeDir))
-	if err != nil {
-		return teamUpRunningProcess{}, false, err
-	}
-	proc, ok := active[canonicalTeamUpPath(homeDir)]
-	return proc, ok, nil
-}
-
-func setupTeamAddedAgentWorktree(anchorDir string, plan teamHumanAddedAgent, workDir string) error {
-	if strings.TrimSpace(plan.HomeDir) == "" {
-		return nil
-	}
-	homeRepoRoot, homeInRepo, err := teamAddGitRepoRootForHome(anchorDir, plan.HomeDir)
-	if err != nil {
-		return err
-	}
-	workRepoRoot := ""
-	if strings.TrimSpace(workDir) != "" {
-		workRepoRoot, err = teamAddGitRepoRootForWorkDir(anchorDir, workDir)
-		if err != nil {
-			return err
-		}
-	} else if homeInRepo {
-		workRepoRoot = homeRepoRoot
-	} else {
-		return nil
-	}
-	if homeInRepo {
-		if err := ensureTeamAddHomeGitignored(homeRepoRoot, plan.HomeDir); err != nil {
-			return err
-		}
-	}
-	worktreeDir := filepath.Join(plan.HomeDir, "worktree")
-	worktreeExisted := false
-	if _, statErr := os.Stat(filepath.Join(worktreeDir, ".git")); statErr == nil {
-		worktreeExisted = true
-	} else if !os.IsNotExist(statErr) {
-		return statErr
-	}
-	branchExisted := exec.Command("git", "-C", workRepoRoot, "rev-parse", "--verify", "--quiet", "refs/heads/"+strings.TrimSpace(plan.Name)).Run() == nil
-	if err := ensureTeamAddGitWorktree(workRepoRoot, worktreeDir, plan.Name); err != nil {
-		return err
-	}
-	rollbackSetup := func(cause error) error {
-		if worktreeExisted {
-			return cause
-		}
-		rollbackErr := rollbackTeamAddedAgentWorktree(workRepoRoot, worktreeDir, plan.Name, !branchExisted)
-		if rollbackErr != nil {
-			return fmt.Errorf("%w; git worktree rollback failed: %v", cause, rollbackErr)
-		}
-		return cause
-	}
-	worksOnMain, err := teamAddedAgentWorksOnMain(plan)
-	if err != nil {
-		return rollbackSetup(err)
-	}
-	if worksOnMain {
-		if err := ensureTeamAddWorkMainLink(plan.HomeDir, workRepoRoot); err != nil {
-			return rollbackSetup(err)
-		}
-	}
-	return nil
-}
-
-func rollbackTeamAddedAgentWorktree(repoRoot, worktreeDir, branch string, removeBranch bool) error {
-	cmd := exec.Command("git", "-C", repoRoot, "worktree", "remove", "--force", worktreeDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git worktree remove %s: %w%s", worktreeDir, err, formatCommandOutput(out))
-	}
-	if !removeBranch {
-		return nil
-	}
-	branch = strings.TrimSpace(branch)
-	cmd = exec.Command("git", "-C", repoRoot, "branch", "-D", branch)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git branch -D %s: %w%s", branch, err, formatCommandOutput(out))
-	}
-	return nil
-}
-
-func teamAddGitRepoRootForHome(anchorDir, homeDir string) (string, bool, error) {
-	probeDir := anchorDir
-	if parent := filepath.Dir(homeDir); strings.TrimSpace(parent) != "" {
-		probeDir = parent
-	}
-	repoRoot, err := currentGitWorktreeRootFromDir(probeDir)
-	if err != nil {
-		return "", false, nil
-	}
-	canonicalRepoRoot := canonicalTeamUpPath(repoRoot)
-	canonicalHome := canonicalTeamUpPath(homeDir)
-	rel, err := filepath.Rel(canonicalRepoRoot, canonicalHome)
-	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
-		return "", false, nil
-	}
-	return canonicalRepoRoot, true, nil
-}
-
-func teamAddGitRepoRootForWorkDir(anchorDir, workDir string) (string, error) {
-	resolved := strings.TrimSpace(workDir)
-	if resolved == "" {
-		return "", fmt.Errorf("--work-dir is required")
-	}
-	if !filepath.IsAbs(resolved) {
-		resolved = filepath.Join(anchorDir, resolved)
-	}
-	repoRoot, err := currentGitWorktreeRootFromDir(resolved)
-	if err != nil {
-		return "", fmt.Errorf("--work-dir %s is not inside a git repo: %w", workDir, err)
-	}
-	return canonicalTeamUpPath(repoRoot), nil
-}
-
-func ensureTeamAddHomeGitignored(repoRoot, homeDir string) error {
-	rel, err := filepath.Rel(canonicalTeamUpPath(repoRoot), canonicalTeamUpPath(homeDir))
-	if err != nil {
-		return err
-	}
-	rel = filepath.ToSlash(filepath.Clean(rel))
-	if rel == "." || strings.HasPrefix(rel, "../") {
-		return nil
-	}
-	gitignore := filepath.Join(repoRoot, ".gitignore")
-	pattern := "/" + strings.TrimPrefix(rel, "/") + "/"
-	content, err := os.ReadFile(gitignore)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	for _, line := range strings.Split(string(content), "\n") {
-		if strings.TrimSpace(line) == pattern {
-			return nil
-		}
-	}
-	prefix := ""
-	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
-		prefix = "\n"
-	}
-	return os.WriteFile(gitignore, append(content, []byte(prefix+pattern+"\n")...), 0o644)
-}
-
-func ensureTeamAddGitWorktree(repoRoot, worktreeDir, branch string) error {
-	if info, err := os.Stat(worktreeDir); err == nil && info.IsDir() {
-		if _, gitErr := os.Stat(filepath.Join(worktreeDir, ".git")); gitErr == nil {
-			return nil
-		}
-		return fmt.Errorf("%s exists but is not a git worktree", worktreeDir)
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
-		return err
-	}
-	branch = strings.TrimSpace(branch)
-	if branch == "" {
-		return fmt.Errorf("agent branch name is required")
-	}
-	if exec.Command("git", "-C", repoRoot, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil {
-		cmd := exec.Command("git", "-C", repoRoot, "worktree", "add", worktreeDir, branch)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("git worktree add %s %s: %w%s", worktreeDir, branch, err, formatCommandOutput(out))
-		}
-		return nil
-	}
-	cmd := exec.Command("git", "-C", repoRoot, "worktree", "add", worktreeDir, "-b", branch)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git worktree add %s -b %s: %w%s", worktreeDir, branch, err, formatCommandOutput(out))
-	}
-	return nil
-}
-
-func teamAddedAgentWorksOnMain(plan teamHumanAddedAgent) (bool, error) {
-	profilePath := filepath.Join(plan.HomeDir, ".aw", "profile", "profile.yaml")
-	data, err := os.ReadFile(profilePath)
-	if err == nil {
-		var raw struct {
-			WorksOnMain *bool `yaml:"works_on_main" json:"works_on_main"`
-		}
-		if err := yaml.Unmarshal(data, &raw); err != nil {
-			return false, fmt.Errorf("parse %s: %w", profilePath, err)
-		}
-		if raw.WorksOnMain != nil {
-			return *raw.WorksOnMain, nil
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return false, err
-	}
-	return teamAgentLikelyWorksOnMain(plan), nil
-}
-
-func teamAgentLikelyWorksOnMain(plan teamHumanAddedAgent) bool {
-	labels := []string{plan.Name}
-	if plan.Profile != nil {
-		labels = append(labels, plan.Profile.ProfileRef)
-	}
-	for _, label := range labels {
-		lower := strings.ToLower(strings.TrimSpace(label))
-		for _, token := range []string{"coordinator", "reviewer", "proofreader", "deployer", "reliability", "maintainer"} {
-			if strings.Contains(lower, token) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func ensureTeamAddWorkMainLink(homeDir, repoRoot string) error {
-	link := filepath.Join(homeDir, "work-main")
-	if info, err := os.Lstat(link); err == nil {
-		if info.Mode()&os.ModeSymlink == 0 {
-			return fmt.Errorf("%s exists and is not a symlink", link)
-		}
-		if err := os.Remove(link); err != nil {
-			return err
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return os.Symlink(repoRoot, link)
-}
-
-type localProvisioningRollback struct {
-	Cause    error
-	Rollback error
-}
-
-func withLocalProvisioningRollback(input localProvisioningRollback) error {
-	if input.Rollback == nil {
-		return input.Cause
-	}
-	return errors.Join(input.Cause, fmt.Errorf("local home rollback failed: %w", input.Rollback))
-}
-
-type agentHomeRollback struct {
-	home    string
-	existed bool
-	entries map[string]bool
-}
-
-func captureAgentHomeRollback(homeDir string) (*agentHomeRollback, error) {
-	home := filepath.Clean(homeDir)
-	info, err := os.Lstat(home)
-	if os.IsNotExist(err) {
-		return &agentHomeRollback{home: home, existed: false}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return &agentHomeRollback{home: home, existed: true, entries: map[string]bool{".": true}}, nil
-	}
-	entries := map[string]bool{}
-	if err := filepath.WalkDir(home, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(home, path)
-		if err != nil {
-			return err
-		}
-		entries[filepath.ToSlash(rel)] = true
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return &agentHomeRollback{home: home, existed: true, entries: entries}, nil
-}
-
-func (r *agentHomeRollback) Rollback() error {
-	if r == nil || strings.TrimSpace(r.home) == "" {
-		return nil
-	}
-	if !r.existed {
-		return os.RemoveAll(r.home)
-	}
-	var created []string
-	if err := filepath.WalkDir(r.home, func(path string, d os.DirEntry, err error) error {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(r.home, path)
-		if err != nil {
-			return err
-		}
-		key := filepath.ToSlash(rel)
-		if key != "." && !r.entries[key] {
-			created = append(created, path)
-		}
-		return nil
-	}); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	sort.Slice(created, func(i, j int) bool { return len(created[i]) > len(created[j]) })
-	for _, path := range created {
-		if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
-}
-
-func preflightEmptyAgentHome(homeDir string) error {
-	if err := pathpreflight.PreflightDir(homeDir, "agent home", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
-		return err
-	}
-	if _, err := os.Lstat(filepath.Join(homeDir, ".aw")); err == nil {
-		return usageError("agent home %s already has identity state", homeDir)
-	} else if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
-func preflightProfileAgentHome(homeDir string) error {
-	return pathpreflight.PreflightDir(homeDir, "agent home", pathpreflight.AllowTempAmbientSymlinkPrefix())
-}
-
-func formatTeamHumanAdd(v any) string {
-	out := v.(teamHumanAddOutput)
-	if strings.TrimSpace(out.Status) == "failed" {
-		return formatTeamHumanAddFailure(out)
-	}
-	verb := "Added"
-	if strings.TrimSpace(out.Status) == "extended" {
-		verb = "Extended with"
-	}
-	var b strings.Builder
-	profileCount := teamHumanProfileAgentCount(out.Agents)
-	if profileCount == len(out.Agents) && profileCount > 0 {
-		agentWord := "agent"
-		if len(out.Agents) != 1 {
-			agentWord = "agents"
-		}
-		profileText := "blueprint profiles"
-		if profileCount == 1 {
-			profileText = "blueprint profile " + teamHumanProfileLabel(out.Agents[0].Profile)
-		}
-		if out.HomeOverride {
-			fmt.Fprintf(&b, "%s %d %s from %s with explicit home\n", verb, len(out.Agents), agentWord, profileText)
-		} else {
-			fmt.Fprintf(&b, "%s %d %s from %s under %s\n", verb, len(out.Agents), agentWord, profileText, out.AgentsRoot)
-		}
-	} else if profileCount > 0 {
-		emptyCount := len(out.Agents) - profileCount
-		if out.HomeOverride {
-			fmt.Fprintf(&b, "%s %d agent(s) with explicit home (%d from blueprint profiles, %d empty-profile)\n", verb, len(out.Agents), profileCount, emptyCount)
-		} else {
-			fmt.Fprintf(&b, "%s %d agent(s) under %s (%d from blueprint profiles, %d empty-profile)\n", verb, len(out.Agents), out.AgentsRoot, profileCount, emptyCount)
-		}
-	} else if out.HomeOverride {
-		fmt.Fprintf(&b, "%s %d empty-profile agent(s) with explicit home\n", verb, len(out.Agents))
-	} else {
-		fmt.Fprintf(&b, "%s %d empty-profile agent(s) under %s\n", verb, len(out.Agents), out.AgentsRoot)
-	}
-	if strings.TrimSpace(out.Status) == "extended" {
-		if strings.TrimSpace(out.TeamID) != "" {
-			fmt.Fprintf(&b, "Team: %s\n", strings.TrimSpace(out.TeamID))
-		}
-		if strings.TrimSpace(out.AuthorityTier) != "" {
-			fmt.Fprintf(&b, "Authority tier: %s\n", strings.TrimSpace(out.AuthorityTier))
-		}
-	}
-	for _, agent := range out.Agents {
-		fmt.Fprintf(&b, "- %s: %s\n", agent.Name, agent.HomeDir)
-		// Per agent, because a roster can draw different roles from different sources -
-		// one role on the team's shelf, another only in the public catalog - and a
-		// single summary line at the end cannot say which was which.
-		if src := strings.TrimSpace(agent.ProfileSource); src != "" {
-			fmt.Fprintf(&b, "    profile from %s\n", src)
-		}
-	}
-	if out.NoLibrary {
-		b.WriteString("No Library profile was adopted; no profile home was materialized.\n")
-	}
-	return b.String()
-}
-
-func formatTeamHumanAddFailure(out teamHumanAddOutput) string {
-	var b strings.Builder
-	b.WriteString("Roster outcome after failure:\n")
-	if strings.TrimSpace(out.TeamID) != "" {
-		fmt.Fprintf(&b, "Team: %s\n", strings.TrimSpace(out.TeamID))
-	}
-	if strings.TrimSpace(out.AuthorityTier) != "" {
-		fmt.Fprintf(&b, "Authority tier: %s\n", strings.TrimSpace(out.AuthorityTier))
-	}
-	for _, agent := range out.Agents {
-		switch agent.Outcome {
-		case teamHumanRosterOutcomeCreated:
-			fmt.Fprintf(&b, "- %s: created (%s)\n", agent.Name, agent.HomeDir)
-		case teamHumanRosterOutcomeFailed:
-			fmt.Fprintf(&b, "- %s: failed: %s\n", agent.Name, agent.Reason)
-		case teamHumanRosterOutcomeNotAttempted:
-			fmt.Fprintf(&b, "- %s: not attempted\n", agent.Name)
-		}
-	}
-	return b.String()
-}
-
-func teamHumanProfileAgentCount(agents []teamHumanAddedAgent) int {
-	count := 0
-	for _, agent := range agents {
-		if agent.Profile != nil || agent.ProfileMode == "library" {
-			count++
-		}
-	}
-	return count
-}
-
-func teamHumanProfileLabel(selector *libraryProfileSelector) string {
-	if selector == nil {
-		return "unknown"
-	}
-	label := strings.TrimSpace(selector.SourceBlueprintRef) + "/" + strings.TrimSpace(selector.ProfileRef)
-	if strings.TrimSpace(selector.SourceBlueprintVersion) != "" {
-		label += "@" + strings.TrimSpace(selector.SourceBlueprintVersion)
-	}
-	return label
 }
 
 func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {

@@ -84,16 +84,6 @@ func LoadDeliveredIDsForDir(startDir string) (map[string]struct{}, error) {
 	return ids, nil
 }
 
-// SaveDeliveredIDs records accepted message IDs for the process directory.
-// It merges concurrent updates and expires old receipts under the store lock.
-func SaveDeliveredIDs(ids []string) error {
-	wd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	return SaveDeliveredIDsForDir(wd, ids)
-}
-
 // SaveDeliveredIDsForDir atomically merges accepted IDs into startDir's receipt
 // store, honoring DeliveredIDsPathEnv and preserving concurrent writers.
 func SaveDeliveredIDsForDir(startDir string, ids []string) error {
@@ -157,21 +147,6 @@ func DeliveredMessageIDs(messages []awid.ChatMessage) []string {
 		ids = append(ids, id)
 	}
 	return ids
-}
-
-// FilterDeliveredMessages filters for the process directory and leaves messages
-// unchanged on a receipt-store read error.
-// Deprecated: use FilterDeliveredMessagesForDir to receive failure diagnostics.
-func FilterDeliveredMessages(messages []awid.ChatMessage) []awid.ChatMessage {
-	wd, err := os.Getwd()
-	if err != nil {
-		return messages
-	}
-	filtered, err := FilterDeliveredMessagesForDir(wd, messages)
-	if err != nil {
-		return messages
-	}
-	return filtered
 }
 
 // FilterDeliveredMessagesForDir binds suppression to the selected workspace and

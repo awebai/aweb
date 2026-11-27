@@ -46,15 +46,13 @@ identity is inherited. Their existing clean-target/overwrite checks still run.
 `init --join-from` and `init --workspace-team` support an explicit fresh external
 target. Joining uses the same single invite/accept/connect operation; its token
 never reaches the caller. An inherited home is never a creation target.
-Account/bootstrap and first-agent creation refuse an inherited identity. `aw run`
-never starts implicit onboarding when a selected external principal lacks a
-workspace connection.
+Account/bootstrap and first-agent creation refuse an inherited identity.
 
 `id status`, `id team list` and `id cert show` inspect recorded local state
 without network access or credential renewal. `id status` can inspect an
 incomplete or absent selected home; unreadable or corrupt records remain errors,
 and no checkout identity substitutes for the selected home.
-`team admin add` and `workspace add-worktree` keep their explicit target homes
+`workspace add-worktree` keeps its explicit target home
 separate from the selected actor. Joining a team with an existing global
 identity uses that identity's key; it does not mint another identity.
 

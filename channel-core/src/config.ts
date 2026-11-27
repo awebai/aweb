@@ -168,7 +168,7 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
   if (identityHome.external) preflightFile(workspacePath, "workspace config");
   const workspace = await readYAML<WorkspaceConfig>(workspacePath);
   if (!workspace) {
-    throw new Error("current directory is not initialized for aw; run `aw init` or `aw run` first");
+    throw new Error("current directory is not initialized for aw; run `aw init` first");
   }
 
   const baseURL = (workspace.aweb_url || "").trim();

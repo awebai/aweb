@@ -210,7 +210,7 @@ func runOrgTeamCreate(cmd *cobra.Command, name string) error {
 	if org == "" || name == "" {
 		return usageError("--org and a team name are required")
 	}
-	for _, incompatible := range []string{"byot", "namespace", "registry", "service", "alias", "username", "home", "runtime", "library-url", "agent", "profile", "blueprint", "team"} {
+	for _, incompatible := range []string{"byot", "namespace", "registry", "service", "alias", "username", "team"} {
 		if cmd.Flags().Changed(incompatible) {
 			return usageError("--%s cannot be combined with --org; chosen-org creation returns an invite without creating a local workspace", incompatible)
 		}

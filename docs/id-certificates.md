@@ -92,7 +92,7 @@ evidence. `aw id proof` exports that evidence separately.
 
 This initial path supports plaintext mail, not human encryption-key custody.
 Encrypted sends or replies refuse when that custody is unavailable; there is
-no silent plaintext fallback. Chat, arbitrary `id sign`, blueprint publication
+no silent plaintext fallback. Chat, arbitrary `id sign`
 and executable plugins do not accept this participation selector. Existing
 human issuance commands keep their separate, explicit authority checks. No
 unlocked session, background signer or delegated credential is created.
@@ -1093,8 +1093,8 @@ the parent is `{kind:namespace,id:<exact domain>}`, and the root controller
 holds the fixed self-custodial invitation in its existing local invitation
 record. The approving root operator supplies the human approval described
 below; root-key custody alone never enables unattended human CSR approval.
-When a same-machine constructor (`aw team admin create --agent` or certificate-only
-`aw workspace add-worktree`) selects a self-custodial agent parent, it runs the
+When a same-machine constructor (certificate-only `aw workspace add-worktree`)
+selects a self-custodial agent parent, it runs the
 existing child request/receive/approve/import exchange before accepting the
 hosted invite. The retained preview pins the parent and domain; the child keeps
 its original key and request UUID. If issuance refuses, the pending child home

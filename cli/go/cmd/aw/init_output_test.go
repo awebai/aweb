@@ -50,7 +50,7 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 			t.Fatalf("missing %q in next steps:\n%s", want, text)
 		}
 	}
-	for _, unwanted := range []string{"--dangerously-skip-permissions", "aw run codex", "aw run claude", "docs/agent-guide.md", "https://aweb.ai/agent-guide.md"} {
+	for _, unwanted := range []string{"--dangerously-skip-permissions", "docs/agent-guide.md", "https://aweb.ai/agent-guide.md"} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("unexpected %q in next steps:\n%s", unwanted, text)
 		}

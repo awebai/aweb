@@ -5,7 +5,7 @@ Make target, `e2e` means end-to-end integration testing; it does **not** mean th
 encrypted-message E2E protocol. Library is unnecessary for basic communication,
 identity/team membership, or encrypted-v2 interoperability.
 
-The self-hosted integration stack the optional profile/team/Library flow runs against. It
+The self-hosted integration stack the optional Library integration runs against. It
 brings up, from source, on one Docker network:
 
 | Service  | Source            | Host port (default) | In-container |
@@ -17,8 +17,8 @@ brings up, from source, on one Docker network:
 | library  | `naapp/library/Dockerfile` | 18765      | 8765         |
 
 It then **seeds** the current `aweb.team` catalog blueprint into Library over
-real AWID team-certificate auth, so the materializer is exercised against the
-real folded-block-scalar blueprint content (the same flow Library's own e2e
+real AWID team-certificate auth, so the suite reads the real
+folded-block-scalar blueprint content (the same flow Library's own e2e
 suite runs).
 
 This harness contains postgres + redis + AWID + OSS aweb + Library. Hosted
@@ -123,27 +123,6 @@ The suite covers:
 
 - **`real_stack_e2e_test.go`** — team-certificate auth reaches Library, and the
   seeded `aweb.team` blueprint is visible in the public catalog.
-- **`materialize_flow_e2e_test.go`** — the tight regression net for the three
-  Library materialize bugs (shelf-adopt idempotency, folded-block-scalar mission
-  round-trip + materialize, and materialize-failure atomicity), driven through
-  the real binary against the real seeded Library.
-- **`refresh_flow_e2e_test.go`** — the public-pin adoption and approved shelf
-  refresh flow. It exercises first-team creation in the shared `local` AWID
-  namespace, so it needs a fresh stack (`make -C cli e2e` resets the stack).
-- **`team_create_flow_e2e_test.go`** — the full self-hosted
-  `aw team admin create --profile` flow: adopting two profiles materializes both homes
-  and connects each member to the aweb service so the coordination-docs step
-  succeeds (the self-hostability fix). It bootstraps its own unique BYOT
-  namespace and therefore does not contend for `local`.
-
-**Manifest fixture caveat.** Reaching Library through `aw` needs the library
-plugin pointed at the stack. The committed Library manifest hardcodes
-`origin: https://library.aweb.ai` and `aw plugin install` enforces origin/fetch
-self-consistency, so a self-hosted Library cannot be installed normally — filed
-as a self-hostability bug. The materialize suite works around this *for the test
-only* by writing the served manifest with its origin rewritten to the stack URL.
-When that bug is fixed (Library serves its own public origin), the fixture is
-deleted and the suite installs the manifest the real way.
 
 ## Environment overrides
 

@@ -861,14 +861,6 @@ func (e *noActiveTeamInviteTargetError) Is(target error) bool {
 	return target == errTeamInviteTargetHasNoActiveTeam
 }
 
-func resolveTeamInviteTarget(workingDir string) (team, domain, registryURL, awebURL string, err error) {
-	home, err := identityHomeForDir(workingDir)
-	if err != nil {
-		return "", "", "", "", err
-	}
-	return resolveTeamInviteTargetAt(workingDir, externalIdentityHomeRoot(home))
-}
-
 func resolveTeamInviteTargetAt(workingDir, identityHome string) (team, domain, registryURL, awebURL string, err error) {
 	team = strings.ToLower(strings.TrimSpace(teamInviteTeam))
 	domain = awconfig.NormalizeDomain(teamInviteNamespace)
@@ -927,14 +919,6 @@ func resolveTeamInviteTargetAt(workingDir, identityHome string) (team, domain, r
 		Kind: registryTeamRoute, Domain: domain, TeamID: teamID, WorkingDir: rootDir, IdentityHome: identityHome, AwebURL: awebURL,
 	})
 	return team, domain, registryURL, awebURL, err
-}
-
-func loadTeamStateForInvite(workingDir string) (*awconfig.TeamState, string, error) {
-	home, err := identityHomeForDir(workingDir)
-	if err != nil {
-		return nil, "", err
-	}
-	return loadTeamStateForInviteAt(workingDir, externalIdentityHomeRoot(home))
 }
 
 func loadTeamStateForInviteAt(workingDir, identityHome string) (*awconfig.TeamState, string, error) {
@@ -2857,7 +2841,7 @@ func resolveHostedTeamRemoveAuth(workingDir, teamID string) (awebURL, apiKey str
 
 func resolveHostedTeamRemoveAuthWithAwebURL(workingDir, teamID, explicitAwebURL, explicitAPIKey string) (awebURL, apiKey string, err error) {
 	awebURL = strings.TrimSpace(explicitAwebURL)
-	apiKey = firstNonEmptyLibraryValue(explicitAPIKey, os.Getenv(initAPIKeyEnvVar))
+	apiKey = firstNonEmptyString(explicitAPIKey, os.Getenv(initAPIKeyEnvVar))
 	home, homeErr := identityHomeForDir(workingDir)
 	if homeErr != nil {
 		return "", "", homeErr

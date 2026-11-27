@@ -13,16 +13,11 @@ import (
 )
 
 func TestOATSRealProvisioningCommandsRetainKeyAfterCertificateWriteFailure(t *testing.T) {
-	for _, mode := range []string{"workspace add-worktree", "team admin add"} {
+	for _, mode := range []string{"workspace add-worktree"} {
 		t.Run(mode, func(t *testing.T) {
 			const alias = "recipient"
 			target := filepath.Join(t.TempDir(), alias)
-			var world *realCommandWorld
-			if mode == "team admin add" {
-				world = newRealCommandWorldWithCertificateObstruction(t, awconfig.WorktreeIdentityHome(target))
-			} else {
-				world = newRealCommandWorld(t)
-			}
+			world := newRealCommandWorld(t)
 			source := world.addLocalMember(t, "issuer")
 			t.Setenv("HOME", world.UserHome)
 			if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
@@ -32,7 +27,7 @@ func TestOATSRealProvisioningCommandsRetainKeyAfterCertificateWriteFailure(t *te
 				t.Fatal(err)
 			}
 			workDir := filepath.Dir(source.Home)
-			args := []string{"team", "admin", "add", alias + ":local", "--home", target}
+			var args []string
 			if mode == "workspace add-worktree" {
 				workDir = filepath.Join(t.TempDir(), "repo")
 				if err := os.MkdirAll(workDir, 0o700); err != nil {

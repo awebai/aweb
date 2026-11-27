@@ -11,18 +11,10 @@ must not be used as a prerequisite in a shipped tutorial.
 
 ## Runtime launch
 
-- Claude Code and Pi can be launched by `aw team admin up` and one-agent `--start`.
-- Codex and `local-shell` can be materialized, but must be started manually.
+- aw does not launch AI tools. Launching and materializing agents is done by
+  OATS, outside aw.
 - Runtime wake-up is integration-specific; portable polling remains the
   fallback.
-
-## Blueprint discovery
-
-- Public profiles can be browsed at [library.aweb.ai](https://library.aweb.ai)
-  and materialized directly by team commands.
-- `aw blueprint search` is planned. Do not teach it as a shipped onboarding
-  command.
-- The private Library shelf is opt-in and is not required for onboarding.
 
 ## Team and identity lifecycle
 

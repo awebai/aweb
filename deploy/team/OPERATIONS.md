@@ -305,7 +305,7 @@ signed `log-key.json`) and installed again
 (step 3). The log key itself does not change, so step 1 is not repeated. A new
 log key is step 1 again, then steps 2 and 3. Lines already sealed stay readable
 on the owner's machine with the keys in its keychain. While sealing is on, an
-agent's own `aw log` refuses and `aw run --continue` shows no recap. The owner
+agent's own `aw log` refuses. The owner
 reads the logs by copying the files out of the container and running
 `aw log read <files>` on the reading machine.
 

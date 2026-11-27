@@ -56,7 +56,7 @@ func TestHumanParticipationSelectorStopsAtBuiltins(t *testing.T) {
 }
 
 func TestHumanParticipationUnsupportedCommandsRefuseBeforeCustody(t *testing.T) {
-	for _, cmd := range []*cobra.Command{idSignCmd, blueprintPublishProfileCmd, chatSendCmd} {
+	for _, cmd := range []*cobra.Command{idSignCmd, chatSendCmd} {
 		if err := prepareHumanParticipation(cmd); err == nil || !strings.Contains(err.Error(), "not supported") {
 			t.Fatalf("%s: %v", cmd.CommandPath(), err)
 		}
@@ -68,7 +68,7 @@ func TestHumanParticipationBinaryRefusesNonAllowlistedCommands(t *testing.T) {
 	defer cancel()
 	bin := filepath.Join(t.TempDir(), awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
-	for _, args := range [][]string{{"id", "sign", "--payload", `{"x":1}`}, {"blueprint", "publish-profile", "."}, {"chat", "send-and-leave", "bob", "hello"}} {
+	for _, args := range [][]string{{"id", "sign", "--payload", `{"x":1}`}, {"chat", "send-and-leave", "bob", "hello"}} {
 		args = append([]string{"--human", "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "--human-domain", "example.com"}, args...)
 		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir = t.TempDir()

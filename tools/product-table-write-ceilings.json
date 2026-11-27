@@ -183,7 +183,6 @@
     "server/tests/test_app_registry_http.py": 2,
     "server/tests/test_app_task_requests.py": 15,
     "server/tests/test_attachments_http.py": 3,
-    "server/tests/test_aw_run_input_boundary.py": 1,
     "server/tests/test_awid_transport.py": 1,
     "server/tests/test_c2_vectors.py": 1,
     "server/tests/test_chat_http.py": 156,

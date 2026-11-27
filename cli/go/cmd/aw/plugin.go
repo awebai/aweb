@@ -1379,13 +1379,6 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 	if err != nil {
 		return nil, true, err
 	}
-	effectiveArgs, err := effectiveLibraryManifestMaterializeArgs(name, verb, parsedArgs, spec.Body)
-	if err != nil {
-		return nil, true, err
-	}
-	if isLibraryManifestLocalMaterialize(name, verb, effectiveArgs) && (!spec.Mutation || spec.Auth == "none") {
-		return nil, true, fmt.Errorf("library materialize --target local requires a signed mutation tool")
-	}
 	parsedURL, err := url.Parse(spec.URL)
 	if err != nil {
 		return nil, true, err
@@ -1424,11 +1417,6 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 			return nil, true, err
 		}
 		installedResult = &installedManifestToolResult{Status: result.Status, Body: result.Body}
-	}
-	if installedResult.Status >= http.StatusOK && installedResult.Status < http.StatusMultipleChoices {
-		if err := applyLibraryManifestLocalMaterialize(name, verb, effectiveArgs, installedResult.Body); err != nil {
-			return nil, true, err
-		}
 	}
 	return installedResult, true, nil
 }

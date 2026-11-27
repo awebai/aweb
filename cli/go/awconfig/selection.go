@@ -105,7 +105,7 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 			if identityErr == nil {
 				return finalizeStandaloneIdentitySelection(workingDir, identityHome, opts.ExternalIdentityHome, identity)
 			}
-			return nil, errors.New("current directory is not initialized for aw; run `aw init` here or start with `aw run <provider>` in a TTY")
+			return nil, errors.New("current directory is not initialized for aw; run `aw init` here")
 		}
 		return nil, fmt.Errorf("invalid worktree workspace: %w", err)
 	}

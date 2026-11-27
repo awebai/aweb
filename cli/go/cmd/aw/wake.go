@@ -10,11 +10,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/eventstream"
 	"github.com/awebai/aw/internal/wake"
 	"github.com/awebai/aw/internal/wake/session"
@@ -716,4 +718,33 @@ func daemonCommitForStatus() string {
 		return ""
 	}
 	return commit
+}
+
+// reloadedEventStreamOpener returns the stream opener for a client a reload
+// built. When the client was built for another mount than the stored server
+// URL, that mount is stored once a stream signed for it has opened there: the
+// open's 200 is the first signed answer the mount gives. A refused or failed
+// open stores nothing.
+func reloadedEventStreamOpener(client *aweb.Client, sel *awconfig.Selection) eventstream.EventStreamOpener {
+	open := eventstream.NewEventStreamOpener(client.Client)
+	if sel == nil || strings.TrimSpace(os.Getenv("AWEB_URL")) != "" {
+		return open
+	}
+	stored, err := cleanBaseURL(sel.AwebURL)
+	if err != nil || stored == sel.BaseURL {
+		return open
+	}
+	workspacePath, mount := sel.WorkspacePath, sel.BaseURL
+	var store sync.Once
+	return func(ctx context.Context, deadline time.Time) (awid.EventSource, error) {
+		source, err := open(ctx, deadline)
+		if err == nil {
+			store.Do(func() {
+				if err := persistResolvedAwebURL(workspacePath, mount); err != nil {
+					debugLog("store answering mount for %s: %v", workspacePath, err)
+				}
+			})
+		}
+		return source, err
+	}
 }
