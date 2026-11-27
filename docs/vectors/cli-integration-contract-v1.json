@@ -811,7 +811,7 @@
         "alias_conflict",
         "native_agent_signature_pending"
       ],
-      "recovery": "after any nonzero exit, read id status --team T for the exact recipient home; reconnect with workspace connect to the verified service for this join, without reusing the token, only when team_id is T, alias is the requested name, certificate_present and signing_key_present are true and workspace_bound is false; certificate_present false -> keep the home, the service side is unresolved; anything else, including an unrelated or ambiguous binding -> keep the home and stop; a native_agent_signature_pending retry keeps the same token, name, home and --parent"
+      "recovery": "after any nonzero exit, read id status --team T for the exact recipient home; reconnect with workspace connect to the verified service for this join, without reusing the token, only when team_id is T, alias is the requested name, certificate_present and signing_key_present are true and workspace_bound is false; certificate_present false -> keep the home, the service side is unresolved; anything else, including an unrelated or ambiguous binding -> keep the home and stop; after native_agent_signature_pending, rerun the exact original argv, keeping SOURCE, team, FRESH, name and scope; the CLI keeps the token, child key and source selection, and the framework never sees the token"
     },
     {
       "id": "workspace_connect",
@@ -1469,7 +1469,8 @@
         "revoked_at is an RFC 3339 timestamp",
         "release.code == ''",
         "release.next_step == ''",
-        "release.subject.alias == argv --expect-subject when given"
+        "release.subject.alias == argv --expect-subject when given",
+        "release.subject.stable_id is empty exactly when the selected identity is local"
       ],
       "controls": [
         "wrong effect fails",
@@ -1569,7 +1570,8 @@
         "release.team_id == argv T",
         "release.outcome == unknown exactly when error.code == outcome_unknown",
         "release.code == error.code",
-        "release.subject fields may be empty only where the selected identity's evidence could not be read"
+        "release.subject.stable_id is empty exactly when the selected identity is local",
+        "any other empty release.team_id or release.subject field only where the selected identity's evidence could not be read"
       ],
       "controls": [
         "wrong effect fails",
@@ -2340,7 +2342,8 @@
         "release.target.workspace_id == argv WORKSPACE_ID",
         "release.target.certificate_id == argv CERT",
         "release.outcome == confirmed exactly when retirement_code == retired_and_revoked and alias_released",
-        "release.outcome == pending exactly when retirement_code == retired_key_holder_required"
+        "release.outcome == pending exactly when retirement_code == retired_key_holder_required",
+        "release.subject.stable_id is empty exactly when the selected identity is local"
       ],
       "controls": [
         "wrong effect fails",
@@ -2438,7 +2441,8 @@
         "release.target.workspace_id == argv WORKSPACE_ID",
         "release.target.certificate_id == argv CERT",
         "release.code == error.code",
-        "release.team_id and release.subject may be empty only where the selected member's evidence could not be read"
+        "release.subject.stable_id is empty exactly when the selected identity is local",
+        "any other empty release.team_id or release.subject field only where the selected member's evidence could not be read"
       ]
     }
   ],

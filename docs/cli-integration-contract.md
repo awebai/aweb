@@ -275,7 +275,10 @@ The commands:
   `identity_scope`, `id_registration`, `team_key`, `responsibility`,
   `next_steps` array, `guide`. Codes: `invite_not_created`, `alias_conflict`,
   `native_agent_signature_pending`. After a nonzero exit, read FRESH as for an
-  acceptance.
+  acceptance. After `native_agent_signature_pending`, rerun the exact original
+  argument array, keeping SOURCE, the team, FRESH, the name and the scope: the
+  CLI keeps the token, the child key and the source selection across the
+  resumed attempt, and the framework never sees the token.
 - **Connect a workspace.** `aw --identity-home H workspace connect --service
   URL --team T --json`. Answer: as the join's, without `next_steps` and
   `guide`.
@@ -430,8 +433,10 @@ request:
   `retired_key_holder_required`) or `unknown`; a refusal's is `refused`, or
   `unknown` when cleanup was not confirmed.
 - `target` always carries the request's coordinates. `team_id` and the
-  `subject` fields match the selected identity, and may be empty only on a
-  refusal where that identity's evidence could not be read.
+  `subject` fields match the selected identity. `subject.stable_id` is
+  always empty for a local resident or member, which has no global identity;
+  any other empty value occurs only on a refusal where that identity's
+  evidence could not be read.
 
 What the framework does with each outcome is its own rule, never running
 `next_step`:
