@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-cleanup-oss (E3.1, E3.2, E3.3).
+* **Creation**: decision [a pure rule asks for its facts one at a time](/aweb-expert/decisions/a-pure-rule-asks-for-facts-one-at-a-time.md).
+* **Creation**: lessons [a table row carries the deleted test's facts](/aweb-expert/lessons/a-table-row-carries-the-deleted-tests-facts.md) and [fix reviewed work with new commits](/aweb-expert/lessons/fix-reviewed-work-with-new-commits.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
