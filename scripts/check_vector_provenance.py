@@ -72,6 +72,10 @@ ROOT_CONSUMERS = {
         "cli-integration-codes-v1.json",
         'filepath.Join("..", "..", "..", "..", "docs", "vectors", "cli-integration-codes-v1.json")',
     ),
+    PurePosixPath("cli/go/cmd/aw/release_receipt_test.go"): _consumer(
+        "cli-integration-codes-v1.json",
+        'filepath.Join("..", "..", "..", "..", "docs", "vectors", "cli-integration-codes-v1.json")',
+    ),
     PurePosixPath("awid/tests/test_point_encoding_components.py"): _consumer(
         "signature-point-encoding-v2.json",
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
