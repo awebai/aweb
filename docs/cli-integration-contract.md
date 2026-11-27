@@ -8,7 +8,8 @@ where the two disagree, that is a defect in this repository.
 This contract lists what a framework that runs agents (OATS) may rely on when
 it calls the `aw` command line: which commands, how to select the identity
 they act as, what their JSON answers contain, and what their exit statuses and
-error codes mean. Anything not listed here may change in any `aw` release. The
+error codes mean. Version 1's consumers may rely on nothing that is not listed
+here; what released clients already use keeps working (section 7). The
 framework talks to `aw` only through these commands: it does not read `aw`'s
 files, match its sentences or probe its help text.
 
@@ -84,8 +85,9 @@ command acts on. The framework sets them only where a command below says so,
 and clears them otherwise.
 
 **Output.**
-- Success writes exactly one JSON document to stdout. Key order and
-  whitespace are not part of the contract.
+- Success of a JSON command writes exactly one JSON document to stdout; the
+  exit-only commands (section 3.8) write nothing the contract covers. Key
+  order and whitespace are not part of the contract.
 - A listed key is promised with its type. Keys marked optional may be absent;
   absent and empty mean the same unless the command says otherwise. Keys not
   listed may appear and must be ignored. Objects with an `alias` may also
@@ -231,9 +233,9 @@ The commands:
     `unknown`, `status` `unverified`, no `expires_at`;
   - hosted, known inactive with metadata: exit 1, error envelope with `code`
     `expired`, `exhausted` or `revoked`, and `invite` beside it in the hosted
-    form;
+    form, whose `status` equals that code;
   - hosted, inactive without metadata: exit 1, `code` `exhausted` (HTTP 409)
-    or `expired_or_revoked` (HTTP 410), no `invite`;
+    or `expired_or_revoked` (HTTP 410), and no `invite`;
   - other failures: exit 1 with `malformed_token`, `unsupported_version`,
     `unknown_or_invalid`, `server_unreachable` or `server_mismatch`; exit 2
     for usage errors (absent, multiline or oversized stdin).
@@ -250,14 +252,20 @@ The commands:
   membership and then fail or refuse, with exit 1 or 2 (for example, when the
   invitation gives no usable service URL, or connecting the workspace fails).
   So after any nonzero exit the framework reads `id status --team T` for the
-  exact recipient home and team:
-  - `certificate_present` true and `workspace_bound` false: the membership is
-    stored; connect it with `workspace connect` to the verified service,
-    without reusing the token;
+  exact recipient home and team, and binds what it finds to this join:
+  - reconnect, with `workspace connect` to the verified service for this
+    join and without reusing the token, only when `team_id` is T, `alias` is
+    the requested name, `certificate_present` and `signing_key_present` are
+    both true, and `workspace_bound` is false. `workspace_bound` says only
+    what is recorded locally;
   - `certificate_present` false: nothing is installed locally, but the
     service's side is unresolved; keep the home and do not reuse the token
     elsewhere;
-  - anything inconclusive: keep the home and stop.
+  - anything else, including a binding to another team or name or an
+    ambiguous one: keep the home and stop.
+
+  A retry after `native_agent_signature_pending` keeps the same token, name,
+  home and `--parent`.
 - **Invite and join in one process.** `aw --identity-home FRESH init
   --join-from SOURCE --join-team T --name N --json`. SOURCE mints with its own
   authority (its hosted membership, or the team controller key on this
@@ -405,11 +413,25 @@ Two effects, two commands, under different authorities.
   hosted team this mode refuses with `certificate_binding_unavailable` before
   sending.
 
-A `release` object: `effect` (`revoke_grant` or `retire_member`), `team_id`,
-`subject` {`alias`, `did`, `stable_id`}, `target` {`grant_id`, or
-`workspace_id` and `certificate_id`}, `outcome` (`confirmed`, `pending`,
-`unknown` or `refused`), `code`, `next_step` (text for the operator, or
-empty).
+A `release` object: `effect`, `team_id`, `subject` {`alias`, `did`,
+`stable_id`}, `target`, `outcome`, `code` (empty when confirmed), `next_step`
+(text for the operator, or empty). Each command's receipt is bound to its own
+request:
+
+- `aw id grant revoke`: `effect` is always `revoke_grant`; `target` is
+  {`grant_id`}, the requested grant (compared as UUIDs), and `team_id` the
+  requested team. On success `outcome` is `confirmed` and `revoked_at` is an
+  RFC 3339 timestamp; on failure `outcome` is `unknown` (exactly when
+  `code` is `outcome_unknown`) or `refused`.
+- `aw workspace delete --retire-member`: `effect` is always `retire_member`;
+  `target` is {`workspace_id`, `certificate_id`}, the requested workspace and
+  expected certificate. A printed result's `outcome` is `confirmed` (exactly
+  for `retired_and_revoked` with `alias_released` true), `pending` (exactly for
+  `retired_key_holder_required`) or `unknown`; a refusal's is `refused`, or
+  `unknown` when cleanup was not confirmed.
+- `target` always carries the request's coordinates. `team_id` and the
+  `subject` fields match the selected identity, and may be empty only on a
+  refusal where that identity's evidence could not be read.
 
 What the framework does with each outcome is its own rule, never running
 `next_step`:

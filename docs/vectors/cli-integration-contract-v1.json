@@ -3,7 +3,7 @@
   "version": 1,
   "status": "draft",
   "owner": "docs/cli-integration-contract.md",
-  "type_notation": "string | bool | int | null | object | array; {enum}; {nullable: T}; {object: {required, optional}}; {array: T}",
+  "type_notation": "string | bool | int | null | object | array; {enum}; {nullable: T}; {object: {required, optional}}; {array: T}; forbidden: keys that must be absent; relations: checks between the answer and the request or between fields; controls: failing cases each check must be shown to catch",
   "version_probe": {
     "argv": [
       "aw",
@@ -58,50 +58,7 @@
         },
         "optional": {
           "invite": "object",
-          "release": {
-            "object": {
-              "required": {
-                "effect": {
-                  "enum": [
-                    "revoke_grant",
-                    "retire_member"
-                  ]
-                },
-                "team_id": "string",
-                "subject": {
-                  "object": {
-                    "required": {
-                      "alias": "string",
-                      "did": "string",
-                      "stable_id": "string"
-                    },
-                    "optional": {}
-                  }
-                },
-                "target": {
-                  "object": {
-                    "required": {},
-                    "optional": {
-                      "grant_id": "string",
-                      "workspace_id": "string",
-                      "certificate_id": "string"
-                    }
-                  }
-                },
-                "outcome": {
-                  "enum": [
-                    "confirmed",
-                    "pending",
-                    "unknown",
-                    "refused"
-                  ]
-                },
-                "code": "string",
-                "next_step": "string"
-              },
-              "optional": {}
-            }
-          }
+          "release": "object"
         }
       }
     },
@@ -558,7 +515,11 @@
               ]
             },
             "server_url": "string",
-            "status": "string",
+            "status": {
+              "enum": [
+                "active"
+              ]
+            },
             "expires_at": {
               "nullable": "string"
             }
@@ -567,6 +528,11 @@
         }
       },
       "stdin": "the token, one line",
+      "controls": [
+        "one valid response from each lane: hosted active, controller, inactive preview, refused",
+        "a wrong status in each lane fails",
+        "a missing or present-when-forbidden invite fails"
+      ],
       "notes": "unsigned: canonical_team_id and server_url are claims to check against independently verified coordinates"
     },
     {
@@ -610,7 +576,7 @@
       "notes": "decoded locally; no expires_at"
     },
     {
-      "id": "invite_inspect_inactive",
+      "id": "invite_inspect_inactive_preview",
       "argv": [
         "aw",
         "team",
@@ -628,14 +594,18 @@
             "error": {
               "object": {
                 "required": {
-                  "code": "string",
+                  "code": {
+                    "enum": [
+                      "expired",
+                      "exhausted",
+                      "revoked"
+                    ]
+                  },
                   "message": "string"
                 },
                 "optional": {}
               }
-            }
-          },
-          "optional": {
+            },
             "invite": {
               "object": {
                 "required": {
@@ -653,7 +623,13 @@
                     ]
                   },
                   "server_url": "string",
-                  "status": "string",
+                  "status": {
+                    "enum": [
+                      "expired",
+                      "exhausted",
+                      "revoked"
+                    ]
+                  },
                   "expires_at": {
                     "nullable": "string"
                   }
@@ -661,24 +637,65 @@
                 "optional": {}
               }
             }
-          }
+          },
+          "optional": {}
         }
       },
       "stdin": "the token, one line",
       "exits": {
-        "1": "inspection failed; invite present only for a known inactive hosted invitation (HTTP 200)",
-        "2": "usage: absent, multiline or oversized stdin"
+        "1": "a known inactive hosted invitation (HTTP 200 with safe metadata)"
       },
-      "codes": [
-        "expired",
-        "exhausted",
-        "revoked",
-        "expired_or_revoked",
-        "malformed_token",
-        "unsupported_version",
-        "unknown_or_invalid",
-        "server_unreachable",
-        "server_mismatch"
+      "relations": [
+        "invite.status == error.code"
+      ],
+      "notes": "codes owned by docs/invite-inspection.md"
+    },
+    {
+      "id": "invite_inspect_refused",
+      "argv": [
+        "aw",
+        "team",
+        "invite",
+        "inspect",
+        "--json"
+      ],
+      "selector": "shared selector; creates nothing",
+      "authority": "none",
+      "network": true,
+      "output": "json",
+      "answer": {
+        "object": {
+          "required": {
+            "error": {
+              "object": {
+                "required": {
+                  "code": {
+                    "enum": [
+                      "exhausted",
+                      "expired_or_revoked",
+                      "malformed_token",
+                      "unsupported_version",
+                      "unknown_or_invalid",
+                      "server_unreachable",
+                      "server_mismatch"
+                    ]
+                  },
+                  "message": "string"
+                },
+                "optional": {}
+              }
+            }
+          },
+          "optional": {}
+        }
+      },
+      "stdin": "the token, one line",
+      "exits": {
+        "1": "inspection failed: exhausted (HTTP 409) or expired_or_revoked (HTTP 410) carry no metadata",
+        "2": "usage: absent, multiline or oversized stdin; code malformed_token"
+      },
+      "forbidden": [
+        "invite"
       ],
       "notes": "codes owned by docs/invite-inspection.md"
     },
@@ -698,7 +715,7 @@
         "--json"
       ],
       "selector": "FRESH",
-      "authority": "the token",
+      "authority": "the token; a controller token also needs this machine's invite record and the team controller authority",
       "network": true,
       "output": "json",
       "answer": {
@@ -727,7 +744,7 @@
       "codes": [
         "native_agent_signature_pending"
       ],
-      "recovery": "after any nonzero exit, read id status --team T for the exact recipient home: certificate_present true and workspace_bound false -> workspace connect to the verified service without reusing the token; certificate_present false -> keep the home, the service side is unresolved; inconclusive -> keep the home",
+      "recovery": "after any nonzero exit, read id status --team T for the exact recipient home; reconnect with workspace connect to the verified service for this join, without reusing the token, only when team_id is T, alias is the requested name, certificate_present and signing_key_present are true and workspace_bound is false; certificate_present false -> keep the home, the service side is unresolved; anything else, including an unrelated or ambiguous binding -> keep the home and stop; a native_agent_signature_pending retry keeps the same token, name, home and --parent",
       "notes": "optional --parent ROOT/.aw; a controller token needs this machine's invite record and controller authority"
     },
     {
@@ -794,7 +811,7 @@
         "alias_conflict",
         "native_agent_signature_pending"
       ],
-      "recovery": "after any nonzero exit, read id status --team T for the exact recipient home: certificate_present true and workspace_bound false -> workspace connect to the verified service without reusing the token; certificate_present false -> keep the home, the service side is unresolved; inconclusive -> keep the home"
+      "recovery": "after any nonzero exit, read id status --team T for the exact recipient home; reconnect with workspace connect to the verified service for this join, without reusing the token, only when team_id is T, alias is the requested name, certificate_present and signing_key_present are true and workspace_bound is false; certificate_present false -> keep the home, the service side is unresolved; anything else, including an unrelated or ambiguous binding -> keep the home and stop; a native_agent_signature_pending retry keeps the same token, name, home and --parent"
     },
     {
       "id": "workspace_connect",
@@ -1408,8 +1425,7 @@
                 "required": {
                   "effect": {
                     "enum": [
-                      "revoke_grant",
-                      "retire_member"
+                      "revoke_grant"
                     ]
                   },
                   "team_id": "string",
@@ -1425,18 +1441,106 @@
                   },
                   "target": {
                     "object": {
-                      "required": {},
-                      "optional": {
-                        "grant_id": "string",
-                        "workspace_id": "string",
-                        "certificate_id": "string"
-                      }
+                      "required": {
+                        "grant_id": "string"
+                      },
+                      "optional": {}
                     }
                   },
                   "outcome": {
                     "enum": [
-                      "confirmed",
-                      "pending",
+                      "confirmed"
+                    ]
+                  },
+                  "code": "string",
+                  "next_step": "string"
+                },
+                "optional": {}
+              }
+            }
+          },
+          "optional": {}
+        }
+      },
+      "relations": [
+        "grant_id == argv ID, compared as UUIDs",
+        "release.target.grant_id == argv ID, compared as UUIDs",
+        "release.team_id == argv T",
+        "revoked_at is an RFC 3339 timestamp",
+        "release.code == ''",
+        "release.next_step == ''",
+        "release.subject.alias == argv --expect-subject when given"
+      ],
+      "controls": [
+        "wrong effect fails",
+        "wrong target fails",
+        "missing target fails",
+        "invalid revoked_at fails"
+      ],
+      "recovery": "unknown: retry the same argv with the same executable, --identity-home, routing inputs, --team, grant id and --expect-subject",
+      "notes": "optional --expect-subject ALIAS"
+    },
+    {
+      "id": "grant_revoke_failed",
+      "argv": [
+        "aw",
+        "id",
+        "grant",
+        "revoke",
+        "ID",
+        "--team",
+        "T",
+        "--json"
+      ],
+      "selector": "the resident's directory",
+      "authority": "the resident",
+      "network": true,
+      "output": "json",
+      "answer": {
+        "object": {
+          "required": {
+            "error": {
+              "object": {
+                "required": {
+                  "code": "string",
+                  "message": "string"
+                },
+                "optional": {
+                  "http_status": "int",
+                  "detail": "string",
+                  "reason": "string"
+                }
+              }
+            },
+            "release": {
+              "object": {
+                "required": {
+                  "effect": {
+                    "enum": [
+                      "revoke_grant"
+                    ]
+                  },
+                  "team_id": "string",
+                  "subject": {
+                    "object": {
+                      "required": {
+                        "alias": "string",
+                        "did": "string",
+                        "stable_id": "string"
+                      },
+                      "optional": {}
+                    }
+                  },
+                  "target": {
+                    "object": {
+                      "required": {
+                        "grant_id": "string"
+                      },
+                      "optional": {}
+                    }
+                  },
+                  "outcome": {
+                    "enum": [
                       "unknown",
                       "refused"
                     ]
@@ -1451,13 +1555,27 @@
           "optional": {}
         }
       },
+      "exits": {
+        "1": "unknown, or a definitive refusal",
+        "2": "subject_mismatch, refused before sending"
+      },
       "codes": [
         "grant_not_found",
         "subject_mismatch",
         "outcome_unknown"
       ],
-      "recovery": "unknown: retry the same argv with the same executable, --identity-home, routing inputs, --team, grant id and --expect-subject",
-      "notes": "optional --expect-subject ALIAS; on failure release sits beside error"
+      "relations": [
+        "release.target.grant_id == argv ID, compared as UUIDs",
+        "release.team_id == argv T",
+        "release.outcome == unknown exactly when error.code == outcome_unknown",
+        "release.code == error.code",
+        "release.subject fields may be empty only where the selected identity's evidence could not be read"
+      ],
+      "controls": [
+        "wrong effect fails",
+        "wrong or missing target fails",
+        "outcome confirmed or pending fails"
+      ]
     },
     {
       "id": "custody_status",
@@ -2157,7 +2275,6 @@
                 "required": {
                   "effect": {
                     "enum": [
-                      "revoke_grant",
                       "retire_member"
                     ]
                   },
@@ -2174,20 +2291,18 @@
                   },
                   "target": {
                     "object": {
-                      "required": {},
-                      "optional": {
-                        "grant_id": "string",
+                      "required": {
                         "workspace_id": "string",
                         "certificate_id": "string"
-                      }
+                      },
+                      "optional": {}
                     }
                   },
                   "outcome": {
                     "enum": [
                       "confirmed",
                       "pending",
-                      "unknown",
-                      "refused"
+                      "unknown"
                     ]
                   },
                   "code": "string",
@@ -2213,8 +2328,102 @@
         }
       },
       "exits": {
-        "1": "retired_revocation_pending or retired_key_holder_required: a retained result is printed, then exit 1",
-        "2": "a refusal before sending: error envelope with release beside it"
+        "0": "confirmed: retired_and_revoked",
+        "1": "a retained result is printed, then exit 1: retired_key_holder_required (pending) or retired_revocation_pending (unknown)"
+      },
+      "codes": [
+        "retired_revocation_pending",
+        "retired_key_holder_required"
+      ],
+      "relations": [
+        "workspace_id == argv WORKSPACE_ID",
+        "release.target.workspace_id == argv WORKSPACE_ID",
+        "release.target.certificate_id == argv CERT",
+        "release.outcome == confirmed exactly when retirement_code == retired_and_revoked and alias_released",
+        "release.outcome == pending exactly when retirement_code == retired_key_holder_required"
+      ],
+      "controls": [
+        "wrong effect fails",
+        "wrong or missing target fails",
+        "outcome refused on a retained result fails"
+      ],
+      "recovery": "unknown: keep the home and retry the same argv in the same way; pending: keep the home and its receipt and hand off to the key holder"
+    },
+    {
+      "id": "retire_member_refused",
+      "argv": [
+        "aw",
+        "workspace",
+        "delete",
+        "WORKSPACE_ID",
+        "--retire-member",
+        "--expect-certificate",
+        "CERT",
+        "--json"
+      ],
+      "selector": "the member's own home",
+      "authority": "none: refused, or the cleanup not confirmed",
+      "network": true,
+      "output": "json",
+      "answer": {
+        "object": {
+          "required": {
+            "error": {
+              "object": {
+                "required": {
+                  "code": "string",
+                  "message": "string"
+                },
+                "optional": {}
+              }
+            },
+            "release": {
+              "object": {
+                "required": {
+                  "effect": {
+                    "enum": [
+                      "retire_member"
+                    ]
+                  },
+                  "team_id": "string",
+                  "subject": {
+                    "object": {
+                      "required": {
+                        "alias": "string",
+                        "did": "string",
+                        "stable_id": "string"
+                      },
+                      "optional": {}
+                    }
+                  },
+                  "target": {
+                    "object": {
+                      "required": {
+                        "workspace_id": "string",
+                        "certificate_id": "string"
+                      },
+                      "optional": {}
+                    }
+                  },
+                  "outcome": {
+                    "enum": [
+                      "refused",
+                      "unknown"
+                    ]
+                  },
+                  "code": "string",
+                  "next_step": "string"
+                },
+                "optional": {}
+              }
+            }
+          },
+          "optional": {}
+        }
+      },
+      "exits": {
+        "2": "refused before sending",
+        "1": "the cleanup was not confirmed: unknown"
       },
       "codes": [
         "not_own_workspace",
@@ -2223,11 +2432,14 @@
         "controller_key_missing",
         "certificate_binding_unavailable",
         "retirement_receipt_unavailable",
-        "workspace_cleanup_incomplete",
-        "retired_revocation_pending",
-        "retired_key_holder_required"
+        "workspace_cleanup_incomplete"
       ],
-      "recovery": "unknown: keep the home and retry the same argv in the same way; pending: keep the home and hand off to the key holder"
+      "relations": [
+        "release.target.workspace_id == argv WORKSPACE_ID",
+        "release.target.certificate_id == argv CERT",
+        "release.code == error.code",
+        "release.team_id and release.subject may be empty only where the selected member's evidence could not be read"
+      ]
     }
   ],
   "code_list_v1_additions": {
