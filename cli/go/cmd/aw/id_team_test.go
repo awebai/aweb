@@ -1439,7 +1439,7 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
 		"--team", "backend",
 		"--namespace", domain,
-		"--persistent",
+		"--member-global",
 		"--json")
 	runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	runInvite.Dir = tmp
@@ -4659,7 +4659,7 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 		"--namespace", "acme.com",
 		"--did", memberDID,
 		"--name", "alice",
-		"--lifetime", "persistent",
+		"--global",
 		"--did-aw", memberDIDAW,
 		"--address", "acme.com/alice",
 		"--json")
@@ -4667,7 +4667,7 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
-		t.Fatalf("add-member by did global compatibility path failed: %v\n%s", err, string(out))
+		t.Fatalf("add-member by did global path failed: %v\n%s", err, string(out))
 	}
 
 	var got map[string]any
@@ -5166,10 +5166,10 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(keyBefore, keyAfter) {
-		t.Fatal("signing.key changed during aw id team add")
+		t.Fatal("signing.key changed during aw id team accept-invite --global")
 	}
 	if !bytes.Equal(identityBefore, identityAfter) {
-		t.Fatal("identity.yaml changed during aw id team add")
+		t.Fatal("identity.yaml changed during aw id team accept-invite --global")
 	}
 
 	teamState, err := awconfig.LoadTeamState(tmp)
@@ -5191,7 +5191,7 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatalf("accepted certificate mismatch: %+v", acceptedCert)
 	}
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("workspace.yaml should not be created by aw id team add, stat err=%v", err)
+		t.Fatalf("workspace.yaml should not be created by aw id team accept-invite --global, stat err=%v", err)
 	}
 
 	runList := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "list", "--json")

@@ -233,24 +233,6 @@ async def list_app_event_subscriptions(
     return [_subscription_from_row(row) for row in rows]
 
 
-async def delete_app_event_subscription(
-    db, *, team_id: str, agent_id: str, subscription_id: str
-) -> bool:
-    result = await db.fetch_one(
-        """
-        DELETE FROM {{tables.app_event_subscriptions}}
-        WHERE team_id = $1 AND agent_id = $2::UUID AND subscription_id = $3::UUID
-        RETURNING subscription_id
-        """,
-        validate_team_id(team_id),
-        agent_id,
-        subscription_id,
-    )
-    if result is not None:
-        record_agent_wake(agent_wake_key(agent_id), "app")
-    return result is not None
-
-
 def _subscription_from_row(row) -> AppEventSubscription:
     return AppEventSubscription(
         subscription_id=str(row["subscription_id"]),

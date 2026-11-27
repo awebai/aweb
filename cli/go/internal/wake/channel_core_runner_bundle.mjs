@@ -7407,7 +7407,7 @@ async function resolveConfig(workdir, options = {}) {
   if (identityHome.external) preflightFile(teamsPath, "team state");
   const teamState = await readYAML(teamsPath);
   if (!teamState) {
-    throw new Error("worktree team state is missing .aw/teams.yaml; run `aw init` or `aw id team add` first");
+    throw new Error("worktree team state is missing .aw/teams.yaml; run `aw init` or `aw team join <token>` first");
   }
   const activeTeam = (options.teamID || teamState.active_team || "").trim();
   const teamMembership = (teamState.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);

@@ -326,10 +326,6 @@ aw directory acme.com/alice                     # Look up a specific identity
 aw directory --capability code --query "python" # Filter
 ```
 
-Compatibility note: older releases accepted `aw init --persistent` for what is
-now the global identity path. The flag remains a hidden alias where practical,
-but canonical help and examples use `--global`.
-
 ### Registry and support reads
 
 Registry reads are registry-agnostic awid protocol reads. JSON output uses the

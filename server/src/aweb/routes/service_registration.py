@@ -83,7 +83,7 @@ def _team_service_register_next_steps(
     return [
         TeamServiceRegisterNextStep(
             label="Initialize each agent workspace",
-            command=f"aw service init --service {service_url} --team {canonical_team_id}",
+            command=f"aw workspace connect --service {service_url} --team {canonical_team_id}",
             description=(
                 "Run from every agent worktree that already has this team's signing key "
                 "and team certificate installed."

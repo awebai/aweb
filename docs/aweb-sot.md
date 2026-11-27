@@ -1633,9 +1633,8 @@ relies on are:
 | `aw init` | Bind the current workspace using the active certificate from `.aw/team-certs/` (`POST /v1/connect`) |
 | `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Unsupported bootstrap-token command retained for this release; use a dashboard setup key or `aw init --join-from` |
 | `aw id team create --name X --namespace Y` | Create team at awid |
-| `aw id team invite [--team X --namespace Y] [--member-global]` | Create invite token; defaults to the active team and a local invite. `--member-local` is the explicit default; the old `--global` and `--local` spellings are deprecated hidden aliases |
+| `aw id team invite [--team X --namespace Y] [--member-global]` | Create invite token; defaults to the active team and a local invite. `--member-local` is the explicit default |
 | `aw id team accept-invite <token>` | Accept a hosted `aw_inv_` or local-controller invite, receive certificate; hosted local accepts into an explicit external `--identity-home` auto-connect that root when the invite names a service |
-| `aw id team add <token>` | Deprecated alias for `aw id team accept-invite --global <token>`; use `aw team join --global <token>` or `aw id team accept-invite --global <token>` |
 | `aw id team switch <team_id>` | Change the active local team membership for this workspace |
 | `aw id team list` | Show local team memberships stored in `.aw/teams.yaml` |
 | `aw id team leave <team_id>` | Remove one local team membership and its cert from this workspace only |

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- aw drops second routes to acts that already have one:
+  - `aw id team add <token>`: use `aw id team accept-invite --global <token>`
+    or `aw team join --global <token>`;
+  - the hidden `aw team agent-status`, `aw team remove-agent` and
+    `aw team replace-key`: use `aw team admin <command>`;
+  - the deprecated flags `aw init --local-name` (use `--name`) and
+    `--persistent` (use `--global`), `aw team create --alias` (use
+    `--first-agent-name`), `aw team invite --local`/`--global` and
+    `aw id team invite --local`/`--global`/`--ephemeral`/`--persistent` (use
+    `--member-local`/`--member-global`), `aw team join --alias` (use `--name`),
+    and `aw id team add-member --lifetime` (use `--global` or `--local`).
+
+  The server drops `DELETE /v1/events/subscriptions/{subscription_id}`, which
+  no client called. Team service registration now names
+  `aw workspace connect` as its next step.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under

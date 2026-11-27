@@ -142,7 +142,7 @@ aweb cloud projects the customer-signed facts; it does not mint anything itself.
 ```bash
 # Owner side, same machine, local-controller key present:
 aw team invite                 # local-workspace member (default)
-aw team invite --global        # global-member token (requires existing global identity in the accepting directory)
+aw team invite --member-global # global-member token (requires existing global identity in the accepting directory)
 
 # Joiner side (still same machine, different directory):
 
