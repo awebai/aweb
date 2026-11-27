@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
@@ -90,6 +92,36 @@ def test_invalid_sizes_refuse_to_start(env, minimum, maximum, message):
         ValueError, match=message.replace("(", r"\(").replace(")", r"\)")
     ):
         get_settings()
+
+
+@pytest.mark.parametrize(
+    "name,value,message",
+    [
+        (
+            "AWID_DATABASE_MAX_CONNECTIONS",
+            "5",
+            "AWID_DATABASE_MAX_CONNECTIONS (5) is below the default minimum of 10",
+        ),
+        (
+            "AWID_DATABASE_MIN_CONNECTIONS",
+            "21",
+            "AWID_DATABASE_MIN_CONNECTIONS (21) exceeds the default maximum of 20",
+        ),
+    ],
+)
+def test_one_size_alone_must_fit_the_default_other_side(env, name, value, message):
+    env.setenv(name, value)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        get_settings()
+
+
+def test_pooler_mode_clamps_one_size_alone(env):
+    env.setenv("AWID_DATABASE_USES_TRANSACTION_POOLER", "true")
+    env.setenv("AWID_DATABASE_POOLER_MAX_CONNECTIONS", "10")
+    env.setenv("AWID_DATABASE_MAX_CONNECTIONS", "5")
+    config = database_config_from_settings(get_settings())
+    assert config.max_connections == 5
+    assert config.min_connections <= config.max_connections
 
 
 def test_settings_keep_their_existing_positions():

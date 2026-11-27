@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from pgdbm import DatabaseConfig
+
 from awid.ratelimit import normalize_service_token
 
 
@@ -66,15 +68,11 @@ def get_settings() -> Settings:
         )
     min_connections = _env_int_at_least("AWID_DATABASE_MIN_CONNECTIONS", 0)
     max_connections = _env_int_at_least("AWID_DATABASE_MAX_CONNECTIONS", 1)
-    if (
-        min_connections is not None
-        and max_connections is not None
-        and min_connections > max_connections
-    ):
-        raise ValueError(
-            f"AWID_DATABASE_MIN_CONNECTIONS ({min_connections}) exceeds "
-            f"AWID_DATABASE_MAX_CONNECTIONS ({max_connections})"
-        )
+    uses_transaction_pooler = _env_bool("AWID_DATABASE_USES_TRANSACTION_POOLER")
+    if not uses_transaction_pooler:
+        # The transaction pooler clamps the pair itself; without it, a side
+        # left unset takes pgdbm's default and the pair must still be ordered.
+        _require_ordered_pool_sizes(min_connections, max_connections)
     session_check_timeout = float(
         os.getenv("AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS", "30")
     )
@@ -102,9 +100,7 @@ def get_settings() -> Settings:
         db_schema=schema,
         rate_limit_backend=rate_limit_backend,
         service_token=normalize_service_token(os.getenv("AWID_SERVICE_TOKEN")),
-        database_uses_transaction_pooler=_env_bool(
-            "AWID_DATABASE_USES_TRANSACTION_POOLER"
-        ),
+        database_uses_transaction_pooler=uses_transaction_pooler,
         database_pooler_max_connections=pooler_max_connections,
         database_statement_cache_size=statement_cache_size,
         database_min_connections=min_connections,
@@ -128,3 +124,30 @@ def _env_int_at_least(name: str, minimum: int) -> int | None:
     if value < minimum:
         raise ValueError(f"{name} must be at least {minimum}, got {value}")
     return value
+
+
+def _require_ordered_pool_sizes(
+    min_connections: int | None, max_connections: int | None
+) -> None:
+    """Refuse a pool whose minimum exceeds its maximum, naming the setting."""
+    defaults = DatabaseConfig.model_fields
+    if min_connections is not None and max_connections is not None:
+        if min_connections > max_connections:
+            raise ValueError(
+                f"AWID_DATABASE_MIN_CONNECTIONS ({min_connections}) exceeds "
+                f"AWID_DATABASE_MAX_CONNECTIONS ({max_connections})"
+            )
+    elif max_connections is not None:
+        default_min = defaults["min_connections"].default
+        if max_connections < default_min:
+            raise ValueError(
+                f"AWID_DATABASE_MAX_CONNECTIONS ({max_connections}) is below the "
+                f"default minimum of {default_min}; set AWID_DATABASE_MIN_CONNECTIONS too"
+            )
+    elif min_connections is not None:
+        default_max = defaults["max_connections"].default
+        if min_connections > default_max:
+            raise ValueError(
+                f"AWID_DATABASE_MIN_CONNECTIONS ({min_connections}) exceeds the "
+                f"default maximum of {default_max}; set AWID_DATABASE_MAX_CONNECTIONS too"
+            )

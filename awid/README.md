@@ -54,10 +54,13 @@ Optional environment:
   the transaction pooler.
 - `AWID_DATABASE_STATEMENT_CACHE_SIZE` overrides the statement cache size.
 - `AWID_DATABASE_MIN_CONNECTIONS` and `AWID_DATABASE_MAX_CONNECTIONS` size the
-  database pool (min at least 0, max at least 1, min no greater than max).
-  Unset, the pool uses pgdbm's defaults (10 and 20). They change only the pool
-  size, not the statement cache or `search_path`; with the transaction pooler
-  the pool is still capped at `AWID_DATABASE_POOLER_MAX_CONNECTIONS`.
+  database pool (min at least 0, max at least 1). Unset, the pool uses pgdbm's
+  defaults (10 and 20), and a side left unset takes its default: the minimum
+  must not exceed the maximum after that, so a maximum below 10 needs a
+  minimum too, and a minimum above 20 needs a maximum. They change only the
+  pool size, not the statement cache or `search_path`; with the transaction
+  pooler the pool is still capped at `AWID_DATABASE_POOLER_MAX_CONNECTIONS`,
+  and the minimum is lowered to fit.
 - `AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS` default `30`, the bound on the
   startup session-settings check.
 - `AWID_DATABASE_REQUIRE_SESSION_SETTINGS` default `false`. Set `true` to refuse
