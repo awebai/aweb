@@ -56,7 +56,11 @@ def operator_git_environment():
     """
     environment = child_environment()
     environment.update(
-        {name: os.environ[name] for name in OPERATOR_GIT_VARIABLES if name in os.environ}
+        {
+            name: os.environ[name]
+            for name in OPERATOR_GIT_VARIABLES
+            if name in os.environ
+        }
     )
     return environment
 
@@ -89,7 +93,7 @@ def check_machine(machine, config):
     return platform, backend
 
 
-def cloud_main(repo, cloud_sha, gate=False):
+def cloud_main(repo, cloud_sha, gate=False, name="ac"):
     """Refuse before boot unless C is where its job needs it on real main.
 
     A release's version commit C sits directly on real main. A gate's C is a
@@ -109,7 +113,15 @@ def cloud_main(repo, cloud_sha, gate=False):
     real_main = git(repo, "rev-parse", "refs/remotes/origin/main^{commit}")
     if gate:
         over = subprocess.run(
-            ["git", "-C", str(repo), "merge-base", "--is-ancestor", real_main, cloud_sha],
+            [
+                "git",
+                "-C",
+                str(repo),
+                "merge-base",
+                "--is-ancestor",
+                real_main,
+                cloud_sha,
+            ],
             capture_output=True,
             text=True,
         )
@@ -118,14 +130,20 @@ def cloud_main(repo, cloud_sha, gate=False):
                 f"Cloud main moved: {cloud_sha} is not over real main {real_main}; "
                 "rebase the train onto main"
             )
-        return {"real_main": {"ac": real_main}, "ac_main_is_ancestor_of_c": True}
+        return {
+            "real_main": {name: real_main},
+            f"{name.replace('-', '_')}_main_is_ancestor_of_c": True,
+        }
     parent = git(repo, "rev-parse", cloud_sha + "^{commit}^")
     if parent != real_main:
         raise Refused(
             f"Cloud main moved: real main is {real_main}, the release commit's parent is {parent}; "
             "rerun make release to pin again"
         )
-    return {"real_main": {"ac": real_main}, "ac_parent_of_c": parent}
+    return {
+        "real_main": {name: real_main},
+        f"{name.replace('-', '_')}_parent_of_c": parent,
+    }
 
 
 def cloud_bundle(repo, cloud_sha, out, main=None):
@@ -253,6 +271,98 @@ def hermes_key(path):
     return path
 
 
+# The stages Cloud's full gate records in its summary.tsv
+# (scripts/candidate-suite.sh). Preflight writes no row: a failed preflight
+# stops the run before any stage row exists. A stage run writes no Cloud ledger
+# record, so its receipt is its evidence.
+CLOUD_GATE_STAGES = (
+    "backend",
+    "frontend",
+    "image",
+    "two-service",
+    "cloud-user-journey",
+)
+
+
+class CloudProject:
+    """What the launcher knows about one Cloud-shaped repository's gate.
+
+    ac and the pilot (aweb-cloud) share the bundle, image and receipt path;
+    they differ only in these facts, each agreed with the repository's owner."""
+
+    def __init__(
+        self,
+        name,
+        *,
+        repository,
+        evidence_prefix,
+        stages,
+        every_row,
+        hermes,
+        aweb_source_required,
+        release_make,
+        gate_make,
+        image_env,
+    ):
+        self.name = name
+        self.repository = repository  # the only image repository --image may name
+        self.evidence_prefix = (
+            evidence_prefix  # the gate's /tmp directory, before the SHA
+        )
+        self.stages = stages  # stages that must be present and PASSED
+        self.every_row = every_row  # whether every other summary row must be PASSED too
+        self.hermes = hermes  # whether the gate's journeys need the Hermes key
+        self.aweb_source_required = (
+            aweb_source_required  # whether a release names the aweb its journeys build
+        )
+        self.release_make = (
+            release_make  # image -> the make arguments of a release gate
+        )
+        self.gate_make = gate_make  # the make arguments of a train gate
+        self.image_env = (
+            image_env  # (image, archive, member, lock source) -> the guest's exports
+        )
+
+
+CLOUD_PROJECTS = {
+    "ac": CloudProject(
+        "ac",
+        repository="ghcr.io/awebai/ac",
+        evidence_prefix="ac-candidate-gate-",
+        stages=CLOUD_GATE_STAGES,
+        every_row=False,
+        hermes=True,
+        aweb_source_required=True,
+        release_make=lambda image: "release-gate",
+        gate_make="gate GATE_STAGES=all",
+        image_env=lambda image, archive, member, lock_source: [
+            f"AC_CANDIDATE_RELEASE_IMAGE={image}",
+            f"AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE={archive}",
+            f"AC_CANDIDATE_RELEASE_IMAGE_MEMBER={member}",
+            f"AC_CANDIDATE_AWEB_LOCK_SOURCE_SHA={lock_source}",
+        ],
+    ),
+    # The pilot: any stage selection makes its run a diagnostic, so a train
+    # gate is bare `make gate`; its gate writes /tmp/aweb-cloud-gate-<sha>/.
+    "aweb-cloud": CloudProject(
+        "aweb-cloud",
+        repository="ghcr.io/awebai/aweb-cloud",
+        evidence_prefix="aweb-cloud-gate-",
+        stages=("tool-image", "checks", "storage", "image"),
+        every_row=True,
+        hermes=False,
+        aweb_source_required=False,
+        release_make=lambda image: "release-gate RELEASE_IMAGE=" + Q(image),
+        gate_make="gate",
+        image_env=lambda image, archive, member, lock_source: [
+            f"RELEASE_IMAGE={image}",
+            f"RELEASE_IMAGE_ARCHIVE={archive}",
+            f"RELEASE_IMAGE_MEMBER={member}",
+        ],
+    ),
+}
+
+
 def guest_script(
     *,
     cloud_sha,
@@ -266,6 +376,7 @@ def guest_script(
     home="/home/gateuser",
     key=GUEST_KEY,
     cloud_target="release-gate",
+    cloud=CLOUD_PROJECTS["ac"],
 ):
     """Cloud's gate alone; its exit and output go under release/cloud/.
 
@@ -278,18 +389,18 @@ def guest_script(
         f"AWEB_GATE_LEDGER={release}/cloud/ledger.tsv",
         f"AWEB_GATE_LOG_DIR={release}/cloud/gate-logs",
         f"DOCKER_CONFIG={release}/cloud/empty-docker-config",
-        # Cloud's journeys run the Hermes journey, which needs its isolated credential.
-        f"AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE={key}",
     ]
+    if cloud.hermes:
+        # Cloud's journeys run the Hermes journey, which needs its isolated credential.
+        cloud_env.append(f"AC_CANDIDATE_HERMES_ANTHROPIC_KEY_FILE={key}")
     if cloud_target == "release-gate":
-        cloud_env += [
-            f"AC_CANDIDATE_RELEASE_IMAGE={image}",
-            f"AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE={remote}/cloud-image.tar",
-            f"AC_CANDIDATE_RELEASE_IMAGE_MEMBER={member}",
-            f"AC_CANDIDATE_AWEB_LOCK_SOURCE_SHA={lock_source_sha}",
-        ]
+        cloud_env += cloud.image_env(
+            image, f"{remote}/cloud-image.tar", member, lock_source_sha
+        )
     # A train gate runs every stage on its own head; a release runs release-gate.
-    cloud_make = "release-gate" if cloud_target == "release-gate" else "gate GATE_STAGES=all"
+    cloud_make = (
+        cloud.release_make(image) if cloud_target == "release-gate" else cloud.gate_make
+    )
     # A gate's candidate is fetched by its own ref, never found by object id:
     # a fetch that keeps only reachable objects would otherwise lose it.
     refs = (
@@ -344,7 +455,11 @@ class ReleaseExecutor(Executor):
         super().prepare(server, timeout)
         self.upload(self.release["bundle"], REMOTE + "/cloud.bundle", mode="0444")
         if self.release["archive"]:
-            self.upload(self.release["archive"], REMOTE + "/cloud-image.tar", mode="0444")
+            self.upload(
+                self.release["archive"], REMOTE + "/cloud-image.tar", mode="0444"
+            )
+        if self.release["hermes_key"] is None:
+            return
         self.run(
             f"install -d -o root -g gateuser -m 0710 {GUEST_KEY_DIRECTORY}",
             "hermes-directory",
@@ -362,28 +477,26 @@ class ReleaseExecutor(Executor):
         return super().collect(server, timeout)
 
 
-# The stages Cloud's full gate records in its summary.tsv
-# (scripts/candidate-suite.sh). Preflight writes no row: a failed preflight
-# stops the run before any stage row exists. A stage run writes no Cloud ledger
-# record, so its receipt is its evidence.
-CLOUD_GATE_STAGES = (
-    "backend",
-    "frontend",
-    "image",
-    "two-service",
-    "cloud-user-journey",
-)
+def cloud_stage_verdicts(evidence, cloud_sha, cloud=CLOUD_PROJECTS["ac"]):
+    """Each stage's verdict, from the gate's own summary in the evidence.
 
-
-def cloud_stage_verdicts(evidence, cloud_sha):
-    """Each Cloud stage's verdict, from the gate's own summary in the evidence."""
+    The required stages read MISSING when absent. A project whose every row
+    counts also reports each further row it wrote, so a new stage is judged
+    without a launcher change."""
     verdicts = {}
-    for summary in sorted((Path(evidence) / "tmp").glob(f"ac-candidate-gate-{cloud_sha}*/summary.tsv")):
+    for summary in sorted(
+        (Path(evidence) / "tmp").glob(
+            f"{cloud.evidence_prefix}{cloud_sha}*/summary.tsv"
+        )
+    ):
         for line in summary.read_text().splitlines():
             fields = line.split("\t")
             if len(fields) >= 2 and not line.startswith("#"):
                 verdicts[fields[0]] = fields[1]
-    return {stage: verdicts.get(stage, "MISSING") for stage in CLOUD_GATE_STAGES}
+    required = {stage: verdicts.get(stage, "MISSING") for stage in cloud.stages}
+    if not cloud.every_row:
+        return required
+    return {**verdicts, **required}
 
 
 def suite_record(evidence, suite):

@@ -364,7 +364,7 @@ ledger=Path({ledger!r})
 if ledger.exists():shutil.copyfile(ledger,{LOGS + "/ledger-after.tsv"!r})
 logs=ledger.parent/'gate-logs'
 if logs.exists():shutil.copytree(logs,{LOGS + "/ledger-gate-logs"!r},dirs_exist_ok=True)
-paths=[{LOGS!r}]+glob.glob('/tmp/aweb-candidate-gate-*')+glob.glob('/tmp/ac-candidate-gate-*')+glob.glob('/tmp/aweb-ledger-evidence.*')
+paths=[{LOGS!r}]+glob.glob('/tmp/aweb-candidate-gate-*')+glob.glob('/tmp/ac-candidate-gate-*')+glob.glob('/tmp/aweb-cloud-gate-*')+glob.glob('/tmp/aweb-ledger-evidence.*')
 with tarfile.open({REMOTE + "/evidence.tar.gz"!r},'w:gz') as t:
  for path in paths:t.add(path,arcname=path.lstrip('/'))
  spool=Path({REMOTE!r})/'daemon-journal'

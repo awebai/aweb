@@ -285,6 +285,15 @@ gate sizes itself from the machine it runs on.
   real main in its history, and the guest runs `make gate GATE_STAGES=all`.
   Either way green needs every stage PASSED in Cloud's own `summary.tsv`; a
   missing row is red. `ac` also runs on a native host.
+- `aweb-cloud`: the pilot repository, on `ac`'s path with its own facts, kept
+  with ac's in one table (`release.CLOUD_PROJECTS`). `--image` must name
+  `ghcr.io/awebai/aweb-cloud` (and ac's `ghcr.io/awebai/ac`). A release runs
+  `make release-gate RELEASE_IMAGE=<index>` with `RELEASE_IMAGE`,
+  `RELEASE_IMAGE_ARCHIVE` and `RELEASE_IMAGE_MEMBER`; a train gate runs bare
+  `make gate`, since any stage selection makes the pilot's run a diagnostic.
+  No Hermes key is required or shipped, and `--aweb-source` is optional. Green
+  needs every row of `/tmp/aweb-cloud-gate-<sha>/summary.tsv` PASSED and
+  tool-image, checks, storage and image present. It runs only in a guest.
 - `servers`: the steps of one reviewed spec, `--steps SPEC`, in one guest.
   The spec names each source as an author's git bundle with its `sha256`, the
   ref that holds it and the commit; `--repo` and `--sha` are its servers bundle
