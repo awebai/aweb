@@ -5,10 +5,6 @@ from collections.abc import Iterable, Iterator
 from aweb.names import CLASSIC_NAMES
 
 
-class AliasExhaustedError(RuntimeError):
-    pass
-
-
 def extract_name_prefix(alias: str) -> str:
     alias = (alias or "").strip()
     if not alias:

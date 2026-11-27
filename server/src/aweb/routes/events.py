@@ -5,7 +5,10 @@ from __future__ import annotations
 from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 from aweb.messaging.kinds import ContentMode
 from aweb.messaging.mail_attribution import incoming_mail_snapshot_predicate
-from aweb.messaging.participant_succession import MailSuccessionScope, load_mail_succession_scope
+from aweb.messaging.participant_succession import (
+    MailSuccessionScope,
+    load_mail_succession_scope,
+)
 
 import asyncio
 import json
@@ -47,6 +50,7 @@ from aweb.identity_metadata import (
     routable_chat_address,
 )
 from aweb.messaging.chat import get_pending_conversations
+from aweb.messaging.sender_address import stored_sender_address
 from aweb.messaging.room_notices import (
     RoomAuthorityUnavailable,
     RoomAuthorityWindow,
@@ -82,7 +86,9 @@ EVENTS_SNAPSHOT_FAILURE_WINDOW = 30.0  # tolerate bursts; terminate only after >
 EVENTS_SNAPSHOT_MAX_BACKOFF = 5.0  # cap snapshot retry delay
 EVENTS_HEARTBEAT_INTERVAL = 30.0  # seconds between idle SSE heartbeat comments
 CONTROL_SIGNAL_BATCH = 10  # control signals consumed per read; a full batch reads again
-ROOM_AUTHORITY_RETRY_MAX = 5.0  # cap on retrying room notices while authority is unavailable
+ROOM_AUTHORITY_RETRY_MAX = (
+    5.0  # cap on retrying room notices while authority is unavailable
+)
 
 # Snapshot and emission order, and the field each kind's events are keyed by.
 STREAM_KINDS = ("mail", "chat", "control", "app", "room")
@@ -196,7 +202,9 @@ async def _current_actionable_mail(
     aweb_db, *, inbox_dids: list[str], mail_scope: MailSuccessionScope
 ) -> list[dict[str, Any]]:
     """Return unread incoming mail using preloaded, exact thread evidence."""
-    predicate = incoming_mail_snapshot_predicate(inbox_dids=inbox_dids, scope=mail_scope)
+    predicate = incoming_mail_snapshot_predicate(
+        inbox_dids=inbox_dids, scope=mail_scope
+    )
     rows = await aweb_db.fetch_all(
         f"""
         WITH unread AS (
@@ -244,12 +252,12 @@ async def _current_actionable_mail(
             "from_stable_id": sender_map.get((r.get("from_did") or "").strip(), {}).get(
                 "stable_id", ""
             ),
-            "from_address": (
-                r.get("from_address")
-                or sender_map.get((r.get("from_did") or "").strip(), {}).get("address")
-                or r["from_alias"]
-                or ""
-            ),
+            "from_address": stored_sender_address(
+                r.get("from_address"),
+                sender_map.get((r.get("from_did") or "").strip(), {}).get("address")
+                or r["from_alias"],
+            )
+            or "",
             "subject": ""
             if r.get("content_mode") == ContentMode.ENCRYPTED
             else (r["subject"] or ""),
@@ -303,13 +311,17 @@ async def _chat_waiting_state(
     return state
 
 
-async def _chat_waiting_changed(redis, *, viewer_dids: list[str], held: ChatWaitingState) -> bool:
+async def _chat_waiting_changed(
+    redis, *, viewer_dids: list[str], held: ChatWaitingState
+) -> bool:
     if not held:
         return False
     current = await _chat_waiting_state(
         redis,
         viewer_dids=viewer_dids,
-        other_dids={session_id: list(others) for session_id, (others, _, _) in held.items()},
+        other_dids={
+            session_id: list(others) for session_id, (others, _, _) in held.items()
+        },
     )
     return current != held
 
@@ -345,7 +357,11 @@ async def _current_actionable_chat(
             did
             for item in pending_by_session.values()
             for did in list(item.get("participant_dids", []) or [])
-            + ([(item.get("last_from_did") or "").strip()] if item.get("last_from_did") else [])
+            + (
+                [(item.get("last_from_did") or "").strip()]
+                if item.get("last_from_did")
+                else []
+            )
         ],
     )
     state = await _chat_waiting_state(
@@ -353,7 +369,9 @@ async def _current_actionable_chat(
         viewer_dids=participant_dids,
         other_dids={
             session_id: [
-                did for did in item.get("participant_dids", []) if did not in viewer_did_set
+                did
+                for did in item.get("participant_dids", [])
+                if did not in viewer_did_set
             ]
             for session_id, item in pending_by_session.items()
         },
@@ -368,6 +386,16 @@ async def _current_actionable_chat(
         if recipient_waiting:
             continue
         last_activity = item.get("last_activity")
+        from_address = stored_sender_address(
+            item.get("last_from_address"),
+            routable_chat_address(
+                participant_identity_map.get(
+                    (item.get("last_from_did") or "").strip(), {}
+                ),
+                viewer_team_id,
+                item.get("last_from") or "",
+            ),
+        )
         actionable.append(
             {
                 "type": "actionable_chat",
@@ -394,22 +422,14 @@ async def _current_actionable_chat(
                 "from_stable_id": participant_identity_map.get(
                     (item.get("last_from_did") or "").strip(), {}
                 ).get("stable_id", ""),
-                "from_address": item.get("last_from_address")
-                or routable_chat_address(
-                    participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
-                    viewer_team_id,
-                    item.get("last_from") or "",
-                ),
+                "from_address": from_address,
                 "last_from": item.get("last_from") or "",
-                "last_from_address": item.get("last_from_address")
-                or routable_chat_address(
-                    participant_identity_map.get((item.get("last_from_did") or "").strip(), {}),
-                    viewer_team_id,
-                    item.get("last_from") or "",
-                ),
+                "last_from_address": from_address,
                 "last_message": item.get("last_message") or "",
                 "last_activity": (
-                    last_activity.astimezone(timezone.utc).isoformat() if last_activity else ""
+                    last_activity.astimezone(timezone.utc).isoformat()
+                    if last_activity
+                    else ""
                 ),
                 "unread_count": int(item.get("unread_count") or 0),
                 "sender_waiting": sender_waiting,
@@ -419,7 +439,9 @@ async def _current_actionable_chat(
     return actionable
 
 
-def _index_events(events: list[dict[str, Any]], *, key_field: str) -> dict[str, dict[str, Any]]:
+def _index_events(
+    events: list[dict[str, Any]], *, key_field: str
+) -> dict[str, dict[str, Any]]:
     return {str(evt[key_field]): evt for evt in events}
 
 
@@ -435,8 +457,12 @@ def _new_or_changed_events(
         key = str(evt[key_field])
         previous_event = previous.get(key)
         if previous_event is None or {
-            field: value for field, value in previous_event.items() if field not in ignored_fields
-        } != {field: value for field, value in evt.items() if field not in ignored_fields}:
+            field: value
+            for field, value in previous_event.items()
+            if field not in ignored_fields
+        } != {
+            field: value for field, value in evt.items() if field not in ignored_fields
+        }:
             changed.append(evt)
     return changed
 
@@ -512,14 +538,18 @@ def _stream_wake_keys(identity: TeamIdentity, viewer_dids: list[str]) -> list[st
     return keys
 
 
-async def _read_stream_marks(redis, keys: list[str]) -> dict[tuple[str, str], str | None] | None:
+async def _read_stream_marks(
+    redis, keys: list[str]
+) -> dict[tuple[str, str], str | None] | None:
     """The stream's wake counters, or None when Redis cannot answer."""
     if redis is None:
         return None
     try:
         return await read_wake_marks(redis, keys)
     except Exception:
-        logger.warning("Agent wake counters unavailable; reconciling from Postgres", exc_info=True)
+        logger.warning(
+            "Agent wake counters unavailable; reconciling from Postgres", exc_info=True
+        )
         return None
 
 
@@ -607,17 +637,23 @@ async def _sse_agent_events(
                 waiting_state=chat_waiting,
             )
         if "control" in kinds:
-            current["control"] = await _poll_control_signals(aweb_db, team_id=team_id, agent_id=aid)
+            current["control"] = await _poll_control_signals(
+                aweb_db, team_id=team_id, agent_id=aid
+            )
         if "app" in kinds:
             current["app"] = await current_app_events_for_agent(
                 aweb_db, team_id=team_id, agent_id=agent_id
             )
         if "room" in kinds:
             try:
-                current["room"] = await current_room_events(request, db, identity, room_authority)
+                current["room"] = await current_room_events(
+                    request, db, identity, room_authority
+                )
             except RoomAuthorityUnavailable:
                 # Left out: still pending, its bookmark unmoved, retried apart.
-                logger.warning("Room authority unavailable for agent %s; retrying", agent_id)
+                logger.warning(
+                    "Room authority unavailable for agent %s; retrying", agent_id
+                )
         return current
 
     def unfinished(current: dict[str, list[dict[str, Any]]]) -> set[str]:
@@ -640,7 +676,9 @@ async def _sse_agent_events(
             if kind == "mail":
                 emitted.extend(_new_or_changed_mail_events(events, previous[kind]))
             else:
-                emitted.extend(_new_or_changed_events(events, previous[kind], key_field=key_field))
+                emitted.extend(
+                    _new_or_changed_events(events, previous[kind], key_field=key_field)
+                )
             previous[kind] = _index_events(events, key_field=key_field)
         return emitted
 
@@ -648,7 +686,9 @@ async def _sse_agent_events(
         wake_hub, _stream_wake_keys(identity, viewer_dids)
     ) as subscription:
         keys = list(subscription.keys) if subscription is not None else []
-        marks = await _read_stream_marks(redis, keys) if subscription is not None else None
+        marks = (
+            await _read_stream_marks(redis, keys) if subscription is not None else None
+        )
 
         yield ": keepalive\n\n"
         last_heartbeat_at = datetime.now(timezone.utc)
@@ -721,7 +761,9 @@ async def _sse_agent_events(
                 break
 
             if monotonic() - listening_recorded_at >= LISTENING_REFRESH_SECONDS:
-                await record_stream_listening(redis, agent_id, now=datetime.now(timezone.utc))
+                await record_stream_listening(
+                    redis, agent_id, now=datetime.now(timezone.utc)
+                )
                 listening_recorded_at = monotonic()
 
             reason = await guard.reason()
@@ -754,18 +796,24 @@ async def _sse_agent_events(
             if kinds and monotonic() >= retry_at:
                 try:
                     snapshot_marks = (
-                        await _read_stream_marks(redis, keys) if subscription is not None else None
+                        await _read_stream_marks(redis, keys)
+                        if subscription is not None
+                        else None
                     )
                     # A wake for one kind also reads every kind whose counter
                     # moved, so a lost publication is not absorbed unread.
                     kinds |= (
-                        _moved_kinds(marks, snapshot_marks) if snapshot_marks is not None else set()
+                        _moved_kinds(marks, snapshot_marks)
+                        if snapshot_marks is not None
+                        else set()
                     )
                     if monotonic() < room_retry_at:
                         kinds.discard("room")
                     current = await snapshot(kinds)
                 except Exception:
-                    logger.exception("event-stream snapshot error for agent %s", agent_id)
+                    logger.exception(
+                        "event-stream snapshot error for agent %s", agent_id
+                    )
                     now = monotonic()
                     if failure_started_at is None:
                         failure_started_at = now
@@ -785,13 +833,17 @@ async def _sse_agent_events(
                     pending = (pending | kinds) - read | unfinished(current)
                     if "room" in kinds and "room" not in read:
                         room_retry_at = monotonic() + room_retry_delay
-                        room_retry_delay = min(room_retry_delay * 2, ROOM_AUTHORITY_RETRY_MAX)
+                        room_retry_delay = min(
+                            room_retry_delay * 2, ROOM_AUTHORITY_RETRY_MAX
+                        )
                     elif "room" in read:
                         room_retry_delay = EVENTS_SNAPSHOT_RETRY_INITIAL
                     if snapshot_marks is not None:
                         # Advance only the bookmarks of kinds actually read.
                         marks = {
-                            mark: (value if mark[1] in read else (marks or {}).get(mark))
+                            mark: (
+                                value if mark[1] in read else (marks or {}).get(mark)
+                            )
                             for mark, value in snapshot_marks.items()
                         }
                     emitted = changes(current)
@@ -818,7 +870,9 @@ async def _sse_agent_events(
             heartbeat_now = datetime.now(timezone.utc)
             if delivered:
                 last_heartbeat_at = heartbeat_now
-            elif (heartbeat_now - last_heartbeat_at).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
+            elif (
+                heartbeat_now - last_heartbeat_at
+            ).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
                 yield ": keepalive\n\n"
                 last_heartbeat_at = heartbeat_now
 
@@ -880,7 +934,9 @@ async def list_app_event_subscriptions_route(
 ) -> AppEventSubscriptionsResponse:
     team_id, agent_id = await _subscription_read_identity(request, db)
     aweb_db = db.get_manager("aweb")
-    subscriptions = await list_app_event_subscriptions(aweb_db, team_id=team_id, agent_id=agent_id)
+    subscriptions = await list_app_event_subscriptions(
+        aweb_db, team_id=team_id, agent_id=agent_id
+    )
     return AppEventSubscriptionsResponse(
         subscriptions=[_subscription_response(item) for item in subscriptions]
     )
@@ -913,7 +969,11 @@ def _agent_wake_hub(state):
     """The process's wake subscriber; reports once when Redis has none."""
     global _missing_wake_hub_reported
     hub = getattr(state, "agent_wake_hub", None)
-    if hub is None and getattr(state, "redis", None) is not None and not _missing_wake_hub_reported:
+    if (
+        hub is None
+        and getattr(state, "redis", None) is not None
+        and not _missing_wake_hub_reported
+    ):
         _missing_wake_hub_reported = True
         logger.warning(
             "Agent wakes are not started on this app (call aweb.api.start_agent_wakes when "
@@ -940,12 +1000,14 @@ async def event_stream(
         raise HTTPException(status_code=422, detail="Invalid deadline format")
 
     # Cap deadline so clients cannot hold connections open indefinitely.
-    max_deadline = datetime.now(timezone.utc) + timedelta(seconds=STREAM_MAX_DURATION_SECONDS)
+    max_deadline = datetime.now(timezone.utc) + timedelta(
+        seconds=STREAM_MAX_DURATION_SECONDS
+    )
     if deadline_dt > max_deadline:
         deadline_dt = max_deadline
     deadline_dt = clamp_deadline_to_grant(deadline_dt, identity)
 
-    await require_valid_stream_grant(request, db, identity)
+    await require_valid_stream_grant(request, db, identity, use_admitted_member=True)
 
     return StreamingResponse(
         _sse_agent_events(

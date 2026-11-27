@@ -86,7 +86,9 @@ def _miss_records(caplog):
 
 
 @pytest.mark.asyncio
-async def test_suffix_miss_logs_inputs_and_connection_diagnostics(aweb_cloud_db, caplog):
+async def test_suffix_miss_logs_inputs_and_connection_diagnostics(
+    aweb_cloud_db, caplog
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db, TEAM_ID, "acme.com", "backend")
 
@@ -106,7 +108,9 @@ async def test_suffix_miss_logs_inputs_and_connection_diagnostics(aweb_cloud_db,
 
 
 @pytest.mark.asyncio
-async def test_suffix_miss_reports_matches_under_other_teams_and_deleted(aweb_cloud_db, caplog):
+async def test_suffix_miss_reports_matches_under_other_teams_and_deleted(
+    aweb_cloud_db, caplog
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db, TEAM_ID, "acme.com", "backend")
     await _seed_team(aweb_cloud_db.aweb_db, OTHER_TEAM_ID, "acme.com", "frontend")

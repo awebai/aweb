@@ -210,7 +210,7 @@ def main():
                 ),
             }
             for name, service in services.items():
-                service.update(cpus=1, mem_limit="1g", pids_limit=128)
+                service.update(mem_limit="1g", pids_limit=128)
                 if dns and name in ("server", "awid", "cli"):
                     service["dns"] = [dns]
             return dict(

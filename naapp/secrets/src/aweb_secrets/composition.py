@@ -277,7 +277,6 @@ async def _compose(
         audit=audit,
     )
 
-
     async def team_key(team_id):
         return (await runtime.team_cache().get(team_id)).team_did_key
 

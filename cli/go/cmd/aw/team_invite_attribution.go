@@ -29,7 +29,7 @@ func resolveIDExchangeIdentity(wd, home string) (*awconfig.ResolvedIdentity, err
 	if errors.Is(err, os.ErrNotExist) {
 		identity, err = resolveCertificateIdentityAtHome(wd, home)
 		if err == nil && identity.IdentityScope != awid.IdentityModeLocal {
-			return nil, errors.New("global exchange identity is missing identity.yaml")
+			return nil, missingGlobalIdentityFile()
 		}
 	}
 	if err != nil {

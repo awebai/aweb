@@ -14,8 +14,8 @@ from typing import Any
 from aweb.hooks import MutationCallback
 from aweb.application_state import native_application_state
 
-_mutation_callback: contextvars.ContextVar[MutationCallback | None] = contextvars.ContextVar(
-    "aweb_mcp_mutation_callback", default=None
+_mutation_callback: contextvars.ContextVar[MutationCallback | None] = (
+    contextvars.ContextVar("aweb_mcp_mutation_callback", default=None)
 )
 
 

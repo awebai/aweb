@@ -156,7 +156,9 @@ async def verify_team_key_change(
     ``rotate_team_key`` act, newer than ``pinned_at`` (the prior act's
     signing time, or first admission time), signed by the controller DNS
     names for ``domain``."""
-    act = verify_team_key_act(record, domain=domain, name=name, team_did_key=team_did_key)
+    act = verify_team_key_act(
+        record, domain=domain, name=name, team_did_key=team_did_key
+    )
     if pinned_at is not None and act.signed_at <= pinned_at:
         raise TeamKeyActError("not_newer")
     controller = await dns_namespace_controller(domain, resolver)
@@ -209,7 +211,8 @@ class MemoryTeamKeyPins:
 
     async def first_sight(self, team_id: str, team_did_key: str) -> TeamKeyPin:
         return self._pins.setdefault(
-            team_id, TeamKeyPin(team_did_key, None, admitted_at=datetime.now(timezone.utc))
+            team_id,
+            TeamKeyPin(team_did_key, None, admitted_at=datetime.now(timezone.utc)),
         )
 
     async def move(
@@ -360,7 +363,9 @@ async def _move_without_act(
     key a member was verified under is the team's current key on this server.
     The time of the last accepted act is kept: no act moved it."""
     if await pins.move(
-        team_id, expected=pin, new=TeamKeyPin(served, pin.act_at, admitted_at=pin.admitted_at)
+        team_id,
+        expected=pin,
+        new=TeamKeyPin(served, pin.act_at, admitted_at=pin.admitted_at),
     ):
         logger.warning(
             "team_key_pin_moved_without_act team=%s from=%s to=%s reason=%s",

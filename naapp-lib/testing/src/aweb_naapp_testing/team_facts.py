@@ -21,8 +21,12 @@ def _legacy_controller_did_key():
 
 def legacy_team(domain: str, name: str, *, team_did_key: str | None = None) -> Team:
     return Team(
-        team_id=f"{name}:{domain}", domain=domain, name=name, display_name=name,
-        team_did_key=team_did_key or _legacy_controller_did_key(), visibility="public",
+        team_id=f"{name}:{domain}",
+        domain=domain,
+        name=name,
+        display_name=name,
+        team_did_key=team_did_key or _legacy_controller_did_key(),
+        visibility="public",
         created_at="2026-11-13T00:00:00Z",
     )
 
@@ -63,8 +67,12 @@ def legacy_registry(registry=_UNSET):
     if not isinstance(registry, Mock):
         return registry
     fresh = registry.get_team_fresh
-    if (isinstance(fresh, AsyncMock) and fresh.side_effect is None
-            and fresh._mock_return_value is DEFAULT):
+    if (
+        isinstance(fresh, AsyncMock)
+        and fresh.side_effect is None
+        and fresh._mock_return_value is DEFAULT
+    ):
+
         async def read(domain, name):
             return await LegacyTeamFacts.get_team_fresh(registry, domain, name)
 
@@ -74,6 +82,10 @@ def legacy_registry(registry=_UNSET):
 
 def legacy_certificate_status(team_id, certificate_id, *, team_did_key, revoked_at=None):
     """Ordinary status for a test's own certificate catalog."""
-    return {"team_id": team_id, "certificate_id": certificate_id,
-        "team_did_key": team_did_key, "status": "active" if revoked_at is None else "revoked",
-        "revoked_at": revoked_at}
+    return {
+        "team_id": team_id,
+        "certificate_id": certificate_id,
+        "team_did_key": team_did_key,
+        "status": "active" if revoked_at is None else "revoked",
+        "revoked_at": revoked_at,
+    }

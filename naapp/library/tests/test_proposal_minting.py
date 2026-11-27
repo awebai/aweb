@@ -53,7 +53,9 @@ async def _publish_and_import(db) -> None:
     )
     principal = SimpleNamespace(team_id=_TEAM, alias="dev")
     await publish_blueprint(
-        db, principal=principal, payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA}
+        db,
+        principal=principal,
+        payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA},
     )
     await import_to_shelf(
         db,
@@ -87,7 +89,9 @@ def _files(row: dict[str, Any]) -> list[dict[str, str]]:
     return _json(row["files"])
 
 
-def _files_with_changes(base_files: list[dict[str, str]], *, version: str, replacements: dict[str, str]) -> list[dict[str, str]]:
+def _files_with_changes(
+    base_files: list[dict[str, str]], *, version: str, replacements: dict[str, str]
+) -> list[dict[str, str]]:
     by_path = {entry["path"]: dict(entry) for entry in base_files}
     for path, content in replacements.items():
         by_path[path] = _payload_file(path, content)
@@ -319,10 +323,12 @@ async def test_approve_applies_file_asset_to_current_profile_and_mints(migrated_
     base_digests = profile_asset_digests(base_files)
     base_part_baselines = _json(base["part_baselines"])
 
-    new_instructions = next(f["content_utf8"] for f in base_files if f["path"] == "instructions.md") + (
-        "\nRemember to report blockers early.\n"
+    new_instructions = next(
+        f["content_utf8"] for f in base_files if f["path"] == "instructions.md"
+    ) + ("\nRemember to report blockers early.\n")
+    expected_files = _files_with_changes(
+        base_files, version="0.1.1", replacements={"instructions.md": new_instructions}
     )
-    expected_files = _files_with_changes(base_files, version="0.1.1", replacements={"instructions.md": new_instructions})
     expected_profile = parse_profile_payload(expected_files)
 
     proposal = await create_proposal(
@@ -357,12 +363,18 @@ async def test_approve_applies_file_asset_to_current_profile_and_mints(migrated_
     assert latest["digest"] == expected_profile.digest
     assert latest["source_blueprint_ref"] == "aweb.engineering"
     latest_files = _files(latest)
-    assert next(f for f in latest_files if f["path"] == "instructions.md")["content_utf8"] == new_instructions
+    assert (
+        next(f for f in latest_files if f["path"] == "instructions.md")["content_utf8"]
+        == new_instructions
+    )
     # Team mints do not re-anchor blueprint baselines. The current asset digest is
     # recomputed for future proposal stale checks, but part_baselines must remain
     # the adopted blueprint baseline so update-from-source preserves this team edit.
     assert _json(latest["part_baselines"]) == base_part_baselines
-    assert profile_asset_digests(latest_files)["file:instructions.md"] != base_part_baselines["file:instructions.md"]
+    assert (
+        profile_asset_digests(latest_files)["file:instructions.md"]
+        != base_part_baselines["file:instructions.md"]
+    )
 
     shelf = await list_shelf(db, principal=principal)
     coordinator = next(p for p in shelf["profiles"] if p["profile_ref"] == "coordinator")
@@ -382,7 +394,10 @@ async def test_non_overlapping_asset_proposals_do_not_conflict(migrated_db) -> N
     )
     mission_base = shelf["proposal_asset_digests"]["profile.yaml#mission"]
     assert mission_base == base_digests["field:mission"]
-    instructions = next(f["content_utf8"] for f in base_files if f["path"] == "instructions.md") + "\nOne more rule.\n"
+    instructions = (
+        next(f["content_utf8"] for f in base_files if f["path"] == "instructions.md")
+        + "\nOne more rule.\n"
+    )
     mission = "Coordinate focused delivery and keep everyone unblocked."
 
     first = await create_proposal(
@@ -407,17 +422,26 @@ async def test_non_overlapping_asset_proposals_do_not_conflict(migrated_db) -> N
             target="profile",
             profile_ref="coordinator",
             content=_changeset(
-                {"path": "profile.yaml#mission", "content": mission, "base_asset_digest": mission_base}
+                {
+                    "path": "profile.yaml#mission",
+                    "content": mission,
+                    "base_asset_digest": mission_base,
+                }
             ),
         ),
     )
 
     await approve_proposal(db, principal=principal, proposal_id=first["proposal_id"])
-    approved_second = await approve_proposal(db, principal=principal, proposal_id=second["proposal_id"])
+    approved_second = await approve_proposal(
+        db, principal=principal, proposal_id=second["proposal_id"]
+    )
     assert approved_second["minted"]["version"] == "0.1.2"
     latest = await _latest_row(db)
     latest_files = _files(latest)
-    assert next(f for f in latest_files if f["path"] == "instructions.md")["content_utf8"] == instructions
+    assert (
+        next(f for f in latest_files if f["path"] == "instructions.md")["content_utf8"]
+        == instructions
+    )
     assert parse_profile_payload(latest_files).mission == mission
 
 
@@ -428,7 +452,9 @@ async def test_approve_rechecks_stale_asset_after_later_shelf_version(migrated_d
     base = await _latest_row(db)
     base_files = _files(base)
     base_digests = profile_asset_digests(base_files)
-    original_instructions = next(f["content_utf8"] for f in base_files if f["path"] == "instructions.md")
+    original_instructions = next(
+        f["content_utf8"] for f in base_files if f["path"] == "instructions.md"
+    )
 
     stale = await create_proposal(
         db,
@@ -470,7 +496,10 @@ async def test_create_new_skill_changeset_is_atomic(migrated_db) -> None:
     base = await _latest_row(db)
     base_files = _files(base)
     base_digests = profile_asset_digests(base_files)
-    profile_doc = yaml.safe_load(next(f["content_utf8"] for f in base_files if f["path"] == "profile.yaml")) or {}
+    profile_doc = (
+        yaml.safe_load(next(f["content_utf8"] for f in base_files if f["path"] == "profile.yaml"))
+        or {}
+    )
     skills = list(profile_doc["skills"])
     skills.append({"path": "skills/debug/SKILL.md", "kind": "skill"})
     skill_content = "---\nname: debug\ndescription: Debug a failure.\n---\n\n# Debug\n"
@@ -483,15 +512,25 @@ async def test_create_new_skill_changeset_is_atomic(migrated_db) -> None:
             profile_ref="coordinator",
             content=_changeset(
                 {"path": "skills/debug/SKILL.md", "content_utf8": skill_content},
-                {"path": "profile.yaml#skills", "content": skills, "base_asset_digest": base_digests["field:skills"]},
+                {
+                    "path": "profile.yaml#skills",
+                    "content": skills,
+                    "base_asset_digest": base_digests["field:skills"],
+                },
             ),
         ),
     )
     approved = await approve_proposal(db, principal=principal, proposal_id=proposal["proposal_id"])
     assert approved["minted"]["version"] == "0.1.1"
     latest_files = _files(await _latest_row(db))
-    assert next(f for f in latest_files if f["path"] == "skills/debug/SKILL.md")["content_utf8"] == skill_content
-    minted_doc = yaml.safe_load(next(f["content_utf8"] for f in latest_files if f["path"] == "profile.yaml")) or {}
+    assert (
+        next(f for f in latest_files if f["path"] == "skills/debug/SKILL.md")["content_utf8"]
+        == skill_content
+    )
+    minted_doc = (
+        yaml.safe_load(next(f["content_utf8"] for f in latest_files if f["path"] == "profile.yaml"))
+        or {}
+    )
     assert {entry["path"] for entry in minted_doc["skills"]} >= {"skills/debug/SKILL.md"}
 
 
@@ -512,11 +551,16 @@ async def test_create_first_skill_when_profile_yaml_skills_field_absent(migrated
             minimal_files.append(_payload_file("profile.yaml", content))
         else:
             minimal_files.append(entry)
-    await create_shelf_profile(db, principal=principal, files=sorted(minimal_files, key=lambda item: item["path"]), tags=[])
+    await create_shelf_profile(
+        db, principal=principal, files=sorted(minimal_files, key=lambda item: item["path"]), tags=[]
+    )
 
     base = await _latest_row(db, profile_ref="minimal")
     base_files = _files(base)
-    base_doc = yaml.safe_load(next(f["content_utf8"] for f in base_files if f["path"] == "profile.yaml")) or {}
+    base_doc = (
+        yaml.safe_load(next(f["content_utf8"] for f in base_files if f["path"] == "profile.yaml"))
+        or {}
+    )
     assert "skills" not in base_doc
     # profile_asset_digests still emits the null field digest for update-from-source,
     # but proposal create semantics must treat the absent field as non-existent.
@@ -531,16 +575,25 @@ async def test_create_first_skill_when_profile_yaml_skills_field_absent(migrated
             profile_ref="minimal",
             content=_changeset(
                 {"path": "skills/debug/SKILL.md", "content_utf8": skill_content},
-                {"path": "profile.yaml#skills", "content": [{"path": "skills/debug/SKILL.md", "kind": "skill"}]},
+                {
+                    "path": "profile.yaml#skills",
+                    "content": [{"path": "skills/debug/SKILL.md", "kind": "skill"}],
+                },
             ),
         ),
     )
     approved = await approve_proposal(db, principal=principal, proposal_id=proposal["proposal_id"])
     assert approved["minted"]["version"] == "0.1.1"
     latest_files = _files(await _latest_row(db, profile_ref="minimal"))
-    minted_doc = yaml.safe_load(next(f["content_utf8"] for f in latest_files if f["path"] == "profile.yaml")) or {}
+    minted_doc = (
+        yaml.safe_load(next(f["content_utf8"] for f in latest_files if f["path"] == "profile.yaml"))
+        or {}
+    )
     assert minted_doc["skills"] == [{"path": "skills/debug/SKILL.md", "kind": "skill"}]
-    assert next(f for f in latest_files if f["path"] == "skills/debug/SKILL.md")["content_utf8"] == skill_content
+    assert (
+        next(f for f in latest_files if f["path"] == "skills/debug/SKILL.md")["content_utf8"]
+        == skill_content
+    )
 
 
 async def test_delete_asset_marker_removes_file_and_field_entry(migrated_db) -> None:
@@ -550,8 +603,15 @@ async def test_delete_asset_marker_removes_file_and_field_entry(migrated_db) -> 
     base = await _latest_row(db)
     base_files = _files(base)
     base_digests = profile_asset_digests(base_files)
-    profile_doc = yaml.safe_load(next(f["content_utf8"] for f in base_files if f["path"] == "profile.yaml")) or {}
-    artifacts = [entry for entry in profile_doc["artifacts"] if entry["path"] != "artifacts/status-template.md"]
+    profile_doc = (
+        yaml.safe_load(next(f["content_utf8"] for f in base_files if f["path"] == "profile.yaml"))
+        or {}
+    )
+    artifacts = [
+        entry
+        for entry in profile_doc["artifacts"]
+        if entry["path"] != "artifacts/status-template.md"
+    ]
 
     proposal = await create_proposal(
         db,
@@ -577,5 +637,8 @@ async def test_delete_asset_marker_removes_file_and_field_entry(migrated_db) -> 
     assert approved["minted"]["version"] == "0.1.1"
     latest_files = _files(await _latest_row(db))
     assert "artifacts/status-template.md" not in {entry["path"] for entry in latest_files}
-    minted_doc = yaml.safe_load(next(f["content_utf8"] for f in latest_files if f["path"] == "profile.yaml")) or {}
+    minted_doc = (
+        yaml.safe_load(next(f["content_utf8"] for f in latest_files if f["path"] == "profile.yaml"))
+        or {}
+    )
     assert minted_doc["artifacts"] == []

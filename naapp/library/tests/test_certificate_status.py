@@ -1,4 +1,5 @@
 """Real AWID routes/PostgreSQL and app authentication, with HTTP-boundary fault controls."""
+
 from __future__ import annotations
 
 import base64
@@ -34,22 +35,36 @@ def signed_headers():
     member_did = did_from_public_key(bytes(member_key.verify_key))
     timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     cert = {
-        "version": 1, "certificate_id": "target", "team_id": TEAM_ID,
-        "team_did_key": team_did, "member_did_key": member_did,
-        "alias": "target", "issued_at": timestamp,
+        "version": 1,
+        "certificate_id": "target",
+        "team_id": TEAM_ID,
+        "team_did_key": team_did,
+        "member_did_key": member_did,
+        "alias": "target",
+        "issued_at": timestamp,
     }
     cert["signature"] = sign_message(bytes(team_key), canonical_json_bytes(cert))
-    payload = canonical_json_bytes({
-        "v": 2, "aud": ORIGIN, "method": "GET", "path": "/protected",
-        "team_id": TEAM_ID, "timestamp": timestamp,
-        "body_sha256": hashlib.sha256(b"").hexdigest(),
-    })
-    return team_did, member_did, {
-        "Authorization": f"DIDKey {member_did} {sign_message(bytes(member_key), payload)}",
-        "X-AWEB-Timestamp": timestamp,
-        "X-AWID-Team-Certificate": base64.b64encode(json.dumps(cert).encode()).decode(),
-        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode(),
-    }
+    payload = canonical_json_bytes(
+        {
+            "v": 2,
+            "aud": ORIGIN,
+            "method": "GET",
+            "path": "/protected",
+            "team_id": TEAM_ID,
+            "timestamp": timestamp,
+            "body_sha256": hashlib.sha256(b"").hexdigest(),
+        }
+    )
+    return (
+        team_did,
+        member_did,
+        {
+            "Authorization": f"DIDKey {member_did} {sign_message(bytes(member_key), payload)}",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWID-Team-Certificate": base64.b64encode(json.dumps(cert).encode()).decode(),
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode(),
+        },
+    )
 
 
 @pytest_asyncio.fixture
@@ -68,16 +83,20 @@ async def real_registry(test_db_factory, monkeypatch, request):
     team = await db.fetch_one(
         "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) "
         "VALUES ('example.com', 'backend', $1, $2) RETURNING team_uuid",
-        team_did, getattr(request, "param", "private"),
+        team_did,
+        getattr(request, "param", "private"),
     )
     await db.execute(
         "INSERT INTO {{tables.team_certificates}} "
         "(team_uuid, certificate_id, member_did_key, alias, issued_at) "
-        "VALUES ($1, 'target', $2, 'target', now())", team["team_uuid"], member_did,
+        "VALUES ($1, 'target', $2, 'target', now())",
+        team["team_uuid"],
+        member_did,
     )
     app_db = await test_db_factory.create_db(suffix="status_app")
     await AsyncMigrationManager(
-        app_db, migrations_path=str(Path(auth.__file__).parent / "migrations"),
+        app_db,
+        migrations_path=str(Path(auth.__file__).parent / "migrations"),
         module_name="library",
     ).apply_pending_migrations()
     calls, faults = [], {}
@@ -99,17 +118,25 @@ async def real_registry(test_db_factory, monkeypatch, request):
         elif fault == "payload":
             response._content = json.dumps(faults["payload"]).encode()
 
-    monkeypatch.setattr(auth.httpx, "AsyncClient", lambda **kw: client_type(
-        transport=httpx.ASGITransport(app=registry),
-        event_hooks={"request": [record], "response": [inject_fault]}, **kw,
-    ))
+    monkeypatch.setattr(
+        auth.httpx,
+        "AsyncClient",
+        lambda **kw: client_type(
+            transport=httpx.ASGITransport(app=registry),
+            event_hooks={"request": [record], "response": [inject_fault]},
+            **kw,
+        ),
+    )
     cache = auth.AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=60)
     app = FastAPI()
 
     @app.get("/protected")
     async def protected(request: Request):
         principal = await auth.authenticate_request(
-            request, settings=Settings(public_origin=ORIGIN), team_cache=cache, db=app_db,
+            request,
+            settings=Settings(public_origin=ORIGIN),
+            team_cache=cache,
+            db=app_db,
         )
         return {"certificate_id": principal.certificate_id}
 
@@ -172,14 +199,31 @@ async def test_failed_refresh_has_no_stale_fallback(real_registry, fault):
     assert (await client.get("/protected", headers=headers)).status_code == 200
 
 
-@pytest.mark.parametrize("change", ["nonobject", "missing_key", "invalid_key", "wrong_team",
-                                  "missing_status", "bad_status", "missing_revoked_at",
-                                  "active_with_revocation", "revoked_without_time", "bad_time", "extra"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "nonobject",
+        "missing_key",
+        "invalid_key",
+        "wrong_team",
+        "missing_status",
+        "bad_status",
+        "missing_revoked_at",
+        "active_with_revocation",
+        "revoked_without_time",
+        "bad_time",
+        "extra",
+    ],
+)
 async def test_malformed_status_is_not_cached(real_registry, change):
     client, headers, cache, db, calls, faults = real_registry
     row = await db.fetch_one("SELECT team_did_key FROM {{tables.teams}}")
-    payload = {"team_id": TEAM_ID, "team_did_key": row["team_did_key"],
-               "status": "active", "revoked_at": None}
+    payload = {
+        "team_id": TEAM_ID,
+        "team_did_key": row["team_did_key"],
+        "status": "active",
+        "revoked_at": None,
+    }
     if change == "nonobject":
         payload = []
     elif change.startswith("missing_"):

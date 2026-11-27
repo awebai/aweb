@@ -36,7 +36,13 @@ class RecipientSelector(StrEnum):
 
 
 async def _send(
-    env, *, sender, recipient, agent_id, kind: MessageTransport, selector: RecipientSelector
+    env,
+    *,
+    sender,
+    recipient,
+    agent_id,
+    kind: MessageTransport,
+    selector: RecipientSelector,
 ):
     if kind is MessageTransport.MAIL:
         target = {
@@ -57,7 +63,9 @@ async def _send(
                 "to_aliases": [TEAM.split(":", 1)[0] + "~" + recipient[2]]
             },
             RecipientSelector.DID: {"to_dids": [recipient[1]]},
-            RecipientSelector.ADDRESS: {"to_addresses": [f"example.test/{recipient[2]}"]},
+            RecipientSelector.ADDRESS: {
+                "to_addresses": [f"example.test/{recipient[2]}"]
+            },
         }[selector]
         path = "/v1/chat/sessions"
         payload = {**target, "message": "membership test"}
@@ -82,7 +90,9 @@ async def _send(
         (MessageTransport.CHAT, RecipientSelector.ADDRESS),
     ],
 )
-async def test_every_local_selector_requires_current_membership(pinning, kind, selector):
+async def test_every_local_selector_requires_current_membership(
+    pinning, kind, selector
+):
     env = pinning
     sender, recipient = _new_member("selectsender"), _new_member("selectrecipient")
     for member in (sender, recipient):
@@ -90,16 +100,28 @@ async def test_every_local_selector_requires_current_membership(pinning, kind, s
         assert (await _connect(env, member, cert)).status_code == 200
     recipient_id = str((await _row(env, recipient))["agent_id"])
     before = await _send(
-        env, sender=sender, recipient=recipient, agent_id=recipient_id, kind=kind, selector=selector
+        env,
+        sender=sender,
+        recipient=recipient,
+        agent_id=recipient_id,
+        kind=kind,
+        selector=selector,
     )
     assert before.status_code == 200, before.text
 
     next_sk, next_did = await _change_key(env)
     assert (
-        await _connect(env, sender, _certificate(next_sk, next_did, sender, "sender-after"))
+        await _connect(
+            env, sender, _certificate(next_sk, next_did, sender, "sender-after")
+        )
     ).status_code == 200
     refused = await _send(
-        env, sender=sender, recipient=recipient, agent_id=recipient_id, kind=kind, selector=selector
+        env,
+        sender=sender,
+        recipient=recipient,
+        agent_id=recipient_id,
+        kind=kind,
+        selector=selector,
     )
     assert refused.status_code == 404, refused.text
     assert (
@@ -129,11 +151,18 @@ async def test_every_local_selector_requires_current_membership(pinning, kind, s
 
     assert (
         await _connect(
-            env, recipient, _certificate(next_sk, next_did, recipient, "recipient-after")
+            env,
+            recipient,
+            _certificate(next_sk, next_did, recipient, "recipient-after"),
         )
     ).status_code == 200
     after = await _send(
-        env, sender=sender, recipient=recipient, agent_id=recipient_id, kind=kind, selector=selector
+        env,
+        sender=sender,
+        recipient=recipient,
+        agent_id=recipient_id,
+        kind=kind,
+        selector=selector,
     )
     assert after.status_code == 200, after.text
 
@@ -159,7 +188,9 @@ async def test_trusted_proxy_does_not_restore_superseded_actor(pinning):
     env = pinning
     member = _new_member("proxyactor")
     assert (
-        await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "proxy-before"))
+        await _connect(
+            env, member, _certificate(env.team_sk, env.team_did, member, "proxy-before")
+        )
     ).status_code == 200
     actor_id = str((await _row(env, member))["agent_id"])
     headers = _proxy_headers(actor_id)
@@ -176,7 +207,9 @@ async def test_trusted_proxy_does_not_restore_superseded_actor(pinning):
     )
 
     assert (
-        await _connect(env, member, _certificate(next_sk, next_did, member, "proxy-after"))
+        await _connect(
+            env, member, _certificate(next_sk, next_did, member, "proxy-after")
+        )
     ).status_code == 200
     after = await env.client.get(path, headers=headers)
     assert after.status_code == 200, after.text
@@ -200,7 +233,10 @@ async def test_room_rechecks_current_membership_after_request_authentication(pin
             "type": "http",
             "method": "GET",
             "path": "/v1/room",
-            "headers": [(name.lower().encode(), value.encode()) for name, value in headers.items()],
+            "headers": [
+                (name.lower().encode(), value.encode())
+                for name, value in headers.items()
+            ],
             "app": env.app,
         }
     )
@@ -213,14 +249,18 @@ async def test_room_rechecks_current_membership_after_request_authentication(pin
         await room_metadata(env.infra, actor)
     assert refused.value.detail == "Room requires current team membership"
     assert (
-        await _connect(env, member, _certificate(next_sk, next_did, member, "room-after"))
+        await _connect(
+            env, member, _certificate(next_sk, next_did, member, "room-after")
+        )
     ).status_code == 200
     after = await room_metadata(env.infra, actor)
     assert after["room_id"] == before["room_id"]
 
 
 @pytest.mark.asyncio
-async def test_public_native_actor_lock_requires_current_member_under_real_rotation(pinning):
+async def test_public_native_actor_lock_requires_current_member_under_real_rotation(
+    pinning,
+):
     from aweb.human_channels.authority import NativeMessagingSubject, lock_native_actors
     from aweb.human_channels.contract import ContractError
 
@@ -231,11 +271,15 @@ async def test_public_native_actor_lock_requires_current_member_under_real_rotat
     # The public SDK receives exact actor facts produced by real admission;
     # no host authority hook or authenticated context is substituted here.
     member_row = await _row(env, member)
-    subject = NativeMessagingSubject(member[1], member[1], str(member_row["agent_id"]), TEAM)
+    subject = NativeMessagingSubject(
+        member[1], member[1], str(member_row["agent_id"]), TEAM
+    )
 
     async def read_locked():
         async with env.db.transaction() as transaction:
-            return await lock_native_actors(env.infra, transaction.connection, (subject,))
+            return await lock_native_actors(
+                env.infra, transaction.connection, (subject,)
+            )
 
     assert await read_locked() == (subject,)
     next_sk, next_did = await _change_key(env)
@@ -247,6 +291,8 @@ async def test_public_native_actor_lock_requires_current_member_under_real_rotat
         "Reconnect with a certificate issued under the team's current key."
     )
     assert (
-        await _connect(env, member, _certificate(next_sk, next_did, member, "native-after"))
+        await _connect(
+            env, member, _certificate(next_sk, next_did, member, "native-after")
+        )
     ).status_code == 200
     assert await read_locked() == (subject,)

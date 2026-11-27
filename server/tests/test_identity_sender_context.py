@@ -108,7 +108,9 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
         # signatures, address writes and native admission remain production.
         async def exact_namespace_authority(domain: str) -> DomainAuthority:
             assert domain == "example.test"
-            return DomainAuthority(env.namespace_did, registry_origin, "_awid.example.test")
+            return DomainAuthority(
+                env.namespace_did, registry_origin, "_awid.example.test"
+            )
 
         env.registry_app.dependency_overrides[get_domain_verifier] = lambda: (
             exact_namespace_authority
@@ -131,7 +133,10 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
         )
         selected_address = f"{selected.domain}/{selected.name}"
         addresses = await registry.list_did_addresses(stable)
-        assert f"{addresses[0].domain}/{addresses[0].name}" == f"{earlier.domain}/{earlier.name}"
+        assert (
+            f"{addresses[0].domain}/{addresses[0].name}"
+            == f"{earlier.domain}/{earlier.name}"
+        )
         certificate = _encode_certificate(
             _make_certificate(
                 env.team_sk,

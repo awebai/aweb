@@ -1,4 +1,5 @@
 """Pure ID-certificate codecs consume the single frozen root vector file."""
+
 from __future__ import annotations
 
 import base64
@@ -20,7 +21,12 @@ from awid.id_certificates import (
 )
 
 VECTORS = json.loads(
-    (Path(__file__).resolve().parents[2] / "docs" / "vectors" / "id-certificates-v1.json").read_text()
+    (
+        Path(__file__).resolve().parents[2]
+        / "docs"
+        / "vectors"
+        / "id-certificates-v1.json"
+    ).read_text()
 )
 
 
@@ -37,7 +43,9 @@ def test_chain_header_round_trip_is_the_frozen_canonical_header():
     assert decode_id_chain_header(case["header"]) == case["bundle"]
 
 
-@pytest.mark.parametrize("case", VECTORS["raw_wire_refusals"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case", VECTORS["raw_wire_refusals"], ids=lambda case: case["name"]
+)
 def test_raw_header_refusals(case):
     if "header" in case:
         header = case["header"]
@@ -87,29 +95,46 @@ def test_canonical_utf8_preserves_literal_escape_text():
     )
 
 
-@pytest.mark.parametrize("case", VECTORS["ed25519_verification"]["cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case", VECTORS["ed25519_verification"]["cases"], ids=lambda case: case["name"]
+)
 def test_ed25519_profile_probes_through_certificate_verification(case):
     from awid.did import did_from_public_key
 
     signed = copy.deepcopy(VECTORS["certificates"]["alice"]["signed"])
-    assert id_certificate_signing_bytes(signed["certificate"]).hex() == case["message_hex"]
-    signed["certificate"]["issuer_key"] = did_from_public_key(bytes.fromhex(case["public_key_hex"]))
-    signed["signature"] = base64.urlsafe_b64encode(bytes.fromhex(case["signature_hex"])).rstrip(b"=").decode()
+    assert (
+        id_certificate_signing_bytes(signed["certificate"]).hex() == case["message_hex"]
+    )
+    signed["certificate"]["issuer_key"] = did_from_public_key(
+        bytes.fromhex(case["public_key_hex"])
+    )
+    signed["signature"] = (
+        base64.urlsafe_b64encode(bytes.fromhex(case["signature_hex"]))
+        .rstrip(b"=")
+        .decode()
+    )
     if case["expected"]["accepted"]:
         verify_id_certificate(signed, issuer_key=signed["certificate"]["issuer_key"])
     else:
         with pytest.raises(IDCertificateError) as caught:
-            verify_id_certificate(signed, issuer_key=signed["certificate"]["issuer_key"])
+            verify_id_certificate(
+                signed, issuer_key=signed["certificate"]["issuer_key"]
+            )
         assert caught.value.code == case["expected"]["reason"]
 
 
-@pytest.mark.parametrize("case", VECTORS["ed25519_verification"]["cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case", VECTORS["ed25519_verification"]["cases"], ids=lambda case: case["name"]
+)
 def test_public_raw_verifier_uses_the_frozen_strict_profile(case):
     from awid.did import did_from_public_key
 
     did_key = did_from_public_key(bytes.fromhex(case["public_key_hex"]))
     assert strict_did_key(did_key) is (case["expected"]["reason"] != "invalid_shape")
-    message, signature = bytes.fromhex(case["message_hex"]), bytes.fromhex(case["signature_hex"])
+    message, signature = (
+        bytes.fromhex(case["message_hex"]),
+        bytes.fromhex(case["signature_hex"]),
+    )
     if case["expected"]["accepted"]:
         assert verify_ed25519(did_key, message, signature) is None
     else:
@@ -125,7 +150,9 @@ def test_public_raw_verifier_refuses_non_signature_bytes(signature):
     assert caught.value.code == "invalid_signature"
 
 
-@pytest.mark.parametrize("value", [None, "", VECTORS["keys"]["alice"]["did_aw"], "did:key:zbad"])
+@pytest.mark.parametrize(
+    "value", [None, "", VECTORS["keys"]["alice"]["did_aw"], "did:key:zbad"]
+)
 def test_public_key_predicate_does_not_accept_non_keys(value):
     assert strict_did_key(value) is False
 
@@ -139,7 +166,11 @@ def test_public_raw_verifier_requires_exact_message_bytes():
 @pytest.mark.parametrize("name", ["maximum-depth-eight", "depth-nine-refuses"])
 def test_codec_depth_limit_on_genuinely_signed_chains(name):
     case = next(case for case in VECTORS["verification_cases"] if case["name"] == name)
-    bundle = {"v": 1, "type": "aweb.id-chain", "certificates": [VECTORS["certificates"][n]["signed"] for n in case["chain"]]}
+    bundle = {
+        "v": 1,
+        "type": "aweb.id-chain",
+        "certificates": [VECTORS["certificates"][n]["signed"] for n in case["chain"]],
+    }
     raw = json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()
     assert len(raw) < 6144  # Exercises the depth limit, not the byte limit.
     header = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
@@ -147,7 +178,10 @@ def test_codec_depth_limit_on_genuinely_signed_chains(name):
         assert decode_id_chain_header(header) == bundle
         assert encode_id_chain_header(bundle) == header
     else:
-        for operation in [lambda: decode_id_chain_header(header), lambda: encode_id_chain_header(bundle)]:
+        for operation in [
+            lambda: decode_id_chain_header(header),
+            lambda: encode_id_chain_header(bundle),
+        ]:
             with pytest.raises(IDCertificateError) as caught:
                 operation()
             assert caught.value.code == "depth_exceeded"
@@ -160,7 +194,13 @@ def test_claimed_issuer_cannot_differ_from_the_independently_selected_signer():
     # The signature is valid under the supplied Bob key, but the certificate
     # still selects root. Crypto alone must not silently ignore that selector.
     signer = SigningKey(bytes.fromhex(VECTORS["keys"]["bob"]["seed_hex"]))
-    signed["signature"] = base64.urlsafe_b64encode(signer.sign(id_certificate_signing_bytes(signed["certificate"])).signature).rstrip(b"=").decode()
+    signed["signature"] = (
+        base64.urlsafe_b64encode(
+            signer.sign(id_certificate_signing_bytes(signed["certificate"])).signature
+        )
+        .rstrip(b"=")
+        .decode()
+    )
     with pytest.raises(IDCertificateError) as caught:
         verify_id_certificate(signed, issuer_key=VECTORS["keys"]["bob"]["did_key"])
     assert caught.value.code == "invalid_signature"

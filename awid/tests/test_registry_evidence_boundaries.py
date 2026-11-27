@@ -117,10 +117,16 @@ def peer(peer_factory):
         b'{"revocations":[],"has_more":true,"next_cursor":"   "}',
     ],
 )
-async def test_malformed_revocations_never_become_cached_absence(peer, wire, client_type):
+async def test_malformed_revocations_never_become_cached_absence(
+    peer, wire, client_type
+):
     redis = FakeRedis() if client_type is CachedRegistryClient else None
     peer.response = wire
-    client = client_type(peer.origin, redis) if redis is not None else client_type(peer.origin)
+    client = (
+        client_type(peer.origin, redis)
+        if redis is not None
+        else client_type(peer.origin)
+    )
     try:
         with pytest.raises(RegistryError) as refused:
             await client.get_team_revocations(DOMAIN, TEAM)
@@ -131,7 +137,9 @@ async def test_malformed_revocations_never_become_cached_absence(peer, wire, cli
         )
         if redis is not None:
             assert redis.values == {}
-        peer.response = b'{"revocations":[{"certificate_id":"revoked"}],"has_more":false}'
+        peer.response = (
+            b'{"revocations":[{"certificate_id":"revoked"}],"has_more":false}'
+        )
         assert await client.get_team_revocations(DOMAIN, TEAM) == {"revoked"}
         assert len(peer.requests) == 2
     finally:
@@ -153,7 +161,11 @@ async def test_explicit_empty_revocations_remain_a_cacheable_complete_answer(
 ):
     peer.response = wire
     redis = FakeRedis() if client_type is CachedRegistryClient else None
-    client = client_type(peer.origin, redis) if redis is not None else client_type(peer.origin)
+    client = (
+        client_type(peer.origin, redis)
+        if redis is not None
+        else client_type(peer.origin)
+    )
     try:
         assert await client.get_team_revocations(DOMAIN, TEAM) == set()
         if redis is not None:
@@ -189,13 +201,17 @@ def prepared_revoke(*, origin: str) -> dict:
         "certificate_id": certificate_id,
         "controller_did": did_from_public_key(public),
         "signing": signed,
-        "signature": base64.b64decode(encoded_signature + "=" * (-len(encoded_signature) % 4)),
+        "signature": base64.b64decode(
+            encoded_signature + "=" * (-len(encoded_signature) % 4)
+        ),
     }
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [200, 403, 503])
-async def test_prepared_revoke_reaches_http_once_despite_redis_invalidation_failure(peer, status):
+async def test_prepared_revoke_reaches_http_once_despite_redis_invalidation_failure(
+    peer, status
+):
     peer.response = b'{"detail":"registry refused"}'
     peer.status = status
     client = CachedRegistryClient(peer.origin, UnavailableInvalidationRedis())
@@ -205,7 +221,9 @@ async def test_prepared_revoke_reaches_http_once_despite_redis_invalidation_fail
             await client.revoke_team_certificate_with_proof(DOMAIN, TEAM, **selected)
         else:
             with pytest.raises(RegistryError) as refused:
-                await client.revoke_team_certificate_with_proof(DOMAIN, TEAM, **selected)
+                await client.revoke_team_certificate_with_proof(
+                    DOMAIN, TEAM, **selected
+                )
             assert refused.value.status_code == status
         assert peer.requests == [
             (

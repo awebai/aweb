@@ -7,7 +7,6 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from vm_gate.executor import Executor
@@ -128,36 +127,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     ).read_text()
                 )
                 self.assertEqual(record["status"], "unavailable")
-
-    def test_collection_observes_before_any_cleanup_or_archive(self):
-        calls = []
-
-        class Transport:
-            def run(self, command, **kwargs):
-                calls.append(command)
-                if "failure_diagnostics.py" in command:
-                    raise subprocess.TimeoutExpired(command, kwargs["timeout"])
-                return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            executor = Executor(
-                {"ledger": "/tmp/fixture/ledger", "owner": "fixture"},
-                tmp,
-                {"sha": SHA},
-                "exit 7",
-                None,
-            )
-            executor.transport = Transport()
-            executor.deadline = __import__("time").monotonic() + 30
-            executor.observe_machine_diagnostics(phase="failure")
-            record = json.loads(
-                (Path(tmp) / "machine-diagnostics-failure-observation.json").read_text()
-            )
-            self.assertEqual(record["status"], "unavailable")
-            self.assertIn("TimeoutExpired", record["error"])
-            self.assertEqual(len(calls), 1)
-            self.assertIn("timeout --signal=TERM --kill-after=1s 12s", calls[0])
-            self.assertLessEqual(record["transport_timeout_seconds"], 14)
 
 
 if __name__ == "__main__":

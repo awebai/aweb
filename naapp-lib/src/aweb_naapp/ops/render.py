@@ -413,11 +413,21 @@ def deploy(
     if deploy_commit(created) != commit:
         raise OpsError("Render created a deploy for the wrong commit")
     finished = wait_for_deploy(
-        client, config, deploy_id, commit,
-        timeout_seconds=timeout_seconds, interval_seconds=interval_seconds,
+        client,
+        config,
+        deploy_id,
+        commit,
+        timeout_seconds=timeout_seconds,
+        interval_seconds=interval_seconds,
     )
-    require_deploy(current_live(client.deploys(config.service_id)), deploy_id=deploy_id, commit=commit)
-    return {"deploy": safe_deploy(finished), "rollback": safe_deploy(live), "health": check_health(config)}
+    require_deploy(
+        current_live(client.deploys(config.service_id)), deploy_id=deploy_id, commit=commit
+    )
+    return {
+        "deploy": safe_deploy(finished),
+        "rollback": safe_deploy(live),
+        "health": check_health(config),
+    }
 
 
 def wait(
@@ -433,19 +443,27 @@ def wait(
     require_commit(commit)
     validate_service(client.service(config.service_id), config)
     finished = wait_for_deploy(
-        client, config, deploy_id, commit,
-        timeout_seconds=timeout_seconds, interval_seconds=interval_seconds,
+        client,
+        config,
+        deploy_id,
+        commit,
+        timeout_seconds=timeout_seconds,
+        interval_seconds=interval_seconds,
     )
     return {"deploy": safe_deploy(finished)}
 
 
-def verify(client: RenderClient, config: ProductionConfig, *, deploy_id: str, commit: str) -> dict[str, Any]:
+def verify(
+    client: RenderClient, config: ProductionConfig, *, deploy_id: str, commit: str
+) -> dict[str, Any]:
     require_deploy_id(deploy_id)
     require_commit(commit)
     validate_service(client.service(config.service_id), config)
     artifact = client.deploy_by_id(config.service_id, deploy_id)
     require_deploy(artifact, deploy_id=deploy_id, commit=commit)
-    require_deploy(current_live(client.deploys(config.service_id)), deploy_id=deploy_id, commit=commit)
+    require_deploy(
+        current_live(client.deploys(config.service_id)), deploy_id=deploy_id, commit=commit
+    )
     return {"deploy": safe_deploy(artifact), "health": check_health(config)}
 
 
@@ -478,10 +496,16 @@ def rollback(
     if deploy_commit(created) != rollback_commit:
         raise OpsError("Render created a rollback for the wrong commit")
     finished = wait_for_deploy(
-        client, config, created_id, rollback_commit,
-        timeout_seconds=timeout_seconds, interval_seconds=interval_seconds,
+        client,
+        config,
+        created_id,
+        rollback_commit,
+        timeout_seconds=timeout_seconds,
+        interval_seconds=interval_seconds,
     )
     require_deploy(
-        current_live(client.deploys(config.service_id)), deploy_id=created_id, commit=rollback_commit
+        current_live(client.deploys(config.service_id)),
+        deploy_id=created_id,
+        commit=rollback_commit,
     )
     return {"rollback_deploy": safe_deploy(finished), "health": check_health(config)}

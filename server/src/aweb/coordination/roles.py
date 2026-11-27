@@ -7,9 +7,7 @@ import re
 ROLE_MAX_LENGTH = 50
 ROLE_MAX_WORDS = 2
 ROLE_WORD_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
-ROLE_ERROR_MESSAGE = (
-    "Invalid role: use 1-2 words (letters/numbers) with hyphens/underscores allowed; max 50 chars"
-)
+ROLE_ERROR_MESSAGE = "Invalid role: use 1-2 words (letters/numbers) with hyphens/underscores allowed; max 50 chars"
 
 
 def normalize_role(role: str) -> str:

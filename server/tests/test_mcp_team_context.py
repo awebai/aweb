@@ -46,4 +46,6 @@ def _identity_only_auth(team_id: str | None) -> AuthContext:
 async def test_coordination_mcp_tools_require_team_context(monkeypatch, call, team_id):
     monkeypatch.setattr(common_tools, "get_auth", lambda: _identity_only_auth(team_id))
     result = json.loads(await call(_DBInfra()))
-    assert result == {"error": "This tool requires team context. Use a team certificate."}
+    assert result == {
+        "error": "This tool requires team context. Use a team certificate."
+    }

@@ -120,7 +120,6 @@ def compose_configuration(*, workers: int) -> dict:
             "tmpfs": ["/var/lib/postgresql/data:rw,noexec,nosuid,size=1g"],
             "mem_limit": "2g",
             "memswap_limit": "2g",
-            "cpus": 1,
             "pids_limit": 512,
             "command": [
                 "postgres",
@@ -142,7 +141,6 @@ def compose_configuration(*, workers: int) -> dict:
             "tmpfs": ["/data:rw,noexec,nosuid,size=128m"],
             "mem_limit": "256m",
             "memswap_limit": "256m",
-            "cpus": 0.5,
             "pids_limit": 128,
             "command": ["redis-server", "--save", "", "--appendonly", "no"],
             "healthcheck": {
@@ -272,7 +270,7 @@ def check_docker(*, environ: dict[str, str] | None = None) -> dict[str, str]:
         environ=dict(os.environ) if environ is None else environ
     )
     result = invoke(
-        ["bash", str(ROOT / "scripts/candidate-docker-gate.sh"), "--check-disk"],
+        ["bash", str(ROOT / "scripts/candidate-docker-gate.sh"), "--check-disk", "local-server"],
         env=selected,
     )
     if result.returncode:
@@ -695,7 +693,9 @@ def run_suites(
         else:
             target = "test-server" if item is Suite.SERVER else "test-awid"
             command = [
-                "make", target, f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
+                "make",
+                target,
+                f"SERVER_TEST_WORKERS={workers if item is Suite.SERVER else 0}",
             ]
         options = [
             *arguments,

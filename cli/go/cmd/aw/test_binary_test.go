@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -34,6 +35,12 @@ func buildAwBinary(t *testing.T, ctx context.Context, outPath string) {
 		t.Fatal(err)
 	}
 	awTestBinary.once.Do(func() {
+		// The candidate gate builds aw once for every suite and gives its path;
+		// a package run under load must not compile another copy.
+		if given := prebuiltAwBinary(awTestBinary.env); given != "" {
+			awTestBinary.path = given
+			return
+		}
 		awTestBinary.dir, awTestBinary.err = os.MkdirTemp("", "aw-cmd-test-binary-")
 		if awTestBinary.err != nil {
 			return
@@ -86,6 +93,17 @@ func buildAwBinary(t *testing.T, ctx context.Context, outPath string) {
 	if closeErr != nil {
 		t.Fatal(closeErr)
 	}
+}
+
+// prebuiltAwBinary is the aw named by AW_TEST_CLI_BINARY in env, or "".
+func prebuiltAwBinary(env []string) string {
+	given := ""
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, "AW_TEST_CLI_BINARY="); ok {
+			given = value
+		}
+	}
+	return given
 }
 
 func mustExtractPublicKey(t *testing.T, didKey string) ed25519.PublicKey {

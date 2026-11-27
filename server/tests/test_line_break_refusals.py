@@ -21,12 +21,18 @@ from aweb.agent_status import StatusDocumentError, verify_status_document
 from aweb.internal_auth import _is_valid_proxy_team_id
 from aweb.signed_document import decode_payload
 
-LINE_BREAKS = pytest.mark.parametrize("suffix", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"])
+LINE_BREAKS = pytest.mark.parametrize(
+    "suffix", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"]
+)
 
 STATUS_VECTOR = json.loads(
-    (Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json").read_text()
+    (
+        Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json"
+    ).read_text()
 )
-STATUS_NOW = datetime.fromisoformat(STATUS_VECTOR["valid"][0]["now"].replace("Z", "+00:00"))
+STATUS_NOW = datetime.fromisoformat(
+    STATUS_VECTOR["valid"][0]["now"].replace("Z", "+00:00")
+)
 
 
 def _signed_status(**changes) -> tuple[str, str]:
@@ -59,7 +65,10 @@ def test_proxy_team_id_refuses_a_line_break_after_the_team_name(suffix):
 
 def test_signed_payload_without_a_line_break_verifies():
     reason = {"code": "oats.grant_expired", "text": "Its connection expired."}
-    assert _verify_status(*_signed_status(reachable="no", reason=reason))["reason"] == reason
+    assert (
+        _verify_status(*_signed_status(reachable="no", reason=reason))["reason"]
+        == reason
+    )
 
 
 # A payload whose length is a multiple of four decodes with the line break
@@ -69,13 +78,18 @@ WHOLE_QUANTUM_PAYLOAD = base64.urlsafe_b64encode(b'{"ab"}').decode("ascii")
 
 def test_whole_quantum_payload_decodes():
     assert len(WHOLE_QUANTUM_PAYLOAD) % 4 == 0
-    assert decode_payload(WHOLE_QUANTUM_PAYLOAD, max_bytes=64, error=StatusDocumentError) == b'{"ab"}'
+    assert (
+        decode_payload(WHOLE_QUANTUM_PAYLOAD, max_bytes=64, error=StatusDocumentError)
+        == b'{"ab"}'
+    )
 
 
 @LINE_BREAKS
 def test_signed_payload_refuses_a_trailing_line_break(suffix):
     with pytest.raises(StatusDocumentError) as refused:
-        decode_payload(WHOLE_QUANTUM_PAYLOAD + suffix, max_bytes=64, error=StatusDocumentError)
+        decode_payload(
+            WHOLE_QUANTUM_PAYLOAD + suffix, max_bytes=64, error=StatusDocumentError
+        )
     assert refused.value.code == "malformed_payload"
 
 
@@ -98,8 +112,15 @@ def test_status_timestamp_refuses_a_trailing_line_break(suffix):
 @pytest.fixture
 def reserved_artifact(monkeypatch):
     def use(app_ids: list[str]) -> None:
-        payload = json.dumps({"schema": app_registry.RESERVED_APP_IDS_SCHEMA, "reserved_app_ids": app_ids})
-        monkeypatch.setattr(app_registry, "_read_reserved_app_ids_artifact", lambda: payload)
+        payload = json.dumps(
+            {
+                "schema": app_registry.RESERVED_APP_IDS_SCHEMA,
+                "reserved_app_ids": app_ids,
+            }
+        )
+        monkeypatch.setattr(
+            app_registry, "_read_reserved_app_ids_artifact", lambda: payload
+        )
         app_registry.reserved_app_ids.cache_clear()
 
     yield use
@@ -112,7 +133,9 @@ def test_reserved_app_ids_artifact_accepts_a_bare_id(reserved_artifact):
 
 
 @LINE_BREAKS
-def test_reserved_app_ids_artifact_refuses_an_id_with_a_trailing_line_break(reserved_artifact, suffix):
+def test_reserved_app_ids_artifact_refuses_an_id_with_a_trailing_line_break(
+    reserved_artifact, suffix
+):
     reserved_artifact(["status" + suffix])
     with pytest.raises(RuntimeError):
         app_registry.reserved_app_ids()

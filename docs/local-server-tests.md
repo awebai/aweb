@@ -73,11 +73,12 @@ operation, refuses remote endpoints, and pins the selected Unix socket for disk
 inspection, provisioning, readback, suite children and cleanup. A later change
 to Docker's current context cannot redirect these operations. It delegates the
 free-disk check to
-`candidate-docker-gate.sh --check-disk`. A refusal stops the command. Reclaim
+`candidate-docker-gate.sh --check-disk local-server`. A refusal stops the command. Reclaim
 unused Docker objects with `docker system prune` and reclaim the Docker VM disk
 with `fstrim` using the host's approved maintenance procedure; review the affected
-objects first. The test target never prunes or trims automatically. The guard's
-existing floor and reserve apply.
+objects first. The test target never prunes or trims automatically. The guard
+needs the 50 GiB critical floor plus one local server run's measured 2 GiB,
+not the parallel candidate gate's 60 GiB reserve.
 
 On normal exit, failure, INT or TERM, the suite process group is stopped before
 `docker compose down --volumes --remove-orphans` removes this project's resources.

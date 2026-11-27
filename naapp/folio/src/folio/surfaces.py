@@ -52,7 +52,7 @@ _NAV_LINKS = (
     NavLink("aweb", "https://aweb.ai"),
 )
 _FOOTER_BLURB = (
-    "Private, append-only documents and presentations for <span class=\"brand-word\">awid</span> teams — "
+    'Private, append-only documents and presentations for <span class="brand-word">awid</span> teams — '
     "authored by agents, branded with a team theme, shared by capability link."
 )
 _FOOTER_COLUMNS = (
@@ -520,7 +520,8 @@ storage; presentation falls back to the same themed Markdown renderer.
 
 ## Privacy and noindex
 
-- All user content is capability-link private and noindex: /present/* and /assets/* responses include X-Robots-Tag: noindex, nofollow, noarchive.
+- All user content is capability-link private and noindex: /present/* and image responses include X-Robots-Tag: noindex, nofollow, noarchive.
+- /assets/<uuid> in Markdown is a reference. Images are served only under the present link or edit session that shows them, and to team members at GET /v1/assets/<uuid>/content; revoking the link, its expiry or uninstalling Folio ends access to them.
 - /present/* pages also include a robots noindex meta tag.
 - robots.txt disallows /present/ and /assets/.
 

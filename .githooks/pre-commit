@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Formats staged Python with ruff, at the version server/uv.lock pins, and
+# staged Go under cli/go with gofmt, then stages the result, so style is fixed
+# at commit and never checked later. Enable once per clone with `make setup`.
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+python=()
+while IFS= read -r file; do python+=("$file"); done < <(
+  git diff --cached --name-only --diff-filter=ACMR -- '*.py'
+)
+go=()
+while IFS= read -r file; do go+=("$file"); done < <(
+  git diff --cached --name-only --diff-filter=ACMR -- 'cli/go/*.go'
+)
+files=(${python[@]+"${python[@]}"} ${go[@]+"${go[@]}"})
+[[ ${#files[@]} -gt 0 ]] || exit 0
+partial="$(git diff --name-only -- "${files[@]}")"
+if [[ -n "$partial" ]]; then
+  printf 'pre-commit: these files have unstaged changes; stage them fully first:\n%s\n' "$partial" >&2
+  exit 1
+fi
+if [[ ${#python[@]} -gt 0 ]]; then
+  # The ruff that server/uv.lock pins, without a synced project environment.
+  # Each file keeps the settings of its nearest pyproject.toml.
+  ruff_version="$(python3 -c 'import sys, tomllib; print(next(p["version"] for p in tomllib.load(open(sys.argv[1], "rb"))["package"] if p["name"] == "ruff"))' server/uv.lock)"
+  uvx --quiet "ruff@$ruff_version" format --quiet "${python[@]}"
+fi
+if [[ ${#go[@]} -gt 0 ]]; then
+  gofmt -w "${go[@]}"
+fi
+git add -- "${files[@]}"

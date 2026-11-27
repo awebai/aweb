@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# The repositories moving into aweb for epic aweb-aauv, and the ref facts every
+# The repositories that moved into aweb for epic aweb-aauv, and the ref facts a
 # check of that move has to agree about.
 #
-# Sourced by scripts/check-naapp-move-addable.sh and
-# scripts/check-naapp-move-images.sh so the two cannot disagree about which
-# commit is being moved. A comment claiming a ref is the pinned one is true only
-# by coincidence; the assertion below makes it true by construction.
+# Sourced by scripts/check-naapp-golden-visibility.sh, whose self-test builds a
+# scratch tree from the movers' real .gitignore files when they are reachable. A
+# comment claiming a ref is the pinned one is true only by coincidence; the
+# assertion below makes it true by construction.
 
 # Source repo : destination path inside aweb : source ref.
 #

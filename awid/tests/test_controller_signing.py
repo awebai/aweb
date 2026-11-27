@@ -265,7 +265,9 @@ async def test_owned_transport_pins_destination_and_checks_exact_wire_before_sen
     # The bytes sent are the bytes signed.
     assert sent[0].content == canonical_json_bytes(request().parameters)
     signed = base64.urlsafe_b64decode(sent[0].headers["x-aweb-signed-payload"] + "==")
-    assert json.loads(signed)["body_sha256"] == hashlib.sha256(sent[0].content).hexdigest()
+    assert (
+        json.loads(signed)["body_sha256"] == hashlib.sha256(sent[0].content).hexdigest()
+    )
     assert json.loads(signed)["aud"] == ORIGIN
 
 

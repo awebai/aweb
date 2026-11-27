@@ -32,13 +32,19 @@ async def test_parent_closure_waits_for_child_before_locking_their_shared_worksp
 ):
     env = privacy_app
     parent = await request_as(
-        env, alias="alice", method="POST", path="/v1/tasks",
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
         payload={"title": "Parent lock order"},
     )
     assert parent.status_code == 200, parent.text
     parent_ref = parent.json()["task_ref"]
     child = await request_as(
-        env, alias="alice", method="POST", path="/v1/tasks",
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
         payload={"title": "Child lock order", "parent_task_id": parent_ref},
     )
     assert child.status_code == 200, child.text
@@ -46,7 +52,10 @@ async def test_parent_closure_waits_for_child_before_locking_their_shared_worksp
     child_ref = child.json()["task_ref"]
     for ref in (parent_ref, child_ref):
         claimed = await request_as(
-            env, alias="alice", method="PATCH", path=f"/v1/tasks/{ref}",
+            env,
+            alias="alice",
+            method="PATCH",
+            path=f"/v1/tasks/{ref}",
             payload={"status": "in_progress"},
         )
         assert claimed.status_code == 200, claimed.text
@@ -60,7 +69,10 @@ async def test_parent_closure_waits_for_child_before_locking_their_shared_worksp
             )
             pending = asyncio.create_task(
                 request_as(
-                    env, alias="bob", method="PATCH", path=f"/v1/tasks/{parent_ref}",
+                    env,
+                    alias="bob",
+                    method="PATCH",
+                    path=f"/v1/tasks/{parent_ref}",
                     payload={"status": "closed"},
                 )
             )
@@ -85,8 +97,13 @@ async def test_parent_closure_waits_for_child_before_locking_their_shared_worksp
                 updated = await update_task(
                     TransactionInfra(env.infra, child_tx),
                     actor=TeamIdentity(
-                        team_id=TEAM, agent_id=str(alice.id), alias="alice",
-                        did_key=alice.did, did_aw="", address="", identity_scope="local",
+                        team_id=TEAM,
+                        agent_id=str(alice.id),
+                        alias="alice",
+                        did_key=alice.did,
+                        did_aw="",
+                        address="",
+                        identity_scope="local",
                         certificate_id="privacy-alice",
                     ),
                     on_mutation=None,
@@ -96,28 +113,36 @@ async def test_parent_closure_waits_for_child_before_locking_their_shared_worksp
                 assert updated["title"] == "Child write committed before closing"
         response = await pending
         assert response.status_code == 200, response.text
-        assert response.json()["auto_closed"] == [{
-            "task_id": str(child_id),
-            "task_ref": child_ref,
-            "title": "Child write committed before closing",
-        }]
+        assert response.json()["auto_closed"] == [
+            {
+                "task_id": str(child_id),
+                "task_ref": child_ref,
+                "title": "Child write committed before closing",
+            }
+        ]
     finally:
         if pending is not None and not pending.done():
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
 
-    assert await env.db.fetch_value(
-        "SELECT status FROM {{tables.tasks}} WHERE task_id=$1", child_id
-    ) == "closed"
+    assert (
+        await env.db.fetch_value(
+            "SELECT status FROM {{tables.tasks}} WHERE task_id=$1", child_id
+        )
+        == "closed"
+    )
     assert not await env.db.fetch_all(
         "SELECT task_ref FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=ANY($2::text[])",
         TEAM,
         [parent_ref, child_ref],
     )
-    assert await env.db.fetch_value(
-        "SELECT focus_task_ref FROM {{tables.workspaces}} WHERE workspace_id=$1",
-        env.actors["alice"].workspace,
-    ) is None
+    assert (
+        await env.db.fetch_value(
+            "SELECT focus_task_ref FROM {{tables.workspaces}} WHERE workspace_id=$1",
+            env.actors["alice"].workspace,
+        )
+        is None
+    )
     releases = {
         ctx["task_ref"]: ctx["released_claim_workspace_ids"]
         for name, ctx in env.dispatched

@@ -146,12 +146,16 @@ def _manifest(seed_hex: str) -> Manifest:
 
 
 def _v2_manifest(*purposes_by_kid: tuple[str, str, list[str]]) -> Manifest:
-    return _loaded({
-        "manifest_version": 2,
-        "app": {"id": "example", "origin": "https://example.test"},
-        "tools": [],
-        "app_keys": [{"kid": kid, "did_key": did, "purposes": p} for kid, did, p in purposes_by_kid],
-    })
+    return _loaded(
+        {
+            "manifest_version": 2,
+            "app": {"id": "example", "origin": "https://example.test"},
+            "tools": [],
+            "app_keys": [
+                {"kid": kid, "did_key": did, "purposes": p} for kid, did, p in purposes_by_kid
+            ],
+        }
+    )
 
 
 def _settings(seed_hex: str, origin: str | None = "https://core.example.test", **values: object):
@@ -259,7 +263,9 @@ def test_a_v2_app_that_declares_no_app_event_key_needs_no_app_event_settings() -
     assert events.key is None
 
 
-def test_an_app_events_origin_with_no_key_declared_for_app_event_refuses_to_start(seed: str) -> None:
+def test_an_app_events_origin_with_no_key_declared_for_app_event_refuses_to_start(
+    seed: str,
+) -> None:
     manifest = _v2_manifest((_KID, _did_key(seed), ["app-request"]))
     with pytest.raises(AppKeyError, match="app-event"):
         AppEvents.from_settings(_settings(seed), manifest)

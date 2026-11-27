@@ -108,8 +108,14 @@ async def append(
     """
     async with db.transaction() as tx:
         return await append_on(
-            tx, signer, event=event, signing_bytes=signing_bytes, signature=signature,
-            key_evidence=key_evidence, received_at=received_at, before_append=before_append,
+            tx,
+            signer,
+            event=event,
+            signing_bytes=signing_bytes,
+            signature=signature,
+            key_evidence=key_evidence,
+            received_at=received_at,
+            before_append=before_append,
             purge_act=purge_act,
         )
 
@@ -160,8 +166,7 @@ async def append_on(
             )
         else:
             same = (
-                bytes(stored["signing_bytes"]) == signing_bytes
-                and stored["signature"] == signature
+                bytes(stored["signing_bytes"]) == signing_bytes and stored["signature"] == signature
             )
         if same:
             # The same event can be owed through overlapping registrations.
@@ -175,7 +180,8 @@ async def append_on(
                 await tx.execute(
                     "UPDATE {{tables.chain_events}} SET key_evidence = $3::jsonb"
                     " WHERE team_id = $1 AND event_id = $2",
-                    event.team_id, event_id,
+                    event.team_id,
+                    event_id,
                     json.dumps({**previous, "admissions": admissions}, sort_keys=True),
                 )
             return Appended(receipt=receipt, duplicate=True)
@@ -448,15 +454,23 @@ def _stored_event(team_id: str, chain_epoch: int, row: Mapping[str, Any]) -> Sto
             producer_did_key=evidence["did_key"],
         )
     return StoredEvent(
-        link=link, event_hash=row["event_hash"], content=content, purge_act=row["purge_act"],
+        link=link,
+        event_hash=row["event_hash"],
+        content=content,
+        purge_act=row["purge_act"],
         key_evidence=evidence,
     )
 
 
 async def verify_epoch(
-    db: AsyncDatabaseManager, team_id: str, chain_epoch: int, *,
-    receipt_keys: frozenset[str], checkpoint_keys: frozenset[str],
-    receipts: Sequence[tuple[bytes, str]] = (), checkpoints: Sequence[tuple[bytes, str]] = (),
+    db: AsyncDatabaseManager,
+    team_id: str,
+    chain_epoch: int,
+    *,
+    receipt_keys: frozenset[str],
+    checkpoint_keys: frozenset[str],
+    receipts: Sequence[tuple[bytes, str]] = (),
+    checkpoints: Sequence[tuple[bytes, str]] = (),
 ) -> dict[str, Any]:
     """A consistent stored report for the reader's already-authorized team.
 
@@ -481,22 +495,28 @@ async def verify_epoch(
         own_receipts = await tx.fetch_all(
             "SELECT team_seq, receipt_bytes, receipt_signature FROM {{tables.chain_events}}"
             " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY team_seq",
-            team_id, chain_epoch,
+            team_id,
+            chain_epoch,
         )
         own_checkpoints = await tx.fetch_all(
             "SELECT team_seq, signing_bytes, signature FROM {{tables.chain_checkpoints}}"
             " WHERE team_id = $1 AND chain_epoch = $2 ORDER BY position",
-            team_id, chain_epoch,
+            team_id,
+            chain_epoch,
         )
         faults = await tx.fetch_all(
             "SELECT f.fault_id, f.event_id, e.team_seq, f.kind, f.refused_sha256, f.recorded_at"
             " FROM {{tables.chain_faults}} f JOIN {{tables.chain_events}} e"
             " ON (e.team_id, e.event_id) = (f.team_id, f.event_id)"
             " WHERE f.team_id = $1 AND e.chain_epoch = $2 ORDER BY f.fault_id",
-            team_id, chain_epoch,
+            team_id,
+            chain_epoch,
         )
     chain = verify_chain(
-        genesis, events, receipt_keys=receipt_keys, checkpoint_keys=checkpoint_keys,
+        genesis,
+        events,
+        receipt_keys=receipt_keys,
+        checkpoint_keys=checkpoint_keys,
         receipts=(
             *receipts,
             *((bytes(r["receipt_bytes"]), r["receipt_signature"]) for r in own_receipts),
@@ -518,9 +538,7 @@ async def verify_epoch(
     )
     last = (events[-1].link.team_seq, events[-1].event_hash) if events else (0, genesis.hash())
     head_matches = (
-        head is None
-        or head.chain_epoch != chain_epoch
-        or last == (head.team_seq, head.event_hash)
+        head is None or head.chain_epoch != chain_epoch or last == (head.team_seq, head.event_hash)
     )
     report = chain.to_json()
     report["intact"] = chain.intact and not own and head_matches
@@ -537,9 +555,15 @@ async def verify_epoch(
     }
     report["delivery"] = verify_deliveries(genesis, events).to_json()
     report["conflicts"] = [
-        {"fault_id": f["fault_id"], "event_id": str(f["event_id"]), "team_seq": f["team_seq"],
-         "kind": f["kind"], "refused_sha256": f["refused_sha256"],
-         "recorded_at": format_time(f["recorded_at"])} for f in faults
+        {
+            "fault_id": f["fault_id"],
+            "event_id": str(f["event_id"]),
+            "team_seq": f["team_seq"],
+            "kind": f["kind"],
+            "refused_sha256": f["refused_sha256"],
+            "recorded_at": format_time(f["recorded_at"]),
+        }
+        for f in faults
     ]
     return report
 

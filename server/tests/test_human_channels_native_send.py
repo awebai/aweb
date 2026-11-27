@@ -2,6 +2,7 @@
 
 import json
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -114,7 +115,8 @@ async def native_send(aweb_cloud_db):
         address=None,
     )
     await db.execute(
-        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", UUID(b)
+        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1",
+        UUID(b),
     )
     await db.execute(
         "CREATE TABLE public.host_authority (actor_id UUID PRIMARY KEY,principal TEXT,signing_key TEXT,custody TEXT,active BOOLEAN,revision INTEGER,encryption_assertion JSONB)"
@@ -256,12 +258,28 @@ async def complete(env, prepared, *, fail=None, key=None):
 
 
 @pytest.mark.asyncio
+async def test_native_human_mail_addressless_sender_keeps_null_address(native_send):
+    env = native_send
+    env["auth"] = replace(env["auth"], address="")
+    prepared = await env["prepared"](caller=env["auth"])
+    await complete(env, prepared)
+    row = await env["db"].fetch_one(
+        "SELECT from_address FROM {{tables.messages}} WHERE message_id=$1",
+        UUID(prepared.value["message_id"]),
+    )
+    assert row is not None and row["from_address"] is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 async def test_native_send_and_host_result_commit_once(native_send, kind):
     env = native_send
     if kind == "chat":
         # D8: this is the valid agent-chat neighbour; mail still reaches a human.
-        await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
+        await env["db"].execute(
+            "UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1",
+            UUID(env["b"]),
+        )
 
     prepared = await env["prepared"](kind)
     result = await complete(env, prepared)
@@ -449,7 +467,10 @@ async def test_prepared_native_v2_preserves_exact_envelope_and_hosted_label(
     env = native_send
     if kind == "chat":
         # D8: this is the valid agent-chat neighbour; mail still reaches a human.
-        await env["db"].execute("UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1", UUID(env["b"]))
+        await env["db"].execute(
+            "UPDATE {{tables.agents}} SET agent_type='agent' WHERE agent_id=$1",
+            UUID(env["b"]),
+        )
 
     identities = []
     for actor, did, principal, sk, custody in (
@@ -628,10 +649,14 @@ async def test_human_discovery_withholds_unverified_global_claim(native_send):
     with pytest.raises(ContractError, match="authority_unavailable"):
         await env["service"].resolve(
             env["auth"],
-            dto("ResolveRequest", dict(
-                version="aweb-human-resolve-v1", team_id=env["auth"].team_id,
-                selector="human",
-            )),
+            dto(
+                "ResolveRequest",
+                dict(
+                    version="aweb-human-resolve-v1",
+                    team_id=env["auth"].team_id,
+                    selector="human",
+                ),
+            ),
         )
 
 
@@ -641,27 +666,43 @@ async def test_native_accept_rechecks_identity_wide_contacts_only(native_send):
     prepared = await env["prepared"]()
     await _insert_team(env["db"], "other:example.test")
     await _insert_agent(
-        env["db"], team_id="other:example.test", alias="other-human",
-        did_key=env["recipient_did"], did_aw="did:aw:human", address=None,
+        env["db"],
+        team_id="other:example.test",
+        alias="other-human",
+        did_key=env["recipient_did"],
+        did_aw="did:aw:human",
+        address=None,
         inbound_mode="contacts_only",
     )
     with pytest.raises(ContractError, match="forbidden"):
         await complete(env, prepared)
-    for table in ("messages", "conversations", "human_channel_ingress", "human_channel_mutations"):
-        assert (await env["db"].fetch_one(
-            "SELECT count(*) n FROM {{tables." + table + "}}"
-        ))["n"] == 0
+    for table in (
+        "messages",
+        "conversations",
+        "human_channel_ingress",
+        "human_channel_mutations",
+    ):
+        assert (
+            await env["db"].fetch_one("SELECT count(*) n FROM {{tables." + table + "}}")
+        )["n"] == 0
     # A fresh exact contact is the valid neighbouring authority.
     from aweb.messaging.contacts import add_contact
+
     await add_contact(
-        env["service"].db, owner_did="did:aw:human",
-        contact_address="example.test/agent", contact_did_aw="did:aw:agent",
-        binding_controller_did=env["auth"].did_key, label="agent",
+        env["service"].db,
+        owner_did="did:aw:human",
+        contact_address="example.test/agent",
+        contact_did_aw="did:aw:agent",
+        binding_controller_did=env["auth"].did_key,
+        label="agent",
     )
     from dataclasses import replace
+
     env["auth"] = replace(env["auth"], address="example.test/agent")
     await complete(env, await env["prepared"](caller=env["auth"]))
-    assert (await env["db"].fetch_one("SELECT count(*) n FROM {{tables.messages}}"))["n"] == 1
+    assert (await env["db"].fetch_one("SELECT count(*) n FROM {{tables.messages}}"))[
+        "n"
+    ] == 1
 
 
 @pytest.mark.asyncio
@@ -671,8 +712,12 @@ async def test_identity_policy_lock_spans_outer_commit(native_send):
     env = native_send
     await _insert_team(env["db"], "other:example.test")
     other = await _insert_agent(
-        env["db"], team_id="other:example.test", alias="other-human",
-        did_key=env["recipient_did"], did_aw="did:aw:human", address=None,
+        env["db"],
+        team_id="other:example.test",
+        alias="other-human",
+        did_key=env["recipient_did"],
+        did_aw="did:aw:human",
+        address=None,
     )
     prepared = await env["prepared"]()
     update = None
@@ -680,16 +725,25 @@ async def test_identity_policy_lock_spans_outer_commit(native_send):
         async with env["service"].unit_of_work(env["auth"]) as uow:
             await uow.claim_ingress(env["key"])
             accepted = await uow.accept(prepared)
-            update = asyncio.create_task(env["db"].execute(
-                "UPDATE {{tables.agents}} SET inbound_mode='contacts_only' WHERE agent_id=$1",
-                UUID(other),
-            ))
+            update = asyncio.create_task(
+                env["db"].execute(
+                    "UPDATE {{tables.agents}} SET inbound_mode='contacts_only' WHERE agent_id=$1",
+                    UUID(other),
+                )
+            )
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(asyncio.shield(update), 0.05)
-            await uow.finish_ingress(dto("IngressResult", dict(
-                version="aweb-ingress-result-v1", key=env["key"].value,
-                accepted=accepted.value, result={},
-            )))
+            await uow.finish_ingress(
+                dto(
+                    "IngressResult",
+                    dict(
+                        version="aweb-ingress-result-v1",
+                        key=env["key"].value,
+                        accepted=accepted.value,
+                        result={},
+                    ),
+                )
+            )
         await asyncio.wait_for(update, 2)
     finally:
         if update and not update.done():
@@ -700,19 +754,27 @@ async def test_identity_policy_lock_spans_outer_commit(native_send):
 @pytest.mark.asyncio
 async def test_native_facts_project_identity_in_endpoint_team(native_send):
     env = native_send
-    await _insert_team(env['db'], 'partner:partner.test')
-    other = await _insert_agent(env['db'], team_id='partner:partner.test', alias='same-human',
-        did_key=env['recipient_did'], did_aw='did:aw:human', address='partner.test/same-human')
+    await _insert_team(env["db"], "partner:partner.test")
+    other = await _insert_agent(
+        env["db"],
+        team_id="partner:partner.test",
+        alias="same-human",
+        did_key=env["recipient_did"],
+        did_aw="did:aw:human",
+        address="partner.test/same-human",
+    )
     # Even a valid projection elsewhere is not the endpoint team's admission context.
-    row = await env['service']._row(actor_id=other)
-    facts = await env['service']._facts(env['auth'], row)
-    assert facts.value['principal'] == {'kind': 'native', 'did': 'did:aw:human'}
-    assert facts.value['actor_id'] == env['b']
-    assert facts.value['team_id'] == env['auth'].team_id
+    row = await env["service"]._row(actor_id=other)
+    facts = await env["service"]._facts(env["auth"], row)
+    assert facts.value["principal"] == {"kind": "native", "did": "did:aw:human"}
+    assert facts.value["actor_id"] == env["b"]
+    assert facts.value["team_id"] == env["auth"].team_id
 
 
 @pytest.mark.asyncio
-async def test_legacy_native_policy_retains_forbidden_contract_after_local_refusal(mail_server):
+async def test_legacy_native_policy_retains_forbidden_contract_after_local_refusal(
+    mail_server,
+):
     from dataclasses import replace
     from types import SimpleNamespace
     from aweb.application_state import RegistryClientUnavailable
@@ -726,23 +788,35 @@ async def test_legacy_native_policy_retains_forbidden_contract_after_local_refus
         "SELECT * FROM {{tables.agents}} WHERE agent_id=$1", UUID(bob.id)
     )
     outsider = MessagingAuth(
-        did_key=env.pilot_did, did_aw=env.pilot_stable, address=None,
-        team_id="ops:acme.com", verified_team_id="ops:acme.com",
+        did_key=env.pilot_did,
+        did_aw=env.pilot_stable,
+        address=None,
+        team_id="ops:acme.com",
+        verified_team_id="ops:acme.com",
     )
     with pytest.raises(ContractError) as refused:
-        await NativeMessagingService._policy(service, env.fixture.infra, outsider, recipient)
+        await NativeMessagingService._policy(
+            service, env.fixture.infra, outsider, recipient
+        )
     assert refused.value.code == "forbidden"
     assert refused.value.field == (
         "The recipient is not reachable from outside its team. "
         "Use a teammate alias from inside its team, or ask the recipient "
         "for a registered address and retry."
     )
-    member = replace(outsider, did_key=bob.did, did_aw=None, team_id=bob.team,
-                     verified_team_id=bob.team)
+    member = replace(
+        outsider,
+        did_key=bob.did,
+        did_aw=None,
+        team_id=bob.team,
+        verified_team_id=bob.team,
+    )
     await NativeMessagingService._policy(service, env.fixture.infra, member, recipient)
     service.registry_client = None
     with pytest.raises(RegistryClientUnavailable) as unavailable:
-        await NativeMessagingService._policy(service, env.fixture.infra, member, recipient)
+        await NativeMessagingService._policy(
+            service, env.fixture.infra, member, recipient
+        )
     assert unavailable.value.status_code == 503
     assert unavailable.value.detail == {
         "code": RegistryClientUnavailable.code,

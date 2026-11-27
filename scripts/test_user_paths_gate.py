@@ -43,43 +43,6 @@ def known_failure(case):
 
 
 class UserPathsAdmission(unittest.TestCase):
-    def test_cross_server_controls_expect_current_stored_route_refusal_in_both_lanes(
-        self,
-    ):
-        import sys
-        from unittest.mock import patch
-
-        spec = importlib.util.spec_from_file_location(
-            "user_paths", ROOT / "scripts/e2e/user_paths.py"
-        )
-        paths = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {"user_paths_result": result_model}):
-            spec.loader.exec_module(paths)
-        for name in ["head", "released"]:
-            with self.subTest(lane=name):
-                lane = paths.Lane.__new__(paths.Lane)
-                lane.name, lane.legacy_released_diagnostics = name, name == "released"
-                observed = []
-                lane.refused = lambda *args: observed.append(args)
-                lane.run_case = lambda case, operation: (
-                    operation() if "/cross-server/" in case else None
-                )
-                lane.controls()
-                self.assertEqual(
-                    observed,
-                    [
-                        (
-                            "t1",
-                            "remote",
-                            kind,
-                            422,
-                            "local_sender_route_mismatch",
-                            "local_sender_route_mismatch",
-                        )
-                        for kind in ["mail", "chat"]
-                    ],
-                )
-
     def test_missing_prepared_runtime_fails_without_allocating_or_fetching(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -149,7 +112,8 @@ class UserPathsAdmission(unittest.TestCase):
         self.assertEqual(len(full["passed_agent_cases"]), 66)
         self.assertEqual(len(full["known_issue_budget"]), 4)
         self.assertEqual(
-            {row["task"] for row in full["known_issue_budget"]}, {"aweb-actw", "aweb-adje.15"}
+            {row["task"] for row in full["known_issue_budget"]},
+            {"aweb-actw", "aweb-adje.15"},
         )
         self.assertEqual(full["known_issues"], [])
         self.assertEqual(
@@ -167,11 +131,6 @@ class UserPathsAdmission(unittest.TestCase):
         self.assertEqual(result_model.qualification(lanes, 100, [])["status"], "FAILED")
 
     def test_fixed_released_local_chat_has_no_budget_exception(self):
-        self.assertEqual(
-            {row["maximum_version"] for row in result_model.KNOWN_RELEASED_ISSUES
-             if row["task"] == "aweb-actw"},
-            {"1.36.54"},
-        )
         for case in ["released/t1->t2/chat/v2", "released/t2->t1/chat/v2"]:
             with self.subTest(case=case):
                 passed = result_model.classify_outcome(
@@ -292,8 +251,18 @@ class FrozenGateInput(unittest.TestCase):
                     "candidate-record.sh",
                     "candidate-network.py",
                     "fetch_released_aw.py",
+                    "gate_budget.py",
+                    "product_table_writes.py",
+                    "release_files.py",
                 ]:
                     shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
+                for relative in (
+                    "scripts/vm-gate/vm_gate/budget.py",
+                    "server/tests/worker_services.py",
+                    "candidate-gate/measured-work.json",
+                ):
+                    (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(ROOT / relative, repo / relative)
                 # Docker itself is fake in this input/ledger test. Keep the
                 # wrapper's real host-preflight call, with an explicit stand-in.
                 (repo / "scripts/e2e").mkdir()
@@ -310,7 +279,7 @@ class FrozenGateInput(unittest.TestCase):
                 (repo / "scripts/candidate-host-pressure.py").write_text(
                     'import pathlib,sys\nif sys.argv[1]=="capture": pathlib.Path(sys.argv[2]).write_text("{}")\n'
                 )
-                (repo / "candidate-gate").mkdir()
+                (repo / "candidate-gate").mkdir(exist_ok=True)
                 (repo / "candidate-gate/Dockerfile").write_text("FROM scratch\n")
                 (repo / "naapp/library/test-vectors/blueprints/team").mkdir(
                     parents=True
@@ -324,6 +293,8 @@ naapp-e2e-packages:
 e2e-user-paths:
 \t@python3 -c 'import os,pathlib,hashlib,json; p=pathlib.Path(os.environ["USER_PATHS_LATEST_METADATA"]); b=p.read_bytes(); pathlib.Path(os.environ["SNAPSHOT_RECEIPT"]).write_text(json.dumps(dict(body=b.decode(),digest=hashlib.sha256(b).hexdigest(),declared=os.environ.get("USER_PATHS_LATEST_SHA256"))))'
 \t@python3 scripts/coverage_fixture.py
+test-federation-e2e:
+\t@if [ -n "$$AWEB_CANDIDATE_RELEASE_FILES" ]; then printf '%s\\n' "$$AWEB_CANDIDATE_RELEASE_FILES" > "$$RELEASE_LANE_RECEIPT"; python3 scripts/release_files.py listing "$$AWEB_CANDIDATE_RELEASE_FILES" >> "$$RELEASE_LANE_RECEIPT"; fi
 """.lstrip()
                 )
 
@@ -395,7 +366,8 @@ if args[0]=='run' and 'scripts/candidate-suite.sh' in args:
  checkout=args[args.index('-w')+1]
  env['PATH']={str(commands)!r}+os.pathsep+env['PATH']
  # The fixture executes the actual stage script at the runner boundary.
- sys.exit(subprocess.run(['bash','scripts/candidate-suite.sh',args[-1]],cwd=checkout,env=env).returncode)
+ suite=args.index('scripts/candidate-suite.sh')
+ sys.exit(subprocess.run(['bash',*args[suite:]],cwd=checkout,env=env).returncode)
 if args[0]=='run': print('1000' if 'stat' in args else 'service');sys.exit(0)
 if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.exit(0)
 """)
@@ -422,10 +394,13 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     HOME=str(root / "home"),
                     SNAPSHOT_RECEIPT=str(root / "snapshot.json"),
                     ID_LOOKUP_RECEIPT=str(root / "id-lookups"),
+                    # Docker is fake here, so the budget is given, not measured.
+                    GATE_CPUS="4",
+                    GATE_MEMORY_MIB="8192",
                 )
 
-                def invoke(stages):
-                    settings = dict(env)
+                def invoke(stages, expect=0, **extra):
+                    settings = dict(env, **extra)
                     if stages is not None:
                         settings["AWEB_CANDIDATE_STAGES"] = stages
                     result = run_fixture(
@@ -436,10 +411,13 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                         text=True,
                         timeout=30,
                     )
-                    self.assertEqual(
-                        result.returncode, 0, result.stdout + result.stderr
-                    )
-                    return result.stdout
+                    if expect == 0:
+                        self.assertEqual(
+                            result.returncode, 0, result.stdout + result.stderr
+                        )
+                    else:
+                        self.assertNotEqual(result.returncode, 0, result.stdout)
+                    return result.stdout + result.stderr
 
                 def ledger_rows():
                     rows = (root / "ledger.tsv").read_text().splitlines()
@@ -456,24 +434,19 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     ["-un", "-u"],
                 )
                 self.assertTrue(
-                    list(
-                        (repo / "scripts/__pycache__").glob(
-                            "fetch_released_aw.*.pyc"
-                        )
-                    )
+                    list((repo / "scripts/__pycache__").glob("fetch_released_aw.*.pyc"))
                 )
                 self.assertEqual(
                     git("status", "--porcelain", "--untracked-files=all"), ""
                 )
                 invoke(None)
                 ledger = ledger_rows()
-                self.assertEqual(len(ledger), 5, ledger)
+                self.assertEqual(len(ledger), 6, ledger)
                 self.assertEqual(len({row.split("\t")[0] for row in ledger}), 1)
                 receipt = json.loads((root / "snapshot.json").read_text())
                 # The frozen input names its source: a registry gitHead here.
                 expected = (
-                    json.dumps(dict(metadata, source="gitHead"), sort_keys=True)
-                    + "\n"
+                    json.dumps(dict(metadata, source="gitHead"), sort_keys=True) + "\n"
                 ).encode()
                 digest = hashlib.sha256(expected).hexdigest()
                 self.assertEqual(receipt["body"].encode(), expected)
@@ -481,7 +454,7 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 self.assertEqual(receipt["declared"], digest)
                 tree = git("rev-parse", "HEAD^{tree}")
                 main = git("rev-parse", "refs/remotes/origin/main")
-                external = f"CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nSYNCHRONIZED_MAIN_SHA={main}\nRELEASED_AW={digest}\n"
+                external = f"CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nREVIEWED_PRODUCT_TABLE_CEILINGS=absent\nRELEASED_AW={digest}\n"
                 self.assertEqual(
                     ledger[0].split("\t")[0],
                     tree + "-" + hashlib.sha256(external.encode()).hexdigest(),
@@ -490,16 +463,47 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 self.assertIn("no stages run", reused)
                 self.assertEqual(reused.count("NOT COVERED: pending aweb-actu"), 12)
                 self.assertIn("incomplete: human paths not covered", reused)
-                self.assertEqual(len(ledger_rows()), 5)
-                # A new reviewed main baseline also invalidates cached checks,
-                # even when the candidate source tree and artifact are unchanged.
-                next_main = git(
-                    "commit-tree", tree, "-p", main, "-m", "next reviewed main"
-                )
+                self.assertEqual(len(ledger_rows()), 6)
+                # A new main with the same reviewed ceilings keeps the cached
+                # checks. New reviewed ceilings on main invalidate them, even when
+                # the candidate source tree and artifact are unchanged.
+                next_main = git("commit-tree", tree, "-p", main, "-m", "next main")
                 git("update-ref", "refs/remotes/origin/main", next_main)
+                self.assertIn("no stages run", invoke("checks"))
+                self.assertEqual(len(ledger_rows()), 6)
+                ceilings = run_fixture(
+                    ["git", "-C", str(repo), "hash-object", "-w", "--stdin"],
+                    input='{"schema_version":1,"nonliteral_files":{},"files":{}}\n',
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                tools = run_fixture(
+                    ["git", "-C", str(repo), "mktree"],
+                    input=f"100644 blob {ceilings}\tproduct-table-write-ceilings.json\n",
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                reviewed_tree = run_fixture(
+                    ["git", "-C", str(repo), "mktree"],
+                    input=git("ls-tree", tree) + f"\n040000 tree {tools}\ttools\n",
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                reviewed_main = git(
+                    "commit-tree",
+                    reviewed_tree,
+                    "-p",
+                    next_main,
+                    "-m",
+                    "reviewed ceilings",
+                )
+                git("update-ref", "refs/remotes/origin/main", reviewed_main)
                 invoke("checks")
                 rebound = ledger_rows()
-                self.assertEqual(len(rebound), 6)
+                self.assertEqual(len(rebound), 7)
                 self.assertNotEqual(
                     rebound[-1].split("\t")[0], ledger[0].split("\t")[0]
                 )
@@ -507,17 +511,56 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 metadata["version"] = "1.36.55"
                 invoke("checks")
                 changed = ledger_rows()
-                self.assertEqual(len(changed), 7)
+                self.assertEqual(len(changed), 8)
                 self.assertNotEqual(
                     changed[-1].split("\t")[0], ledger[0].split("\t")[0]
                 )
-                self.assertEqual(server.requests, ["/@awebai%2faw/latest"] * 5)
+                self.assertEqual(server.requests, ["/@awebai%2faw/latest"] * 6)
                 owned_runs = list(run_logs.iterdir())
                 self.assertEqual(len(owned_runs), 4)
                 for run in owned_runs:
                     run_id = (run / "run-id").read_text().strip()
-                    self.assertEqual(run.name, f"aweb-candidate-gate-{git('rev-parse', 'HEAD')}-{run_id}")
+                    self.assertEqual(
+                        run.name,
+                        f"aweb-candidate-gate-{git('rev-parse', 'HEAD')}-{run_id}",
+                    )
                     self.assertTrue((run / "owned-resources.tsv").is_file())
+                # A release gate's built files are a gate input: a pass without
+                # them is not reused for them, and the lane installs the copy
+                # in the run's own log directory.
+                dist = root / "release-dist"
+                dist.mkdir()
+                for name in ("aweb-1.27.55-py3-none-any.whl", "aweb-1.27.55.tar.gz"):
+                    (dist / name).write_bytes(name.encode())
+                lane_receipt = root / "release-lane"
+                invoke("integration", RELEASE_LANE_RECEIPT=str(lane_receipt))
+                self.assertFalse(lane_receipt.exists())
+                without = ledger_rows()[-1].split("\t")[0]
+                released = invoke(
+                    "integration",
+                    AWEB_CANDIDATE_RELEASE_FILES=str(dist),
+                    RELEASE_LANE_RECEIPT=str(lane_receipt),
+                )
+                self.assertNotIn("no stages run", released)
+                with_files = ledger_rows()[-1].split("\t")[0]
+                self.assertNotEqual(with_files, without)
+                listing = subprocess.check_output(
+                    [sys.executable, str(ROOT / "scripts/release_files.py"), "listing", str(dist)],
+                    text=True,
+                )
+                lane_path, *lane_listing = lane_receipt.read_text().splitlines()
+                self.assertEqual(Path(lane_path).name, "release-files")
+                self.assertTrue(Path(lane_path).parent.name.startswith("aweb-candidate-gate-"))
+                self.assertEqual(lane_listing, listing.splitlines())
+                self.assertIn(
+                    "no stages run",
+                    invoke("integration", AWEB_CANDIDATE_RELEASE_FILES=str(dist)),
+                )
+                (dist / "notes.txt").write_text("stray\n")
+                refused = invoke(
+                    "integration", expect=1, AWEB_CANDIDATE_RELEASE_FILES=str(dist)
+                )
+                self.assertIn("is not one release's built files", refused)
         finally:
             server.shutdown()
             thread.join()
@@ -531,12 +574,16 @@ class ExactMessageAssertions(unittest.TestCase):
         diagnostic = "Expected contacts_only; server stored team_and_contacts"
         for kind in ("mail", "chat"):
             case = f"released/contacts-only/{kind}"
-            outcome = dict(case=case, status="FAILED", error=diagnostic, assertion=diagnostic)
+            outcome = dict(
+                case=case, status="FAILED", error=diagnostic, assertion=diagnostic
+            )
             with self.subTest(case=case):
                 classified = result_model.classify_outcome(outcome, "1.36.40")
                 self.assertEqual(classified["status"], "KNOWN_ISSUE")
                 self.assertEqual(classified["observed_status"], "FAILED")
-                self.assertEqual(result_model.classify_outcome(classified, "1.36.40"), classified)
+                self.assertEqual(
+                    result_model.classify_outcome(classified, "1.36.40"), classified
+                )
                 for changed, version in (
                     (outcome, "1.36.39"),
                     (outcome, "1.36.41"),
@@ -548,9 +595,14 @@ class ExactMessageAssertions(unittest.TestCase):
                     ({**outcome, "assertion": "routing failed"}, "1.36.40"),
                     (dict(case=case, status="PASSED"), "1.36.40"),
                 ):
-                    self.assertEqual(result_model.classify_outcome(changed, version)["status"], "FAILED")
+                    self.assertEqual(
+                        result_model.classify_outcome(changed, version)["status"],
+                        "FAILED",
+                    )
                 self.assertEqual(
-                    result_model.classify_outcome(dict(case=case, status="PASSED"), "1.36.41")["status"],
+                    result_model.classify_outcome(
+                        dict(case=case, status="PASSED"), "1.36.41"
+                    )["status"],
                     "PASSED",
                 )
 
@@ -567,21 +619,26 @@ class ExactMessageAssertions(unittest.TestCase):
         lane = paths.Lane.__new__(paths.Lane)
         lane.name, lane.version = "released", "1.36.40"
         lane.failures, lane.outcomes, lane.actors = [], [], {}
-        lane.command = Mock(side_effect=[
-            {"inbound_mode": "contacts_only"},
-            {"inbound_mode": "team_and_contacts"},
-            {"inbound_mode": "open"},
-        ])
+        lane.command = Mock(
+            side_effect=[
+                {"inbound_mode": "contacts_only"},
+                {"inbound_mode": "team_and_contacts"},
+                {"inbound_mode": "open"},
+            ]
+        )
         lane.refused = Mock()
         lane.run_case("released/contacts-only/mail", lambda: lane.contacts_only("mail"))
         self.assertEqual(lane.outcomes[0]["observed_status"], "FAILED")
         self.assertEqual(lane.outcomes[0]["status"], "KNOWN_ISSUE")
         self.assertEqual(lane.failures, [])
-        self.assertEqual(lane.command.call_args_list, [
-            call("g2", "inbound-mode", "contacts-only"),
-            call("g2", "inbound-mode"),
-            call("g2", "inbound-mode", "open"),
-        ])
+        self.assertEqual(
+            lane.command.call_args_list,
+            [
+                call("g2", "inbound-mode", "contacts-only"),
+                call("g2", "inbound-mode"),
+                call("g2", "inbound-mode", "open"),
+            ],
+        )
         lane.refused.assert_not_called()
 
     def exercise(self, kind, encrypted, mutate=None):

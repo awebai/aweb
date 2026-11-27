@@ -31,6 +31,7 @@ from aweb.inbound_modes import effective_inbound_mode
 from aweb.service_errors import ServiceError, ValidationError
 from aweb.team_admission import admit_team
 from aweb.team_auth_deps import get_team_identity, verify_request_certificate
+from aweb.id_chain_auth import SUPERSEDED_ID_CHAIN_RECOVERY
 
 router = APIRouter(prefix="/v1", tags=["connect"])
 
@@ -62,9 +63,19 @@ class ConnectResponse(BaseModel):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 class _ProfileUpdate(StrEnum):
     RECONNECT = "reconnect"
     IMPORT = "import"
+
+
+class WorkspaceContact(StrEnum):
+    """The observed contact a constructor caller can attest to."""
+
+    NONE = "none"
+    SIGNED_CONNECT = "signed_connect"
+    PERSON_SESSION = "person_session"
+    OBSERVED_REFRESH = "observed_refresh"
 
 
 class WorkspaceProfile(StrEnum):
@@ -157,8 +168,14 @@ def _require_matching_admission_fields(
     if supplied is None:
         return
     for field in (
-        "team_id", "team_did_key", "alias", "did_key", "member_did_key",
-        "certificate_id", "member_did_aw", "member_address",
+        "team_id",
+        "team_did_key",
+        "alias",
+        "did_key",
+        "member_did_key",
+        "certificate_id",
+        "member_did_aw",
+        "member_address",
     ):
         if field not in supplied:
             continue
@@ -168,8 +185,12 @@ def _require_matching_admission_fields(
         if value != expected:
             raise ConnectIdentityRefusal(reason)
     if "identity_scope" in supplied or "lifetime" in supplied:
-        scope = normalize_identity_scope(supplied.get("identity_scope") or supplied.get("lifetime"))
-        expected = normalize_identity_scope(checked.get("identity_scope") or checked.get("lifetime"))
+        scope = normalize_identity_scope(
+            supplied.get("identity_scope") or supplied.get("lifetime")
+        )
+        expected = normalize_identity_scope(
+            checked.get("identity_scope") or checked.get("lifetime")
+        )
         if scope != expected:
             raise ConnectIdentityRefusal(reason)
 
@@ -226,7 +247,10 @@ async def _ensure_agent(
                 code="alias_mismatch",
             )
         if profile_update is _ProfileUpdate.IMPORT:
-            effective_name, effective_role = existing_agent["human_name"], existing_agent["role"]
+            effective_name, effective_role = (
+                existing_agent["human_name"],
+                existing_agent["role"],
+            )
             if identity_kind is None:
                 effective_type = existing_agent["agent_type"]
                 effective_human_key = existing_agent["human_verified_key"]
@@ -358,7 +382,9 @@ async def _ensure_agent(
         team_id,
         did_key,
     )
-    assert row is not None  # The insert or its locked existing winner supplies this row.
+    assert (
+        row is not None
+    )  # The insert or its locked existing winner supplies this row.
     if row["alias"] != alias:
         raise AliasConflictError(
             f"cert claims alias {alias!r} but did_key is already bound to alias {row['alias']!r} in team {team_id}",
@@ -398,6 +424,7 @@ async def _ensure_workspace(
     planned_workspace_id: uuid.UUID | None = None,
     workspace_profile: WorkspaceProfile | None = None,
     profile_update: _ProfileUpdate = _ProfileUpdate.RECONNECT,
+    contact: WorkspaceContact = WorkspaceContact.NONE,
 ) -> _ConnectedWorkspace:
     """Find or create a workspace row. Returns workspace_id as string.
 
@@ -434,7 +461,13 @@ async def _ensure_workspace(
             UPDATE {{tables.workspaces}}
             SET hostname = $1, workspace_path = $2, role = $3,
                 human_name = $4, repo_id = COALESCE($5, repo_id),
-                agent_id = $6, last_seen_at = NOW(), updated_at = NOW(), workspace_type = $8
+                agent_id = $6, last_seen_at = CASE
+                    WHEN $9 IN ('signed_connect', 'person_session')
+                        OR ($9 = 'observed_refresh' AND last_seen_at IS NOT NULL)
+                    THEN NOW()
+                    ELSE last_seen_at
+                END,
+                updated_at = NOW(), workspace_type = $8
             WHERE workspace_id = $7
             """,
             hostname,
@@ -445,6 +478,7 @@ async def _ensure_workspace(
             uuid.UUID(agent_id),
             workspace_id,
             workspace_type,
+            contact.value,
         )
         return _ConnectedWorkspace(str(workspace_id), workspace_type)
 
@@ -471,7 +505,7 @@ async def _ensure_workspace(
                 INSERT INTO {{tables.workspaces}}
                     (workspace_id, team_id, agent_id, repo_id, alias, human_name,
                      role, hostname, workspace_path, workspace_type, last_seen_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CASE WHEN $11 = 'signed_connect' THEN NOW() END)
                 RETURNING workspace_id
                 """,
                 workspace_id,
@@ -484,6 +518,7 @@ async def _ensure_workspace(
                 hostname,
                 workspace_path,
                 workspace_type,
+                contact.value,
             )
         assert row is not None  # This INSERT always returns the workspace it created.
         return _ConnectedWorkspace(str(row["workspace_id"]), workspace_type)
@@ -539,6 +574,7 @@ async def connect_agent(
     generation: VerifiedCertificateGeneration | None = None,
     controller_import: VerifiedControllerImportMember | None = None,
     workspace_profile: WorkspaceProfile | None = None,
+    contact: WorkspaceContact = WorkspaceContact.NONE,
 ) -> dict[str, Any]:
     """Auto-provision team + agent + workspace from certificate info.
 
@@ -559,6 +595,9 @@ async def connect_agent(
         planned_ids: Retained creation IDs; existing projections must match both exactly.
         workspace_profile: Explicit non-repository kind; an existing repository
             always keeps agent kind. Omission preserves an existing workspace kind.
+        contact: Signed connect records contact on insert and update. A current
+            person session refreshes an existing row. An observed refresh updates
+            an existing row only once contact has already been recorded.
         controller_import: Actual live APPLY member from verify_controller_import.
             It is separate from generation/request proof, needs independent global
             binding/kind observations and preserves existing profiles on reuse.
@@ -570,16 +609,24 @@ async def connect_agent(
     Returns:
         Dict with team_id, alias, agent_id, workspace_id, role.
     """
-    if workspace_profile is not None and not isinstance(workspace_profile, WorkspaceProfile):
-        raise ValidationError({
-            "code": "workspace_profile_invalid",
-            "message": "Choose WorkspaceProfile.MANUAL or WorkspaceProfile.HOSTED_MCP, then retry.",
-        })
+    if workspace_profile is not None and not isinstance(
+        workspace_profile, WorkspaceProfile
+    ):
+        raise ValidationError(
+            {
+                "code": "workspace_profile_invalid",
+                "message": "Choose WorkspaceProfile.MANUAL or WorkspaceProfile.HOSTED_MCP, then retry.",
+            }
+        )
     if generation is not None and controller_import is not None:
-        raise TypeError("Choose exactly one generation or checked controller-import input.")
+        raise TypeError(
+            "Choose exactly one generation or checked controller-import input."
+        )
     if controller_import is not None:
         if not isinstance(controller_import, VerifiedControllerImportMember):
-            raise TypeError("Pass a checked controller-import member from verify_controller_import.")
+            raise TypeError(
+                "Pass a checked controller-import member from verify_controller_import."
+            )
         controller_import.require_freshness()
         certificate = controller_import.certificate
         if certificate.revoked_at is not None or controller_import.request.dry_run:
@@ -596,7 +643,9 @@ async def connect_agent(
             "member_address": certificate.member_address or "",
         }
         _require_matching_admission_fields(
-            supplied=cert_info, supplied_team_key=team_did_key, checked=imported,
+            supplied=cert_info,
+            supplied_team_key=team_did_key,
+            checked=imported,
             reason=ConnectIdentityRefusalReason.IMPORT_MISMATCH,
         )
         cert_info = imported
@@ -615,13 +664,17 @@ async def connect_agent(
         verified["did_key"] = claims["member_did_key"]
         verified["team_did_key"] = generation.verified_team_did_key
         _require_matching_admission_fields(
-            supplied=cert_info, supplied_team_key=team_did_key, checked=verified,
+            supplied=cert_info,
+            supplied_team_key=team_did_key,
+            checked=verified,
             reason=ConnectIdentityRefusalReason.GENERATION_MISMATCH,
         )
         cert_info = verified
         team_did_key = generation.verified_team_did_key
     if cert_info is None or team_did_key is None:
-        raise TypeError("Pass verified request fields and team key, a verified generation, or a checked controller-import member.")
+        raise TypeError(
+            "Pass verified request fields and team key, a verified generation, or a checked controller-import member."
+        )
     if planned_ids is not None and not isinstance(planned_ids, PlannedIdentityIds):
         raise TypeError("Pass PlannedIdentityIds for retained creation resources.")
     team_id = cert_info["team_id"]
@@ -682,7 +735,9 @@ async def connect_agent(
         if controller_import is not None:
             controller_import.require_freshness()
         profile_update = (
-            _ProfileUpdate.IMPORT if controller_import is not None else _ProfileUpdate.RECONNECT
+            _ProfileUpdate.IMPORT
+            if controller_import is not None
+            else _ProfileUpdate.RECONNECT
         )
 
         agent_id = await _ensure_agent(
@@ -729,6 +784,7 @@ async def connect_agent(
             else None,
             workspace_profile=workspace_profile,
             profile_update=profile_update,
+            contact=contact,
         )
         if controller_import is not None:
             controller_import.require_freshness()
@@ -736,8 +792,13 @@ async def connect_agent(
                 "SELECT role, agent_type FROM {{tables.agents}} WHERE agent_id=$1",
                 uuid.UUID(agent_id),
             )
-            assert effective_profile is not None  # The member write is held in this transaction.
-            role, agent_type = effective_profile["role"], effective_profile["agent_type"]
+            assert (
+                effective_profile is not None
+            )  # The member write is held in this transaction.
+            role, agent_type = (
+                effective_profile["role"],
+                effective_profile["agent_type"],
+            )
 
     return {
         "team_id": team_id,
@@ -764,7 +825,16 @@ async def connect_endpoint(
     Uses certificate-only auth (no agent lookup) since the agent may not
     exist yet — this endpoint creates the agent row.
     """
-    cert_info = await verify_request_certificate(request, db, fresh=True)
+    try:
+        cert_info = await verify_request_certificate(request, db, fresh=True)
+    except HTTPException as exc:
+        if exc.status_code != 403 or exc.detail != "superseded_certificate":
+            raise
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail, "message": SUPERSEDED_ID_CHAIN_RECOVERY},
+            headers=exc.headers,
+        )
 
     aweb_db = db.get_manager("aweb")
 
@@ -784,6 +854,7 @@ async def connect_endpoint(
             role=payload.role,
             human_name=payload.human_name,
             agent_type=payload.agent_type,
+            contact=WorkspaceContact.SIGNED_CONNECT,
         )
     except AliasConflictError as exc:
         raise HTTPException(

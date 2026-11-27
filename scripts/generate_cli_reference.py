@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import collections
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -59,6 +60,39 @@ def parse_flags(lines: list[str], start: int) -> tuple[list[str], int]:
         flags.append(" ".join(part.strip() for part in columns if part.strip()))
         index += 1
     return flags, index
+
+
+CODE_SPAN = re.compile(r"(`+).+?\1", re.DOTALL)
+HTML_LIKE = re.compile(r"<[A-Za-z][^<>`\n]*>")
+
+
+def markdown_prose(text: str) -> str:
+    """Write help prose so a <placeholder> renders as code, not as an HTML element.
+
+    The site renders raw HTML, so a bare <title> in prose becomes a real title
+    element and swallows the rest of the page. Indented code blocks and existing
+    code spans already show their text literally and are left as written.
+    """
+
+    def protect(paragraph: str) -> str:
+        pieces = []
+        position = 0
+        for span in CODE_SPAN.finditer(paragraph):
+            pieces.append(
+                HTML_LIKE.sub(
+                    lambda m: f"`{m.group(0)}`", paragraph[position : span.start()]
+                )
+            )
+            pieces.append(span.group(0))
+            position = span.end()
+        pieces.append(HTML_LIKE.sub(lambda m: f"`{m.group(0)}`", paragraph[position:]))
+        return "".join(pieces)
+
+    blocks = re.split(r"(\n[ \t]*\n)", text)
+    return "".join(
+        block if index % 2 or block.startswith("    ") else protect(block)
+        for index, block in enumerate(blocks)
+    )
 
 
 def parse_help(text: str) -> dict[str, object]:
@@ -267,7 +301,7 @@ def render_reference(binary: Path) -> str:
         output.extend(["", f"## `{title}`", "", f"### `{title}`", ""])
         description = str(parsed["description"])
         if description:
-            output.extend([description, ""])
+            output.extend([markdown_prose(description), ""])
         subcommands = parsed["subcommands"]
         assert isinstance(subcommands, list)
         groups = parsed["groups"]
@@ -283,7 +317,7 @@ def render_reference(binary: Path) -> str:
             output.append("Subcommands:")
             for name, description in all_subcommands:
                 suffix = f" {description}" if description else ""
-                output.append(f"- `{name}`{suffix}")
+                output.append(f"- `{name}`{markdown_prose(suffix)}")
             output.append("")
         flags = parsed["flags"]
         assert isinstance(flags, list)

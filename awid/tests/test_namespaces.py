@@ -55,7 +55,11 @@ async def _create_team(client, signing_key, controller_did, domain, team_name):
     team_signing_key, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
     headers = _sign(
-        signing_key, controller_did, domain=domain, operation="create_team", name=team_name,
+        signing_key,
+        controller_did,
+        domain=domain,
+        operation="create_team",
+        name=team_name,
     )
     resp = await client.post(
         f"/v1/namespaces/{domain}/teams",
@@ -73,7 +77,11 @@ async def _register_address(client, signing_key, controller_did, domain, name):
     member_did_key = did_from_public_key(member_pub)
     await _register_identity(client, member_key, member_did_key)
     headers = _sign(
-        signing_key, controller_did, domain=domain, operation="register_address", name=name,
+        signing_key,
+        controller_did,
+        domain=domain,
+        operation="register_address",
+        name=name,
     )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
@@ -105,10 +113,16 @@ async def _register_address_for_identity(
         member_signing_key, member_pub = generate_keypair()
         member_did_key = did_from_public_key(member_pub)
     if member_signing_key is None:
-        raise AssertionError("member_signing_key is required when member_did_key is supplied")
+        raise AssertionError(
+            "member_signing_key is required when member_did_key is supplied"
+        )
     await _register_identity(client, member_signing_key, member_did_key)
     headers = _sign(
-        signing_key, controller_did, domain=domain, operation="register_address", name=name,
+        signing_key,
+        controller_did,
+        domain=domain,
+        operation="register_address",
+        name=name,
     )
     payload = {
         "name": name,
@@ -182,7 +196,12 @@ def _signed_certificate_header(
     alias: str = "alice",
     lifetime: str = "persistent",
 ) -> str:
-    issued_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    issued_at = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     certificate = {
         "version": 1,
         "certificate_id": certificate_id,
@@ -236,9 +255,12 @@ async def _register_certificate(
         lifetime=lifetime,
     )
     headers = _sign(
-        team_key, team_did,
-        domain=domain, operation="register_certificate",
-        team_name=team_name, certificate_id=certificate_id,
+        team_key,
+        team_did,
+        domain=domain,
+        operation="register_certificate",
+        team_name=team_name,
+        certificate_id=certificate_id,
     )
     payload = {
         "certificate_id": certificate_id,
@@ -278,7 +300,9 @@ async def _register_persistent_certificate_for_address(
     member_address,
 ):
     address_domain, address_name = member_address.split("/", 1)
-    address_resp = await client.get(f"/v1/namespaces/{address_domain}/addresses/{address_name}")
+    address_resp = await client.get(
+        f"/v1/namespaces/{address_domain}/addresses/{address_name}"
+    )
     assert address_resp.status_code == 200, address_resp.text
     address_body = address_resp.json()
     await _register_certificate(
@@ -294,11 +318,16 @@ async def _register_persistent_certificate_for_address(
     )
 
 
-async def _revoke_certificate(client, team_key, team_did, domain, team_name, certificate_id):
+async def _revoke_certificate(
+    client, team_key, team_did, domain, team_name, certificate_id
+):
     headers = _sign(
-        team_key, team_did,
-        domain=domain, operation="revoke_certificate",
-        team_name=team_name, certificate_id=certificate_id,
+        team_key,
+        team_did,
+        domain=domain,
+        operation="revoke_certificate",
+        team_name=team_name,
+        certificate_id=certificate_id,
     )
     resp = await client.post(
         f"/v1/namespaces/{domain}/teams/{team_name}/certificates/revoke",
@@ -310,8 +339,12 @@ async def _revoke_certificate(client, team_key, team_did, domain, team_name, cer
 
 def _bad_signature_headers(signing_key, header_did, *, domain, operation, **extra):
     payload = {"domain": domain, "operation": operation, **extra}
-    headers = _sign(signing_key, header_did, domain=domain, operation=operation, **extra)
-    headers["Authorization"] = f"DIDKey {header_did} {sign_message(signing_key, canonical_json_bytes(payload | {'timestamp': headers['X-AWEB-Timestamp']}))}"
+    headers = _sign(
+        signing_key, header_did, domain=domain, operation=operation, **extra
+    )
+    headers["Authorization"] = (
+        f"DIDKey {header_did} {sign_message(signing_key, canonical_json_bytes(payload | {'timestamp': headers['X-AWEB-Timestamp']}))}"
+    )
     return headers
 
 
@@ -321,7 +354,9 @@ async def test_register_namespace_local_skips_dns_verification(client):
     controller_did = did_from_public_key(public_key)
 
     headers = _sign(signing_key, controller_did, domain="local", operation="register")
-    resp = await client.post("/v1/namespaces", json={"domain": "local"}, headers=headers)
+    resp = await client.post(
+        "/v1/namespaces", json={"domain": "local"}, headers=headers
+    )
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -334,15 +369,21 @@ async def test_register_namespace_notlocal_still_requires_dns_verification(clien
     signing_key, public_key = generate_keypair()
     controller_did = did_from_public_key(public_key)
 
-    headers = _sign(signing_key, controller_did, domain="notlocal", operation="register")
-    resp = await client.post("/v1/namespaces", json={"domain": "notlocal"}, headers=headers)
+    headers = _sign(
+        signing_key, controller_did, domain="notlocal", operation="register"
+    )
+    resp = await client.post(
+        "/v1/namespaces", json={"domain": "notlocal"}, headers=headers
+    )
 
     assert resp.status_code == 403
     assert resp.json()["detail"] == "Signing key does not match DNS controller"
 
 
 @pytest.mark.asyncio
-async def test_namespace_default_delivery_origin_is_controller_authorized(client, controller_identity):
+async def test_namespace_default_delivery_origin_is_controller_authorized(
+    client, controller_identity
+):
     signing_key, controller_did = controller_identity
     domain = "delivery.example"
     delivery_origin = "https://aweb.delivery.example"
@@ -372,7 +413,9 @@ async def test_namespace_default_delivery_origin_is_controller_authorized(client
 
 
 @pytest.mark.asyncio
-async def test_namespace_default_delivery_origin_update_requires_controller(client, controller_identity):
+async def test_namespace_default_delivery_origin_update_requires_controller(
+    client, controller_identity
+):
     signing_key, controller_did = controller_identity
     domain = "delivery-update.example"
     await _register_namespace(client, signing_key, controller_did, domain)
@@ -411,7 +454,10 @@ async def test_namespace_default_delivery_origin_update_requires_controller(clie
     )
 
     assert wrong_resp.status_code == 403
-    assert wrong_resp.json()["detail"] == "Only the namespace controller can update namespace metadata"
+    assert (
+        wrong_resp.json()["detail"]
+        == "Only the namespace controller can update namespace metadata"
+    )
 
 
 @pytest.mark.asyncio
@@ -557,7 +603,9 @@ async def test_namespace_default_delivery_origin_rejects_literal_ip(
 
 
 @pytest.mark.asyncio
-async def test_address_resolution_returns_namespace_route_origin(client, controller_identity):
+async def test_address_resolution_returns_namespace_route_origin(
+    client, controller_identity
+):
     signing_key, controller_did = controller_identity
     identity_key, identity_pub = generate_keypair()
     identity_did_key = did_from_public_key(identity_pub)
@@ -578,10 +626,20 @@ async def test_address_resolution_returns_namespace_route_origin(client, control
     )
     assert resp.status_code == 200, resp.text
 
-    headers = _sign(signing_key, controller_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        signing_key,
+        controller_did,
+        domain=domain,
+        operation="register_address",
+        name="alice",
+    )
     address_resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
-        json={"name": "alice", "did_aw": identity["did_aw"], "current_did_key": identity_did_key},
+        json={
+            "name": "alice",
+            "did_aw": identity["did_aw"],
+            "current_did_key": identity_did_key,
+        },
         headers=headers,
     )
     assert address_resp.status_code == 200, address_resp.text
@@ -632,7 +690,9 @@ async def test_rotate_local_namespace_controller_requires_previous_key(client):
     )
 
     assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"]["code"] == "local_rotation_requires_previous_key", resp.text
+    assert resp.json()["detail"]["code"] == "local_rotation_requires_previous_key", (
+        resp.text
+    )
     current = await client.get("/v1/namespaces/local")
     assert current.status_code == 200, current.text
     assert current.json()["controller_did"] == controller_did
@@ -643,7 +703,9 @@ async def test_rotate_local_namespace_controller_requires_previous_key(client):
 
 @pytest.mark.asyncio
 async def test_skip_dns_bootstraps_but_cannot_replace_controller_without_dns(
-    client, controller_identity, monkeypatch,
+    client,
+    controller_identity,
+    monkeypatch,
 ):
     old_key, old_did = controller_identity
     domain = "skip-dns-bootstrap.example"
@@ -659,9 +721,15 @@ async def test_skip_dns_bootstraps_but_cannot_replace_controller_without_dns(
     new_key, new_public = generate_keypair()
     new_did = did_from_public_key(new_public)
     response = await client.put(
-        f"/v1/namespaces/{domain}", json={"new_controller_did": new_did},
-        headers=_sign(new_key, new_did, domain=domain, operation="rotate_controller",
-                      new_controller_did=new_did),
+        f"/v1/namespaces/{domain}",
+        json={"new_controller_did": new_did},
+        headers=_sign(
+            new_key,
+            new_did,
+            domain=domain,
+            operation="rotate_controller",
+            new_controller_did=new_did,
+        ),
     )
     assert response.status_code == 422, response.text
     assert response.json()["detail"] == "No DNS authority available"
@@ -671,7 +739,12 @@ async def test_skip_dns_bootstraps_but_cannot_replace_controller_without_dns(
 @pytest.mark.parametrize("skip_dns", [False, True])
 @pytest.mark.asyncio
 async def test_rotate_namespace_controller_recovers_lost_old_key_via_dns(
-    client, awid_db_infra, fake_redis, controller_identity, monkeypatch, skip_dns,
+    client,
+    awid_db_infra,
+    fake_redis,
+    controller_identity,
+    monkeypatch,
+    skip_dns,
 ):
     if skip_dns:
         monkeypatch.setenv("AWID_SKIP_DNS_VERIFY", "1")
@@ -700,7 +773,9 @@ async def test_rotate_namespace_controller_recovers_lost_old_key_via_dns(
     app.dependency_overrides[get_domain_verifier] = lambda: _rotated_domain_verifier
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as recovery_client:
             headers = _sign(
                 new_signing_key,
                 new_controller_did,
@@ -733,7 +808,10 @@ async def test_rotate_namespace_controller_recovers_lost_old_key_via_dns(
                 headers=old_headers,
             )
             assert old_resp.status_code == 403
-            assert old_resp.json()["detail"] == "Only the namespace controller can manage teams"
+            assert (
+                old_resp.json()["detail"]
+                == "Only the namespace controller can manage teams"
+            )
 
     assert logged == [
         (
@@ -745,7 +823,10 @@ async def test_rotate_namespace_controller_recovers_lost_old_key_via_dns(
 
 @pytest.mark.asyncio
 async def test_rotate_namespace_controller_rejects_when_dns_still_points_to_old_did(
-    client, awid_db_infra, fake_redis, controller_identity,
+    client,
+    awid_db_infra,
+    fake_redis,
+    controller_identity,
 ):
     old_signing_key, old_controller_did = controller_identity
     domain = "recover-mismatch.example"
@@ -765,7 +846,9 @@ async def test_rotate_namespace_controller_rejects_when_dns_still_points_to_old_
     app.dependency_overrides[get_domain_verifier] = lambda: _stale_domain_verifier
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as recovery_client:
             headers = _sign(
                 new_signing_key,
                 new_controller_did,
@@ -785,7 +868,11 @@ async def test_rotate_namespace_controller_rejects_when_dns_still_points_to_old_
 
 @pytest.mark.asyncio
 async def test_reverify_namespace_updates_controller_from_dns(
-    client, awid_db_infra, fake_redis, controller_identity, monkeypatch,
+    client,
+    awid_db_infra,
+    fake_redis,
+    controller_identity,
+    monkeypatch,
 ):
     old_signing_key, old_controller_did = controller_identity
     domain = "reverify.example"
@@ -806,13 +893,17 @@ async def test_reverify_namespace_updates_controller_from_dns(
     def _capture_warning(message: str, *args) -> None:
         logged.append((message, args))
 
-    monkeypatch.setattr(dns_namespace_reverify_routes.logger, "warning", _capture_warning)
+    monkeypatch.setattr(
+        dns_namespace_reverify_routes.logger, "warning", _capture_warning
+    )
 
     app = create_app(db_infra=awid_db_infra, redis=fake_redis)
     app.dependency_overrides[get_domain_verifier] = lambda: _rotated_domain_verifier
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as recovery_client:
             resp = await recovery_client.post(f"/v1/namespaces/{domain}/reverify")
             assert resp.status_code == 200, resp.text
             body = resp.json()
@@ -836,7 +927,10 @@ async def test_reverify_namespace_updates_controller_from_dns(
                 headers=old_headers,
             )
             assert old_resp.status_code == 403
-            assert old_resp.json()["detail"] == "Only the namespace controller can manage teams"
+            assert (
+                old_resp.json()["detail"]
+                == "Only the namespace controller can manage teams"
+            )
 
             new_headers = _sign(
                 new_signing_key,
@@ -862,7 +956,10 @@ async def test_reverify_namespace_updates_controller_from_dns(
 
 @pytest.mark.asyncio
 async def test_reverify_namespace_matching_dns_refreshes_without_rotation(
-    client, awid_db_infra, fake_redis, controller_identity,
+    client,
+    awid_db_infra,
+    fake_redis,
+    controller_identity,
 ):
     signing_key, controller_did = controller_identity
     domain = "reverify-refresh.example"
@@ -889,7 +986,9 @@ async def test_reverify_namespace_matching_dns_refreshes_without_rotation(
     app.dependency_overrides[get_domain_verifier] = lambda: _same_domain_verifier
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as recovery_client:
             resp = await recovery_client.post(f"/v1/namespaces/{domain}/reverify")
             assert resp.status_code == 200, resp.text
             body = resp.json()
@@ -902,7 +1001,10 @@ async def test_reverify_namespace_matching_dns_refreshes_without_rotation(
 
 @pytest.mark.asyncio
 async def test_reverify_child_namespace_inherits_parent_dns_authority(
-    client, awid_db_infra, fake_redis, controller_identity,
+    client,
+    awid_db_infra,
+    fake_redis,
+    controller_identity,
 ):
     parent_key, parent_controller_did = controller_identity
     parent_domain = "parent-reverify.example"
@@ -911,7 +1013,9 @@ async def test_reverify_child_namespace_inherits_parent_dns_authority(
 
     child_key, child_pub = generate_keypair()
     child_controller_did = did_from_public_key(child_pub)
-    child_headers = _sign(child_key, child_controller_did, domain=child_domain, operation="register")
+    child_headers = _sign(
+        child_key, child_controller_did, domain=child_domain, operation="register"
+    )
     parent_headers = _sign(
         parent_key,
         parent_controller_did,
@@ -952,7 +1056,9 @@ async def test_reverify_child_namespace_inherits_parent_dns_authority(
     app.dependency_overrides[get_domain_verifier] = lambda: _parent_domain_verifier
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as recovery_client:
             resp = await recovery_client.post(f"/v1/namespaces/{child_domain}/reverify")
             assert resp.status_code == 200, resp.text
             body = resp.json()
@@ -964,7 +1070,10 @@ async def test_reverify_child_namespace_inherits_parent_dns_authority(
 
 @pytest.mark.asyncio
 async def test_reverify_namespace_dns_failure_returns_422_without_revoking(
-    client, awid_db_infra, fake_redis, controller_identity,
+    client,
+    awid_db_infra,
+    fake_redis,
+    controller_identity,
 ):
     signing_key, controller_did = controller_identity
     domain = "reverify-fail.example"
@@ -977,7 +1086,9 @@ async def test_reverify_namespace_dns_failure_returns_422_without_revoking(
     app.dependency_overrides[get_domain_verifier] = lambda: _failing_domain_verifier
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as recovery_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as recovery_client:
             resp = await recovery_client.post(f"/v1/namespaces/{domain}/reverify")
             assert resp.status_code == 422
             assert resp.json()["detail"] == f"DNS lookup failed for _awid.{domain}"
@@ -1015,7 +1126,11 @@ async def test_reverify_namespace_missing_returns_404(client):
 
 @pytest.mark.asyncio
 async def test_stale_address_verification_updates_controller_instead_of_revoking(
-    client, awid_db_infra, fake_redis, controller_identity, monkeypatch,
+    client,
+    awid_db_infra,
+    fake_redis,
+    controller_identity,
+    monkeypatch,
 ):
     old_signing_key, old_controller_did = controller_identity
     domain = "stale-update.example"
@@ -1046,13 +1161,17 @@ async def test_stale_address_verification_updates_controller_instead_of_revoking
     def _capture_warning(message: str, *args) -> None:
         logged.append((message, args))
 
-    monkeypatch.setattr(dns_namespace_reverify_routes.logger, "warning", _capture_warning)
+    monkeypatch.setattr(
+        dns_namespace_reverify_routes.logger, "warning", _capture_warning
+    )
 
     app = create_app(db_infra=awid_db_infra, redis=fake_redis)
     app.dependency_overrides[get_domain_verifier] = lambda: _rotated_domain_verifier
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as address_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as address_client:
             _, old_member_pub = generate_keypair()
             old_member_did_key = did_from_public_key(old_member_pub)
             old_headers = _sign(
@@ -1073,9 +1192,14 @@ async def test_stale_address_verification_updates_controller_instead_of_revoking
                 headers=old_headers,
             )
             assert old_resp.status_code == 403
-            assert old_resp.json()["detail"] == "Only the namespace controller can manage addresses"
+            assert (
+                old_resp.json()["detail"]
+                == "Only the namespace controller can manage addresses"
+            )
 
-            new_address = await _register_address(address_client, new_signing_key, new_controller_did, domain, "alice")
+            new_address = await _register_address(
+                address_client, new_signing_key, new_controller_did, domain, "alice"
+            )
             assert new_address["name"] == "alice"
 
     row = await db.fetch_one(
@@ -1098,7 +1222,10 @@ async def test_stale_address_verification_updates_controller_instead_of_revoking
 
 @pytest.mark.asyncio
 async def test_stale_address_dns_failure_does_not_revoke_namespace(
-    client, awid_db_infra, fake_redis, controller_identity,
+    client,
+    awid_db_infra,
+    fake_redis,
+    controller_identity,
 ):
     signing_key, controller_did = controller_identity
     domain = "stale-failure.example"
@@ -1121,7 +1248,9 @@ async def test_stale_address_dns_failure_does_not_revoke_namespace(
     app.dependency_overrides[get_domain_verifier] = lambda: _failing_domain_verifier
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as address_client:
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as address_client:
             _, member_pub = generate_keypair()
             member_did_key = did_from_public_key(member_pub)
             headers = _sign(
@@ -1162,7 +1291,9 @@ async def test_local_namespace_behaves_like_normal_namespace(client):
     ns_did = did_from_public_key(ns_pub)
     await _register_namespace(client, ns_key, ns_did, "local")
 
-    team_key, team_did, team = await _create_team(client, ns_key, ns_did, "local", "default")
+    team_key, team_did, team = await _create_team(
+        client, ns_key, ns_did, "local", "default"
+    )
     address = await _register_address(client, ns_key, ns_did, "local", "alice")
     cert = await _register_certificate(
         client,
@@ -1191,7 +1322,9 @@ async def test_local_namespace_behaves_like_normal_namespace(client):
 
 
 @pytest.mark.asyncio
-async def test_delete_namespace_happy_path_cascades(client, controller_identity, awid_db_infra):
+async def test_delete_namespace_happy_path_cascades(
+    client, controller_identity, awid_db_infra
+):
     ns_key, ns_did = controller_identity
     domain = "delete-ns.example"
     namespace = await _register_namespace(client, ns_key, ns_did, domain)
@@ -1261,12 +1394,18 @@ async def test_delete_namespace_happy_path_cascades(client, controller_identity,
 
 
 @pytest.mark.asyncio
-async def test_delete_namespace_with_active_certificates_returns_409(client, controller_identity):
+async def test_delete_namespace_with_active_certificates_returns_409(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     domain = "active-ns.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
-    await _register_certificate(client, team_key, team_did, domain, "backend", str(uuid4()))
+    team_key, team_did, _ = await _create_team(
+        client, ns_key, ns_did, domain, "backend"
+    )
+    await _register_certificate(
+        client, team_key, team_did, domain, "backend", str(uuid4())
+    )
 
     headers = _sign(ns_key, ns_did, domain=domain, operation="delete_namespace")
     resp = await client.delete(f"/v1/namespaces/{domain}", headers=headers)
@@ -1275,7 +1414,9 @@ async def test_delete_namespace_with_active_certificates_returns_409(client, con
 
 
 @pytest.mark.asyncio
-async def test_delete_namespace_already_deleted_returns_404(client, controller_identity):
+async def test_delete_namespace_already_deleted_returns_404(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     domain = "deleted-ns.example"
     await _register_namespace(client, ns_key, ns_did, domain)
@@ -1297,14 +1438,19 @@ async def test_delete_namespace_bad_signature_returns_401(client, controller_ide
     await _register_namespace(client, ns_key, ns_did, domain)
 
     headers = _bad_signature_headers(
-        wrong_key, ns_did, domain=domain, operation="delete_namespace",
+        wrong_key,
+        ns_did,
+        domain=domain,
+        operation="delete_namespace",
     )
     resp = await client.delete(f"/v1/namespaces/{domain}", headers=headers)
     assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_delete_namespace_wrong_operation_returns_401(client, controller_identity):
+async def test_delete_namespace_wrong_operation_returns_401(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     domain = "wrong-op-ns.example"
     await _register_namespace(client, ns_key, ns_did, domain)
@@ -1321,7 +1467,9 @@ async def test_delete_address_happy_path(client, controller_identity, awid_db_in
     await _register_namespace(client, ns_key, ns_did, domain)
     address = await _register_address(client, ns_key, ns_did, domain, "alice")
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="delete_address", name="alice"
+    )
     resp = await client.request(
         "DELETE",
         f"/v1/namespaces/{domain}/addresses/alice",
@@ -1348,7 +1496,9 @@ async def test_delete_address_happy_path(client, controller_identity, awid_db_in
 
 
 @pytest.mark.asyncio
-async def test_conditional_delete_preserves_reassigned_address(client, controller_identity):
+async def test_conditional_delete_preserves_reassigned_address(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     domain = "conditional-delete.example"
     await _register_namespace(client, ns_key, ns_did, domain)
@@ -1401,12 +1551,16 @@ async def test_conditional_delete_preserves_reassigned_address(client, controlle
 
 
 @pytest.mark.asyncio
-async def test_delete_address_with_active_certificates_returns_409(client, controller_identity):
+async def test_delete_address_with_active_certificates_returns_409(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     domain = "active-address.example"
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_address(client, ns_key, ns_did, domain, "alice")
-    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    team_key, team_did, _ = await _create_team(
+        client, ns_key, ns_did, domain, "backend"
+    )
     await _register_persistent_certificate_for_address(
         client,
         team_key,
@@ -1417,8 +1571,12 @@ async def test_delete_address_with_active_certificates_returns_409(client, contr
         f"{domain}/alice",
     )
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_address", name="alice")
-    resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="delete_address", name="alice"
+    )
+    resp = await client.delete(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=headers
+    )
     assert resp.status_code == 409
     assert "active certificates" in resp.text
 
@@ -1430,12 +1588,20 @@ async def test_delete_address_already_deleted_returns_404(client, controller_ide
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_address(client, ns_key, ns_did, domain, "alice")
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_address", name="alice")
-    resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="delete_address", name="alice"
+    )
+    resp = await client.delete(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=headers
+    )
     assert resp.status_code == 200
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_address", name="alice")
-    resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="delete_address", name="alice"
+    )
+    resp = await client.delete(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=headers
+    )
     assert resp.status_code == 404
 
 
@@ -1448,9 +1614,15 @@ async def test_delete_address_bad_signature_returns_401(client, controller_ident
     await _register_address(client, ns_key, ns_did, domain, "alice")
 
     headers = _bad_signature_headers(
-        wrong_key, ns_did, domain=domain, operation="delete_address", name="alice",
+        wrong_key,
+        ns_did,
+        domain=domain,
+        operation="delete_address",
+        name="alice",
     )
-    resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+    resp = await client.delete(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=headers
+    )
     assert resp.status_code == 401
 
 
@@ -1462,7 +1634,9 @@ async def test_delete_address_wrong_operation_returns_401(client, controller_ide
     await _register_address(client, ns_key, ns_did, domain, "alice")
 
     headers = _sign(ns_key, ns_did, domain=domain, operation="delete", name="alice")
-    resp = await client.delete(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
+    resp = await client.delete(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=headers
+    )
     assert resp.status_code == 401
 
 
@@ -1479,7 +1653,9 @@ async def test_public_address_get_allows_anonymous(client, controller_identity):
 
 
 @pytest.mark.asyncio
-async def test_nobody_reachability_no_longer_blocks_global_address_get(client, controller_identity):
+async def test_nobody_reachability_no_longer_blocks_global_address_get(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1496,8 +1672,12 @@ async def test_nobody_reachability_no_longer_blocks_global_address_get(client, c
         reachability="nobody",
     )
 
-    owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
-    owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
+    owner_headers = _sign(
+        owner_key, owner_did_key, domain=domain, operation="get_address", name="alice"
+    )
+    owner_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers
+    )
     assert owner_resp.status_code == 200, owner_resp.text
     assert owner_resp.json()["address_id"] == address["address_id"]
 
@@ -1507,14 +1687,20 @@ async def test_nobody_reachability_no_longer_blocks_global_address_get(client, c
 
     other_key, other_pub = generate_keypair()
     other_did_key = did_from_public_key(other_pub)
-    other_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
-    other_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_headers)
+    other_headers = _sign(
+        other_key, other_did_key, domain=domain, operation="get_address", name="alice"
+    )
+    other_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=other_headers
+    )
     assert other_resp.status_code == 200, other_resp.text
     assert other_resp.json()["address_id"] == address["address_id"]
 
 
 @pytest.mark.asyncio
-async def test_address_get_nonexistent_still_returns_404_after_reachability_removal(client, controller_identity):
+async def test_address_get_nonexistent_still_returns_404_after_reachability_removal(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1533,19 +1719,31 @@ async def test_address_get_nonexistent_still_returns_404_after_reachability_remo
         reachability="nobody",
     )
 
-    hidden_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
-    hidden_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=hidden_headers)
+    hidden_headers = _sign(
+        other_key, other_did_key, domain=domain, operation="get_address", name="alice"
+    )
+    hidden_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=hidden_headers
+    )
     assert hidden_resp.status_code == 200, hidden_resp.text
     assert hidden_resp.json()["name"] == "alice"
 
-    missing_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="missing")
-    missing_resp = await client.get(f"/v1/namespaces/{domain}/addresses/missing", headers=missing_headers)
+    missing_headers = _sign(
+        other_key, other_did_key, domain=domain, operation="get_address", name="missing"
+    )
+    missing_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/missing", headers=missing_headers
+    )
     assert missing_resp.status_code == 404
-    assert missing_resp.json() == {"detail": {"code": "address_not_found", "message": "Address not found"}}
+    assert missing_resp.json() == {
+        "detail": {"code": "address_not_found", "message": "Address not found"}
+    }
 
 
 @pytest.mark.asyncio
-async def test_list_addresses_includes_nobody_reachability_for_global_resolution(client, controller_identity):
+async def test_list_addresses_includes_nobody_reachability_for_global_resolution(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1572,16 +1770,28 @@ async def test_list_addresses_includes_nobody_reachability_for_global_resolution
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert anon_resp.status_code == 200, anon_resp.text
-    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["nobody-alice", "public-alice"]
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == [
+        "nobody-alice",
+        "public-alice",
+    ]
 
-    owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="list_addresses")
-    owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=owner_headers)
+    owner_headers = _sign(
+        owner_key, owner_did_key, domain=domain, operation="list_addresses"
+    )
+    owner_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses", headers=owner_headers
+    )
     assert owner_resp.status_code == 200, owner_resp.text
-    assert [item["name"] for item in owner_resp.json()["addresses"]] == ["nobody-alice", "public-alice"]
+    assert [item["name"] for item in owner_resp.json()["addresses"]] == [
+        "nobody-alice",
+        "public-alice",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_list_addresses_no_longer_has_visibility_filters_to_bypass(client, controller_identity):
+async def test_list_addresses_no_longer_has_visibility_filters_to_bypass(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     outsider_key, outsider_pub = generate_keypair()
     outsider_did_key = did_from_public_key(outsider_pub)
@@ -1604,23 +1814,42 @@ async def test_list_addresses_no_longer_has_visibility_filters_to_bypass(client,
         reachability="public",
     )
 
-    controller_headers = _sign(ns_key, ns_did, domain=domain, operation="list_addresses")
-    controller_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=controller_headers)
+    controller_headers = _sign(
+        ns_key, ns_did, domain=domain, operation="list_addresses"
+    )
+    controller_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses", headers=controller_headers
+    )
     assert controller_resp.status_code == 200, controller_resp.text
-    assert [item["name"] for item in controller_resp.json()["addresses"]] == ["nobody-alice", "public-alice"]
+    assert [item["name"] for item in controller_resp.json()["addresses"]] == [
+        "nobody-alice",
+        "public-alice",
+    ]
 
-    outsider_headers = _sign(outsider_key, outsider_did_key, domain=domain, operation="list_addresses")
-    outsider_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=outsider_headers)
+    outsider_headers = _sign(
+        outsider_key, outsider_did_key, domain=domain, operation="list_addresses"
+    )
+    outsider_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses", headers=outsider_headers
+    )
     assert outsider_resp.status_code == 200, outsider_resp.text
-    assert [item["name"] for item in outsider_resp.json()["addresses"]] == ["nobody-alice", "public-alice"]
+    assert [item["name"] for item in outsider_resp.json()["addresses"]] == [
+        "nobody-alice",
+        "public-alice",
+    ]
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert anon_resp.status_code == 200, anon_resp.text
-    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["nobody-alice", "public-alice"]
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == [
+        "nobody-alice",
+        "public-alice",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_org_only_address_get_allows_global_resolution_without_team_visibility_gate(client, controller_identity):
+async def test_org_only_address_get_allows_global_resolution_without_team_visibility_gate(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1632,7 +1861,9 @@ async def test_org_only_address_get_allows_global_resolution_without_team_visibi
     ephemeral_did_key = did_from_public_key(ephemeral_pub)
     domain = "org-only.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    team_key, team_did, _ = await _create_team(
+        client, ns_key, ns_did, domain, "backend"
+    )
     await _register_address_for_identity(
         client,
         ns_key,
@@ -1669,35 +1900,59 @@ async def test_org_only_address_get_allows_global_resolution_without_team_visibi
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
     assert anon_resp.status_code == 200, anon_resp.text
 
-    owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
-    owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
+    owner_headers = _sign(
+        owner_key, owner_did_key, domain=domain, operation="get_address", name="alice"
+    )
+    owner_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers
+    )
     assert owner_resp.status_code == 200, owner_resp.text
     assert "reachability" not in owner_resp.json()
 
-    member_headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    member_headers = _sign(
+        member_key, member_did_key, domain=domain, operation="get_address", name="alice"
+    )
     member_headers["X-AWID-Team-Certificate"] = member_cert["certificate_header"]
-    member_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=member_headers)
+    member_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=member_headers
+    )
     assert member_resp.status_code == 200, member_resp.text
 
-    member_without_cert_headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    member_without_cert_headers = _sign(
+        member_key, member_did_key, domain=domain, operation="get_address", name="alice"
+    )
     member_without_cert_resp = await client.get(
         f"/v1/namespaces/{domain}/addresses/alice",
         headers=member_without_cert_headers,
     )
     assert member_without_cert_resp.status_code == 200, member_without_cert_resp.text
 
-    other_headers = _sign(other_key, other_did_key, domain=domain, operation="get_address", name="alice")
-    other_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_headers)
+    other_headers = _sign(
+        other_key, other_did_key, domain=domain, operation="get_address", name="alice"
+    )
+    other_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=other_headers
+    )
     assert other_resp.status_code == 200, other_resp.text
 
-    ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
+    ephemeral_headers = _sign(
+        ephemeral_key,
+        ephemeral_did_key,
+        domain=domain,
+        operation="get_address",
+        name="alice",
+    )
     ephemeral_headers["X-AWID-Team-Certificate"] = ephemeral_cert["certificate_header"]
-    ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
+    ephemeral_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers
+    )
     assert ephemeral_resp.status_code == 200, ephemeral_resp.text
 
 
 @pytest.mark.asyncio
-async def test_org_only_address_get_accepts_unpublished_valid_certificate(client, controller_identity):
+async def test_org_only_address_get_accepts_unpublished_valid_certificate(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1705,7 +1960,9 @@ async def test_org_only_address_get_accepts_unpublished_valid_certificate(client
     member_did_key = did_from_public_key(member_pub)
     domain = "org-only-unpublished.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    team_key, team_did, _ = await _create_team(
+        client, ns_key, ns_did, domain, "backend"
+    )
     await _register_address_for_identity(
         client,
         ns_key,
@@ -1717,7 +1974,9 @@ async def test_org_only_address_get_accepts_unpublished_valid_certificate(client
         reachability="org_only",
     )
 
-    headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    headers = _sign(
+        member_key, member_did_key, domain=domain, operation="get_address", name="alice"
+    )
     headers["X-AWID-Team-Certificate"] = _signed_certificate_header(
         team_key,
         team_did,
@@ -1735,7 +1994,9 @@ async def test_org_only_address_get_accepts_unpublished_valid_certificate(client
 
 
 @pytest.mark.asyncio
-async def test_global_address_get_ignores_invalid_legacy_presented_certificate(client, controller_identity):
+async def test_global_address_get_ignores_invalid_legacy_presented_certificate(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1755,7 +2016,9 @@ async def test_global_address_get_ignores_invalid_legacy_presented_certificate(c
         reachability="org_only",
     )
 
-    headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    headers = _sign(
+        member_key, member_did_key, domain=domain, operation="get_address", name="alice"
+    )
     headers["X-AWID-Team-Certificate"] = base64.b64encode(b'{"version": 1}').decode()
     resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=headers)
 
@@ -1764,7 +2027,9 @@ async def test_global_address_get_ignores_invalid_legacy_presented_certificate(c
 
 
 @pytest.mark.asyncio
-async def test_org_only_legacy_reachability_does_not_require_persistent_certificate(client, controller_identity):
+async def test_org_only_legacy_reachability_does_not_require_persistent_certificate(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1772,7 +2037,9 @@ async def test_org_only_legacy_reachability_does_not_require_persistent_certific
     ephemeral_did_key = did_from_public_key(ephemeral_pub)
     domain = "org-only-ephemeral.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    team_key, team_did, _ = await _create_team(
+        client, ns_key, ns_did, domain, "backend"
+    )
     await _register_address_for_identity(
         client,
         ns_key,
@@ -1796,14 +2063,24 @@ async def test_org_only_legacy_reachability_does_not_require_persistent_certific
         lifetime="ephemeral",
     )
 
-    ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
+    ephemeral_headers = _sign(
+        ephemeral_key,
+        ephemeral_did_key,
+        domain=domain,
+        operation="get_address",
+        name="alice",
+    )
     ephemeral_headers["X-AWID-Team-Certificate"] = ephemeral_cert["certificate_header"]
-    ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
+    ephemeral_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers
+    )
     assert ephemeral_resp.status_code == 200, ephemeral_resp.text
 
 
 @pytest.mark.asyncio
-async def test_list_addresses_includes_org_only_without_team_cert_visibility_gate(client, controller_identity):
+async def test_list_addresses_includes_org_only_without_team_cert_visibility_gate(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
@@ -1811,7 +2088,9 @@ async def test_list_addresses_includes_org_only_without_team_cert_visibility_gat
     outsider_did_key = did_from_public_key(outsider_pub)
     domain = "list-org-only.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    team_key, team_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
+    team_key, team_did, _ = await _create_team(
+        client, ns_key, ns_did, domain, "backend"
+    )
     await _register_address_for_identity(
         client,
         ns_key,
@@ -1842,22 +2121,41 @@ async def test_list_addresses_includes_org_only_without_team_cert_visibility_gat
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert anon_resp.status_code == 200, anon_resp.text
-    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["org-alice", "public-alice"]
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == [
+        "org-alice",
+        "public-alice",
+    ]
 
-    outsider_headers = _sign(outsider_key, outsider_did_key, domain=domain, operation="list_addresses")
-    outsider_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=outsider_headers)
+    outsider_headers = _sign(
+        outsider_key, outsider_did_key, domain=domain, operation="list_addresses"
+    )
+    outsider_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses", headers=outsider_headers
+    )
     assert outsider_resp.status_code == 200, outsider_resp.text
-    assert [item["name"] for item in outsider_resp.json()["addresses"]] == ["org-alice", "public-alice"]
+    assert [item["name"] for item in outsider_resp.json()["addresses"]] == [
+        "org-alice",
+        "public-alice",
+    ]
 
-    member_headers = _sign(member_key, member_did_key, domain=domain, operation="list_addresses")
+    member_headers = _sign(
+        member_key, member_did_key, domain=domain, operation="list_addresses"
+    )
     member_headers["X-AWID-Team-Certificate"] = member_cert["certificate_header"]
-    member_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=member_headers)
+    member_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses", headers=member_headers
+    )
     assert member_resp.status_code == 200, member_resp.text
-    assert [item["name"] for item in member_resp.json()["addresses"]] == ["org-alice", "public-alice"]
+    assert [item["name"] for item in member_resp.json()["addresses"]] == [
+        "org-alice",
+        "public-alice",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_team_members_only_address_get_ignores_legacy_team_visibility_gate(client, controller_identity):
+async def test_team_members_only_address_get_ignores_legacy_team_visibility_gate(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -1869,8 +2167,12 @@ async def test_team_members_only_address_get_ignores_legacy_team_visibility_gate
     ephemeral_did_key = did_from_public_key(ephemeral_pub)
     domain = "team-members-only.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    backend_key, backend_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
-    frontend_key, frontend_did, _ = await _create_team(client, ns_key, ns_did, domain, "frontend")
+    backend_key, backend_did, _ = await _create_team(
+        client, ns_key, ns_did, domain, "backend"
+    )
+    frontend_key, frontend_did, _ = await _create_team(
+        client, ns_key, ns_did, domain, "frontend"
+    )
     address = await _register_address_for_identity(
         client,
         ns_key,
@@ -1921,28 +2223,54 @@ async def test_team_members_only_address_get_ignores_legacy_team_visibility_gate
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
     assert anon_resp.status_code == 200, anon_resp.text
 
-    owner_headers = _sign(owner_key, owner_did_key, domain=domain, operation="get_address", name="alice")
-    owner_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers)
+    owner_headers = _sign(
+        owner_key, owner_did_key, domain=domain, operation="get_address", name="alice"
+    )
+    owner_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=owner_headers
+    )
     assert owner_resp.status_code == 200, owner_resp.text
 
-    member_headers = _sign(member_key, member_did_key, domain=domain, operation="get_address", name="alice")
+    member_headers = _sign(
+        member_key, member_did_key, domain=domain, operation="get_address", name="alice"
+    )
     member_headers["X-AWID-Team-Certificate"] = backend_cert["certificate_header"]
-    member_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=member_headers)
+    member_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=member_headers
+    )
     assert member_resp.status_code == 200, member_resp.text
 
-    other_team_headers = _sign(other_team_key, other_team_did_key, domain=domain, operation="get_address", name="alice")
+    other_team_headers = _sign(
+        other_team_key,
+        other_team_did_key,
+        domain=domain,
+        operation="get_address",
+        name="alice",
+    )
     other_team_headers["X-AWID-Team-Certificate"] = frontend_cert["certificate_header"]
-    other_team_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=other_team_headers)
+    other_team_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=other_team_headers
+    )
     assert other_team_resp.status_code == 200, other_team_resp.text
 
-    ephemeral_headers = _sign(ephemeral_key, ephemeral_did_key, domain=domain, operation="get_address", name="alice")
+    ephemeral_headers = _sign(
+        ephemeral_key,
+        ephemeral_did_key,
+        domain=domain,
+        operation="get_address",
+        name="alice",
+    )
     ephemeral_headers["X-AWID-Team-Certificate"] = ephemeral_cert["certificate_header"]
-    ephemeral_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers)
+    ephemeral_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses/alice", headers=ephemeral_headers
+    )
     assert ephemeral_resp.status_code == 200, ephemeral_resp.text
 
 
 @pytest.mark.asyncio
-async def test_list_addresses_includes_team_members_only_without_target_team_gate(client, controller_identity):
+async def test_list_addresses_includes_team_members_only_without_target_team_gate(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     backend_member_key, backend_member_pub = generate_keypair()
     backend_member_did_key = did_from_public_key(backend_member_pub)
@@ -1950,8 +2278,12 @@ async def test_list_addresses_includes_team_members_only_without_target_team_gat
     frontend_member_did_key = did_from_public_key(frontend_member_pub)
     domain = "list-team-members-only.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    backend_key, backend_did, _ = await _create_team(client, ns_key, ns_did, domain, "backend")
-    frontend_key, frontend_did, _ = await _create_team(client, ns_key, ns_did, domain, "frontend")
+    backend_key, backend_did, _ = await _create_team(
+        client, ns_key, ns_did, domain, "backend"
+    )
+    frontend_key, frontend_did, _ = await _create_team(
+        client, ns_key, ns_did, domain, "frontend"
+    )
     await _register_address_for_identity(
         client,
         ns_key,
@@ -1994,33 +2326,60 @@ async def test_list_addresses_includes_team_members_only_without_target_team_gat
 
     anon_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert anon_resp.status_code == 200, anon_resp.text
-    assert [item["name"] for item in anon_resp.json()["addresses"]] == ["backend-alice", "public-alice"]
+    assert [item["name"] for item in anon_resp.json()["addresses"]] == [
+        "backend-alice",
+        "public-alice",
+    ]
 
-    frontend_headers = _sign(frontend_member_key, frontend_member_did_key, domain=domain, operation="list_addresses")
+    frontend_headers = _sign(
+        frontend_member_key,
+        frontend_member_did_key,
+        domain=domain,
+        operation="list_addresses",
+    )
     frontend_headers["X-AWID-Team-Certificate"] = frontend_cert["certificate_header"]
-    frontend_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=frontend_headers)
+    frontend_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses", headers=frontend_headers
+    )
     assert frontend_resp.status_code == 200, frontend_resp.text
-    assert [item["name"] for item in frontend_resp.json()["addresses"]] == ["backend-alice", "public-alice"]
+    assert [item["name"] for item in frontend_resp.json()["addresses"]] == [
+        "backend-alice",
+        "public-alice",
+    ]
 
-    backend_headers = _sign(backend_member_key, backend_member_did_key, domain=domain, operation="list_addresses")
+    backend_headers = _sign(
+        backend_member_key,
+        backend_member_did_key,
+        domain=domain,
+        operation="list_addresses",
+    )
     backend_headers["X-AWID-Team-Certificate"] = backend_cert["certificate_header"]
-    backend_resp = await client.get(f"/v1/namespaces/{domain}/addresses", headers=backend_headers)
+    backend_resp = await client.get(
+        f"/v1/namespaces/{domain}/addresses", headers=backend_headers
+    )
     assert backend_resp.status_code == 200, backend_resp.text
-    assert [item["name"] for item in backend_resp.json()["addresses"]] == ["backend-alice", "public-alice"]
+    assert [item["name"] for item in backend_resp.json()["addresses"]] == [
+        "backend-alice",
+        "public-alice",
+    ]
 
 
 @pytest.mark.asyncio
 # Split the literals so residue greps can stay strict while this negative test
 # still exercises server-side rejection of the removed enum values.
 @pytest.mark.parametrize("reachability", ["contacts" + "_only", "org" + "_visible"])
-async def test_register_address_ignores_deprecated_reachability_values(client, controller_identity, reachability):
+async def test_register_address_ignores_deprecated_reachability_values(
+    client, controller_identity, reachability
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
     domain = f"legacy-{reachability.replace('_', '-')}.example"
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_identity(client, owner_key, owner_did_key)
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
         json={
@@ -2044,7 +2403,9 @@ async def test_register_address_requires_registered_did(client, controller_ident
     domain = "unregistered-address-did.example"
     await _register_namespace(client, ns_key, ns_did, domain)
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
         json={
@@ -2057,7 +2418,9 @@ async def test_register_address_requires_registered_did(client, controller_ident
     )
 
     assert resp.status_code == 409
-    assert resp.json()["detail"] == "did_aw must be registered before address assignment"
+    assert (
+        resp.json()["detail"] == "did_aw must be registered before address assignment"
+    )
 
 
 @pytest.mark.asyncio
@@ -2074,7 +2437,9 @@ async def test_register_address_accepts_registered_did_without_extra_identity_ro
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_identity(client, owner_key, owner_did_key)
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
         json={
@@ -2126,24 +2491,32 @@ async def test_register_address_is_idempotent_for_same_did_and_key(
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_identity(client, owner_key, owner_did_key)
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+    )
     payload = {
         "name": "alice",
         "did_aw": owner_did_aw,
         "current_did_key": owner_did_key,
         "reachability": "public",
     }
-    first = await client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers)
+    first = await client.post(
+        f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers
+    )
     assert first.status_code == 200, first.text
 
-    second = await client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers)
+    second = await client.post(
+        f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers
+    )
     assert second.status_code == 200, second.text
     assert second.json() == first.json()
     assert await _active_address_count(awid_db_infra, domain, "alice") == 1
 
 
 @pytest.mark.asyncio
-async def test_register_address_rejects_existing_name_for_different_did_aw(client, controller_identity):
+async def test_register_address_rejects_existing_name_for_different_did_aw(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     first_key, first_pub = generate_keypair()
     first_did_key = did_from_public_key(first_pub)
@@ -2154,7 +2527,9 @@ async def test_register_address_rejects_existing_name_for_different_did_aw(clien
     await _register_identity(client, first_key, first_did_key)
     await _register_identity(client, second_key, second_did_key)
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+    )
     first = await client.post(
         f"/v1/namespaces/{domain}/addresses",
         json={
@@ -2182,7 +2557,9 @@ async def test_register_address_rejects_existing_name_for_different_did_aw(clien
 
 
 @pytest.mark.asyncio
-async def test_reregister_address_rejects_stale_did_key_after_rotation(client, controller_identity):
+async def test_reregister_address_rejects_stale_did_key_after_rotation(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     old_key, old_pub = generate_keypair()
     old_did_key = did_from_public_key(old_pub)
@@ -2193,19 +2570,25 @@ async def test_reregister_address_rejects_stale_did_key_after_rotation(client, c
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_identity(client, old_key, old_did_key)
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+    )
     payload = {
         "name": "alice",
         "did_aw": owner_did_aw,
         "current_did_key": old_did_key,
         "reachability": "public",
     }
-    first = await client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers)
+    first = await client.post(
+        f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers
+    )
     assert first.status_code == 200, first.text
 
     await _rotate_identity(client, old_key, owner_did_aw, old_did_key, new_did_key)
 
-    second = await client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers)
+    second = await client.post(
+        f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers
+    )
     assert second.status_code == 409
     assert second.json()["detail"] == "did_aw current key does not match"
 
@@ -2224,7 +2607,9 @@ async def test_concurrent_register_address_exact_match_creates_one_row(
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_identity(client, owner_key, owner_did_key)
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+    )
     payload = {
         "name": "alice",
         "did_aw": owner_did_aw,
@@ -2233,8 +2618,12 @@ async def test_concurrent_register_address_exact_match_creates_one_row(
     }
 
     responses = await asyncio.gather(
-        client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers),
-        client.post(f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers),
+        client.post(
+            f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers
+        ),
+        client.post(
+            f"/v1/namespaces/{domain}/addresses", json=payload, headers=headers
+        ),
     )
 
     assert [resp.status_code for resp in responses] == [200, 200]
@@ -2247,7 +2636,9 @@ async def test_registry_client_maps_address_already_bound_error():
     async def handler(request):
         assert request.method == "POST"
         assert request.url.path == "/v1/namespaces/example.com/addresses"
-        return Response(409, json={"detail": "address already bound to a different did_aw"})
+        return Response(
+            409, json={"detail": "address already bound to a different did_aw"}
+        )
 
     controller_key, _ = generate_keypair()
     registry = RegistryClient(
@@ -2268,7 +2659,9 @@ async def test_registry_client_maps_address_already_bound_error():
 
 
 @pytest.mark.asyncio
-async def test_address_reads_reflect_rotated_did_key_without_address_update(client, controller_identity):
+async def test_address_reads_reflect_rotated_did_key_without_address_update(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -2313,7 +2706,9 @@ async def test_address_reads_reflect_rotated_did_key_without_address_update(clie
 
 
 @pytest.mark.asyncio
-async def test_register_address_rejects_stale_did_key_after_rotation(client, controller_identity):
+async def test_register_address_rejects_stale_did_key_after_rotation(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     old_key, old_pub = generate_keypair()
     old_did_key = did_from_public_key(old_pub)
@@ -2325,7 +2720,9 @@ async def test_register_address_rejects_stale_did_key_after_rotation(client, con
     await _register_identity(client, old_key, old_did_key)
     await _rotate_identity(client, old_key, owner_did_aw, old_did_key, new_did_key)
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
         json={
@@ -2342,14 +2739,18 @@ async def test_register_address_rejects_stale_did_key_after_rotation(client, con
 
 
 @pytest.mark.asyncio
-async def test_register_address_ignores_deprecated_team_members_only_without_visible_to_team_id(client, controller_identity):
+async def test_register_address_ignores_deprecated_team_members_only_without_visible_to_team_id(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
     domain = "missing-team-scope.example"
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_identity(client, owner_key, owner_did_key)
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
         json={
@@ -2366,7 +2767,9 @@ async def test_register_address_ignores_deprecated_team_members_only_without_vis
 
 
 @pytest.mark.asyncio
-async def test_register_address_ignores_deprecated_visible_to_team_id(client, controller_identity):
+async def test_register_address_ignores_deprecated_visible_to_team_id(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -2374,7 +2777,9 @@ async def test_register_address_ignores_deprecated_visible_to_team_id(client, co
     await _register_namespace(client, ns_key, ns_did, domain)
     await _register_identity(client, owner_key, owner_did_key)
     await _create_team(client, ns_key, ns_did, domain, "backend")
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
         json={
@@ -2392,7 +2797,9 @@ async def test_register_address_ignores_deprecated_visible_to_team_id(client, co
 
 
 @pytest.mark.asyncio
-async def test_update_address_normalizes_legacy_reachability_metadata(client, controller_identity, awid_db_infra):
+async def test_update_address_normalizes_legacy_reachability_metadata(
+    client, controller_identity, awid_db_infra
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -2417,7 +2824,9 @@ async def test_update_address_normalizes_legacy_reachability_metadata(client, co
         visible_to_team_id=f"backend:{domain}",
     )
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="update_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="update_address", name="alice"
+    )
     resp = await client.put(
         f"/v1/namespaces/{domain}/addresses/alice",
         json={"reachability": "org_only"},
@@ -2429,7 +2838,9 @@ async def test_update_address_normalizes_legacy_reachability_metadata(client, co
 
 
 @pytest.mark.asyncio
-async def test_update_address_ignores_deprecated_visible_to_team_id(client, controller_identity, awid_db_infra):
+async def test_update_address_ignores_deprecated_visible_to_team_id(
+    client, controller_identity, awid_db_infra
+):
     ns_key, ns_did = controller_identity
     owner_key, owner_pub = generate_keypair()
     owner_did_key = did_from_public_key(owner_pub)
@@ -2453,7 +2864,9 @@ async def test_update_address_ignores_deprecated_visible_to_team_id(client, cont
         reachability="nobody",
     )
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="update_address", name="alice")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="update_address", name="alice"
+    )
     resp = await client.put(
         f"/v1/namespaces/{domain}/addresses/alice",
         json={"reachability": "org_only", "visible_to_team_id": f"backend:{domain}"},
@@ -2465,7 +2878,9 @@ async def test_update_address_ignores_deprecated_visible_to_team_id(client, cont
 
 
 @pytest.mark.asyncio
-async def test_same_identity_addresses_resolve_to_distinct_namespace_route_origins(client, controller_identity):
+async def test_same_identity_addresses_resolve_to_distinct_namespace_route_origins(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     identity_key, identity_pub = generate_keypair()
     identity_did_key = did_from_public_key(identity_pub)
@@ -2489,7 +2904,9 @@ async def test_same_identity_addresses_resolve_to_distinct_namespace_route_origi
             headers=headers,
         )
         assert ns_resp.status_code == 200, ns_resp.text
-        address_headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="alice")
+        address_headers = _sign(
+            ns_key, ns_did, domain=domain, operation="register_address", name="alice"
+        )
         address_resp = await client.post(
             f"/v1/namespaces/{domain}/addresses",
             json={
@@ -2508,16 +2925,21 @@ async def test_same_identity_addresses_resolve_to_distinct_namespace_route_origi
         payload = resolved.json()
         assert payload["did_aw"] == identity["did_aw"]
         assert payload["current_did_key"] == identity_did_key
-        assert payload["delivery"] == {"origin": namespace_origin, "source": "namespace"}
+        assert payload["delivery"] == {
+            "origin": namespace_origin,
+            "source": "namespace",
+        }
 
     did_addresses = await client.get(f"/v1/did/{identity['did_aw']}/addresses")
     assert did_addresses.status_code == 200, did_addresses.text
-    assert {item["delivery"]["origin"] for item in did_addresses.json()["addresses"]} == {
-        origin for _, origin in domains
-    }
+    assert {
+        item["delivery"]["origin"] for item in did_addresses.json()["addresses"]
+    } == {origin for _, origin in domains}
 
 
-@pytest.mark.parametrize("reachability", ["nobody", "org_only", "team_members_only", "public"])
+@pytest.mark.parametrize(
+    "reachability", ["nobody", "org_only", "team_members_only", "public"]
+)
 @pytest.mark.asyncio
 async def test_legacy_address_request_metadata_does_not_affect_get_or_list(
     client,
@@ -2562,27 +2984,41 @@ async def test_legacy_address_request_metadata_does_not_affect_get_or_list(
     get_resp = await client.get(f"/v1/namespaces/{domain}/addresses/alice")
     assert get_resp.status_code == 200, get_resp.text
     assert get_resp.json()["did_aw"] == legacy_address["did_aw"]
-    assert get_resp.json()["delivery"] == {"origin": namespace_origin, "source": "namespace"}
+    assert get_resp.json()["delivery"] == {
+        "origin": namespace_origin,
+        "source": "namespace",
+    }
     assert "reachability" not in get_resp.json()
     assert "visible_to_team_id" not in get_resp.json()
 
     list_resp = await client.get(f"/v1/namespaces/{domain}/addresses")
     assert list_resp.status_code == 200, list_resp.text
-    assert [item["name"] for item in list_resp.json()["addresses"]] == ["alice", "public-alice"]
+    assert [item["name"] for item in list_resp.json()["addresses"]] == [
+        "alice",
+        "public-alice",
+    ]
     assert all("reachability" not in item for item in list_resp.json()["addresses"])
 
 
 @pytest.mark.asyncio
-async def test_local_did_key_cannot_be_registered_as_global_address_identity(client, controller_identity, awid_db_infra):
+async def test_local_did_key_cannot_be_registered_as_global_address_identity(
+    client, controller_identity, awid_db_infra
+):
     ns_key, ns_did = controller_identity
     local_key, local_pub = generate_keypair()
     local_did_key = did_from_public_key(local_pub)
     domain = "local-did-key-address.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name="local")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name="local"
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
-        json={"name": "local", "did_aw": local_did_key, "current_did_key": local_did_key},
+        json={
+            "name": "local",
+            "did_aw": local_did_key,
+            "current_did_key": local_did_key,
+        },
         headers=headers,
     )
     assert resp.status_code == 422, resp.text

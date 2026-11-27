@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awebai/aw/a2agw"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/a2agw"
 	"gopkg.in/yaml.v3"
 )
 
@@ -49,6 +49,7 @@ type mailHTTPFixture struct {
 	targetDID    string
 	targetStable string
 	gatewayDID   string
+	gatewayKey   ed25519.PrivateKey
 	notices      atomic.Int32
 	failNotice   atomic.Bool
 	resolutions  atomic.Int32

@@ -214,13 +214,15 @@ async def read_stored_message(db, *, claim: StoredMessageClaim) -> StoredMessage
         for party in participants:
             did = party["did"]
             matches = {
-                expected for expected in remaining
-                if did == expected or (
-                    did.startswith("did:key:") and current_keys.get(expected) == did
-                )
+                expected
+                for expected in remaining
+                if did == expected
+                or (did.startswith("did:key:") and current_keys.get(expected) == did)
             }
             if len(matches) != 1:
-                return StoredMessageLookup(state=StoredMessageState.PARTICIPANTS_CHANGED)
+                return StoredMessageLookup(
+                    state=StoredMessageState.PARTICIPANTS_CHANGED
+                )
             remaining.remove(matches.pop())
         if remaining:
             return StoredMessageLookup(state=StoredMessageState.PARTICIPANTS_CHANGED)

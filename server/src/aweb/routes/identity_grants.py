@@ -36,7 +36,11 @@ class GrantMintRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     grant_did_key: str = Field(..., min_length=1, max_length=512)
     scopes: list[str] = Field(..., min_length=1)
-    ttl_seconds: Annotated[int, Field(ge=GRANT_TTL_MIN_SECONDS, le=GRANT_TTL_MAX_SECONDS)] | Literal["never"] | None = None
+    ttl_seconds: (
+        Annotated[int, Field(ge=GRANT_TTL_MIN_SECONDS, le=GRANT_TTL_MAX_SECONDS)]
+        | Literal["never"]
+        | None
+    ) = None
     label: Optional[str] = Field(None, max_length=200)
 
     @field_validator("grant_did_key")
@@ -81,8 +85,14 @@ class GrantStatusView(GrantListItem):
 
 
 def reject_grant_scheme(request: Request) -> None:
-    if (request.headers.get("Authorization") or "").lstrip().startswith(GRANT_AUTH_SCHEME):
-        raise HTTPException(status_code=403, detail="grants cannot mint or revoke grants")
+    if (
+        (request.headers.get("Authorization") or "")
+        .lstrip()
+        .startswith(GRANT_AUTH_SCHEME)
+    ):
+        raise HTTPException(
+            status_code=403, detail="grants cannot mint or revoke grants"
+        )
 
 
 @router.post("")
@@ -96,7 +106,9 @@ async def mint_identity_grant(
     # Revoking the issuing certificate ends the grant, so a grant needs one.
     issuing_certificate_id = (identity.certificate_id or "").strip()
     if not issuing_certificate_id:
-        raise HTTPException(status_code=403, detail="grants can only be minted with a team certificate")
+        raise HTTPException(
+            status_code=403, detail="grants can only be minted with a team certificate"
+        )
     manager = db.get_manager("aweb")
     subject = await manager.fetch_one(
         f"""
@@ -112,7 +124,11 @@ async def mint_identity_grant(
     subject_did_aw = (identity.did_aw or "").strip() or None
 
     now = datetime.now(timezone.utc)
-    expires_at = add_years(now, 100) if payload.ttl_seconds in (None, "never") else now + timedelta(seconds=payload.ttl_seconds)
+    expires_at = (
+        add_years(now, 100)
+        if payload.ttl_seconds in (None, "never")
+        else now + timedelta(seconds=payload.ttl_seconds)
+    )
     async with manager.transaction() as tx:
         await tx.fetch_value(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -126,7 +142,10 @@ async def mint_identity_grant(
             """,
             payload.grant_did_key,
         )
-        if existing and (never_expires(existing.get("issued_at"), existing["expires_at"]) or existing["expires_at"] > now):
+        if existing and (
+            never_expires(existing.get("issued_at"), existing["expires_at"])
+            or existing["expires_at"] > now
+        ):
             raise HTTPException(
                 status_code=409,
                 detail="an active grant already exists for this grant_did_key",
@@ -232,7 +251,9 @@ async def identity_grant_status(
         SELECT g.grant_id, g.team_id, g.subject_did_aw, g.grant_did_key, g.scopes, g.label,
                g.issued_at, g.expires_at, g.revoked_at, g.issued_by_certificate_id,
                a.status AS subject_status, a.deleted_at AS subject_deleted_at,
-               a.certificate_id, """ + member_key_columns_sql("a") + """
+               a.certificate_id, """
+        + member_key_columns_sql("a")
+        + """
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
         WHERE g.grant_id = $1::UUID AND g.team_id = $2 AND g.subject_agent_id = $3::UUID

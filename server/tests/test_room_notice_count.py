@@ -217,8 +217,19 @@ async def test_mcp_count_uses_current_admitted_actor_and_omits_failed_authority(
             result = await room_notice_count(env.infra)
             await JSONResponse({"room_count": result})(scope, receive, send)
 
-    env.app.mount("/mcp-count", MCPAuthMiddleware(Probe(), env.infra, proxy_verification=ProxyVerificationConfig(
-        trust=ProxyHeaderTrust.SHARED_SECRET if proxy else ProxyHeaderTrust.DISABLED, shared_secret="test-internal-auth-secret")))
+    env.app.mount(
+        "/mcp-count",
+        MCPAuthMiddleware(
+            Probe(),
+            env.infra,
+            proxy_verification=ProxyVerificationConfig(
+                trust=ProxyHeaderTrust.SHARED_SECRET
+                if proxy
+                else ProxyHeaderTrust.DISABLED,
+                shared_secret="test-internal-auth-secret",
+            ),
+        ),
+    )
     auth = headers(actor)
     if proxy:
         principal = str(uuid4())

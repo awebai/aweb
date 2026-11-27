@@ -43,7 +43,10 @@ from aweb.messaging.message_replay import (
 )
 
 from aweb.agent_wake import agent_wake_scope
-from aweb.attachment_service import confirm_accepted_attachment_refs, refuse_remote_attachments
+from aweb.attachment_service import (
+    confirm_accepted_attachment_refs,
+    refuse_remote_attachments,
+)
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.db import TransactionInfra
@@ -127,6 +130,7 @@ from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.delivery_policy import DeliverySender, DeliveryPolicyRefused
 from aweb.messaging.refusals import DeliveryRefusalCode
 from aweb.messaging.sender_address import sender_address as _sender_address
+from aweb.messaging.sender_address import sender_signature_address
 from aweb.messaging.signatures import (
     MessageSignatureShapeError,
     validate_ed25519_message_signature,
@@ -332,7 +336,10 @@ def _validate_signed_mail_payload(
             detail="signed_payload from_did must match the authenticated sender",
         )
     signed_from_stable_id = str(payload.get("from_stable_id") or "").strip()
-    if signed_from_stable_id and signed_from_stable_id != str(from_stable_id or "").strip():
+    if (
+        signed_from_stable_id
+        and signed_from_stable_id != str(from_stable_id or "").strip()
+    ):
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload from_stable_id must match the authenticated sender",
@@ -367,7 +374,9 @@ def _validate_signed_mail_payload(
     try:
         validate_ed25519_message_signature(signature)
     except MessageSignatureShapeError as exc:
-        raise DeliveryRefusal(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     require_verified_message_signature(
         signed_payload=signed_payload,
         signature=signature,
@@ -418,12 +427,14 @@ def _validate_encrypted_payload(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="message_id and conversation_id are required for encrypted mail",
         )
-    expected_recipient_did = str((recipient or {}).get("did_key") or recipient_did).strip()
+    expected_recipient_did = str(
+        (recipient or {}).get("did_key") or recipient_did
+    ).strip()
     recipient_stable_id = str((recipient or {}).get("did_aw") or "").strip()
     recipient_address = _recipient_envelope_address(recipient, payload)
-    if expected_recipient_did.startswith("did:key:") and not recipient_stable_id.startswith(
-        "did:aw:"
-    ):
+    if expected_recipient_did.startswith(
+        "did:key:"
+    ) and not recipient_stable_id.startswith("did:aw:"):
         # For remote local-only participants, any stored address is a transport
         # hint. It is not an AWID address authority and must not be required in
         # the encrypted recipient binding.
@@ -470,7 +481,9 @@ async def record_successful_contact_side_effect(
     sender_team = str(sender_team_id or "").strip()
     if sender_team and recipient_team_id and sender_team == recipient_team_id:
         return False
-    controller_did = str((recipient or {}).get("authority_controller_did") or "").strip()
+    controller_did = str(
+        (recipient or {}).get("authority_controller_did") or ""
+    ).strip()
     if not controller_did and (recipient or {}).get("requires_local_address_authority"):
         controller_did = (
             await resolve_local_namespace_controller_did(
@@ -558,7 +571,7 @@ def _prepare_remote_mail_envelope(
             type="mail",
             sender_did_aw=sender_routing_did,
             sender_current_did_key=sender_current_did,
-            sender_address=sender_address,
+            sender_address=sender_address or None,
             sender_delivery_origin=runtime.public_origin,
             target_address=target_address,
             target_did_aw=target_stable_id,
@@ -567,7 +580,11 @@ def _prepare_remote_mail_envelope(
             body="" if is_encrypted else payload.body,
             message_id=payload.message_id,
             timestamp=payload.timestamp
-            or ((payload.encrypted_envelope or {}).get("created_at") if is_encrypted else None),
+            or (
+                (payload.encrypted_envelope or {}).get("created_at")
+                if is_encrypted
+                else None
+            ),
             signed_payload=payload.signed_payload if not is_encrypted else None,
             conversation_id=payload.conversation_id,
             subject="" if is_encrypted else payload.subject,
@@ -589,7 +606,9 @@ def _prepare_remote_mail_envelope(
             },
         )
     except FederationEnvelopeError as exc:
-        raise DeliveryRefusal(status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return _PreparedRemoteMail(
         envelope=envelope,
         signature=federation_signature,
@@ -672,7 +691,9 @@ async def deliver_remote_mail_and_project_locally(
     if not is_encrypted:
         projection = await read_plaintext_projection(
             db,
-            claim=PlaintextProjectionClaim.from_envelope(envelope, signature=federation_signature),
+            claim=PlaintextProjectionClaim.from_envelope(
+                envelope, signature=federation_signature
+            ),
         )
         if projection.message is None:
             _require_fresh_mail_attestation(payload)
@@ -690,7 +711,9 @@ async def deliver_remote_mail_and_project_locally(
     except FederatedMailDeliveryError as exc:
         raise DeliveryRefusal(status_code=exc.status_code, detail=str(exc)) from exc
 
-    conversation_id = str(remote.get("conversation_id") or payload.conversation_id or "").strip()
+    conversation_id = str(
+        remote.get("conversation_id") or payload.conversation_id or ""
+    ).strip()
     message_id = str(remote.get("message_id") or payload.message_id or "").strip()
     delivered_at = str(remote.get("delivered_at") or (payload.timestamp or "")).strip()
     if conversation_id != payload.conversation_id:
@@ -745,7 +768,9 @@ async def deliver_remote_mail_and_project_locally(
         UUID(conversation_id),
     )
     if existing_conversation:
-        conversation = {"conversation_id": str(existing_conversation["conversation_id"])}
+        conversation = {
+            "conversation_id": str(existing_conversation["conversation_id"])
+        }
     else:
         conversation = await _create_mail_conversation(
             db,
@@ -791,7 +816,9 @@ async def deliver_remote_mail_and_project_locally(
                     signed_did=None,
                     wake_dids=(recipient.get("did_aw"), recipient.get("did_key")),
                 ),
-                content=mail_content_for_storage(payload, encrypted_metadata=encrypted_metadata),
+                content=mail_content_for_storage(
+                    payload, encrypted_metadata=encrypted_metadata
+                ),
                 attestation=MailAttestation(
                     signature=None if is_encrypted else payload.signature,
                     signed_payload=None if is_encrypted else payload.signed_payload,
@@ -818,7 +845,9 @@ async def deliver_remote_mail_and_project_locally(
             team_id=auth.team_id,
             from_agent_id=auth.agent_id,
             from_did=sender_did,
-            from_did_aw=sender_routing_did if sender_routing_did.startswith("did:aw:") else None,
+            from_did_aw=sender_routing_did
+            if sender_routing_did.startswith("did:aw:")
+            else None,
             to_agent_id=to_agent_id,
             from_alias=auth.alias or sender_did,
             message_id=message_id or str(local_message_id),
@@ -860,18 +889,24 @@ async def _stored_exact_send(db, *, payload, sender_did: str) -> MailReplayLooku
     follows ordinary admission and refuses before any new effect.
     """
     if not payload.message_id:
-        return MailReplayLookup(stored=None, availability=MailIdAvailability.UNDETERMINED)
+        return MailReplayLookup(
+            stored=None, availability=MailIdAvailability.UNDETERMINED
+        )
     try:
         message_uuid = UUID(payload.message_id)
     except ValueError:
-        return MailReplayLookup(stored=None, availability=MailIdAvailability.UNDETERMINED)
+        return MailReplayLookup(
+            stored=None, availability=MailIdAvailability.UNDETERMINED
+        )
     lookup = await read_stored_message(
         db,
         claim=StoredMessageClaim(
             kind=MessageKind.MAIL,
             message_id=message_uuid,
             sender_did=sender_did,
-            conversation_id=UUID(payload.conversation_id) if payload.conversation_id else None,
+            conversation_id=UUID(payload.conversation_id)
+            if payload.conversation_id
+            else None,
             artifact=replay_artifact(
                 content_mode=payload.content_mode,
                 encrypted_envelope=payload.encrypted_envelope,
@@ -892,11 +927,15 @@ async def _stored_exact_send(db, *, payload, sender_did: str) -> MailReplayLooku
     row = lookup.message
     # All callers validate encryption and current delivery policy before this
     # lookup. Bound attachment refs therefore cannot bypass ordinary admission.
-    await confirm_accepted_attachment_refs(db, kind=MessageKind.MAIL, message_id=row["message_id"])
+    await confirm_accepted_attachment_refs(
+        db, kind=MessageKind.MAIL, message_id=row["message_id"]
+    )
     return MailReplayLookup(
         stored=SentMail(
             message_id=str(row["message_id"]),
-            conversation_id=str(row["conversation_id"]) if row["conversation_id"] else None,
+            conversation_id=str(row["conversation_id"])
+            if row["conversation_id"]
+            else None,
             status="delivered",
             delivered_at=_utc_iso(row["created_at"]),
         ),
@@ -948,22 +987,38 @@ async def _continuation_signature_recipient(
         did_key=sender_did_key,
     )
     if signed is None:
-        raise DeliveryRefusal(status_code=HTTPStatus.FORBIDDEN, detail="Invalid message signature")
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.FORBIDDEN, detail="Invalid message signature"
+        )
     stable = str(participant.get("did") or "")
     signed_stable = signed.get("to_stable_id") or ""
     signed_key = signed.get("to_did") or ""
     signed_to = signed.get("to") or ""
-    if not signed_stable and isinstance(signed_key, str) and signed_key.startswith("did:aw:"):
+    if (
+        not signed_stable
+        and isinstance(signed_key, str)
+        and signed_key.startswith("did:aw:")
+    ):
         signed_stable, signed_key = signed_key, ""
-    if not signed_stable and isinstance(signed_to, str) and signed_to.startswith("did:aw:"):
+    if (
+        not signed_stable
+        and isinstance(signed_to, str)
+        and signed_to.startswith("did:aw:")
+    ):
         signed_stable = signed_to
     if not stable.startswith("did:aw:") or signed_stable != stable:
         raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
     address = str(participant.get("address") or "")
-    signed_address = signed_to if isinstance(signed_to, str) and "/" in signed_to else ""
+    signed_address = (
+        signed_to if isinstance(signed_to, str) and "/" in signed_to else ""
+    )
     if signed_address and signed_address != address:
         raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
-    if not signed_key and isinstance(signed_to, str) and signed_to.startswith("did:key:"):
+    if (
+        not signed_key
+        and isinstance(signed_to, str)
+        and signed_to.startswith("did:key:")
+    ):
         signed_key = signed_to
     if not signed_key:
         # Released clients may sign only the stable DID on a stored route.
@@ -990,7 +1045,9 @@ async def _continuation_signature_recipient(
                 "Stored mail signature binding dependency failed failure_type=%s",
                 type(exc).__name__,
             )
-            raise RecipientIdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
+            raise RecipientIdentityBindingError(
+                IdentityBindingCode.UNAVAILABLE
+            ) from exc
     if not isinstance(signed_key, str) or not signed_key.startswith("did:key:"):
         raise RecipientIdentityBindingError(IdentityBindingCode.MISMATCH)
     try:
@@ -1018,7 +1075,9 @@ async def _commit_mail_continuation(
 ) -> StoredMail:
     """Recheck stored-route policy and commit the message under its read locks."""
     if message.conversation_id is None:
-        raise ValueError("A mail continuation commit requires its stored conversation ID")
+        raise ValueError(
+            "A mail continuation commit requires its stored conversation ID"
+        )
     async with db.get_manager("aweb").transaction() as tx:
         send_db = TransactionInfra(db, tx)
         await admit_message_delivery(
@@ -1033,7 +1092,9 @@ async def _commit_mail_continuation(
             stored_route_continuation=True,
         )
         stored = await store_mail(send_db, message=message)
-        await touch_conversation_activity(send_db, conversation_id=message.conversation_id)
+        await touch_conversation_activity(
+            send_db, conversation_id=message.conversation_id
+        )
     return stored
 
 
@@ -1104,7 +1165,7 @@ async def send_mail_conversation_continuation(
             to_alias=recipient_participant.get("alias"),
             requested_to_alias=payload.to_alias,
             from_alias=auth.alias,
-            from_address=sender_address,
+            from_address=sender_signature_address(auth, sender_address),
             from_stable_id=auth.did_aw,
             priority=payload.priority,
             subject=payload.subject,
@@ -1194,7 +1255,8 @@ async def send_mail_conversation_continuation(
                     verified_dids=tuple(auth_dids(auth)),
                 ),
                 message=MailStorageInput(
-                    local_team_id=continuation.conversation.get("team_id") or auth.team_id,
+                    local_team_id=continuation.conversation.get("team_id")
+                    or auth.team_id,
                     sender=MailSender(
                         did=sender_did,
                         alias=auth.alias,
@@ -1203,7 +1265,8 @@ async def send_mail_conversation_continuation(
                     ),
                     recipient=MailRecipient(
                         did=recipient_participant["did"],
-                        alias=recipient_participant.get("alias") or recipient.get("alias"),
+                        alias=recipient_participant.get("alias")
+                        or recipient.get("alias"),
                         address=recipient.get("address"),
                         agent_id=recipient.get("agent_id"),
                         signed_did=historical_target["signed_did"]
@@ -1232,7 +1295,9 @@ async def send_mail_conversation_continuation(
     ) as exc:
         if not _lost_send_race(exc):
             raise
-        replay_lookup = await _stored_exact_send(db, payload=payload, sender_did=sender_did)
+        replay_lookup = await _stored_exact_send(
+            db, payload=payload, sender_did=sender_did
+        )
         if replay_lookup.stored is None:
             raise
         return replay_lookup.stored
@@ -1278,7 +1343,9 @@ async def send_federated_mail_conversation_continuation(
     """Reply through the recorded remote participant without resolving its address as first contact."""
     refuse_remote_attachments()
     recipient_participant = continuation.recipient_participant
-    recipient = await remote_recipient_from_participant(registry_client, recipient_participant)
+    recipient = await remote_recipient_from_participant(
+        registry_client, recipient_participant
+    )
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
     # The remote projection owner checks age after recognizing exact plaintext
     # retries. Encrypted envelope verification retains its existing window.
@@ -1373,7 +1440,9 @@ class MailTarget:
         object.__setattr__(
             self,
             "recipient",
-            Recipient.from_delivery_projection(recipient) if recipient is not None else None,
+            Recipient.from_delivery_projection(recipient)
+            if recipient is not None
+            else None,
         )
         object.__setattr__(self, "recipient_did", recipient_did)
         object.__setattr__(self, "to_agent_id", to_agent_id)
@@ -1515,7 +1584,9 @@ async def _resolve_requested_mail_continuation(
         )
 
     if has_explicit_recipient and payload.conversation_id is not None:
-        requested_conversation = await get_conversation(db, conversation_id=payload.conversation_id)
+        requested_conversation = await get_conversation(
+            db, conversation_id=payload.conversation_id
+        )
         if requested_conversation is not None:
             requested_continuation = await mail_continuation_context(
                 db,
@@ -1533,11 +1604,13 @@ async def _resolve_requested_mail_continuation(
                 to_address=payload.to_address,
             )
             if not target_matches:
-                target_matches = await _accepted_encrypted_mail_target_matches_participant(
-                    db,
-                    payload=payload,
-                    sender_did=sender_did,
-                    participant=requested_continuation.recipient_participant,
+                target_matches = (
+                    await _accepted_encrypted_mail_target_matches_participant(
+                        db,
+                        payload=payload,
+                        sender_did=sender_did,
+                        participant=requested_continuation.recipient_participant,
+                    )
                 )
             if (
                 not target_matches
@@ -1555,7 +1628,9 @@ async def _resolve_requested_mail_continuation(
                     await predecessor_target_for_mail(
                         db,
                         conversation_id=payload.conversation_id,
-                        successor_did=requested_continuation.recipient_participant["did"],
+                        successor_did=requested_continuation.recipient_participant[
+                            "did"
+                        ],
                         signed=signed,
                     )
                     if signed is not None
@@ -1596,7 +1671,9 @@ async def _resolve_new_mail_target(
 
     if payload.to_address is None and payload.to_stable_id is not None:
         recipient_did = payload.to_stable_id.strip()
-        recipient = await resolve_recipient_by_did(db, recipient_did, sender_team_id=auth.team_id)
+        recipient = await resolve_recipient_by_did(
+            db, recipient_did, sender_team_id=auth.team_id
+        )
         if recipient is not None:
             recipient = identity_recipient(recipient)
         if recipient is None:
@@ -1644,7 +1721,9 @@ async def _resolve_new_mail_target(
                     resolved=RecipientSelectorField.DID,
                 )
         recipient_did = (
-            recipient.get("did_aw") or recipient.get("did_key") or requested_recipient_did
+            recipient.get("did_aw")
+            or recipient.get("did_key")
+            or requested_recipient_did
         ).strip()
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
@@ -1666,7 +1745,9 @@ async def _resolve_new_mail_target(
             signed_payload=payload.signed_payload,
             signature=payload.signature,
         )
-        recipient_did = str(recipient.get("did_aw") or recipient.get("did_key") or "").strip()
+        recipient_did = str(
+            recipient.get("did_aw") or recipient.get("did_key") or ""
+        ).strip()
         if payload.to_alias is not None and payload.to_alias.strip():
             if recipient.get("external"):
                 if payload.to_alias.strip() != recipient["alias"]:
@@ -1684,7 +1765,10 @@ async def _resolve_new_mail_target(
                         resolved=RecipientSelectorField.ADDRESS,
                     )
         if payload.to_stable_id is not None and payload.to_stable_id.strip():
-            if payload.to_stable_id.strip() != str(recipient.get("did_aw") or "").strip():
+            if (
+                payload.to_stable_id.strip()
+                != str(recipient.get("did_aw") or "").strip()
+            ):
                 raise recipient_selector_mismatch(
                     supplied=RecipientSelectorField.STABLE_ID,
                     resolved=RecipientSelectorField.ADDRESS,
@@ -1722,7 +1806,9 @@ async def _resolve_new_mail_target(
                     supplied=RecipientSelectorField.ALIAS,
                     resolved=RecipientSelectorField.AGENT_ID,
                 )
-        recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
+        recipient_did = (
+            recipient.get("did_aw") or recipient.get("did_key") or ""
+        ).strip()
         to_alias = recipient.get("alias")
     elif payload.to_alias is not None:
         recipient = await _resolve_message_alias(
@@ -1730,7 +1816,9 @@ async def _resolve_new_mail_target(
         )
         if recipient is None:
             raise recipient_not_found()
-        recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
+        recipient_did = (
+            recipient.get("did_aw") or recipient.get("did_key") or ""
+        ).strip()
         to_agent_id = str(recipient["agent_id"])
         to_alias = recipient["alias"]
     else:
@@ -1740,12 +1828,15 @@ async def _resolve_new_mail_target(
         )
 
     if payload.to_agent_id and any(
-        value is not None for value in (payload.to_address, payload.to_did, payload.to_stable_id)
+        value is not None
+        for value in (payload.to_address, payload.to_did, payload.to_stable_id)
     ):
         selected_member = await get_agent_by_id(
             db, agent_id=payload.to_agent_id, team_id=auth.team_id
         )
-        if recipient.get("external") or not _recipient_identity_matches(selected_member, recipient):
+        if recipient.get("external") or not _recipient_identity_matches(
+            selected_member, recipient
+        ):
             field = (
                 RecipientSelectorField.ADDRESS
                 if payload.to_address is not None
@@ -1876,7 +1967,9 @@ async def _commit_new_local_mail(
                         recipient.get("did_key"),
                     ),
                 ),
-                content=mail_content_for_storage(payload, encrypted_metadata=encrypted_metadata),
+                content=mail_content_for_storage(
+                    payload, encrypted_metadata=encrypted_metadata
+                ),
                 attestation=MailAttestation(
                     signature=payload.signature,
                     signed_payload=payload.signed_payload,
@@ -1968,7 +2061,7 @@ async def _send_mail_to_resolved_target(
             to_alias=to_alias,
             requested_to_alias=payload.to_alias,
             from_alias=auth.alias,
-            from_address=sender_address,
+            from_address=sender_signature_address(auth, sender_address),
             from_stable_id=auth.did_aw,
             priority=payload.priority,
             subject=payload.subject,
@@ -1997,7 +2090,7 @@ async def _send_mail_to_resolved_target(
         )
 
     try:
-        if not recipient.get("external"):
+        if msg_uuid is not None or payload.content_mode == ContentMode.ENCRYPTED:
             await authorize_message_delivery(
                 db,
                 registry_client=runtime.registry_client,
@@ -2020,7 +2113,9 @@ async def _send_mail_to_resolved_target(
                 [recipient] if recipient else [],
                 sender=auth,
             )
-        replay_lookup = await _stored_exact_send(db, payload=payload, sender_did=sender_did)
+        replay_lookup = await _stored_exact_send(
+            db, payload=payload, sender_did=sender_did
+        )
         if replay_lookup.stored is not None:
             return replay_lookup.stored
         _require_fresh_mail_attestation(payload)
@@ -2049,7 +2144,9 @@ async def _send_mail_to_resolved_target(
             # rollback here leaves nothing of this attempt behind.
             if not _lost_send_race(exc):
                 raise
-            replay_lookup = await _stored_exact_send(db, payload=payload, sender_did=sender_did)
+            replay_lookup = await _stored_exact_send(
+                db, payload=payload, sender_did=sender_did
+            )
             if replay_lookup.stored is None:
                 raise
             return replay_lookup.stored

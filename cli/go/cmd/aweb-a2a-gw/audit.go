@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/awebai/aw/a2agw"
+	"github.com/awebai/aw/internal/a2agw"
 )
 
 type jsonlAuditSink struct {

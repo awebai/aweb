@@ -236,7 +236,7 @@
     "server/tests/test_human_alias_cli.py": 6,
     "server/tests/test_human_channels_actor_lock.py": 10,
     "server/tests/test_human_channels_native_send.py": 5,
-    "server/tests/test_human_channels_participants.py": 30,
+    "server/tests/test_human_channels_participants.py": 27,
     "server/tests/test_human_channels_presence.py": 2,
     "server/tests/test_human_chat_policy.py": 11,
     "server/tests/test_id_chain_message_metadata.py": 1,
@@ -310,8 +310,9 @@
     "server/tests/test_workspaces_delete_http.py": 3
   },
   "marked_files": {
+    "naapp/folio/tests/test_present_link_verifier_migration.py": 1,
     "server/tests/test_chat_coverage_migration_http.py": 6,
-    "server/tests/test_inbound_mode_migration_http.py": 2
+    "server/tests/test_inbound_mode_migration_http.py": 3
   },
   "nonliteral_files": {
     "awid/tests/test_id_enrollment_resolution.py": 1,
@@ -396,5 +397,8 @@
     "server/tests/test_task_search.py": 1,
     "server/tests/test_verified_installations.py": 5
   },
-  "schema_version": 1
+  "schema_version": 1,
+  "marked_nonliteral_files": {
+    "server/tests/test_app_manifest_fetch.py": 1
+  }
 }

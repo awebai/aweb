@@ -101,7 +101,9 @@ async def _close(pubsub: PubSub) -> None:
     try:
         await pubsub.aclose()
     except Exception:
-        logger.warning("Redis pubsub close failed; returning its connection", exc_info=True)
+        logger.warning(
+            "Redis pubsub close failed; returning its connection", exc_info=True
+        )
         # A PubSub whose constructor failed has no connection attribute.
         connection = getattr(pubsub, "connection", None)
         if connection is not None:

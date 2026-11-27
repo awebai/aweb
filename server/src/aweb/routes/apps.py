@@ -49,7 +49,11 @@ from aweb.installations import (
     uninstall_installation_on,
 )
 from aweb.internal_auth import parse_internal_auth_context, resolve_internal_actor
-from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ServiceError, IdentityBindingError
+from aweb.service_errors import (
+    RESOURCE_NOT_FOUND_DETAIL,
+    ServiceError,
+    IdentityBindingError,
+)
 from aweb.application_state import RegistryClientUnavailable
 from aweb.team_auth_deps import get_team_identity
 
@@ -170,7 +174,9 @@ async def _payload(request: Request, model):
     async for chunk in request.stream():
         body.extend(chunk)
         if len(body) > MAX_INSTALL_BODY_BYTES:
-            raise HTTPException(status_code=413, detail="install request exceeds the size bound")
+            raise HTTPException(
+                status_code=413, detail="install request exceeds the size bound"
+            )
     try:
         return model.model_validate_json(bytes(body))
     except PydanticValidationError as exc:
@@ -185,7 +191,9 @@ async def list_installed_apps_route(
 ) -> InstalledAppsResponse:
     try:
         authorized, _ = await _caller(request, db_infra, team_id)
-        apps = await list_installed_apps(db_infra.get_manager("aweb"), team_id=authorized)
+        apps = await list_installed_apps(
+            db_infra.get_manager("aweb"), team_id=authorized
+        )
         return InstalledAppsResponse(
             team_id=authorized, apps=[InstalledAppResponse(**vars(app)) for app in apps]
         )
@@ -278,7 +286,9 @@ async def request_installation_route(
     try:
         authorized, _ = await _caller(request, db_infra, team_id)
         app_id = normalize_app_id(payload.app_id)
-        fetched = await _fetcher(request).fetch(payload.origin, expected_digest=payload.digest)
+        fetched = await _fetcher(request).fetch(
+            payload.origin, expected_digest=payload.digest
+        )
         if fetched.manifest.app_id != app_id:
             raise HTTPException(422, detail={"code": "manifest_app_mismatch"})
         async with db_infra.get_manager("aweb").transaction() as tx:
@@ -305,7 +315,12 @@ async def list_installation_requests_route(
         async with db_infra.get_manager("aweb").transaction() as tx:
             if not mine:
                 await require_install_admin(
-                    tx, request, identity, authorized, action="apps.requests.read", app_id="*"
+                    tx,
+                    request,
+                    identity,
+                    authorized,
+                    action="apps.requests.read",
+                    app_id="*",
                 )
             rows = await tx.fetch_all(
                 """SELECT request_id,app_id,origin,digest,requested_scopes,requested_by,state,
@@ -351,12 +366,16 @@ async def approve_installation_request_route(
                 unverified_origin=pending["origin"],
             )
             if pending["state"] != "pending":
-                raise HTTPException(409, detail={"code": "installation_request_resolved"})
+                raise HTTPException(
+                    409, detail={"code": "installation_request_resolved"}
+                )
         fetched = await _fetcher(request).fetch(
             pending["origin"], expected_digest=pending["digest"]
         )
         async with db.transaction() as tx:
-            await _lock_installation_on(tx, team_id=authorized, app_id=pending["app_id"])
+            await _lock_installation_on(
+                tx, team_id=authorized, app_id=pending["app_id"]
+            )
             await require_install_admin(
                 tx,
                 request,
@@ -404,7 +423,9 @@ async def decline_installation_request_route(
                 app_id=row["app_id"],
             )
             if row["state"] != "pending":
-                raise HTTPException(409, detail={"code": "installation_request_resolved"})
+                raise HTTPException(
+                    409, detail={"code": "installation_request_resolved"}
+                )
             await tx.execute(
                 "UPDATE {{tables.app_installation_requests}} SET state='declined',resolved_at=clock_timestamp() WHERE request_id=$1",
                 request_id,
@@ -470,11 +491,16 @@ async def install_app_route(
                 app_id=app_id,
                 unverified_origin=payload.origin,
             )
-        fetched = await _fetcher(request).fetch(payload.origin, expected_digest=payload.digest)
+        fetched = await _fetcher(request).fetch(
+            payload.origin, expected_digest=payload.digest
+        )
         if fetched.manifest.app_id != app_id:
             raise HTTPException(
                 status_code=422,
-                detail={"code": "manifest_app_mismatch", "message": "Manifest names another app"},
+                detail={
+                    "code": "manifest_app_mismatch",
+                    "message": "Manifest names another app",
+                },
             )
         async with db.transaction() as tx:
             await _lock_installation_on(tx, team_id=authorized, app_id=app_id)
@@ -493,7 +519,9 @@ async def install_app_route(
                 fetched=fetched,
                 granted_scopes=payload.granted_scopes,
                 expected_generation=payload.expected_generation,
-                installed_by_agent_id=identity.agent_id if identity is not None else None,
+                installed_by_agent_id=identity.agent_id
+                if identity is not None
+                else None,
             )
             await audit_success(tx, request, authorized)
         return row
@@ -515,7 +543,12 @@ async def uninstall_installation_route(
         request.state.operator_audit_target = "app:" + app_id
         async with db_infra.get_manager("aweb").transaction() as tx:
             await require_install_admin(
-                tx, request, identity, authorized, action="apps.uninstall", app_id=app_id
+                tx,
+                request,
+                identity,
+                authorized,
+                action="apps.uninstall",
+                app_id=app_id,
             )
             row = await uninstall_installation_on(
                 tx,
@@ -539,14 +572,19 @@ async def app_grant_status_route(
     try:
         credential = await verify_app_credential(request, db, APP_GRANT_READ)
         app = await get_installed_app(
-            db, team_id=credential.team_id, app_id=credential.app_id, digest=credential.digest
+            db,
+            team_id=credential.team_id,
+            app_id=credential.app_id,
+            digest=credential.digest,
         )
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     if app is None:
         # The installation moved to another digest, or went away, after the key
         # was checked: the key no longer belongs to an installed digest.
-        raise HTTPException(status_code=403, detail=PURPOSES[APP_GRANT_READ].key_not_registered)
+        raise HTTPException(
+            status_code=403, detail=PURPOSES[APP_GRANT_READ].key_not_registered
+        )
 
     return AppGrantStatusResponse(
         team_id=credential.team_id,

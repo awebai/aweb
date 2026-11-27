@@ -50,7 +50,9 @@ def _origin(sock):
 
 @asynccontextmanager
 async def _listener(app, sock):
-    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none"))
+    server = uvicorn.Server(
+        uvicorn.Config(app, lifespan="off", log_level="error", ws="none")
+    )
     serving = asyncio.create_task(server.serve(sockets=[sock]))
     try:
         for _ in range(100):
@@ -112,7 +114,9 @@ async def route_pair(test_db_factory, monkeypatch):
             team_id = f"members:{domain}"
             team_sk, _, team_did = _make_keypair()
             db = await test_db_factory.create_db(suffix=f"actl_{name}")
-            await db.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public")
+            await db.execute(
+                "CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public"
+            )
             dsn = db.config.get_dsn()
             registry = await stack.enter_async_context(
                 running_registry(dsn, service_token=token, redis=redis)
@@ -140,7 +144,9 @@ async def route_pair(test_db_factory, monkeypatch):
                 visibility="private",
                 namespace_controller=SigningKey(team_sk),
             )
-            await registry_client.update_namespace_delivery_origin(domain, team_sk, public_origin)
+            await registry_client.update_namespace_delivery_origin(
+                domain, team_sk, public_origin
+            )
             monkeypatch.setenv("AWID_REGISTRY_URL", registry_origin)
             server = await stack.enter_async_context(
                 running_server(
@@ -233,7 +239,9 @@ async def _actor(node, alias, *, global_identity):
         # global fields, rather than signed empty strings it cannot preserve.
         for field in ("signature", "member_did_aw", "member_address"):
             certificate.pop(field)
-        certificate["signature"] = sign_message(node.team_sk, canonical_json_bytes(certificate))
+        certificate["signature"] = sign_message(
+            node.team_sk, canonical_json_bytes(certificate)
+        )
     encoded = _encode_certificate(certificate)
     await node.registry_client.register_team_certificate(
         node.domain,
@@ -310,7 +318,9 @@ def _submission(sender, target, kind, *, encrypted=False, continuation=None):
             payload = dict(body=body, leaving=True)
         else:
             path = "/v1/chat/sessions"
-            payload = dict(to_addresses=[to_label], message=body, session_id=cid, leaving=True)
+            payload = dict(
+                to_addresses=[to_label], message=body, session_id=cid, leaving=True
+            )
     encoded = canonical_json_bytes(fields).decode()
     payload.update(
         from_did=sender.did,
@@ -344,7 +354,9 @@ def _submission(sender, target, kind, *, encrypted=False, continuation=None):
         )
         payload.pop("signature")
         payload.pop("signed_payload")
-        payload.update(content_mode="encrypted_v2", message_version=2, encrypted_envelope=envelope)
+        payload.update(
+            content_mode="encrypted_v2", message_version=2, encrypted_envelope=envelope
+        )
         if kind == "mail":
             payload.update(subject="", body="")
         else:
@@ -366,7 +378,11 @@ async def _send(sender, target, kind, *, encrypted=False, continuation=None):
         content=raw,
         headers={
             **_signed_team_headers(
-                sender.sk, sender.did, sender.node.team_id, sender.encoded_certificate, raw
+                sender.sk,
+                sender.did,
+                sender.node.team_id,
+                sender.encoded_certificate,
+                raw,
             ),
             "Content-Type": "application/json",
         },
@@ -387,7 +403,9 @@ async def _effects(node):
         "federation_mutation_outbox",
     )
     return {
-        table: await node.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}")
+        table: await node.db.fetch_value(
+            "SELECT count(*) FROM {{tables." + table + "}}"
+        )
         for table in tables
     }
 
@@ -400,11 +418,15 @@ async def _stored(target, kind, submitted):
     )
     assert row is not None
     assert row["conversation_id" if kind == "mail" else "session_id"] == submitted.cid
-    assert row["from_did"] == submitted.fields.get("from_stable_id", submitted.fields["from_did"])
+    assert row["from_did"] == submitted.fields.get(
+        "from_stable_id", submitted.fields["from_did"]
+    )
     if submitted.envelope is None:
         assert row["body"] == submitted.fields["body"]
         assert json.loads(row["signed_payload"]) == submitted.fields
     else:
         stored = row["encrypted_envelope"]
-        assert (json.loads(stored) if isinstance(stored, str) else stored) == submitted.envelope
+        assert (
+            json.loads(stored) if isinstance(stored, str) else stored
+        ) == submitted.envelope
     return row

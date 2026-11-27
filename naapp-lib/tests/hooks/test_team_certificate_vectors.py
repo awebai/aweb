@@ -16,7 +16,9 @@ from aweb_naapp.hooks.delivery import ReceiveOptions, _verify_client_certificate
 from aweb_naapp.hooks.envelope import Envelope, Refused
 
 VECTORS = json.loads(
-    (Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json").read_text()
+    (
+        Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json"
+    ).read_text()
 )
 
 

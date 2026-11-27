@@ -171,7 +171,6 @@ class DidLogEntry(BaseModel):
     timestamp: str
 
 
-
 async def _db(request: Request):
     return (await get_db_infra(request)).get_manager("aweb")
 
@@ -244,7 +243,10 @@ async def _fetch_current_encryption_assertion(
     )
 
 
-@router.post("", dependencies=[Depends(rate_limit_dep("did_register", allow_trusted_service=True))])
+@router.post(
+    "",
+    dependencies=[Depends(rate_limit_dep("did_register", allow_trusted_service=True))],
+)
 async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     try:
         validate_stable_id(req.did_aw)
@@ -269,7 +271,9 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
         timestamp=req.timestamp,
     )
     entry_hash = awid_sha256_hex(entry_payload)
-    state_hash = awid_identity_state_hash(did_aw=req.did_aw, current_did_key=req.new_did_key)
+    state_hash = awid_identity_state_hash(
+        did_aw=req.did_aw, current_did_key=req.new_did_key
+    )
 
     db = await _db(request)
     created_at = app_clock(request.app)()
@@ -295,7 +299,9 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
 
         derived = stable_id_from_public_key(public_key)
         if derived != req.did_aw:
-            raise HTTPException(status_code=400, detail="did_aw does not match new_did_key derivation")
+            raise HTTPException(
+                status_code=400, detail="did_aw does not match new_did_key derivation"
+            )
 
         try:
             verify_did_key_signature(
@@ -366,12 +372,17 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
             """,
             did_aw,
         )
-        enrollment = await tx.fetch_one("SELECT domain FROM {{tables.id_identities}} WHERE id = $1", did_aw)
+        enrollment = await tx.fetch_one(
+            "SELECT domain FROM {{tables.id_identities}} WHERE id = $1", did_aw
+        )
         if row is None:
             # A missing key still states enrollment: an enrolled ID never reads as legacy.
             return JSONResponse(
                 status_code=404,
-                content={"detail": "not found", "id_tree": _id_tree_enrollment(enrollment).model_dump()},
+                content={
+                    "detail": "not found",
+                    "id_tree": _id_tree_enrollment(enrollment).model_dump(),
+                },
             )
 
         head = await tx.fetch_one(
@@ -427,7 +438,11 @@ def _id_tree_enrollment(enrollment) -> IdTreeEnrollment:
     "/{did_aw}/encryption-key",
     response_model=EncryptionKeyAssertion,
     response_model_exclude_none=True,
-    dependencies=[Depends(rate_limit_dep("did_encryption_key_publish", allow_trusted_service=True))],
+    dependencies=[
+        Depends(
+            rate_limit_dep("did_encryption_key_publish", allow_trusted_service=True)
+        )
+    ],
 )
 async def publish_encryption_key(
     request: Request,
@@ -453,11 +468,13 @@ async def publish_encryption_key(
             raise HTTPException(status_code=404, detail="did_aw not found")
 
         try:
-            canonical, assertion_created_at, not_before_at, expires_at = _validate_encryption_assertion(
-                assertion,
-                did_aw=did_aw,
-                current_did_key=row["current_did_key"],
-                now=_now(),
+            canonical, assertion_created_at, not_before_at, expires_at = (
+                _validate_encryption_assertion(
+                    assertion,
+                    did_aw=did_aw,
+                    current_did_key=row["current_did_key"],
+                    now=_now(),
+                )
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -545,7 +562,9 @@ async def list_did_addresses(
             raise HTTPException(status_code=400, detail="Invalid cursor")
         params.append(cursor_domain)
         params.append(cursor_name)
-        where_clauses.append(f"(ns.domain, pa.name) > (${len(params) - 1}, ${len(params)})")
+        where_clauses.append(
+            f"(ns.domain, pa.name) > (${len(params) - 1}, ${len(params)})"
+        )
     params.append(validated_limit + 1)
     query = (
         "SELECT pa.address_id, ns.domain, pa.name, pa.did_aw, m.current_did_key,"
@@ -553,7 +572,8 @@ async def list_did_addresses(
         " FROM {{tables.public_addresses}} pa"
         " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
-        " WHERE " + " AND ".join(where_clauses)
+        " WHERE "
+        + " AND ".join(where_clauses)
         + f" ORDER BY ns.domain ASC, pa.name ASC LIMIT ${len(params)}"
     )
     rows = await db.fetch_all(query, *params)
@@ -561,7 +581,9 @@ async def list_did_addresses(
     page_rows = rows[:validated_limit]
     next_cursor = None
     if has_more and page_rows:
-        next_cursor = encode_cursor({"domain": page_rows[-1]["domain"], "name": page_rows[-1]["name"]})
+        next_cursor = encode_cursor(
+            {"domain": page_rows[-1]["domain"], "name": page_rows[-1]["name"]}
+        )
     return AddressListResponse(
         addresses=[
             AddressResponse(
@@ -570,7 +592,9 @@ async def list_did_addresses(
                 name=row["name"],
                 did_aw=row["did_aw"],
                 current_did_key=row["current_did_key"],
-                delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin"), source="namespace"),
+                delivery=AddressDeliveryResponse(
+                    origin=row.get("default_delivery_origin"), source="namespace"
+                ),
                 created_at=row["created_at"].isoformat(),
             )
             for row in page_rows
@@ -634,14 +658,20 @@ async def get_head(request: Request, did_aw: str) -> DidHeadResponse:
     response_model=DidFullResponse,
     dependencies=[Depends(rate_limit_dep("did_full", allow_trusted_service=True))],
 )
-async def get_full(request: Request, did_aw: str, authorization: str | None = Header(default=None)):
+async def get_full(
+    request: Request, did_aw: str, authorization: str | None = Header(default=None)
+):
     try:
         did_aw = validate_stable_id(did_aw)
         did_key, sig = parse_didkey_auth(authorization)
         timestamp = require_timestamp(request)
         enforce_timestamp_skew(timestamp)
-        signing_payload = f"{timestamp}\n{request.method}\n{request.url.path}".encode("utf-8")
-        verify_did_key_signature(did_key=did_key, payload=signing_payload, signature_b64=sig)
+        signing_payload = f"{timestamp}\n{request.method}\n{request.url.path}".encode(
+            "utf-8"
+        )
+        verify_did_key_signature(
+            did_key=did_key, payload=signing_payload, signature_b64=sig
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -667,7 +697,6 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
-
 
 
 @router.get(
@@ -711,7 +740,10 @@ async def get_log(request: Request, did_aw: str) -> list[DidLogEntry]:
     ]
 
 
-@router.put("/{did_aw}", dependencies=[Depends(rate_limit_dep("did_update", allow_trusted_service=True))])
+@router.put(
+    "/{did_aw}",
+    dependencies=[Depends(rate_limit_dep("did_update", allow_trusted_service=True))],
+)
 async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -> dict:
     try:
         did_aw = validate_stable_id(did_aw)
@@ -738,9 +770,13 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
 
         previous_did_key = row["current_did_key"]
         if req.new_did_key == previous_did_key:
-            raise HTTPException(status_code=400, detail="rotate_key requires a different did:key")
+            raise HTTPException(
+                status_code=400, detail="rotate_key requires a different did:key"
+            )
         if req.authorized_by != previous_did_key:
-            raise HTTPException(status_code=401, detail="authorized_by must be current did:key")
+            raise HTTPException(
+                status_code=401, detail="authorized_by must be current did:key"
+            )
 
         last = await tx.fetch_one(
             """
@@ -762,7 +798,9 @@ async def update_mapping(request: Request, did_aw: str, req: DidUpdateRequest) -
         if req.prev_entry_hash != prev_entry_hash:
             raise HTTPException(status_code=409, detail="prev_entry_hash mismatch")
 
-        state_hash = awid_identity_state_hash(did_aw=did_aw, current_did_key=req.new_did_key)
+        state_hash = awid_identity_state_hash(
+            did_aw=did_aw, current_did_key=req.new_did_key
+        )
         if state_hash != req.state_hash:
             raise HTTPException(status_code=400, detail="state_hash mismatch")
 

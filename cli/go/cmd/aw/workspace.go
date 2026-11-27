@@ -491,7 +491,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	client, selection, err := resolveClientSelectionAtIdentityHome(workingDir, home)
+	client, _, err := resolveClientSelectionAtIdentityHome(workingDir, home)
 	if err != nil {
 		return err
 	}
@@ -529,40 +529,6 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	sourceServerURL := strings.TrimSpace(state.AwebURL)
 	if sourceServerURL == "" {
 		return usageError("current worktree is missing aweb_url; run `aw init` first")
-	}
-
-	apiKey := resolveInitAPIKey()
-	authority := agentCreationRequest{WorkingDir: workingDir, APIKey: apiKey, AwebURL: sourceServerURL, RequestedTeam: teamID}
-	storedKey := strings.TrimSpace(state.APIKey)
-	if selection.IdentityScope == awid.IdentityModeGlobal {
-		// A global creator issues signed invitations using its selected identity.
-		storedKey = ""
-	}
-	useWorkspaceFallback := false
-	switch {
-	case apiKey != "":
-		ctx, cancel := commandAPIContext(cmd)
-		selected, readErr := readAPIKeyCreationTeam(ctx, sourceServerURL, apiKey)
-		cancel()
-		authority.SelectedTeam = selected
-		if readErr != nil {
-			debugLog("API-key team unavailable for add-worktree: %v", readErr)
-			useWorkspaceFallback = true
-			apiKey = storedKey
-		}
-	case !home.External() && storedKey != "":
-		// A local or legacy co-located workspace can use its stored key for bootstrap.
-		// An explicitly selected identity uses its own signing authority.
-		useWorkspaceFallback = true
-		apiKey = storedKey
-	}
-	var creation creationAuthority
-	if !useWorkspaceFallback {
-		creation, err = resolveAgentCreation(authority)
-		if err != nil {
-			return err
-		}
-		printCreationAuthority(creation)
 	}
 
 	alias := strings.TrimSpace(workspaceAddAlias)
@@ -631,40 +597,27 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid team_id in workspace.yaml: %w", err)
 	}
 
-	// Keep local controller issuance; otherwise use the selected creator
-	// invitation or an explicitly supplied setup/legacy API credential.
 	hasTeamKey, err := awconfig.TeamKeyExists(teamDomain, teamName)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return fmt.Errorf("check team key: %w", err)
 	}
 
-	if useWorkspaceFallback {
-		// Keep the released workspace authority order for the stored-key
-		// path and for services without API-key team introspection.
-		switch {
-		case hasTeamKey:
-			creation.Mode = creationAuthorityController
-		case apiKey != "":
-			creation.Mode = creationAuthorityAPI
-		}
-	}
-
+	// Preserve the released authority order for the selected parent workspace.
 	child := worktreeAgentCreation{
 		WorkingDir: workingDir, CreatorHome: home, WorktreePath: worktreePath, RepoRoot: root,
 		BranchName: branchName, BranchCreated: branchCreated, ServerURL: sourceServerURL, TeamID: teamID,
-		Alias: alias, Role: role, Workspace: state, APIKey: apiKey, SelectedTeam: creation.SelectedTeam,
+		Alias: alias, Role: role, Workspace: state,
 	}
-	if creation.Mode == creationAuthorityController && hasTeamKey {
+	switch {
+	case hasTeamKey:
 		_, err = addWorktreeViaLocalTeamKey(child)
-	} else if creation.Mode == creationAuthorityAPI {
-		if selected := child.SelectedTeam; selected == nil || selected.CanonicalTeamID == "" || strings.EqualFold(selected.CanonicalTeamID, teamID) {
-			if membership := teamState.Membership(teamID); membership != nil {
-				child.TeamRegistryURL = membership.RegistryURL
-			}
+	case strings.TrimSpace(state.APIKey) != "":
+		if activeMembership := teamState.Membership(teamID); activeMembership != nil {
+			child.TeamRegistryURL = activeMembership.RegistryURL
 		}
 		_, err = addWorktreeViaCloudBootstrap(child)
-	} else {
+	default:
 		_, err = addWorktreeViaPrimaryInvite(child)
 	}
 	if err != nil {

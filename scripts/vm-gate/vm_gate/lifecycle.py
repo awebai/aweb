@@ -56,6 +56,7 @@ def execute_guest(remote, server, budget, summary, clock=time.time):
                     )
                     for field in [
                         "supervision",
+                        "budget",
                         "stages",
                         "targets",
                         "gate_summaries",

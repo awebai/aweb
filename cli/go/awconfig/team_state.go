@@ -20,6 +20,9 @@ type TeamMembership struct {
 	JoinedAt    string                `yaml:"joined_at,omitempty"`
 	RegistryURL string                `yaml:"registry_url,omitempty"`
 	AwebURL     string                `yaml:"aweb_url,omitempty"`
+
+	RegistryOperatorOrigin string `yaml:"registry_operator_origin"`
+	LegacyRegistryOrigin   bool   `yaml:"-"`
 }
 
 type TeamState struct {
@@ -40,6 +43,8 @@ type teamMembershipYAML struct {
 	JoinedAt    string                `yaml:"joined_at,omitempty"`
 	RegistryURL string                `yaml:"registry_url,omitempty"`
 	AwebURL     string                `yaml:"aweb_url,omitempty"`
+
+	RegistryOperatorOrigin *string `yaml:"registry_operator_origin"`
 }
 
 func (m *TeamMembership) normalize() {
@@ -228,14 +233,20 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 func (raw teamStateYAML) normalizedTeamState() TeamState {
 	memberships := make([]TeamMembership, 0, len(raw.Memberships))
 	for _, membership := range raw.Memberships {
+		origin := ""
+		if membership.RegistryOperatorOrigin != nil {
+			origin = *membership.RegistryOperatorOrigin
+		}
 		memberships = append(memberships, TeamMembership{
-			TeamID:      membership.TeamID,
-			TeamKey:     membership.TeamKey,
-			Alias:       membership.Alias,
-			CertPath:    membership.CertPath,
-			JoinedAt:    membership.JoinedAt,
-			RegistryURL: membership.RegistryURL,
-			AwebURL:     membership.AwebURL,
+			TeamID:                 membership.TeamID,
+			TeamKey:                membership.TeamKey,
+			Alias:                  membership.Alias,
+			CertPath:               membership.CertPath,
+			JoinedAt:               membership.JoinedAt,
+			RegistryURL:            membership.RegistryURL,
+			RegistryOperatorOrigin: origin,
+			LegacyRegistryOrigin:   membership.RegistryOperatorOrigin == nil,
+			AwebURL:                membership.AwebURL,
 		})
 	}
 	state := TeamState{
@@ -254,13 +265,14 @@ func (s TeamState) MarshalYAML() (any, error) {
 	memberships := make([]teamMembershipYAML, 0, len(s.Memberships))
 	for _, membership := range s.Memberships {
 		memberships = append(memberships, teamMembershipYAML{
-			TeamID:      membership.TeamID,
-			TeamKey:     membership.TeamKey,
-			Alias:       membership.Alias,
-			CertPath:    membership.CertPath,
-			JoinedAt:    membership.JoinedAt,
-			RegistryURL: membership.RegistryURL,
-			AwebURL:     membership.AwebURL,
+			TeamID:                 membership.TeamID,
+			TeamKey:                membership.TeamKey,
+			Alias:                  membership.Alias,
+			CertPath:               membership.CertPath,
+			JoinedAt:               membership.JoinedAt,
+			RegistryURL:            membership.RegistryURL,
+			RegistryOperatorOrigin: &membership.RegistryOperatorOrigin,
+			AwebURL:                membership.AwebURL,
 		})
 	}
 	return teamStateYAML{

@@ -761,7 +761,7 @@ func persistAPIKeyBootstrapState(
 	if err != nil {
 		return err
 	}
-	return awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{
+	return saveWorktreeIdentityWithRegistryOrigin(identityPath, &awconfig.WorktreeIdentity{
 		DID:            strings.TrimSpace(didKey),
 		StableID:       strings.TrimSpace(stableID),
 		Address:        strings.TrimSpace(cert.MemberAddress),

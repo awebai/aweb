@@ -65,12 +65,18 @@ _TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 @pytest_asyncio.fixture
 async def privacy_app(shared_test_pool, monkeypatch, request):
-    async with privacy_stack(shared_test_pool, monkeypatch, proxy_verification=getattr(request, "param", None)) as env:
+    async with privacy_stack(
+        shared_test_pool,
+        monkeypatch,
+        proxy_verification=getattr(request, "param", None),
+    ) as env:
         yield env
 
 
 @pytest_asyncio.fixture
-async def pre_chat_coverage_privacy_app(shared_test_pool, monkeypatch, chat_coverage_upgrade):
+async def pre_chat_coverage_privacy_app(
+    shared_test_pool, monkeypatch, chat_coverage_upgrade
+):
     async with privacy_stack(
         shared_test_pool, monkeypatch, database=chat_coverage_upgrade.infra
     ) as env:
@@ -79,9 +85,16 @@ async def pre_chat_coverage_privacy_app(shared_test_pool, monkeypatch, chat_cove
 
 @asynccontextmanager
 async def privacy_stack(
-    shared_test_pool, monkeypatch, tls=None, *,
-    aliases=("alice", "bob", "carol"), team_visibility="public", database=None,
-    outbox_recovery=OutboxRecoveryOwnership.NATIVE, proxy_verification=None,
+    shared_test_pool,
+    monkeypatch,
+    tls=None,
+    *,
+    aliases=("alice", "bob", "carol"),
+    team_visibility="public",
+    database=None,
+    outbox_recovery=OutboxRecoveryOwnership.NATIVE,
+    proxy_verification=None,
+    workspace_counts=None,
 ):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
@@ -116,7 +129,9 @@ async def privacy_stack(
                 transport=ServiceTransport(registry_app),
                 registry_url="http://registry.test",
             )
-            namespace_key = await fixture_registry.ensure_namespace(domain="example.test")
+            namespace_key = await fixture_registry.ensure_namespace(
+                domain="example.test"
+            )
             registry = RegistryClient(
                 registry_url="http://registry.test",
                 transport=fixture_registry.transport,
@@ -124,7 +139,8 @@ async def privacy_stack(
                 domain_verifier=fixture_registry.namespace_authority,
             )
             app = create_app(
-                host_runs_outbox_recovery=outbox_recovery is OutboxRecoveryOwnership.HOST,
+                host_runs_outbox_recovery=outbox_recovery
+                is OutboxRecoveryOwnership.HOST,
                 proxy_verification=proxy_verification,
             )
             # Externally provisioned resources, exactly as an embedding host
@@ -171,14 +187,17 @@ async def privacy_stack(
                     did,
                     alias,
                 )
-                await manager.execute(
-                    "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
-                    "VALUES ($1, $2, $3, $4)",
-                    workspace_id,
-                    TEAM,
-                    agent_id,
-                    alias,
-                )
+                extras = (workspace_counts or {}).get(alias, 1) - 1
+                workspace_ids = [workspace_id, *(uuid4() for _ in range(extras))]
+                for index, workspace in enumerate(workspace_ids):
+                    await manager.execute(
+                        "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
+                        "VALUES ($1, $2, $3, $4)",
+                        workspace,
+                        TEAM,
+                        agent_id,
+                        alias if index == 0 else f"{alias}-workspace-{index + 1}",
+                    )
                 certificate = _encode_certificate(
                     _make_certificate(
                         team_sk,
@@ -195,6 +214,7 @@ async def privacy_stack(
                     did=did,
                     id=agent_id,
                     workspace=workspace_id,
+                    workspace_ids=workspace_ids,
                     certificate=certificate,
                 )
             host, certificates = tls or ("127.0.0.1", None)
@@ -212,7 +232,9 @@ async def privacy_stack(
                 else {}
             )
             server = uvicorn.Server(
-                uvicorn.Config(app, lifespan="off", log_level="error", ws="none", **server_tls)
+                uvicorn.Config(
+                    app, lifespan="off", log_level="error", ws="none", **server_tls
+                )
             )
             serving = asyncio.create_task(server.serve(sockets=[sock]))
             try:
@@ -306,7 +328,9 @@ async def test_registry_rate_limit_window_is_private_to_each_app(privacy_app):
 @pytest.mark.parametrize("visibility", ["public", "private"])
 async def test_dashboard_cannot_read_mail_but_participants_can(privacy_app, visibility):
     env = privacy_app
-    await env.registry_db.execute("UPDATE {{tables.teams}} SET visibility = $1", visibility)
+    await env.registry_db.execute(
+        "UPDATE {{tables.teams}} SET visibility = $1", visibility
+    )
     message_id = await _seed_mail(env)
     # A persisted v2 row exercises the same read boundary independently of send
     # encryption negotiation (which has its own conformance suite).
@@ -358,8 +382,12 @@ async def test_dashboard_cannot_read_mail_but_participants_can(privacy_app, visi
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("token,status", [(None, 401), ("invalid", 401), ("wrong_team", 403)])
-async def test_public_team_activity_requires_verified_dashboard_token(privacy_app, token, status):
+@pytest.mark.parametrize(
+    "token,status", [(None, 401), ("invalid", 401), ("wrong_team", 403)]
+)
+async def test_public_team_activity_requires_verified_dashboard_token(
+    privacy_app, token, status
+):
     env = privacy_app
     # Prove the real registry exposes this team's directory publicly.
     assert (await env.client.get(f"/v1/teams/{TEAM}/agents")).status_code == 200
@@ -373,7 +401,9 @@ async def test_public_team_activity_requires_verified_dashboard_token(privacy_ap
 
 
 @pytest.mark.asyncio
-async def test_team_stream_suppresses_old_publishers_and_keeps_task_activity(privacy_app):
+async def test_team_stream_suppresses_old_publishers_and_keeps_task_activity(
+    privacy_app,
+):
     env = privacy_app
     async with env.client.stream(
         "GET",
@@ -452,7 +482,9 @@ async def test_real_sends_keep_mutation_callbacks_and_participant_reads(privacy_
     for actor in ("alice", "bob", "carol"):
         conversations = await _request(env, actor, "GET", "/v1/conversations")
         assert conversations.status_code == 200, conversations.text
-        history = await _request(env, actor, "GET", f"/v1/chat/sessions/{session_id}/messages")
+        history = await _request(
+            env, actor, "GET", f"/v1/chat/sessions/{session_id}/messages"
+        )
         if actor == "carol":
             assert history.status_code in (403, 404)
             assert "private chat" not in history.text
@@ -706,7 +738,10 @@ async def test_embedded_public_status_reader_never_gets_messaging(
 @pytest.mark.asyncio
 async def test_agent_roster_masks_keys_bound_to_unverified_stable_identity(privacy_app):
     """An unrelated global row must not invalidate a local caller's roster."""
-    from awid.e2ee_keys import build_encryption_key_assertion, validate_encryption_key_assertion
+    from awid.e2ee_keys import (
+        build_encryption_key_assertion,
+        validate_encryption_key_assertion,
+    )
     from aweb.e2ee_messages import generate_x25519_keypair
 
     env = privacy_app

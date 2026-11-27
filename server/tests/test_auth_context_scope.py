@@ -35,4 +35,9 @@ def test_identity_only_messaging_has_no_implicit_team_scope():
     auth = MessagingAuth(did_key="did:key:worker", did_aw=None, address=None)
     assert auth.identity_scope is None
     with pytest.raises(ValueError, match="identity_scope must"):
-        MessagingAuth(did_key="did:key:worker", did_aw=None, address=None, identity_scope="unknown")
+        MessagingAuth(
+            did_key="did:key:worker",
+            did_aw=None,
+            address=None,
+            identity_scope="unknown",
+        )

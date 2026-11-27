@@ -69,10 +69,14 @@ async def checked_member(stack):
 
 
 @pytest.mark.asyncio
-async def test_metadata_import_projects_exact_independent_resources_without_artifact(real_stack):
+async def test_metadata_import_projects_exact_independent_resources_without_artifact(
+    real_stack,
+):
     proof, _, _, member = await checked_member(real_stack)
     planned = PlannedIdentityIds(agent_id=uuid4(), workspace_id=uuid4())
-    result = await connect_agent(**arguments(real_stack, planned), controller_import=proof)
+    result = await connect_agent(
+        **arguments(real_stack, planned), controller_import=proof
+    )
     assert result["agent_id"] == str(planned.agent_id)
     assert result["workspace_id"] == str(planned.workspace_id)
     assert result["agent_id"] != result["workspace_id"]
@@ -86,11 +90,16 @@ async def test_metadata_import_projects_exact_independent_resources_without_arti
         certificate_id=proof.certificate.certificate_id,
         accepted_team_did_key=proof.verified_team_did_key,
     )
-    assert await connect_agent(**arguments(real_stack, planned), controller_import=proof) == result
+    assert (
+        await connect_agent(**arguments(real_stack, planned), controller_import=proof)
+        == result
+    )
 
 
 @pytest.mark.asyncio
-async def test_import_reuse_preserves_member_and_repository_workspace_profiles(real_stack):
+async def test_import_reuse_preserves_member_and_repository_workspace_profiles(
+    real_stack,
+):
     proof, _, controller, member = await checked_member(real_stack)
     planned = PlannedIdentityIds(agent_id=uuid4(), workspace_id=uuid4())
     initial = arguments(real_stack, planned)
@@ -138,7 +147,9 @@ async def test_import_reuse_preserves_member_and_repository_workspace_profiles(r
             planned.workspace_id,
         )
     )
-    result = await connect_agent(**arguments(real_stack, planned), controller_import=proof)
+    result = await connect_agent(
+        **arguments(real_stack, planned), controller_import=proof
+    )
     assert result["role"] == "Existing role"
     assert result["agent_type"] == "worker"
     assert result["workspace_type"] == "agent"
@@ -166,7 +177,9 @@ async def test_import_reuse_preserves_member_and_repository_workspace_profiles(r
 async def test_import_conflicts_preserve_exact_existing_projection(real_stack):
     proof, _, _, _ = await checked_member(real_stack)
     planned = PlannedIdentityIds(agent_id=uuid4(), workspace_id=uuid4())
-    initial = await connect_agent(**arguments(real_stack, planned), controller_import=proof)
+    initial = await connect_agent(
+        **arguments(real_stack, planned), controller_import=proof
+    )
     before = dict(
         await real_stack.aweb_db.fetch_one(
             "SELECT * FROM {{tables.agents}} WHERE agent_id=$1", planned.agent_id
@@ -182,7 +195,9 @@ async def test_import_conflicts_preserve_exact_existing_projection(real_stack):
     ):
         with pytest.raises(ConnectIdentityRefusal) as refusal:
             await connect_agent(
-                **arguments(real_stack, planned), controller_import=proof, cert_info=supplied
+                **arguments(real_stack, planned),
+                controller_import=proof,
+                cert_info=supplied,
             )
         assert refusal.value.reason is ConnectIdentityRefusalReason.IMPORT_MISMATCH
         assert refusal.value.message == (
@@ -193,7 +208,9 @@ async def test_import_conflicts_preserve_exact_existing_projection(real_stack):
         PlannedIdentityIds(agent_id=planned.agent_id, workspace_id=uuid4()),
     ):
         with pytest.raises(PlannedIdentityConflict):
-            await connect_agent(**arguments(real_stack, changed_ids), controller_import=proof)
+            await connect_agent(
+                **arguments(real_stack, changed_ids), controller_import=proof
+            )
     assert (
         dict(
             await real_stack.aweb_db.fetch_one(
@@ -212,7 +229,9 @@ async def test_import_conflicts_preserve_exact_existing_projection(real_stack):
 
 
 @pytest.mark.asyncio
-async def test_import_uses_the_callers_transaction_and_rolls_back_projection(real_stack):
+async def test_import_uses_the_callers_transaction_and_rolls_back_projection(
+    real_stack,
+):
     proof, _, _, _ = await checked_member(real_stack)
     planned = PlannedIdentityIds(agent_id=uuid4(), workspace_id=uuid4())
     with pytest.raises(RuntimeError, match="completion failed"):
@@ -222,7 +241,8 @@ async def test_import_uses_the_callers_transaction_and_rolls_back_projection(rea
             await connect_agent(**values, controller_import=proof)
             raise RuntimeError("completion failed")
     assert not await real_stack.aweb_db.fetch_value(
-        "SELECT EXISTS(SELECT 1 FROM {{tables.agents}} WHERE agent_id=$1)", planned.agent_id
+        "SELECT EXISTS(SELECT 1 FROM {{tables.agents}} WHERE agent_id=$1)",
+        planned.agent_id,
     )
     assert not await real_stack.aweb_db.fetch_value(
         "SELECT EXISTS(SELECT 1 FROM {{tables.workspaces}} WHERE workspace_id=$1)",
@@ -271,7 +291,8 @@ async def test_controller_move_after_import_snapshot_refuses_old_projection(
         "Read and verify the import again under the team's current controller, then retry importing."
     )
     assert not await real_stack.aweb_db.fetch_value(
-        "SELECT EXISTS(SELECT 1 FROM {{tables.agents}} WHERE agent_id=$1)", planned.agent_id
+        "SELECT EXISTS(SELECT 1 FROM {{tables.agents}} WHERE agent_id=$1)",
+        planned.agent_id,
     )
     result = await connect_agent(
         **arguments(real_stack, planned), controller_import=current.members[0]
@@ -280,7 +301,9 @@ async def test_controller_move_after_import_snapshot_refuses_old_projection(
 
 
 @pytest.mark.asyncio
-async def test_import_global_claims_still_require_actual_independent_binding(real_stack):
+async def test_import_global_claims_still_require_actual_independent_binding(
+    real_stack,
+):
     sdk, _, controller, member = await registered_import_team(real_stack)
     member_key = did_key_from_signing_key(member)
     async with aclosing(sdk):
@@ -292,8 +315,12 @@ async def test_import_global_claims_still_require_actual_independent_binding(rea
             certificate_id="live-certificate",
         )
         _, encoded = issue_team_certificate(
-            team_id="import:local", team_signing_key=controller, member_did_key=member_key,
-            member_did_aw=identity.did_aw, alias="live", identity_scope="global",
+            team_id="import:local",
+            team_signing_key=controller,
+            member_did_key=member_key,
+            member_did_aw=identity.did_aw,
+            alias="live",
+            identity_scope="global",
             certificate_id="global-certificate",
         )
         await sdk.register_team_certificate(
@@ -315,9 +342,13 @@ async def test_import_global_claims_still_require_actual_independent_binding(rea
             controller_signature=sign_message(controller, request.signing_bytes()),
         )
         proof = next(
-            x for x in batch.members if x.certificate.certificate_id == "global-certificate"
+            x
+            for x in batch.members
+            if x.certificate.certificate_id == "global-certificate"
         )
-        binding = await observe_identity_binding(sdk, did_key=member_key, did_aw=identity.did_aw)
+        binding = await observe_identity_binding(
+            sdk, did_key=member_key, did_aw=identity.did_aw
+        )
     planned = PlannedIdentityIds(agent_id=uuid4(), workspace_id=uuid4())
     with pytest.raises(ConnectIdentityRefusal) as refusal:
         await connect_agent(**arguments(real_stack, planned), controller_import=proof)
@@ -326,15 +357,19 @@ async def test_import_global_claims_still_require_actual_independent_binding(rea
         "Verify the certificate's exact identity and address before connecting this agent."
     )
     assert not await real_stack.aweb_db.fetch_value(
-        "SELECT EXISTS(SELECT 1 FROM {{tables.agents}} WHERE agent_id=$1)", planned.agent_id
+        "SELECT EXISTS(SELECT 1 FROM {{tables.agents}} WHERE agent_id=$1)",
+        planned.agent_id,
     )
     result = await connect_agent(
-        **arguments(real_stack, planned), controller_import=proof, identity_binding=binding
+        **arguments(real_stack, planned),
+        controller_import=proof,
+        identity_binding=binding,
     )
     assert result["agent_id"] == str(planned.agent_id)
     assert (
         await real_stack.aweb_db.fetch_value(
-            "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1", planned.agent_id
+            "SELECT did_aw_verified_key FROM {{tables.agents}} WHERE agent_id=$1",
+            planned.agent_id,
         )
         == member_key
     )

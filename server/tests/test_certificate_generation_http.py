@@ -111,4 +111,7 @@ async def test_unexpected_service_failure_still_hides_its_private_detail():
     ) as client:
         response = await client.get("/unexpected-generation-failure")
     assert response.status_code == 500
-    assert response.json() == {"detail": "Internal server error", "message": INTERNAL_SERVICE_ERROR_MESSAGE}
+    assert response.json() == {
+        "detail": "Internal server error",
+        "message": INTERNAL_SERVICE_ERROR_MESSAGE,
+    }

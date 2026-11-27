@@ -15,6 +15,10 @@ ROOT = Path(__file__).resolve().parents[3]
 
 @pytest.fixture(scope="module")
 def aw_binary(tmp_path_factory):
+    configured = os.environ.get("AW_TEST_CLI_BINARY")
+    if configured:
+        # The candidate gate builds aw once and hands every suite its path.
+        return Path(configured)
     binary = tmp_path_factory.mktemp("secrets-aw") / "aw"
     subprocess.run(
         ["go", "build", "-o", str(binary), "./cmd/aw"],

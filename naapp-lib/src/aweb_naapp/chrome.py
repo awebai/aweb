@@ -242,7 +242,8 @@ def render_header(site: SiteConfig) -> str:
         for link in site.nav_links
     )
     actions = "".join(
-        f'\n        <a class="btn secondary" href="{a.href}">{a.label}</a>' for a in site.header_actions
+        f'\n        <a class="btn secondary" href="{a.href}">{a.label}</a>'
+        for a in site.header_actions
     )
     gh = (
         f'\n        <a class="gh-link" href="{escape(site.source_url, quote=True)}" target="_blank"'
@@ -325,5 +326,7 @@ def page(site: SiteConfig, body_html: str) -> str:
 def render_field() -> str:
     """Static decorative strands for spacious public landing sections."""
     field = files("aweb_naapp").joinpath("assets/field.svg").read_text(encoding="utf-8")
-    return field.replace('<svg xmlns="http://www.w3.org/2000/svg">',
-        '<svg class="site-field" viewBox="0 0 1800 1800" aria-hidden="true" focusable="false">')
+    return field.replace(
+        '<svg xmlns="http://www.w3.org/2000/svg">',
+        '<svg class="site-field" viewBox="0 0 1800 1800" aria-hidden="true" focusable="false">',
+    )

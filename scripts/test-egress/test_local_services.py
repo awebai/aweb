@@ -20,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import test_server_local as local  # noqa: E402
 
+# Set when run directly; discovery of the no-services controls skips this file.
+RUN_DIRECTLY = False
+
 DRIVER = """
 import asyncio, os, signal, sys
 sys.path.insert(0, "scripts")
@@ -48,6 +51,11 @@ except local.Interrupted as exc:
 
 
 class NativeLocalServices(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not RUN_DIRECTLY:
+            raise unittest.SkipTest("explicit native acceptance: run this file directly")
+
     def test_disk_floor_refuses_before_creating_a_project(self):
         # Reach the guard even when whole-suite slots are occupied; no suite runs.
         env = dict(
@@ -128,4 +136,5 @@ class NativeLocalServices(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    RUN_DIRECTLY = True
     unittest.main()

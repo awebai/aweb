@@ -146,9 +146,7 @@ def wire_envelope(prepared: PreparedSend, *, sender_origin: str, receiver_origin
 
 async def table_counts(manager):
     return {
-        table: await manager.fetch_value(
-            f"SELECT count(*) FROM {{{{tables.{table}}}}}"
-        )
+        table: await manager.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}")
         for table in (
             "messages",
             "chat_messages",

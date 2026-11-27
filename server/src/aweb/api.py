@@ -18,6 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
+from starlette.exceptions import HTTPException as ASGIHTTPException
 from starlette.routing import Mount
 
 from .application_state import RegistryClientUnavailable
@@ -121,9 +122,10 @@ class RequestBodyCacheMiddleware:
     other request is read whole before the app runs and replayed to it, so
     FastAPI still parses it. A body over ``max_body_bytes`` is refused with
     413 as soon as it is declared or read past the cap, before the app runs,
-    so no request buffers more than the cap. Pure ASGI: unlike a
-    BaseHTTPMiddleware, it holds no tasks of its own for a long-lived
-    streaming response.
+    so no request buffers more than the cap. An embedding host can enforce a
+    tighter limit by raising a Starlette HTTPException(413) from receive.
+    Pure ASGI: unlike a BaseHTTPMiddleware, it holds no tasks of its own for
+    a long-lived streaming response.
     """
 
     def __init__(
@@ -166,7 +168,15 @@ class RequestBodyCacheMiddleware:
             return
         chunks, received = [], 0
         while True:
-            message = await receive()
+            try:
+                message = await receive()
+            except ASGIHTTPException as exc:
+                if exc.status_code != 413:
+                    raise
+                # The mounted app's error middleware would send a 500 before
+                # the host could handle the receive-side refusal.
+                await self._refuse(scope, receive, send)
+                return
             if message["type"] == "http.disconnect":
                 return  # The client left before sending its body; nobody to answer.
             chunk = message.get("body", b"")
@@ -198,10 +208,6 @@ async def _mount_mcp_app(
     )
     move_mount_before_spa_fallback(app, "/mcp")
     logger.info("MCP endpoint mounted at /mcp/")
-
-
-
-
 
 
 class _RegistryClientOptions(TypedDict):

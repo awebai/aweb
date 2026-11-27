@@ -97,7 +97,7 @@ wheels = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.40rc3"
+version = "0.5.43"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },

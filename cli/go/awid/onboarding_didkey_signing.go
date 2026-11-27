@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 // onboardingDIDKeySignPayload builds the canonical JSON bytes for the shared

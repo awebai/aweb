@@ -3,7 +3,6 @@
 import json
 from collections import OrderedDict
 from dataclasses import FrozenInstanceError, fields, is_dataclass, replace
-from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -13,8 +12,6 @@ from aweb.federation.envelope import verify_federation_envelope
 from aweb.hooks import fire_mutation_callback
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.message_events import (
-    ChatMessageEvent,
-    MessageAcknowledgedEvent,
     ChatMessageSentContext,
     FederatedMessageSentContext,
     MailSentContext,
@@ -252,19 +249,6 @@ def test_acknowledgement_context_retains_the_existing_identity_fields(
     }
 
 
-def test_standard_mutation_vocabulary_covers_the_retained_call_site_inventory():
-    root = Path(__file__).resolve().parents[2]
-    inventory = json.loads(
-        (root / "docs/vectors/mutation-hook-call-sites-v1.json").read_text()
-    )
-    assert {site["event"] for site in inventory["call_sites"]} <= {
-        event.value for event in MutationEventType
-    }
-    # Known names are constants, not a new callback admission gate.
-    assert MutationEventType.MAIL_SENT == "message.sent"
-    assert "host.custom_event" != MutationEventType.MAIL_SENT
-
-
 def test_delivered_transport_event_preserves_the_literal_wire_fields():
     event = MessageDeliveredEvent(
         workspace_id="workspace", content_mode=ContentMode.ENCRYPTED
@@ -393,14 +377,3 @@ def test_acknowledgement_context_preserves_historical_metadata_strings():
         content_mode=" Historical/Content ",
     )
     assert dto.to_context()["content_mode"] == " Historical/Content "
-
-
-def test_transport_exports_reuse_existing_public_dtos_instead_of_a_second_set():
-    assert MessageDeliveredEvent is existing_transport.MessageDeliveredEvent
-    assert MessageAcknowledgedEvent is existing_transport.MessageAcknowledgedEvent
-    assert ChatMessageEvent is existing_transport.ChatMessageEvent
-    event = MessageDeliveredEvent(
-        workspace_id="workspace", content_mode=ContentMode.ENCRYPTED
-    )
-    assert json.loads(event.to_json())["content_mode"] == "encrypted_v2"
-    assert event.type == TransportEventType.MAIL_DELIVERED

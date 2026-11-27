@@ -30,7 +30,9 @@ __all__ = ["privacy_app"]
 
 def _headers(sk, did, payload):
     timestamp = datetime.now(timezone.utc).isoformat()
-    signature = sign_message(sk, canonical_json_bytes({**payload, "timestamp": timestamp}))
+    signature = sign_message(
+        sk, canonical_json_bytes({**payload, "timestamp": timestamp})
+    )
     return {
         "Authorization": f"DIDKey {did} {signature}",
         "X-AWEB-Timestamp": timestamp,
@@ -121,13 +123,17 @@ async def test_awid_rotation_replaces_oss_controller_authority(
     member = env.actors["bob"]
     refused, _, _ = await _controller_action(env, operation, member.sk, member.did)
     assert refused.status_code == 403, refused.text
-    before, stored, expected = await _controller_action(env, operation, env.team_sk, env.team_did)
+    before, stored, expected = await _controller_action(
+        env, operation, env.team_sk, env.team_did
+    )
     assert before.status_code == 200, before.text
     assert stored == expected
     # Warm the real SDK cache even on the unfixed server, whose controller
     # routes currently bypass it. The fix must honor its freshness bound.
     assert (
-        await env.app.state.awid_registry_client.get_team_public_key("example.test", TEAM_NAME)
+        await env.app.state.awid_registry_client.get_team_public_key(
+            "example.test", TEAM_NAME
+        )
         == env.team_did
     )
 
@@ -153,7 +159,9 @@ async def test_awid_rotation_replaces_oss_controller_authority(
         )
         assert rotated.status_code == 200, rotated.text
         assert rotated.json()["key_changed"] is True
-        current = await registry_http.get(f"/v1/namespaces/example.test/teams/{TEAM_NAME}")
+        current = await registry_http.get(
+            f"/v1/namespaces/example.test/teams/{TEAM_NAME}"
+        )
         assert current.status_code == 200, current.text
         assert current.json()["team_did_key"] == next_did
     assert (
@@ -194,7 +202,9 @@ async def test_awid_rotation_replaces_oss_controller_authority(
                 "/v1/connect",
                 content=b"{}",
                 headers={
-                    **_signed_team_headers(actor.sk, actor.did, TEAM, certificate, b"{}"),
+                    **_signed_team_headers(
+                        actor.sk, actor.did, TEAM, certificate, b"{}"
+                    ),
                     "Content-Type": "application/json",
                 },
             )

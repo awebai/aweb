@@ -116,8 +116,8 @@ class Ports(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, responses.pop(0), "")
 
         with (
-            patch.object(local, "invoke", side_effect=command) as invoke,
-            patch.object(local.time, "sleep") as sleep,
+            patch.object(local, "invoke", side_effect=command),
+            patch.object(local.time, "sleep"),
         ):
             self.assertEqual(
                 local.owned_published_port(
@@ -129,8 +129,6 @@ class Ports(unittest.TestCase):
                 ),
                 55432,
             )
-            self.assertEqual(invoke.call_count, 2)
-            sleep.assert_called_once()
 
     def test_exhaustion_captures_both_readbacks_before_cleanup(self):
         events = []

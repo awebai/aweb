@@ -22,14 +22,24 @@ GENESIS = Genesis(team_id=TEAM_ID, chain_epoch=1, logs_origin=LOGS_ORIGIN, creat
 def _binding(event, kind, binding_id):
     producer = event.fields["producer"]
     return {
-        "binding_id": binding_id, "team_id": TEAM_ID, "kind": kind,
-        "catalog_id": "aweb.hooks", "catalog_version": 1, "hook": event.hook,
+        "binding_id": binding_id,
+        "team_id": TEAM_ID,
+        "kind": kind,
+        "catalog_id": "aweb.hooks",
+        "catalog_version": 1,
+        "hook": event.hook,
         "app_id": "logs" if kind == "registration" else producer["app_id"],
         "origin": LOGS_ORIGIN if kind == "registration" else producer["origin"],
-        "installation_id": "logs-install" if kind == "registration" else producer["installation_id"],
+        "installation_id": "logs-install"
+        if kind == "registration"
+        else producer["installation_id"],
         "generation": 1 if kind == "registration" else producer["generation"],
-        "digest": "sha256:" + "a" * 64, "method": "POST", "path": "/v1/hooks/ingest",
-        "active_from": ACTIVE, "state": "active", "revoked_at": None,
+        "digest": "sha256:" + "a" * 64,
+        "method": "POST",
+        "path": "/v1/hooks/ingest",
+        "active_from": ACTIVE,
+        "state": "active",
+        "revoked_at": None,
     }
 
 
@@ -50,10 +60,20 @@ def _events(seqs, *, kind="app", change=None):
             admission["server_url"] = event.fields["producer"]["origin"]
         evidence = {"did_key": event.producer_did_key, "admissions": [admission]}
         salt = seed(team_seq)
-        link = link_for(event, chain_epoch=1, team_seq=team_seq, prev_event_hash=prev,
-                        received_at=AT, content_commitment=content_commitment(salt, signing, signature))
-        stored = StoredEvent(link, link.event_hash(), Content(salt, signing, signature, event.producer_did_key),
-                             key_evidence=evidence)
+        link = link_for(
+            event,
+            chain_epoch=1,
+            team_seq=team_seq,
+            prev_event_hash=prev,
+            received_at=AT,
+            content_commitment=content_commitment(salt, signing, signature),
+        )
+        stored = StoredEvent(
+            link,
+            link.event_hash(),
+            Content(salt, signing, signature, event.producer_did_key),
+            key_evidence=evidence,
+        )
         result.append(stored)
         prev = stored.event_hash
     return result
@@ -68,7 +88,9 @@ def test_only_authenticated_internal_holes_are_reported(kind):
     assert report["gaps"][0]["registration_id"] == "registration-1"
     assert report["sequence_conflicts"] == report["unassessed"] == []
     # A delivery hole does not mean the receipt chain itself was edited.
-    assert verify_chain(GENESIS, events, receipt_keys=frozenset(), checkpoint_keys=frozenset()).intact
+    assert verify_chain(
+        GENESIS, events, receipt_keys=frozenset(), checkpoint_keys=frozenset()
+    ).intact
 
 
 def test_late_events_fill_holes_without_inventing_a_restart():
@@ -82,19 +104,26 @@ def test_key_rotation_does_not_hide_an_internal_hole():
     fields["producer"].update(kid="rotated", did_key=did_key(seed(200)))
     signing, signature = envelope.sign(seed(200), fields)
     key = fields["producer"]["did_key"]
-    content = replace(event.content, signing_bytes=signing, signature=signature, producer_did_key=key)
-    link = replace(event.link, content_commitment=content_commitment(content.salt, signing, signature))
+    content = replace(
+        event.content, signing_bytes=signing, signature=signature, producer_did_key=key
+    )
+    link = replace(
+        event.link, content_commitment=content_commitment(content.salt, signing, signature)
+    )
     events[1] = replace(event, content=content, link=link, event_hash=link.event_hash())
     assert len(verify_deliveries(GENESIS, events).gaps) == 1
 
 
-@pytest.mark.parametrize("boundary", ["generation", "installation", "production", "registration", "activation"])
+@pytest.mark.parametrize(
+    "boundary", ["generation", "installation", "production", "registration", "activation"]
+)
 def test_observation_does_not_bridge_provenance_intervals(boundary):
     def change(i, fields):
         if i == 2 and boundary == "generation":
             fields["producer"]["generation"] += 1
         if i == 2 and boundary == "installation":
             fields["producer"]["installation_id"] = str(uuid4())
+
     events = _events([40, 43], change=change)
     evidence = copy.deepcopy(events[1].key_evidence)
     admission = evidence["admissions"][0]
@@ -114,7 +143,7 @@ def test_distinct_authenticated_events_reusing_a_sequence_are_an_inconsistency(b
         evidence["admissions"][0][binding_change]["binding_id"] += "-new"
         events[1] = replace(events[1], key_evidence=evidence)
     report = verify_deliveries(GENESIS, events).to_json()
-    conflict, = report["sequence_conflicts"]
+    (conflict,) = report["sequence_conflicts"]
     assert conflict["seq"] == 40
     assert set(conflict["event_ids"]) == {
         envelope.open_envelope(e.content.signing_bytes).event_id for e in events
@@ -131,7 +160,9 @@ def test_uncertain_content_or_authority_cannot_establish_a_hole(uncertainty):
     elif uncertainty == "purged":
         middle = replace(middle, content=None, purge_act="erase:1")
     elif uncertainty == "tampered":
-        middle = replace(middle, content=replace(middle.content, signature=events[0].content.signature))
+        middle = replace(
+            middle, content=replace(middle.content, signature=events[0].content.signature)
+        )
     else:
         evidence = copy.deepcopy(middle.key_evidence)
         evidence["admissions"][0]["production"]["installation_id"] = "another-install"
@@ -144,7 +175,10 @@ def test_uncertain_content_or_authority_cannot_establish_a_hole(uncertainty):
 
 def test_client_events_do_not_have_a_required_sequence():
     assert verify_deliveries(GENESIS, _events([1, 10], kind="client")).to_json() == {
-        "scope": "observed_internal_only", "gaps": [], "sequence_conflicts": [], "unassessed": [],
+        "scope": "observed_internal_only",
+        "gaps": [],
+        "sequence_conflicts": [],
+        "unassessed": [],
     }
 
 

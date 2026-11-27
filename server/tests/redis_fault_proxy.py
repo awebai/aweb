@@ -64,7 +64,10 @@ class RedisFaultProxy:
             client_writer.close()
             return
         self._writers.update({client_writer, upstream_writer})
-        for source, sink in ((client_reader, upstream_writer), (upstream_reader, client_writer)):
+        for source, sink in (
+            (client_reader, upstream_writer),
+            (upstream_reader, client_writer),
+        ):
             task = asyncio.create_task(self._pipe(source, sink))
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)

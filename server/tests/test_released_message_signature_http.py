@@ -148,9 +148,7 @@ async def test_pinned_released_payload_bytes_verify_with_the_transport_subject(
         assert wrong_key.json()["detail"] == (
             "The message signature does not verify. Sign the message again with the authenticated sender's key and resend it."
         )
-    assert (
-        await env.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == 0
-    )
+    assert await env.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == 0
     assert env.dispatched == []
     accepted = await post(wire)
     assert accepted.status_code == 200, accepted.text
@@ -169,7 +167,5 @@ async def test_pinned_released_payload_bytes_verify_with_the_transport_subject(
         f"SELECT from_did,body,signature,signed_payload FROM {{{{tables.{table}}}}} WHERE message_id=$1",
         UUID(wire["message_id"]),
     ) == dict(stored)
-    assert (
-        await env.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == 1
-    )
+    assert await env.db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}}") == 1
     assert len(env.dispatched) == 1

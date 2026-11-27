@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 from awid.did import did_from_public_key, did_key_from_signing_key, generate_keypair
 
-_IDENTITY_VECTOR = Path(__file__).resolve().parents[2] / "docs" / "vectors" / "identity-log-v1.json"
+_IDENTITY_VECTOR = (
+    Path(__file__).resolve().parents[2] / "docs" / "vectors" / "identity-log-v1.json"
+)
 
 
 def test_a_seeds_did_key_is_its_public_keys_did_key():

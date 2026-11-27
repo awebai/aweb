@@ -79,7 +79,10 @@ class InstallAdmissionPolicy(Protocol):
 def _admin_required() -> HTTPException:
     return HTTPException(
         status_code=403,
-        detail={"code": "admin_required", "message": "Ask a team administrator to approve this installation action"},
+        detail={
+            "code": "admin_required",
+            "message": "Ask a team administrator to approve this installation action",
+        },
     )
 
 
@@ -102,7 +105,9 @@ async def require_install_admin(
     Exceptions and non-True policy results never authorize a mutation.
     """
     subject = await _install_subject(tx, request, identity, team_id)
-    policy: InstallAdminPolicy | None = getattr(request.app.state, "install_admin_policy", None)
+    policy: InstallAdminPolicy | None = getattr(
+        request.app.state, "install_admin_policy", None
+    )
     if policy is None:
         policy = standalone_install_admin_policy
     context = {} if verified_origin is None else {"verified_origin": verified_origin}
@@ -120,12 +125,23 @@ async def require_install_admission(
     unverified_origin: str,
 ) -> None:
     """Admit network work only; final authority must be checked after fetching."""
-    policy: InstallAdmissionPolicy | None = getattr(request.app.state, "install_admission_policy", None)
+    policy: InstallAdmissionPolicy | None = getattr(
+        request.app.state, "install_admission_policy", None
+    )
     if policy is None:
-        await require_install_admin(tx, request, identity, team_id, action=action, app_id=app_id)
+        await require_install_admin(
+            tx, request, identity, team_id, action=action, app_id=app_id
+        )
         return
     subject = await _install_subject(tx, request, identity, team_id)
-    await _check_policy(policy, tx, subject, action=action, app_id=app_id, unverified_origin=unverified_origin)
+    await _check_policy(
+        policy,
+        tx,
+        subject,
+        action=action,
+        app_id=app_id,
+        unverified_origin=unverified_origin,
+    )
 
 
 async def _check_policy(policy, tx, subject, **context) -> None:
@@ -135,15 +151,22 @@ async def _check_policy(policy, tx, subject, **context) -> None:
         # Preserve the standalone policy's named authority-unavailable response.
         raise
     except Exception as exc:
-        raise HTTPException(status_code=503, detail={
-            "code": "install_policy_unavailable", "message": "Installation policy is unavailable",
-        }) from exc
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "install_policy_unavailable",
+                "message": "Installation policy is unavailable",
+            },
+        ) from exc
     if permitted is not True:
         raise _admin_required()
 
 
 async def _install_subject(
-    tx: TransactionManager, request: Request, identity: TeamIdentity | None, team_id: str
+    tx: TransactionManager,
+    request: Request,
+    identity: TeamIdentity | None,
+    team_id: str,
 ) -> InstallAdminSubject:
     team_id = validate_team_id(team_id)
     if identity is not None:
@@ -162,13 +185,17 @@ async def _install_subject(
         # proxy's team-level principal, whose authority the policy decides.
         await resolve_internal_actor(tx, internal)
         subject = InternalInstallAdminSubject(
-            team_id=team_id, principal_type=internal["principal_type"],
-            principal_id=internal["principal_id"], actor_id=internal["actor_id"],
+            team_id=team_id,
+            principal_type=internal["principal_type"],
+            principal_id=internal["principal_id"],
+            actor_id=internal["actor_id"],
         )
     elif identity is not None:
         subject = CertificateInstallAdminSubject(
-            team_id=team_id, agent_id=identity.agent_id,
-            certificate_id=identity.certificate_id, did_key=identity.did_key,
+            team_id=team_id,
+            agent_id=identity.agent_id,
+            certificate_id=identity.certificate_id,
+            did_key=identity.did_key,
         )
     else:
         raise HTTPException(status_code=401, detail="Authentication required")

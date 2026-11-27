@@ -163,7 +163,9 @@ def proof_for(*, certificate_id="0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11"):
     from aweb_naapp.runtime.team_auth import MembershipProof
 
     checked = time.monotonic_ns()
-    return MembershipProof(SCOPE.team_id, certificate_id, TEAM_KEY, checked, checked + seconds_to_ns(60))
+    return MembershipProof(
+        SCOPE.team_id, certificate_id, TEAM_KEY, checked, checked + seconds_to_ns(60)
+    )
 
 
 async def proof_for_link(db, link_id):

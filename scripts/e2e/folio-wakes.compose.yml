@@ -1,7 +1,6 @@
 # Disposable real Folio/AWID/aweb acceptance stack. Run with --project-directory repository root.
 services:
   postgres:
-    cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
     image: postgres:16-alpine
@@ -19,7 +18,6 @@ services:
       - /var/lib/postgresql/data
 
   redis:
-    cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
     image: redis:7-alpine
@@ -30,7 +28,6 @@ services:
       retries: 30
 
   awid:
-    cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
     build:
@@ -64,7 +61,6 @@ services:
 
   aweb:
     command: ["/app/.venv/bin/python", "/fixture/e2e/folio_wakes_server.py"]
-    cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
     build:
@@ -104,7 +100,6 @@ services:
     command: ["/app/.venv/bin/uvicorn", "folio.api:app", "--host", "0.0.0.0", "--port", "8765", "--ssl-keyfile", "/fixture/tls/server.key", "--ssl-certfile", "/fixture/tls/server.pem"]
     # The app and client share the server's signed loopback audience.
     network_mode: service:aweb
-    cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
     build:
@@ -130,7 +125,6 @@ services:
         condition: service_healthy
 
   client:
-    cpus: "2"
     mem_limit: "1g"
     pids_limit: 512
     build:

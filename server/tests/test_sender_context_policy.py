@@ -13,7 +13,9 @@ def test_multi_context_sender_refusal_names_the_selecting_credential():
         did_key="did:key:signer",
         did_aw="did:aw:principal",
         address=None,
-        address_resolution=AddressResolution(state=AddressResolutionState.CONTEXT_REQUIRED),
+        address_resolution=AddressResolution(
+            state=AddressResolutionState.CONTEXT_REQUIRED
+        ),
     )
     assert auth.did_aw == "did:aw:principal"
     with pytest.raises(HTTPException) as refused:
@@ -45,7 +47,9 @@ def test_empty_keys_never_verify_a_stored_global_claim():
 def test_typed_binding_refusal_retains_reason_and_action(code, action):
     from aweb.service_errors import IdentityBindingCode, IdentityBindingError
 
-    error = IdentityBindingError(IdentityBindingCode(code), headers={"Retry-After": "7"})
+    error = IdentityBindingError(
+        IdentityBindingCode(code), headers={"Retry-After": "7"}
+    )
     assert error.detail == code
     assert action in error.message
     assert error.headers == {"Retry-After": "7"}

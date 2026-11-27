@@ -38,15 +38,35 @@ def _app(aweb_db) -> FastAPI:
 
     @app.post("/probe/{purpose}")
     async def probe(purpose: str, request: Request):
-        credential = await verify_app_credential(request, aweb_db, purpose,
-            installation=getattr(app.state, "installation_snapshot", None))
-        return {"purpose": credential.purpose, "team_id": credential.team_id, "kid": credential.kid,
-                "installation_id": credential.installation_id, "generation": credential.installation_generation}
+        credential = await verify_app_credential(
+            request,
+            aweb_db,
+            purpose,
+            installation=getattr(app.state, "installation_snapshot", None),
+        )
+        return {
+            "purpose": credential.purpose,
+            "team_id": credential.team_id,
+            "kid": credential.kid,
+            "installation_id": credential.installation_id,
+            "generation": credential.installation_generation,
+        }
 
     return app
 
 
-def _headers(*, signing_key: bytes, did_key: str, kid: str, path: str, body: bytes, prefix: str, auth: str, team_id: str = TEAM_ID, claims=None):
+def _headers(
+    *,
+    signing_key: bytes,
+    did_key: str,
+    kid: str,
+    path: str,
+    body: bytes,
+    prefix: str,
+    auth: str,
+    team_id: str = TEAM_ID,
+    claims=None,
+):
     timestamp = datetime.now(timezone.utc).isoformat()
     canonical = canonical_json_bytes(
         {
@@ -70,7 +90,9 @@ def _headers(*, signing_key: bytes, did_key: str, kid: str, path: str, body: byt
         "X-AWEB-App-Key-ID": kid,
         "X-AWEB-Team-ID": team_id,
         "X-AWEB-Timestamp": timestamp,
-        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(canonical).decode().rstrip("="),
+        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(canonical)
+        .decode()
+        .rstrip("="),
         "Content-Type": "application/json",
     }
 
@@ -80,10 +102,15 @@ def _signed_for(purpose: str, **kwargs):
     return _headers(prefix=spec.prefix, auth=spec.auth, **kwargs)
 
 
-async def _register_app_key(db, *, did_key: str, kid: str, purposes: list[str], team_id: str = TEAM_ID) -> None:
+async def _register_app_key(
+    db, *, did_key: str, kid: str, purposes: list[str], team_id: str = TEAM_ID
+) -> None:
     # Credential-unit fixture: seed a purpose key under the actual installed
     # byte pin. Origin derivation is covered by the network installation tests.
-    digest = await db.fetch_value("SELECT digest FROM {{tables.team_app_installs}} WHERE team_id=$1 AND app_id='folio'", team_id)
+    digest = await db.fetch_value(
+        "SELECT digest FROM {{tables.team_app_installs}} WHERE team_id=$1 AND app_id='folio'",
+        team_id,
+    )
     await db.execute(
         """
         INSERT INTO {{tables.team_app_keys}} (team_id, app_id, origin, digest, key_id, did_key, purposes)
@@ -98,7 +125,9 @@ async def _register_app_key(db, *, did_key: str, kid: str, purposes: list[str], 
 
 
 async def _post(app, path: str, body: bytes, headers: dict):
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         return await client.post(path, content=body, headers=headers)
 
 
@@ -109,7 +138,9 @@ async def installed(aweb_cloud_db):
     emit_key, emit_did = _make_app_keypair()
     await _install_folio(db, did_key=emit_did, kid="emit-1")
     read_key, read_did = _make_app_keypair()
-    await _register_app_key(db, did_key=read_did, kid="read-1", purposes=[APP_GRANT_READ, HOOK_RESOLVE])
+    await _register_app_key(
+        db, did_key=read_did, kid="read-1", purposes=[APP_GRANT_READ, HOOK_RESOLVE]
+    )
     return {
         "db": db,
         "app": _app(db),
@@ -122,7 +153,12 @@ async def installed(aweb_cloud_db):
 @pytest.mark.parametrize("purpose", READ_PURPOSES)
 async def test_a_key_registered_for_a_read_purpose_verifies_for_it(installed, purpose):
     path = f"/probe/{purpose}"
-    response = await _post(installed["app"], path, b"{}", _signed_for(purpose, path=path, body=b"{}", **installed["read"]))
+    response = await _post(
+        installed["app"],
+        path,
+        b"{}",
+        _signed_for(purpose, path=path, body=b"{}", **installed["read"]),
+    )
 
     assert response.status_code == 200, response.text
     assert response.json()["purpose"] == purpose
@@ -131,12 +167,23 @@ async def test_a_key_registered_for_a_read_purpose_verifies_for_it(installed, pu
 @pytest.mark.asyncio
 async def test_a_key_is_refused_for_a_purpose_it_does_not_declare(installed):
     key, did = _make_app_keypair()
-    await _register_app_key(installed["db"], did_key=did, kid="grant-only", purposes=[APP_GRANT_READ])
+    await _register_app_key(
+        installed["db"], did_key=did, kid="grant-only", purposes=[APP_GRANT_READ]
+    )
     path = f"/probe/{HOOK_RESOLVE}"
 
     response = await _post(
-        installed["app"], path, b"{}",
-        _signed_for(HOOK_RESOLVE, signing_key=key, did_key=did, kid="grant-only", path=path, body=b"{}"),
+        installed["app"],
+        path,
+        b"{}",
+        _signed_for(
+            HOOK_RESOLVE,
+            signing_key=key,
+            did_key=did,
+            kid="grant-only",
+            path=path,
+            body=b"{}",
+        ),
     )
 
     assert response.status_code == 403, response.text
@@ -146,7 +193,12 @@ async def test_a_key_is_refused_for_a_purpose_it_does_not_declare(installed):
 async def test_an_emit_key_never_signs_a_read_purpose(installed):
     path = f"/probe/{APP_GRANT_READ}"
 
-    response = await _post(installed["app"], path, b"{}", _signed_for(APP_GRANT_READ, path=path, body=b"{}", **installed["emit"]))
+    response = await _post(
+        installed["app"],
+        path,
+        b"{}",
+        _signed_for(APP_GRANT_READ, path=path, body=b"{}", **installed["emit"]),
+    )
 
     assert response.status_code == 403, response.text
 
@@ -155,8 +207,12 @@ async def test_an_emit_key_never_signs_a_read_purpose(installed):
 async def test_a_read_purpose_credential_is_refused_at_the_emit_endpoint(installed):
     for purpose in READ_PURPOSES:
         response = await _post(
-            installed["app"], "/v1/events/app", EMIT_BODY,
-            _signed_for(purpose, path="/v1/events/app", body=EMIT_BODY, **installed["read"]),
+            installed["app"],
+            "/v1/events/app",
+            EMIT_BODY,
+            _signed_for(
+                purpose, path="/v1/events/app", body=EMIT_BODY, **installed["read"]
+            ),
         )
         assert response.status_code == 401, (purpose, response.text)
 
@@ -166,7 +222,12 @@ async def test_a_read_purpose_credential_is_refused_at_the_emit_endpoint(install
 async def test_an_app_event_credential_is_refused_at_a_read_purpose(installed, purpose):
     path = f"/probe/{purpose}"
 
-    response = await _post(installed["app"], path, b"{}", _signed_for(APP_EVENT, path=path, body=b"{}", **installed["emit"]))
+    response = await _post(
+        installed["app"],
+        path,
+        b"{}",
+        _signed_for(APP_EVENT, path=path, body=b"{}", **installed["emit"]),
+    )
 
     assert response.status_code == 401, response.text
 
@@ -179,12 +240,28 @@ async def test_prefix_and_signed_auth_must_both_name_the_purpose(installed, purp
     other = PURPOSES[APP_EVENT]
 
     right_prefix_wrong_auth = await _post(
-        installed["app"], path, b"{}",
-        _headers(prefix=spec.prefix, auth=other.auth, path=path, body=b"{}", **installed["read"]),
+        installed["app"],
+        path,
+        b"{}",
+        _headers(
+            prefix=spec.prefix,
+            auth=other.auth,
+            path=path,
+            body=b"{}",
+            **installed["read"],
+        ),
     )
     wrong_prefix_right_auth = await _post(
-        installed["app"], path, b"{}",
-        _headers(prefix=other.prefix, auth=spec.auth, path=path, body=b"{}", **installed["read"]),
+        installed["app"],
+        path,
+        b"{}",
+        _headers(
+            prefix=other.prefix,
+            auth=spec.auth,
+            path=path,
+            body=b"{}",
+            **installed["read"],
+        ),
     )
 
     assert right_prefix_wrong_auth.status_code == 401, right_prefix_wrong_auth.text
@@ -198,14 +275,35 @@ async def test_emit_endpoint_refuses_wrong_prefix_or_wrong_auth(installed):
     path = "/v1/events/app"
 
     right_prefix_wrong_auth = await _post(
-        installed["app"], path, EMIT_BODY,
-        _headers(prefix=emit_spec.prefix, auth=read_spec.auth, path=path, body=EMIT_BODY, **installed["emit"]),
+        installed["app"],
+        path,
+        EMIT_BODY,
+        _headers(
+            prefix=emit_spec.prefix,
+            auth=read_spec.auth,
+            path=path,
+            body=EMIT_BODY,
+            **installed["emit"],
+        ),
     )
     wrong_prefix_right_auth = await _post(
-        installed["app"], path, EMIT_BODY,
-        _headers(prefix=read_spec.prefix, auth=emit_spec.auth, path=path, body=EMIT_BODY, **installed["emit"]),
+        installed["app"],
+        path,
+        EMIT_BODY,
+        _headers(
+            prefix=read_spec.prefix,
+            auth=emit_spec.auth,
+            path=path,
+            body=EMIT_BODY,
+            **installed["emit"],
+        ),
     )
-    valid = await _post(installed["app"], path, EMIT_BODY, _signed_for(APP_EVENT, path=path, body=EMIT_BODY, **installed["emit"]))
+    valid = await _post(
+        installed["app"],
+        path,
+        EMIT_BODY,
+        _signed_for(APP_EVENT, path=path, body=EMIT_BODY, **installed["emit"]),
+    )
 
     assert right_prefix_wrong_auth.status_code == 401, right_prefix_wrong_auth.text
     assert wrong_prefix_right_auth.status_code == 401, wrong_prefix_right_auth.text
@@ -217,17 +315,40 @@ async def test_revoked_or_other_team_app_keys_are_refused(installed):
     db = installed["db"]
     await _seed_team_and_agent(db, team_id=OTHER_TEAM_ID)
     other_key, other_did = _make_app_keypair()
-    await _install_folio(db, team_id=OTHER_TEAM_ID, did_key=_make_app_keypair()[1], kid="emit-9")
-    await _register_app_key(db, did_key=other_did, kid="other-read", purposes=[APP_GRANT_READ], team_id=OTHER_TEAM_ID)
+    await _install_folio(
+        db, team_id=OTHER_TEAM_ID, did_key=_make_app_keypair()[1], kid="emit-9"
+    )
+    await _register_app_key(
+        db,
+        did_key=other_did,
+        kid="other-read",
+        purposes=[APP_GRANT_READ],
+        team_id=OTHER_TEAM_ID,
+    )
     await db.execute(
-        "UPDATE {{tables.team_app_keys}} SET revoked_at = NOW() WHERE team_id = $1 AND key_id = 'read-1'", TEAM_ID
+        "UPDATE {{tables.team_app_keys}} SET revoked_at = NOW() WHERE team_id = $1 AND key_id = 'read-1'",
+        TEAM_ID,
     )
     path = f"/probe/{APP_GRANT_READ}"
 
-    revoked = await _post(installed["app"], path, b"{}", _signed_for(APP_GRANT_READ, path=path, body=b"{}", **installed["read"]))
+    revoked = await _post(
+        installed["app"],
+        path,
+        b"{}",
+        _signed_for(APP_GRANT_READ, path=path, body=b"{}", **installed["read"]),
+    )
     other_team = await _post(
-        installed["app"], path, b"{}",
-        _signed_for(APP_GRANT_READ, signing_key=other_key, did_key=other_did, kid="other-read", path=path, body=b"{}"),
+        installed["app"],
+        path,
+        b"{}",
+        _signed_for(
+            APP_GRANT_READ,
+            signing_key=other_key,
+            did_key=other_did,
+            kid="other-read",
+            path=path,
+            body=b"{}",
+        ),
     )
 
     assert revoked.status_code == 403, revoked.text
@@ -237,21 +358,51 @@ async def test_revoked_or_other_team_app_keys_are_refused(installed):
 @pytest.mark.asyncio
 async def test_app_request_is_purpose_and_installation_bound(installed):
     key, did = _make_app_keypair()
-    await _register_app_key(installed["db"], did_key=did, kid="request-only", purposes=[APP_REQUEST])
-    installed["app"].state.installation_snapshot = dict(installation_id="installation-1", generation=3, state="active", origin_verified=True)
+    await _register_app_key(
+        installed["db"], did_key=did, kid="request-only", purposes=[APP_REQUEST]
+    )
+    installed["app"].state.installation_snapshot = dict(
+        installation_id="installation-1",
+        generation=3,
+        state="active",
+        origin_verified=True,
+    )
     path = "/probe/app-request"
     args = dict(signing_key=key, did_key=did, kid="request-only", path=path, body=b"{}")
     claims = dict(installation_id="installation-1", installation_generation=3)
-    valid = await _post(installed["app"], path, b"{}", _signed_for(APP_REQUEST, **args, claims=claims))
+    valid = await _post(
+        installed["app"], path, b"{}", _signed_for(APP_REQUEST, **args, claims=claims)
+    )
     assert valid.status_code == 200, valid.text
-    assert (valid.json()["installation_id"], valid.json()["generation"]) == ("installation-1", 3)
-    for changes in ({"installation_id": "previous-install"}, {"installation_generation": 2},
-                    {"installation_generation": True}, {"unexpected_authority": True}):
-        refused = await _post(installed["app"], path, b"{}", _signed_for(APP_REQUEST, **args, claims={**claims, **changes}))
-        expected_status = 403 if "installation_id" in changes or type(changes.get("installation_generation")) is int else 401
+    assert (valid.json()["installation_id"], valid.json()["generation"]) == (
+        "installation-1",
+        3,
+    )
+    for changes in (
+        {"installation_id": "previous-install"},
+        {"installation_generation": 2},
+        {"installation_generation": True},
+        {"unexpected_authority": True},
+    ):
+        refused = await _post(
+            installed["app"],
+            path,
+            b"{}",
+            _signed_for(APP_REQUEST, **args, claims={**claims, **changes}),
+        )
+        expected_status = (
+            403
+            if "installation_id" in changes
+            or type(changes.get("installation_generation")) is int
+            else 401
+        )
         assert refused.status_code == expected_status, refused.text
-    wrong_purpose = await _post(installed["app"], path, b"{}", _signed_for(APP_EVENT, **args, claims=claims))
+    wrong_purpose = await _post(
+        installed["app"], path, b"{}", _signed_for(APP_EVENT, **args, claims=claims)
+    )
     assert wrong_purpose.status_code == 401, wrong_purpose.text
     installed["app"].state.installation_snapshot["state"] = "uninstalled"
-    retired = await _post(installed["app"], path, b"{}", _signed_for(APP_REQUEST, **args, claims=claims))
+    retired = await _post(
+        installed["app"], path, b"{}", _signed_for(APP_REQUEST, **args, claims=claims)
+    )
     assert retired.status_code == 403, retired.text

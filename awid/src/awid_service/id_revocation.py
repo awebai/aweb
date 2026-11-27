@@ -29,8 +29,15 @@ ROOT = "root"
 
 
 async def revoke_identity(
-    db, *, domain: str, subject_id: str, expected_head: str | None, effective_from: datetime | None,
-    signer: str, dns_authority: DomainAuthority | None, clock: Clock,
+    db,
+    *,
+    domain: str,
+    subject_id: str,
+    expected_head: str | None,
+    effective_from: datetime | None,
+    signer: str,
+    dns_authority: DomainAuthority | None,
+    clock: Clock,
 ) -> dict:
     """Revoke ``subject_id`` for ``signer``; return its ``{revoked_at, effective_from}``."""
     async with db.transaction() as tx:
@@ -43,11 +50,19 @@ async def revoke_identity(
             FROM {{tables.id_certificates}}
             WHERE id = $1 AND domain = $2 AND superseded_at IS NULL
             """,
-            subject_id, domain,
+            subject_id,
+            domain,
         )
-        parent_did = None if head is None else identity_parent_did(head["parent_kind"], head["parent_id"])
+        parent_did = (
+            None
+            if head is None
+            else identity_parent_did(head["parent_kind"], head["parent_id"])
+        )
         keys, subject = await lock_keys_and_subject(
-            tx, dids={subject_id, parent_did}, subject_id=subject_id, parent_id=parent_did,
+            tx,
+            dids={subject_id, parent_did},
+            subject_id=subject_id,
+            parent_id=parent_did,
         )
         # The last lock wait is behind us: everything below reads the state
         # those locks hold still, and the witness time is sampled from here.
@@ -70,7 +85,12 @@ async def revoke_identity(
         if actor == PARENT:
             # The parent may revoke only while its own whole current chain is valid.
             verdict = await verify_parent_chain(
-                tx, domain=domain, parent=parent_did, parent_key=keys[parent_did], dns_authority=dns_authority, clock=clock,
+                tx,
+                domain=domain,
+                parent=parent_did,
+                parent_key=keys[parent_did],
+                dns_authority=dns_authority,
+                clock=clock,
             )
             if verdict["outcome"] == "unavailable":
                 raise IdentityTreeRefusal("evidence_unavailable", 503)
@@ -83,7 +103,9 @@ async def revoke_identity(
                 "SELECT MAX(created_at) FROM {{tables.did_aw_log}} WHERE did_aw = $1",
                 subject_id if actor == SELF else parent_did,
             )
-        now = serialization_time(clock, await latest_domain_event(tx, domain), signer_key_epoch)
+        now = serialization_time(
+            clock, await latest_domain_event(tx, domain), signer_key_epoch
+        )
         cutoff = now if effective_from is None else effective_from
         if cutoff > now:
             raise IdentityTreeRefusal("invalid_cutoff")
@@ -96,7 +118,9 @@ async def revoke_identity(
             if cutoff > subject["effective_from"]:
                 raise IdentityTreeRefusal("invalid_cutoff")
             await tx.execute(
-                "UPDATE {{tables.id_identities}} SET effective_from = $2 WHERE id = $1", subject_id, cutoff,
+                "UPDATE {{tables.id_identities}} SET effective_from = $2 WHERE id = $1",
+                subject_id,
+                cutoff,
             )
             return _revocation(subject["revoked_at"], cutoff)
 
@@ -106,7 +130,10 @@ async def revoke_identity(
             SET revoked_at = $2, effective_from = $3, revoked_by = $4
             WHERE id = $1
             """,
-            subject_id, now, cutoff, signer,
+            subject_id,
+            now,
+            cutoff,
+            signer,
         )
     return _revocation(now, cutoff)
 
@@ -130,5 +157,10 @@ async def _actor(tx, root, subject_id, parent_did, keys, signer) -> str:
 
 
 def _revocation(revoked_at: datetime, effective_from: datetime) -> dict:
-    return {"revoked_at": wire_time(revoked_at), "effective_from": wire_time(effective_from)}
+    return {
+        "revoked_at": wire_time(revoked_at),
+        "effective_from": wire_time(effective_from),
+    }
+
+
 from awid.dns_verify import DomainAuthority

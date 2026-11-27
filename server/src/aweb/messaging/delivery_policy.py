@@ -13,7 +13,7 @@ from aweb.inbound_modes import (
     effective_inbound_mode,
     normalize_inbound_mode,
 )
-from aweb.member_team_key import MemberReadLock, current_member_team_ids_for_identity
+from aweb.member_team_key import MemberReadLock, current_member_team_ids_for_identities
 from aweb.messaging.contacts import IdentityContactMatch, identity_contact_match
 from aweb.messaging.refusals import (
     CONTACT_REBIND_ACTION,
@@ -23,9 +23,7 @@ from aweb.messaging.refusals import (
 from aweb.service_errors import ForbiddenError
 
 logger = logging.getLogger(__name__)
-_POLICY_ACTION = (
-    "Ask the recipient to add your exact address as a contact or check their inbound policy."
-)
+_POLICY_ACTION = "Ask the recipient to add your exact address as a contact or check their inbound policy."
 
 
 class DeliveryAttempt(Enum):
@@ -44,7 +42,9 @@ class DeliverySender:
     def identity_dids(self) -> list[str]:
         return list(
             dict.fromkeys(
-                value.strip() for value in (*self.verified_dids, self.did) if value.strip()
+                value.strip()
+                for value in (*self.verified_dids, self.did)
+                if value.strip()
             )
         )
 
@@ -58,7 +58,9 @@ class DeliveryPolicyRefused(ForbiddenError):
 
     def __init__(self, *, code: DeliveryRefusalCode, detail: str):
         self.code = code
-        self.status_code = 404 if code is DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING else 403
+        self.status_code = (
+            404 if code is DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING else 403
+        )
         logger.warning("delivery_policy_refused reason=%s", code.value)
         super().__init__(detail)
 
@@ -77,7 +79,9 @@ async def recipient_inbound_mode(db, recipient: Mapping) -> InboundMode:
     policy_did = recipient.get("policy_did_aw", recipient.get("did_aw"))
     try:
         mode = (
-            await effective_inbound_mode(db.get_manager("aweb"), str(policy_did), for_share=True)
+            await effective_inbound_mode(
+                db.get_manager("aweb"), str(policy_did), for_share=True
+            )
             if policy_did
             else normalize_inbound_mode(recipient.get("inbound_mode"), default="")
         )
@@ -100,11 +104,12 @@ async def has_current_shared_team(
     recipient_dids = [
         str(recipient[field]) for field in ("did_aw", "did_key") if recipient.get(field)
     ]
-    recipient_teams = await current_member_team_ids_for_identity(
-        db, recipient_dids, registry_client=registry_client, read_lock=MemberReadLock.SHARE
-    )
-    sender_teams = await current_member_team_ids_for_identity(
-        db, sender_dids, registry_client=registry_client, read_lock=MemberReadLock.SHARE
+    recipient_teams, sender_teams = await current_member_team_ids_for_identities(
+        db,
+        recipient_dids,
+        sender_dids,
+        registry_client=registry_client,
+        read_lock=MemberReadLock.SHARE,
     )
     return bool(recipient_teams & sender_teams)
 
@@ -144,7 +149,9 @@ async def authorize_delivery(
             # An exact contact independently admits the sender. Otherwise an
             # unavailable membership read must retain its cause and retry status.
             membership_error = exc
-    owner_dids = [str(recipient[field]) for field in ("did_aw", "did_key") if recipient.get(field)]
+    owner_dids = [
+        str(recipient[field]) for field in ("did_aw", "did_key") if recipient.get(field)
+    ]
     match = await identity_contact_match(
         db,
         owner_dids=owner_dids,
@@ -172,4 +179,6 @@ async def authorize_delivery(
         if mode is InboundMode.CONTACTS_ONLY
         else "Recipient only accepts messages from verified team members or exact active contacts. "
     ) + _POLICY_ACTION
-    raise DeliveryPolicyRefused(code=DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED, detail=detail)
+    raise DeliveryPolicyRefused(
+        code=DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED, detail=detail
+    )

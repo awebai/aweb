@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awebai/aw/strictjson"
+	"github.com/awebai/aw/internal/strictjson"
 )
 
 const ownerActVectorPath = "../../../docs/vectors/owner-act-v1.json"

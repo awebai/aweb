@@ -35,34 +35,73 @@ async def _controller_operation(client, controller_identity, operation):
     if operation == "team_delete":
         for attempt in range(targets):
             _, public = generate_keypair()
-            headers = _sign(ns_key, ns_did, domain=DOMAIN, operation="create_team", name=f"gone-{attempt}")
+            headers = _sign(
+                ns_key,
+                ns_did,
+                domain=DOMAIN,
+                operation="create_team",
+                name=f"gone-{attempt}",
+            )
             response = await client.post(
                 f"/v1/namespaces/{DOMAIN}/teams",
-                json={"name": f"gone-{attempt}", "team_did_key": did_from_public_key(public)},
+                json={
+                    "name": f"gone-{attempt}",
+                    "team_did_key": did_from_public_key(public),
+                },
                 headers=headers,
             )
             assert response.status_code == 200, response.text
     if operation == "certificate_revoke":
         for attempt in range(targets):
-            certificate_id, _ = await _register_cert(client, team_key, team_did, DOMAIN, "staff", f"member-{attempt}")
+            certificate_id, _ = await _register_cert(
+                client, team_key, team_did, DOMAIN, "staff", f"member-{attempt}"
+            )
             certificates.append(certificate_id)
 
     def build(attempt, *, wrong_controller=False):
-        index = attempt % targets if attempt < 100 else LIMITS[operation] + 1 + attempt % 100
+        index = (
+            attempt % targets
+            if attempt < 100
+            else LIMITS[operation] + 1 + attempt % 100
+        )
         if operation == "team_update":
             visibility = "private" if attempt % 2 == 0 else "public"
             key, did = (ns_key, ns_did) if wrong_controller else (team_key, team_did)
-            headers = _sign(key, did, domain=DOMAIN, operation="set_team_visibility", team_name="staff", visibility=visibility)
-            return f"/v1/namespaces/{DOMAIN}/teams/staff/visibility", {"visibility": visibility}, headers
+            headers = _sign(
+                key,
+                did,
+                domain=DOMAIN,
+                operation="set_team_visibility",
+                team_name="staff",
+                visibility=visibility,
+            )
+            return (
+                f"/v1/namespaces/{DOMAIN}/teams/staff/visibility",
+                {"visibility": visibility},
+                headers,
+            )
         if operation == "team_delete":
             name = f"gone-{index}"
             key, did = (team_key, team_did) if wrong_controller else (ns_key, ns_did)
-            headers = _sign(key, did, domain=DOMAIN, operation="delete_team", team_name=name)
+            headers = _sign(
+                key, did, domain=DOMAIN, operation="delete_team", team_name=name
+            )
             return f"/v1/namespaces/{DOMAIN}/teams/{name}", None, headers
         certificate_id = certificates[index]
         key, did = (ns_key, ns_did) if wrong_controller else (team_key, team_did)
-        headers = _sign(key, did, domain=DOMAIN, operation="revoke_certificate", team_name="staff", certificate_id=certificate_id)
-        return f"/v1/namespaces/{DOMAIN}/teams/staff/certificates/revoke", {"certificate_id": certificate_id}, headers
+        headers = _sign(
+            key,
+            did,
+            domain=DOMAIN,
+            operation="revoke_certificate",
+            team_name="staff",
+            certificate_id=certificate_id,
+        )
+        return (
+            f"/v1/namespaces/{DOMAIN}/teams/staff/certificates/revoke",
+            {"certificate_id": certificate_id},
+            headers,
+        )
 
     effect = {
         "team_update": f"SELECT visibility FROM {{{{tables.teams}}}} WHERE domain = '{DOMAIN}' AND name = 'staff' AND deleted_at IS NULL",
@@ -92,18 +131,29 @@ def _limited(response, limit):
 @pytest.mark.parametrize("operation", OPERATIONS)
 @pytest.mark.parametrize("credential", ["valid", "missing", "wrong", "unconfigured"])
 async def test_controller_writes_exempt_only_matching_service_token(
-    client, controller_identity, awid_db_infra, monkeypatch, operation, credential,
+    client,
+    controller_identity,
+    awid_db_infra,
+    monkeypatch,
+    operation,
+    credential,
 ):
     build, effect = await _controller_operation(client, controller_identity, operation)
     limit = LIMITS[operation]
     monkeypatch.setitem(ratelimit_module._BUCKET_DEFAULTS, operation, (limit, 3600))
     app = client._transport.app
-    monkeypatch.setattr(app.state, "awid_service_token", None if credential == "unconfigured" else TOKEN)
+    monkeypatch.setattr(
+        app.state, "awid_service_token", None if credential == "unconfigured" else TOKEN
+    )
     monkeypatch.setattr(app.state, "rate_limiter", MemoryFixedWindowRateLimiter())
     monkeypatch.setattr(ratelimit_module.time, "time", lambda: 1800000000.0)
-    headers = {} if credential == "missing" else {
-        "X-AWID-Service-Token": WRONG_TOKEN if credential == "wrong" else TOKEN,
-    }
+    headers = (
+        {}
+        if credential == "missing"
+        else {
+            "X-AWID-Service-Token": WRONG_TOKEN if credential == "wrong" else TOKEN,
+        }
+    )
     db = awid_db_infra.get_manager()
     before = await db.fetch_value(effect)
 
@@ -114,7 +164,9 @@ async def test_controller_writes_exempt_only_matching_service_token(
             if credential == "valid" and attempt == limit:
                 assert "X-RateLimit-Limit" not in response.headers
             elif credential != "valid":
-                assert response.headers["X-RateLimit-Remaining"] == str(limit - attempt - 1)
+                assert response.headers["X-RateLimit-Remaining"] == str(
+                    limit - attempt - 1
+                )
         else:
             _limited(response, limit)
     after = await db.fetch_value(effect)
@@ -140,7 +192,11 @@ async def test_controller_writes_exempt_only_matching_service_token(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", OPERATIONS)
 async def test_service_allowance_does_not_authorize_controller_writes(
-    client, controller_identity, awid_db_infra, monkeypatch, operation,
+    client,
+    controller_identity,
+    awid_db_infra,
+    monkeypatch,
+    operation,
 ):
     build, effect = await _controller_operation(client, controller_identity, operation)
     app = client._transport.app
@@ -153,7 +209,8 @@ async def test_service_allowance_does_not_authorize_controller_writes(
     assert wrong.status_code == 403, wrong.text
     path, body, _ = build(0)
     missing_signature = (
-        await client.delete(path, headers=headers) if body is None
+        await client.delete(path, headers=headers)
+        if body is None
         else await client.post(path, json=body, headers=headers)
     )
     assert missing_signature.status_code == 401, missing_signature.text

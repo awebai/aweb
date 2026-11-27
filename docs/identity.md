@@ -393,12 +393,13 @@ Once a response is retained, recovery installs and connects from that response
 without submitting another signup. The API key is saved before the connect
 request; successful installation leaves it in the workspace before output.
 
-Availability prompting happens before preparation. A refusal or lost response
-after submission does not prove that the account was never created. An
-unclassified response retains the request; a collision alone never authorizes
-a new signer or handle. Replaying that request requires the service's signup
-replay contract. An expired private response must follow the service's account
-recovery outcome rather than minting another credential.
+Availability prompting happens before preparation. A 409 from the first local
+signup submission clears the recovery record and allows a new username. If
+signup created the identity directory just for that request, it removes the
+empty directory too. A conflict on a replay or after global DID registration
+keeps recovery, as does an unknown result such as a lost response or 500.
+Replaying that request requires the service's signup replay contract. An expired
+private response must follow the service's account recovery outcome.
 
 `aw doctor --offline` names a leftover signup record and tells the operator to
 run `aw init`. To abandon local recovery, first check whether signup created the
@@ -720,6 +721,37 @@ Claimless local connects need no observation.
 Identity-only and grant authentication apply the same check to their identity
 or grant subject; a grant session key does not become the subject's root key.
 
+For ordinary certificate routes, an embedding host may select
+`IdentityEvidencePolicy.PREFER_LIVE`. The native verifier attempts live
+identity binding and ID ancestry with a shared two-second evidence deadline, after
+the request signature, team certificate and its standing have passed.
+An address-not-found response or unavailable identity evidence can use the
+admitted member's previously verified stable DID only when its marker matches
+the signing key and its DID matches the binding under examination. During
+binding unavailability it retains the stored, verified address. A definite
+address absence withholds the address. Neither fallback updates the member
+projection or supplies a kind or ID chain. With a successful live binding
+and unavailable ID ancestry, the request retains that binding without kind
+or a chain. This also drops the carried chain for a `did:key` sender during
+ancestry unavailability, where `ENFORCE` can retain it without verified kind.
+A stale issuer follows the shared chain disposition: a `did:key` subject can
+continue without verified kind, and a `did:aw` subject is refused. Superseded,
+revoked or malformed chains remain refusals, as do a missing stable DID record,
+conflicting key or address, and malformed binding claims. Connect, identity-only
+and grant authorization retain strict verification. After a superseded-chain
+Connect refusal, run `aw id parent refresh` in the identity home and reconnect.
+An admitted fallback produces one INFO entry with the team and its reason.
+`aweb_identity_evidence_fallbacks_total` counts by reason only:
+`address_missing`, `unavailable`, `timed_out`, or `chain_unavailable`.
+`PREFER_LIVE` can reuse an address-missing result for 60 seconds or an
+unavailable or timed-out binding for five seconds in the process's bounded
+binding cache. Enforcing or fresh reads bypass these fallback observations.
+Newly observed key authority supersedes a conflicting fallback.
+After a timed-out or unavailable chain-status read, `PREFER_LIVE` suppresses
+status refreshes for that registry and domain for five seconds in the current
+process. It still uses fresh cached status when available. Enforcing reads
+retain their normal refresh behavior.
+
 `agents.did_aw_verified_key` records the key against which a projection was
 verified. Historical rows start with a null marker. Stable-DID and global-address
 routing, identity expansion and membership checks use a row's global claims only
@@ -773,6 +805,27 @@ manufacturing NULL authority facts. Native scope-aware authentication is exposed
 as `aweb.team_auth_deps.resolve_team_identity_with_grant_scope(request, db, *,
 grant_scope)`. Hosts apply account-specific fences to its result; they do not
 copy its grant or certificate policy.
+
+A host that needs member facts before its route policy can call
+`read_team_member_snapshot(db, cert_info, request=request, overlay_sql=...)`
+from `aweb.team_auth_deps` after the native certificate verifier succeeds. The
+manager executes one statement outside any surrounding transaction, with SHARE
+locks on the native team and member. The optional host SELECT receives
+`native_member` as a CTE and binds canonical team ID, member DID key and
+presented certificate ID as `$1`, `$2` and `$3`. It returns one row of host
+facts even when the native member is absent. The native projection and host row
+are separate fields of the returned snapshot.
+
+The host then passes that snapshot to `resolve_team_membership` at the normal
+native admission point, after host policy. The snapshot is usable for the
+same ASGI request and verified credential. The resolver checks the native
+member's active status, removal and current team key and returns the admitted
+identity and the snapshot. An unchanged certificate and a warm identity
+binding require no second SELECT. Reacceptance or a fresh binding uses a
+separate UPDATE transaction and rereads the same projection. The optional
+synchronous `before_write(snapshot)` checks any host fences on that reread
+before a native write. It does no I/O. A verifier-only route can use the
+read-only snapshot with its existing policy and no local admission.
 
 ## Session grants
 

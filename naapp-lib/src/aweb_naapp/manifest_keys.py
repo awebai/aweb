@@ -23,4 +23,6 @@ def check_manifest_keys(manifest: Manifest) -> None:
             raise ManifestError(
                 "manifest_invalid", f"event emitter kid {kid!r} did_key is not an Ed25519 did:key"
             )
-        raise ManifestError("app_keys_invalid", f"app key {kid!r} did_key is not an Ed25519 did:key")
+        raise ManifestError(
+            "app_keys_invalid", f"app key {kid!r} did_key is not an Ed25519 did:key"
+        )

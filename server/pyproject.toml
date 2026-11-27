@@ -1,6 +1,6 @@
 [project]
 name = "aweb"
-version = "1.27.51rc3"
+version = "1.27.55"
 description = "Agent Web: self-hostable coordination server for AI agents (identity, presence, mail, chat, tasks, locks)"
 readme = "README.md"
 license = "MIT"
@@ -19,9 +19,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = [
-    "awid-service>=0.5.40rc3",
+    "awid-service>=0.5.43",
     # Shared origin egress, manifest reader and hooks; no runtime extra.
-    "aweb-naapp[egress,hooks]>=0.5.2rc3",
+    "aweb-naapp[egress,hooks]>=0.5.2",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",
@@ -96,9 +96,6 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-# NOTE: widening python_files here makes the *.py.recovered probes in tests/
-# collectible again. They are preserved evidence, two of them red by design.
-# Read tests/RECOVERED-PROBES.md before changing this key.
 pythonpath = ["src", "../awid/src"]
 
 [tool.ruff]

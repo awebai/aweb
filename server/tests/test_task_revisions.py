@@ -103,20 +103,34 @@ async def test_assignment_principal_does_not_follow_alias_reuse(aweb_cloud_db):
     await _member(db, "alice")
     service = _DbShim(db)
     task = await create_task(
-        service, actor=ALICE, on_mutation=None, title="Decide", assignee_alias="requester"
+        service,
+        actor=ALICE,
+        on_mutation=None,
+        title="Decide",
+        assignee_alias="requester",
     )
     assert task["assignee_did"] == f"did:key:{old_id}"
-    await db.execute("UPDATE {{tables.agents}} SET deleted_at = NOW() WHERE agent_id = $1", old_id)
+    await db.execute(
+        "UPDATE {{tables.agents}} SET deleted_at = NOW() WHERE agent_id = $1", old_id
+    )
     replacement_id = await _member(db, "requester", human=True)
     read = await get_task(service, team_id=TEAM_ID, ref=task["task_ref"])
     assert read["assignee_did"] == f"did:key:{old_id}"
     # Explicit reassignment, even to the same display alias, changes authority.
     reassigned = await update_task(
-        service, actor=ALICE, on_mutation=None, ref=task["task_ref"], assignee_alias="requester"
+        service,
+        actor=ALICE,
+        on_mutation=None,
+        ref=task["task_ref"],
+        assignee_alias="requester",
     )
     assert reassigned["assignee_did"] == f"did:key:{replacement_id}"
     cleared = await update_task(
-        service, actor=ALICE, on_mutation=None, ref=task["task_ref"], assignee_alias=None
+        service,
+        actor=ALICE,
+        on_mutation=None,
+        ref=task["task_ref"],
+        assignee_alias=None,
     )
     assert cleared["assignee_did"] is None
 
@@ -134,7 +148,8 @@ async def test_global_principal_uses_did_aw_and_claim_reassigns_it(privacy_app):
         if actor is subject:
             continue
         await env.registry.add_certificate(
-            json.loads(base64.b64decode(actor.certificate)), team_key=SigningKey(env.team_sk)
+            json.loads(base64.b64decode(actor.certificate)),
+            team_key=SigningKey(env.team_sk),
         )
     async with aclosing(
         RegistryClient(
@@ -168,7 +183,11 @@ async def test_global_principal_uses_did_aw_and_claim_reassigns_it(privacy_app):
                 alias="bob",
                 method="POST",
                 path="/v1/connect",
-                payload={"hostname": "test", "workspace_path": "/human", "agent_type": "human"},
+                payload={
+                    "hostname": "test",
+                    "workspace_path": "/human",
+                    "agent_type": "human",
+                },
             )
             assert connected.status_code == 200, connected.text
             projection = await env.db.fetch_one(
@@ -214,7 +233,8 @@ async def test_direct_transaction_writes_also_advance_revision(aweb_cloud_db):
     service = _DbShim(db)
     task = await create_task(service, actor=ALICE, on_mutation=None, title="Decide")
     await db.execute(
-        "UPDATE {{tables.tasks}} SET status = 'closed' WHERE task_id = $1", UUID(task["task_id"])
+        "UPDATE {{tables.tasks}} SET status = 'closed' WHERE task_id = $1",
+        UUID(task["task_id"]),
     )
     await db.execute(
         "UPDATE {{tables.tasks}} SET status = 'in_progress' WHERE task_id = $1",

@@ -19,17 +19,23 @@ def _agent_uuid(agent_id: str) -> UUID:
         ) from exc
 
 
-async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> Recipient | None:
+async def get_agent_by_id(
+    db, *, agent_id: str, team_id: str | None = None
+) -> Recipient | None:
     """Select an exact current member, using the shared member rule.
 
     This roster selector is distinct from an independently admitted identity's
     residence or existing participation. Those reads do not require membership.
     """
-    rows = await current_member_projections(db, agent_id=_agent_uuid(agent_id), team_id=team_id)
+    rows = await current_member_projections(
+        db, agent_id=_agent_uuid(agent_id), team_id=team_id
+    )
     return Recipient.from_member_projection(rows[0]) if rows else None
 
 
-async def resolve_agent_by_did(db, did: str, *, team_id: str | None = None) -> Recipient | None:
+async def resolve_agent_by_did(
+    db, did: str, *, team_id: str | None = None
+) -> Recipient | None:
     """Resolve a current agent with the supplied team as an authority constraint."""
     rows = await current_member_projections(db, dids=[did], team_id=team_id)
     return _recipient_from_rows(rows)
@@ -55,7 +61,9 @@ async def resolve_recipient_by_did(
 
 
 def _one_verified_global_identity(rows: list[MemberProjection]) -> bool:
-    identities = {(row.verified_identity().get("did_aw"), row["did_key"]) for row in rows}
+    identities = {
+        (row.verified_identity().get("did_aw"), row["did_key"]) for row in rows
+    }
     return len(identities) == 1 and bool(next(iter(identities))[0])
 
 

@@ -1,6 +1,7 @@
 """One source-owned image build for isolated suites and package callers."""
 
 import hashlib
+import os
 import shlex
 import shutil
 import subprocess
@@ -21,14 +22,20 @@ print(json.dumps(receipt))
 """
 
 
-def prepare_image(root, evidence, image, projects=None):
-    if projects is None:
-        projects = [
-            str(Path(p).parent)
-            for p in subprocess.check_output(
-                ["git", "ls-files", "*uv.lock"], cwd=root, text=True
-            ).splitlines()
-        ]
+def prepare_image(root, evidence, image, base=None):
+    """Build the isolated suites' image.
+
+    In a gate run, base is the gate's own image, already in the engine: the
+    suites' setup starts from it, and the engine's own builder builds it, so
+    the image lands in the engine with no export and load. Standalone, the
+    recipe starts from candidate-gate/Dockerfile.
+    """
+    projects = [
+        str(Path(p).parent)
+        for p in subprocess.check_output(
+            ["git", "ls-files", "*uv.lock"], cwd=root, text=True
+        ).splitlines()
+    ]
     # Copy only source files and a self-contained Git bundle. A worktree's
     # .git file points outside it and cannot be copied into the runner.
     with tempfile.TemporaryDirectory(prefix="aw-egress-source-") as tmp:
@@ -66,10 +73,8 @@ def prepare_image(root, evidence, image, projects=None):
                 )
                 hashes.append(hashlib.sha256(data).hexdigest() + "  " + name)
         (evidence / "source-files.sha256").write_text("\n".join(hashes) + "\n")
-        # A docker-container builder cannot resolve a daemon-local tools
-        # image. Build the tools and suite setup in one recipe instead.
         recipe = (
-            (root / "candidate-gate/Dockerfile").read_text()
+            (f"FROM {base}\n" if base else (root / "candidate-gate/Dockerfile").read_text())
             + "\n"
             + (root / "scripts/test-egress/Dockerfile").read_text()
         )
@@ -94,6 +99,7 @@ def prepare_image(root, evidence, image, projects=None):
                 argv += ["--project", project]
             recipe += (
                 "\nCOPY --chmod=0644 package-environment.py /opt/package-environment.py\n"
+                + "USER 1000:1000\n"
                 + "RUN "
                 + shlex.join(
                     [
@@ -101,12 +107,10 @@ def prepare_image(root, evidence, image, projects=None):
                         "--mode",
                         "prepare",
                         "--receipt",
-                        "/opt/package-environment-prepared.json",
+                        "/home/test-runner/package-environment-prepared.json",
                     ]
                 )
-                + " && chown -R 1000:1000 /src /home/test-runner"
-                + " && chmod -R a+rX /opt/ms-playwright\nUSER 1000:1000\n"
-                + "RUN "
+                + "\nRUN "
                 + shlex.join(
                     ["python3", "-c", "exec(" + repr(HELPER_READABILITY_CHECK) + ")"]
                 )
@@ -125,6 +129,14 @@ def prepare_image(root, evidence, image, projects=None):
         dockerfile = Path(tmp) / "isolated.Dockerfile"
         dockerfile.write_text(recipe)
         (evidence / "Dockerfile.generated").write_text(recipe)
+        # Inside a gate runner the docker shim sends plain builds to the run's
+        # docker-container builder (BUILDX_BUILDER), whose image must be
+        # exported and loaded back; this build uses the engine's own builder.
+        env = {k: v for k, v in os.environ.items() if k != "BUILDX_BUILDER"}
+        label = os.environ.get("AWEB_CANDIDATE_RESOURCE_LABEL")
+        labels = ["--label", f"aweb.candidate-gate={label}"] if label else []
         subprocess.run(
-            ["docker", "build", "-f", str(dockerfile), "-t", image, tmp], check=True
+            ["docker", "build", *labels, "-f", str(dockerfile), "-t", image, tmp],
+            check=True,
+            env=env,
         )

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from aweb.messaging.refusals import RecipientIdentityBindingError, registry_dependency_refusal
+from aweb.messaging.refusals import (
+    RecipientIdentityBindingError,
+    registry_dependency_refusal,
+)
 
-from aweb.messaging.refusals import unreachable_address_refusal as unreachable_address_refusal
+from aweb.messaging.refusals import (
+    unreachable_address_refusal as unreachable_address_refusal,
+)
 
 import json
 import logging
@@ -35,7 +40,8 @@ def resolved_recipient_delivery_origin(
     """Read either admitted address projection, preserving an absent origin."""
     if isinstance(resolution, Address):
         return (
-            (resolution.delivery.origin if resolution.delivery is not None else "") or ""
+            (resolution.delivery.origin if resolution.delivery is not None else "")
+            or ""
         ).strip()
     return (resolution.delivery_origin or "").strip()
 
@@ -44,10 +50,16 @@ def resolved_recipient_controller_did(
     resolution: Address | ResolvedContactIdentity,
 ) -> str:
     """Only strict external resolution carries its verified controller here."""
-    return "" if isinstance(resolution, Address) else (resolution.controller_did or "").strip()
+    return (
+        ""
+        if isinstance(resolution, Address)
+        else (resolution.controller_did or "").strip()
+    )
 
 
-def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: MessagingAuth) -> bool:
+def local_recipient_visible_to_auth(
+    row: Mapping[str, Any] | None, auth: MessagingAuth
+) -> bool:
     """Check same-team visibility only; this does not establish an address binding."""
     row_team_id = str((row or {}).get("team_id") or "").strip()
     auth_team_id = str(auth.team_id or "").strip()
@@ -56,7 +68,9 @@ def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: Messagi
 
 def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> Recipient:
     """Project an admitted identity/route, never a team actor as a participant."""
-    recipient = row if isinstance(row, Recipient) else Recipient.from_local_projection(row)
+    recipient = (
+        row if isinstance(row, Recipient) else Recipient.from_local_projection(row)
+    )
     return recipient.as_identity(address=address)
 
 
@@ -128,7 +142,11 @@ async def local_recipient_for_own_route(
         from aweb.member_team_key import read_participant_identity_projection
 
         projection = await read_participant_identity_projection(db, participant_did=did)
-        recipient = Recipient.from_local_projection(projection) if projection is not None else None
+        recipient = (
+            Recipient.from_local_projection(projection)
+            if projection is not None
+            else None
+        )
     if recipient is None:
         refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
         return None
@@ -148,7 +166,9 @@ async def local_recipient_for_own_route(
                     type(exc).__name__,
                 )
             raise RecipientIdentityBindingError(
-                IdentityBindingCode.MISMATCH if mismatch else IdentityBindingCode.UNAVAILABLE
+                IdentityBindingCode.MISMATCH
+                if mismatch
+                else IdentityBindingCode.UNAVAILABLE
             ) from exc
         address = str(route.get("address") or "")
         try:
@@ -199,7 +219,9 @@ async def namespace_uses_home_registry(db, registry_client, domain: str) -> bool
             return False
         namespace = await registry_client.get_namespace_fresh(domain)
     except AWID_DEPENDENCY_ERRORS as exc:
-        raise registry_dependency_refusal(exc, operation="AWID recipient namespace lookup") from exc
+        raise registry_dependency_refusal(
+            exc, operation="AWID recipient namespace lookup"
+        ) from exc
     return bool(
         namespace
         and namespace.domain == domain

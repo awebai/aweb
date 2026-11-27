@@ -9,24 +9,33 @@ hold each response, so the code under test, the routes and the database all
 stay real.
 
 No rate limit applies. Nothing here is used by the registry service itself.
+
+:func:`require_selected_test_database` is the one rule for which Postgres a test
+database may be created on; ``awid_service.testing_postgres`` applies it to
+pgdbm's fixtures in every suite that loads that plugin.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from inspect import isawaitable
-from typing import Any, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 from fastapi import FastAPI
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
+from pgdbm.testing import DatabaseTestConfig
 from redis.asyncio import Redis
 
 from awid.attestation_records import (
@@ -49,7 +58,116 @@ from .db import AwidDatabaseInfra
 from .deps import get_domain_verifier
 from .main import mount_registry
 
+if TYPE_CHECKING:
+    import pytest
+
 REGISTRY_URL = "https://registry.example"
+
+# The Postgres server a run names for its test databases (pgdbm's own names).
+_SELECTION = ("TEST_DB_HOST", "TEST_DB_PORT")
+
+
+class PostgresNotSelected(RuntimeError):
+    """A test database was requested on a Postgres server the run did not name."""
+
+
+def selected_test_database_config() -> DatabaseTestConfig:
+    """pgdbm's test database settings for the Postgres server the run names.
+
+    Without TEST_DB_HOST and TEST_DB_PORT, pgdbm falls back to localhost:5432,
+    which on a workstation is the host's own shared Postgres; a test database is
+    never created there by default (aweb-admf).
+    """
+    missing = [name for name in _SELECTION if not os.environ.get(name)]
+    if missing:
+        raise PostgresNotSelected(
+            f"{' and '.join(missing)} unset: test databases are created only on a "
+            "Postgres server the run names, never by default on the host's "
+            "localhost:5432. Run the database tests on a gate-vms lease, or point "
+            "TEST_DB_HOST and TEST_DB_PORT at a disposable Postgres you started for "
+            "this run. Setting TEST_DB_PORT=5432 by hand on a workstation is a "
+            "knowing choice of the host's own Postgres."
+        )
+    return DatabaseTestConfig.from_env()
+
+
+def require_selected_test_database(config: DatabaseTestConfig) -> None:
+    """Refuses ``config`` unless it is the Postgres server the run names."""
+    selected = selected_test_database_config()
+    if (config.host, config.port) != (selected.host, selected.port):
+        raise PostgresNotSelected(
+            f"pgdbm's test databases target {config.host}:{config.port}, but the run "
+            f"names {selected.host}:{selected.port}. Set TEST_DB_HOST and TEST_DB_PORT "
+            "before the test run starts, so pgdbm reads them when it loads."
+        )
+
+
+# Code that keeps a child test run off every server, whatever its plugins do.
+NO_NETWORK = """
+import socket
+
+def _refuse(*args, **kwargs):
+    raise OSError("this test run may not open network connections")
+
+socket.socket.connect = _refuse
+socket.socket.connect_ex = _refuse
+"""
+
+
+# Set in the child run of check_suite_refuses_an_unnamed_server.
+_UNNAMED_SERVER_CHILD = "AWID_TEST_UNNAMED_SERVER_CHILD"
+
+
+def check_suite_refuses_an_unnamed_server(
+    request: pytest.FixtureRequest, scratch: Path
+) -> None:
+    """The whole body of a suite's one test that its database fixtures refuse a
+    run that names no Postgres server.
+
+    The test runs itself again in a child pytest, which loads the suite's own
+    conftest, names no server and can reach none. Only the child requests the
+    factory, and it must be refused.
+    """
+    if _UNNAMED_SERVER_CHILD in os.environ:
+        try:
+            request.getfixturevalue("test_db_factory")
+        except PostgresNotSelected:
+            return
+        raise AssertionError("the suite's test_db_factory admitted an unnamed server")
+
+    (scratch / "no_network.py").write_text(NO_NETWORK)
+    # The parent's worker and options are not the child's.
+    environ = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in _SELECTION and not name.startswith("PYTEST_")
+    }
+    environ[_UNNAMED_SERVER_CHILD] = "1"
+    environ["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (str(scratch), os.environ.get("PYTHONPATH")))
+    )
+    child = subprocess.run(
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no_network",
+            "-p",
+            "no:cacheprovider",
+        ]
+        + [f"--basetemp={scratch / 'child'}", f"{request.path}::{request.node.name}"],
+        cwd=request.config.invocation_params.dir,
+        env=environ,
+        capture_output=True,
+        text=True,
+    )
+    output = child.stdout + child.stderr
+    assert child.returncode == 0 and "1 passed" in child.stdout, output
+
+
 SERVICE_TOKEN = "awid-testing-service-token-32-bytes"
 
 # Changes the real response in place, or returns a response to send instead.
@@ -57,7 +175,9 @@ ResponseFault = Callable[[httpx.Request, httpx.Response], httpx.Response | None]
 
 
 async def fixture_domain_authority(
-    overrides: Mapping[Callable[..., Any], Callable[[], DomainVerifier | Awaitable[DomainVerifier]]],
+    overrides: Mapping[
+        Callable[..., Any], Callable[[], DomainVerifier | Awaitable[DomainVerifier]]
+    ],
     domain: str,
 ) -> DomainAuthority:
     """Resolve the fixture's DNS override outside FastAPI dependency injection."""
@@ -160,7 +280,9 @@ class Registry:
         default_factory=dict, repr=False
     )
 
-    _registry_client: RegistryClient | None = field(default=None, init=False, repr=False)
+    _registry_client: RegistryClient | None = field(
+        default=None, init=False, repr=False
+    )
 
     async def ensure_namespace(
         self,
@@ -188,6 +310,7 @@ class Registry:
             key, _ = generate_keypair()
         self._namespace_keys[domain] = key
         if get_domain_verifier not in self.app.dependency_overrides:
+
             async def get_namespace_verifier() -> DomainVerifier:
                 return self.namespace_authority
 
@@ -225,7 +348,9 @@ class Registry:
         name, domain = team_id.split(":", 1)
         controller = await self.ensure_namespace(
             domain=domain,
-            controller=bytes(namespace_controller) if namespace_controller is not None else None,
+            controller=bytes(namespace_controller)
+            if namespace_controller is not None
+            else None,
         )
         await self._client().register_team(
             domain=domain,
@@ -255,7 +380,9 @@ class Registry:
         namespace controller (registered for the domain if it has none), so
         AWID keeps the act a pinned server checks against DNS (dns_naming)."""
         name, domain = team_id.split(":", 1)
-        namespace_key = await self.ensure_namespace(domain=domain, controller=bytes(controller))
+        namespace_key = await self.ensure_namespace(
+            domain=domain, controller=bytes(controller)
+        )
         await self._client().rotate_team_key(
             domain,
             name,
@@ -263,7 +390,9 @@ class Registry:
             namespace_controller_signing_key=namespace_key,
         )
 
-    async def add_certificate(self, cert: dict[str, Any], *, team_key: SigningKey) -> None:
+    async def add_certificate(
+        self, cert: dict[str, Any], *, team_key: SigningKey
+    ) -> None:
         """Register the signed membership through AWID, per docs/identity.md:97-100."""
         name, domain = cert["team_id"].split(":", 1)
         await self._client().register_team_certificate(
@@ -330,7 +459,9 @@ class Registry:
                 else AttestationOperation.PERSON
             )
             claims = {"team_name": name, "certificate_id": record["certificate_id"]}
-            resource = "custody" if operation is AttestationOperation.CUSTODY else "person"
+            resource = (
+                "custody" if operation is AttestationOperation.CUSTODY else "person"
+            )
             path = f"{prefix}/certificates/{record['certificate_id']}/{resource}"
         else:
             raise ValueError(
@@ -352,7 +483,9 @@ class Registry:
         headers = {
             "Content-Type": "application/json",
             "X-AWEB-Timestamp": timestamp,
-            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii"),
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload)
+            .rstrip(b"=")
+            .decode("ascii"),
             "Authorization": f"DIDKey {_did_key(team_key)} {sign_message(bytes(team_key), payload)}",
         }
         async with httpx.AsyncClient(
@@ -434,7 +567,9 @@ class Registry:
         async with httpx.AsyncClient(
             transport=self.transport, base_url=self.registry_url
         ) as client:
-            response = await client.put(f"/v1/namespaces/{domain}/teams/{name}/server", json=body)
+            response = await client.put(
+                f"/v1/namespaces/{domain}/teams/{name}/server", json=body
+            )
         response.raise_for_status()
 
 
@@ -482,7 +617,9 @@ async def running_registry(
         # Its public origin, which covering controller signatures name. After
         # mount_registry, which reads AWID_PUBLIC_ORIGINS from the environment.
         app.state.awid_public_origins = (REGISTRY_URL,)
-        registry = Registry(app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app))
+        registry = Registry(
+            app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app)
+        )
         yield registry
     finally:
         try:

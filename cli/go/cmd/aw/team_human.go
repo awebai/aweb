@@ -1153,7 +1153,7 @@ func foundTeamWithNamespaceControllerAuthority(input namespaceTeamFounding) (*te
 	}
 	// The creator self-enrolls as the team's first member and produces a
 	// ready-to-run identity, so the worktree binding is written now.
-	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: input.WorkingDir, Output: accepted, Certificate: bootstrap.Certificate, RegistryURL: registryURL, AwebURL: awebURL, IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: input.WorkingDir, Output: accepted, Certificate: bootstrap.Certificate, RegistryURL: registryURL, RegistryOperatorOrigin: operatorRegistryOrigin(registryURL, ""), AwebURL: awebURL, IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding}); err != nil {
 		return nil, err
 	}
 	return &teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: registryURL}, nil

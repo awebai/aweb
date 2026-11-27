@@ -36,7 +36,9 @@ def _key(upstream: Upstream, secret: SecretVersion = VERSION_1) -> TokenKey:
     )
 
 
-def _kind_params(upstream: Upstream, client_auth: str = "client_secret_basic", **change: str) -> dict:
+def _kind_params(
+    upstream: Upstream, client_auth: str = "client_secret_basic", **change: str
+) -> dict:
     return {
         "token_endpoint": upstream.url("/oauth2/token"),
         "client_auth": client_auth,
@@ -72,9 +74,13 @@ async def _call(upstream: Upstream, tokens: ProcessTokenCache, *, secret: str | 
 
 
 @pytest.mark.parametrize("client_auth", ["client_secret_basic", "client_secret_post"])
-async def test_the_exchanged_token_verifies_at_the_upstream(tmp_path: Path, client_auth: str) -> None:
+async def test_the_exchanged_token_verifies_at_the_upstream(
+    tmp_path: Path, client_auth: str
+) -> None:
     async with running_upstream(tmp_path) as upstream:
-        call = await _call(upstream, ProcessTokenCache(), kind_params=_kind_params(upstream, client_auth))
+        call = await _call(
+            upstream, ProcessTokenCache(), kind_params=_kind_params(upstream, client_auth)
+        )
         assert call.result.status == 200, call.result.body
         assert json.loads(call.result.body)["scheme"] == "oauth2-client-credentials"
 
@@ -141,13 +147,14 @@ async def test_the_token_and_the_client_secret_are_known_values(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("missing", ["token_endpoint", "client_auth", "scope"])
-async def test_a_secret_without_its_owner_set_parameter_is_refused(tmp_path: Path, missing: str) -> None:
+async def test_a_secret_without_its_owner_set_parameter_is_refused(
+    tmp_path: Path, missing: str
+) -> None:
     async with running_upstream(tmp_path) as upstream:
         params = {k: v for k, v in _kind_params(upstream).items() if k != missing}
         with pytest.raises(ValueError):
             await _call(upstream, ProcessTokenCache(), kind_params=params)
         assert upstream.paths == []
-
 
 
 async def test_the_form_encoded_client_pair_is_a_known_value(tmp_path: Path) -> None:

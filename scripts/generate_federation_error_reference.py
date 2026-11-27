@@ -84,12 +84,19 @@ def _validate_contract(
     if contract.get("schema") != "aweb.federation-authority-state.v1":
         raise ReferenceContractError("unsupported federation authority vector schema")
     if contract.get("contract") != "aweb-aazd.2.1":
-        raise ReferenceContractError("unexpected federation authority contract identity")
+        raise ReferenceContractError(
+            "unexpected federation authority contract identity"
+        )
 
     response = contract.get("error_response_contract")
     if not isinstance(response, Mapping):
         raise ReferenceContractError("missing error response contract")
-    if response.get("required_body_fields") != ["detail", "reason", "retryable", "correlation_id"]:
+    if response.get("required_body_fields") != [
+        "detail",
+        "reason",
+        "retryable",
+        "correlation_id",
+    ]:
         raise ReferenceContractError("stable error body fields changed")
     retry_after_reasons = response.get("retry_after_required_only_for")
     if retry_after_reasons != ["federation_rate_limited"]:
@@ -99,7 +106,13 @@ def _validate_contract(
     if not isinstance(errors, list) or not errors:
         raise ReferenceContractError("stable error vocabulary is empty")
     reasons: set[str] = set()
-    required_fields = {"reason", "detail", "http_status", "retryable", "retry_after_required"}
+    required_fields = {
+        "reason",
+        "detail",
+        "http_status",
+        "retryable",
+        "retry_after_required",
+    }
     for error in errors:
         if not isinstance(error, Mapping) or set(error) != required_fields:
             raise ReferenceContractError("stable error has unsupported fields")
@@ -132,7 +145,9 @@ def _validate_contract(
     ]
     canonical_by_reason = {error["reason"]: error for error in canonical_errors}
     if len(canonical_by_reason) != len(canonical_errors):
-        raise ReferenceContractError("duplicate stable error in canonical federation error source")
+        raise ReferenceContractError(
+            "duplicate stable error in canonical federation error source"
+        )
     vector_by_reason = {error["reason"]: dict(error) for error in errors}
     if vector_by_reason != canonical_by_reason:
         raise ReferenceContractError(
@@ -145,7 +160,9 @@ def _validate_contract(
         raise ReferenceContractError(f"unclassified stable error: {unclassified[0]}")
     stale_meanings = sorted(set(SUPPORT_MEANINGS) - canonical_reasons)
     if stale_meanings:
-        raise ReferenceContractError(f"support meaning retains absent stable error: {stale_meanings[0]}")
+        raise ReferenceContractError(
+            f"support meaning retains absent stable error: {stale_meanings[0]}"
+        )
     return canonical_errors
 
 
@@ -160,7 +177,9 @@ def render_reference(
     )
     response = contract["error_response_contract"]
     allowed = ", ".join(f"`{field}`" for field in response["diagnostic_fields_allowed"])
-    forbidden = ", ".join(f"`{field}`" for field in response["diagnostic_fields_forbidden"])
+    forbidden = ", ".join(
+        f"`{field}`" for field in response["diagnostic_fields_forbidden"]
+    )
 
     lines = [
         "---",
@@ -242,7 +261,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if current != rendered_bytes:
             print("federation error reference is stale", file=sys.stderr)
             return 1
-        print("federation error reference matches canonical error source and authority vectors")
+        print(
+            "federation error reference matches canonical error source and authority vectors"
+        )
         return 0
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

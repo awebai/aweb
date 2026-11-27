@@ -171,7 +171,9 @@ class OperatorAuditRoute(APIRoute):
                 actor = getattr(request.state, "operator_audit_actor", None)
                 if 400 <= status < 500 and isinstance(actor, AuditActor):
                     db = get_db(request)
-                    manager = db.get_manager("aweb") if hasattr(db, "get_manager") else db
+                    manager = (
+                        db.get_manager("aweb") if hasattr(db, "get_manager") else db
+                    )
                     async with manager.transaction() as tx:
                         await record_coordination_audit(
                             tx,

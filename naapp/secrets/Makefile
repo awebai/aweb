@@ -1,4 +1,4 @@
-.PHONY: test check-shards lint e2e
+.PHONY: test check-shards lint typecheck e2e
 
 SECRETS_UNIT = pytest -q -m "not e2e"
 
@@ -14,6 +14,8 @@ check-shards:
 e2e:
 	SECRETS_E2E=1 uv run pytest -q -m e2e tests/test_e2e_owner_acts.py
 
-lint:
+lint: typecheck
 	uv run ruff check .
+
+typecheck:
 	uv run mypy src e2e

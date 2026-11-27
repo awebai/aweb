@@ -103,7 +103,12 @@ def _render_sections(raw: Any) -> list[str]:
     for index, item in enumerate(_list(raw, field="sections"), start=1):
         section = _dict(item, field=f"sections[{index}]")
         _reject_extra_fields(section, field=f"sections[{index}]", allowed={"heading", "body"})
-        heading = _text(section.get("heading"), field=f"sections[{index}].heading", required=True, max_length=240)
+        heading = _text(
+            section.get("heading"),
+            field=f"sections[{index}].heading",
+            required=True,
+            max_length=240,
+        )
         body = _text(section.get("body"), field=f"sections[{index}].body", max_length=16_000)
         lines.extend([f"## {heading}"])
         if body:
@@ -118,11 +123,19 @@ def _render_metrics(raw: Any) -> list[str]:
     rows: list[str] = []
     for index, item in enumerate(_list(raw, field="metrics"), start=1):
         metric = _dict(item, field=f"metrics[{index}]")
-        _reject_extra_fields(metric, field=f"metrics[{index}]", allowed={"label", "value", "caption"})
-        label = _text(metric.get("label"), field=f"metrics[{index}].label", required=True, max_length=120)
-        value = _text(metric.get("value"), field=f"metrics[{index}].value", required=True, max_length=120)
+        _reject_extra_fields(
+            metric, field=f"metrics[{index}]", allowed={"label", "value", "caption"}
+        )
+        label = _text(
+            metric.get("label"), field=f"metrics[{index}].label", required=True, max_length=120
+        )
+        value = _text(
+            metric.get("value"), field=f"metrics[{index}].value", required=True, max_length=120
+        )
         caption = _text(metric.get("caption"), field=f"metrics[{index}].caption", max_length=240)
-        rows.append(f"| {_escape_table_cell(label)} | {_escape_table_cell(value)} | {_escape_table_cell(caption)} |")
+        rows.append(
+            f"| {_escape_table_cell(label)} | {_escape_table_cell(value)} | {_escape_table_cell(caption)} |"
+        )
     if not rows:
         return []
     return ["## Metrics", "", "| Metric | Value | Notes |", "| --- | --- | --- |", *rows]
@@ -143,7 +156,9 @@ def _render_ask(raw: Any) -> list[str]:
         if body:
             lines.append("")
         for index, item in enumerate(items, start=1):
-            lines.append(f"- {_text(item, field=f'ask.items[{index}]', required=True, max_length=240)}")
+            lines.append(
+                f"- {_text(item, field=f'ask.items[{index}]', required=True, max_length=240)}"
+            )
     return lines
 
 

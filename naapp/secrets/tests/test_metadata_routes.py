@@ -53,7 +53,9 @@ async def serving(registry, database_url, tmp_path):
     runtime = service.runtime
     async with service.api_app.router.lifespan_context(service.api_app):
         await apply_job_migrations(runtime.db())
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(service), base_url=API) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(service), base_url=API
+        ) as client:
             yield runtime, client
 
 

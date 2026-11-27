@@ -240,7 +240,7 @@ func executeTeamShowServer(ctx context.Context, opts teamServerOptions) (teamSer
 	stored, err := registry.GetTeamServerRecord(ctx, registryURL, domain, teamName)
 	if err != nil {
 		if code, ok := registryStatusCode(err); ok && code == http.StatusNotFound {
-			return teamServerOutput{}, withErrorCode(codeTeamServerRecordMissing, fmt.Errorf("no team server record is published for %s\nPublish one with aw id team set-server --team %s --namespace %s --url <server-url>, then retry.", teamID, teamName, domain))
+			return teamServerOutput{}, withErrorClassification(codeTeamServerRecordMissing, fmt.Errorf("no team server record is published for %s", teamID))
 		}
 		return teamServerOutput{}, fmt.Errorf("read team server for %s: %w", teamID, err)
 	}

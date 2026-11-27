@@ -40,7 +40,7 @@ type callKey struct {
 
 func (k callKey) String() string { return k.File + ":" + k.Symbol + ": " + k.Callee }
 
-const strictModule = "cli/go/signaturewire/signature.go"
+const strictModule = "cli/go/internal/signaturewire/signature.go"
 const signerSign = "crypto.Signer.Sign"
 
 func excluded(file string) bool {

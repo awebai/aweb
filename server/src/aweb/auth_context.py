@@ -43,7 +43,7 @@ GRANT_SCOPES = (
 class TeamIdentity:
     """Authenticated agent identity within a team.
 
-    Resolved from the verified team certificate and the agents table.
+    Certificate verifiers mark admission and retain the checked controller key.
     """
 
     team_id: str
@@ -58,13 +58,12 @@ class TeamIdentity:
     address_resolution: AddressResolution = field(default_factory=AddressResolution)
     # The verifier's checked key, retained for this credential's stream lifetime.
     verified_team_did_key: str | None = None
+    certificate_verified: bool = False
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "identity_scope", normalize_identity_scope(self.identity_scope))
-
-
-class NativeCertificateIdentity(TeamIdentity):
-    """Team identity produced by native certificate verification and acceptance."""
+        object.__setattr__(
+            self, "identity_scope", normalize_identity_scope(self.identity_scope)
+        )
 
 
 @dataclass(frozen=True)
@@ -94,6 +93,7 @@ class MessagingAuth:
     id_chain: dict | None = None
     address_resolution: AddressResolution = field(default_factory=AddressResolution)
     verified_team_did_key: str | None = None
+    certificate_verified: bool = False
 
     def __post_init__(self) -> None:
         if self.identity_scope is not None:
@@ -102,5 +102,6 @@ class MessagingAuth:
             )
 
 
-class NativeCertificateMessagingAuth(MessagingAuth):
-    """Messaging projection of the same verified native certificate credential."""
+def has_verified_team_certificate(identity: TeamIdentity | MessagingAuth) -> bool:
+    """Read credential provenance recorded by the admitting verifier."""
+    return getattr(identity, "certificate_verified", False) is True

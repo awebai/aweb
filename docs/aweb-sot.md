@@ -648,6 +648,17 @@ run after taking that lock, so concurrent creators allocate distinct ordered
 versions rather than racing on `MAX(version) + 1`. The database's one-active
 indexes remain the final invariant for every writer.
 
+**Migration 057 (`057_legacy_mail_index.sql`).** The ordinary transactional
+build adds `idx_messages_legacy_created_id` on
+`messages (created_at DESC, message_id DESC)` for rows without a conversation
+ID. Message writes can wait while the index builds. The migration limits
+lock acquisition to two seconds and the whole CREATE INDEX statement to five
+seconds, including time spent acquiring its lock. If either timeout fires, the
+transaction rolls back and the migration remains pending. Retry through the
+migration manager after the writer completes or the build can meet its bound.
+The index changes query plans without rewriting messages or changing the
+conversation API.
+
 ### Current table inventory
 
 The following list is exhaustive for current **aweb application tables declared
@@ -1099,7 +1110,7 @@ transient `did:key`.
 |-------|-------|
 | `GET /v1/agents/{alias}/events` | SSE event stream |
 | `GET /v1/status` | Team status |
-| `GET /v1/status/stream` | Team coordination SSE. Message and chat events are restricted to the authenticated actor's own active workspaces. Native certificate streams check membership standing every 30 seconds and close on definite membership loss. A temporary AWID outage keeps the admitted connection open while its local membership and checked key still match. Native certificate and grant connections close within 300 seconds, or at the grant's earlier expiry. Embedded public readers receive no messaging events. |
+| `GET /v1/status/stream` | Team coordination SSE. Message and chat events are restricted to the authenticated actor's own active workspaces. Certificate-authenticated streams check membership standing every 30 seconds and close on definite membership loss. A temporary AWID outage keeps the admitted connection open while its local membership and checked key still match. Certificate and grant connections close within 300 seconds, or at the grant's earlier expiry. Embedded public readers receive no messaging events. |
 | `POST /v1/agents/heartbeat` | Keep-alive |
 | `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |
@@ -1236,8 +1247,11 @@ the workspace. It returns `409` if the bound agent is global
 workspace whose activity is within the presence TTL (30 minutes by default,
 configured by `AWEB_PRESENCE_TTL_SECONDS`). Activity is the newest workspace
 `last_seen_at`, Redis heartbeat timestamp, or currently valid grant-liveness
-timestamp. Embedded callers pass their selected registry client explicitly
-to the lifecycle planner and cascade. Before a remote membership revocation,
+timestamp. For lifecycle planning and cleanup only, a workspace with no
+observed contact uses its `created_at` as the cutoff timestamp. Reservation
+alone provides no last-seen time or online status. Embedded callers pass their
+selected registry client explicitly to the lifecycle planner and cascade.
+Before a remote membership revocation,
 the host checks the workspace with the shared planner and preserves its
 refusal. The lifecycle planner, cascade and agent list use the same activity
 owner, as do HTTP/MCP workspace status, online lists, dashboard snapshots and
@@ -2212,8 +2226,9 @@ and start the application. Read-only sender-membership projections retain
 
 ### Current certificate acceptance and stream lifetime
 
-A verified certificate's checked team key is retained as
-`verified_team_did_key` in the native authenticated context. Acceptance checks
+A certificate verifier sets `certificate_verified` on the authenticated
+context after admission and retains its checked controller key as
+`verified_team_did_key`. Acceptance checks
 the current-member owner under the same team/member transaction locks as any
 acceptance or projection writes. A cached key or a host snapshot cannot
 substitute for that check, and a missing checked key cannot be filled from the
@@ -2229,9 +2244,13 @@ deadline and the checks for new stream admission still apply. Readmitting
 the member under a new certificate does not change
 the credential that opened the old stream. Independent identity-only thread
 participation remains governed by the Identity and Messaging Contract.
-The native stream recheck applies to a credential verified and accepted on
-the native certificate path. A proxy identity keeps its own admission when
-its transport supplies an opaque certificate identifier.
+The synchronous agent event stream opening check can use the exact admitted
+member from the same request and still checks registry standing. Each later
+check reads current membership again.
+Embedding hosts set `certificate_verified` and `verified_team_did_key` after
+certificate verification and admission. API-key and proxy credentials retain
+their own admission with `certificate_verified` false, including when their
+transport supplies an opaque certificate identifier.
 
 Revocation without a key rotation removes authentication and delivery standing.
 Roster, assignee, room fan-out and alias projections use the admitted member
@@ -2251,13 +2270,14 @@ the replacement claim, including when the task stays `in_progress`.
 
 ### Staged certificate-registration observations
 
-While registration enforcement is off, successful artifact and revocation
-checks still evaluate registration and record the would-refuse observation.
-This deliberate measurement supports the decision to enable enforcement; an
-off-mode observation is not a promise of no existence read. The read uses the
-existing SDK active-certificate view after revocation checks, without a new
-cache. An unavailable observation remains unknown and cannot turn an otherwise
-valid off-mode operation into a refusal. Enforcing mode retains its complete
+While configured registration enforcement is off, standing records registration
+as `not_observed` after the revocation check. Before enabling REQUIRED, census
+admitted certificates using the hosted certificate reconciliation dry run or
+explicit-mode observations on a native server, and resolve or account for
+every missing registration.
+Explicit observations use the SDK's active-certificate view.
+An unavailable observation remains unknown and cannot turn an otherwise valid
+off-mode operation into a refusal. Enforcing mode retains its complete
 registration-list and signature-verified miss-refresh owners. AWID's
 `evaluate_team_certificate_standing` applies the same acquired revocation and
 registration facts to the server, registry SDK and checked artifact path. This

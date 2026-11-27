@@ -55,9 +55,19 @@ def test_pi_verification_covers_runtime_files_beyond_tiny_entry(tmp_path, monkey
     runtime = package / "runtime.js"
     runtime.write_text("real runtime")
     manifest = tmp_path / "pins.json"
-    manifest.write_text(json.dumps({"artifacts": {"pi": {
-        "member": "package/cli.js", "sha256": hashlib.sha256(entry.read_bytes()).hexdigest(),
-        "tree_sha256": setup.tree_digest(package)}}}))
+    manifest.write_text(
+        json.dumps(
+            {
+                "artifacts": {
+                    "pi": {
+                        "member": "package/cli.js",
+                        "sha256": hashlib.sha256(entry.read_bytes()).hexdigest(),
+                        "tree_sha256": setup.tree_digest(package),
+                    }
+                }
+            }
+        )
+    )
     monkeypatch.setattr(setup, "MANIFEST", manifest)
     assert setup.verify_tools(root)["pi"] == entry
     runtime.write_text("changed runtime")

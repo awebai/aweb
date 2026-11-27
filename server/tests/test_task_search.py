@@ -96,7 +96,12 @@ async def _seed_team_and_tasks(aweb_db):
                  status, priority, task_type)
             VALUES ($1, $2, $3, $4, $5, $6, 'open', 2, 'task')
             """,
-            task_id, TEAM_ADDRESS, num, seq, suffix, title,
+            task_id,
+            TEAM_ADDRESS,
+            num,
+            seq,
+            suffix,
+            title,
         )
 
 
@@ -175,7 +180,9 @@ async def test_list_tasks_filters_by_parent_ref(aweb_cloud_db):
     )
     await create_task(db, actor=ALICE, on_mutation=None, title="Other root")
 
-    results = await list_tasks(db, team_id=TEAM_ADDRESS, parent_task_id=parent["task_ref"])
+    results = await list_tasks(
+        db, team_id=TEAM_ADDRESS, parent_task_id=parent["task_ref"]
+    )
 
     assert [task["task_id"] for task in results] == [child["task_id"]]
 
@@ -234,9 +241,7 @@ async def test_concurrent_reparents_cannot_commit_a_cycle(aweb_cloud_db):
     manager = aweb_cloud_db.aweb_db
     setup_db = _DbShim(manager)
     await _seed_team(manager)
-    second = await create_task(
-        setup_db, actor=ALICE, on_mutation=None, title="Second"
-    )
+    second = await create_task(setup_db, actor=ALICE, on_mutation=None, title="Second")
     first = await create_task(
         setup_db,
         actor=ALICE,
@@ -244,9 +249,7 @@ async def test_concurrent_reparents_cannot_commit_a_cycle(aweb_cloud_db):
         title="First",
         parent_task_id=second["task_ref"],
     )
-    third = await create_task(
-        setup_db, actor=ALICE, on_mutation=None, title="Third"
-    )
+    third = await create_task(setup_db, actor=ALICE, on_mutation=None, title="Third")
     concurrent_db = _DbShim(_BarrierManager(manager))
 
     results = await asyncio.gather(

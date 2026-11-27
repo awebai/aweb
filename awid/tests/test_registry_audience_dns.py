@@ -50,7 +50,9 @@ class RegistryAudienceDNS(asyncio.DatagramProtocol):
             response.set_rcode(dns.rcode.SERVFAIL)
         else:
             override = (
-                "https://override.example" if self.answer == AuthorityAnswer.OVERRIDE else None
+                "https://override.example"
+                if self.answer == AuthorityAnswer.OVERRIDE
+                else None
             )
             record = (
                 "awid=v1; controller=not-a-controller;"
@@ -62,7 +64,9 @@ class RegistryAudienceDNS(asyncio.DatagramProtocol):
             )
         if self.answer == AuthorityAnswer.AMBIGUOUS:
             response.answer.append(
-                dns.rrset.from_text(question.name, 0, "IN", "TXT", '"awid=v1; controller=invalid;"')
+                dns.rrset.from_text(
+                    question.name, 0, "IN", "TXT", '"awid=v1; controller=invalid;"'
+                )
             )
         self.transport.sendto(response.to_wire(), peer)
 
@@ -128,7 +132,9 @@ async def test_registry_audience_uses_dns_override_only_for_public_default(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("answer", [AuthorityAnswer.MALFORMED, AuthorityAnswer.AMBIGUOUS])
+@pytest.mark.parametrize(
+    "answer", [AuthorityAnswer.MALFORMED, AuthorityAnswer.AMBIGUOUS]
+)
 async def test_malformed_dns_is_not_a_read_fallback(registry_audience_dns, answer):
     from awid.dns_verify import DnsVerificationError
 

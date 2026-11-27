@@ -39,7 +39,10 @@ class LocalRecipientNotFoundError(FederationAuthorityError):
         from aweb.member_team_key import RECIPIENT_RECONNECT_DETAIL
 
         address = f" {self.address}" if self.address is not None else ""
-        return f"Recipient not found. Check the address{address}. " + RECIPIENT_RECONNECT_DETAIL
+        return (
+            f"Recipient not found. Check the address{address}. "
+            + RECIPIENT_RECONNECT_DETAIL
+        )
 
     def __init__(self, *, address: str | None = None) -> None:
         self.address = address
@@ -55,7 +58,12 @@ def authority_error_body(
     body: dict[str, Any] = {
         "detail": error.detail
         if isinstance(
-            error, (RecipientNotResidentError, LocalRecipientNotFoundError, FederationPolicyRefused)
+            error,
+            (
+                RecipientNotResidentError,
+                LocalRecipientNotFoundError,
+                FederationPolicyRefused,
+            ),
         )
         else error.reason,
         "reason": error.reason,

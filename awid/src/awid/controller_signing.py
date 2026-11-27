@@ -717,7 +717,11 @@ def _build_controller_payload(
         # The parent authorizes the child's controller over the same request.
         register = op == "namespace_register"
         field = "controller_did" if register else "new_controller_did"
-        operation = "authorize_subdomain_registration" if register else "authorize_subdomain_rotation"
+        operation = (
+            "authorize_subdomain_registration"
+            if register
+            else "authorize_subdomain_rotation"
+        )
         claims = {"child_domain": request.domain, field: p[field]}
     return covering_payload(
         aud=origin,

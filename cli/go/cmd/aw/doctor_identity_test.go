@@ -270,18 +270,33 @@ func TestAwDoctorIdentityPublishedEncryptionKeyMatchesLocal(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	fixture.EncryptionAssertion = assertion
-	server, _ := newDoctorAWIDServer(t, &fixture, nil)
-	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
+	for _, tc := range []struct {
+		name, custody string
+		status        doctorStatus
+	}{
+		{"current key", awid.EncryptionKeyCustodySelf, doctorStatusOK},
+		{"hosted claim for local key", awid.EncryptionKeyCustodyHosted, doctorStatusFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			published := *assertion
+			published.Custody = tc.custody
+			if err := awid.SignEncryptionKeyAssertion(&published, fixture.SigningKey); err != nil {
+				t.Fatal(err)
+			}
+			registryFixture := fixture
+			registryFixture.EncryptionAssertion = &published
+			server, _ := newDoctorAWIDServer(t, &registryFixture, nil)
+			updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
 
-	out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
-	if err != nil {
-		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
-	}
-	got := decodeDoctorOutput(t, out)
-	check := requireDoctorCheckStatus(t, got, doctorCheckAWIDEncryptionKey, doctorStatusOK)
-	if check.Detail["encryption_key_id"] != record.KeyID {
-		t.Fatalf("encryption_key_id detail=%v want %s", check.Detail["encryption_key_id"], record.KeyID)
+			out, err := runDoctorCLIWithRegistry(t, fixture.Bin, fixture.Dir, server.URL, "doctor", "registry", "--online", "--json")
+			if err != nil {
+				t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
+			}
+			check := requireDoctorCheckStatus(t, decodeDoctorOutput(t, out), doctorCheckAWIDEncryptionKey, tc.status)
+			if tc.status == doctorStatusOK && check.Detail["encryption_key_id"] != record.KeyID {
+				t.Fatalf("encryption_key_id detail=%v want %s", check.Detail["encryption_key_id"], record.KeyID)
+			}
+		})
 	}
 }
 

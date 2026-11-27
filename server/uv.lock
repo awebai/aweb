@@ -128,7 +128,7 @@ wheels = [
 
 [[package]]
 name = "aweb"
-version = "1.27.51rc3"
+version = "1.27.55"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
@@ -201,7 +201,7 @@ dev = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.5.2rc4"
+version = "0.5.2"
 source = { editable = "../naapp-lib" }
 
 [package.optional-dependencies]
@@ -274,13 +274,14 @@ dev = [
     { name = "playwright", specifier = "==1.63.0" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
+    { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = ">=0.14.0" },
     { name = "uvicorn", specifier = ">=0.35.0" },
 ]
 
 [[package]]
 name = "aweb-naapp-testing"
-version = "0.5.2rc4"
+version = "0.5.2"
 source = { editable = "../naapp-lib/testing" }
 dependencies = [
     { name = "aiosmtpd" },
@@ -307,7 +308,7 @@ provides-extras = ["server"]
 
 [[package]]
 name = "awid-service"
-version = "0.5.40rc3"
+version = "0.5.43"
 source = { editable = "../awid" }
 dependencies = [
     { name = "asyncpg" },

@@ -11,20 +11,20 @@ from fastapi import HTTPException, Request
 from aweb.application_state import application_registry_client
 from aweb.auth_context import (
     MessagingAuth,
-    NativeCertificateIdentity,
-    NativeCertificateMessagingAuth,
     TeamIdentity,
+    has_verified_team_certificate,
 )
-from aweb.certificate_registration import configured_registration_mode
 from aweb.identity_grant_status import GrantValidityState, grant_validity
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
     GRANT_ISSUER_RECOVERY_DETAIL,
+    MemberProjection,
     current_member,
     current_membership,
     member_key_columns_sql,
     read_member_projection,
 )
+from aweb.team_auth_deps import admitted_member_projection
 from aweb.team_registry import native_database_manager
 
 STREAM_AUTHORITY_RECHECK_SECONDS = 30
@@ -36,18 +36,14 @@ GRANT_TERMINAL_DETAILS = {
     "grant_expired": "identity grant expired",
     "grant_revoked": "identity grant revoked",
     "grant_subject_inactive": "identity grant subject inactive",
-    "grant_issuer_revoked": "identity grant issuer revoked. " + GRANT_ISSUER_RECOVERY_DETAIL,
+    "grant_issuer_revoked": "identity grant issuer revoked. "
+    + GRANT_ISSUER_RECOVERY_DETAIL,
     "team_membership_not_current": CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
 }
 
 
-def is_native_certificate_stream(identity: object) -> bool:
-    """Classify the checked credential, independent of any opaque certificate ID."""
-    return isinstance(identity, (NativeCertificateIdentity, NativeCertificateMessagingAuth))
-
-
 def requires_stream_recheck(identity: StreamIdentity) -> bool:
-    return is_native_certificate_stream(identity) or identity.grant is not None
+    return has_verified_team_certificate(identity) or identity.grant is not None
 
 
 def clamp_deadline_to_grant(deadline: datetime, identity: StreamIdentity) -> datetime:
@@ -73,45 +69,93 @@ def grant_expiry_reason(identity: StreamIdentity) -> str | None:
     return None
 
 
-async def require_valid_stream_grant(request: Request, db, identity: StreamIdentity) -> None:
+async def require_valid_stream_grant(
+    request: Request,
+    db,
+    identity: StreamIdentity,
+    *,
+    use_admitted_member: bool = False,
+) -> None:
     """Check before constructing StreamingResponse, while HTTP errors are legal."""
+    if (
+        use_admitted_member
+        and admitted_member_projection(request, identity) is not None
+    ):
+        # Ingress already admitted this exact credential in this request.
+        # The stream's later checks read current standing independently.
+        return
     reason = await grant_terminal_reason(request, db, identity)
     if reason:
         raise HTTPException(status_code=403, detail=GRANT_TERMINAL_DETAILS[reason])
 
 
+async def _certificate_terminal_reason(
+    request: Request,
+    identity: StreamIdentity,
+    row: MemberProjection | None,
+    *,
+    continue_on_registry_outage: bool = False,
+) -> str | None:
+    checked_key = identity.verified_team_did_key
+    if (
+        not checked_key
+        or row is None
+        or row["did_key"] != identity.did_key
+        or not current_member(row, checked_key=checked_key)
+    ):
+        return "team_membership_not_current"
+    registry = application_registry_client(request.app.state)
+    try:
+        member = await current_membership(
+            registry,
+            {**dict(row), "certificate_id": identity.certificate_id},
+            request=request,
+        )
+    except HTTPException as exc:
+        # The registration adapter wraps acquisition failures in a 503
+        # for the caller. Keep the registry's original classification.
+        acquisition = exc.__cause__ if isinstance(exc.__cause__, HTTPException) else exc
+        if (
+            continue_on_registry_outage
+            and exc.status_code == acquisition.status_code == 503
+        ):
+            # Only an admitted connection may keep its previous standing.
+            # The local membership and checked key were confirmed above.
+            return None
+        raise
+    return None if member and member.get("team_id") else "team_membership_not_current"
+
+
 async def grant_terminal_reason(
-    request: Request, db, identity: StreamIdentity, *, continue_on_registry_outage: bool = False,
+    request: Request,
+    db,
+    identity: StreamIdentity,
+    *,
+    continue_on_registry_outage: bool = False,
 ) -> str | None:
     grant = identity.grant
     if grant is None:
-        if not is_native_certificate_stream(identity):
+        if not has_verified_team_certificate(identity):
             return None
-        if not identity.certificate_id or not identity.team_id or not identity.agent_id:
-            return "team_membership_not_current"
-        row = await read_member_projection(
-            native_database_manager(db), team_id=identity.team_id, agent_id=identity.agent_id,
-        )
-        if (
-            row is None or row["did_key"] != identity.did_key
-            or not current_member(row, checked_key=identity.verified_team_did_key or "")
+        checked_key = identity.verified_team_did_key
+        if not (
+            checked_key
+            and identity.certificate_id
+            and identity.team_id
+            and identity.agent_id
         ):
             return "team_membership_not_current"
-        registry = application_registry_client(request.app.state)
-        try:
-            member = await current_membership(
-                registry, {**dict(row), "certificate_id": identity.certificate_id}, request=request,
-            )
-        except HTTPException as exc:
-            # The registration adapter wraps acquisition failures in a 503
-            # for the caller. Keep the registry's original classification.
-            acquisition = exc.__cause__ if isinstance(exc.__cause__, HTTPException) else exc
-            if continue_on_registry_outage and exc.status_code == acquisition.status_code == 503:
-                # Only an admitted connection may keep its previous standing.
-                # The local membership and checked key were confirmed above.
-                return None
-            raise
-        return None if member and member.get("team_id") else "team_membership_not_current"
+        row = await read_member_projection(
+            native_database_manager(db),
+            team_id=identity.team_id,
+            agent_id=identity.agent_id,
+        )
+        return await _certificate_terminal_reason(
+            request,
+            identity,
+            row,
+            continue_on_registry_outage=continue_on_registry_outage,
+        )
     now = datetime.now(timezone.utc)
     if not grant.never_expires and _as_utc(grant.expires_at) <= now:
         return "grant_expired"
@@ -139,7 +183,6 @@ async def grant_terminal_reason(
         row=row,
         now=now,
         registry_client=application_registry_client(request.app.state),
-        registration_mode=configured_registration_mode(),
         request=request,
     )
     observation.raise_if_unavailable()
@@ -194,7 +237,11 @@ def allowed_status_categories(identity: TeamIdentity) -> set[str] | None:
     if identity.grant is None:
         return None
     scopes = set(identity.grant.scopes or ())
-    return {category for category, scope in _STATUS_CATEGORY_SCOPE.items() if scope in scopes}
+    return {
+        category
+        for category, scope in _STATUS_CATEGORY_SCOPE.items()
+        if scope in scopes
+    }
 
 
 def status_event_allowed(identity: TeamIdentity, event: dict[str, Any]) -> bool:
@@ -226,7 +273,10 @@ class NeverGrantStreamGuard:
         self.checked_at = now
         try:
             return await grant_terminal_reason(
-                self.request, self.db, self.identity, continue_on_registry_outage=True,
+                self.request,
+                self.db,
+                self.identity,
+                continue_on_registry_outage=True,
             )
         except Exception:
             logging.getLogger(__name__).warning(

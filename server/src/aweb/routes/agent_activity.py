@@ -9,7 +9,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from aweb.agent_activity import ActivityEventError, relay_activity, verify_activity_event
+from aweb.agent_activity import (
+    ActivityEventError,
+    relay_activity,
+    verify_activity_event,
+)
 from aweb.deps import get_db, get_redis
 from aweb.identity_auth_deps import participant_dids
 from aweb.messaging.chat import resolve_session_actor_did
@@ -34,6 +38,7 @@ end
 return {count, redis.call('PTTL', KEYS[1])}
 """
 
+
 class PublishActivityRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -50,16 +55,23 @@ async def _require_small_body(request: Request) -> None:
 
 
 def _unavailable() -> HTTPException:
-    return HTTPException(status_code=503, detail="publishing_unavailable: Activity publishing is unavailable")
+    return HTTPException(
+        status_code=503,
+        detail="publishing_unavailable: Activity publishing is unavailable",
+    )
 
 
 async def _enforce_rate(redis, agent_id: str) -> None:
-    count, remaining_ms = await redis.eval(_RATE_SCRIPT, 1, f"agent-activity-rate:{agent_id}", RATE_WINDOW_SECONDS)
+    count, remaining_ms = await redis.eval(
+        _RATE_SCRIPT, 1, f"agent-activity-rate:{agent_id}", RATE_WINDOW_SECONDS
+    )
     if int(count) <= RATE_LIMIT:
         return
     # Ceiling seconds keep Retry-After from expiring before the Redis window.
     remaining_ms = int(remaining_ms)
-    retry_after = (remaining_ms + 999) // 1000 if remaining_ms > 0 else RATE_WINDOW_SECONDS
+    retry_after = (
+        (remaining_ms + 999) // 1000 if remaining_ms > 0 else RATE_WINDOW_SECONDS
+    )
     raise HTTPException(
         status_code=429,
         detail=f"rate_limited: at most {RATE_LIMIT} activity events per agent every {RATE_WINDOW_SECONDS} seconds",
@@ -69,7 +81,9 @@ async def _enforce_rate(redis, agent_id: str) -> None:
 
 async def _require_participant(db, identity: TeamIdentity, session_id: str) -> None:
     actor_dids = participant_dids(identity)
-    if not await resolve_session_actor_did(db, session_id=UUID(session_id), actor_dids=actor_dids):
+    if not await resolve_session_actor_did(
+        db, session_id=UUID(session_id), actor_dids=actor_dids
+    ):
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
 
@@ -87,7 +101,11 @@ async def publish_agent_activity(
     agent's own key, or the grant session key for a grant caller, attributed to
     the grant's subject.
     """
-    signer_did = identity.grant.session_did_key if identity.grant is not None else identity.did_key
+    signer_did = (
+        identity.grant.session_did_key
+        if identity.grant is not None
+        else identity.did_key
+    )
     now = datetime.now(timezone.utc)
     try:
         event = verify_activity_event(
@@ -99,7 +117,9 @@ async def publish_agent_activity(
             now=now,
         )
     except ActivityEventError as exc:
-        logger.info("Refused activity from %s (%s): %s", identity.alias, signer_did, exc)
+        logger.info(
+            "Refused activity from %s (%s): %s", identity.alias, signer_did, exc
+        )
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if redis is None:
         raise _unavailable()

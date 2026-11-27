@@ -171,9 +171,11 @@ def _memory_policy_html(policy: Any) -> str:
     if policy is None or policy == "" or policy == []:
         return '<span class="empty">not specified</span>'
     if isinstance(policy, dict):
-        return "<ul>" + "".join(
-            f"<li><b>{_e(k)}:</b> {_e(v)}</li>" for k, v in policy.items()
-        ) + "</ul>"
+        return (
+            "<ul>"
+            + "".join(f"<li><b>{_e(k)}:</b> {_e(v)}</li>" for k, v in policy.items())
+            + "</ul>"
+        )
     if isinstance(policy, list):
         return _list_items([str(v) for v in policy])
     return _e(policy)
@@ -278,7 +280,7 @@ def render_blueprint_page(*, public_origin: str, blueprint: dict[str, Any]) -> s
         rows.append(
             f"""            <tr>
               <td class="browse-roster__name"><a href="{_profile_href(_e(ref), _e(pref))}">{_e(pref)}</a></td>
-              <td class="browse-roster__mission">{_e(r.get('mission') or '')}</td>
+              <td class="browse-roster__mission">{_e(r.get("mission") or "")}</td>
               <td class="browse-roster__count">{count_html}</td>
             </tr>"""
         )
@@ -310,7 +312,7 @@ def render_blueprint_page(*, public_origin: str, blueprint: dict[str, Any]) -> s
           <h2 class="browse-section-title">First missions</h2>
           <p>Concrete ways teams start with this blueprint.</p>
         </div>
-        <ul class="browse-missions">{''.join(f'<li>{_e(m)}</li>' for m in missions)}</ul>
+        <ul class="browse-missions">{"".join(f"<li>{_e(m)}</li>" for m in missions)}</ul>
       </div>
     </section>"""
         if missions
@@ -329,7 +331,7 @@ def render_blueprint_page(*, public_origin: str, blueprint: dict[str, Any]) -> s
         <p class="kicker">Blueprint</p>
         <h1 class="browse-title is-id">{_e(name)}</h1>
         <p class="browse-summary">{_e(summary)}</p>
-        <div class="browse-meta">{''.join(meta_bits)}</div>
+        <div class="browse-meta">{"".join(meta_bits)}</div>
         {_tags(tags)}
       </div>
     </section>
@@ -349,17 +351,17 @@ def render_profile_page(*, public_origin: str, profile: dict[str, Any]) -> str:
     )
 
     specs = f"""        <dl class="browse-specs">
-          <div><dt>accepted work</dt><dd>{_list_items(profile.get('accepted_work') or [])}</dd></div>
-          <div><dt>runtime assumptions</dt><dd>{_list_items(profile.get('runtime_assumptions') or [])}</dd></div>
-          <div><dt>memory policy</dt><dd>{_memory_policy_html(profile.get('memory_policy'))}</dd></div>
-          <div><dt>needs approval</dt><dd>{_list_items(profile.get('approval_required') or [])}</dd></div>
+          <div><dt>accepted work</dt><dd>{_list_items(profile.get("accepted_work") or [])}</dd></div>
+          <div><dt>runtime assumptions</dt><dd>{_list_items(profile.get("runtime_assumptions") or [])}</dd></div>
+          <div><dt>memory policy</dt><dd>{_memory_policy_html(profile.get("memory_policy"))}</dd></div>
+          <div><dt>needs approval</dt><dd>{_list_items(profile.get("approval_required") or [])}</dd></div>
         </dl>"""
 
     skills = profile.get("skills") or []
     skill_cards = "".join(
-        f"""          <li><a class="browse-skill-card" href="{escape(s.get('href') or _profile_href(ref, pref) + '/skills/' + (s.get('name') or ''), quote=True)}">
-            <h3 class="browse-skill-card__name">{_e(s.get('name') or '')}</h3>
-            <p class="browse-skill-card__desc">{_e(s.get('description') or '')}</p>
+        f"""          <li><a class="browse-skill-card" href="{escape(s.get("href") or _profile_href(ref, pref) + "/skills/" + (s.get("name") or ""), quote=True)}">
+            <h3 class="browse-skill-card__name">{_e(s.get("name") or "")}</h3>
+            <p class="browse-skill-card__desc">{_e(s.get("description") or "")}</p>
           </a></li>"""
         for s in skills
     )
@@ -427,7 +429,7 @@ def render_profile_page(*, public_origin: str, profile: dict[str, Any]) -> str:
         <p class="kicker">Profile &middot; in {_e(ref)}</p>
         <h1 class="browse-title is-id">{_e(pref)}</h1>
         <p class="browse-summary">{_e(mission)}</p>
-        <div class="browse-meta">{''.join(meta_bits)}</div>
+        <div class="browse-meta">{"".join(meta_bits)}</div>
       </div>
     </section>
     <section class="browse-section">
@@ -460,9 +462,7 @@ def render_skill_page(*, public_origin: str, skill: dict[str, Any]) -> str:
 
     # Frontmatter: show only keys beyond name/description (the hero already
     # renders those); render values plainly so a nested mapping stays readable.
-    extra = {
-        k: v for k, v in frontmatter.items() if k not in ("name", "description")
-    }
+    extra = {k: v for k, v in frontmatter.items() if k not in ("name", "description")}
     fm_rows = "".join(
         f"<dt>{_e(k)}</dt><dd>{_e(v if not isinstance(v, dict) else ' · '.join(f'{ik}: {iv}' for ik, iv in v.items()))}</dd>"
         for k, v in extra.items()

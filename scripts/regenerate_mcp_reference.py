@@ -100,7 +100,9 @@ def validate_coverage(tools: Mapping[str, Any]) -> None:
         if not isinstance(tool.description, str) or not tool.description.strip():
             raise CoverageError(f"registered tool has no description: {name}")
         schema = tool.inputSchema
-        if not isinstance(schema, dict) or not isinstance(schema.get("properties"), dict):
+        if not isinstance(schema, dict) or not isinstance(
+            schema.get("properties"), dict
+        ):
             raise CoverageError(f"registered tool has unsupported input schema: {name}")
         output_schema = tool.outputSchema
         result = (output_schema or {}).get("properties", {}).get("result", {})
@@ -170,7 +172,7 @@ This reference is generated from the live OSS MCP registration in
 Run `make regenerate-mcp-tools-reference` after changing registration, parameters,
 or descriptions. `make test-mcp-tools-reference` checks freshness and proves that
 unclassified or removed tools fail closed. For the canonical contract, see the
-MCP section of [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
+MCP section of [`aweb-sot.md`](aweb-sot.md).
 
 ## Transport and Auth
 
@@ -178,7 +180,7 @@ MCP section of [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
 - With the default `streamable_http_path="/"`, clients use `/mcp/`.
 - The transport is Streamable HTTP via FastMCP with `stateless_http=True`.
 - The canonical auth contract lives in the MCP and Authentication sections of
-  [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md); this reference does not
+  [`aweb-sot.md`](aweb-sot.md); this reference does not
   restate request headers or the signature envelope.
 - All tools require authenticated identity context.
 - Identity, mail, chat, and contact operations can run without team context
@@ -225,7 +227,7 @@ operator owns their documentation.
 - Tool auth resolves caller context through
   [`server/src/aweb/mcp/auth.py`](https://github.com/awebai/aweb/blob/main/server/src/aweb/mcp/auth.py);
   the canonical contract remains
-  [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
+  [`aweb-sot.md`](aweb-sot.md).
 - To add an OSS MCP tool, implement behavior under
   [`server/src/aweb/mcp/tools/`](https://github.com/awebai/aweb/tree/main/server/src/aweb/mcp/tools),
   register it in

@@ -27,25 +27,42 @@ def is_exact(authority: DomainAuthority | None) -> bool:
 
 def delegation_of(namespace) -> dict | None:
     """The persisted parent authorization, bound to the current child key."""
-    if namespace is None or namespace.get("parent_domain") is None or namespace.get("parent_controller_key") is None:
+    if (
+        namespace is None
+        or namespace.get("parent_domain") is None
+        or namespace.get("parent_controller_key") is None
+    ):
         return None
-    return {"parent_domain": namespace["parent_domain"],
-            "parent_controller_key": namespace["parent_controller_key"],
-            "controller_key": namespace["controller_did"]}
+    return {
+        "parent_domain": namespace["parent_domain"],
+        "parent_controller_key": namespace["parent_controller_key"],
+        "controller_key": namespace["controller_did"],
+    }
 
 
 def authority_evidence(domain: str, authority: DomainAuthority | None) -> dict:
-    return {"domain": domain, "dns_name": authority.dns_name if authority else None,
-            "inherited": authority.inherited if authority else False,
-            "controller_key": authority.controller_did if authority else None}
+    return {
+        "domain": domain,
+        "dns_name": authority.dns_name if authority else None,
+        "inherited": authority.inherited if authority else False,
+        "controller_key": authority.controller_did if authority else None,
+    }
 
 
-def proves_root(authority: DomainAuthority | None, did_key: str, *, domain: str | None = None, namespace=None) -> bool:
+def proves_root(
+    authority: DomainAuthority | None,
+    did_key: str,
+    *,
+    domain: str | None = None,
+    namespace=None,
+) -> bool:
     """Whether found DNS and the parent-authorized record establish this root."""
     if authority is None:
         return False
     domain = domain or authority.dns_name.removeprefix("_awid.")
-    return namespace_authority_valid(domain, authority_evidence(domain, authority), did_key, delegation_of(namespace))
+    return namespace_authority_valid(
+        domain, authority_evidence(domain, authority), did_key, delegation_of(namespace)
+    )
 
 
 async def record_delegation(tx, *, domain: str, parent) -> None:
@@ -54,11 +71,15 @@ async def record_delegation(tx, *, domain: str, parent) -> None:
         """UPDATE {{tables.dns_namespaces}}
            SET parent_domain = $2, parent_controller_key = $3
            WHERE domain = $1 AND deleted_at IS NULL""",
-        domain, parent["domain"], parent["controller_did"],
+        domain,
+        parent["domain"],
+        parent["controller_did"],
     )
 
 
-async def advance_delegated_children(tx, *, domain: str, previous_key: str, controller_key: str) -> None:
+async def advance_delegated_children(
+    tx, *, domain: str, previous_key: str, controller_key: str
+) -> None:
     """Two-key rotation carries only the retiring key's direct delegations."""
     # Leaving an invalid witness untouched can revive it when its old key is
     # reused as this rotation's destination. Only the previous key's grants
@@ -68,11 +89,15 @@ async def advance_delegated_children(tx, *, domain: str, previous_key: str, cont
         """UPDATE {{tables.dns_namespaces}}
            SET parent_controller_key = $3
            WHERE parent_domain = $1 AND parent_controller_key = $2 AND deleted_at IS NULL""",
-        domain, previous_key, controller_key,
+        domain,
+        previous_key,
+        controller_key,
     )
 
 
-async def withdraw_delegated_children(tx, *, domain: str, retaining_key: str | None = None) -> None:
+async def withdraw_delegated_children(
+    tx, *, domain: str, retaining_key: str | None = None
+) -> None:
     """Withdraw grants without deleting children or leaving key-reuse authority.
 
     The parent row is locked by the caller, serializing child registrations.
@@ -84,11 +109,14 @@ async def withdraw_delegated_children(tx, *, domain: str, retaining_key: str | N
            SET parent_domain = NULL, parent_controller_key = NULL
            WHERE parent_domain = $1 AND deleted_at IS NULL
              AND ($2::text IS NULL OR parent_controller_key <> $2)""",
-        domain, retaining_key,
+        domain,
+        retaining_key,
     )
 
 
-async def open_epoch(tx, *, domain: str, did_key: str, continuity: str, clock: Clock) -> None:
+async def open_epoch(
+    tx, *, domain: str, did_key: str, continuity: str, clock: Clock
+) -> None:
     """Retire the open epoch, if any, and open its successor at one witness time."""
     current = await open_epoch_of(tx, domain, for_update=True)
     at = serialization_time(clock, await latest_domain_event(tx, domain))
@@ -111,7 +139,8 @@ async def open_epoch(tx, *, domain: str, did_key: str, continuity: str, clock: C
 
 async def has_epoch_history(tx, domain: str) -> bool:
     return await tx.fetch_value(
-        "SELECT EXISTS (SELECT 1 FROM {{tables.id_namespace_epochs}} WHERE domain = $1)", domain,
+        "SELECT EXISTS (SELECT 1 FROM {{tables.id_namespace_epochs}} WHERE domain = $1)",
+        domain,
     )
 
 

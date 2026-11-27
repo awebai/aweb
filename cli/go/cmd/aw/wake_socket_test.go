@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/awebai/aw/internal/custodypath"
-	"github.com/awebai/aw/wake"
+	"github.com/awebai/aw/internal/wake"
 	"os"
 	"os/exec"
 	"path/filepath"

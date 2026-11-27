@@ -16,7 +16,9 @@ REPO = Path(__file__).resolve().parents[3]
 
 def journey():
     sys.path.insert(0, str(REPO / "naapp" / "secrets" / "e2e"))
-    spec = importlib.util.spec_from_file_location("team_deployment_journey", REPO / "scripts" / "e2e" / "team_deployment_journey.py")
+    spec = importlib.util.spec_from_file_location(
+        "team_deployment_journey", REPO / "scripts" / "e2e" / "team_deployment_journey.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -44,7 +46,9 @@ def operator_secrets(tmp_path: Path) -> Path:
 
 
 def check(secrets: Path, **owners):
-    return J.check_operator_secrets(secrets, **{"root_uid": ME, "staging_uid": ME, "agents_gid": MY_GROUP, **owners})
+    return J.check_operator_secrets(
+        secrets, **{"root_uid": ME, "staging_uid": ME, "agents_gid": MY_GROUP, **owners}
+    )
 
 
 def world(tmp_path: Path, secrets: Path | None = None):
@@ -99,7 +103,11 @@ def test_the_receivers_login_directory_is_never_created_or_chowned(tmp_path, mon
     assert "/state" in " ".join(made[0])
     after = os.lstat(secrets / "agents")
     assert (after.st_mode, after.st_uid, after.st_gid, after.st_mtime_ns) == (
-        before.st_mode, before.st_uid, before.st_gid, before.st_mtime_ns)
+        before.st_mode,
+        before.st_uid,
+        before.st_gid,
+        before.st_mtime_ns,
+    )
 
 
 def test_the_default_journey_still_creates_its_own_empty_login_directory(tmp_path, monkeypatch):
@@ -148,7 +156,9 @@ def test_a_symlinked_or_missing_secrets_directory_is_refused(tmp_path):
 
 
 @pytest.mark.parametrize("component", ["redis", "front", "secrets"])
-def test_a_missing_component_directory_is_refused_since_the_staging_user_cannot_create_it(tmp_path, component):
+def test_a_missing_component_directory_is_refused_since_the_staging_user_cannot_create_it(
+    tmp_path, component
+):
     secrets = operator_secrets(tmp_path)
     (secrets / component).rmdir()
     assert f"{component}: not pre-created" in refusal(secrets)
@@ -180,20 +190,37 @@ def test_the_login_directorys_contents_are_not_examined(tmp_path):
     check(secrets)
 
 
-def test_the_journey_refuses_an_operator_secrets_directory_before_it_makes_the_run(tmp_path, monkeypatch):
+def test_the_journey_refuses_an_operator_secrets_directory_before_it_makes_the_run(
+    tmp_path, monkeypatch
+):
     # The check uses root's uid 0, which this test's directory does not have.
     secrets = operator_secrets(tmp_path)
     images = tmp_path / "images.txt"
     images.write_text("")
-    monkeypatch.setattr(sys, "argv", ["journey", "--run-dir", str(tmp_path / "run47"), "--project", "p",
-                                      "--images", str(images), "--secrets-dir", str(secrets)])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "journey",
+            "--run-dir",
+            str(tmp_path / "run47"),
+            "--project",
+            "p",
+            "--images",
+            str(images),
+            "--secrets-dir",
+            str(secrets),
+        ],
+    )
     with pytest.raises(SystemExit, match="not root-owned"):
         J.main()
     assert not (tmp_path / "run47").exists()
 
 
 @pytest.mark.parametrize("mode", [0o755, 0o750, 0o705, 0o770, 0o701])
-def test_a_component_directory_others_can_reach_is_refused_before_any_write(tmp_path, monkeypatch, mode):
+def test_a_component_directory_others_can_reach_is_refused_before_any_write(
+    tmp_path, monkeypatch, mode
+):
     # Credentials are written with the caller's umask before each component's
     # files are chowned and chmodded; only a private directory keeps them
     # unreachable meanwhile.
@@ -204,10 +231,26 @@ def test_a_component_directory_others_can_reach_is_refused_before_any_write(tmp_
     images.write_text("")
     # The CLI's own check, with this test's uid standing in for root.
     original = J.check_operator_secrets
-    monkeypatch.setattr(J, "check_operator_secrets",
-                        lambda path: original(path, root_uid=ME, staging_uid=ME, agents_gid=MY_GROUP))
-    monkeypatch.setattr(sys, "argv", ["journey", "--run-dir", str(tmp_path / "run"), "--project", "p",
-                                      "--images", str(images), "--secrets-dir", str(secrets)])
+    monkeypatch.setattr(
+        J,
+        "check_operator_secrets",
+        lambda path: original(path, root_uid=ME, staging_uid=ME, agents_gid=MY_GROUP),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "journey",
+            "--run-dir",
+            str(tmp_path / "run"),
+            "--project",
+            "p",
+            "--images",
+            str(images),
+            "--secrets-dir",
+            str(secrets),
+        ],
+    )
     with pytest.raises(SystemExit, match="must be private"):
         J.main()
     assert not (tmp_path / "run").exists() and list((secrets / "postgres").iterdir()) == []

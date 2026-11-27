@@ -4,7 +4,7 @@ import shlex
 from .admission import validate_command
 from .errors import Refused
 
-STAGES = ("checks", "user-paths", "unit", "artifacts", "integration")
+STAGES = ("static", "checks", "user-paths", "unit", "artifacts", "integration")
 
 
 def command(*, stages=None, focused=None, intent="branch"):
@@ -12,7 +12,7 @@ def command(*, stages=None, focused=None, intent="branch"):
         raise Refused("choose stages or a focused command")
     if intent == "train":
         if focused is not None or stages not in (None, " ".join(STAGES)):
-            raise Refused("train candidate requires the complete five-stage gate")
+            raise Refused("train candidate requires the complete gate")
         stages = " ".join(STAGES)
     if focused is not None:
         validate_command(focused)

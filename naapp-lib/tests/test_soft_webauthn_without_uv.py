@@ -28,15 +28,18 @@ def enrolled():
         }
     )
     credential = next(iter(device.credentials.values()))
-    assertion = device.get({"rpId": "human.example.com", "challenge": "bG9naW4"}, user_verified=True)
+    assertion = device.get(
+        {"rpId": "human.example.com", "challenge": "bG9naW4"}, user_verified=True
+    )
     return credential, assertion
 
 
 def verifies(public_key, assertion) -> bool:
     response = assertion["response"]
-    signed = from_b64url(response["authenticatorData"]) + hashlib.sha256(
-        from_b64url(response["clientDataJSON"])
-    ).digest()
+    signed = (
+        from_b64url(response["authenticatorData"])
+        + hashlib.sha256(from_b64url(response["clientDataJSON"])).digest()
+    )
     try:
         public_key.verify(from_b64url(response["signature"]), signed, ec.ECDSA(hashes.SHA256()))
         return True
@@ -47,8 +50,9 @@ def verifies(public_key, assertion) -> bool:
 def test_only_the_uv_flag_and_the_signature_change_and_the_new_signature_is_the_credentials():
     credential, assertion = enrolled()
     changed = without_user_verification(assertion, credential.key)
-    before, after = from_b64url(assertion["response"]["authenticatorData"]), from_b64url(
-        changed["response"]["authenticatorData"]
+    before, after = (
+        from_b64url(assertion["response"]["authenticatorData"]),
+        from_b64url(changed["response"]["authenticatorData"]),
     )
     assert before[32] & UV and not after[32] & UV
     # RP id hash, the other flags and the counter are untouched.
@@ -85,5 +89,6 @@ def test_an_ed25519_credential_is_signed_with_ed25519():
     response = changed["response"]
     key.public_key().verify(
         from_b64url(response["signature"]),
-        from_b64url(response["authenticatorData"]) + hashlib.sha256(from_b64url(response["clientDataJSON"])).digest(),
+        from_b64url(response["authenticatorData"])
+        + hashlib.sha256(from_b64url(response["clientDataJSON"])).digest(),
     )

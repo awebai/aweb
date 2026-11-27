@@ -65,7 +65,9 @@ def test_vector_covers_the_out_of_contract_inputs():
 
 # Inputs outside the contract: the vector records what canonical_json_bytes
 # does with each, so that a change is noticed.
-@pytest.mark.parametrize("case", _out_of_contract_cases(), ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case", _out_of_contract_cases(), ids=lambda case: case["name"]
+)
 def test_canonical_json_bytes_keeps_its_recorded_out_of_contract_behaviour(case):
     value = json.loads(case["json"])
     recorded = case["python_canonical_json_bytes"]

@@ -116,22 +116,6 @@ func newRunWakeValidator(client *aweb.Client, selfAlias string) runWakeResolver 
 	}
 }
 
-func resolveChatWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
-	selfAlias := ""
-	if client != nil && client.Client != nil {
-		selfAlias = handleFromAddress(client.Address())
-	}
-	return resolveChatWakeForAlias(ctx, client, selfAlias, evt)
-}
-
-func resolveMailWake(ctx context.Context, client *aweb.Client, evt awid.AgentEvent) (runWakeResolution, error) {
-	selfAlias := ""
-	if client != nil && client.Client != nil {
-		selfAlias = handleFromAddress(client.Address())
-	}
-	return resolveMailWakeForAlias(ctx, client, selfAlias, evt)
-}
-
 func resolveChatWakeForAlias(ctx context.Context, client *aweb.Client, selfAlias string, evt awid.AgentEvent) (runWakeResolution, error) {
 	sessionID := strings.TrimSpace(evt.SessionID)
 	if sessionID == "" {

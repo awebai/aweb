@@ -1,0 +1,64 @@
+{
+  "measure": "One green receipt, vm-cc7cf483e850489387faf6d878bc6312 (aweb 6a460770f9, 12-CPU merak guest, every lane at once). CPU-seconds: the cumulative usage_usec of every container's cpu.stat in its memory.jsonl, attributed to a lane by name (its runner, Postgres and Redis, and the containers it started) and to a unit suite by its isolated runner and the services in that runner's network namespace. The run's shared builder (509) and static (201) are in no lane; 60 CPU-s in one unlabelled sibling (aweb-cross-reg) are attributed to none. Short-lived containers between samples are undercounted. Workers and elapsed seconds are that run's: each lane other than unit ran one process; unit's suites ran in its plan (test-server 4 xdist workers, test-naapp-lib serial, the serial suites in a pool of 3 slots). A part's workers per busy CPU is workers x elapsed / CPU-seconds (the pool's: its slot-seconds / CPU-seconds).",
+  "receipt": "vm-cc7cf483e850489387faf6d878bc6312",
+  "lanes": {
+    "checks": 1333,
+    "user-paths": 252,
+    "unit": 9576,
+    "artifacts": 244,
+    "integration": 1255
+  },
+  "lane_runs": {
+    "checks": {
+      "workers": 1,
+      "elapsed_seconds": 1581
+    },
+    "user-paths": {
+      "workers": 1,
+      "elapsed_seconds": 147
+    },
+    "unit": {
+      "elapsed_seconds": 2436
+    },
+    "artifacts": {
+      "workers": 1,
+      "elapsed_seconds": 326
+    },
+    "integration": {
+      "workers": 1,
+      "elapsed_seconds": 2084
+    }
+  },
+  "unit_suites": {
+    "test-server": 4872,
+    "test-awid": 386,
+    "test-key-holder": 44,
+    "test-naapp-lib": 1194,
+    "test-naapp-folio": 54,
+    "test-naapp-library": 52,
+    "test-naapp-secrets": 1508,
+    "test-naapp-logs": 258,
+    "test-cli": 678,
+    "test-cli-auth-v2": 70,
+    "_candidate-unit-channel": 26,
+    "_candidate-unit-channel-core": 177,
+    "_candidate-unit-pi": 25
+  },
+  "measured_in": {
+    "test-key-holder": "vm-fc264aa378364cb082f1e2d72366c868 (aweb f7a5b9ccbe, 12-CPU merak guest, every lane at once), measured as the rest of this file: the cumulative usage_usec of its isolated runner and the PostgreSQL and Redis in that runner's network namespace, 44.1 CPU-s. Every other figure comes from the receipt above."
+  },
+  "unit_runs": {
+    "test-server": {
+      "workers": 4,
+      "elapsed_seconds": 1636
+    },
+    "test-naapp-lib": {
+      "workers": 1,
+      "elapsed_seconds": 1265
+    },
+    "serial": {
+      "workers": 3,
+      "slot_seconds": 3721
+    }
+  }
+}

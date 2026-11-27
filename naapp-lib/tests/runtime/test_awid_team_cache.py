@@ -29,7 +29,9 @@ TEAM_ID = "backend:example.com"
 
 
 def history_cache(registry, token=SERVICE_TOKEN) -> AWIDTeamCache:
-    return AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, service_token=token, transport=registry.transport)
+    return AWIDTeamCache(
+        registry_url=REGISTRY_URL, ttl_seconds=60, service_token=token, transport=registry.transport
+    )
 
 
 def status_cache(registry) -> AWIDTeamCache:
@@ -97,20 +99,31 @@ async def test_history_finds_the_certificate_beyond_the_first_page(registry, tea
 
 
 async def test_history_refuses_a_certificate_awid_never_published(registry, team):
-    unpublished = Member(team_id=TEAM_ID, team_key=team.team_key, certificate_id="unpublished", alias="ghost")
-    async with relying_app(registry, public_origin=ORIGIN, cache=history_cache(registry)) as (client, _):
+    unpublished = Member(
+        team_id=TEAM_ID, team_key=team.team_key, certificate_id="unpublished", alias="ghost"
+    )
+    async with relying_app(registry, public_origin=ORIGIN, cache=history_cache(registry)) as (
+        client,
+        _,
+    ):
         assert (await client.get("/v1/items", headers=get_items(unpublished))).status_code == 401
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
 
 
 async def test_history_facts_are_reused_for_at_most_a_minute(registry, team):
-    cache = AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, service_token=SERVICE_TOKEN,
-                          transport=registry.transport)
+    cache = AWIDTeamCache(
+        registry_url=REGISTRY_URL,
+        ttl_seconds=60,
+        service_token=SERVICE_TOKEN,
+        transport=registry.transport,
+    )
     await cache.get(TEAM_ID, "target")
     assert 0 < cache._cache[TEAM_ID].expires_at - time.monotonic_ns() <= seconds_to_ns(60)
 
 
-async def test_history_page_bound_fails_closed_without_caching_partial_facts(registry, team, history_clock):
+async def test_history_page_bound_fails_closed_without_caching_partial_facts(
+    registry, team, history_clock
+):
     await add_filler_certificates(registry, team, 201, 19999)
     complete = history_cache(registry)
     async with relying_app(registry, public_origin=ORIGIN, cache=complete) as (client, _):
@@ -188,20 +201,40 @@ def later_page_fault(kind: str, first_cursor: dict):
                 prior["issued_at"] = "2025-12-31T00:00:00+00:00"
                 payload["next_cursor"] = encode_cursor(prior)
             else:
-                payload["next_cursor"] = {"missing_cursor": None, "blank_cursor": " ", "invalid_cursor": 1}.get(
-                    kind, first_cursor["value"]
-                )
+                payload["next_cursor"] = {
+                    "missing_cursor": None,
+                    "blank_cursor": " ",
+                    "invalid_cursor": 1,
+                }.get(kind, first_cursor["value"])
         response._content = json.dumps(payload).encode()
 
     return fault
 
 
-@pytest.mark.parametrize("kind", [
-    "payload", "json", "missing_has_more", "has_more", "certificates", "row", "missing_revoked_at",
-    "missing_certificate_id", "oversized_page", "missing_cursor", "repeated_cursor", "blank_cursor",
-    "invalid_cursor", "cycling_cursor", "http", "transport",
-])
-async def test_history_later_page_fault_fails_closed_then_recovers(registry, team, kind, caplog, history_clock):
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "payload",
+        "json",
+        "missing_has_more",
+        "has_more",
+        "certificates",
+        "row",
+        "missing_revoked_at",
+        "missing_certificate_id",
+        "oversized_page",
+        "missing_cursor",
+        "repeated_cursor",
+        "blank_cursor",
+        "invalid_cursor",
+        "cycling_cursor",
+        "http",
+        "transport",
+    ],
+)
+async def test_history_later_page_fault_fails_closed_then_recovers(
+    registry, team, kind, caplog, history_clock
+):
     cache = history_cache(registry)
     first_cursor: dict = {}
     registry.transport.fault = later_page_fault(kind, first_cursor)
@@ -232,7 +265,9 @@ async def test_history_private_denial_is_classified(registry, team):
 
 async def test_history_with_a_wrong_token_reads_public_but_not_private_teams(registry, team):
     cache = history_cache(registry, token="not-the-registry-service-token-32-bytes")
-    visibility = (await registry.db.fetch_one("SELECT visibility FROM {{tables.teams}}"))["visibility"]
+    visibility = (await registry.db.fetch_one("SELECT visibility FROM {{tables.teams}}"))[
+        "visibility"
+    ]
     if visibility == "public":
         assert (await cache.get(TEAM_ID, "target")).team_did_key == team.team_did_key
         return
@@ -242,14 +277,19 @@ async def test_history_with_a_wrong_token_reads_public_but_not_private_teams(reg
     assert caught.value.detail["code"] == "team_private_unreadable"
 
 
-@pytest.mark.parametrize("status,body,expected", [
-    (403, {"detail": {"code": "other"}}, 503),
-    (403, {"detail": "team_private"}, 503),
-    (403, None, 503),
-    (500, {"detail": {"code": "team_private"}}, 503),
-    (404, {"detail": "Team not found"}, 401),
-])
-async def test_history_team_lookup_refusals_map_to_distinct_outcomes(registry, team, status, body, expected):
+@pytest.mark.parametrize(
+    "status,body,expected",
+    [
+        (403, {"detail": {"code": "other"}}, 503),
+        (403, {"detail": "team_private"}, 503),
+        (403, None, 503),
+        (500, {"detail": {"code": "team_private"}}, 503),
+        (404, {"detail": "Team not found"}, 401),
+    ],
+)
+async def test_history_team_lookup_refusals_map_to_distinct_outcomes(
+    registry, team, status, body, expected
+):
     def fault(request, response):
         if request.url.path.endswith("/teams/backend"):
             response.status_code = status
@@ -277,7 +317,9 @@ def team_lookups(registry, team_name="backend"):
     return [r for r in registry.transport.calls if r.url.path.endswith("/teams/" + team_name)]
 
 
-async def test_history_new_member_refreshes_before_the_cached_team_expires(registry, team, history_clock):
+async def test_history_new_member_refreshes_before_the_cached_team_expires(
+    registry, team, history_clock
+):
     cache = history_cache(registry)
     newcomer = Member(
         team_id=TEAM_ID, team_key=team.team_key, certificate_id="new-member", alias="new-member"
@@ -293,7 +335,9 @@ async def test_history_new_member_refreshes_before_the_cached_team_expires(regis
         assert all(response.status_code == 200 for response in responses), [
             response.text for response in responses
         ]
-        assert all(response.json()["certificate_id"] == newcomer.certificate_id for response in responses)
+        assert all(
+            response.json()["certificate_id"] == newcomer.certificate_id for response in responses
+        )
     facts = cache._cache[TEAM_ID]
     assert facts is not old_facts and newcomer.certificate_id in facts.published_certificate_ids
     assert len(team_lookups(registry)) == 2
@@ -308,10 +352,17 @@ async def test_history_new_member_refreshes_before_the_cached_team_expires(regis
 
 @pytest.mark.parametrize("warm", [False, True])
 @pytest.mark.parametrize("history_clock", [1_000_000_000_000, 1_021_100_000_000], indirect=True)
-async def test_history_unknown_id_flood_coalesces_one_refresh_per_window(registry, team, history_clock, warm):
+async def test_history_unknown_id_flood_coalesces_one_refresh_per_window(
+    registry, team, history_clock, warm
+):
     cache = history_cache(registry)
     ghosts = [
-        Member(team_id=TEAM_ID, team_key=team.team_key, certificate_id=f"unknown-{i}", alias=f"unknown-{i}")
+        Member(
+            team_id=TEAM_ID,
+            team_key=team.team_key,
+            certificate_id=f"unknown-{i}",
+            alias=f"unknown-{i}",
+        )
         for i in range(16)
     ]
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
@@ -322,7 +373,9 @@ async def test_history_unknown_id_flood_coalesces_one_refresh_per_window(registr
             *(client.get("/v1/items", headers=get_items(member)) for member in ghosts)
         )
         assert all(response.status_code == 401 for response in responses)
-        assert len(team_lookups(registry)) == initial_loads + 1  # At most one lookup for the unknown wave.
+        assert (
+            len(team_lookups(registry)) == initial_loads + 1
+        )  # At most one lookup for the unknown wave.
         history_clock[0] += seconds_to_ns(4)
         assert (await client.get("/v1/items", headers=get_items(ghosts[0]))).status_code == 401
         assert len(team_lookups(registry)) == initial_loads + 1
@@ -394,7 +447,9 @@ async def test_history_nonexistent_team_flood_does_not_retain_refresh_state(regi
     assert not cache._team_refresh_errors
 
 
-async def test_history_unknown_refresh_failure_never_authorizes_or_renews_old_facts(registry, team, history_clock):
+async def test_history_unknown_refresh_failure_never_authorizes_or_renews_old_facts(
+    registry, team, history_clock
+):
     cache = history_cache(registry)
     old_facts = await cache.get(TEAM_ID, team.certificate_id)
     history_clock[0] += seconds_to_ns(1)
@@ -441,7 +496,9 @@ async def test_status_path_verifies_without_a_token_and_reuses_for_at_most_a_min
 
 
 async def test_status_path_refuses_an_unpublished_certificate(registry, team):
-    unpublished = Member(team_id=TEAM_ID, team_key=team.team_key, certificate_id="unpublished", alias="ghost")
+    unpublished = Member(
+        team_id=TEAM_ID, team_key=team.team_key, certificate_id="unpublished", alias="ghost"
+    )
     cache = status_cache(registry)
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
         assert (await client.get("/v1/items", headers=get_items(unpublished))).status_code == 401
@@ -456,14 +513,18 @@ async def test_status_cache_is_per_certificate(registry, team):
         await cache.get(TEAM_ID, "unpublished")
     assert caught.value.status_code == 401
     assert [r.url.path.rsplit("/", 2)[-2] for r in registry.transport.calls] == [
-        "target", "unpublished"]
+        "target",
+        "unpublished",
+    ]
 
 
 async def test_without_a_certificate_id_the_team_key_is_a_plain_read(registry, team):
     """A team-key read without a caller certificate (an owner act's verifier)
     is a plain read: a public team answers it, a private one is refused,
     naming the credential that would read it."""
-    visibility = (await registry.db.fetch_one("SELECT visibility FROM {{tables.teams}}"))["visibility"]
+    visibility = (await registry.db.fetch_one("SELECT visibility FROM {{tables.teams}}"))[
+        "visibility"
+    ]
     if visibility == "public":
         assert (await status_cache(registry).get(TEAM_ID)).team_did_key == team.team_did_key
         return
@@ -497,17 +558,30 @@ async def test_status_refresh_failure_has_no_stale_fallback(registry, team, kind
     assert (await cache.get(TEAM_ID, "target")).team_did_key == team.team_did_key
 
 
-@pytest.mark.parametrize("change", [
-    "nonobject", "missing_key", "invalid_key", "wrong_team", "missing_status", "bad_status",
-    "missing_revoked_at", "active_with_revocation", "revoked_without_time", "bad_time", "naive_time", "extra",
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "nonobject",
+        "missing_key",
+        "invalid_key",
+        "wrong_team",
+        "missing_status",
+        "bad_status",
+        "missing_revoked_at",
+        "active_with_revocation",
+        "revoked_without_time",
+        "bad_time",
+        "naive_time",
+        "extra",
+    ],
+)
 async def test_malformed_status_is_unavailable_and_not_cached(registry, team, change):
     def fault(request, response):
         payload = response.json()
         if change == "nonobject":
             payload = []
         elif change.startswith("missing_"):
-            payload.pop({"missing_key": "team_did_key"}.get(change, change[len("missing_"):]))
+            payload.pop({"missing_key": "team_did_key"}.get(change, change[len("missing_") :]))
         elif change == "invalid_key":
             payload["team_did_key"] = "garbage"
         elif change == "wrong_team":
@@ -518,8 +592,11 @@ async def test_malformed_status_is_unavailable_and_not_cached(registry, team, ch
             payload["revoked_at"] = "2026-01-01T00:00:00Z"
         elif change in ("revoked_without_time", "bad_time", "naive_time"):
             payload["status"] = "revoked"
-            payload["revoked_at"] = {"revoked_without_time": None, "bad_time": "yesterday",
-                                     "naive_time": "2026-01-01T00:00:00"}[change]
+            payload["revoked_at"] = {
+                "revoked_without_time": None,
+                "bad_time": "yesterday",
+                "naive_time": "2026-01-01T00:00:00",
+            }[change]
         else:
             payload["alias"] = "private-member"
         response._content = json.dumps(payload).encode()

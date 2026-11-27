@@ -35,7 +35,10 @@ async def _verified_hosted_key(db, *, agent_id, did, stable_id, key_id, invalid_
         return False
     try:
         assertion = json.loads(row["assertion_canonical"])
-        if not isinstance(assertion, dict) or assertion.get("custody") != "hosted_custodial":
+        if (
+            not isinstance(assertion, dict)
+            or assertion.get("custody") != "hosted_custodial"
+        ):
             return False
         assertion["signature"] = row["assertion_signature"]
         validate_encryption_key_assertion(
@@ -47,7 +50,9 @@ async def _verified_hosted_key(db, *, agent_id, did, stable_id, key_id, invalid_
         if assertion["encryption_key_id"] != key_id:
             raise ValueError("stored assertion does not bind the targeted key")
     except (ValueError, TypeError) as exc:
-        logger.warning("Invalid encryption-key assertion for actor %s", agent_id, exc_info=True)
+        logger.warning(
+            "Invalid encryption-key assertion for actor %s", agent_id, exc_info=True
+        )
         raise FederationAuthorityError(invalid_reason) from exc
     return True
 
@@ -71,10 +76,16 @@ async def require_non_custodial_recipients(
             wrap.get("sender_encryption_key_id") if isinstance(wrap, dict) else None
             for wrap in wraps
         ]
-        if any(not isinstance(key, str) or not key for key in keys) or len(set(keys)) != 1:
+        if (
+            any(not isinstance(key, str) or not key for key in keys)
+            or len(set(keys)) != 1
+        ):
             raise FederationAuthorityError("federation_envelope_invalid")
         sender_ref = envelope.get("from")
-        if not isinstance(sender_ref, dict) or sender_ref.get("encryption_key_id") != keys[0]:
+        if (
+            not isinstance(sender_ref, dict)
+            or sender_ref.get("encryption_key_id") != keys[0]
+        ):
             raise FederationAuthorityError("federation_envelope_invalid")
         if await _verified_hosted_key(
             db,
@@ -90,9 +101,15 @@ async def require_non_custodial_recipients(
     if not isinstance(references, list):
         return  # Malformed envelopes still go through the shared validator.
     for recipient in recipients:
-        did = str(recipient.get("did_key") or recipient.get("current_did_key") or "").strip()
+        did = str(
+            recipient.get("did_key") or recipient.get("current_did_key") or ""
+        ).strip()
         reference = next(
-            (item for item in references if isinstance(item, dict) and item.get("did") == did),
+            (
+                item
+                for item in references
+                if isinstance(item, dict) and item.get("did") == did
+            ),
             None,
         )
         if not reference:

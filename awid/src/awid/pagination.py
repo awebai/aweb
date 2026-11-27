@@ -47,7 +47,9 @@ def decode_cursor(cursor: Optional[str]) -> Optional[dict[str, Any]]:
 
     # Validate size before decoding
     if len(cursor) > MAX_CURSOR_SIZE_BYTES:
-        raise ValueError(f"Invalid cursor: exceeds maximum size of {MAX_CURSOR_SIZE_BYTES} bytes")
+        raise ValueError(
+            f"Invalid cursor: exceeds maximum size of {MAX_CURSOR_SIZE_BYTES} bytes"
+        )
 
     try:
         # Over-pad to let base64 library handle any valid padding

@@ -40,7 +40,9 @@ async def admitted_world(shared_test_pool, monkeypatch, tmp_path_factory):
     certificates = make_certificates(
         tmp_path_factory.mktemp("hook-root-tls"), ["hook-root.test"], [host]
     )
-    async with privacy_stack(shared_test_pool, monkeypatch, tls=(host, certificates)) as env:
+    async with privacy_stack(
+        shared_test_pool, monkeypatch, tls=(host, certificates)
+    ) as env:
         actor = env.actors["alice"]
         certificate = decode_team_certificate(actor.certificate)
         name, domain = TEAM.split(":", 1)
@@ -67,7 +69,9 @@ async def admitted_world(shared_test_pool, monkeypatch, tmp_path_factory):
             # The lower R5 auth owner takes its native State. Forward the real
             # signed request, keeping its cached body and all signed headers.
             scope = {**request.scope, "app": env.app}
-            identity = await authenticate(Request(scope, receive=request.receive), db_infra)
+            identity = await authenticate(
+                Request(scope, receive=request.receive), db_infra
+            )
             assert identity.agent_id == str(actor.id)
             assert identity.team_id == TEAM
             assert identity.did_key == actor.did
@@ -143,7 +147,9 @@ async def test_selected_root_activates_and_revokes_actual_owner_act(
     root = _root(env, selected)
     await _install(env.db, team_id=TEAM)
     binding, _ = await _bindings(env, team_id=TEAM)
-    async with aclosing(RegistryClient(registry_url="http://unselected.invalid")) as unselected:
+    async with aclosing(
+        RegistryClient(registry_url="http://unselected.invalid")
+    ) as unselected:
         if shadow:
             root.state.awid_registry_client = unselected
         else:
@@ -164,12 +170,20 @@ async def test_selected_root_activates_and_revokes_actual_owner_act(
                 assert response.json()["state"] == expected
                 assert response.json()["binding_id"] == str(binding.binding_id)
     rows = await list_app_bindings(env.db, team_id=TEAM, app_id="logs")
-    assert next(row for row in rows if row.binding_id == binding.binding_id).state == "revoked"
-    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 2
+    assert (
+        next(row for row in rows if row.binding_id == binding.binding_id).state
+        == "revoked"
+    )
+    assert (
+        await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}")
+        == 2
+    )
 
 
 @pytest.mark.asyncio
-async def test_missing_selected_root_refuses_without_using_outer_registry(admitted_world):
+async def test_missing_selected_root_refuses_without_using_outer_registry(
+    admitted_world,
+):
     env = admitted_world
     root = _root(env, None)
     root.state.awid_registry_client = env.app.state.awid_registry_client
@@ -194,4 +208,7 @@ async def test_missing_selected_root_refuses_without_using_outer_registry(admitt
     )
     rows = await list_app_bindings(env.db, team_id=TEAM, app_id="logs")
     assert all(row.state == "pending" for row in rows)
-    assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}") == 0
+    assert (
+        await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.owner_act_nonces}}")
+        == 0
+    )

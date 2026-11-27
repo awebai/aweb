@@ -279,7 +279,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (output idCreateOu
 		return idCreateOutput{}, err
 	}
 
-	if err := awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
+	if err := saveWorktreeIdentityWithRegistryOrigin(plan.IdentityPath, &awconfig.WorktreeIdentity{
 		DID:            plan.DIDKey,
 		StableID:       plan.DIDAW,
 		Address:        plan.Address,
@@ -397,20 +397,6 @@ func standaloneCreateEncryption(identity *awconfig.ResolvedIdentity, key ed25519
 		return nil, nil, nil, "", err
 	}
 	return record, assertion, state, path, nil
-}
-
-// idCreateTargetPaths are where the identity and its signing key go: the
-// identity home when one is selected, else the working directory's .aw.
-func idCreateTargetPaths(workingDir string, opts idCreateOptions) (string, string, error) {
-	if opts.IdentityHome == nil {
-		return awconfig.WorktreeIdentityPath(workingDir), awconfig.WorktreeSigningKeyPath(workingDir), nil
-	}
-	identityPath, err := awconfig.IdentityHomePath(*opts.IdentityHome, "identity.yaml")
-	if err != nil {
-		return "", "", err
-	}
-	signingKeyPath, err := awconfig.IdentityHomePath(*opts.IdentityHome, "signing.key")
-	return identityPath, signingKeyPath, err
 }
 
 func standaloneCreateSelection(workingDir string, opts idCreateOptions) (standaloneCreateResume, error) {
@@ -772,10 +758,11 @@ func resolveOrCreateControllerKey(domain, registryURL, createdAt string) (ed2551
 				return nil, "", false, err
 			}
 			if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
-				Domain:        domain,
-				ControllerDID: controllerDID,
-				RegistryURL:   registryURL,
-				CreatedAt:     createdAt,
+				Domain:                 domain,
+				ControllerDID:          controllerDID,
+				RegistryURL:            registryURL,
+				RegistryOperatorOrigin: operatorRegistryOrigin(registryURL, ""),
+				CreatedAt:              createdAt,
 			}); err != nil {
 				return nil, "", false, err
 			}
@@ -792,10 +779,11 @@ func resolveOrCreateControllerKey(domain, registryURL, createdAt string) (ed2551
 		return nil, "", false, err
 	}
 	if err := awconfig.SaveControllerMeta(domain, &awconfig.ControllerMeta{
-		Domain:        domain,
-		ControllerDID: controllerDID,
-		RegistryURL:   registryURL,
-		CreatedAt:     createdAt,
+		Domain:                 domain,
+		ControllerDID:          controllerDID,
+		RegistryURL:            registryURL,
+		RegistryOperatorOrigin: operatorRegistryOrigin(registryURL, ""),
+		CreatedAt:              createdAt,
 	}); err != nil {
 		// Clean up the key file so the next retry starts fresh
 		keyPath, _ := awconfig.ControllerKeyPath(domain)

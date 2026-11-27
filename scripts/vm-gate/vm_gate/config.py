@@ -42,7 +42,6 @@ def load(path, repo):
         "pull_seconds",
         "cleanup_seconds",
         "margin_seconds",
-        "lint_timeout_seconds",
     ]:
         if key in config and (
             type(config[key]) not in {int, float}

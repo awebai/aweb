@@ -19,7 +19,7 @@ five vectors:
 
 The strict catalog reader is `aweb_naapp.hooks.catalog`
 (`naapp-lib/src/aweb_naapp/hooks/catalog.py`). The envelope and credential
-authority is the Go package `cli/go/hookevent`, which regenerates both of
+authority is the Go package `cli/go/internal/hookevent`, which regenerates both of
 their vectors byte for byte. The Python reading is `aweb_naapp.hooks.envelope`
 and `aweb_naapp.hooks.delivery`, behind the dependency-light `hooks` extra, and
 passes the same vectors with the same refusal codes. The design and its rationale are
@@ -848,7 +848,7 @@ The catalog lists them under `excluded_core_events`.
 ### `post-command-hook`
 
 **Open (aweb-acgh.16.17):** `aw` emits no client events. The catalog and the
-envelope library (`cli/go/hookevent`) are on main.
+envelope library (`cli/go/internal/hookevent`) are on main.
 
 `command` is the canonical command path, such as `aw id rotate-key`. `flags`
 lists flag names only, never values. `exit_status` is the command's exit status.

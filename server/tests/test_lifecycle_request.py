@@ -114,7 +114,9 @@ async def test_native_lifecycle_writers_reject_missing_team_before_sql(team_id):
 
 @pytest.mark.asyncio
 async def test_planner_refusal_is_always_reported_as_a_dry_run():
-    request = LifecycleCascadeRequest(operation="cleanup_agent_coordination_state", actor=ACTOR)
+    request = LifecycleCascadeRequest(
+        operation="cleanup_agent_coordination_state", actor=ACTOR
+    )
     result = await plan_lifecycle_cascade(None, request, registry_client=None)
     assert [error.code for error in result.errors] == ["missing_workspace_scope_target"]
     assert result.dry_run is True

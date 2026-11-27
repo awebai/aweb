@@ -33,7 +33,8 @@ class ExampleSettings(NaappSettings):
 def _runtime(tmp_path: Path, database_url: str) -> NaappRuntime:
     manifest_path = tmp_path / "aweb-app.json"
     write_manifest_file(
-        manifest_path, {"manifest_version": 1, "app": {"id": "example", "origin": ORIGIN}, "tools": []}
+        manifest_path,
+        {"manifest_version": 1, "app": {"id": "example", "origin": ORIGIN}, "tools": []},
     )
     migrations = tmp_path / "migrations"
     migrations.mkdir()
@@ -58,7 +59,9 @@ async def _results(runtime: NaappRuntime) -> dict[str, tuple[bool, dict]]:
     }
 
 
-async def test_the_database_and_an_empty_outbox_are_healthy(tmp_path: Path, database_url: str) -> None:
+async def test_the_database_and_an_empty_outbox_are_healthy(
+    tmp_path: Path, database_url: str
+) -> None:
     runtime = _runtime(tmp_path, database_url)
     app = FastAPI(lifespan=runtime.lifespan)
     async with app.router.lifespan_context(app):
@@ -118,9 +121,7 @@ async def test_the_probes_follow_the_database(
     runtime = _runtime(tmp_path, database_url)
     app = FastAPI(lifespan=runtime.lifespan)
     health.mount_health(app, runtime.settings, checks=runtime.health_checks())
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url=ORIGIN
-    ) as client:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
         async with app.router.lifespan_context(app):
             for path in ("/live", "/ready", "/health"):
                 assert (await client.get(path)).status_code == 200, path
@@ -171,7 +172,7 @@ class ClosingRelay:
 
     def hold_closes(self) -> list[int]:
         """Hold the close of every connection open now; returns their local
-        ports toward the server, which PostgreSQL reports as ``client_port``."""
+        ports toward the server, one per held connection."""
         for held in self._open.values():
             held.set()
         return list(self._open)
@@ -297,19 +298,27 @@ async def test_the_lifespan_ends_after_the_database_drops_its_connections_and_a_
         running = AsyncExitStack()
         await running.enter_async_context(app.router.lifespan_context(app))
         try:
-            # The app's own backends: the ones connected through the relay.
+            # The app's own backends: the ones connected through the relay. The
+            # server knows them by the name the app's pool sends; a published
+            # port or NAT between the relay and the server rewrites the relay's
+            # source ports, so those cannot name them.
             held = relay.hold_closes()
             assert held
+            pool_config = runtime.db().config
+            assert pool_config is not None
+            app_name = pool_config.get_server_settings()["application_name"]
             admin = await asyncpg.connect(database_url)
             try:
                 terminated = await admin.fetch(
                     "SELECT pg_terminate_backend(pid) AS terminated FROM pg_stat_activity"
-                    " WHERE datname = current_database() AND client_port = ANY($1::int[])",
-                    held,
+                    " WHERE datname = current_database() AND application_name = $1",
+                    app_name,
                 )
             finally:
                 await admin.close()
-            assert [row["terminated"] for row in terminated] == [True] * len(held)
+            assert [row["terminated"] for row in terminated] == [True] * len(held), (
+                f"backends named {app_name!r}: expected the {len(held)} the relay holds"
+            )
             async with asyncio.timeout(SHUTDOWN_BOUND_SECONDS):
                 await relay.wait_for_held_closes(len(held))
             # The relay holding the close decides the outcome; this wait only

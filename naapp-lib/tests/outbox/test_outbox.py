@@ -492,7 +492,11 @@ async def test_an_unresolvable_event_backs_off_up_to_the_cap(db) -> None:
             db, channel="default", resolver=Targets(None), transport=Scripted({}), policy=policy
         )
         delays.append(await delay())
-    assert delays[:3] == [pytest.approx(5, abs=1), pytest.approx(10, abs=1), pytest.approx(20, abs=1)]
+    assert delays[:3] == [
+        pytest.approx(5, abs=1),
+        pytest.approx(10, abs=1),
+        pytest.approx(20, abs=1),
+    ]
     assert delays[-1] == pytest.approx(30, abs=1)
 
 
@@ -975,7 +979,9 @@ def test_events_default_to_the_default_channel() -> None:
 # --- Retention of drained events ----------------------------------------------
 
 
-async def _deliver(db: AsyncDatabaseManager, event: OutboxEvent, outcomes: dict[str, object]) -> None:
+async def _deliver(
+    db: AsyncDatabaseManager, event: OutboxEvent, outcomes: dict[str, object]
+) -> None:
     """Enqueue the event and drain it once, to the targets ``outcomes`` names."""
     async with db.transaction() as tx:
         await enqueue(tx, event)
@@ -1072,7 +1078,12 @@ async def test_an_identical_enqueue_after_its_event_was_pruned_is_another_event(
         {"a": Acked("delivered", None), "b": Unacceptable("too_large")},
         {"a": Acked("delivered", None), "b": Conflict()},
     ],
-    ids=["unresolved", "one-target-undelivered", "rejected-unacknowledged", "conflict-unacknowledged"],
+    ids=[
+        "unresolved",
+        "one-target-undelivered",
+        "rejected-unacknowledged",
+        "conflict-unacknowledged",
+    ],
 )
 async def test_an_event_that_is_not_drained_is_kept_at_any_age(db, outcomes) -> None:
     held, recent = _event(b"held"), _event(b"recent")

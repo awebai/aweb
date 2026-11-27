@@ -9,7 +9,6 @@ from awid.a2a_publication import (
     A2A_AUTHORITY_SELF_DELEGATION,
     A2A_AUTHORITY_SELF_IDENTITY_KEY,
     A2A_CARD_DIGEST_ALG_SHA256,
-    A2A_CONFLICT_CODES,
     A2A_CUSTODY_DELEGATED_BRIDGE,
     A2A_DELEGATION_OPERATION,
     A2A_PUBLICATION_OPERATION,
@@ -38,7 +37,12 @@ _CARD_DIGEST = "sha256:1af084d5252fdf3bb11a0bc93ca8b257d88325152c02a9f336a179e73
 
 
 def _contract_timestamp(value: datetime) -> str:
-    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        value.astimezone(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _valid_route_times() -> dict[str, str]:
@@ -57,9 +61,14 @@ def test_a2a_publication_vector_canonical_bytes_and_conflict_codes():
         )
     )
 
-    assert canonical_json_bytes(vector["publication"]["payload"]).decode("utf-8") == vector["publication"]["canonical"]
-    assert canonical_json_bytes(vector["delegation"]["payload"]).decode("utf-8") == vector["delegation"]["canonical"]
-    assert vector["conflict_codes"] == list(A2A_CONFLICT_CODES)
+    assert (
+        canonical_json_bytes(vector["publication"]["payload"]).decode("utf-8")
+        == vector["publication"]["canonical"]
+    )
+    assert (
+        canonical_json_bytes(vector["delegation"]["payload"]).decode("utf-8")
+        == vector["delegation"]["canonical"]
+    )
 
     delegation_digest = signed_assertion_digest(
         vector["delegation"]["canonical"].encode("utf-8"),
@@ -76,8 +85,12 @@ def test_a2a_route_id_validation_matches_gateway_path_safe_subset():
             validate_route_id(route_id)
 
 
-async def _register_namespace(client, signing_key, controller_did, domain="example.com"):
-    headers = build_signed_headers(signing_key, controller_did, domain=domain, operation="register")
+async def _register_namespace(
+    client, signing_key, controller_did, domain="example.com"
+):
+    headers = build_signed_headers(
+        signing_key, controller_did, domain=domain, operation="register"
+    )
     resp = await client.post("/v1/namespaces", json={"domain": domain}, headers=headers)
     assert resp.status_code == 200, resp.text
     return resp.json()
@@ -205,7 +218,12 @@ def _delegation_body(
             route_id="r_research",
             card_url="https://example.com/a2a/agents/r_research/agent-card.json",
             rpc_url="https://example.com/a2a/agents/r_research/rpc",
-            allowed_operations=("send_task", "receive_reply", "cancel_task", "serve_card"),
+            allowed_operations=(
+                "send_task",
+                "receive_reply",
+                "cancel_task",
+                "serve_card",
+            ),
             card_digest_alg=A2A_CARD_DIGEST_ALG_SHA256,
             card_digest=card_digest,
             custody_mode=A2A_CUSTODY_DELEGATED_BRIDGE,
@@ -221,7 +239,9 @@ def _delegation_body(
         )
     )
     canonical = a2a_delegation_canonical(fields)
-    signature = signature_override or sign_message(seed["identity_signing_key"], canonical)
+    signature = signature_override or sign_message(
+        seed["identity_signing_key"], canonical
+    )
     return {
         **json.loads(canonical.decode("utf-8")),
         "signature": signature,
@@ -246,7 +266,9 @@ def _publication_body(
             None
             if direct
             else signed_assertion_digest(
-                canonical_json_bytes({k: v for k, v in delegation_body.items() if k != "signature"}),
+                canonical_json_bytes(
+                    {k: v for k, v in delegation_body.items() if k != "signature"}
+                ),
                 delegation_body["signature"],
             )
         )
@@ -263,7 +285,9 @@ def _publication_body(
             rpc_url=rpc_url,
             route_id="r_research",
             tenant=None,
-            gateway_identity=seed["identity_did_aw"] if direct else seed["gateway_did_aw"],
+            gateway_identity=seed["identity_did_aw"]
+            if direct
+            else seed["gateway_did_aw"],
             delegation_id=None if direct else "del_test_01",
             delegation_digest=delegation_digest,
             card_digest_alg=A2A_CARD_DIGEST_ALG_SHA256,
@@ -287,8 +311,12 @@ def _publication_body(
 
 async def _counts(awid_db_infra) -> tuple[int, int]:
     db = awid_db_infra.get_manager("aweb")
-    delegations = await db.fetch_one("SELECT COUNT(*) AS count FROM {{tables.a2a_bridge_delegations}}")
-    publications = await db.fetch_one("SELECT COUNT(*) AS count FROM {{tables.a2a_route_publications}}")
+    delegations = await db.fetch_one(
+        "SELECT COUNT(*) AS count FROM {{tables.a2a_bridge_delegations}}"
+    )
+    publications = await db.fetch_one(
+        "SELECT COUNT(*) AS count FROM {{tables.a2a_route_publications}}"
+    )
     return delegations["count"], publications["count"]
 
 
@@ -297,12 +325,16 @@ def _resign_publication(seed: dict, publication: dict, **changes: str) -> dict:
     payload.update(changes)
     return {
         **payload,
-        "signature": sign_message(seed["identity_signing_key"], canonical_json_bytes(payload)),
+        "signature": sign_message(
+            seed["identity_signing_key"], canonical_json_bytes(payload)
+        ),
     }
 
 
 @pytest.mark.asyncio
-async def test_a2a_delegation_publication_and_anonymous_lookup(client, awid_db_infra, controller_identity):
+async def test_a2a_delegation_publication_and_anonymous_lookup(
+    client, awid_db_infra, controller_identity
+):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     delegation = _delegation_body(seed)
     delegation_resp = await client.post("/v1/a2a/delegations", json=delegation)
@@ -325,7 +357,9 @@ async def test_a2a_delegation_publication_and_anonymous_lookup(client, awid_db_i
 
 
 @pytest.mark.asyncio
-async def test_a2a_expired_delegation_rejects_publication(client, awid_db_infra, controller_identity):
+async def test_a2a_expired_delegation_rejects_publication(
+    client, awid_db_infra, controller_identity
+):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     now = datetime.now(timezone.utc)
     delegation = _delegation_body(
@@ -345,7 +379,9 @@ async def test_a2a_expired_delegation_rejects_publication(client, awid_db_infra,
 
 
 @pytest.mark.asyncio
-async def test_a2a_publication_same_active_route_digest_is_idempotent(client, awid_db_infra, controller_identity):
+async def test_a2a_publication_same_active_route_digest_is_idempotent(
+    client, awid_db_infra, controller_identity
+):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     delegation = _delegation_body(seed)
     delegation_resp = await client.post("/v1/a2a/delegations", json=delegation)
@@ -401,7 +437,9 @@ async def test_a2a_publication_same_digest_metadata_change_conflicts(
 
 
 @pytest.mark.asyncio
-async def test_a2a_direct_hosted_publication_succeeds(client, awid_db_infra, controller_identity):
+async def test_a2a_direct_hosted_publication_succeeds(
+    client, awid_db_infra, controller_identity
+):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     publication = _publication_body(
         seed,
@@ -427,7 +465,9 @@ async def test_a2a_publication_missing_identity_key_history_fails_before_write(
 ):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     db = awid_db_infra.get_manager("aweb")
-    await db.execute("DELETE FROM {{tables.did_aw_log}} WHERE did_aw = $1", seed["identity_did_aw"])
+    await db.execute(
+        "DELETE FROM {{tables.did_aw_log}} WHERE did_aw = $1", seed["identity_did_aw"]
+    )
     publication = _publication_body(seed, None, direct=True)
 
     resp = await client.post("/v1/a2a/publications", json=publication)
@@ -462,12 +502,16 @@ async def test_a2a_publication_authority_error_names_expected_and_supplied(
 
 
 @pytest.mark.asyncio
-async def test_a2a_delegation_bad_signature_fails_before_writes(client, awid_db_infra, controller_identity):
+async def test_a2a_delegation_bad_signature_fails_before_writes(
+    client, awid_db_infra, controller_identity
+):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     other_signing_key, _ = generate_keypair()
     delegation = _delegation_body(
         seed,
-        signature_override=sign_message(other_signing_key, b"not the canonical payload"),
+        signature_override=sign_message(
+            other_signing_key, b"not the canonical payload"
+        ),
     )
 
     resp = await client.post("/v1/a2a/delegations", json=delegation)
@@ -478,7 +522,9 @@ async def test_a2a_delegation_bad_signature_fails_before_writes(client, awid_db_
 
 
 @pytest.mark.asyncio
-async def test_a2a_delegation_malformed_signature_fails_structured(client, awid_db_infra, controller_identity):
+async def test_a2a_delegation_malformed_signature_fails_structured(
+    client, awid_db_infra, controller_identity
+):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     delegation = _delegation_body(seed, signature_override="not*base64")
 
@@ -501,7 +547,9 @@ async def test_a2a_delegation_rejects_bad_signer_kid_and_extra_operations(
     bad_kid["signer_kid"] = bad_kid["signer_did"] + "#other"
     bad_kid_resp = await client.post("/v1/a2a/delegations", json=bad_kid)
     assert bad_kid_resp.status_code == 422, bad_kid_resp.text
-    assert bad_kid_resp.json()["detail"]["code"] == "a2a_payload_canonicalization_mismatch"
+    assert (
+        bad_kid_resp.json()["detail"]["code"] == "a2a_payload_canonicalization_mismatch"
+    )
 
     extra_op = _delegation_body(seed)
     extra_op["allowed_operations"] = [
@@ -513,7 +561,10 @@ async def test_a2a_delegation_rejects_bad_signer_kid_and_extra_operations(
     ]
     extra_op_resp = await client.post("/v1/a2a/delegations", json=extra_op)
     assert extra_op_resp.status_code == 422, extra_op_resp.text
-    assert extra_op_resp.json()["detail"]["code"] == "a2a_payload_canonicalization_mismatch"
+    assert (
+        extra_op_resp.json()["detail"]["code"]
+        == "a2a_payload_canonicalization_mismatch"
+    )
     assert await _counts(awid_db_infra) == (0, 0)
 
 
@@ -525,13 +576,17 @@ async def test_a2a_publication_rejects_bad_signer_kid_and_malformed_signature(
 ):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     delegation = _delegation_body(seed)
-    assert (await client.post("/v1/a2a/delegations", json=delegation)).status_code == 200
+    assert (
+        await client.post("/v1/a2a/delegations", json=delegation)
+    ).status_code == 200
 
     bad_kid = _publication_body(seed, delegation)
     bad_kid["signer_kid"] = bad_kid["signer_did"] + "#other"
     bad_kid_resp = await client.post("/v1/a2a/publications", json=bad_kid)
     assert bad_kid_resp.status_code == 422, bad_kid_resp.text
-    assert bad_kid_resp.json()["detail"]["code"] == "a2a_payload_canonicalization_mismatch"
+    assert (
+        bad_kid_resp.json()["detail"]["code"] == "a2a_payload_canonicalization_mismatch"
+    )
 
     malformed = _publication_body(seed, delegation)
     malformed["assertion_id"] = "pub_bad_signature"
@@ -553,7 +608,11 @@ async def test_a2a_publication_delegation_digest_mismatch_fails_before_write(
     delegation_resp = await client.post("/v1/a2a/delegations", json=delegation)
     assert delegation_resp.status_code == 200, delegation_resp.text
 
-    publication = _publication_body(seed, delegation, delegation_digest="sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    publication = _publication_body(
+        seed,
+        delegation,
+        delegation_digest="sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    )
     resp = await client.post("/v1/a2a/publications", json=publication)
 
     assert resp.status_code == 409, resp.text
@@ -608,7 +667,9 @@ async def test_a2a_terminal_delegation_allows_withdrawal_and_replacement(
     replacement = _publication_body(seed, None, direct=True, assertion_id="pub_test_02")
     blocked = await client.post("/v1/a2a/publications", json=replacement)
     assert blocked.status_code == 409, blocked.text
-    assert blocked.json()["detail"]["code"] == "a2a_publication_exists_different_gateway"
+    assert (
+        blocked.json()["detail"]["code"] == "a2a_publication_exists_different_gateway"
+    )
 
     withdrawal = _resign_publication(
         seed,
@@ -623,7 +684,9 @@ async def test_a2a_terminal_delegation_allows_withdrawal_and_replacement(
     assert await _counts(awid_db_infra) == (1, 1)
 
     if revocation_digest is not None:
-        wrong_reference = _resign_publication(seed, withdrawal, delegation_digest=revocation_digest)
+        wrong_reference = _resign_publication(
+            seed, withdrawal, delegation_digest=revocation_digest
+        )
         refused = await client.post("/v1/a2a/publications", json=wrong_reference)
         assert refused.status_code == 409, refused.text
         assert refused.json()["detail"] == {
@@ -648,11 +711,15 @@ async def test_a2a_terminal_delegation_allows_withdrawal_and_replacement(
 
     lookup = await client.get(lookup_url)
     assert lookup.status_code == 200, lookup.text
-    assert lookup.json()["a2a"]["publication_assertion_id"] == replacement["assertion_id"]
+    assert (
+        lookup.json()["a2a"]["publication_assertion_id"] == replacement["assertion_id"]
+    )
 
 
 @pytest.mark.asyncio
-async def test_a2a_live_delegation_withdrawal_rejects_digest_mismatch(client, awid_db_infra, controller_identity):
+async def test_a2a_live_delegation_withdrawal_rejects_digest_mismatch(
+    client, awid_db_infra, controller_identity
+):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     delegation = _delegation_body(seed)
     delegated = await client.post("/v1/a2a/delegations", json=delegation)
@@ -672,11 +739,15 @@ async def test_a2a_live_delegation_withdrawal_rejects_digest_mismatch(client, aw
     assert refused.json()["detail"]["code"] == "a2a_delegation_digest_mismatch"
     lookup = await client.get("/v1/namespaces/example.com/addresses/research/a2a")
     assert lookup.status_code == 200, lookup.text
-    assert lookup.json()["a2a"]["publication_assertion_id"] == publication["assertion_id"]
+    assert (
+        lookup.json()["a2a"]["publication_assertion_id"] == publication["assertion_id"]
+    )
 
 
 @pytest.mark.asyncio
-async def test_a2a_publication_feature_flag_disabled(client, awid_db_infra, controller_identity, monkeypatch):
+async def test_a2a_publication_feature_flag_disabled(
+    client, awid_db_infra, controller_identity, monkeypatch
+):
     seed = await _seed_address(client, awid_db_infra, controller_identity)
     delegation = _delegation_body(seed)
     monkeypatch.setenv("AWID_ENABLE_A2A_PUBLICATION", "0")
@@ -689,12 +760,14 @@ async def test_a2a_publication_feature_flag_disabled(client, awid_db_infra, cont
 
 
 def test_contract_time_parses_ascii_utc_seconds():
-    assert parse_contract_time("2026-01-20T10:00:00Z", field_name="expires_at") == datetime(
-        2026, 1, 20, 10, 0, tzinfo=timezone.utc
-    )
+    assert parse_contract_time(
+        "2026-01-20T10:00:00Z", field_name="expires_at"
+    ) == datetime(2026, 1, 20, 10, 0, tzinfo=timezone.utc)
 
 
-@pytest.mark.parametrize("value", ["\uff12\uff10\uff12\uff16-01-20T10:00:00Z", "2026-02-30T10:00:00Z"])
+@pytest.mark.parametrize(
+    "value", ["\uff12\uff10\uff12\uff16-01-20T10:00:00Z", "2026-02-30T10:00:00Z"]
+)
 def test_contract_time_refuses_non_ascii_digits_and_impossible_dates(value):
     with pytest.raises(ValueError):
         parse_contract_time(value, field_name="expires_at")

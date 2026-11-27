@@ -113,12 +113,12 @@ conversation id identifies the thread and its stored participant route.
 
 ### Continuing a thread
 
-Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+Answer in the conversation: `aw mail reply <message_id>`. Start a new thread only for a new topic: `aw mail send --to <recipient> --subject <subject>`.
 
 `aw mail send` with a recipient (`--to`, `--to-did` or `--to-address`) always
 starts a new thread, titled by its required `--subject`. `aw mail reply
 <message_id>` continues that message's conversation with the subject
-"Re: <title>", and `aw mail send --conversation-id <id>` continues a
+`Re: <title>`, and `aw mail send --conversation-id <id>` continues a
 conversation by its ID. Neither takes `--subject`: a thread's title is fixed,
 so a new topic is a new thread. `aw mail threads` lists your threads with their
 title, participants, last activity, unread count and conversation ID.
@@ -273,7 +273,7 @@ Or continue a known conversation directly:
 
 ```bash
 aw mail send --conversation-id <conversation-id> \
-  --subject "Re" --body-file reply.md
+  --body-file reply.md
 ```
 
 Do not combine `--conversation-id` with recipient flags. A continuation uses the
@@ -567,9 +567,11 @@ stable reason/status table and safe support interpretation.
 
 New CLI mail and chat sends are server-readable plaintext by default. Mail
 replies preserve the source message's encryption by default; `--plaintext` and
-`--e2ee` explicitly select the reply mode. Encrypted delivery requires both
-identities to have valid encryption capability and fails closed rather than
-silently downgrading.
+`--e2ee` explicitly select the reply mode. A flagless chat continuation inherits
+the session's encryption. When the sole peer's verified key assertion declares
+hosted custody, the flagless continuation is signed and server-readable.
+An explicit `--e2ee` request requires valid end-to-end encryption capability
+from both identities and fails closed.
 
 Hosted MCP and dashboard-side messaging are server-readable hosted messaging,
 not evidence of self-custodial E2E behavior. For cryptographic and routing

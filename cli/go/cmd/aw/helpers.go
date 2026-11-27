@@ -216,6 +216,10 @@ func resolveCertificateIdentityAtHome(workingDir, identityHome string) (*awconfi
 	return resolved, nil
 }
 
+func missingGlobalIdentityFile() error {
+	return usageError("current global identity is missing .aw/identity.yaml; restore it or run `aw init` again")
+}
+
 func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIdentity, error) {
 	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if err != nil {
@@ -244,7 +248,7 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 		return nil, fmt.Errorf("load active team certificate for %s: %w", activeTeamID, err)
 	}
 	if awid.NormalizeIdentityScope(cert.IdentityScope) != awid.IdentityModeLocal {
-		return nil, usageError("current global identity is missing .aw/identity.yaml; restore it or run `aw init` again")
+		return nil, missingGlobalIdentityFile()
 	}
 
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
@@ -821,12 +825,15 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	if err != nil {
 		return err
 	}
+	trustStoredRegistryOrigins(registry, sel.WorkingDir, sel.IdentityHome)
 	registry.TeamReadSigningKey = c.SigningKey()
 	// Received addressless identities are verified at the selected TEAM's
 	// registry. Do not inherit a global identity's unrelated home registry.
 	teamRegistry := newAWIDRegistryResolver(c.Client.HTTPClient(), nil)
+	trustStoredRegistryOrigins(teamRegistry, sel.WorkingDir, sel.IdentityHome)
 	teamRegistryURL, err := resolveRegistryAuthority(context.Background(), registryAuthorityRequest{
 		Kind: registryDeliveryTeamRoute, TeamID: sel.TeamID, IdentityHome: sel.IdentityHome,
+		WorkingDir: sel.WorkingDir, DeliveryResolver: teamRegistry,
 	})
 	if err != nil {
 		return err

@@ -22,7 +22,9 @@ from library.auth import AWIDTeamCache, authenticate_request
 from library.config import Settings
 
 VECTORS = json.loads(
-    (Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json").read_text()
+    (
+        Path(__file__).resolve().parents[3] / "docs/vectors/team-certificate-verification-v1.json"
+    ).read_text()
 )
 ORIGIN = "https://library.example.com"
 REGISTRY = "https://registry.example.com"
@@ -35,7 +37,10 @@ def _registry(case: dict) -> httpx.MockTransport:
     def answer(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/certificates"):
             page = [
-                {"certificate_id": certificate_id, "revoked_at": "2026-11-02T00:00:00Z" if certificate_id in revoked else None}
+                {
+                    "certificate_id": certificate_id,
+                    "revoked_at": "2026-11-02T00:00:00Z" if certificate_id in revoked else None,
+                }
                 for certificate_id in case["registered_certificate_ids"]
             ]
             return httpx.Response(200, json={"certificates": page, "has_more": False})
@@ -71,7 +76,9 @@ def _headers(case: dict) -> dict[str, str]:
 async def test_the_library_answers_each_case_as_recorded(monkeypatch, case: dict) -> None:
     registry_client = httpx.AsyncClient
     monkeypatch.setattr(
-        auth.httpx, "AsyncClient", lambda **kwargs: registry_client(transport=_registry(case), **kwargs)
+        auth.httpx,
+        "AsyncClient",
+        lambda **kwargs: registry_client(transport=_registry(case), **kwargs),
     )
 
     # What an accepted request writes about its principal is not the verdict.
@@ -86,10 +93,16 @@ async def test_the_library_answers_each_case_as_recorded(monkeypatch, case: dict
 
     @app.get("/")
     async def relying(request: Request) -> dict[str, str]:
-        principal = await authenticate_request(request, settings=settings, team_cache=cache, db=None)
+        principal = await authenticate_request(
+            request, settings=settings, team_cache=cache, db=None
+        )
         return {"certificate_id": principal.certificate_id}
 
-    async with registry_client(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url=ORIGIN) as client:
+    async with registry_client(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url=ORIGIN
+    ) as client:
         response = await client.get("/", headers=_headers(case))
-    answered = {200: "accepted", 401: "refused"}.get(response.status_code, f"status {response.status_code}")
+    answered = {200: "accepted", 401: "refused"}.get(
+        response.status_code, f"status {response.status_code}"
+    )
     assert answered == case["today"]["library"], response.text

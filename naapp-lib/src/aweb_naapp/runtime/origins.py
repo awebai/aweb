@@ -55,7 +55,9 @@ def _host(scope: Scope) -> str:
 
 
 def _carries_team_auth(headers: Iterable[tuple[bytes, bytes]]) -> bool:
-    return any(name == b"authorization" or name.startswith(_TEAM_AUTH_PREFIXES) for name, _ in headers)
+    return any(
+        name == b"authorization" or name.startswith(_TEAM_AUTH_PREFIXES) for name, _ in headers
+    )
 
 
 async def _refuse(send: Send, status: int, code: str, message: str) -> None:
@@ -113,7 +115,9 @@ def split_origins(
             await agent(scope, receive, send)
         elif host in human_hosts:
             if _carries_team_auth(scope["headers"]):
-                await _refuse(send, 403, "team_auth_refused", "This origin does not accept team-auth")
+                await _refuse(
+                    send, 403, "team_auth_refused", "This origin does not accept team-auth"
+                )
                 return
             await human_app(scope, receive, send)
         else:

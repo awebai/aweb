@@ -13,29 +13,6 @@
 #       org.opencontainers.image.version == the declared version and
 #       org.opencontainers.image.revision == the declared source SHA.
 #       Machine JSON goes ONLY to --out; stdout carries diagnostics.
-#   decide-tag        --tag-kind version|latest --staged sha256:<hex>
-#                     --listing-status ok|failed --present yes|no
-#                     --remote-digest sha256:<hex>|unavailable
-#       Prints ADOPT or COPY, or refuses. An unavailable listing or digest
-#       always refuses - observation failure is never permission to write.
-#       A version tag with a different digest refuses permanently; latest is
-#       the one planned mutable pointer and may transition to the staged
-#       digest.
-#   classify-listing  --tag <name>
-#       Reads a tag-listing JSON document on stdin and prints yes or no for
-#       the tag's presence. Refuses unless the document is a JSON object
-#       whose .Tags is an array of strings: a successful listing command
-#       with malformed, truncated, or unexpected evidence is not an
-#       observation, and callers must map that refusal to an unavailable
-#       listing - never to absence.
-#   require-absent    --listing-status ok|failed --present yes|no
-#       Stage-only absence proof: a failed listing blocks (outage is never
-#       proof of absence), a listed version refuses, and only a proven
-#       absence continues.
-#   observe-digest
-#       Reads raw manifest bytes on stdin and prints sha256:<hex> of the
-#       EXACT byte stream - no shell variable capture, which strips
-#       trailing newlines, and no here-string, which appends one.
 #   verify-published  --archive <oci.tar> --version <X.Y.Z>
 #                     --source-sha <sha> --repository <ghcr.io/owner/name>
 #                     [--version-only] [--observed-digest <tag>=sha256:<hex> ...]
@@ -60,7 +37,6 @@ require_nonnegative_int() {
 
 MODE="${1:-}"; shift || true
 ARCHIVE='' VERSION='' REPOSITORY='' SOURCE_SHA='' OUT=''
-TAG_KIND='' STAGED='' LISTING_STATUS='' PRESENT='' REMOTE_DIGEST='' TAG_NAME=''
 OBSERVED=()
 VERSION_ONLY=false
 while [[ $# -gt 0 ]]; do
@@ -71,12 +47,6 @@ while [[ $# -gt 0 ]]; do
     --repository) REPOSITORY="$2"; shift 2 ;;
     --source-sha) SOURCE_SHA="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
-    --tag-kind) TAG_KIND="$2"; shift 2 ;;
-    --tag) TAG_NAME="$2"; shift 2 ;;
-    --staged) STAGED="$2"; shift 2 ;;
-    --listing-status) LISTING_STATUS="$2"; shift 2 ;;
-    --present) PRESENT="$2"; shift 2 ;;
-    --remote-digest) REMOTE_DIGEST="$2"; shift 2 ;;
     --observed-digest) OBSERVED+=("$2"); shift 2 ;;
     *) echo "oci-exact-publish: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -173,57 +143,6 @@ case "$MODE" in
     printf 'STAGED INDEX: %s\n' \
       "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["index"])' "$OUT")"
     ;;
-  decide-tag)
-    [[ -n "$TAG_KIND" && -n "$STAGED" && -n "$LISTING_STATUS" && -n "$PRESENT" ]] \
-      || { echo "decide-tag requires --tag-kind --staged --listing-status --present" >&2; exit 2; }
-    [[ "$LISTING_STATUS" == "ok" ]] \
-      || fail "tag listing unavailable; observation failure is never permission to write"
-    if [[ "$PRESENT" == "no" ]]; then
-      echo COPY
-      exit 0
-    fi
-    [[ -n "$REMOTE_DIGEST" && "$REMOTE_DIGEST" != "unavailable" ]] \
-      || fail "remote digest unavailable for a present tag; refusing to write blind"
-    if [[ "$REMOTE_DIGEST" == "$STAGED" ]]; then
-      echo ADOPT
-    elif [[ "$TAG_KIND" == "latest" ]]; then
-      # latest is the one planned mutable pointer; it may transition.
-      echo COPY
-    else
-      fail "version tag resolves to $REMOTE_DIGEST, staged index is $STAGED; an immutable version tag is never rewritten"
-    fi
-    ;;
-  classify-listing)
-    [[ -n "$TAG_NAME" ]] \
-      || { echo "classify-listing requires --tag" >&2; exit 2; }
-    # -c keeps the script's stdin (the piped listing) as python's stdin; a
-    # heredoc would displace it.
-    python3 -c '
-import json, sys
-try:
-    doc = json.load(sys.stdin)
-except Exception as exc:
-    sys.exit(f"REFUSE: tag listing is not valid JSON ({exc}); malformed "
-             "evidence is never an observation")
-tags = doc.get("Tags") if isinstance(doc, dict) else None
-if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
-    sys.exit("REFUSE: tag listing .Tags is not an array of strings; "
-             "malformed evidence is never an observation")
-print("yes" if sys.argv[1] in tags else "no")
-' "$TAG_NAME"
-    ;;
-  require-absent)
-    [[ -n "$LISTING_STATUS" && -n "$PRESENT" ]] \
-      || { echo "require-absent requires --listing-status --present" >&2; exit 2; }
-    [[ "$LISTING_STATUS" == "ok" ]] \
-      || fail "tag listing unavailable; an outage is never proof of absence"
-    [[ "$PRESENT" == "no" ]] \
-      || fail "the candidate version tag already exists in the registry"
-    echo "ABSENT: proven by an authoritative listing"
-    ;;
-  observe-digest)
-    python3 -c 'import hashlib, sys; print("sha256:" + hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
-    ;;
   verify-published)
     [[ -n "$REPOSITORY" && -n "$ARCHIVE" && -n "$VERSION" && -n "$SOURCE_SHA" ]] \
       || { echo "verify-published requires --archive --version --source-sha --repository" >&2; exit 2; }
@@ -286,8 +205,8 @@ print("yes" if sys.argv[1] in tags else "no")
           "$timeout_bin" "$req" skopeo inspect --raw "docker://${REPOSITORY}:${tag}" \
             >"$raw_file" 2>"$skopeo_err" || rc=$?
           if [[ "$rc" -eq 0 && -s "$raw_file" ]]; then
-            # The same byte-exact reader the observe-digest verb uses and the
-            # production workflow pipes into - stdin.buffer, no shell rewriting.
+            # The same byte-exact reader the production workflow pipes into -
+            # stdin.buffer, no shell rewriting.
             remote="$(python3 -c 'import hashlib, sys; print("sha256:" + hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' <"$raw_file")"
             rm -f "$skopeo_err" "$raw_file"
             break
@@ -327,7 +246,7 @@ print("yes" if sys.argv[1] in tags else "no")
     done
     ;;
   *)
-    echo "oci-exact-publish: mode must be inspect-staged | classify-listing | decide-tag | require-absent | observe-digest | verify-published" >&2
+    echo "oci-exact-publish: mode must be inspect-staged | verify-published" >&2
     exit 2
     ;;
 esac

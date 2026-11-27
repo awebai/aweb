@@ -47,7 +47,11 @@ def _font_bytes(name: str) -> bytes:
 
 
 def _client(
-    tmp_path: Path, *, committed: bytes | None = None, omit_fonts_dir: bool = False, **overrides: object
+    tmp_path: Path,
+    *,
+    committed: bytes | None = None,
+    omit_fonts_dir: bool = False,
+    **overrides: object,
 ) -> TestClient:
     tmp_path.mkdir(parents=True, exist_ok=True)
     manifest_path = tmp_path / "aweb-app.json"
@@ -159,7 +163,9 @@ def test_fonts_do_not_require_app_copies(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("omit_fonts_dir", [True, False], ids=["omitted", "none"])
-def test_mount_without_app_fonts_serves_only_toolkit_fonts(tmp_path: Path, omit_fonts_dir: bool) -> None:
+def test_mount_without_app_fonts_serves_only_toolkit_fonts(
+    tmp_path: Path, omit_fonts_dir: bool
+) -> None:
     owned = tmp_path / "fonts"
     owned.mkdir()
     (owned / "AppMono.woff2").write_bytes(b"wOF2app-owned")
@@ -300,7 +306,9 @@ def test_an_app_without_the_docs_surface_serves_its_manifest_alone(tmp_path: Pat
         assert client.get(path).status_code == 404
 
 
-def test_an_app_without_the_docs_surface_serves_its_v2_manifest_through_its_catalog(tmp_path: Path) -> None:
+def test_an_app_without_the_docs_surface_serves_its_v2_manifest_through_its_catalog(
+    tmp_path: Path,
+) -> None:
     manifest_path = tmp_path / "aweb-app.json"
     write_manifest_file(manifest_path, _MANIFEST_V2)
     runtime = NaappRuntime(
@@ -326,7 +334,9 @@ def test_an_app_without_the_docs_surface_serves_its_v2_manifest_through_its_cata
 _MANIFEST_V2 = {
     "manifest_version": 2,
     "app": {"id": "example", "origin": _HOSTED},
-    "tools": [{"name": "create", "method": "POST", "path": "/v1/things", "scopes": ["example:write"]}],
+    "tools": [
+        {"name": "create", "method": "POST", "path": "/v1/things", "scopes": ["example:write"]}
+    ],
 }
 
 
@@ -354,7 +364,9 @@ def test_a_v2_app_serves_no_v1_manifest(tmp_path: Path) -> None:
 
 
 def test_a_self_hosted_v2_app_lists_the_bytes_it_serves(tmp_path: Path) -> None:
-    settings = ExampleSettings(_env_file=None, public_origin="http://self.test", app_id="self-example")
+    settings = ExampleSettings(
+        _env_file=None, public_origin="http://self.test", app_id="self-example"
+    )
     client = _client(tmp_path, committed=canonical_bytes(_MANIFEST_V2), settings=settings)
     variant = select_variant("http://self.test", (2,), _fetch(client))
     assert variant.source == "catalog"
@@ -386,21 +398,25 @@ def test_packaged_identity_assets_have_real_image_bytes_and_dimensions(tmp_path:
     import struct
 
     client = _client(tmp_path)
-    svg = client.get('/brand/field-v1/favicon.svg')
+    svg = client.get("/brand/field-v1/favicon.svg")
     assert svg.status_code == 200
-    assert svg.headers['content-type'].startswith('image/svg+xml')
-    assert '<svg' in svg.text
-    for name, size in [('icon-32.png', (32, 32)), ('icon-180.png', (180, 180)),
-                       ('aweb-card.png', (1200, 630)), ('folio-card.png', (1200, 630)),
-                       ('library-card.png', (1200, 630))]:
-        response = client.get('/brand/field-v1/' + name)
+    assert svg.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in svg.text
+    for name, size in [
+        ("icon-32.png", (32, 32)),
+        ("icon-180.png", (180, 180)),
+        ("aweb-card.png", (1200, 630)),
+        ("folio-card.png", (1200, 630)),
+        ("library-card.png", (1200, 630)),
+    ]:
+        response = client.get("/brand/field-v1/" + name)
         assert response.status_code == 200
-        assert response.headers['content-type'] == 'image/png'
-        assert response.content[:8] == b'\x89PNG\r\n\x1a\n'
-        assert struct.unpack('>II', response.content[16:24]) == size
-        assert 'immutable' in response.headers['cache-control']
-    assert client.get('/brand/field-v1/missing.png').status_code == 404
-    assert client.get('/brand/field-v1/..%2Fcss.py').status_code == 404
+        assert response.headers["content-type"] == "image/png"
+        assert response.content[:8] == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">II", response.content[16:24]) == size
+        assert "immutable" in response.headers["cache-control"]
+    assert client.get("/brand/field-v1/missing.png").status_code == 404
+    assert client.get("/brand/field-v1/..%2Fcss.py").status_code == 404
 
 
 def test_app_owned_fonts_remain_available_without_bundling_them(tmp_path: Path) -> None:
@@ -412,4 +428,6 @@ def test_app_owned_fonts_remain_available_without_bundling_them(tmp_path: Path) 
     assert client.get("/fonts/AppMono.woff2").content == b"wOF2app-owned"
     assert client.get("/fonts/private.txt").status_code == 404
     assert client.get("/fonts/..%2Fprivate.txt").status_code == 404
-    assert client.get("/fonts/Archivo-Latin-Variable.woff2").content == font_bytes("Archivo-Latin-Variable.woff2")
+    assert client.get("/fonts/Archivo-Latin-Variable.woff2").content == font_bytes(
+        "Archivo-Latin-Variable.woff2"
+    )

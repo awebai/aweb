@@ -286,11 +286,26 @@ func TestE2EEChatContinuationWithGlobalPeerEncrypts(t *testing.T) {
 	rec := &sendRecorder{sessions: []ChatSessionItem{continuationSession(self, bob)}}
 	c := newCustodialTestClient(t, rec.server(t).URL, self, custodialTestResolver{bob.address: bob.resolved()})
 
-	if _, err := c.ChatSendMessage(context.Background(), "33333333-3333-4333-8333-333333333333", &ChatSendMessageRequest{Body: "reply", EncryptE2EE: true}); err != nil {
+	if _, err := c.ChatSendMessage(context.Background(), "33333333-3333-4333-8333-333333333333", &ChatSendMessageRequest{Body: "reply", EncryptE2EE: true, E2EEInherited: true}); err != nil {
 		t.Fatal(err)
 	}
 	if rec.chat.Encrypted == nil || len(rec.chat.Encrypted.Recipients) != 1 || rec.chat.Encrypted.Recipients[0].DID != bob.did {
 		t.Fatalf("continuation was not encrypted to the peer: %#v", rec.chat.Encrypted)
+	}
+}
+
+func TestInheritedChatDoesNotSendPlaintextOnInvalidHostedAssertion(t *testing.T) {
+	self := newE2EETestIdentity(t, "example.com/self")
+	peer := newE2EETestIdentity(t, "example.com/peer")
+	// The claim changes without the identity signing it.
+	peer.assertion.Custody = EncryptionKeyCustodyHosted
+	session := continuationSession(self, peer)
+	rec := &sendRecorder{sessions: []ChatSessionItem{session}}
+	c := newCustodialTestClient(t, rec.server(t).URL, self, custodialTestResolver{peer.address: peer.resolved()})
+	_, err := c.ChatSendMessage(context.Background(), session.SessionID, &ChatSendMessageRequest{Body: "reply", EncryptE2EE: true, E2EEInherited: true})
+	var hosted *CustodialRecipientError
+	if err == nil || errors.As(err, &hosted) || len(rec.sent()) != 0 {
+		t.Fatalf("invalid hosted assertion: err=%v, sends=%v", err, rec.sent())
 	}
 }
 

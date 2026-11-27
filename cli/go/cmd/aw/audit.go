@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/awid"
-	"github.com/awebai/aw/logschain"
+	"github.com/awebai/aw/internal/logschain"
 	"github.com/spf13/cobra"
 )
 

@@ -9,7 +9,9 @@ import pytest
 from pgdbm.errors import QueryError
 
 
-_MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "src" / "awid_service" / "migrations"
+_MIGRATIONS_DIR = (
+    Path(__file__).resolve().parents[1] / "src" / "awid_service" / "migrations"
+)
 
 
 @pytest.mark.asyncio
@@ -127,9 +129,13 @@ async def test_public_addresses_resolve_key_by_fk_only(awid_db_infra):
 
 
 def _drop_address_reachability_migration_sql(table_name: str) -> str:
-    return (_MIGRATIONS_DIR / "003_drop_address_reachability.sql").read_text().replace(
-        "{{tables.public_addresses}}",
-        "{{tables." + table_name + "}}",
+    return (
+        (_MIGRATIONS_DIR / "003_drop_address_reachability.sql")
+        .read_text()
+        .replace(
+            "{{tables.public_addresses}}",
+            "{{tables." + table_name + "}}",
+        )
     )
 
 
@@ -138,7 +144,9 @@ async def _create_pre_003_public_addresses_table(db, table_name: str) -> None:
     # manager's schema: under the pinned search_path an unqualified CREATE
     # resolves into pg_catalog and is denied.
     await db.execute(
-        "CREATE TABLE {{tables." + table_name + """}} (
+        "CREATE TABLE {{tables."
+        + table_name
+        + """}} (
             address_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             reachability TEXT NOT NULL DEFAULT 'nobody',
             visible_to_team_id TEXT,
@@ -183,7 +191,9 @@ async def test_drop_address_reachability_migration_blocks_active_non_neutral_row
     try:
         await _create_pre_003_public_addresses_table(db, table_name)
         await db.execute(
-            "INSERT INTO {{tables." + table_name + """}} (reachability, visible_to_team_id, deleted_at)
+            "INSERT INTO {{tables."
+            + table_name
+            + """}} (reachability, visible_to_team_id, deleted_at)
             VALUES ($1, $2, NULL)
             """,
             reachability,
@@ -193,20 +203,29 @@ async def test_drop_address_reachability_migration_blocks_active_non_neutral_row
         with pytest.raises(QueryError) as excinfo:
             await db.execute(_drop_address_reachability_migration_sql(table_name))
 
-        assert "Refusing to drop legacy address reachability columns" in str(excinfo.value)
-        assert await _legacy_columns(db, table_name) == ["reachability", "visible_to_team_id"]
+        assert "Refusing to drop legacy address reachability columns" in str(
+            excinfo.value
+        )
+        assert await _legacy_columns(db, table_name) == [
+            "reachability",
+            "visible_to_team_id",
+        ]
     finally:
         await db.execute("DROP TABLE IF EXISTS {{tables." + table_name + "}}")
 
 
 @pytest.mark.asyncio
-async def test_drop_address_reachability_migration_allows_deleted_non_neutral_rows(awid_db_infra):
+async def test_drop_address_reachability_migration_allows_deleted_non_neutral_rows(
+    awid_db_infra,
+):
     db = awid_db_infra.get_manager("aweb")
     table_name = f"migration_public_addresses_{uuid4().hex}"
     try:
         await _create_pre_003_public_addresses_table(db, table_name)
         await db.execute(
-            "INSERT INTO {{tables." + table_name + """}} (reachability, visible_to_team_id, deleted_at)
+            "INSERT INTO {{tables."
+            + table_name
+            + """}} (reachability, visible_to_team_id, deleted_at)
             VALUES ('team_members_only', 'backend:example.com', NOW())
             """
         )
@@ -219,13 +238,17 @@ async def test_drop_address_reachability_migration_allows_deleted_non_neutral_ro
 
 
 @pytest.mark.asyncio
-async def test_drop_address_reachability_migration_allows_active_neutral_rows(awid_db_infra):
+async def test_drop_address_reachability_migration_allows_active_neutral_rows(
+    awid_db_infra,
+):
     db = awid_db_infra.get_manager("aweb")
     table_name = f"migration_public_addresses_{uuid4().hex}"
     try:
         await _create_pre_003_public_addresses_table(db, table_name)
         await db.execute(
-            "INSERT INTO {{tables." + table_name + """}} (reachability, visible_to_team_id, deleted_at)
+            "INSERT INTO {{tables."
+            + table_name
+            + """}} (reachability, visible_to_team_id, deleted_at)
             VALUES ('public', NULL, NULL)
             """
         )

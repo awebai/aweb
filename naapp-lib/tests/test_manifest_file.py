@@ -7,7 +7,12 @@ from aweb_naapp.manifest import canonical_bytes, write_manifest_file
 
 _MANIFEST = {
     "manifest_version": 1,
-    "app": {"id": "example", "version": "0.1.0", "origin": "https://app.example.test", "llms_txt": "/llms.txt"},
+    "app": {
+        "id": "example",
+        "version": "0.1.0",
+        "origin": "https://app.example.test",
+        "llms_txt": "/llms.txt",
+    },
     "tools": [{"name": "list", "method": "GET", "path": "/v1/things", "description": "ü"}],
 }
 

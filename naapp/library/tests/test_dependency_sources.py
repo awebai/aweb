@@ -26,7 +26,9 @@ def test_awid_imports_from_this_checkouts_awid() -> None:
     import awid
 
     source = _REPO_ROOT / "awid" / "src"
-    assert _imported_from(awid.__file__, source), f"awid was imported from {awid.__file__}, not from {source}"
+    assert _imported_from(awid.__file__, source), (
+        f"awid was imported from {awid.__file__}, not from {source}"
+    )
 
 
 def test_the_lock_fetches_no_dependency_from_git() -> None:

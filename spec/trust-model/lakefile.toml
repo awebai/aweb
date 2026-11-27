@@ -1,0 +1,5 @@
+name = "trustweb"
+defaultTargets = ["TrustWeb"]
+
+[[lean_lib]]
+name = "TrustWeb"

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -171,11 +173,8 @@ func TestTeamCreateRefusesATeamPinnedToAnotherKey(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already pinned to "+registry.teamDID) {
 		t.Fatalf("err=%v", err)
 	}
-	if !strings.Contains(err.Error(), "Restore its current controller key to reuse this team, or choose another --name.") {
-		t.Fatalf("the refusal does not say what to do: %v", err)
-	}
-	if code := errorCodeOf(err); code != codeTeamNameTaken {
-		t.Fatalf("error code=%q, want %q", code, codeTeamNameTaken)
+	if reason := errorEnvelope(err, err.Error()).Error.Classification; reason != codeTeamNameTaken {
+		t.Fatalf("classification=%q, want %q", reason, codeTeamNameTaken)
 	}
 	exists, err := awconfig.TeamKeyExists("acme.com", "default")
 	if err != nil {
@@ -217,5 +216,76 @@ func TestTeamCreateDuringAnotherRegistrationUsesTheSavedKey(t *testing.T) {
 	savedDID := awid.ComputeDIDKey(saved.Public().(ed25519.PublicKey))
 	if savedDID != first.TeamDIDKey || second.TeamDIDKey != first.TeamDIDKey || registry.teamDID != first.TeamDIDKey {
 		t.Fatalf("saved=%s first=%s second=%s registry=%s", savedDID, first.TeamDIDKey, second.TeamDIDKey, registry.teamDID)
+	}
+}
+
+func TestOATSReleasedTeamRefusalEnvelopes(t *testing.T) {
+	bin, dir := buildDoctorBinary(t)
+	t.Setenv("HOME", dir)
+	const domain, name = "acme.com", "default"
+	if err := awconfig.SaveControllerKey(domain, newKey(t)); err != nil {
+		t.Fatal(err)
+	}
+	foreignDID := didOf(newKey(t))
+	registry := &teamCreateRegistry{t: t, existing: true, teamDID: foreignDID}
+
+	for _, tc := range []struct {
+		name, command, code, message, classification string
+		status                                       int
+	}{
+		{"missing server", "show-server", "error", "no team server record is published for default:acme.com", "team_server_record_missing", 0},
+		{"foreign pin", "create", "error", "team acme.com/default is already pinned to " + foreignDID, "team_name_taken", 0},
+		{"private pin", "create", "http_error", "create team at registry: registry http 409: Team already exists", "team_name_taken", 409},
+		{"unconfirmed pin", "create", "http_error", "create team at registry: registry http 409: Team already exists", "team_name_unconfirmed", 409},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				switch {
+				case tc.command == "show-server":
+					if req.Method != http.MethodGet || req.URL.Path != "/v1/namespaces/acme.com/teams/default/server" {
+						t.Errorf("unexpected service record request: %s %s", req.Method, req.URL.Path)
+					}
+					http.NotFound(w, req)
+				case tc.status == 409 && req.Method == http.MethodGet && req.URL.Path == "/v1/namespaces/acme.com/teams/default":
+					if tc.classification == "team_name_unconfirmed" {
+						http.Error(w, "registry temporarily unavailable", http.StatusServiceUnavailable)
+					} else {
+						http.Error(w, awid.RegistryCodeTeamPrivate, http.StatusForbidden)
+					}
+				default:
+					registry.ServeHTTP(w, req)
+				}
+			}))
+			nameFlag := "--name"
+			if tc.command == "show-server" {
+				nameFlag = "--team"
+			}
+			cmd := exec.Command(bin, "id", "team", tc.command, "--namespace", domain, nameFlag, name, "--registry", server.URL, "--json")
+			cmd.Dir = dir
+			cmd.Env = append(testCommandEnv(dir), "AWEB_IDENTITY_HOME=", "AW_NO_UPDATE_CHECK=1", "AWID_SKIP_DNS_VERIFY=1")
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			out, err := cmd.Output()
+			var envelope struct {
+				Error struct {
+					Code, Message, Classification string
+					HTTPStatus                    int `json:"http_status"`
+				}
+			}
+			exit, ok := err.(*exec.ExitError)
+			if !ok || exit.ExitCode() != 1 || json.Unmarshal(out, &envelope) != nil {
+				t.Fatalf("expected a JSON refusal and exit 1: %v\nstdout: %s\nstderr: %s", err, out, &stderr)
+			}
+			if envelope.Error.Code != tc.code || envelope.Error.Message != tc.message || envelope.Error.HTTPStatus != tc.status || envelope.Error.Classification != tc.classification {
+				t.Fatalf("unexpected refusal: %s", out)
+			}
+			if strings.TrimSpace(stderr.String()) != tc.message {
+				t.Fatalf("stderr lost the released first line: %s", &stderr)
+			}
+			assertNoTeamKeyFile(t, domain, name)
+			if hasKey := setAsideKey(t, domain, name) != nil; hasKey != (tc.classification == "team_name_unconfirmed") {
+				t.Fatalf("unconfirmed key retained=%t", hasKey)
+			}
+		})
 	}
 }

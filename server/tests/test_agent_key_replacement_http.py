@@ -69,7 +69,9 @@ async def test_controller_replaces_local_agent_key_and_writes_audit(privacy_app)
     response = await client.post(
         "/v1/agents/alice/replace-key",
         json=payload,
-        headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=payload),
+        headers=_controller_headers(
+            controller_sk, controller_did, alias="alice", payload=payload
+        ),
     )
 
     assert response.status_code == 200, response.text
@@ -126,12 +128,16 @@ async def test_exact_controller_replay_returns_the_original_audit_result(privacy
     first = await client.post(
         "/v1/agents/alice/replace-key",
         json=payload,
-        headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=payload),
+        headers=_controller_headers(
+            controller_sk, controller_did, alias="alice", payload=payload
+        ),
     )
     replay = await client.post(
         "/v1/agents/alice/replace-key",
         json=payload,
-        headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=payload),
+        headers=_controller_headers(
+            controller_sk, controller_did, alias="alice", payload=payload
+        ),
     )
 
     assert first.status_code == 200
@@ -147,7 +153,9 @@ async def test_exact_controller_replay_returns_the_original_audit_result(privacy
 
 
 @pytest.mark.asyncio
-async def test_new_key_with_different_certificate_ids_is_not_treated_as_replay(privacy_app):
+async def test_new_key_with_different_certificate_ids_is_not_treated_as_replay(
+    privacy_app,
+):
     controller_sk, controller_did = privacy_app.team_sk, privacy_app.team_did
     old_did = privacy_app.actors["alice"].did
     _, new_did = _keypair()
@@ -157,14 +165,18 @@ async def test_new_key_with_different_certificate_ids_is_not_treated_as_replay(p
     first = await client.post(
         "/v1/agents/alice/replace-key",
         json=payload,
-        headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=payload),
+        headers=_controller_headers(
+            controller_sk, controller_did, alias="alice", payload=payload
+        ),
     )
     changed = dict(payload)
     changed["new_certificate_id"] = "different-cert"
     response = await client.post(
         "/v1/agents/alice/replace-key",
         json=changed,
-        headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=changed),
+        headers=_controller_headers(
+            controller_sk, controller_did, alias="alice", payload=changed
+        ),
     )
 
     assert first.status_code == 200
@@ -214,7 +226,9 @@ async def test_controller_signature_binds_the_exact_replacement(privacy_app):
     old_did = privacy_app.actors["alice"].did
     _, new_did = _keypair()
     signed = _payload(old_did_key=old_did, new_did_key=new_did)
-    headers = _controller_headers(controller_sk, controller_did, alias="alice", payload=signed)
+    headers = _controller_headers(
+        controller_sk, controller_did, alias="alice", payload=signed
+    )
     tampered = dict(signed)
     tampered["new_certificate_id"] = "attacker-certificate"
 
@@ -241,7 +255,9 @@ async def test_controller_signature_binds_the_exact_replacement(privacy_app):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["stale_old_key", "global_identity", "new_key_collision"])
+@pytest.mark.parametrize(
+    "case", ["stale_old_key", "global_identity", "new_key_collision"]
+)
 async def test_replacement_preconditions_fail_without_audit(privacy_app, case: str):
     controller_sk, controller_did = privacy_app.team_sk, privacy_app.team_did
     old_did = privacy_app.actors["alice"].did
@@ -259,7 +275,9 @@ async def test_replacement_preconditions_fail_without_audit(privacy_app, case: s
     response = await client.post(
         "/v1/agents/alice/replace-key",
         json=payload,
-        headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=payload),
+        headers=_controller_headers(
+            controller_sk, controller_did, alias="alice", payload=payload
+        ),
     )
 
     assert response.status_code == expected_status, response.text
@@ -282,7 +300,9 @@ async def test_replacement_rejects_same_or_invalid_did_keys(privacy_app):
     response = await client.post(
         "/v1/agents/alice/replace-key",
         json=same,
-        headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=same),
+        headers=_controller_headers(
+            controller_sk, controller_did, alias="alice", payload=same
+        ),
     )
     assert response.status_code == 422
 
@@ -290,6 +310,8 @@ async def test_replacement_rejects_same_or_invalid_did_keys(privacy_app):
     response = await client.post(
         "/v1/agents/alice/replace-key",
         json=invalid,
-        headers=_controller_headers(controller_sk, controller_did, alias="alice", payload=invalid),
+        headers=_controller_headers(
+            controller_sk, controller_did, alias="alice", payload=invalid
+        ),
     )
     assert response.status_code == 422

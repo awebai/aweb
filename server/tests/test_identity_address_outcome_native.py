@@ -41,7 +41,9 @@ def identity_request(env, actor):
             "raw_path": b"/v1/messages/inbox",
             "query_string": b"",
             "app": env.app,
-            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+            "headers": [
+                (key.lower().encode(), value.encode()) for key, value in headers.items()
+            ],
         }
     )
 
@@ -96,7 +98,9 @@ async def stalled_address_read(env):
     # DID/key and independent team/revocation evidence stay available. Leaving
     # the transaction releases the fault and exercises recovery on the same SDK.
     async with env.registry_db.transaction() as lock:
-        await lock.execute("LOCK TABLE {{tables.public_addresses}} IN ACCESS EXCLUSIVE MODE")
+        await lock.execute(
+            "LOCK TABLE {{tables.public_addresses}} IN ACCESS EXCLUSIVE MODE"
+        )
         yield
 
 
@@ -121,13 +125,17 @@ async def test_failed_reverse_read_is_unknown_and_recovers_without_empty_evidenc
 ):
     env = privacy_app
     async with address_reader(env):
-        actor = await prepare_actor(env, "alice", address=f"example.test/adbv-{uuid4().hex}")
+        actor = await prepare_actor(
+            env, "alice", address=f"example.test/adbv-{uuid4().hex}"
+        )
         before = await projection(env, actor)
         async with stalled_address_read(env):
             # Establish the actual dependency failure independently of auth's
             # current broad catch. This must not be an invented HTTP response.
             with pytest.raises(RegistryError) as failed:
-                await env.app.state.awid_registry_client.list_did_addresses(actor.stable_id)
+                await env.app.state.awid_registry_client.list_did_addresses(
+                    actor.stable_id
+                )
             assert failed.value.status_code == 503
             assert isinstance(failed.value.__cause__, TimeoutError)
 
@@ -153,7 +161,10 @@ async def test_failed_reverse_read_is_unknown_and_recovers_without_empty_evidenc
             assert context.address_resolution.state == "unknown"
             assert isinstance(context.address_resolution.cause, RegistryError)
             assert context.address == actor.address
-            assert mcp_messaging_auth(context).address_resolution is context.address_resolution
+            assert (
+                mcp_messaging_auth(context).address_resolution
+                is context.address_resolution
+            )
             assert await projection(env, actor) == before
 
         recovered = await resolve_identity_auth(identity_request(env, actor))
@@ -161,12 +172,17 @@ async def test_failed_reverse_read_is_unknown_and_recovers_without_empty_evidenc
         assert recovered.address_resolution.state == "verified"
         assert recovered.address_resolution.cause is None
         diagnostics = [
-            r.getMessage() for r in caplog.records if r.name == "aweb.identity_auth_deps"
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "aweb.identity_auth_deps"
         ]
         assert any("address" in line and "unavailable" in line for line in diagnostics)
-        assert all(signature not in line and actor.address not in line for line in diagnostics)
         assert all(
-            env.app.state.awid_registry_client.service_token not in line for line in diagnostics
+            signature not in line and actor.address not in line for line in diagnostics
+        )
+        assert all(
+            env.app.state.awid_registry_client.service_token not in line
+            for line in diagnostics
         )
 
 
@@ -208,7 +224,9 @@ async def test_address_outage_preserves_verified_sender_and_refuses_unknown_befo
 ):
     env = privacy_app
     async with address_reader(env):
-        verified = await prepare_actor(env, "alice", address=f"example.test/adbv-{uuid4().hex}")
+        verified = await prepare_actor(
+            env, "alice", address=f"example.test/adbv-{uuid4().hex}"
+        )
         verified_empty = await prepare_actor(env, "bob", address="")
         unknown = await prepare_actor(env, "carol", address="")
         await env.db.execute(
@@ -216,7 +234,8 @@ async def test_address_outage_preserves_verified_sender_and_refuses_unknown_befo
             unknown.id,
         )
         before = {
-            actor.id: await projection(env, actor) for actor in (verified, verified_empty, unknown)
+            actor.id: await projection(env, actor)
+            for actor in (verified, verified_empty, unknown)
         }
         async with stalled_address_read(env):
             kept_id, empty_id, refused_id = str(uuid4()), str(uuid4()), str(uuid4())
@@ -287,7 +306,9 @@ async def test_conflicting_verified_stored_addresses_refuse_during_outage_before
 ):
     env = privacy_app
     async with address_reader(env):
-        actor = await prepare_actor(env, "alice", address=f"example.test/adbv-{uuid4().hex}")
+        actor = await prepare_actor(
+            env, "alice", address=f"example.test/adbv-{uuid4().hex}"
+        )
         # A real second address for the same identity, positively verified by
         # the same registry before recording the second membership's marker.
         other_name = f"adbv-other-{uuid4().hex}"
@@ -359,8 +380,16 @@ async def test_conflicting_verified_stored_addresses_refuse_during_outage_before
             assert response.status_code == 409, response.text
             assert response.json()["detail"]["code"] == "sender_context_required"
             assert "X-AWID-Team-Certificate" in response.json()["detail"]["message"]
-            assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
-            assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.conversations}}") == 0
+            assert (
+                await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}")
+                == 0
+            )
+            assert (
+                await env.db.fetch_value(
+                    "SELECT COUNT(*) FROM {{tables.conversations}}"
+                )
+                == 0
+            )
             assert len(env.dispatched) == dispatched
             after = [
                 dict(row)
