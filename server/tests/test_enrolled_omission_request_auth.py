@@ -16,6 +16,7 @@ from awid.did import stable_id_from_did_key
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
 from aweb.api import _build_awid_registry_client
+from aweb.identity_binding import identity_binding_cache
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
@@ -103,6 +104,9 @@ async def test_stored_did_aw_gets_the_tree_status_of_a_claimed_one(
             )
             assert (await writer.register_did(did_key, sk)).did_aw == stable
             await _connect_global_member(env, sk=sk, did_key=did_key, stable_did=stable)
+            # Enrollment and revocation come after the connect's 60s binding
+            # observation (not enrolled) has expired.
+            identity_binding_cache(env.app.state).clear()
             if tree_state != "never-enrolled":
                 human = _signed_fixture_certificate(
                     "alice",
