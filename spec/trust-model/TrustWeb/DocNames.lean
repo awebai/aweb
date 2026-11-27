@@ -22,7 +22,7 @@ and the build's own library name. -/
 def skipped : List String :=
   ["a", "b", "c", "g", "g'", "h", "h'", "i", "k", "m", "n", "o", "o'", "p", "pk",
    "r", "s", "s'", "s1", "s2", "s3", "t", "x", "L", "ask", "who", "approvals", "assign",
-   "key", "as", "Prop", "sorry", "axiom", "native_decide", "opaque",
+   "key", "keep", "as", "Prop", "sorry", "axiom", "native_decide", "opaque",
    "implemented_by", "controller_asserted_person", "nearest_human",
    "rotate_team_key", "DocCheck"]
 

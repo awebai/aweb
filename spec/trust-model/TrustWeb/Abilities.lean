@@ -139,7 +139,7 @@ theorem no_admin_no_new_admin_certificate {s s' : State} {who : Party} {o : Org}
   | mintGrant _ _ => exact absurd hnew hold
   | revokeGrant _ => exact absurd hnew hold
   | release _ _ => exact absurd hnew hold
-  | rekeyTeam _ => exact absurd (List.mem_filter.mp hnew).1 hold
+  | rekeyTeam _ _ => exact absurd (List.mem_filter.mp hnew).1 hold
   | replaceRoot _ => exact absurd hnew hold
   | readmitByRoot _ _ _ _ => exact absurd hnew hold
   | readmitByParent _ _ _ _ => exact absurd hnew hold
@@ -323,8 +323,7 @@ theorem locked_admin_team_opens_only_by_root {s s' : State} {who : Party} {o : O
         · subst he
           exact absurd hask (noAdmin k)
         · simp only [ne_eq, decide_eq_true_eq]; exact he
-  | rekeyTeam hauth =>
-      rename_i o' t approvals
+  | @rekeyTeam o' t _ _ _ hauth _ =>
       refine ⟨List.mem_filter.mpr ⟨hheld, ?_⟩, fun x hx => hnone x (List.mem_filter.mp hx).1⟩
       by_cases he : OrgKey.team o .admin = OrgKey.team o' t
       · cases he
@@ -500,13 +499,11 @@ theorem domain_owner_recovers_an_admin {ask : AskRule} {s : State} {o : Org} {k 
         (·.subject)) ++ s.revoked,
       cutOff := ((s.certs.filter (fun c => decide (c.org = o ∧ c.subject ∉ s.revoked))).map
         (·.subject)) ++ s.cutOff,
-      held := s.held.filter (fun x => decide (x ≠ .root o)),
-      grants := s.grants.filter (fun g => decide (g.subject ∉
-        (s.certs.filter (fun c => decide (c.org = o ∧ c.subject ∉ s.revoked))).map
-          (·.subject))) }
+      held := s.held.filter (fun x => decide (x ≠ .root o)) }
   let s2 : State :=
     { s1 with held := s1.held.filter (fun x => decide (x ≠ .team o .admin)),
-              members := s1.members.filter (fun m => decide (¬ (m.org = o ∧ m.team = .admin))),
+              members := s1.members.filter
+                (fun m => decide (¬ (m.org = o ∧ m.team = .admin) ∨ m.member ∈ ([] : List Key))),
               grants := s1.grants.filter (fun g => decide (¬ (g.org = o ∧ g.team = .admin))) }
   let c : Cert := ⟨o, k, .person, .root⟩
   let s3 : State := { s2 with certs := c :: s2.certs }
@@ -523,34 +520,30 @@ theorem domain_owner_recovers_an_admin {ask : AskRule} {s : State} {o : Org} {k 
   have hv3 : Valid s3 o k .person :=
     .person (.byRoot (c := c) List.mem_cons_self rfl rfl rfl rfl) hrev3
   refine ⟨s1, s2, s3, s4, Step.replaceRoot ho,
-    Step.rekeyTeam (t := .admin) (approvals := []) (.inl ⟨hroot1, rfl⟩),
+    Step.rekeyTeam (t := .admin) (keep := []) (approvals := []) (.inl ⟨hroot1, rfl⟩)
+      (fun h => absurd h hroot1),
     Step.registerByRoot (c := c) (approvals := []) rfl ho hk (.inl ⟨hroot2, rfl⟩),
     Step.admitAdmin (m := ⟨o, .admin, k⟩) (kind := .person) (approvals := []) rfl hv3
       (.inl ⟨hteam3, rfl⟩), List.mem_cons_self, .person, ?_⟩
   exact Valid.mono (s := s3) (t := s4) (fun _ h => h) (fun _ h => h) hv3
 
 /-- If `o`'s root key is not with a key holder, then for any team `t` of `o`
-and any key `k` there are two accepted acts, asked for by whoever controls
-`o`'s root key and then by whoever controls `t`'s key, after which `k` holds
-no certificate of `t` and no grant on `k` from team `t` of `o` stands. In the
-construction the acts are a re-key of `t` and a removal of `k`'s certificate. -/
+and any key `k` there is an accepted act asked for by whoever controls `o`'s
+root key, after which `k` holds no certificate of `t` and no grant on `k` from
+team `t` of `o` stands. In the construction the act is a re-key of `t` that
+keeps no member. -/
 theorem root_can_end_team_membership {ask : AskRule} {s : State} {o : Org} {t : Team}
     {k : Key} (hroot : OrgKey.root o ∉ s.held) :
-    ∃ s1 s2, Step ask s (.controller (.root o)) s1 ∧ Step ask s1 (.controller (.team o t)) s2 ∧
-      ¬ HasTeamCert s2 o t k ∧ ∀ g, g ∈ s2.grants → ¬ (g.org = o ∧ g.team = t ∧ g.subject = k) := by
-  let s1 : State :=
-    { s with held := s.held.filter (fun x => decide (x ≠ .team o t)),
-             members := s.members.filter (fun m => decide (¬ (m.org = o ∧ m.team = t))),
-             grants := s.grants.filter (fun g => decide (¬ (g.org = o ∧ g.team = t))) }
-  have hteam : OrgKey.team o t ∉ s1.held := by simp [s1]
-  refine ⟨s1, _, Step.rekeyTeam (approvals := []) (.inl ⟨hroot, rfl⟩),
-    Step.remove (m := ⟨o, t, k⟩) (approvals := []) (.inl ⟨hteam, rfl⟩)
-      (fun h => absurd h hteam), ?_, ?_⟩
-  · exact not_mem_filter_ne
-  · intro g hg hc
+    ∃ s1, Step ask s (.controller (.root o)) s1 ∧
+      ¬ HasTeamCert s1 o t k ∧ ∀ g, g ∈ s1.grants → ¬ (g.org = o ∧ g.team = t ∧ g.subject = k) := by
+  refine ⟨_, Step.rekeyTeam (t := t) (keep := []) (approvals := []) (.inl ⟨hroot, rfl⟩)
+    (fun h => absurd h hroot), ?_, ?_⟩
+  · intro h
+    have := (List.mem_filter.mp h).2
+    simp at this
+  · intro g hg ⟨h1, h2, _⟩
     have := (List.mem_filter.mp hg).2
-    simp only [decide_eq_true_eq] at this
-    exact this hc
+    simp [h1, h2] at this
 
 /-- Under any rule there is a record the system reaches, an act asked for by
 whoever controls organisation 1's root key, and a grant `g` of organisation 0,
@@ -668,7 +661,7 @@ theorem new_admin_certificate_needs_valid_member {ask : AskRule} {s s' : State}
   | mintGrant _ _ => exact absurd hnew hold
   | revokeGrant _ => exact absurd hnew hold
   | release _ _ => exact absurd hnew hold
-  | rekeyTeam _ => exact absurd (List.mem_filter.mp hnew).1 hold
+  | rekeyTeam _ _ => exact absurd (List.mem_filter.mp hnew).1 hold
   | replaceRoot _ => exact absurd hnew hold
   | readmitByRoot _ _ _ _ => exact absurd hnew hold
   | readmitByParent _ _ _ _ => exact absurd hnew hold
@@ -745,7 +738,7 @@ theorem root_controller_cannot_act_while_held {ask : AskRule} {s s' : State} {o 
   | entrust hn => exact hn hheld
   | readmitByRoot _ _ _ h => exact (ctrl h).2 ((ctrl h).1 ▸ hheld)
   | release hk h => exact (ctrl h).2 hk
-  | rekeyTeam h => exact (ctrl h).2 ((ctrl h).1 ▸ hheld)
+  | rekeyTeam h _ => exact (ctrl h).2 ((ctrl h).1 ▸ hheld)
   | registerByRoot _ _ _ h => exact (ctrl h).2 ((ctrl h).1 ▸ hheld)
   | revokeByOrg _ h => exact (ctrl h).2 ((ctrl h).1 ▸ hheld)
   | admit _ h _ => cases (ctrl h).1
@@ -778,7 +771,7 @@ theorem root_cert_org_exists {ask : AskRule} {s : State} (hr : Reachable ask s) 
       | readmitByRoot _ _ _ _ => exact keep
       | readmitByParent _ _ _ _ => exact keep
       | release _ _ => exact keep
-      | rekeyTeam _ => exact keep
+      | rekeyTeam _ _ => exact keep
       | entrust _ => exact keep
       | revokeSelf _ => exact keep
       | revokeChild _ _ _ => exact keep
@@ -817,5 +810,112 @@ theorem root_replacement_can_leave_no_admin (ask : AskRule) :
   obtain ⟨s, _, hr, hheld, ha, _, _⟩ := revocation_can_leave_no_admin ask
   obtain ⟨s', hstep, _, hnone⟩ := dns_owner_can_always_take_over (admin_org_exists hr ha)
   exact ⟨s, s', hr, hheld, ha, hstep, fun k ⟨_, kind, hv⟩ => hnone k kind hv⟩
+
+/-- As built. Under any rule there is a record the system reaches in which a
+grant `g` stands, its subject is revoked, and `g` is not live; and an act
+asked for by whoever controls organisation 0's root key, after which the
+grants are as before, `g` is live, and `g` may send. In the construction the
+subject was cut off by a root replacement and the act re-admits it. -/
+theorem grant_revives_with_readmission (ask : AskRule) :
+    ∃ (s s' : State) (g : Grant), Reachable ask s ∧ g ∈ s.grants ∧ g.subject ∈ s.revoked ∧
+      ¬ GrantLive s g ∧ Step ask s (.controller (.root 0)) s' ∧ s'.grants = s.grants ∧
+      GrantLive s' g ∧ g.maySend = true := by
+  let e : State := ⟨[], [], [], [], [], [], [], [], [], []⟩
+  let c : Cert := ⟨0, 1, .agent, .root⟩
+  let m : Membership := ⟨0, .named 7, 1⟩
+  let g : Grant := ⟨5, 1, 0, .named 7, true⟩
+  let s1 : State := { e with orgs := [0] }
+  let s2 : State := { s1 with certs := [c] }
+  let s3 : State := { s2 with members := [m] }
+  let s4 : State := { s3 with grants := [g] }
+  let s5 : State := { s4 with
+      revoked := ((s4.certs.filter (fun c => decide (c.org = 0 ∧ c.subject ∉ s4.revoked))).map
+        (·.subject)) ++ s4.revoked,
+      cutOff := ((s4.certs.filter (fun c => decide (c.org = 0 ∧ c.subject ∉ s4.revoked))).map
+        (·.subject)) ++ s4.cutOff,
+      held := s4.held.filter (fun k => decide (k ≠ .root 0)) }
+  let s6 : State := { s5 with revoked := s5.revoked.filter (fun k => decide (k ≠ c.subject)),
+                              cutOff := s5.cutOff.filter (fun k => decide (k ≠ c.subject)) }
+  have r1 : Reachable ask s1 := .step (.start []) (Step.createOrg (o := 0) (by simp))
+  have r2 : Reachable ask s2 :=
+    .step r1 (Step.registerByRoot (c := c) (who := .controller (.root 0)) (approvals := [])
+      rfl (by simp [s1, c]) (by intro d hd; simp [s1, e] at hd) (.inl ⟨by simp [s1, e], rfl⟩))
+  have v2 : Valid s2 0 1 .agent :=
+    .agentOfRoot (c := c) (by simp [s2]) rfl rfl rfl rfl (by simp [s2, s1, e])
+  have r3 : Reachable ask s3 :=
+    .step r2 (Step.admit (m := m) (who := .controller (.team 0 (.named 7))) (approvals := [])
+      (by simp [m]) (.inl ⟨by simp [s2, s1, e], rfl⟩) (.inl ⟨c, by simp [s2], rfl⟩))
+  have v3 : Valid s3 0 1 .agent :=
+    .agentOfRoot (c := c) (by simp [s3, s2]) rfl rfl rfl rfl (by simp [s3, s2, s1, e])
+  have r4 : Reachable ask s4 :=
+    .step r3 (Step.mintGrant (g := g) ⟨by simp [HasTeamCert, s3, m, g], .inr ⟨0, .agent, v3⟩⟩
+      (by intro g' hg'; simp [s3, s2, s1, e] at hg'))
+  have r5 : Reachable ask s5 := .step r4 (Step.replaceRoot (o := 0) (by simp [s4, s3, s2, s1]))
+  have hrev : g.subject ∈ s5.revoked := by simp [s5, s4, s3, s2, s1, e, c, g]
+  have hstep : Step ask s5 (.controller (.root 0)) s6 :=
+    Step.readmitByRoot (c := c) (approvals := []) (by simp [s5, s4, s3, s2])
+      rfl (by simp [s5, s4, s3, s2, s1, e, c]) (.inl ⟨by simp [s5, c], rfl⟩)
+  have v6 : Valid s6 0 1 .agent :=
+    .agentOfRoot (c := c) (by simp [s6, s5, s4, s3, s2]) rfl rfl rfl rfl
+      (by simp [s6, s5, s4, s3, s2, s1, e, c])
+  refine ⟨s5, s6, g, r5, by simp [s5, s4], hrev, ?_, hstep, rfl,
+    ⟨by simp [s6, s5, s4], by simp [HasTeamCert, s6, s5, s4, s3, m, g], .inr ⟨0, .agent, v6⟩⟩, rfl⟩
+  exact grant_ends_with_subject r5.revokedAreRegistered (.inl hrev)
+
+/-- The planned root replacement (aweb-adzf.9): the record `replaceRoot` gives,
+with the grants on the identities it cuts off removed. -/
+def plannedReplaceRoot (s : State) (o : Org) : State :=
+  let cut := (s.certs.filter (fun c => decide (c.org = o ∧ c.subject ∉ s.revoked))).map (·.subject)
+  { s with revoked := cut ++ s.revoked, cutOff := cut ++ s.cutOff,
+           held := s.held.filter (fun k => decide (k ≠ .root o)),
+           grants := s.grants.filter (fun g => decide (g.subject ∉ cut)) }
+
+/-- Design, aweb-adzf.9. After the planned root replacement of `o`, no grant
+stands on an unrevoked identity with a certificate of `o`; and every grant on
+any other identity still stands. -/
+theorem planned_replacement_ends_cut_off_grants (s : State) (o : Org) :
+    (∀ g, g ∈ (plannedReplaceRoot s o).grants → ∀ c, c ∈ s.certs → c.org = o →
+      c.subject ∉ s.revoked → g.subject ≠ c.subject) ∧
+    (∀ g, g ∈ s.grants → (∀ c, c ∈ s.certs → c.org = o → c.subject ∉ s.revoked →
+      g.subject ≠ c.subject) → g ∈ (plannedReplaceRoot s o).grants) := by
+  refine ⟨?_, ?_⟩
+  · intro g hg c hc ho hr he
+    have h := (List.mem_filter.mp hg).2
+    simp only [decide_eq_true_eq] at h
+    exact h (List.mem_map.mpr ⟨c, List.mem_filter.mpr ⟨hc, by simp [ho, hr]⟩, he.symm⟩)
+  · intro g hg hno
+    refine List.mem_filter.mpr ⟨hg, ?_⟩
+    simp only [decide_eq_true_eq]
+    intro hm
+    obtain ⟨c, hc, hcs⟩ := List.mem_map.mp hm
+    have hc' := List.mem_filter.mp hc
+    simp only [decide_eq_true_eq] at hc'
+    exact hno c hc'.1 hc'.2.1 hc'.2.2 hcs.symm
+
+/-- If `Authorised` holds for `o`'s root key and a re-key, and, when `o`'s root
+key is held and `t` is the admin team, some identity in `keep` is an admin of
+`o`, there is an accepted act that `who` asks for, after which the key of team
+`t` of `o` is not held, every certificate of that team that stands is of a
+member in `keep`, and no grant from that team stands. -/
+theorem rekey_ends_team_grants {ask : AskRule} {s : State} {o : Org} {t : Team}
+    {keep : List Key} {who : Party} {approvals : List Key}
+    (hauth : Authorised ask s (.root o) .rekey who approvals)
+    (hkeep : OrgKey.root o ∈ s.held → t = .admin → ∃ k, k ∈ keep ∧ Admin s o k) :
+    ∃ s', Step ask s who s' ∧ OrgKey.team o t ∉ s'.held ∧
+      (∀ m, m ∈ s'.members → m.org = o → m.team = t → m.member ∈ keep) ∧
+      ∀ g, g ∈ s'.grants → ¬ (g.org = o ∧ g.team = t) := by
+  refine ⟨_, Step.rekeyTeam hauth hkeep, ?_, ?_, ?_⟩
+  · intro h
+    have := (List.mem_filter.mp h).2
+    simp at this
+  · intro m hm h1 h2
+    have h := (List.mem_filter.mp hm).2
+    simp only [decide_eq_true_eq] at h
+    rcases h with h | h
+    · exact absurd ⟨h1, h2⟩ h
+    · exact h
+  · intro g hg ⟨h1, h2⟩
+    have := (List.mem_filter.mp hg).2
+    simp [h1, h2] at this
 
 end TrustWeb
