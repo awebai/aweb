@@ -45,7 +45,7 @@ func runWakeStatus(cmd *cobra.Command, args []string) error {
 	case controlErr != nil:
 		// A stored snapshot is diagnostic evidence, never permission for a
 		// mutation fallback. Preserve every transport failure in the readiness
-		// refusal, including an accepted exchange (docs/cli-integration-contract.md:111).
+		// refusal, including an accepted exchange (docs/cli-integration-contract.md, Wake readiness).
 		status, err = wake.StatusFromStore(store, wakeMaxStreams)
 		if err != nil {
 			return fmt.Errorf("read wake snapshot after control failure: %w; restore wake control or repair its stored status before retrying", errors.Join(controlErr, err))

@@ -1,16 +1,404 @@
-# CLI contracts for orchestrators
+# aw's contract with the framework, version 1
 
-Use `--json` and the process exit status. Human error sentences remain useful
-for operators, but machine consumers should read codes rather than classify
-sentences. The acting identity follows [identity selection](cli-identity-selection.md).
+**Status: draft for approval.** aweb owns this contract and its number. The
+machine-readable copy is
+[`cli-integration-contract-v1.json`](vectors/cli-integration-contract-v1.json);
+where the two disagree, that is a defect in this repository.
 
-## Version
+This contract lists what a framework that runs agents (OATS) may rely on when
+it calls the `aw` command line: which commands, how to select the identity
+they act as, what their JSON answers contain, and what their exit statuses and
+error codes mean. Anything not listed here may change in any `aw` release. The
+framework talks to `aw` only through these commands: it does not read `aw`'s
+files, match its sentences or probe its help text.
 
-`aw version --json` answers before any identity exists: it selects no
-identity home, makes no update check and no network request, so a caller can
-ask the exact binary it will run before anything else. It returns `version`,
-`commit`, `commit_repo` and `built`, all strings; a value the build was not
-stamped with is an empty string. Text `aw version` is unchanged.
+Part 1 is the contract. Part 2 keeps the detailed rules of individual
+commands, which part 1 refers to by section.
+
+# Part 1. The contract
+
+## 1. The version and how it is accepted
+
+`aw version --json` answers before anything else is read. It selects no
+identity, makes no update check and no network request, so the framework can
+ask the exact `aw` executable it will run:
+
+```json
+{"version": "1.37.0", "commit": "<hash>", "commit_repo": "github.com/awebai/aw", "built": "<RFC 3339>", "integration_contract": 1}
+```
+
+All values are strings except `integration_contract`, an integer. A value the
+build was not stamped with is an empty string. Text `aw version` is for people
+and is not part of the contract.
+
+- `integration_contract` is this document's number. An `aw` reports `1` only
+  when it keeps every promise of version 1. An `aw` that predates this
+  contract has no such key.
+- The number changes only when this contract changes, never with an ordinary
+  `aw` release. The release number in `version` says nothing about the
+  contract.
+- A framework release states the contract version it accepts. At start, before
+  any effect, it runs `aw version --json` on the exact `aw` it will use and
+  refuses if the key is missing, malformed or not the accepted number. The
+  refusal names the required contract and what `aw` reported. Acceptance is
+  exact: a higher number is accepted only under a written rule in a later
+  version of this document.
+- When `aw` is upgraded, the framework restarts, or keeps the checked
+  executable for its lifetime.
+
+## What version 1 adds to released `aw`
+
+Everything in this contract exists in released `aw` (1.36.59) except:
+
+- `aw version --json` and its `integration_contract` key. Released `aw
+  version` prints text and ignores `--json`.
+- The `release` receipt of `aw id grant revoke`, its `--expect-subject`
+  check, and `revoked_at`. Released revoke answers `status` and `grant_id`.
+- `aw workspace delete --retire-member --expect-certificate`.
+- The code `username_unavailable`.
+
+All are additions: no released key, exit status or code changes meaning, with
+one exception, stated in [Release receipts](#release-receipts): a revoke whose
+reply was lost now exits 0 when `aw` reads back that the grant was revoked.
+
+## 2. Rules for every call
+
+**Invocation.** The framework runs `aw` with an argument array, never through a
+shell, and passes `--json` to every listed command. Under `--json` no update
+check runs. Secrets (invite tokens) are passed on stdin where the command says
+so, never as arguments.
+
+**Selecting the identity.** `--identity-home PATH`, placed before the
+subcommand, selects the identity `aw` acts as; PATH is the absolute credential
+directory (it holds `signing.key` or `grant.yaml`; usually `<workspace>/.aw`).
+It wins over `AWEB_IDENTITY_HOME`, which wins over the current directory's
+`.aw`. A selected home that cannot be loaded fails; it never falls back to
+another identity. Where a command creates an identity, the flag names the
+fresh recipient directory, and the command says what authorises it
+([identity selection](cli-identity-selection.md)).
+
+**Environment.** Variables that select a service or credential (`AWEB_URL`,
+`AWEB_API_KEY`, `AWID_REGISTRY_URL`, `AWEB_IDENTITY_HOME`) change what a
+command acts on. The framework sets them only where a command below says so,
+and clears them otherwise.
+
+**Output.**
+- Success writes exactly one JSON document to stdout. Key order and
+  whitespace are not part of the contract.
+- A listed key is promised with its type. Keys marked optional may be absent;
+  absent and empty mean the same unless the command says otherwise. Keys not
+  listed may appear and must be ignored. Objects with an `alias` may also
+  carry `name` with the same value; it is not part of the contract.
+- stderr carries sentences for operators, including notices on success. It is
+  never part of the contract.
+
+**Exit status.** `0` is success. `2` is a usage error or a refusal before any
+effect. `1` is any other failure, which may also have happened before any
+effect: an exit status alone never says that something changed. A command
+below that prints a result and exits nonzero says so, and the framework reads
+that result.
+
+**The error envelope.** On failure under `--json`, when nothing was printed to
+stdout, `aw` prints one document:
+
+```json
+{"error": {"code": "...", "message": "...", "http_status": 404, "detail": "...", "reason": "...", "classification": "..."}}
+```
+
+- `code` and `message` are always present. `message` is for operators; the
+  framework branches on `code`, never on `message`.
+- `http_status`, `detail` and `reason` are present for a refusal by the aweb
+  service or the AWID registry. `reason` is that service's own refusal code
+  (an open vocabulary owned by the service, not this list); `detail` is its
+  text.
+- `classification` is present only for the classified team errors in
+  [Refusal codes](#refusal-codes).
+- `invite` (invite inspection) and `release` (release receipts) sit beside
+  `error` where the command says so, in the same document.
+- `code` is one of the codes in
+  [`cli-integration-codes-v1.json`](vectors/cli-integration-codes-v1.json)
+  (the machine list pins its edition by digest when version 1 is released),
+  `error` (a failure with no
+  more specific code), `http_error` (a service refusal, read `http_status` and
+  `reason`), `alias_conflict` or `outcome_unknown` (a write that may have
+  applied: inspect before retrying).
+
+**Telling failures apart.** The framework must keep these distinct: `aw`
+could not be started; it was stopped by the framework's own timeout; its
+stdout is empty, truncated or not one JSON document; it printed the error
+envelope; it printed a result and exited nonzero (only where listed). Only
+the last two are answers.
+
+## 3. The commands
+
+Each command lists who authorises it, what it reads or changes, its input, the
+keys of its answer, and its exits. Types: `string`, `bool`, `int`, `array`,
+`object`, `null`. "Recorded" means read from the selected home's own files,
+with no network; it proves what was written, not current authority.
+
+### 3.1 The version
+- `aw version --json`. No identity, no network. Answer as in section 1.
+
+### 3.2 Facts about a home
+- `aw --identity-home H id status --team T --json`. Recorded. Answer (all
+  always present): `team_id`, `signing_key_present` bool, `identity_present`
+  bool, `identity_registered` bool, `registry_status` (`registered`,
+  `pending`, `unknown` or `not_applicable`), `did`, `stable_id`, `address`,
+  `alias`, `certificate_present` bool, `certificate_id`, `workspace_bound`
+  bool, `workspace_id`, `service`, `partial_init` {`present` bool, `stage`:
+  `absent`, `identity_prepared` or `response_received`},
+  `pending_hosted_accept` bool, `mint_complete` bool. A home whose files are
+  corrupt or inconsistent fails with exit 1 and a repair instruction. See
+  [Recorded initialization and membership](#recorded-initialization-and-membership).
+- `aw --identity-home H id team list --json`. Recorded. Answer: `active_team`
+  string, `memberships` array of {`team_id`, `alias`, `active` bool,
+  `registry_url`, `aweb_url`, `certificate_id`, `workspace_id` (each always
+  present, empty when unknown); optional `identity_scope`, `issued_at`}.
+- `aw --identity-home H whoami --json`. Reads the home and, for its inbound
+  mode, the service. Answer, every key optional: `alias`, `address`, `domain`,
+  `did`, `stable_id`, `custody`, `identity_scope`, `grant_id`, `grant_status`,
+  `grant_scopes` array, `grant_expires_at`, `inbound_mode`,
+  `inbound_mode_error`. A failed inbound-mode read is reported in
+  `inbound_mode_error` and does not fail the command.
+- `aw --identity-home H doctor identity --offline --json` and
+  `aw --identity-home H doctor registry --online --json`. Answer: `version`
+  (`doctor.v1`), `status` (`ok`, `info`, `warn`, `fail`, `unknown` or
+  `blocked`), `mode`, `subject` object (optional `team_id`, `workspace_id`,
+  `alias`, `identity_scope`), `checks` array of {`id`, `status`, `message`;
+  optional `detail` object, `next_step`}. These always exit 0, whatever the
+  status. Check ids are `identity.*`, `awid.*`; a check's `detail` keys are
+  not part of the contract.
+
+The framework reads nothing else about a home. A bounded recorded read that
+answers what the framework reads from `aw`'s files today is planned for a
+later version (section 5).
+
+### 3.3 Creating an agent's identity and membership
+
+The issuer and the recipient are different homes, acting under different
+authorities. These are separate journeys, not one operation.
+
+- **Mint an invitation.** `aw --identity-home ISSUER id team invite --team-id T
+  --json`. Authority: the issuer's team controller key, or for a hosted team
+  the issuer's hosted membership; the same command and answer serve both.
+  Answer: `status` (`created`), `invite_id`, `token` (secret: never log or
+  pass as an argument), `for_human` (null), optional `expires_at`. The answer
+  carries no service URL: the caller uses the service it already selected or
+  verified. `--preflight` returns the authority plan without creating
+  anything; see [Invite planning and cancellation](#invite-planning-and-cancellation).
+- **Inspect an invitation.** `aw team invite inspect --json`, token on stdin.
+  No identity. Answer: `kind` (`hosted` or `controller`), `canonical_team_id`,
+  `identity_scope` (`unknown` for controller tokens), `server_url`, `status`
+  (`active`, `unverified`, `expired`, `exhausted` or `revoked`), and for
+  hosted invitations `expires_at` (string or null). An invitation that is not
+  active exits 1 with the error envelope and `invite` beside it. Codes:
+  `malformed_token`, `unsupported_version`, `unknown_or_invalid`,
+  `expired_or_revoked`, `exhausted`, `server_unreachable`, `server_mismatch`.
+  This spelling is kept until the command tree is reorganised (E1).
+- **Accept an invitation.** `aw --identity-home FRESH id team accept-invite
+  --token-stdin --name A --local [--parent ROOT/.aw] --json`, token on stdin.
+  Authority: the token; FRESH holds no credentials yet. Answer: `status`
+  (`accepted`), `team_id`, `alias`, `cert_path`; optional `connected` bool,
+  `aweb_url`, `connect_command`, `id_registration`, `team_key` object,
+  `responsibility` object. Codes: `native_agent_signature_pending` (exit 1;
+  keep the home and retry with the same token, name and home). If membership
+  was installed but connecting the workspace failed, it exits 1 and keeps the
+  home; `id status` then reports `certificate_present` true and
+  `workspace_bound` false, and the framework runs `workspace connect` for that
+  home without reusing the token.
+- **Invite and join in one process.** `aw --identity-home FRESH init
+  --join-from SOURCE --join-team T --name N --json`. Authority: SOURCE's
+  membership issues; FRESH must be explicitly selected and free of
+  credentials. No token is returned. Answer: `status` (`connected`),
+  `team_id`, `alias`, `aweb_url`; optional `workspace_id`, `stable_id`,
+  `address`, `identity_scope`, `id_registration`, `team_key`,
+  `responsibility`, `next_steps` array, `guide`. Codes: `invite_not_created`,
+  `alias_conflict`, `native_agent_signature_pending`.
+- **Connect a workspace.** `aw --identity-home H workspace connect --service
+  URL --team T --json`. Answer: as the join's, without `next_steps` and
+  `guide`.
+- **A global resident.** `aw init --global --name N --json` in the resident's
+  directory, with `AWEB_URL` and `AWEB_API_KEY` set (a setup key). Answer: as
+  the join's, with `identity_scope` `global`, `stable_id` and `address`.
+- **An addressed global identity.** `aw --identity-home FRESH id create --name
+  N --domain D --json`. Authority: registering the address needs the
+  authority of namespace D (the answer's `controller_did`); a parent and a
+  team's admission are separate authorities, used later. Answer: `status` (`created`, or `chain_installed` on resume), `address`,
+  `did_aw`, `did_key`, `registry_status` (`registered`), `identity_path`,
+  `signing_key_path`; optional `controller_did`, `registry_url`,
+  `registry_error`, `encryption_key_id`.
+- **A hosted account.** `aw init --new-account --username U --name N --json`
+  with `AWEB_URL` set. Answer: as the join's. Code `username_unavailable`
+  (exit 2) when the name is taken.
+
+### 3.4 A team the user controls (bring your own team)
+- `aw id team create --name N --namespace D --json`. Authority: the
+  namespace's controller key on this machine. Answer: `status` (`created`),
+  `team_id`, `team_did_key`, `team_key_path`; optional `registry_url`. Codes:
+  `controller_key_missing` (exit 2); classifications `team_name_taken`,
+  `team_name_unconfirmed`.
+- `aw id team show-server --team N --namespace D --json` and `aw id team
+  set-server --team N --namespace D --url URL --json`. Answer: `status`
+  (`verified` for show, `published` for set), `team_id`, `server_url`,
+  `audience`, `issued_at`, `team_did_key`, `registry_url`. No record:
+  classification `team_server_record_missing`.
+- `aw id team register --service URL --team T --json`. Authority: the team
+  controller key. Answer: `status`, `awid_team_id`, `service_url`, `dry_run`
+  bool, `timestamp`, `controller_did`; optional `next_steps`. The service's own
+  refusal code is kept in `error.code` and `reason`.
+- `aw id team invite --team N --namespace D --json`. As 3.3's mint.
+
+### 3.5 Residents, grants and custody
+- `aw id grant mint --team T --scope S --ttl D --label L --out GRANTHOME
+  --custody-socket SOCK --json`, run in the resident's directory. Answer:
+  `grant_id`, `team_id`, `expires_at` (`never` or RFC 3339), `out`, `apps`
+  array, `skipped_apps` array; optional `alias`, `address`,
+  `custody_socket_path`.
+- `aw id grant show ID --team T --json` and `aw id grant list --team T
+  --json`. Answer: a grant (or `grants`, an array of grants): `grant_id`,
+  `team_id`, `subject_alias`, `subject_did_aw`, `grant_did_key`, `scopes`
+  array, `issued_at`, `expires_at`; optional `label`, `status` (`active`,
+  `expired` or `revoked`), `revoked_at`. Code `grant_not_found` names the
+  selected team.
+- `aw id grant revoke ID --team T --json`: see 3.8.
+- `aw custody status --json`, run in the resident's directory. Answer:
+  `status` (`running` or `not_running`), `socket_path`, `resident` object,
+  `teams` (array or null) of {`team_id`, `ready` bool, `certificate_present`
+  bool, `grant_status_endpoint_ready` bool}, `keys` (object or null) with
+  `signing_ready` and `encryption_ready` bools, `ops` (array or null) of
+  operation names, `errors` optional array. Unreachable custody answers
+  `not_running` with `errors` `["custody_unavailable"]` and exits 0.
+
+### 3.6 Who is in the team, and who answers for an agent
+- `aw --identity-home H id team members --team-id T --json`. Answer:
+  `team_id`, `members` array of {`certificate_id`, `team_id`, `alias`,
+  `member_did_key`, `identity_scope`, `issued_at`; optional `member_address`,
+  `member_did_aw`, `revoked_at`}; optional `source` and `limitations`. From a
+  grant home the answer is the service's roster: `source` is `service-roster`,
+  `limitations` says what it omits, and certificate fields are empty.
+- `aw --identity-home H workspace status --json`, for operator display only:
+  `selected_team`, `team` array (never null; the other workspaces of the team,
+  as the service projects them, each with `alias`, `status`, optional
+  `last_seen`, `hostname`, `role`, `workspace_path`), `team_has_more` bool,
+  `workspace` object. It is a projection of the service, not authority.
+- `aw --identity-home H who --json [--registry ORIGIN]`. Answer: `id`,
+  `domain`, `outcome` (`nearest_human`, `no_human`, `unavailable` or another
+  value, which means unknown), `human_id` (string or null), `identity_valid`
+  (bool or null), `kind` (string or null), `reason`; optional `chain` array of
+  {`id`, `kind`}, ending with `id`. It exits 0 whatever the outcome.
+
+### 3.7 Messages
+- `aw --identity-home H mail send --to A --subject S --body-file F [--new-conversation] --json`.
+  Answer: `message_id`, `status`, `delivered_at`; optional `conversation_id`.
+- `aw --identity-home H mail show --message-id ID --json` and `mail show
+  --conversation-id ID --limit N --json`. Answer: `messages` array, `has_more`
+  bool, optional `next_cursor`. Each message: `message_id`, `subject`, `body`,
+  `priority` (`low`, `normal`, `high` or `urgent`), `created_at`, `read_at`
+  (string or null), `from_alias`; optional `conversation_id`, `from_address`,
+  `to_address`, `from_did`, `to_did`, `from_stable_id`, `to_stable_id`,
+  `content_mode`, `message_version`, `encrypted_envelope`, `signed_payload`,
+  `verification_status` (`verified`, `verified_legacy`, `verified_custodial`,
+  `unverified`, `failed` or `identity_mismatch`).
+- `aw --identity-home H mail threads --limit N [--cursor C] --json`. Answer:
+  `conversations` array of {`conversation_type`; optional `conversation_id`,
+  `subject`, `title`, `last_message_at`, `unread_count`}, optional
+  `next_cursor`.
+- `aw --identity-home H mail inbox --count-only --json`. Answer:
+  `unread_count` int. It never marks mail read.
+
+### 3.8 Wake delivery
+- `aw wake status --json`, and `aw wake status --home H --min-daemon-version V
+  --json`. Answer: the daemon's status (`updated_at`, `daemon_running` bool,
+  optional `daemon_version`, `daemon_version_state`, `daemon_pid`, `instances`
+  array), and `readiness`: an array of verdicts without `--home`, one verdict
+  with it. A verdict: `home`, `ready` bool, `code`, `reason`,
+  `daemon_version`, `updated_at`, `last_inspect_at`, `advisories` array; codes
+  in [Wake readiness](#wake-readiness). Not ready still exits 0. The fields of
+  `instances` are diagnostic: the framework decides on `readiness`.
+- `aw wake register --registration-json -`, the registration on stdin:
+  {`home`, `identity_home`, `delivery`; optional `runtime_delivery`,
+  `primary_identity_home`, `backend`, `receive_identities` array of
+  {`identity_home`; optional `team_id`, `label`, `delivery_owner`,
+  `event_classes`, `controls`}}. And `aw wake register --home H --identity-home
+  I --delivery session [--backend tmux]`. Exit 0 means saved; its output is
+  text, not part of the contract. Registering the same binding again is
+  idempotent.
+- `aw wake deregister --home H`. Exit 0 means the home is no longer
+  registered, including when it never was.
+
+### 3.9 Releasing an agent
+
+Two effects, two commands, under different authorities.
+
+- **Revoke a session grant** (the resident stays): `aw id grant revoke ID
+  --team T --json [--expect-subject ALIAS]`, from the resident's home.
+  Answer: `status` (`revoked`), `grant_id`, `revoked_at`, `release`. See
+  [Release receipts](#release-receipts).
+- **Retire the member and its workspace**: `aw workspace delete WORKSPACE_ID
+  --retire-member --expect-certificate CERT --json`, from the member's own
+  home. It never falls back to plain deletion. Answer: as in
+  [Retirement and owner log access](#retirement-and-owner-log-access), with
+  `release`. Hosted self-removal cannot yet bind the exact workspace, so on a
+  hosted team this mode refuses with `certificate_binding_unavailable` before
+  sending.
+
+A `release` object: `effect` (`revoke_grant` or `retire_member`), `team_id`,
+`subject` {`alias`, `did`, `stable_id`}, `target` {`grant_id`, or
+`workspace_id` and `certificate_id`}, `outcome` (`confirmed`, `pending`,
+`unknown` or `refused`), `code`, `next_step` (a complete command, or empty).
+`unknown` and `pending` mean: keep the home and its state, and run
+`next_step`.
+
+## 4. Codes that drive a recovery
+
+The framework branches only on codes. Each place where OATS today reads
+`aw`'s sentences to decide what to do next has a code instead:
+
+| Situation | What the framework reads |
+| --- | --- |
+| The alias is taken | `error.code` `alias_conflict`, or `http_error` with `reason` `self_custody_reinit_unproven` |
+| Team creation made no invitation | `error.code` `invite_not_created` |
+| The controller key is missing here | `error.code` `controller_key_missing` |
+| A hosted username is taken | `error.code` `username_unavailable` (new in version 1) |
+| Deleting through an external home that cannot release the alias | `error.code` `team_not_hosted` |
+| A revoke may have applied | `release.outcome` `unknown`, `error.code` `outcome_unknown` |
+| A read was forbidden, or a message or team is not found | `error.code` `http_error` with `http_status` |
+| No team server record, or the team name is held by another key | `error.classification` `team_server_record_missing` or `team_name_taken` |
+
+## 5. What is not in the contract
+
+- **`aw`'s files.** `workspace.yaml`, `identity.yaml`, `teams.yaml`,
+  `signing.key`, `grant.yaml`, team certificates, recovery files, journals and
+  locks are private to `aw`. A bounded recorded read for what the framework
+  reads from them today is planned (a later version).
+- **Text output, stderr and help text.** No sentence is promised, and no
+  command's help is a feature test: the contract version replaces feature
+  probing.
+- **Fallback key names** (`teams` for `memberships`, `id` for `team_id`,
+  `cert_id` and similar). Only the keys listed here.
+- **Older spellings**: `aw team list` and `aw team invite` (use `aw id team
+  list` and `aw id team invite`). `aw team invite inspect` is the exception and
+  is listed.
+- **Health and status publishing.** The framework in aweb has no health
+  commands and does not call `aw status publish` or `aw status-host`. Released
+  `aw` keeps them for released OATS.
+- **`aw heartbeat`.**
+- **Installing the wake and custody services.** Commands to install, remove
+  and report the launchd and systemd units are planned but not in version 1;
+  they need a test environment with a real user service manager first.
+- **The workspace roster as authority.** `workspace status` is for display.
+
+## 6. How the contract is kept
+
+- The machine list pins this document's promises and the code list's edition
+  by digest. Changing either without a new version number fails aweb's tests.
+- Every listed answer is checked against the list from a real run of the real
+  `aw` against a real aweb service and AWID registry, success and failure
+  shapes alike, so a test fails when a listed answer changes shape.
+- Release evidence runs a framework release against the supported `aw`, and
+  against an older and a newer `aw` that it must refuse at start.
+
+# Part 2. Details of individual commands
 
 ## Recorded initialization and membership
 
@@ -244,22 +632,40 @@ Cancellation does not revoke an issued certificate. `next_step` names
 A release command performs one explicit effect and reports it in a `release`
 object: `effect`, `team_id`, `subject` (`alias`, `did`, `stable_id` of the
 selected principal, empty where local evidence cannot be read), `target`,
-`outcome` (`confirmed`, `unknown` or `refused`), `code` and `next_step`. On
+`outcome` (`confirmed`, `pending`, `unknown` or `refused`), `code` and `next_step`. On
 success the object sits beside the command's released fields; on failure it
 sits beside `error` in the same JSON document.
 
 `aw id grant revoke GRANT --team T --json [--expect-subject ALIAS]` has effect
 `revoke_grant`: that one session grant ends and the resident stays. The
 service binds the grant to the selected team and resident. `--expect-subject`
-is a sanity check refused before sending (`subject_mismatch`) when the selected
-identity's alias differs or cannot be read. Confirmed means the route returned
-that grant revoked, with `revoked_at`; a repeat on a revoked grant returns the
-original `revoked_at`. A definitive refusal, such as `grant_not_found`, or a
+is a sanity check refused before sending (`subject_mismatch`, with the refused
+`release` beside `error`) when the selected identity's alias differs or cannot
+be read. Grant IDs are compared as UUIDs, whatever their spelling. Confirmed
+means the route returned that grant revoked, with a valid `revoked_at`; a
+repeat on a revoked grant returns the original `revoked_at`. A definitive refusal, such as `grant_not_found`, or a
 connection that was never made is `refused`. After the request was sent, a
 server failure or a lost or unusable reply is settled only by reading back that
 exact grant from the same service, team and resident: a recorded revocation
 confirms, exit 0; anything else is `unknown` with code `outcome_unknown`, exit
-nonzero, and `next_step` repeats the command with the same identity home.
+nonzero, and `next_step` repeats the command with the same identity home,
+service and `--expect-subject`.
+
+`aw workspace delete WORKSPACE_ID --retire-member --expect-certificate CERT
+--json` has effect `retire_member`: the selected local member's own workspace
+is deleted and its exact certificate revoked, as the native retained receipt
+below records. Before sending, it refuses (exit 2) unless WORKSPACE_ID is the
+selected member's own workspace (`not_own_workspace`), the member is local
+(`global_identity`), its certificate is CERT (`subject_mismatch`), the team's
+controller key is here (`controller_key_missing`), and the team is not hosted
+(`certificate_binding_unavailable`: the hosted self-removal route chooses the
+workspace from the member's credential, so the exact workspace cannot yet be
+bound). It never falls back to ordinary deletion. `target` carries
+`workspace_id` and `certificate_id`. `retired_and_revoked` is `confirmed`;
+`retired_key_holder_required` is `pending`, with the key holder's command in
+`next_step`; `retired_revocation_pending` and an unconfirmed cleanup are
+`unknown`, retried with the same command. Without `--retire-member`,
+`aw workspace delete` keeps its released behaviour and carries no `release`.
 
 ## Retirement and owner log access
 

@@ -1,0 +1,1166 @@
+{
+  "contract": "aw-framework",
+  "version": 1,
+  "status": "draft",
+  "owner": "docs/cli-integration-contract.md",
+  "version_probe": {
+    "argv": [
+      "aw",
+      "version",
+      "--json"
+    ],
+    "identity": "none",
+    "network": false,
+    "answer": {
+      "required": {
+        "version": "string",
+        "commit": "string",
+        "commit_repo": "string",
+        "built": "string",
+        "integration_contract": "int"
+      }
+    },
+    "acceptance": "exact; checked at start on the exact aw executable before any effect; refuse when missing, malformed or not the accepted number"
+  },
+  "rules": {
+    "invocation": "argument array, never a shell; --json on every listed command; secrets on stdin",
+    "selector": "--identity-home ABSOLUTE_PATH before the subcommand; then AWEB_IDENTITY_HOME; then ./.aw; an unloadable selection fails without fallback",
+    "stdout": "exactly one JSON document on success; key order, whitespace and the name key are not promised; unlisted keys are ignored",
+    "stderr": "not part of the contract",
+    "exits": {
+      "0": "success",
+      "1": "failure",
+      "2": "usage error or refusal before any effect"
+    },
+    "error_envelope": {
+      "required": {
+        "error": {
+          "code": "string",
+          "message": "string"
+        }
+      },
+      "optional": {
+        "error.http_status": "int",
+        "error.detail": "string",
+        "error.reason": "string",
+        "error.classification": "string",
+        "invite": "object",
+        "release": "object"
+      },
+      "generic_codes": [
+        "error",
+        "http_error",
+        "alias_conflict",
+        "outcome_unknown"
+      ],
+      "codes_list": "cli-integration-codes-v1.json, edition pinned by digest when version 1 is released"
+    },
+    "distinguish": [
+      "aw could not start",
+      "the caller's timeout",
+      "empty, truncated or invalid stdout",
+      "the error envelope",
+      "a result printed with a nonzero exit, where listed"
+    ]
+  },
+  "commands": [
+    {
+      "id": "id_status",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "id",
+        "status",
+        "--team",
+        "T",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "none: recorded",
+      "network": false,
+      "answer": {
+        "required": {
+          "team_id": "string",
+          "signing_key_present": "bool",
+          "identity_present": "bool",
+          "identity_registered": "bool",
+          "registry_status": "string",
+          "did": "string",
+          "stable_id": "string",
+          "address": "string",
+          "alias": "string",
+          "certificate_present": "bool",
+          "certificate_id": "string",
+          "workspace_bound": "bool",
+          "workspace_id": "string",
+          "service": "string",
+          "partial_init": "object",
+          "pending_hosted_accept": "bool",
+          "mint_complete": "bool"
+        },
+        "optional": {}
+      },
+      "notes": "registry_status: registered|pending|unknown|not_applicable; partial_init: {present bool, stage absent|identity_prepared|response_received}"
+    },
+    {
+      "id": "id_team_list",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "id",
+        "team",
+        "list",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "none: recorded",
+      "network": false,
+      "answer": {
+        "required": {
+          "active_team": "string",
+          "memberships": "array"
+        },
+        "optional": {}
+      },
+      "notes": "membership: team_id, alias, active bool, registry_url, aweb_url, certificate_id, workspace_id always present; identity_scope, issued_at optional"
+    },
+    {
+      "id": "whoami",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "whoami",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "H",
+      "network": true,
+      "answer": {
+        "required": {},
+        "optional": {
+          "alias": "string",
+          "address": "string",
+          "domain": "string",
+          "did": "string",
+          "stable_id": "string",
+          "custody": "string",
+          "identity_scope": "string",
+          "grant_id": "string",
+          "grant_status": "string",
+          "grant_scopes": "array",
+          "grant_expires_at": "string",
+          "inbound_mode": "string",
+          "inbound_mode_error": "string"
+        }
+      }
+    },
+    {
+      "id": "doctor_identity",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "doctor",
+        "identity",
+        "--offline",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "none",
+      "network": false,
+      "answer": {
+        "required": {
+          "version": "string",
+          "status": "string",
+          "mode": "string",
+          "subject": "object",
+          "checks": "array"
+        },
+        "optional": {}
+      },
+      "exits": {
+        "0": "always, whatever the status"
+      },
+      "notes": "check: id, status, message; optional detail, next_step; detail keys not promised"
+    },
+    {
+      "id": "doctor_registry",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "doctor",
+        "registry",
+        "--online",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "none",
+      "network": true,
+      "answer": {
+        "required": {
+          "version": "string",
+          "status": "string",
+          "mode": "string",
+          "subject": "object",
+          "checks": "array"
+        },
+        "optional": {}
+      },
+      "exits": {
+        "0": "always, whatever the status"
+      }
+    },
+    {
+      "id": "invite_mint",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "ISSUER",
+        "id",
+        "team",
+        "invite",
+        "--team-id",
+        "T",
+        "--json"
+      ],
+      "selector": "ISSUER",
+      "authority": "the issuer's team controller key, or for a hosted team its hosted membership",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "invite_id": "string",
+          "token": "string",
+          "for_human": "null"
+        },
+        "optional": {
+          "expires_at": "string"
+        }
+      },
+      "notes": "token is a secret; no service URL in the answer"
+    },
+    {
+      "id": "invite_inspect",
+      "argv": [
+        "aw",
+        "team",
+        "invite",
+        "inspect",
+        "--json"
+      ],
+      "selector": "none",
+      "authority": "none",
+      "network": true,
+      "answer": {
+        "required": {
+          "kind": "string",
+          "canonical_team_id": "string",
+          "identity_scope": "string",
+          "server_url": "string",
+          "status": "string"
+        },
+        "optional": {
+          "expires_at": "string"
+        }
+      },
+      "stdin": "the token, one line",
+      "exits": {
+        "1": "inactive invitation: error envelope with invite beside it"
+      },
+      "codes": [
+        "malformed_token",
+        "unsupported_version",
+        "unknown_or_invalid",
+        "expired_or_revoked",
+        "exhausted",
+        "server_unreachable",
+        "server_mismatch"
+      ]
+    },
+    {
+      "id": "invite_accept",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "FRESH",
+        "id",
+        "team",
+        "accept-invite",
+        "--token-stdin",
+        "--name",
+        "A",
+        "--local",
+        "--json"
+      ],
+      "selector": "FRESH",
+      "authority": "the token",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "team_id": "string",
+          "alias": "string",
+          "cert_path": "string"
+        },
+        "optional": {
+          "connected": "bool",
+          "aweb_url": "string",
+          "connect_command": "string",
+          "id_registration": "string",
+          "team_key": "object",
+          "responsibility": "object"
+        }
+      },
+      "stdin": "the token, one line",
+      "codes": [
+        "native_agent_signature_pending"
+      ],
+      "notes": "optional --parent ROOT/.aw; a failed connect after membership exits 1 and keeps the home"
+    },
+    {
+      "id": "init_join_from",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "FRESH",
+        "init",
+        "--join-from",
+        "SOURCE",
+        "--join-team",
+        "T",
+        "--name",
+        "N",
+        "--json"
+      ],
+      "selector": "FRESH",
+      "authority": "SOURCE's membership",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "team_id": "string",
+          "alias": "string",
+          "aweb_url": "string"
+        },
+        "optional": {
+          "workspace_id": "string",
+          "stable_id": "string",
+          "address": "string",
+          "identity_scope": "string",
+          "id_registration": "string",
+          "team_key": "object",
+          "responsibility": "object",
+          "next_steps": "array",
+          "guide": "string"
+        }
+      },
+      "codes": [
+        "invite_not_created",
+        "alias_conflict",
+        "native_agent_signature_pending"
+      ]
+    },
+    {
+      "id": "workspace_connect",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "workspace",
+        "connect",
+        "--service",
+        "URL",
+        "--team",
+        "T",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "H's certificate",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "team_id": "string",
+          "alias": "string",
+          "aweb_url": "string"
+        },
+        "optional": {
+          "workspace_id": "string",
+          "stable_id": "string",
+          "address": "string",
+          "identity_scope": "string",
+          "id_registration": "string",
+          "team_key": "object",
+          "responsibility": "object"
+        }
+      }
+    },
+    {
+      "id": "init_global_resident",
+      "argv": [
+        "aw",
+        "init",
+        "--global",
+        "--name",
+        "N",
+        "--json"
+      ],
+      "selector": "the resident's directory",
+      "authority": "a setup key",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "team_id": "string",
+          "alias": "string",
+          "aweb_url": "string"
+        },
+        "optional": {
+          "workspace_id": "string",
+          "stable_id": "string",
+          "address": "string",
+          "identity_scope": "string",
+          "id_registration": "string",
+          "team_key": "object",
+          "responsibility": "object",
+          "next_steps": "array",
+          "guide": "string"
+        }
+      },
+      "environment": [
+        "AWEB_URL",
+        "AWEB_API_KEY"
+      ]
+    },
+    {
+      "id": "id_create_addressed",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "FRESH",
+        "id",
+        "create",
+        "--name",
+        "N",
+        "--domain",
+        "D",
+        "--json"
+      ],
+      "selector": "FRESH",
+      "authority": "the namespace's controller",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "address": "string",
+          "did_aw": "string",
+          "did_key": "string",
+          "registry_status": "string",
+          "identity_path": "string",
+          "signing_key_path": "string"
+        },
+        "optional": {
+          "controller_did": "string",
+          "registry_url": "string",
+          "registry_error": "string",
+          "encryption_key_id": "string"
+        }
+      }
+    },
+    {
+      "id": "init_new_account",
+      "argv": [
+        "aw",
+        "init",
+        "--new-account",
+        "--username",
+        "U",
+        "--name",
+        "N",
+        "--json"
+      ],
+      "selector": "the new directory",
+      "authority": "the hosted service",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "team_id": "string",
+          "alias": "string",
+          "aweb_url": "string"
+        },
+        "optional": {
+          "workspace_id": "string",
+          "stable_id": "string",
+          "address": "string",
+          "identity_scope": "string",
+          "id_registration": "string",
+          "team_key": "object",
+          "responsibility": "object",
+          "next_steps": "array",
+          "guide": "string"
+        }
+      },
+      "environment": [
+        "AWEB_URL"
+      ],
+      "codes": [
+        "username_unavailable"
+      ]
+    },
+    {
+      "id": "team_create",
+      "argv": [
+        "aw",
+        "id",
+        "team",
+        "create",
+        "--name",
+        "N",
+        "--namespace",
+        "D",
+        "--json"
+      ],
+      "selector": "the namespace controller's home",
+      "authority": "the namespace's controller key",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "team_id": "string",
+          "team_did_key": "string",
+          "team_key_path": "string"
+        },
+        "optional": {
+          "registry_url": "string"
+        }
+      },
+      "codes": [
+        "controller_key_missing"
+      ],
+      "notes": "classifications team_name_taken, team_name_unconfirmed"
+    },
+    {
+      "id": "team_show_server",
+      "argv": [
+        "aw",
+        "id",
+        "team",
+        "show-server",
+        "--team",
+        "N",
+        "--namespace",
+        "D",
+        "--json"
+      ],
+      "selector": "none",
+      "authority": "none",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "team_id": "string",
+          "server_url": "string",
+          "audience": "string",
+          "issued_at": "string",
+          "team_did_key": "string",
+          "registry_url": "string"
+        },
+        "optional": {}
+      },
+      "notes": "classification team_server_record_missing"
+    },
+    {
+      "id": "team_set_server",
+      "argv": [
+        "aw",
+        "id",
+        "team",
+        "set-server",
+        "--team",
+        "N",
+        "--namespace",
+        "D",
+        "--url",
+        "URL",
+        "--json"
+      ],
+      "selector": "the team controller's home",
+      "authority": "the team controller key",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "team_id": "string",
+          "server_url": "string",
+          "audience": "string",
+          "issued_at": "string",
+          "team_did_key": "string",
+          "registry_url": "string"
+        },
+        "optional": {}
+      }
+    },
+    {
+      "id": "team_register",
+      "argv": [
+        "aw",
+        "id",
+        "team",
+        "register",
+        "--service",
+        "URL",
+        "--team",
+        "T",
+        "--json"
+      ],
+      "selector": "the team controller's home",
+      "authority": "the team controller key",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "awid_team_id": "string",
+          "service_url": "string",
+          "dry_run": "bool",
+          "timestamp": "string",
+          "controller_did": "string"
+        },
+        "optional": {
+          "next_steps": "array"
+        }
+      }
+    },
+    {
+      "id": "team_invite_byot",
+      "argv": [
+        "aw",
+        "id",
+        "team",
+        "invite",
+        "--team",
+        "N",
+        "--namespace",
+        "D",
+        "--json"
+      ],
+      "selector": "the team controller's home",
+      "authority": "the team controller key",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "invite_id": "string",
+          "token": "string",
+          "for_human": "null"
+        },
+        "optional": {
+          "expires_at": "string"
+        }
+      }
+    },
+    {
+      "id": "grant_mint",
+      "argv": [
+        "aw",
+        "id",
+        "grant",
+        "mint",
+        "--team",
+        "T",
+        "--scope",
+        "S",
+        "--ttl",
+        "D",
+        "--label",
+        "L",
+        "--out",
+        "GRANTHOME",
+        "--custody-socket",
+        "SOCK",
+        "--json"
+      ],
+      "selector": "the resident's directory",
+      "authority": "the resident",
+      "network": true,
+      "answer": {
+        "required": {
+          "grant_id": "string",
+          "team_id": "string",
+          "expires_at": "string",
+          "out": "string",
+          "apps": "array",
+          "skipped_apps": "array"
+        },
+        "optional": {
+          "alias": "string",
+          "address": "string",
+          "custody_socket_path": "string"
+        }
+      }
+    },
+    {
+      "id": "grant_show",
+      "argv": [
+        "aw",
+        "id",
+        "grant",
+        "show",
+        "ID",
+        "--team",
+        "T",
+        "--json"
+      ],
+      "selector": "the resident's directory",
+      "authority": "the resident",
+      "network": true,
+      "answer": {
+        "required": {
+          "grant_id": "string",
+          "team_id": "string",
+          "subject_alias": "string",
+          "subject_did_aw": "string",
+          "grant_did_key": "string",
+          "scopes": "array",
+          "issued_at": "string",
+          "expires_at": "string"
+        },
+        "optional": {
+          "label": "string",
+          "status": "string",
+          "revoked_at": "string"
+        }
+      },
+      "codes": [
+        "grant_not_found"
+      ]
+    },
+    {
+      "id": "grant_list",
+      "argv": [
+        "aw",
+        "id",
+        "grant",
+        "list",
+        "--team",
+        "T",
+        "--json"
+      ],
+      "selector": "the resident's directory",
+      "authority": "the resident",
+      "network": true,
+      "answer": {
+        "required": {
+          "grants": "array"
+        },
+        "optional": {}
+      },
+      "notes": "each grant as grant_show"
+    },
+    {
+      "id": "grant_revoke",
+      "argv": [
+        "aw",
+        "id",
+        "grant",
+        "revoke",
+        "ID",
+        "--team",
+        "T",
+        "--json"
+      ],
+      "selector": "the resident's directory",
+      "authority": "the resident",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "grant_id": "string",
+          "revoked_at": "string",
+          "release": "object"
+        },
+        "optional": {}
+      },
+      "codes": [
+        "grant_not_found",
+        "subject_mismatch",
+        "outcome_unknown"
+      ],
+      "notes": "optional --expect-subject ALIAS; release beside error on failure"
+    },
+    {
+      "id": "custody_status",
+      "argv": [
+        "aw",
+        "custody",
+        "status",
+        "--json"
+      ],
+      "selector": "the resident's directory",
+      "authority": "none",
+      "network": true,
+      "answer": {
+        "required": {
+          "status": "string",
+          "socket_path": "string",
+          "resident": "object",
+          "teams": "array|null",
+          "keys": "object|null",
+          "ops": "array|null"
+        },
+        "optional": {
+          "errors": "array"
+        }
+      },
+      "exits": {
+        "0": "also when custody is unreachable: status not_running, errors [custody_unavailable]"
+      }
+    },
+    {
+      "id": "team_members",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "id",
+        "team",
+        "members",
+        "--team-id",
+        "T",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "H's membership",
+      "network": true,
+      "answer": {
+        "required": {
+          "team_id": "string",
+          "members": "array"
+        },
+        "optional": {
+          "source": "string",
+          "limitations": "array"
+        }
+      },
+      "notes": "member: certificate_id, team_id, alias, member_did_key, identity_scope, issued_at; optional member_address, member_did_aw, revoked_at; from a grant home source is service-roster"
+    },
+    {
+      "id": "workspace_status_roster",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "workspace",
+        "status",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "H's membership",
+      "network": true,
+      "answer": {
+        "required": {
+          "selected_team": "string",
+          "team": "array",
+          "team_has_more": "bool",
+          "workspace": "object"
+        },
+        "optional": {}
+      },
+      "notes": "operator display only; a projection of the service, not authority"
+    },
+    {
+      "id": "who",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "who",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "none",
+      "network": true,
+      "answer": {
+        "required": {
+          "id": "string",
+          "domain": "string",
+          "outcome": "string",
+          "human_id": "string|null",
+          "identity_valid": "bool|null",
+          "kind": "string|null",
+          "reason": "string"
+        },
+        "optional": {
+          "chain": "array"
+        }
+      },
+      "exits": {
+        "0": "whatever the outcome"
+      },
+      "notes": "optional --registry ORIGIN; outcome nearest_human|no_human|unavailable|other=unknown"
+    },
+    {
+      "id": "mail_send",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "mail",
+        "send",
+        "--to",
+        "A",
+        "--subject",
+        "S",
+        "--body-file",
+        "F",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "H",
+      "network": true,
+      "answer": {
+        "required": {
+          "message_id": "string",
+          "status": "string",
+          "delivered_at": "string"
+        },
+        "optional": {
+          "conversation_id": "string"
+        }
+      },
+      "notes": "optional --new-conversation"
+    },
+    {
+      "id": "mail_show",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "mail",
+        "show",
+        "--message-id",
+        "ID",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "H",
+      "network": true,
+      "answer": {
+        "required": {
+          "messages": "array",
+          "has_more": "bool"
+        },
+        "optional": {
+          "next_cursor": "string"
+        }
+      },
+      "notes": "also --conversation-id ID --limit N; message: message_id, subject, body, priority, created_at, read_at string|null, from_alias; optional conversation_id, from_address, to_address, from_did, to_did, from_stable_id, to_stable_id, content_mode, message_version, encrypted_envelope, signed_payload, verification_status"
+    },
+    {
+      "id": "mail_threads",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "mail",
+        "threads",
+        "--limit",
+        "N",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "H",
+      "network": true,
+      "answer": {
+        "required": {
+          "conversations": "array"
+        },
+        "optional": {
+          "next_cursor": "string"
+        }
+      },
+      "notes": "optional --cursor C; conversation: conversation_type; optional conversation_id, subject, title, last_message_at, unread_count"
+    },
+    {
+      "id": "mail_unread_count",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "mail",
+        "inbox",
+        "--count-only",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "H",
+      "network": true,
+      "answer": {
+        "required": {
+          "unread_count": "int"
+        },
+        "optional": {}
+      },
+      "notes": "never marks mail read"
+    },
+    {
+      "id": "wake_status",
+      "argv": [
+        "aw",
+        "wake",
+        "status",
+        "--json"
+      ],
+      "selector": "none",
+      "authority": "none",
+      "network": true,
+      "answer": {
+        "required": {
+          "updated_at": "string",
+          "daemon_running": "bool",
+          "readiness": "array|object"
+        },
+        "optional": {
+          "daemon_version": "string",
+          "daemon_version_state": "string",
+          "daemon_pid": "int",
+          "instances": "array",
+          "control_error": "string"
+        }
+      },
+      "exits": {
+        "0": "also when not ready"
+      },
+      "notes": "with --home H --min-daemon-version V readiness is one verdict: home, ready, code, reason, daemon_version, updated_at, last_inspect_at, advisories"
+    },
+    {
+      "id": "wake_register",
+      "argv": [
+        "aw",
+        "wake",
+        "register",
+        "--registration-json",
+        "-"
+      ],
+      "selector": "none",
+      "authority": "none",
+      "network": true,
+      "answer": {
+        "required": {},
+        "optional": {}
+      },
+      "stdin": "registration: home, identity_home, delivery; optional runtime_delivery, primary_identity_home, backend, receive_identities[] {identity_home; optional team_id, label, delivery_owner, event_classes, controls}",
+      "exits": {
+        "0": "saved; output is text"
+      },
+      "notes": "also --home H --identity-home I --delivery session [--backend tmux]; idempotent"
+    },
+    {
+      "id": "wake_deregister",
+      "argv": [
+        "aw",
+        "wake",
+        "deregister",
+        "--home",
+        "H"
+      ],
+      "selector": "none",
+      "authority": "none",
+      "network": true,
+      "answer": {
+        "required": {},
+        "optional": {}
+      },
+      "exits": {
+        "0": "no longer registered, including when it never was"
+      }
+    },
+    {
+      "id": "retire_member",
+      "argv": [
+        "aw",
+        "workspace",
+        "delete",
+        "WORKSPACE_ID",
+        "--retire-member",
+        "--expect-certificate",
+        "CERT",
+        "--json"
+      ],
+      "selector": "the member's own home",
+      "authority": "the member's credential and the team controller key",
+      "network": true,
+      "answer": {
+        "required": {
+          "workspace_id": "string",
+          "alias": "string",
+          "identity_deleted": "bool",
+          "alias_released": "bool",
+          "release": "object"
+        },
+        "optional": {
+          "retirement_code": "string",
+          "alias_released_reason": "string",
+          "receipt_path": "string",
+          "next_step": "string",
+          "deleted_at": "string"
+        }
+      },
+      "exits": {
+        "1": "retired_revocation_pending or retired_key_holder_required: the result is printed, then a nonzero exit"
+      },
+      "codes": [
+        "not_own_workspace",
+        "global_identity",
+        "subject_mismatch",
+        "controller_key_missing",
+        "certificate_binding_unavailable",
+        "retirement_receipt_unavailable",
+        "workspace_cleanup_incomplete",
+        "retired_revocation_pending",
+        "retired_key_holder_required"
+      ]
+    }
+  ],
+  "release": {
+    "answer": {
+      "effect": "string",
+      "team_id": "string",
+      "subject": "object",
+      "target": "object",
+      "outcome": "string",
+      "code": "string",
+      "next_step": "string"
+    },
+    "effects": [
+      "revoke_grant",
+      "retire_member"
+    ],
+    "outcomes": [
+      "confirmed",
+      "pending",
+      "unknown",
+      "refused"
+    ]
+  },
+  "not_in_contract": [
+    "aw's files",
+    "text output, stderr and help text",
+    "fallback key names",
+    "aw team list and aw team invite (aw team invite inspect is listed)",
+    "aw status publish, aw status-host and health commands",
+    "aw heartbeat",
+    "installing the wake and custody services",
+    "the workspace roster as authority"
+  ],
+  "new_in_version_1": [
+    "aw version --json with integration_contract",
+    "the release receipt of aw id grant revoke, --expect-subject and revoked_at",
+    "aw workspace delete --retire-member --expect-certificate",
+    "the code username_unavailable"
+  ]
+}

@@ -7,7 +7,7 @@ import (
 )
 
 // Decode only the response detail; HTTP status and operator wording stay with
-// the calling service operation (docs/cli-integration-contract.md:61-67).
+// the calling service operation (docs/cli-integration-contract.md, Refusal codes).
 func decodeTeamServiceRefusalDetail(body []byte) (string, error) {
 	var response struct {
 		Detail any `json:"detail"`

@@ -25,18 +25,18 @@ type nativeInviteRegistrationRequest struct {
 }
 
 // An inconclusive reconciliation must not be mistaken for a definite refusal
-// of the original write (docs/cli-integration-contract.md:161-198).
+// of the original write (docs/cli-integration-contract.md, Invite planning and cancellation).
 type nativeInviteRegistrationUnknownError struct{ cause error }
 
 func (e *nativeInviteRegistrationUnknownError) Error() string { return e.cause.Error() }
 func (e *nativeInviteRegistrationUnknownError) Unwrap() error { return e.cause }
 
 // A retained or uncertain issuance needs this recipient's existing credential
-// for reconciliation, even through outer setup failure (docs/cli-integration-contract.md:161-198).
+// for reconciliation, even through outer setup failure (docs/cli-integration-contract.md, Invite planning and cancellation).
 func (e *nativeInviteRegistrationUnknownError) RetainsIdentity() bool { return true }
 
 // An already-registered reply succeeds only after fetching the exact signed
-// effect, not merely a certificate for the same alias (docs/cli-integration-contract.md:161-198).
+// effect, not merely a certificate for the same alias (docs/cli-integration-contract.md, Invite planning and cancellation).
 func registerExactNativeInviteCertificate(ctx context.Context, request nativeInviteRegistrationRequest) error {
 	issuer := teamMembershipIssuer{
 		TeamID: awid.BuildTeamID(request.Invite.Domain, request.Invite.TeamName), Key: request.TeamKey,
@@ -125,7 +125,7 @@ type nativeInviteResumeRequest struct {
 }
 
 // Resumption holds the invite lock and replays only the frozen effect; neither
-// enrollment selection nor certificate signing runs again (docs/cli-integration-contract.md:161-198).
+// enrollment selection nor certificate signing runs again (docs/cli-integration-contract.md, Invite planning and cancellation).
 func resumeNativeInviteIssuance(ctx context.Context, request nativeInviteResumeRequest) (*acceptedTeamInvite, error) {
 	invite, issuance := request.Invite, request.Issuance
 	cert := &issuance.PreparedEffect

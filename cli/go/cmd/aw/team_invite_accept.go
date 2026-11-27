@@ -28,7 +28,7 @@ type teamInviteConnectionTarget struct {
 }
 
 // Native connection follows the issuer's saved route after acceptance; an
-// unsigned token hint never overrides it (docs/cli-integration-contract.md:143-145).
+// unsigned token hint never overrides it (docs/cli-integration-contract.md, Invite planning and cancellation).
 // Hosted tokens retain their service-envelope selection.
 func acceptedInviteServiceURL(target teamInviteConnectionTarget) string {
 	acceptedURL := firstNonEmptyString(strings.TrimSpace(target.Accepted.AwebURL), strings.TrimSpace(target.Accepted.Output.AwebURL))
@@ -678,7 +678,7 @@ type nativeInviteIssuanceRequest struct {
 	DefaultClaimResult *awid.AtomicAddressClaimResult
 }
 
-// Registry success consumes enrollment before recipient writes (docs/cli-integration-contract.md:146-161).
+// Registry success consumes enrollment before recipient writes (docs/cli-integration-contract.md, Invite planning and cancellation).
 func issueNativeInviteCertificate(ctx context.Context, request nativeInviteIssuanceRequest) (*awid.TeamCertificate, error) {
 	invite, plan, teamKey := request.Invite, request.Plan, request.TeamKey
 	registry, registryURL := request.Registry, request.RegistryURL

@@ -22,7 +22,7 @@ type TeamInviteIssuanceContext struct {
 
 // TeamInviteIssuance embeds the shared recovery header in the existing invite.
 // Its prepared effect is public membership proof, unlike identity-custody
-// recovery payloads (docs/cli-integration-contract.md:161-198).
+// recovery payloads (docs/cli-integration-contract.md, Invite planning and cancellation).
 type TeamInviteIssuance struct {
 	RecoveryProgress
 	Context        TeamInviteIssuanceContext `json:"context"`
@@ -34,7 +34,7 @@ type TeamInviteIssuance struct {
 var ErrInviteIssuanceUnknown = errors.New("invite issuance is unknown; retain the record and check its exact certificate online before cancelling or resuming")
 
 // InspectTeamInviteIssuance validates pending progress before lifetime readers
-// can classify the invite as unused or expired (docs/cli-integration-contract.md:161-198).
+// can classify the invite as unused or expired (docs/cli-integration-contract.md, Invite planning and cancellation).
 // A nil result is the released record shape without an issuance fence.
 func InspectTeamInviteIssuance(invite *TeamInvite) (*TeamInviteIssuance, error) {
 	if invite == nil {
@@ -87,7 +87,7 @@ type BeginTeamInviteIssuanceInput struct {
 
 // BeginTeamInviteIssuance durably retains the exact signed effect before its
 // submission. The caller holds LockTeamInvite through registration and outcome
-// persistence (docs/cli-integration-contract.md:161-198).
+// persistence (docs/cli-integration-contract.md, Invite planning and cancellation).
 func BeginTeamInviteIssuance(input BeginTeamInviteIssuanceInput) error {
 	invite, err := LoadTeamInvite(input.InviteID)
 	if err != nil {
@@ -118,7 +118,7 @@ type TeamInviteIssuanceOutcomeInput struct {
 }
 
 // ConfirmTeamInviteIssuance marks only the exact retained certificate consumed;
-// a failed write leaves the durable attempted fence (docs/cli-integration-contract.md:161-198).
+// a failed write leaves the durable attempted fence (docs/cli-integration-contract.md, Invite planning and cancellation).
 func ConfirmTeamInviteIssuance(input TeamInviteIssuanceOutcomeInput) error {
 	if input.Now.IsZero() {
 		return errors.New("an issuance confirmation time is required")
@@ -138,7 +138,7 @@ func ConfirmTeamInviteIssuance(input TeamInviteIssuanceOutcomeInput) error {
 
 // ClearTeamInviteIssuanceAfterRefusal restores the original bearer only after
 // the caller proves a definite refusal of this attempt. A later absent status
-// after an ambiguous write is insufficient (docs/cli-integration-contract.md:161-198).
+// after an ambiguous write is insufficient (docs/cli-integration-contract.md, Invite planning and cancellation).
 func ClearTeamInviteIssuanceAfterRefusal(input TeamInviteIssuanceOutcomeInput) error {
 	invite, err := loadExactTeamInviteIssuance(input)
 	if err != nil {

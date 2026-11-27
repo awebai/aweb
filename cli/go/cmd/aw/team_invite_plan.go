@@ -131,7 +131,7 @@ func validateInviteMemberScope(scope teamInviteMemberScope) error {
 }
 
 // Preflight reads the same lifetime owner as controller minting and creates no
-// bearer or child invitation (docs/cli-integration-contract.md:131-147).
+// bearer or child invitation (docs/cli-integration-contract.md, Invite planning and cancellation).
 func preflightTeamInviteMint(request teamInviteMintRequest) (teamInvitePreflightOutput, error) {
 	if err := validateInviteMemberScope(request.Scope); err != nil {
 		return teamInvitePreflightOutput{}, err

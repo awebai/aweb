@@ -259,7 +259,7 @@ func finishLocalControllerRevocation(cmd *cobra.Command, path string, receipt lo
 
 // writeWorkspaceDeleteOutput preserves the outcome's recovery before another
 // retirement attempt; output failure does not change certificate state
-// (docs/cli-integration-contract.md:203-207).
+// (docs/cli-integration-contract.md, Retirement and owner log access).
 func writeWorkspaceDeleteOutput(out workspaceDeleteOutput) error {
 	if err := printOutput(out, formatWorkspaceDelete); err != nil {
 		if out.RetirementCode == "" && !out.AliasReleased {
