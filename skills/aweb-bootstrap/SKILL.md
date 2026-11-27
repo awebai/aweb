@@ -49,8 +49,7 @@ that state as private identity material. Never delete it casually.
 3. Recreate needed workspaces with current primitives:
    - create/join teams with `aw team admin create`, `aw team invite`, `aw team join`,
      or controller-side `aw id team ...` primitives;
-   - connect existing certs with `aw init`, `aw workspace connect`, or
-     `aw service init`;
+   - connect existing certs with `aw init` or `aw workspace connect`;
    - create worktrees with `git worktree add` or the narrower
      `aw workspace add-worktree` helper when appropriate.
 4. Apply reusable resources from current team blueprints / resource packs rather

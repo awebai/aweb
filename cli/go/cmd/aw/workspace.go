@@ -34,7 +34,7 @@ var workspaceAddWorktreeCmd = &cobra.Command{
 	Use:   "add-worktree [role]",
 	Short: "Legacy convenience: create a sibling git worktree and coordination workspace",
 	Long: "Legacy convenience for existing users: create a sibling git worktree and initialize a new coordination workspace in it.\n\n" +
-		"New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.\n\n" +
+		"New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or aw workspace connect unless this command is reduced to a transparent wrapper with no identity/team orchestration.\n\n" +
 		"If the service cannot report the team for AWEB_API_KEY, creation uses the current workspace's existing authority.",
 	Args: cobra.RangeArgs(0, 1),
 	RunE: runWorkspaceAddWorktree,
@@ -47,7 +47,7 @@ var workspaceConnectCmd = &cobra.Command{
 		"With --identity-home, connect the selected external identity root and bind the\n" +
 		"service workspace state under that root, not the caller's current directory.\n" +
 		"This is the first-class workspace connection verb. It does not create identities,\n" +
-		"create teams, or change AWID team membership. It is equivalent to `aw service init`.",
+		"create teams, or change AWID team membership.",
 	RunE: runServiceInit,
 }
 

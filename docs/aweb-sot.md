@@ -1640,7 +1640,7 @@ relies on are:
 | `aw id team leave <team_id>` | Remove one local team membership and its cert from this workspace only |
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly by signing an AWID certificate with a local team controller key; no cloud runtime projection side effect |
 | `aw id team register --service URL --team X:Y` | Register or sync a customer-controlled AWID team with a service using the team controller signature; no private controller keys are uploaded |
-| `aw service init --service URL --team X:Y`; `aw workspace connect --service URL --team X:Y` | Connect the current certified worktree, or an explicitly selected external `--identity-home`, to a service projection for an existing AWID team; does not create identities or mutate AWID membership |
+| `aw workspace connect --service URL --team X:Y` | Connect the current certified worktree, or an explicitly selected external `--identity-home`, to a service projection for an existing AWID team; does not create identities or mutate AWID membership |
 | `aw id team import-request --team X --namespace Y --organization-id ORG` | Compatibility generator for a customer team-controller-signed request to an optional external hosted import adapter; that adapter/endpoint is outside the OSS aweb server contract, and no private controller keys are uploaded |
 | `aw id team fetch-cert --team X --namespace Y --cert-id ID` | Fetch and install a blob-backed certificate after controller approval |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |

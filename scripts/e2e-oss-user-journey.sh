@@ -1738,10 +1738,10 @@ capture_success service_register_apply "service_register_apply" run_aw_in "$SERV
   --service "$AWEB_URL" \
   --json
 service_register_status="$(echo "$service_register_apply" | jq_field status)"
-service_register_next_init="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'service init' in s.get('command','')), ''))" 2>/dev/null || echo "")"
+service_register_next_connect="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'workspace connect' in s.get('command','')), ''))" 2>/dev/null || echo "")"
 service_register_next_claim="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'claim-human' in s.get('command','')), ''))" 2>/dev/null || echo "")"
 assert_eq "service register apply status" "created" "$service_register_status"
-assert_contains "service register returns service init next step" "$service_register_next_init" "aw service init --service $AWEB_URL --team $SERVICE_TEAM_ID"
+assert_contains "service register returns workspace connect next step" "$service_register_next_connect" "aw workspace connect --service $AWEB_URL --team $SERVICE_TEAM_ID"
 assert_contains "service register returns claim-human next step" "$service_register_next_claim" "aw claim-human --email you@example.com"
 
 service_team_rows="$(psql_scalar "SELECT COUNT(*) FROM aweb.teams WHERE team_id = '$SERVICE_TEAM_ID' AND team_did_key = '$SERVICE_TEAM_DID';")"

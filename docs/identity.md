@@ -636,7 +636,7 @@ E2E message decryption uses a separate local X25519 keyring, not the Ed25519
 signing key. Self-custodial clients store it in `.aw/encryption.yaml` and
 `.aw/encryption-keys/`. New self-custodial identity and membership paths create
 the local encryption key automatically, including `aw id create`, `aw init`,
-`aw service init`, `aw id team accept-invite`, and `aw id team fetch-cert`.
+`aw workspace connect`, `aw id team accept-invite`, and `aw id team fetch-cert`.
 Run `aw id encryption-key setup` to repair or publish missing key state, and
 `aw id encryption-key rotate` when rotating encryption material. Back up
 `.aw/encryption-keys/`; losing archived encryption keys makes old encrypted

@@ -233,7 +233,7 @@ aw id team add-member --team <team> --namespace <domain> --did <beta_did_key> --
 
 Use the actual `did`/`did_aw` values printed by `aw id create`. Do not guess them.
 
-`aw workspace connect` / `aw service init` requires the local `.aw/signing.key`, `.aw/teams.yaml`, and `.aw/team-certs/*.pem` for that agent. If the certificate is not installed yet, fetch it first with the certificate id returned by `aw id team add-member`:
+`aw workspace connect` requires the local `.aw/signing.key`, `.aw/teams.yaml`, and `.aw/team-certs/*.pem` for that agent. If the certificate is not installed yet, fetch it first with the certificate id returned by `aw id team add-member`:
 
 ```bash
 aw id team fetch-cert --namespace <domain> --team <team> --cert-id <cert-id>
@@ -265,7 +265,6 @@ Paste the new request body and use Import / sync. Preview and apply are separate
 
 ```bash
 aw workspace connect --service https://app.aweb.ai --team <team>:<domain>
-# equivalent service-oriented primitive: aw service init --service https://app.aweb.ai --team <team>:<domain>
 ```
 
 The customer retains both controller keys. Cloud login and organization permissions authorize the Cloud organization operation; the team-controller signature authorizes projecting the AWID team. Connecting a workspace grants neither namespace nor team-controller authority.

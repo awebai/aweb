@@ -507,7 +507,7 @@ var teamRegisterCmd = &cobra.Command{
 		"local team controller key and sends only public/signed team facts to the\n" +
 		"service. It never uploads namespace or team controller private keys and does\n" +
 		"not initialize any agent workspace. Services may return their own next steps,\n" +
-		"such as `aw service init` or `aw claim-human`.",
+		"such as `aw workspace connect` or `aw claim-human`.",
 	RunE: runTeamRegister,
 }
 

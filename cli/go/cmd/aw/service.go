@@ -20,7 +20,7 @@ var serviceCmd = &cobra.Command{
 	Long: "Connect an existing AWID identity and team certificate to an aw-compatible service.\n\n" +
 		"Service commands do not create identities, register AWID teams, mutate team\n" +
 		"membership, or call BYOD onboarding flows. Use `aw id team register` to add a\n" +
-		"team projection to a service first, then run `aw service init` from each\n" +
+		"team projection to a service first, then run `aw workspace connect` from each\n" +
 		"certified agent workspace.",
 }
 

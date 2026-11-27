@@ -837,7 +837,7 @@ func TestExecuteTeamRegisterSignsAndPostsServicePayload(t *testing.T) {
 	if !ed25519.Verify(world.TeamKey.Public().(ed25519.PublicKey), []byte(out.CanonicalPayload), signature) {
 		t.Fatal("controller signature does not verify")
 	}
-	connectCommand := fmt.Sprintf("aw service init --service %s --team %s", world.Stack.ServerURL, world.TeamID)
+	connectCommand := fmt.Sprintf("aw workspace connect --service %s --team %s", world.Stack.ServerURL, world.TeamID)
 	if len(out.NextSteps) == 0 || out.NextSteps[0].Command != connectCommand || !out.NextSteps[0].Required {
 		t.Fatalf("real service connection guidance not preserved: %+v", out.NextSteps)
 	}
@@ -2919,7 +2919,7 @@ func TestTeamInviteWithoutServiceContextDoesNotUseHostedFallback(t *testing.T) {
 	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
 		"--team", "alpha",
 		"--namespace", "alpha.test.local",
-		"--global",
+		"--member-global",
 		"--json")
 	runInvite.Env = idCreateCommandEnv(tmp)
 	runInvite.Dir = tmp
@@ -2931,7 +2931,7 @@ func TestTeamInviteWithoutServiceContextDoesNotUseHostedFallback(t *testing.T) {
 	if !strings.Contains(text, "no team key for alpha.test.local/alpha") {
 		t.Fatalf("expected local-controller key error, got:\n%s", text)
 	}
-	if strings.Contains(text, "--global is not supported for hosted team invites") {
+	if strings.Contains(text, "--member-global is not supported for hosted team invites") {
 		t.Fatalf("non-hosted invite without service context used hosted fallback:\n%s", text)
 	}
 }

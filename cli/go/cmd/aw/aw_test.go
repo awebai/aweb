@@ -283,9 +283,9 @@ func TestTeamHelpSeparatesEverydayMembershipFromAdministration(t *testing.T) {
 		}
 	}
 
-	// Every former command path remains executable as a hidden compatibility
-	// alias, with the same flags and handler as its canonical admin path.
-	for _, name := range []string{"add", "adopt", "agent-status", "create", "extend", "refresh", "remove-agent", "replace-key", "up"} {
+	// These former command paths remain executable as hidden compatibility
+	// aliases, with the same flags and handler as their canonical admin path.
+	for _, name := range []string{"add", "adopt", "create", "extend", "refresh", "up"} {
 		legacyHelp := runHelp("team", name, "--help")
 		if !strings.Contains(legacyHelp, "aw team "+name) {
 			t.Fatalf("legacy team %s help does not preserve its command path:\n%s", name, legacyHelp)
