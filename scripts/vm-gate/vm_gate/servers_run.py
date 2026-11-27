@@ -289,15 +289,21 @@ def run_step(step, results, paths, record, save):
             record["verdict"] = "failed"
             record["reason"] = f"input destination {item['to']} is not a regular file"
             return
-        target.parent.mkdir(parents=True, exist_ok=True)
+        # The deepest existing parent must resolve inside the base before
+        # anything is created; admission refuses "..", so what is created
+        # beneath it stays inside.
+        existing = target.parent
+        while not existing.exists() and not existing.is_symlink():
+            existing = existing.parent
         try:
-            target.parent.resolve(strict=True).relative_to(base.resolve())
+            existing.resolve(strict=True).relative_to(base.resolve())
         except (OSError, ValueError):
             record["verdict"] = "failed"
             record["reason"] = (
                 f"input destination {item['to']} is not inside its checkout or run directory"
             )
             return
+        target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(origin, target)
         placed = contained(target, base)
         if placed is None or sha256(placed) != produced:

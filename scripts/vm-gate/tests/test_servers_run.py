@@ -555,6 +555,38 @@ class ServersRun(unittest.TestCase):
                     "an input was written outside its checkout",
                 )
 
+    def test_a_refused_input_placement_creates_no_directories_outside(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        producer = self.step(
+            "b",
+            f"(cd ../naapp && ln -s {outside} images) && mkdir -p images && echo '{{}}' > images/release.json",
+            files=["images/release.json"],
+        )
+        consumer = self.step(
+            "a",
+            "true",
+            cwd="naapp",
+            needs=["b"],
+            inputs=[
+                {
+                    "from": "b",
+                    "path": "images/release.json",
+                    "to": "images/sub/deeper/release.json",
+                }
+            ],
+        )
+        code, result = self.run_spec([producer, consumer])
+        self.assertEqual(code, 1, result)
+        a = result["steps"][1]
+        self.assertEqual(a["verdict"], "failed")
+        self.assertIn("not inside its checkout or run directory", a["reason"])
+        self.assertEqual(
+            sorted(outside.rglob("*")),
+            [],
+            "a refused placement changed the tree outside",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
