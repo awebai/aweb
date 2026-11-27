@@ -20,18 +20,18 @@ Install Lean with [elan](https://github.com/leanprover/elan). In this directory 
 lake build
 ```
 
-If it builds with no warning, no proof is left open: a proof left open with `sorry` builds with a warning. An added `axiom` or `native_decide` would build with no warning, so two more checks complete it: the sources use no `axiom`, `native_decide`, `opaque` or `implemented_by` (the words appear only as strings in `TrustWeb/DocNames.lean`'s list of skipped names), and `#print axioms` on each theorem shows only Lean's three standard axioms, `propext`, `Classical.choice` and `Quot.sound`. The toolchain is pinned to Lean 4.36.0, and no package beyond Lean itself is used. The build also fails if a Lean name cited between backquotes in this file, in `CLAIMS.md` or in a doc comment does not exist (`TrustWeb/DocNames.lean`).
+If it builds with no warning, no proof is left open: a proof left open with `sorry` builds with a warning. An added `axiom` or `native_decide` would build with no warning, so two more checks complete it: the sources use no `axiom`, `native_decide`, `opaque` or `implemented_by` (the words appear only as strings in `TrustWeb/DocNames.lean`'s list of skipped names), and `#print axioms` on each theorem shows only Lean's three standard axioms, `propext`, `Classical.choice` and `Quot.sound`. The toolchain is pinned to Lean 4.36.0, and no package beyond Lean itself is used. The build also checks the names the prose cites (`TrustWeb/DocNames.lean`). In this file, in `CLAIMS.md` and in the doc comments, every identifier between backquotes, inside an expression too, must name something in the model: a leading-dot name must be a constructor of one of its inductive types, and any other name must resolve in the `TrustWeb` namespace or be one of four listed Lean names. File paths, shell commands, variables and the protocol's own names are skipped.
 
 ## What is here
 
 - `TrustWeb/Model.lean`: what exists, the record (`State`), the 22 acts (`Step`), and assumptions 1 to 9.
 - `TrustWeb/Properties.lean`: the results below not listed under another file.
 - `TrustWeb/Abilities.lean`: results 22 to 26, 36 and 41 to 47.
-- `TrustWeb/Operations.lean`: the team rule, and results 32 to 35.
+- `TrustWeb/Operations.lean`: the team rule, and results 32 to 35 and 48.
 - `TrustWeb/Core.lean`: an experiment: six of the acts (`CoreStep`), and the theorems `core_one` to `core_five` and `core_two_design`.
 - `TrustWeb/Evidence.lean`: planned evidence of how a person was enrolled, results 38 to 40, and assumption 10.
 - `CLAIMS.md`: each sentence about the model, with the definition or result behind it.
-- `TrustWeb/DocNames.lean`: the build's check that every cited Lean name exists. `lakefile.toml` builds it as its own library, with `README.md` and `CLAIMS.md` as inputs.
+- `TrustWeb/DocNames.lean`: the build's check of the names the prose cites. `lakefile.toml` builds it as its own library, with `README.md` and `CLAIMS.md` as inputs.
 
 ## Who may ask a key holder
 
@@ -125,6 +125,7 @@ How to read these rows. Each row first gives its theorem's conditions and conclu
 | 33 | Any assignment: if a key is with a key holder, an identity holds a certificate of the team that giving a key back is assigned to and is valid in the key's organisation, and some approvals satisfy its policy for giving a key back, there is an accepted act under the team rule, asked for by that identity, after which the key is not with a key holder and the identity certificates, revocations and team certificates are as before | `assigned_team_can_take_key_back` |
 | 34 | Any assignment, in one act: if a key is with a key holder before an accepted act under the team rule and not after, the asker is the domain's owner of the key's organisation; or an identity that holds a certificate of the team giving a key back is assigned to and is valid in that organisation; or the key is a team key of that organisation, and the asker is whoever controls its root key, or an identity that holds a certificate of the team re-keying is assigned to and is valid in it | `only_assigned_team_takes_key_back` |
 | 35 | **A warning.** Under a team rule: there is an assignment and three records such that: in the first, an identity holds no team certificate of an organisation and the organisation's root key is with a key holder; an act asked for by the holder of an invitation's secret takes the first record to the second; an act the identity asks for takes the second to the third; and in the third the root key is not with a key holder. (In the construction, giving the root key back is assigned to a named team and the invitation is to that team) | `invitation_reaches_an_assigned_team` |
+| 48 | **A warning.** Under a team rule: there is an assignment that gives admitting an admin in an organisation to a named team, and three records, such that the first is reachable under that team rule, the organisation's admin team key is with a key holder in it, and an identity holds no team certificate of the organisation there and is not its admin; an act asked for by the holder of an invitation's secret takes the first record to the second; an act the identity asks for takes the second to the third; and in the third the identity is an admin of the organisation. (In the construction the invitation is to the named team, and the identity's act is its own admission to the admin team) | `invitation_then_own_request_makes_an_admin` |
 
 ## What must be possible
 
@@ -150,7 +151,7 @@ Not in the model: an agent whose key a hosting service holds (assumption 7); mov
 
 ## Evidence of how a person was enrolled (planned)
 
-The planned outcome `controller_asserted_person` is described in `Evidence.lean` and `docs/id-certificates.md`. In the model the evidence is a list of assertions outside the record: `State` has no field for it (assumption 10).
+The planned outcome `controller_asserted_person` is described in `Evidence.lean` and `docs/id-certificates.md`. In the model the evidence is a list of assertions outside the record: `State` has no field for it. Assumption 10 is about who signs an assertion.
 
 | # | In plain words | Lean name |
 |---|---|---|
@@ -170,7 +171,7 @@ The planned outcome `controller_asserted_person` is described in `Evidence.lean`
 | Controlling one organisation's key changes something in another organisation | **Not true of what is built.** Whoever controls an organisation's root key can, in one act, stop an identity from acting in another organisation's team and make its grant there not live (46): it can revoke its own identity (`revokeByOrg`), and a revoked identity cannot act in any organisation's teams, in records the system can reach (7). Proved for one act: every new identity certificate and every new or removed team certificate is of the key's organisation, and a newly revoked identity has a certificate of it (`controller_stays_in_its_organisation`); with one certificate each (14), of no other. Not stated for invitations, grants, held keys or re-admissions |
 | A message is attributed to someone who did not send it and gave no grant | Proved for one act, for every message the act adds: 18. That its subject gave the grant used is proved for the act that adds a grant (19), not for every grant in a record |
 | A grant holder does more than send | Proved for one act: 17, its act adds one message and changes nothing else; 19, only the subject gives a grant |
-| An invitation's holder becomes a person or an admin | Proved for one act: 21, 6. Not proved for several acts. For a team rule that assigns admitting admins to a named team, nothing is proved; 35 shows an invitation leading to another operation |
+| An invitation's holder becomes a person or an admin | Proved for one act, under every rule: 21, 6. Not proved for several acts. **Under a team rule that gives admitting admins to a named team, it happens in two acts**: an invitation to that team, then the joiner's own request (48), as 35 shows for giving a key back |
 | An agent approves where a person is required | Proved for every approval: 4, 23 |
 | Being issued an identity gives team membership | Proved for one act: `registering_gives_no_team` |
 | A key with no identity certificate is in two teams | Proved in records the system can reach: 14. In the real system it holds on the supported journey; the registry's own route does not enforce it |

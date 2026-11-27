@@ -358,15 +358,14 @@ def KeepsAnAdmin (s : State) (m : Membership) : Prop :=
 def Fresh (s : State) (k : Key) : Prop :=
   ∀ c, c ∈ s.certs → c.subject ≠ k
 
-/-- `Step s who s'`: `who` asks for one act, it is accepted, and the record
+/-- `Step ask s who s'`: under the rule `ask`, `who` asks for one act, it is accepted, and the record
 changes from `s` to `s'`. Each constructor's premises are what is checked. -/
 inductive Step (ask : AskRule) : State → Party → State → Prop where
-  /-- Create an organisation. Whoever controls the domain in DNS names its root key there. -/
+  /-- Create an organisation, asked for by whoever controls its domain in DNS. -/
   | createOrg {s : State} {o : Org} :
       o ∉ s.orgs →
       Step ask s (.dns o) { s with orgs := o :: s.orgs }
-  /-- Whoever controls the domain in DNS names a new root key and proves it
-  holds it. Every identity of the organisation that was current is cut off.
+  /-- Whoever controls the domain in DNS replaces the root key. Every identity of the organisation that was current is cut off.
   The new root key is not with a key holder. Team certificates, invitations
   and the teams' keys are not touched. In a reachable record a cut-off member
   cannot act in a team (`revoked_has_no_authority`,

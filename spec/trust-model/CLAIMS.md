@@ -3,7 +3,7 @@
 One line for every sentence that says something about the model, apart from a theorem's own restatement. That covers the README's prose, every cell of "What must never happen", every reading inside a result row, every module, definition, field and constructor doc comment, and every reading inside a theorem's doc comment. Each line gives where the sentence is, the sentence in short, and what makes it true.
 
 - **Restatements.** A row of the README's result tables, and a theorem's doc comment, first restate the theorem's statement. A restatement is checked against the statement and is not listed here. What follows it in the row or the doc comment is listed: a reading, with what makes it true, or a construction note ("In the construction ..."), which describes the proof's witnesses.
-- **Names.** Every Lean name cited between backquotes here, in the README and in the doc comments is checked by the build (`TrustWeb/DocNames.lean`).
+- **Names.** Every identifier between backquotes here, in the README and in the doc comments, inside an expression too, is checked by the build (`TrustWeb/DocNames.lean`): a leading-dot name must be a constructor of one of the model's inductive types, any other name must resolve in the `TrustWeb` namespace or be one of four listed Lean names, and file paths, shell commands, variables and the protocol's own names are skipped.
 - **Kinds of line.**
   - A *definition* or *act* line names the definition or `Step` constructor that the sentence reads off.
   - A *result* line names the theorem or row.
@@ -37,7 +37,7 @@ A sentence about the model that is not on this list should not be in the README 
 | An `axiom` or `native_decide` builds with no warning; the sources use none of `axiom`, `native_decide`, `opaque`, `implemented_by` | process | A grep of the sources (each reading ran it); the words occur only as strings in `DocNames.lean`'s skipped list |
 | `#print axioms` shows only `propext`, `Classical.choice`, `Quot.sound` | process | `#print axioms` on every theorem (each reading ran it) |
 | Pinned to Lean 4.36.0; no package beyond Lean | process | `lean-toolchain`; `lake-manifest.json` lists no packages |
-| The build fails if a cited Lean name does not exist | process | `TrustWeb/DocNames.lean`, built as the `DocCheck` library in `lakefile.toml`, with `README.md` and `CLAIMS.md` as its inputs, so it reruns when either changes |
+| The build checks every cited identifier: leading-dot names against the model's constructors, others in the `TrustWeb` namespace or four listed Lean names | process | `TrustWeb/DocNames.lean`, built as the `DocCheck` library in `lakefile.toml`, with `README.md` and `CLAIMS.md` as its inputs, so it reruns when either changes |
 
 ### What is here
 
@@ -47,7 +47,7 @@ A sentence about the model that is not on this list should not be in the README 
 | `Properties.lean`: the results not listed under another file | process | File contents |
 | `Abilities.lean`: results 22 to 26, 36 and 41 to 47 | process | File contents |
 | `DocNames.lean`: the build's name check | process | File contents |
-| `Operations.lean`: the team rule, results 32 to 35 | process | File contents |
+| `Operations.lean`: the team rule, results 32 to 35 and 48 | process | File contents |
 | `Core.lean`: six acts (`CoreStep`), `core_one` to `core_five`, `core_two_design` | definition | `CoreStep` has 6 constructors; file contents |
 | `Evidence.lean`: results 38 to 40, assumption 10 | process | File contents |
 
@@ -139,6 +139,7 @@ A sentence about the model that is not on this list should not be in the README 
 | A person of several organisations can be stated, and there is none in reachable records | result | `Person.cert` with row 14: it would need two certificates |
 | `controller_asserted_person` is described in `Evidence.lean` | process | File contents |
 | In the model the evidence is a list outside the record | definition | `State` has no field for it; the definitions in `Evidence.lean` take `as : List Assertion` |
+| Assumption 10 is about who signs an assertion | assumption | A10 |
 
 ### What must never happen
 
@@ -150,14 +151,14 @@ One block per cell, in the table's order.
 | No chain back to a root | Not true of what is built | result | The lines below |
 | | Proved for valid members and admins (5) | result | Row 5 |
 | | A key with no identity certificate can act in a team on its team certificate alone | definition | `InTeam`; `CanAct`'s first disjunct |
-| | And so give a grant | act | `mintGrant` needs only `InTeam` |
+| | And so give a grant | act | `mintGrant` needs `InTeam` and a session key no current grant uses; some key is always unused, since `grants` is a finite list |
 | | In a team or not, it can send attributed to itself | act | `sendOwn` needs only `CanAct` |
 | | It can leave a team whose key is held | act | `leave` has no validity or registration premise |
 | | A team certificate counts without the root having set the team's key | definition | `InTeam`, `GrantLive` and `admit` have no premise about the root or `rekeyTeam` |
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule` (`Admin` needs `Valid`), `teamRule` |
 | A revoked member keeps authority | Proved in reachable records: not valid, not an admin, cannot act in a team, cannot send with its own key, no live grant | result | Rows 7, 8, 20; `sendOwn` needs `CanAct` |
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | As above |
-| | Under every rule it can still revoke a grant on itself, revoke itself, leave a held team, be the key `redeem` names | act | `revokeGrant`, `revokeSelf`, `leave`, `redeem` have no validity premise |
+| | Under every rule it can still revoke a grant on itself, revoke itself, leave a held team, be the key `redeem` names | act, result | `revokeGrant`, `revokeSelf`, `leave` have no validity premise; `redeem` needs `OneTeamIfLocal`, which a revoked identity meets because in reachable records it is registered (row 14) |
 | A revocation is undone | Proved for one act | result | `revocation_is_permanent` |
 | | Not proved for several acts | process | No theorem states it |
 | | A root-issued cut-off identity can be admitted again while the root key is not held | result | Row 31 |
@@ -173,9 +174,10 @@ One block per cell, in the table's order.
 | A message attributed to someone who did not send it | Proved for one act, for every message the act adds | result | Row 18 |
 | | That the subject gave the grant is proved for the act that adds it, not for every grant | result | Row 19; no theorem about every grant |
 | A grant holder does more than send | Proved for one act | result | Rows 17, 19 |
-| An invitation's holder becomes a person or an admin | Proved for one act | result | Rows 21, 6 |
-| | Not proved for several acts; nothing for a team rule assigning admitting admins | process | No theorem states them |
-| | 35 shows an invitation leading to another operation | result | Row 35 |
+| An invitation's holder becomes a person or an admin | Proved for one act, under every rule | result | Rows 21, 6 quantify over every `AskRule` |
+| | Not proved for several acts | process | No theorem states it |
+| | Under a team rule that gives admitting admins to a named team, it happens in two acts | result | Row 48 |
+| | As 35 shows for giving a key back | result | Row 35 |
 | An agent approves where a person is required | Proved for every approval | result | Rows 4, 23 |
 | Being issued an identity gives team membership | Proved for one act | result | `registering_gives_no_team` |
 | An unregistered key in two teams | Proved in reachable records | result | Row 14 |
@@ -221,7 +223,7 @@ One block per cell, in the table's order.
 | 20 | (true in every reachable record, 14) | result | Row 14 |
 | 21 | The joiner is whatever key the holder names | act | `redeem`'s `k` is any key meeting `OneTeamIfLocal` |
 | 21 | That the joiner holds that key is assumed | assumption | A3 |
-| 22, 35, 36, 41, 43, 44, 45, 46, 47 | Construction notes | construction | The proofs |
+| 22, 35, 36, 41, 43, 44, 45, 46, 47, 48 | Construction notes | construction | The proofs |
 | 22 | The statement does not say who issued whom | result | The statement |
 | 25 | Re-admissions change no team certificate | act | `readmitByRoot`, `readmitByParent` |
 | 26 | The three need not differ | result | The statement has no inequality |
@@ -230,7 +232,7 @@ One block per cell, in the table's order.
 | 28 | The holder no longer holds the current root key | act | `replaceRoot` takes the root key out of `held` |
 | 28 | The model does not show the holder no longer has the former private key | definition | `held` records only which keys are held, not copies |
 | 28 | Nor does the protocol | source | the source readings (sources listed in `Model.lean`) |
-| 35 | A warning | process | A label |
+| 35, 48 | A warning | process | A label |
 | 38 | A valid person answering for itself (`nearest_human`) says nothing about an email check | result, source | `AnswersFor.self` needs only `Valid`; row 38; the verdict's name is the protocol's (`docs/id-certificates.md`) |
 | 40 | The rest of 38's three cases follows from 38 | result | Row 38 applies to any valid person |
 | 41 | In every record such a key exists | result | `exists_fresh_key` |
@@ -267,6 +269,7 @@ Each item pairs a sentence about the model with one about the real system.
 | The root re-keys a team by a separate act | act | `rekeyTeam` |
 | A re-key only changes which key is the team's | act | `rekeyTeam` changes only `held` |
 | Really the rotation also re-signs the member certificates it is given | source | awid `rotate_team_key` at 5c2ee7bad3 |
+| Here that is done by separate acts, `remove` and `admit` | act | `remove` removes a team certificate and `admit` adds one; `rekeyTeam` changes neither |
 | `controller key` is whoever controls that key now; the old one cannot be named | definition | `Party.controller` names a key, not a holder |
 | The operator is not modelled; whoever controls a key asks directly only while it is not held | definition | `Authorised`'s first branch needs `key ∉ s.held`; `entrust` needs `key ∉ s.held` |
 | Really the operator has narrower named commands | source | the source readings (sources listed in `Model.lean`) |
@@ -367,8 +370,10 @@ These are method and process. They make no claim about the model beyond what is 
 | `GrantLive` | Removing the certificate removes the grant, so a later certificate does not bring it back | act | `remove` and `leave` filter `grants` |
 | `OneTeamIfLocal` | `k` is registered, or holds no team certificate | definition | Body |
 | `KeepsAnAdmin` | Its meaning | definition | Body |
+| `Step` | `Step ask s who s'`: under `ask`, `who` asks for one act, accepted, from `s` to `s'` | definition | Its signature and constructors |
 | `Step` | Each constructor's premises are what is checked | definition | Naming |
-| `createOrg` | Asked by the domain's controller | act | `.dns o` |
+| `createOrg` | Asked for by whoever controls the domain in DNS | act | Its asker is `.dns o` |
+| `replaceRoot` | Whoever controls the domain in DNS replaces the root key | act | Its asker is `.dns o`; it takes the root key out of `held`. The model has no value for a root key |
 | `replaceRoot` | Cuts off every current identity of the organisation | act | Its `revoked` and `cutOff` update |
 | `replaceRoot` | The new root key is not held | act | Its `held` filter |
 | `replaceRoot` | Team certificates, invitations and team keys are not touched | act | It changes only `revoked`, `cutOff`, `held` (root only) |
@@ -463,3 +468,13 @@ These are method and process. They make no claim about the model beyond what is 
 | A10 | The assertions are signed by the party they name and bound to the enrolment | assumption | A10 |
 | `Enrolment`, `Assertion` | Their cases and fields | definition | Constructors, fields |
 | `ControllerAssertedPerson`, `HostedEmailEnrolled`, `EnrolmentUnspecified` | Their meaning | definition | Bodies |
+
+## TrustWeb/DocNames.lean
+
+Its doc comments are about the build, not the model.
+
+| Where | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| module doc | What the build reads, what it skips, and the three ways an identifier passes | process | `isPathOrCommand`, `runs`, `passes`, `failures` |
+| `skipped`, `leanNames`, `modelTypes`, `inductives` | What each list is for | process | Their use in `passes`, `resolvesInModel`, `isConstructorOfModel` |
+| `#doc_names_resolve` | Fails if a file cites an identifier that does not pass | process | Its body |
