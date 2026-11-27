@@ -288,40 +288,41 @@ class CloudProject:
     """What the launcher knows about one Cloud-shaped repository's gate.
 
     ac and the pilot (aweb-cloud) share the bundle, image and receipt path;
-    they differ only in these facts, each agreed with the repository's owner."""
+    they differ only in these facts, each agreed with the repository's owner:
 
-    def __init__(
-        self,
-        name,
-        *,
-        repository,
-        evidence_prefix,
-        stages,
-        every_row,
-        hermes,
-        aweb_source_required,
-        release_make,
-        gate_make,
-        image_env,
-    ):
+    - repository: the only image repository --image may name;
+    - evidence_prefix: the gate's /tmp directory, before the SHA;
+    - stages: the stages that must be present and PASSED;
+    - every_row: whether every other summary row must be PASSED too;
+    - exact_summary: judge one exact raw summary.tsv, rejecting bad or repeated rows;
+    - hermes: whether the gate's journeys need the Hermes key;
+    - aweb_source_required: whether a release names the aweb its journeys build;
+    - attests_aweb_source: whether the gate records the aweb it built;
+    - native_exits: whether the gate's own exit says refused (2) or infrastructure (70);
+    - release_command: image -> the command a release gate runs;
+    - gate_command: the command a train gate runs;
+    - image_env: (image, archive, member, lock source) -> the guest's exports.
+    """
+
+    def __init__(self, name, **facts):
         self.name = name
-        self.repository = repository  # the only image repository --image may name
-        self.evidence_prefix = (
-            evidence_prefix  # the gate's /tmp directory, before the SHA
-        )
-        self.stages = stages  # stages that must be present and PASSED
-        self.every_row = every_row  # whether every other summary row must be PASSED too
-        self.hermes = hermes  # whether the gate's journeys need the Hermes key
-        self.aweb_source_required = (
-            aweb_source_required  # whether a release names the aweb its journeys build
-        )
-        self.release_make = (
-            release_make  # image -> the make arguments of a release gate
-        )
-        self.gate_make = gate_make  # the make arguments of a train gate
-        self.image_env = (
-            image_env  # (image, archive, member, lock source) -> the guest's exports
-        )
+        for fact in (
+            "repository",
+            "evidence_prefix",
+            "stages",
+            "every_row",
+            "exact_summary",
+            "hermes",
+            "aweb_source_required",
+            "attests_aweb_source",
+            "native_exits",
+            "release_command",
+            "gate_command",
+            "image_env",
+        ):
+            setattr(self, fact, facts.pop(fact))
+        if facts:
+            raise TypeError(f"unknown Cloud project facts: {', '.join(sorted(facts))}")
 
 
 CLOUD_PROJECTS = {
@@ -331,10 +332,13 @@ CLOUD_PROJECTS = {
         evidence_prefix="ac-candidate-gate-",
         stages=CLOUD_GATE_STAGES,
         every_row=False,
+        exact_summary=False,
         hermes=True,
         aweb_source_required=True,
-        release_make=lambda image: "release-gate",
-        gate_make="gate GATE_STAGES=all",
+        attests_aweb_source=True,
+        native_exits=False,
+        release_command=lambda image: "make release-gate",
+        gate_command="make gate GATE_STAGES=all",
         image_env=lambda image, archive, member, lock_source: [
             f"AC_CANDIDATE_RELEASE_IMAGE={image}",
             f"AC_CANDIDATE_RELEASE_IMAGE_ARCHIVE={archive}",
@@ -343,17 +347,23 @@ CLOUD_PROJECTS = {
         ],
     ),
     # The pilot: any stage selection makes its run a diagnostic, so a train
-    # gate is bare `make gate`; its gate writes /tmp/aweb-cloud-gate-<sha>/.
+    # gate runs every stage; its gate writes one /tmp/aweb-cloud-gate-<sha>/.
+    # The guest runs the pilot's gate script as its Makefile does, so the
+    # gate's own exit survives: make would turn its 2 and 70 into 2. Its gate
+    # builds no aweb, so it cannot attest an --aweb-source pin.
     "aweb-cloud": CloudProject(
         "aweb-cloud",
         repository="ghcr.io/awebai/aweb-cloud",
         evidence_prefix="aweb-cloud-gate-",
         stages=("tool-image", "checks", "storage", "image"),
         every_row=True,
+        exact_summary=True,
         hermes=False,
         aweb_source_required=False,
-        release_make=lambda image: "release-gate RELEASE_IMAGE=" + Q(image),
-        gate_make="gate",
+        attests_aweb_source=False,
+        native_exits=True,
+        release_command=lambda image: "python3 scripts/gate.py --require-release",
+        gate_command="python3 scripts/gate.py",
         image_env=lambda image, archive, member, lock_source: [
             f"RELEASE_IMAGE={image}",
             f"RELEASE_IMAGE_ARCHIVE={archive}",
@@ -398,8 +408,10 @@ def guest_script(
             image, f"{remote}/cloud-image.tar", member, lock_source_sha
         )
     # A train gate runs every stage on its own head; a release runs release-gate.
-    cloud_make = (
-        cloud.release_make(image) if cloud_target == "release-gate" else cloud.gate_make
+    cloud_command = (
+        cloud.release_command(image)
+        if cloud_target == "release-gate"
+        else cloud.gate_command
     )
     # A gate's candidate is fetched by its own ref, never found by object id:
     # a fetch that keeps only reachable objects would otherwise lose it.
@@ -437,7 +449,7 @@ cd {Q(home + "/cloud-source")}
 git config user.name 'aweb release gate'
 git config user.email 'release-gate@localhost'
 {exports}
-make {cloud_make} > {Q(release + "/cloud/gate-output.log")} 2>&1
+{cloud_command} > {Q(release + "/cloud/gate-output.log")} 2>&1
 status=$?
 printf '%s\\n' "$status" > {Q(release + "/cloud/exit")}
 test "$status" = 0 || exit 1
@@ -477,12 +489,42 @@ class ReleaseExecutor(Executor):
         return super().collect(server, timeout)
 
 
+def exact_stage_verdicts(summary, cloud):
+    """Verdicts from the one summary.tsv a gate wrote, its rows read raw.
+
+    A row is stage, result, log and seconds. A row without a stage and a result
+    reads MALFORMED, a stage written twice reads REPEATED, and a required stage
+    absent reads MISSING; none of these is PASSED, so each is red."""
+    verdicts = {}
+    if summary.is_file():
+        for number, line in enumerate(summary.read_text().splitlines(), start=1):
+            fields = line.split("\t")
+            if len(fields) < 2 or not fields[0] or not fields[1]:
+                verdicts[f"line {number}"] = "MALFORMED"
+            elif fields[0] in verdicts:
+                verdicts[fields[0]] = "REPEATED"
+            else:
+                verdicts[fields[0]] = fields[1]
+    return {
+        **verdicts,
+        **{stage: verdicts.get(stage, "MISSING") for stage in cloud.stages},
+    }
+
+
 def cloud_stage_verdicts(evidence, cloud_sha, cloud=CLOUD_PROJECTS["ac"]):
     """Each stage's verdict, from the gate's own summary in the evidence.
 
     The required stages read MISSING when absent. A project whose every row
     counts also reports each further row it wrote, so a new stage is judged
     without a launcher change."""
+    if cloud.exact_summary:
+        return exact_stage_verdicts(
+            Path(evidence)
+            / "tmp"
+            / f"{cloud.evidence_prefix}{cloud_sha}"
+            / "summary.tsv",
+            cloud,
+        )
     verdicts = {}
     for summary in sorted(
         (Path(evidence) / "tmp").glob(

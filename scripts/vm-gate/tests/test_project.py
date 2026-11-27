@@ -915,7 +915,7 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         self.assertEqual(code, 0, receipt)
         self.assertEqual(receipt["project"], "aweb-cloud")
         self.assertEqual(
-            receipt["command"], f"make release-gate RELEASE_IMAGE={PILOT_INDEX}"
+            receipt["command"], "python3 scripts/gate.py --require-release"
         )
         self.assertIsNone(receipt["aweb_source"])
         self.assertNotIn("aweb_source_built", receipt)
@@ -924,7 +924,7 @@ class ProjectJob(CloudFixture, unittest.TestCase):
             receipt["real_main"], {"aweb-cloud": receipt["real_main"]["aweb-cloud"]}
         )
         [call] = self.calls
-        self.assertIn(f"make release-gate RELEASE_IMAGE={PILOT_INDEX}", call["command"])
+        self.assertIn("python3 scripts/gate.py --require-release >", call["command"])
         self.assertIn(f"RELEASE_IMAGE={PILOT_INDEX}", call["command"])
         self.assertIn(
             "RELEASE_IMAGE_ARCHIVE=/opt/vm-gate/cloud-image.tar", call["command"]
@@ -934,14 +934,14 @@ class ProjectJob(CloudFixture, unittest.TestCase):
             self.assertNotIn(absent, call["command"])
         self.assertIsNone(call["executor_factory"].keywords["release"]["hermes_key"])
 
-    def test_aweb_cloud_train_gate_runs_bare_make_gate(self):
+    def test_aweb_cloud_train_gate_runs_every_stage(self):
         self.without_hermes_key()
         self.pilot_evidence()
         code, receipt = self.invoke("aweb-cloud")
         self.assertEqual(code, 0, receipt)
-        self.assertEqual(receipt["command"], "make gate")
+        self.assertEqual(receipt["command"], "python3 scripts/gate.py")
         [call] = self.calls
-        self.assertRegex(call["command"], r"\nmake gate >")
+        self.assertRegex(call["command"], r"\npython3 scripts/gate.py >")
         self.assertNotIn("GATE_STAGES", call["command"])
 
     def test_aweb_cloud_is_green_only_when_every_row_passed_and_the_four_are_present(
@@ -1008,16 +1008,15 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         code, receipt = self.invoke("aweb-cloud")
         self.assertEqual(code, 0, receipt)
 
-    def test_aweb_cloud_files_are_refused_and_aweb_source_is_optional(self):
+    def test_aweb_cloud_files_are_refused_and_a_release_needs_no_aweb_source(self):
         self.without_hermes_key()
         code, receipt = self.invoke("aweb-cloud", "--files", str(self.files))
         self.assertEqual(code, 2, receipt)
         self.assertIn("--files", receipt["vm_gate"]["error"])
         self.pilot_evidence()
-        code, receipt = self.invoke_pilot_release("--aweb-source", self.sha)
-        # Given, it is checked as for ac: the pilot's inputs carry no built head, so it is red.
-        self.assertEqual(code, 1, receipt)
-        self.assertIsNone(receipt["aweb_source_built"])
+        code, receipt = self.invoke_pilot_release()
+        self.assertEqual(code, 0, receipt)
+        self.assertIsNone(receipt["aweb_source"])
 
     def test_aweb_cloud_on_a_native_machine_is_refused(self):
         self.without_hermes_key()

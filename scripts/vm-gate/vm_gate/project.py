@@ -94,6 +94,14 @@ def admit(args):
             and release.IMAGE.fullmatch(args.image)["repository"] != cloud.repository
         ):
             raise Refused(f"--image for {args.project} must name {cloud.repository}")
+        if args.aweb_source and not cloud.attests_aweb_source:
+            raise Refused(
+                f"{args.project}'s gate builds no aweb, so it cannot attest --aweb-source"
+            )
+        if args.aweb_source and not args.image:
+            raise Refused(
+                "--aweb-source pins a release's aweb; a train gate builds none to attest"
+            )
         if args.image and cloud.aweb_source_required and not args.aweb_source:
             raise Refused(
                 "--image needs --aweb-source, the aweb commit the journeys build"
@@ -196,6 +204,11 @@ def exit_code(record):
     # A servers runner exits 1 when it or its collector fails; that is not a failed rehearsal.
     if record["project"] == "servers" and servers.infrastructure(record):
         return INFRASTRUCTURE
+    # A gate that reports its own refusal or infrastructure fault keeps it.
+    if record.get("suite_classification") == "refused":
+        return REFUSED
+    if record.get("suite_classification") == "infrastructure":
+        return INFRASTRUCTURE
     if record["suite_exit"] != 0:
         return RED
     if record["project"] == "aweb" and record.get("files"):
@@ -286,8 +299,8 @@ def project_job(args, *, factory=None, out=None):
             record.update(
                 release.cloud_main(repo, args.sha, gate=not args.image, name=cloud.name)
             )
-            record["command"] = "make " + (
-                cloud.release_make(args.image) if args.image else cloud.gate_make
+            record["command"] = (
+                cloud.release_command(args.image) if args.image else cloud.gate_command
             )
             record["aweb_source"] = args.aweb_source
         run_id = "vm-" + uuid.uuid4().hex
@@ -409,6 +422,11 @@ def project_job(args, *, factory=None, out=None):
                 record["installed_wheels"] = installed_wheels(evidence, args.sha)
         elif args.project in release.CLOUD_PROJECTS:
             cloud = release.CLOUD_PROJECTS[args.project]
+            if cloud.native_exits:
+                record["suite_classification"] = {
+                    2: "refused",
+                    70: "infrastructure",
+                }.get(record["suite_exit"])
             if args.image and args.aweb_source and record["suite_exit"] == 0:
                 record["aweb_source_built"], record["aweb_source_tag"] = cloud_inputs(
                     evidence, args.sha, cloud
