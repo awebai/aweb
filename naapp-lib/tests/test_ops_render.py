@@ -67,7 +67,11 @@ class FakeRender:
 
     def _create(self, commit: str) -> dict[str, Any]:
         self._counter += 1
-        deploy = {"id": f"dep-new{self._counter:04d}", "status": "build_in_progress", "commit": {"id": commit}}
+        deploy = {
+            "id": f"dep-new{self._counter:04d}",
+            "status": "build_in_progress",
+            "commit": {"id": commit},
+        }
         self.deploys.insert(0, deploy)
         return deploy
 
@@ -98,7 +102,9 @@ def fake() -> Iterator[tuple[FakeRender, str]]:
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     origin = f"http://127.0.0.1:{server.server_address[1]}"
     yield state, origin
@@ -220,13 +226,23 @@ def test_status_reports_the_live_deploy_of_the_pinned_service(fake) -> None:
     ("path", "value", "named"),
     [
         (("rootDir",), "naapp/folio", "rootDir"),
-        (("serviceDetails", "envSpecificDetails", "dockerfilePath"), "./Dockerfile", "dockerfilePath"),
-        (("serviceDetails", "envSpecificDetails", "dockerContext"), "./naapp/folio", "dockerContext"),
+        (
+            ("serviceDetails", "envSpecificDetails", "dockerfilePath"),
+            "./Dockerfile",
+            "dockerfilePath",
+        ),
+        (
+            ("serviceDetails", "envSpecificDetails", "dockerContext"),
+            "./naapp/folio",
+            "dockerContext",
+        ),
         (("autoDeploy",), "yes", "autoDeploy"),
         (("serviceDetails", "region"), "virginia", "region"),
     ],
 )
-def test_status_fails_closed_when_the_service_differs_from_the_manifest(fake, path, value, named) -> None:
+def test_status_fails_closed_when_the_service_differs_from_the_manifest(
+    fake, path, value, named
+) -> None:
     state, config, client = _ready(fake)
     target = state.service
     for key in path[:-1]:
@@ -251,13 +267,17 @@ def test_status_fails_closed_on_a_null_root_dir(fake) -> None:
 
 def test_status_refuses_while_another_deploy_is_in_progress(fake) -> None:
     state, config, client = _ready(fake)
-    state.deploys.insert(0, {"id": "dep-busy0001", "status": "build_in_progress", "commit": {"id": "c" * 40}})
+    state.deploys.insert(
+        0, {"id": "dep-busy0001", "status": "build_in_progress", "commit": {"id": "c" * 40}}
+    )
     with pytest.raises(OpsError, match="active"):
         render.status(client, config)
 
 
 def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, check=True, text=True, capture_output=True).stdout.strip()
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, text=True, capture_output=True
+    ).stdout.strip()
 
 
 @pytest.fixture()
@@ -267,7 +287,17 @@ def checkout(tmp_path: Path) -> tuple[Path, str]:
     _git(tmp_path, "init", "--bare", "-b", "main", str(remote))
     work = tmp_path / "work"
     _git(tmp_path, "clone", str(remote), str(work))
-    _git(work, "-c", "user.email=t@example.test", "-c", "user.name=t", "commit", "--allow-empty", "-m", "c")
+    _git(
+        work,
+        "-c",
+        "user.email=t@example.test",
+        "-c",
+        "user.name=t",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "c",
+    )
     _git(work, "push", "origin", "HEAD:main")
     _git(work, "fetch", "origin")
     return work, _git(work, "rev-parse", "HEAD")
@@ -280,11 +310,19 @@ def test_deploy_ships_the_exact_reviewed_commit_and_waits_for_it_live(fake, chec
     state.service["repo"] = config.repo
 
     result = render.deploy(
-        client, config, commit=commit, rollback_deploy_id=LIVE_DEPLOY, rollback_commit=LIVE_COMMIT,
-        repo_root=work, timeout_seconds=10, interval_seconds=0,
+        client,
+        config,
+        commit=commit,
+        rollback_deploy_id=LIVE_DEPLOY,
+        rollback_commit=LIVE_COMMIT,
+        repo_root=work,
+        timeout_seconds=10,
+        interval_seconds=0,
     )
 
-    assert state.posts() == [(f"/v1/services/{SERVICE_ID}/deploys", {"clearCache": "clear", "commitId": commit})]
+    assert state.posts() == [
+        (f"/v1/services/{SERVICE_ID}/deploys", {"clearCache": "clear", "commitId": commit})
+    ]
     assert result["deploy"]["commit"] == commit
     assert result["deploy"]["status"] == "live"
     assert result["rollback"]["id"] == LIVE_DEPLOY
@@ -297,13 +335,21 @@ def test_deploy_refuses_a_commit_that_is_not_the_remote_branch_tip(fake, checkou
     state.service["repo"] = config.repo
     with pytest.raises(OpsError, match="not the approved target"):
         render.deploy(
-            client, config, commit="d" * 40, rollback_deploy_id=LIVE_DEPLOY, rollback_commit=LIVE_COMMIT,
-            repo_root=work, timeout_seconds=10, interval_seconds=0,
+            client,
+            config,
+            commit="d" * 40,
+            rollback_deploy_id=LIVE_DEPLOY,
+            rollback_commit=LIVE_COMMIT,
+            repo_root=work,
+            timeout_seconds=10,
+            interval_seconds=0,
         )
     assert state.posts() == []
 
 
-def test_deploy_refuses_a_commit_the_remote_has_moved_past_without_a_local_fetch(fake, checkout, tmp_path) -> None:
+def test_deploy_refuses_a_commit_the_remote_has_moved_past_without_a_local_fetch(
+    fake, checkout, tmp_path
+) -> None:
     state, config, client = _ready(fake)
     work, stale = checkout
     remote = work.parent / "aweb.git"
@@ -311,14 +357,30 @@ def test_deploy_refuses_a_commit_the_remote_has_moved_past_without_a_local_fetch
     state.service["repo"] = config.repo
     other = tmp_path / "other"
     _git(tmp_path, "clone", str(remote), str(other))
-    _git(other, "-c", "user.email=t@example.test", "-c", "user.name=t", "commit", "--allow-empty", "-m", "newer")
+    _git(
+        other,
+        "-c",
+        "user.email=t@example.test",
+        "-c",
+        "user.name=t",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "newer",
+    )
     _git(other, "push", "origin", "HEAD:main")
     # work has not fetched, so its origin/main still names the stale commit.
     assert _git(work, "rev-parse", "origin/main") == stale
     with pytest.raises(OpsError, match="not the approved target"):
         render.deploy(
-            client, config, commit=stale, rollback_deploy_id=LIVE_DEPLOY, rollback_commit=LIVE_COMMIT,
-            repo_root=work, timeout_seconds=10, interval_seconds=0,
+            client,
+            config,
+            commit=stale,
+            rollback_deploy_id=LIVE_DEPLOY,
+            rollback_commit=LIVE_COMMIT,
+            repo_root=work,
+            timeout_seconds=10,
+            interval_seconds=0,
         )
     assert state.posts() == []
 
@@ -334,21 +396,35 @@ def test_deploy_fails_closed_when_the_remote_cannot_be_read(fake, checkout) -> N
     shutil.rmtree(remote)
     with pytest.raises(OpsError, match="configured remote"):
         render.deploy(
-            client, config, commit=commit, rollback_deploy_id=LIVE_DEPLOY, rollback_commit=LIVE_COMMIT,
-            repo_root=work, timeout_seconds=10, interval_seconds=0,
+            client,
+            config,
+            commit=commit,
+            rollback_deploy_id=LIVE_DEPLOY,
+            rollback_commit=LIVE_COMMIT,
+            repo_root=work,
+            timeout_seconds=10,
+            interval_seconds=0,
         )
     assert state.posts() == []
 
 
-def test_deploy_refuses_when_the_live_deploy_is_not_the_named_rollback_artifact(fake, checkout) -> None:
+def test_deploy_refuses_when_the_live_deploy_is_not_the_named_rollback_artifact(
+    fake, checkout
+) -> None:
     state, config, client = _ready(fake)
     work, commit = checkout
     config = replace(config, repo=str(work.parent / "aweb.git"))
     state.service["repo"] = config.repo
     with pytest.raises(OpsError, match="approved artifact"):
         render.deploy(
-            client, config, commit=commit, rollback_deploy_id=EARLIER_DEPLOY, rollback_commit=EARLIER_COMMIT,
-            repo_root=work, timeout_seconds=10, interval_seconds=0,
+            client,
+            config,
+            commit=commit,
+            rollback_deploy_id=EARLIER_DEPLOY,
+            rollback_commit=EARLIER_COMMIT,
+            repo_root=work,
+            timeout_seconds=10,
+            interval_seconds=0,
         )
     assert state.posts() == []
 
@@ -357,8 +433,14 @@ def test_rollback_redeploys_the_earlier_artifact_and_never_rebuilds_a_commit(fak
     state, config, client = _ready(fake)
 
     result = render.rollback(
-        client, config, rollback_deploy_id=EARLIER_DEPLOY, rollback_commit=EARLIER_COMMIT,
-        current_deploy_id=LIVE_DEPLOY, current_commit=LIVE_COMMIT, timeout_seconds=10, interval_seconds=0,
+        client,
+        config,
+        rollback_deploy_id=EARLIER_DEPLOY,
+        rollback_commit=EARLIER_COMMIT,
+        current_deploy_id=LIVE_DEPLOY,
+        current_commit=LIVE_COMMIT,
+        timeout_seconds=10,
+        interval_seconds=0,
     )
 
     assert state.posts() == [(f"/v1/services/{SERVICE_ID}/rollback", {"deployId": EARLIER_DEPLOY})]
@@ -370,8 +452,14 @@ def test_rollback_cannot_be_asked_to_deploy_a_commit(fake) -> None:
     state, config, client = _ready(fake)
     with pytest.raises(OpsError, match="deploy ID"):
         render.rollback(
-            client, config, rollback_deploy_id=EARLIER_COMMIT, rollback_commit=EARLIER_COMMIT,
-            current_deploy_id=LIVE_DEPLOY, current_commit=LIVE_COMMIT, timeout_seconds=10, interval_seconds=0,
+            client,
+            config,
+            rollback_deploy_id=EARLIER_COMMIT,
+            rollback_commit=EARLIER_COMMIT,
+            current_deploy_id=LIVE_DEPLOY,
+            current_commit=LIVE_COMMIT,
+            timeout_seconds=10,
+            interval_seconds=0,
         )
     assert state.posts() == []
 
@@ -380,8 +468,14 @@ def test_rollback_refuses_an_artifact_whose_commit_differs(fake) -> None:
     state, config, client = _ready(fake)
     with pytest.raises(OpsError, match="approved artifact"):
         render.rollback(
-            client, config, rollback_deploy_id=EARLIER_DEPLOY, rollback_commit="e" * 40,
-            current_deploy_id=LIVE_DEPLOY, current_commit=LIVE_COMMIT, timeout_seconds=10, interval_seconds=0,
+            client,
+            config,
+            rollback_deploy_id=EARLIER_DEPLOY,
+            rollback_commit="e" * 40,
+            current_deploy_id=LIVE_DEPLOY,
+            current_commit=LIVE_COMMIT,
+            timeout_seconds=10,
+            interval_seconds=0,
         )
     assert state.posts() == []
 
@@ -409,9 +503,13 @@ def test_verify_fails_when_health_is_not_ok(fake) -> None:
 
 def test_wait_stops_on_a_failed_build(fake) -> None:
     state, config, client = _ready(fake)
-    state.deploys.insert(0, {"id": "dep-failed01", "status": "build_failed", "commit": {"id": "c" * 40}})
+    state.deploys.insert(
+        0, {"id": "dep-failed01", "status": "build_failed", "commit": {"id": "c" * 40}}
+    )
     with pytest.raises(OpsError, match="build_failed"):
-        render.wait_for_deploy(client, config, "dep-failed01", "c" * 40, timeout_seconds=10, interval_seconds=0)
+        render.wait_for_deploy(
+            client, config, "dep-failed01", "c" * 40, timeout_seconds=10, interval_seconds=0
+        )
 
 
 def test_mutations_require_apply_and_the_exact_service_id(tmp_path: Path) -> None:
@@ -437,7 +535,11 @@ def _cli(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedP
     import os
     import sys
 
-    clean = {key: value for key, value in os.environ.items() if key not in {"APPLY", "CONFIRM_SERVICE_ID"}}
+    clean = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"APPLY", "CONFIRM_SERVICE_ID"}
+    }
     clean.update(env or {})
     return subprocess.run(
         [sys.executable, "-m", "aweb_naapp.ops", *args], text=True, capture_output=True, env=clean
@@ -445,14 +547,20 @@ def _cli(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedP
 
 
 @pytest.mark.parametrize("command", ["deploy", "rollback"])
-def test_cli_refuses_a_mutation_without_apply_before_reading_any_key(tmp_path: Path, command: str) -> None:
-    result = _cli("--config", str(_write_config(tmp_path)), "--env-file", str(tmp_path / "absent"), command)
+def test_cli_refuses_a_mutation_without_apply_before_reading_any_key(
+    tmp_path: Path, command: str
+) -> None:
+    result = _cli(
+        "--config", str(_write_config(tmp_path)), "--env-file", str(tmp_path / "absent"), command
+    )
     assert result.returncode == 2
     assert "--apply" in result.stderr
     assert result.stdout == ""
 
 
 def test_cli_reports_a_missing_key_file_as_one_error(tmp_path: Path) -> None:
-    result = _cli("--config", str(_write_config(tmp_path)), "--env-file", str(tmp_path / "absent"), "status")
+    result = _cli(
+        "--config", str(_write_config(tmp_path)), "--env-file", str(tmp_path / "absent"), "status"
+    )
     assert result.returncode == 2
     assert result.stderr.startswith("ERROR: Render env file not found")

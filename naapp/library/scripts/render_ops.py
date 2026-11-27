@@ -197,9 +197,7 @@ def _open_directory_nofollow(path: Path) -> list[tuple[int, str, tuple[int, int]
         for component in path.parts[1:]:
             descriptor = os.open(component, flags, dir_fd=chain[-1][0])
             component_stat = os.fstat(descriptor)
-            chain.append(
-                (descriptor, component, (component_stat.st_dev, component_stat.st_ino))
-            )
+            chain.append((descriptor, component, (component_stat.st_dev, component_stat.st_ino)))
         return chain
     except OSError:
         for opened, _, _ in reversed(chain):
@@ -210,9 +208,7 @@ def _open_directory_nofollow(path: Path) -> list[tuple[int, str, tuple[int, int]
 class HealthEvidenceRun:
     """Descriptor-anchored, mode-private evidence for unauthenticated health probes."""
 
-    def __init__(
-        self, path: Path, *, label: str, metadata: dict[str, Any] | None = None
-    ) -> None:
+    def __init__(self, path: Path, *, label: str, metadata: dict[str, Any] | None = None) -> None:
         if not path.is_absolute():
             raise OpsError("health evidence directory must be absolute")
         normalized = Path(os.path.normpath(str(path)))
@@ -236,13 +232,8 @@ class HealthEvidenceRun:
         try:
             self._validate_parent_chain()
             parent_stat = os.fstat(self._parent_fd)
-            if (
-                stat.S_IMODE(parent_stat.st_mode) != 0o700
-                or parent_stat.st_uid != os.geteuid()
-            ):
-                raise OpsError(
-                    "health evidence parent must be operator-owned with exact mode 0700"
-                )
+            if stat.S_IMODE(parent_stat.st_mode) != 0o700 or parent_stat.st_uid != os.geteuid():
+                raise OpsError("health evidence parent must be operator-owned with exact mode 0700")
             previous_umask = os.umask(0)
             try:
                 os.mkdir(self._leaf, 0o700, dir_fd=self._parent_fd)
@@ -414,9 +405,7 @@ class CapabilityFixtureRecorder:
     ) -> None:
         if not re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", correlation_id):
             raise OpsError("capability correlation ID must be a stable opaque ID")
-        if mutation_id and not re.fullmatch(
-            r"[a-z0-9]+(?:[.-][a-z0-9]+)*", mutation_id
-        ):
+        if mutation_id and not re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", mutation_id):
             raise OpsError("capability mutation ID must be empty or stable")
         source_identity = _verifier_identity()
         self._evidence = HealthEvidenceRun(
@@ -516,9 +505,7 @@ class CapabilityFixtureRecorder:
     def failure_code(self, exc: Exception) -> str:
         """Classify handled failure without treating exception text as evidence."""
         negatives = [
-            child
-            for child in self.children
-            if child["terminal"]["outcome"] == "expected-failure"
+            child for child in self.children if child["terminal"]["outcome"] == "expected-failure"
         ]
         if len(negatives) == 1:
             return f"{negatives[0]['predicate_id']}.dedicated-negative-observed"
@@ -593,9 +580,7 @@ def open_health_url(url: str, *, timeout: float, user_agent: str = HEALTH_USER_A
 
 
 def _control_safe(value: str) -> str:
-    return "".join(
-        char if ord(char) >= 32 and ord(char) != 127 else "�" for char in value
-    )
+    return "".join(char if ord(char) >= 32 and ord(char) != 127 else "�" for char in value)
 
 
 def _header_evidence_size(
@@ -671,8 +656,7 @@ def _health_headers(
                     omitted_names = candidate_names
                     omitted_seen.add(name)
     while (
-        _header_evidence_size(captured, omitted_names, omitted_count)
-        > HEALTH_HEADER_CAPTURE_LIMIT
+        _header_evidence_size(captured, omitted_names, omitted_count) > HEALTH_HEADER_CAPTURE_LIMIT
         and omitted_names
     ):
         omitted_names.pop()
@@ -785,9 +769,7 @@ def _relative_inside_repository(value: str, *, allow_root: bool) -> bool:
     return allow_root or bool(path.parts)
 
 
-def _validated_public_deployment_identity(
-    value: object, *, expected_commit: str
-) -> dict[str, str]:
+def _validated_public_deployment_identity(value: object, *, expected_commit: str) -> dict[str, str]:
     if not isinstance(value, dict) or set(value) != PUBLIC_DEPLOYMENT_IDENTITY_FIELDS:
         raise OpsError("public deployment identity has unexpected fields")
     if not all(isinstance(item, str) and item for item in value.values()):
@@ -1228,9 +1210,7 @@ def verify_health(
                     error_class=type(exc).__name__,
                 )
             )
-        raise TransientHealthError(
-            f"health check failed for {url}: {type(exc).__name__}"
-        ) from exc
+        raise TransientHealthError(f"health check failed for {url}: {type(exc).__name__}") from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         if capability is not None:
             capability.terminal_child(
@@ -1622,9 +1602,7 @@ def command_public_identity(args: argparse.Namespace) -> dict[str, Any]:
     except OpsError:
         raise
     except (HTTPError, URLError, OSError, HTTPException, IncompleteRead) as exc:
-        raise OpsError(
-            f"public deployment identity request failed: {type(exc).__name__}"
-        ) from exc
+        raise OpsError(f"public deployment identity request failed: {type(exc).__name__}") from exc
     if not complete:
         raise OpsError("public deployment identity response exceeded the health body bound")
     try:

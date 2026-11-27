@@ -33,9 +33,67 @@ test("passive terminal cleanup retains its socket root on child failure", () => 
   }
 });
 
+test("passive terminal cleanup waits for the panes the stopped server leaves running", () => {
+  // kill-server returns before the panes exit. A pane's shell that writes its
+  // history as it exits must not race the root's removal.
+  const scratch = mkdtempSync("/tmp/kpw-");
+  const root = join(scratch, "root"), marker = join(scratch, "pane-last-write");
+  mkdirSync(root);
+  try {
+    // The pane is not the test's child, as a real pane is the server's.
+    const pane = spawnSync("/bin/sh", ["-c", `nohup ${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+      `process.on("SIGHUP", () => setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker)}, "history"); process.exit(0); }, 300));setInterval(() => {}, 1000)`,
+    )} >/dev/null 2>&1 & echo $!`], { encoding: "utf8" });
+    const pid = Number(pane.stdout.trim());
+    assert.ok(Number.isInteger(pid) && pid > 0, "the pane started");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    const tmuxBinary = join(scratch, "tmux.mjs");
+    writeFileSync(tmuxBinary, `#!${process.execPath}
+const args = process.argv.slice(2).join(" ");
+if (args.includes("list-panes")) { process.stdout.write("${pid}\\n"); process.exit(0); }
+if (args.includes("kill-server")) { process.kill(${pid}, "SIGHUP"); process.exit(0); }
+process.exit(1);
+`, { mode: 0o700 });
+    cleanupPassiveTerminal({ root, tmuxBinary, env: { PATH: process.env.PATH } });
+    assert.equal(existsSync(marker), true, "cleanup returns only after the pane's last write");
+    assert.equal(existsSync(root), false, "the root is removed after the pane exits");
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
+});
+
+test("passive terminal cleanup counts an unreaped pane as exited", () => {
+  // Where nothing reaps orphans (a container whose PID 1 is not an init), a
+  // pane that has exited stays a zombie, which signal 0 still reaches.
+  const root = mkdtempSync("/tmp/kpz-");
+  const parentFile = join(root, "parent"), paneFile = join(root, "pane");
+  try {
+    spawnSync("/bin/sh", ["-c", `(sh -c '${JSON.stringify(process.execPath)} -e "setTimeout(() => process.exit(0), 100)" & echo $! > ${paneFile}; echo $$ > ${parentFile}; exec sleep 60') >/dev/null 2>&1 &`]);
+    const deadline = Date.now() + 10000;
+    while (!(existsSync(paneFile) && existsSync(parentFile)) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    const pid = Number(readFileSync(paneFile, "utf8").trim());
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+    assert.doesNotThrow(() => process.kill(pid, 0), "the exited pane is still a process: a zombie");
+    const tmuxBinary = join(root, "tmux.mjs");
+    writeFileSync(tmuxBinary, `#!${process.execPath}
+const args = process.argv.slice(2).join(" ");
+if (args.includes("list-panes")) { process.stdout.write("${pid}\\n"); process.exit(0); }
+process.exit(args.includes("kill-server") ? 0 : 1);
+`, { mode: 0o700 });
+    const started = Date.now();
+    cleanupPassiveTerminal({ root, tmuxBinary, env: { PATH: process.env.PATH } });
+    assert.ok(Date.now() - started < 5000, "cleanup did not wait for an exited pane");
+    assert.equal(existsSync(root), false, "the root is removed");
+  } finally {
+    const parent = existsSync(parentFile) ? Number(readFileSync(parentFile, "utf8").trim()) : 0;
+    if (parent > 0) { try { process.kill(parent, "SIGKILL"); } catch {} }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the wake probe keeps its socket root when its owned tmux cleanup fails", () => {
   // The real probe, failing early, tears down through its own finally block.
-  assert.ok(existsSync("/opt/user-paths/oats-aweb"), "the probe runs only with the gate image's staged kernel and provider");
+  const gateStaged = "/opt/user-paths/released-oats";
+  const staged = existsSync(gateStaged) ? gateStaged : fileURLToPath(new URL("../../candidate-gate/released-oats", import.meta.url));
+  assert.ok(existsSync(join(staged, "node_modules/@awebai/oats/bin/oats.mjs")), "Run make prepare-released-kernel-test first.");
   const probe = fileURLToPath(new URL("./user_paths_oats.mjs", import.meta.url));
   const tmuxBinary = spawnSync("/usr/bin/which", ["tmux"], { encoding: "utf8" }).stdout.trim();
   assert.ok(tmuxBinary, "the no-server case requires installed tmux");
@@ -51,7 +109,7 @@ test("the wake probe keeps its socket root when its owned tmux cleanup fails", (
       // Not an executable aw: the probe fails at its first aw command.
       writeFileSync(notAw, "not an aw binary\n", { mode: 0o600 });
       const run = spawnSync(process.execPath, [probe, "--aw", notAw, "--root", root, "--seat", scratch, "--fixture-home", scratch, "--sender", scratch,
-        "--team", "members:probe.test", "--source-commit", "0000000", "--output", output], { encoding: "utf8", timeout: 60000 });
+        "--team", "members:probe.test", "--source-commit", "0000000", "--released-artifacts", staged, "--output", output], { encoding: "utf8", timeout: 60000 });
       assert.equal(run.status, 1, `${outcome}: the probe fails`);
       const receipt = JSON.parse(readFileSync(output, "utf8"));
       assert.equal(receipt.result, "FAILED", outcome);

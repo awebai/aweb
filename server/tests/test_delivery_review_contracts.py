@@ -69,7 +69,9 @@ def test_mcp_address_missing_family_uses_the_same_privacy_refusal(reason):
 
 
 def test_mcp_registered_nonresident_keeps_its_operator_action():
-    result = json.loads(send_refusal(RecipientNotResidentError(), address="otherco.com/bob"))
+    result = json.loads(
+        send_refusal(RecipientNotResidentError(), address="otherco.com/bob")
+    )
     assert result == {
         "error": (
             "The recipient is not set up for messaging on the server this address points to. "

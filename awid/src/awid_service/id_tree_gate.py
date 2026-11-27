@@ -57,7 +57,12 @@ def strict_json_object(raw: bytes, *, max_bytes: int = 16384) -> dict[str, Any]:
         raise IDCertificateError("invalid_shape")
 
     try:
-        value = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs, parse_float=reject, parse_constant=reject)
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=pairs,
+            parse_float=reject,
+            parse_constant=reject,
+        )
     except (UnicodeError, ValueError, RecursionError) as exc:
         if isinstance(exc, IDCertificateError):
             raise
@@ -69,7 +74,10 @@ def strict_json_object(raw: bytes, *, max_bytes: int = 16384) -> dict[str, Any]:
 
 async def lock_domain(tx, domain: str):
     """Take locks 1 and 2; return the live namespace row, or None."""
-    await tx.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", f"aweb.id-tree/{domain}")
+    await tx.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        f"aweb.id-tree/{domain}",
+    )
     return await tx.fetch_one(
         """
         SELECT namespace_id, controller_did, parent_domain, parent_controller_key
@@ -82,7 +90,11 @@ async def lock_domain(tx, domain: str):
 
 
 async def lock_keys_and_subject(
-    tx, *, dids: set[str | None], subject_id: str, parent_id: str | None = None,
+    tx,
+    *,
+    dids: set[str | None],
+    subject_id: str,
+    parent_id: str | None = None,
 ) -> tuple[dict[str, str], Any]:
     """Take locks 3 and 4; return the current key of each mapped did:aw and the subject row.
 
@@ -116,7 +128,9 @@ async def lock_keys_and_subject(
     return {row["did_aw"]: row["current_did_key"] for row in mapped}, subject
 
 
-async def current_root(tx, domain: str, namespace, dns_authority: DomainAuthority | None):
+async def current_root(
+    tx, domain: str, namespace, dns_authority: DomainAuthority | None
+):
     """The domain's open epoch when it has current root authority, else None.
 
     Authority binds the stored controller and open epoch to found DNS and,
@@ -133,12 +147,21 @@ async def current_root(tx, domain: str, namespace, dns_authority: DomainAuthorit
         """,
         domain,
     )
-    if (epoch is None or epoch["did_key"] != namespace["controller_did"]
-            or not proves_root(dns_authority, epoch["did_key"], domain=domain, namespace=namespace)):
+    if (
+        epoch is None
+        or epoch["did_key"] != namespace["controller_did"]
+        or not proves_root(
+            dns_authority, epoch["did_key"], domain=domain, namespace=namespace
+        )
+    ):
         return None
     return epoch
 
 
 def identity_parent_did(parent_kind: str, parent_id: str) -> str | None:
     """The did:aw of an identity parent, which is the only parent with a mapping."""
-    return parent_id if parent_kind == "identity" and parent_id.startswith("did:aw:") else None
+    return (
+        parent_id
+        if parent_kind == "identity" and parent_id.startswith("did:aw:")
+        else None
+    )

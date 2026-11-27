@@ -118,7 +118,9 @@ async def deliver_federated_message(
     if refusal:
         raise FederatedDeliveryRefused(origin, refusal)
     if transport is None:
-        raise FederatedMailDeliveryError(origin, "delivery_unavailable", status_code=502)
+        raise FederatedMailDeliveryError(
+            origin, "delivery_unavailable", status_code=502
+        )
     if not isinstance(transport, httpx.AsyncBaseTransport):
         raise TypeError("federated delivery requires a transport")
     origins = set(own_origins or ())
@@ -143,7 +145,11 @@ async def deliver_federated_message(
                     headers={
                         "Accept": "application/json",
                         "Accept-Encoding": "identity",
-                        **({"X-AWID-ID-Chain": encode_id_chain_header(id_chain)} if id_chain is not None else {}),
+                        **(
+                            {"X-AWID-ID-Chain": encode_id_chain_header(id_chain)}
+                            if id_chain is not None
+                            else {}
+                        ),
                     },
                 ) as response:
                     max_bytes = (
@@ -156,7 +162,9 @@ async def deliver_federated_message(
         reason = _transport_failure_reason(exc)
         logger.warning(
             "Federated delivery to %s failed: %s (%s)",
-            origin, reason, _safe_error_text(str(exc).encode("utf-8"))[:MAX_LOGGED_ERROR_CHARS],
+            origin,
+            reason,
+            _safe_error_text(str(exc).encode("utf-8"))[:MAX_LOGGED_ERROR_CHARS],
         )
         raise FederatedMailDeliveryError(origin, reason, status_code=502) from exc
 
@@ -169,21 +177,28 @@ async def deliver_federated_message(
             answer = {}
         _log_unrelayed_answer(origin, response.status_code, content)
         # Preserve this application refusal across the chat federation hop.
-        if (envelope.type == "chat" and response.status_code == 422
-                and answer.get("reason") == HumanChatRefused.reason
-                and answer.get("retryable") is False):
+        if (
+            envelope.type == "chat"
+            and response.status_code == 422
+            and answer.get("reason") == HumanChatRefused.reason
+            and answer.get("retryable") is False
+        ):
             raise HumanChatRefused(_refused_recipients(answer.get("recipients")))
         raise FederatedMailDeliveryError(
             origin,
             _typed_refusal_reason(answer) or f"HTTP {response.status_code}",
-            status_code=response.status_code if 400 <= response.status_code < 500 else 502,
+            status_code=response.status_code
+            if 400 <= response.status_code < 500
+            else 502,
         )
 
     try:
         data = json.loads(content)
     except Exception as exc:
         _log_unrelayed_answer(origin, response.status_code, content)
-        raise FederatedMailDeliveryError(origin, "invalid JSON", status_code=502) from exc
+        raise FederatedMailDeliveryError(
+            origin, "invalid JSON", status_code=502
+        ) from exc
     if not isinstance(data, dict):
         _log_unrelayed_answer(origin, response.status_code, content)
         raise FederatedMailDeliveryError(origin, "invalid response", status_code=502)
@@ -194,7 +209,9 @@ def _log_unrelayed_answer(origin: str, status_code: int, content: bytes) -> None
     """Log, at a bounded length, the answer text a failed delivery does not relay."""
     logger.warning(
         "Federated delivery to %s answered HTTP %d: %s",
-        origin, status_code, _safe_error_text(content)[:MAX_LOGGED_ERROR_CHARS],
+        origin,
+        status_code,
+        _safe_error_text(content)[:MAX_LOGGED_ERROR_CHARS],
     )
 
 
@@ -211,9 +228,15 @@ def _typed_refusal_reason(answer: dict) -> str | None:
 
 def _refused_recipients(recipients) -> list[str]:
     """The recipient names of a human chat refusal, when all are short printable strings."""
-    if (isinstance(recipients, list)
-            and len(recipients) <= MAX_REFUSED_RECIPIENTS
-            and all(isinstance(name, str) and name.isprintable()
-                    and len(name) <= MAX_REFUSED_RECIPIENT_CHARS for name in recipients)):
+    if (
+        isinstance(recipients, list)
+        and len(recipients) <= MAX_REFUSED_RECIPIENTS
+        and all(
+            isinstance(name, str)
+            and name.isprintable()
+            and len(name) <= MAX_REFUSED_RECIPIENT_CHARS
+            for name in recipients
+        )
+    ):
         return recipients
     return []

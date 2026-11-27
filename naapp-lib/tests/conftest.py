@@ -2,13 +2,23 @@
 and real AWID routes on one of them (awid_service.testing) for the tests that
 verify team acts."""
 
+import os
+import runpy
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
-import pytest
-import pytest_asyncio
-from aweb_naapp_testing.databases import SchemaDatabases
-from awid_service.testing import Registry, running_registry
+# xdist sets its worker identity before conftest imports. Bind this worker to
+# its own Postgres and Redis (the server suite's plan) before pgdbm's plugin
+# and test modules capture an endpoint.
+runpy.run_path(
+    str(Path(__file__).resolve().parents[2] / "server/tests/worker_services.py")
+)["configure_worker_environment"](os.environ)
+
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from aweb_naapp_testing.databases import SchemaDatabases  # noqa: E402
+from awid_service.testing import Registry, running_registry  # noqa: E402
 
 pytest_plugins = ("pgdbm.fixtures.conftest", "aweb_naapp_testing.server")
 

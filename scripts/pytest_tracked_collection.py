@@ -121,7 +121,14 @@ def _tracked(paths: set[Path], root: Path, cwd: Path) -> set[Path]:
     # list. Batch the call if that ever happens.
     try:
         listed = subprocess.run(
-            ["git", "ls-files", "-z", "--full-name", "--", *[str(p) for p in sorted(paths)]],
+            [
+                "git",
+                "ls-files",
+                "-z",
+                "--full-name",
+                "--",
+                *[str(p) for p in sorted(paths)],
+            ],
             cwd=cwd,
             capture_output=True,
             text=True,

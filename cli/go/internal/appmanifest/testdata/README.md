@@ -16,10 +16,6 @@ against the synthetic resident certificate and team-auth v2 request binding.
 These are client compatibility tests, not deployed application business tests.
 
 `events-v1.json` is the shared event-declaration contract matrix. The Go test
-requires `accepted`; the pinned Cloud excerpt runner at
-`scripts/check-app-event-vectors.py` requires `gateway_accepted`. Differences
-are deliberately recorded for old gateway coercions and its missing count
-bound. Well-formed and exact deployed-manifest cases agree. The excerpt has no
-runtime authority and does not change Cloud. The strict contract allows at most
+requires `accepted`. The strict contract allows at most
 64 declarations, optional string description (4096 trimmed Unicode characters),
 app-local type, and exact ambient/wake/steer intent (absent defaults to ambient).

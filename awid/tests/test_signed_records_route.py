@@ -4,6 +4,7 @@ Real AWID on PostgreSQL and Redis. Only the team key or the trusted service
 token may read, whatever the team's visibility, and every refusal looks like an
 unknown team.
 """
+
 from __future__ import annotations
 
 import json
@@ -34,7 +35,12 @@ RECORDS = f"{BASE}/signed-records"
 
 def _path_signed(signer, path: str) -> dict[str, str]:
     key, did = signer
-    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    ts = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     sig = sign_message(key, f"{ts}\nGET\n{path}".encode("utf-8"))
     return {"Authorization": f"DIDKey {did} {sig}", "X-AWEB-Timestamp": ts}
 
@@ -60,19 +66,38 @@ async def _read_all(env, *, limit: int) -> tuple[list[dict], int]:
 
 
 async def _publish_server(env):
-    record = {"v": 1, "type": "aweb.team-server", "team_id": TEAM_ID, "team_did_key": env.team[1],
-              "server_url": "https://coord.example/api", "issued_at": _now(-30)}
-    signed = {"record": record, "signature": sign_message(env.team[0], record_signing_bytes(record))}
+    record = {
+        "v": 1,
+        "type": "aweb.team-server",
+        "team_id": TEAM_ID,
+        "team_did_key": env.team[1],
+        "server_url": "https://coord.example/api",
+        "issued_at": _now(-30),
+    }
+    signed = {
+        "record": record,
+        "signature": sign_message(env.team[0], record_signing_bytes(record)),
+    }
     response = await env.client.put(f"{BASE}/server", json=signed)
     assert response.status_code == 200, response.text
     return signed
 
 
 async def _revoke(env, certificate_id: str) -> None:
-    claims = {"domain": "local", "operation": "revoke_certificate", "team_name": "base",
-              "certificate_id": certificate_id}
-    revoked = await send(env, "POST", f"{BASE}/certificates/revoke", claims,
-                         {"certificate_id": certificate_id}, signer=env.team)
+    claims = {
+        "domain": "local",
+        "operation": "revoke_certificate",
+        "team_name": "base",
+        "certificate_id": certificate_id,
+    }
+    revoked = await send(
+        env,
+        "POST",
+        f"{BASE}/certificates/revoke",
+        claims,
+        {"certificate_id": certificate_id},
+        signer=env.team,
+    )
     assert revoked.status_code == 200, revoked.text
 
 
@@ -92,7 +117,9 @@ async def _every_kind(env):
 
 
 @pytest.mark.asyncio
-async def test_the_controller_reads_every_kind_across_pages_including_revoked_certificates(controller_app):
+async def test_the_controller_reads_every_kind_across_pages_including_revoked_certificates(
+    controller_app,
+):
     env = controller_app
     server, custodians, custody, person = await _every_kind(env)
 
@@ -103,29 +130,48 @@ async def test_the_controller_reads_every_kind_across_pages_including_revoked_ce
     for item in items:
         by_kind.setdefault(item["kind"], []).append(item)
     assert by_kind["team_server"] == [{"kind": "team_server", "key": None, **server}]
-    assert [i["key"] for i in by_kind["team_custodians"]] == ["custodian.example", "standby.example"]
+    assert [i["key"] for i in by_kind["team_custodians"]] == [
+        "custodian.example",
+        "standby.example",
+    ]
     assert [i["record"] for i in by_kind["team_custodians"]] == custodians
-    assert [(i["key"], i["record"]) for i in by_kind["member_custody"]] == [(custody["certificate_id"], custody)]
-    assert [(i["key"], i["record"]) for i in by_kind["member_person"]] == [(person["certificate_id"], person)]
+    assert [(i["key"], i["record"]) for i in by_kind["member_custody"]] == [
+        (custody["certificate_id"], custody)
+    ]
+    assert [(i["key"], i["record"]) for i in by_kind["member_person"]] == [
+        (person["certificate_id"], person)
+    ]
     for item in items:
         if item["kind"] != "team_server":
             assert item["signature"] == sign_record(env.team[0], item["record"])
 
 
 @pytest.mark.asyncio
-async def test_an_unsigned_foreign_or_revoked_read_looks_like_an_unknown_team(controller_app):
+async def test_an_unsigned_foreign_or_revoked_read_looks_like_an_unknown_team(
+    controller_app,
+):
     env = controller_app
     await _every_kind(env)
-    unknown = await env.client.get("/v1/namespaces/local/teams/nobody/signed-records",
-                                   headers=_path_signed(env.team, "/v1/namespaces/local/teams/nobody/signed-records"))
+    unknown = await env.client.get(
+        "/v1/namespaces/local/teams/nobody/signed-records",
+        headers=_path_signed(
+            env.team, "/v1/namespaces/local/teams/nobody/signed-records"
+        ),
+    )
     refusals = [
         await _read(env, signer=False),
         await _read(env, signer=keypair()),
-        await env.client.get(RECORDS, headers={"Authorization": "DIDKey nonsense", "X-AWEB-Timestamp": "x"}),
+        await env.client.get(
+            RECORDS,
+            headers={"Authorization": "DIDKey nonsense", "X-AWEB-Timestamp": "x"},
+        ),
     ]
     assert unknown.status_code == 404
     for refusal in refusals:
-        assert (refusal.status_code, refusal.json()) == (unknown.status_code, unknown.json())
+        assert (refusal.status_code, refusal.json()) == (
+            unknown.status_code,
+            unknown.json(),
+        )
 
 
 @pytest.mark.asyncio
@@ -139,16 +185,24 @@ async def test_only_the_team_key_and_the_trusted_service_may_read(controller_app
     assert (await _read(env)).status_code == 200
     token = "signed-records-service-token-0123456789"
     env.app.state.awid_service_token = token
-    assert (await _read(env, signer=False, headers={"X-AWID-Service-Token": token})).status_code == 200
+    assert (
+        await _read(env, signer=False, headers={"X-AWID-Service-Token": token})
+    ).status_code == 200
 
 
 async def _member_certificate(env, member) -> dict:
     from test_controller_request_v2_http import certificate_body
 
     body = certificate_body(env, alias="reader", member=member)
-    claims = {"domain": "local", "operation": "register_certificate", "team_name": "base",
-              "certificate_id": body["certificate_id"]}
-    response = await send(env, "POST", f"{BASE}/certificates", claims, body, signer=env.team)
+    claims = {
+        "domain": "local",
+        "operation": "register_certificate",
+        "team_name": "base",
+        "certificate_id": body["certificate_id"],
+    }
+    response = await send(
+        env, "POST", f"{BASE}/certificates", claims, body, signer=env.team
+    )
     assert response.status_code == 200, response.text
     return body
 
@@ -177,7 +231,9 @@ async def test_the_read_has_its_own_rate_limit_bucket(controller_app, monkeypatc
     from awid import ratelimit
 
     env = controller_app
-    monkeypatch.setitem(ratelimit._BUCKET_DEFAULTS, "attestation_record_list", (1, 3600))
+    monkeypatch.setitem(
+        ratelimit._BUCKET_DEFAULTS, "attestation_record_list", (1, 3600)
+    )
     assert (await _read(env)).status_code == 200
     limited = await _read(env)
     assert limited.status_code == 429, limited.text
@@ -192,12 +248,18 @@ async def test_five_hundred_records_page_at_the_production_limit(controller_app)
     )
     expected = []
     for index in range(500):
-        record = _custodian(env, custodian_id=f"c{index:03d}.example", issued_at=_now(-60))
+        record = _custodian(
+            env, custodian_id=f"c{index:03d}.example", issued_at=_now(-60)
+        )
         signature = sign_record(env.team[0], record)
         await env.db.execute(
             "INSERT INTO {{tables.team_custodians}} (team_uuid, custodian_id, record_json, signature, team_did_key, issued_at)"
             " VALUES ($1, $2, $3, $4, $5, now())",
-            team_uuid, record["custodian_id"], canonical_json_bytes(record).decode(), signature, record["team_did_key"],
+            team_uuid,
+            record["custodian_id"],
+            canonical_json_bytes(record).decode(),
+            signature,
+            record["team_did_key"],
         )
         expected.append(record["custodian_id"])
 

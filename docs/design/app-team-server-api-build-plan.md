@@ -55,7 +55,7 @@ after an exact-SHA ACK from a non-author reviewer.
 - **Docs in the same change.** Each task updates the source-of-truth document
   its contract lives in (`docs/awid-sot.md`, `docs/app-registry.md`,
   `docs/app-events.md`, the aw command reference) and passes
-  `scripts/check_sot_source_inventories.py` and `scripts/check-extension-docs.py`.
+  `scripts/check_sot_source_inventories.py`.
 - **Vectors.** A task that adds a conformance vector or a consumer of one
   registers both and passes `make test-vector-provenance`
   (`scripts/check_vector_provenance.py`).

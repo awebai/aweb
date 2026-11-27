@@ -39,7 +39,11 @@ async def test_publish_blueprint_then_import_to_shelf(migrated_db) -> None:
     payload = {"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA}
     published = await publish_blueprint(db, principal=principal, payload=payload)
     assert published["blueprint_ref"] == "aweb.engineering"
-    assert {p["profile_ref"] for p in published["profiles"]} == {"coordinator", "developer", "reviewer"}
+    assert {p["profile_ref"] for p in published["profiles"]} == {
+        "coordinator",
+        "developer",
+        "reviewer",
+    }
 
     imported = await import_to_shelf(
         db,
@@ -81,7 +85,9 @@ async def test_get_shelf_profile_include_files_round_trips(migrated_db) -> None:
     )
     principal = SimpleNamespace(team_id=_TEAM)
     await publish_blueprint(
-        db, principal=principal, payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA}
+        db,
+        principal=principal,
+        payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA},
     )
     await import_to_shelf(
         db,
@@ -98,7 +104,9 @@ async def test_get_shelf_profile_include_files_round_trips(migrated_db) -> None:
     assert summary["digest"] == _COORDINATOR_DIGEST
 
     # ?include=files returns the profile content for a local materialize.
-    content = await get_shelf_profile(db, principal=principal, profile_ref="coordinator", include_files=True)
+    content = await get_shelf_profile(
+        db, principal=principal, profile_ref="coordinator", include_files=True
+    )
     assert content["files"], "include_files must return the profile files"
     for f in content["files"]:
         assert {"path", "content_utf8", "sha256"} <= set(f)
@@ -123,7 +131,9 @@ async def test_browse_views_use_published_catalog_payloads(migrated_db) -> None:
     )
     principal = SimpleNamespace(team_id=_TEAM)
     await publish_blueprint(
-        db, principal=principal, payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA}
+        db,
+        principal=principal,
+        payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA},
     )
 
     catalog = await browse_views.catalog_view(db)

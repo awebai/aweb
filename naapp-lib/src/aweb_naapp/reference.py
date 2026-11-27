@@ -59,8 +59,17 @@ _SIGNED_HEADERS = (
 )
 
 _COUNT_WORDS = {
-    0: "zero", 1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
-    6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
+    0: "zero",
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
 }
 
 
@@ -190,12 +199,12 @@ def _operation(origin: str, tool: dict[str, Any], verb: str, values: dict[str, s
             <span class="ref-op-id">
               <a class="ref-op-anchor" href="#op-{name}" aria-label="Link to {name}">#</a>
               <code class="ref-op-verb">aw {verb} {name}</code>
-              <span class="{method_cls}">{tool['method']}</span>
-              <code class="ref-op-path">{escape(tool['path'])}</code>
+              <span class="{method_cls}">{tool["method"]}</span>
+              <code class="ref-op-path">{escape(tool["path"])}</code>
             </span>
             <span class="ref-op-tags">{scope_tags}{auth_tag}</span>
           </div>
-          <p class="ref-op-desc">{escape(tool['description'])}</p>{_params_table(tool)}
+          <p class="ref-op-desc">{escape(tool["description"])}</p>{_params_table(tool)}
           <div class="cmd ref-cmd-primary"><pre>{aw_cmd}</pre>{COPY_BTN}</div>
           <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body">{wire_body}</div></details>
         </article>"""
@@ -277,18 +286,23 @@ def render_reference(
     if has_public:
         nav_groups += _nav_group(
             "Public",
-            "\n          ".join(f'<a href="#op-{escape(t["name"])}">{escape(t["name"])}</a>' for t in publics),
+            "\n          ".join(
+                f'<a href="#op-{escape(t["name"])}">{escape(t["name"])}</a>' for t in publics
+            ),
         )
     if certs:
         nav_groups += _nav_group(
             "Authenticated",
-            "\n          ".join(f'<a href="#op-{escape(t["name"])}">{escape(t["name"])}</a>' for t in certs),
+            "\n          ".join(
+                f'<a href="#op-{escape(t["name"])}">{escape(t["name"])}</a>' for t in certs
+            ),
         )
     if events:
         nav_groups += _nav_group(
             "Events",
             "\n          ".join(
-                f'<a href="#event-{e["type"].replace("/", "-")}">{escape(e["type"])}</a>' for e in events
+                f'<a href="#event-{e["type"].replace("/", "-")}">{escape(e["type"])}</a>'
+                for e in events
             ),
         )
     sidebar = f"""      <aside class="ref-sidebar">

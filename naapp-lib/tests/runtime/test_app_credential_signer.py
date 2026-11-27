@@ -94,7 +94,9 @@ def _request_sign(*, object_api: bool, omit: tuple[str, ...] = (), **changes):
     for field in omit:
         del args[field]
     if object_api:
-        return AppCredentialSigner(app_id=payload["app_id"], key=key, purpose=APP_REQUEST).sign(**args)
+        return AppCredentialSigner(app_id=payload["app_id"], key=key, purpose=APP_REQUEST).sign(
+            **args
+        )
     return sign_app_credential(
         purpose=APP_REQUEST,
         private_key=bytes(key.signing_key),
@@ -135,7 +137,9 @@ def test_app_request_refuses_missing_or_invalid_generation(object_api, generatio
         _request_sign(object_api=object_api, installation_generation=generation)
 
 
-@pytest.mark.parametrize("field,value", [("installation_id", "inst_next"), ("installation_generation", 4)])
+@pytest.mark.parametrize(
+    "field,value", [("installation_id", "inst_next"), ("installation_generation", 4)]
+)
 def test_app_request_signature_binds_the_installation(field, value):
     original = _request_sign(object_api=False)
     changed = _request_sign(object_api=False, **{field: value})

@@ -33,7 +33,9 @@ def signing_case():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("asynchronous", [False, True])
-async def test_signs_once_and_returns_a_strictly_verifiable_certificate(signing_case, asynchronous):
+async def test_signs_once_and_returns_a_strictly_verifiable_certificate(
+    signing_case, asynchronous
+):
     issuer, certificate = signing_case
     calls = []
 
@@ -44,7 +46,9 @@ async def test_signs_once_and_returns_a_strictly_verifiable_certificate(signing_
     async def async_sign(payload):
         return sign(payload)
 
-    signed = await sign_id_certificate(certificate, signer=async_sign if asynchronous else sign)
+    signed = await sign_id_certificate(
+        certificate, signer=async_sign if asynchronous else sign
+    )
     assert calls == [id_certificate_signing_bytes(certificate)]
     assert signed["certificate"] == certificate
     verify_id_certificate(signed, issuer_key=certificate["issuer_key"])
@@ -56,7 +60,9 @@ async def test_shape_refusal_precedes_the_signer(signing_case):
     certificate["id"] = certificate["issuer_key"]  # A human cannot have a local ID.
     calls = []
     with pytest.raises(IDCertificateError) as caught:
-        await sign_id_certificate(certificate, signer=lambda payload: calls.append(payload))
+        await sign_id_certificate(
+            certificate, signer=lambda payload: calls.append(payload)
+        )
     assert caught.value.code == "invalid_shape"
     assert calls == []
 
@@ -78,8 +84,12 @@ async def test_refusing_signer_exception_propagates_once(signing_case):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["other_key", "other_bytes", "short", "not_tuple", "not_bytes"])
-async def test_bad_signer_result_never_becomes_a_signed_certificate(signing_case, failure):
+@pytest.mark.parametrize(
+    "failure", ["other_key", "other_bytes", "short", "not_tuple", "not_bytes"]
+)
+async def test_bad_signer_result_never_becomes_a_signed_certificate(
+    signing_case, failure
+):
     issuer, certificate = signing_case
 
     def sign(payload):
@@ -87,7 +97,9 @@ async def test_bad_signer_result_never_becomes_a_signed_certificate(signing_case
         signature = issuer.sign(payload).signature
         if failure == "other_key":
             other = SigningKey(b"y" * 32)
-            return did_from_public_key(bytes(other.verify_key)), other.sign(payload).signature
+            return did_from_public_key(bytes(other.verify_key)), other.sign(
+                payload
+            ).signature
         if failure == "other_bytes":
             signature = issuer.sign(payload + b"changed").signature
         if failure == "short":

@@ -80,12 +80,18 @@ def after_connect(monkeypatch):
 
 def _streams(redis):
     def status():
-        return stream_events_multi(redis, ["lease-ownership-workspace"], keepalive_seconds=1)
+        return stream_events_multi(
+            redis, ["lease-ownership-workspace"], keepalive_seconds=1
+        )
 
     def dashboard():
         # The first frames precede the dashboard's database snapshot.
-        return _sse_dashboard_events(request=Request({"type": "http"}), db=None, redis=redis,
-                                     team_id="lease-ownership:local")
+        return _sse_dashboard_events(
+            request=Request({"type": "http"}),
+            db=None,
+            redis=redis,
+            team_id="lease-ownership:local",
+        )
 
     return {"status": status, "dashboard": dashboard}
 
@@ -140,7 +146,9 @@ async def test_a_status_stream_cancelled_while_acquiring_returns_its_connection(
 
 
 @pytest.mark.asyncio
-async def test_a_status_stream_cancelled_after_connect_returns_its_connection(redis, after_connect):
+async def test_a_status_stream_cancelled_after_connect_returns_its_connection(
+    redis, after_connect
+):
     connected = asyncio.Event()
 
     async def pause():
@@ -161,9 +169,13 @@ async def test_a_status_stream_cancelled_after_connect_returns_its_connection(re
 
 
 @pytest.mark.asyncio
-async def test_a_status_stream_whose_subscribe_fails_after_connect_returns_its_connection(redis, after_connect):
+async def test_a_status_stream_whose_subscribe_fails_after_connect_returns_its_connection(
+    redis, after_connect
+):
     async def fail():
-        raise RedisConnectionError("subscribe failed after the connection was checked out")
+        raise RedisConnectionError(
+            "subscribe failed after the connection was checked out"
+        )
 
     after_connect["action"] = fail
     for _ in range(CYCLES):
@@ -176,17 +188,23 @@ async def test_a_status_stream_whose_subscribe_fails_after_connect_returns_its_c
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("boundary", ["cancel", "error"])
-async def test_open_subscription_owns_its_connection_until_it_returns(redis, after_connect, boundary):
+async def test_open_subscription_owns_its_connection_until_it_returns(
+    redis, after_connect, boundary
+):
     from aweb.redis_subscriptions import open_subscription, release_subscription
 
     async def interrupt():
         if boundary == "cancel":
             raise asyncio.CancelledError
-        raise RedisConnectionError("subscribe failed after the connection was checked out")
+        raise RedisConnectionError(
+            "subscribe failed after the connection was checked out"
+        )
 
     after_connect["action"] = interrupt
     for _ in range(CYCLES):
-        with pytest.raises(asyncio.CancelledError if boundary == "cancel" else RedisConnectionError):
+        with pytest.raises(
+            asyncio.CancelledError if boundary == "cancel" else RedisConnectionError
+        ):
             await open_subscription(redis, "lease-ownership-channel")
         assert held(redis) == 0
     after_connect["action"] = None
@@ -200,7 +218,9 @@ async def test_open_subscription_owns_its_connection_until_it_returns(redis, aft
 
 
 @pytest.mark.asyncio
-async def test_a_chat_stream_whose_subscribe_fails_after_connect_returns_its_connection(privacy_app, after_connect):
+async def test_a_chat_stream_whose_subscribe_fails_after_connect_returns_its_connection(
+    privacy_app, after_connect
+):
     from test_agent_activity_http import _session, _stream
 
     env = privacy_app
@@ -210,7 +230,9 @@ async def test_a_chat_stream_whose_subscribe_fails_after_connect_returns_its_con
 
     async def fail():
         failures.append(1)
-        raise RedisConnectionError("subscribe failed after the connection was checked out")
+        raise RedisConnectionError(
+            "subscribe failed after the connection was checked out"
+        )
 
     after_connect["action"] = fail
     # The stream falls back to database polling and retries its subscription until the deadline.
@@ -224,7 +246,9 @@ async def test_a_chat_stream_whose_subscribe_fails_after_connect_returns_its_con
 
 
 @pytest.mark.asyncio
-async def test_a_subscription_whose_disconnect_fails_still_returns_its_connection(redis, monkeypatch, caplog):
+async def test_a_subscription_whose_disconnect_fails_still_returns_its_connection(
+    redis, monkeypatch, caplog
+):
     from redis.asyncio.connection import Connection
 
     from aweb.redis_subscriptions import open_subscription, release_subscription
@@ -244,7 +268,9 @@ async def test_a_subscription_whose_disconnect_fails_still_returns_its_connectio
         await release_subscription(pubsub, channel)
     monkeypatch.setattr(Connection, "disconnect", original)
     assert held(redis) == 0
-    assert [r.getMessage() for r in caplog.records] == ["Redis pubsub close failed; returning its connection"]
+    assert [r.getMessage() for r in caplog.records] == [
+        "Redis pubsub close failed; returning its connection"
+    ]
 
     # The returned connection is reused and reconnects. The released PubSub, still
     # alive here, must not resubscribe through it or check out another connection.
@@ -255,7 +281,9 @@ async def test_a_subscription_whose_disconnect_fails_still_returns_its_connectio
 
 
 @pytest.mark.asyncio
-async def test_a_release_cancelled_by_asyncio_still_returns_its_connection(redis, monkeypatch):
+async def test_a_release_cancelled_by_asyncio_still_returns_its_connection(
+    redis, monkeypatch
+):
     from redis.asyncio.connection import Connection
 
     from aweb.redis_subscriptions import open_subscription, release_subscription
@@ -270,7 +298,9 @@ async def test_a_release_cancelled_by_asyncio_still_returns_its_connection(redis
         return await original(self, *args, **kwargs)
 
     monkeypatch.setattr(Connection, "disconnect", slow)
-    releasing = asyncio.create_task(release_subscription(pubsub, "lease-ownership-channel"))
+    releasing = asyncio.create_task(
+        release_subscription(pubsub, "lease-ownership-channel")
+    )
     await disconnecting.wait()
     # A plain task cancellation, outside any AnyIO cancel scope.
     releasing.cancel()

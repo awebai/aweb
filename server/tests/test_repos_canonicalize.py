@@ -10,11 +10,16 @@ def test_canonicalize_ssh_shorthand():
 
 
 def test_canonicalize_https():
-    assert canonicalize_git_url("https://github.com/org/repo.git") == "github.com/org/repo"
+    assert (
+        canonicalize_git_url("https://github.com/org/repo.git") == "github.com/org/repo"
+    )
 
 
 def test_canonicalize_ssh_scheme_with_port():
-    assert canonicalize_git_url("ssh://git@github.com:22/org/repo.git") == "github.com/org/repo"
+    assert (
+        canonicalize_git_url("ssh://git@github.com:22/org/repo.git")
+        == "github.com/org/repo"
+    )
 
 
 @pytest.mark.parametrize(
@@ -38,7 +43,10 @@ def test_canonicalize_ssh_config_alias():
 
 
 def test_canonicalize_scp_like_with_user():
-    assert canonicalize_git_url("deploy@build-host:team/repo.git") == "build-host/team/repo"
+    assert (
+        canonicalize_git_url("deploy@build-host:team/repo.git")
+        == "build-host/team/repo"
+    )
 
 
 def test_canonicalize_alias_without_path_rejected():

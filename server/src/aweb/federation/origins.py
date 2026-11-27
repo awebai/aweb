@@ -1,4 +1,5 @@
 """The same configured origin set governs federation ingress and forwarding."""
+
 from __future__ import annotations
 
 from collections.abc import Set
@@ -11,7 +12,8 @@ from aweb.application_state import native_application_state
 def public_origins(request=None, *, public_origin: str | None = None) -> set[str]:
     """Return the configured origins this application serves as its own."""
     return application_public_origins(
-        getattr(getattr(request, "app", None), "state", None), public_origin=public_origin,
+        getattr(getattr(request, "app", None), "state", None),
+        public_origin=public_origin,
     )
 
 

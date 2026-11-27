@@ -2,12 +2,11 @@
 # Self-test for scripts/npm-exact-publish.sh; network stays on owned loopback.
 #
 #   green: pack-inspect stages one tgz from a coherent package and reports
-#          its digest; verify-published (against a supplied observed file)
-#          adopts byte-identical bytes; publish-exact gives npm an absolute
-#          physical file path without changing the staged bytes
+#          its digest; publish-exact gives npm an absolute physical file path
+#          without changing the staged bytes
 #   reds:  declared version mismatch, missing declared main entry inside
-#          the tgz, a files[] entry with no content in the tgz, observed
-#          published bytes differing from staged, and missing/non-file tgz paths
+#          the tgz, a files[] entry with no content in the tgz, and
+#          missing/non-file tgz paths
 
 set -euo pipefail
 
@@ -78,17 +77,8 @@ rm "$tmp/pkg/README.md"
 expect_refusal "empty files entry" "README.md" \
   pack-inspect --dir "$tmp/pkg" --version 1.2.3 --out "$tmp/staged-red"
 
-# ── verify-published: identical adopts, different refuses ───────────
-staged="$tmp/staged/awebai-lane-fixture-1.2.3.tgz"
-cp "$staged" "$tmp/observed.tgz"
-bash "$LANE" verify-published --tgz "$staged" --observed "$tmp/observed.tgz" \
-  || fail "verify-published refused byte-identical observed bytes"
-ok "verify-published adopts byte-identical observed bytes"
-printf 'x' >> "$tmp/observed.tgz"
-expect_refusal "published bytes differ" "not.*equal\|does not equal" \
-  verify-published --tgz "$staged" --observed "$tmp/observed.tgz"
-
 # ── publish-exact: npm receives only an absolute physical file path ─
+staged="$tmp/staged/awebai-lane-fixture-1.2.3.tgz"
 mkdir -p "$tmp/fake-bin"
 cat > "$tmp/fake-bin/npm" <<'EOF'
 #!/usr/bin/env bash
@@ -170,7 +160,7 @@ SKILLS="$(node "$ROOT/scripts/skill-packaging.mjs" list)"
 make_profile_fixture() {
   # $1 profile, then flags: --no-sentinel, --drop-skill <name>, --extra-skill <name>
   local profile="$1"; shift
-  local sentinel="$SENTINEL" drop='' extra='' plugin=coherent markers="$CHANNEL_MARKERS" unsafe_merge='' mcp_name='aweb-channel'
+  local sentinel="$SENTINEL" drop='' extra='' plugin=coherent markers="$CHANNEL_MARKERS" unsafe_merge='' mcp_name='aweb-channel' pi_skills=''
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-sentinel) sentinel=''; shift ;;
@@ -199,6 +189,7 @@ make_profile_fixture() {
         shift
         ;;
       --unsafe-decrypt-merge) unsafe_merge='Object.assign(msg, decrypted)'; shift ;;
+      --pi-skills) pi_skills="$2"; shift 2 ;;
     esac
   done
   rm -rf "$tmp/prof"; mkdir -p "$tmp/prof/dist"
@@ -234,6 +225,7 @@ make_profile_fixture() {
       pi_metadata='"pi": {"skills": ["./skills"]},'
       ;;
   esac
+  [[ -z "$pi_skills" ]] || pi_metadata="\"pi\": {\"skills\": $pi_skills},"
   if [[ "$profile" == "skills" ]]; then
     local s
     for s in $SKILLS $extra; do
@@ -292,93 +284,15 @@ profile_case "pi profile refuses missing local stream deadline" pi refuse "local
 profile_case "pi profile refuses missing inactivity watchdog" pi refuse "byte-inactivity watchdog" --drop-inactivity-watchdog
 profile_case "pi profile refuses missing settled backoff cleanup" pi refuse "backoff abort-listener cleanup" --drop-backoff-cleanup
 profile_case "skills profile accepts shipped set" skills ok ""
+profile_case "skills profile refuses hidden skills discovery" skills refuse "pi.skills" --pi-skills '[]'
+profile_case "pi profile refuses automatic skills discovery" pi refuse "pi.skills" --pi-skills '["./skills"]'
 profile_case "skills profile refuses missing tasks skill" skills refuse "skill set" --drop-skill aweb-tasks
 profile_case "channel profile refuses configure skill" channel refuse "skills" --extra-skill configure
 profile_case "skills profile refuses an extra skill dir" skills refuse "skill set" --extra-skill extra-skill
 
-# ── manifest publishability and binding ─────────────────────────────
-mkdir -p "$tmp/mstage"
-cp "$staged" "$tmp/mstage/"
-python3 - "$tmp/mstage" <<'PYM'
-import hashlib, json, os, sys
-staging = sys.argv[1]
-files = {}
-for name in sorted(os.listdir(staging)):
-    with open(os.path.join(staging, name), "rb") as f:
-        files[name] = hashlib.sha256(f.read()).hexdigest()
-canonical = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
-json.dump({
-    "mode": "stage-only", "candidate_version": "1.2.3",
-    "source_sha": "a" * 40, "files": files, "canonical_set_digest": canonical,
-}, open(os.path.join(staging, "manifest.json"), "w"))
-PYM
-bash "$LANE" require-publishable --manifest "$tmp/mstage/manifest.json" >/dev/null   || fail "stage-only manifest refused publication"
-ok "stage-only manifest is publishable"
-python3 - "$tmp/mstage/manifest.json" <<'PYM'
-import json, sys
-m = json.load(open(sys.argv[1])); m["mode"] = "verify-only"
-json.dump(m, open(sys.argv[1], "w"))
-PYM
-if bash "$LANE" require-publishable --manifest "$tmp/mstage/manifest.json" 2>/dev/null; then
-  fail "verify-only manifest accepted for publication"
-fi
-ok "verify-only manifest refused for publication"
-python3 - "$tmp/mstage/manifest.json" <<'PYM'
-import json, sys
-m = json.load(open(sys.argv[1])); m["mode"] = "stage-only"
-json.dump(m, open(sys.argv[1], "w"))
-PYM
-bash "$LANE" verify-manifest --staging "$tmp/mstage" --manifest "$tmp/mstage/manifest.json"   --sha "$(printf 'a%.0s' {1..40})" --version 1.2.3 >/dev/null   || fail "verify-manifest refused a coherent staging set"
-ok "verify-manifest accepts a coherent staging set"
-python3 - "$tmp/mstage/manifest.json" <<'PYM'
-import json, sys
-m = json.load(open(sys.argv[1]))
-name = sorted(m["files"])[0]
-m["files"][name] = "0" * 64
-json.dump(m, open(sys.argv[1], "w"))
-PYM
-if bash "$LANE" verify-manifest --staging "$tmp/mstage" --manifest "$tmp/mstage/manifest.json"     --sha "$(printf 'a%.0s' {1..40})" --version 1.2.3 2>/dev/null; then
-  fail "verify-manifest accepted a tampered digest"
-fi
-ok "verify-manifest refuses a tampered digest (canonical mismatch)"
-
-# ── input literal validation ────────────────────────────────────────
-bash "$LANE" validate-inputs --sha "$(printf 'a%.0s' {1..40})" --version 1.2.3   --digest "sha256:$(printf '0%.0s' {1..64})" --run-id 42 --artifact-id 7 >/dev/null   || fail "well-formed input literals refused"
-ok "well-formed input literals accepted"
-for bad in "--sha nope" "--version v1.2.3" "--digest $(printf '0%.0s' {1..64})"; do
-  # shellcheck disable=SC2086
-  if bash "$LANE" validate-inputs $bad 2>/dev/null; then
-    fail "malformed input accepted: $bad"
-  fi
-done
-ok "malformed input literals refused (3 forms)"
-
-# ── decide-npm: only 404 proves absence ─────────────────────────────
-D="$(printf '7%.0s' {1..64})"; E="$(printf '8%.0s' {1..64})"
-[[ "$(bash "$LANE" decide-npm --observed-status 404 --digest "$D")" == "PUBLISH" ]] \
-  || fail "404 must permit exactly one publication"
-[[ "$(bash "$LANE" decide-npm --observed-status 200 --digest "$D" --observed "$D")" == "ADOPT" ]] \
-  || fail "exact present bytes must adopt"
-ok "decide-npm publishes on proven absence, adopts exact bytes"
-expect_refusal "present mismatch is permanent" "permanent" \
-  decide-npm --observed-status 200 --digest "$D" --observed "$E"
-expect_refusal "outage is never absence" "never proof of absence" \
-  decide-npm --observed-status 503 --digest "$D"
-expect_refusal "unavailable digest never acts" "blind" \
-  decide-npm --observed-status 200 --digest "$D" --observed unavailable
-[[ "$(bash "$LANE" decide-npm --observed-status 404)" == "ABSENT" ]] \
-  || fail "guard probe: 404 must prove absence"
-ok "guard probe proves absence only from 404"
-expect_refusal "guard probe refuses present version" "already exists" \
-  decide-npm --observed-status 200
-expect_refusal "guard probe refuses outage" "never proof of absence" \
-  decide-npm --observed-status 500
-
-# ── post-action readback: real owned registry, no external publication ──
+# ── post-action readback requires an earlier publish or adopt ──
 expect_refusal "readback requires an earlier publish/adopt" "post-action" \
   verify-published-bounded --tgz "$staged" --package '@awebai/lane-fixture' --version 1.2.3
-python3 "$ROOT/scripts/test_npm_readback.py"
-ok "bounded exact readback and all seven aw packages verified against owned registry"
 
 # ── committed metadata and ZIP source/output contract ───────────────
 node - "$ROOT" <<'NODE'

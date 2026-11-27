@@ -17,7 +17,9 @@ def _file(path: str, content: str) -> dict[str, str]:
     }
 
 
-def _profile(*, mission: str, instructions: str, apps: list[str], version: str = "0.1.0") -> list[dict[str, str]]:
+def _profile(
+    *, mission: str, instructions: str, apps: list[str], version: str = "0.1.0"
+) -> list[dict[str, str]]:
     doc = {
         "id": "dev",
         "name": "Dev",
@@ -46,7 +48,9 @@ def test_takes_theirs_for_unevolved_parts_keeps_ours_for_evolved() -> None:
     # theirs: both changed upstream.
     theirs = _profile(mission="B", instructions="upstream edit", apps=["x", "y"])
 
-    result = three_way_merge(ours_files=ours, theirs_files=theirs, baselines=baselines, target_version="0.2.0")
+    result = three_way_merge(
+        ours_files=ours, theirs_files=theirs, baselines=baselines, target_version="0.2.0"
+    )
 
     assert "field:mission" in result.updated_parts
     assert "field:expected_apps" in result.updated_parts
@@ -66,7 +70,9 @@ def test_no_op_when_upstream_unchanged() -> None:
     ours = _profile(mission="A", instructions="local edit", apps=["x"])
     theirs = baseline  # source blueprint did not change
 
-    result = three_way_merge(ours_files=ours, theirs_files=theirs, baselines=baselines, target_version="0.2.0")
+    result = three_way_merge(
+        ours_files=ours, theirs_files=theirs, baselines=baselines, target_version="0.2.0"
+    )
     assert result.updated_parts == []  # nothing pullable -> caller treats as no-op
 
 
@@ -77,7 +83,9 @@ def test_pulls_new_upstream_file() -> None:
     theirs = _profile(mission="A", instructions="base", apps=["x"])
     theirs.append(_file("skills/new/SKILL.md", "a new skill"))
 
-    result = three_way_merge(ours_files=ours, theirs_files=theirs, baselines=baselines, target_version="0.2.0")
+    result = three_way_merge(
+        ours_files=ours, theirs_files=theirs, baselines=baselines, target_version="0.2.0"
+    )
     assert "file:skills/new/SKILL.md" in result.updated_parts
     assert any(f["path"] == "skills/new/SKILL.md" for f in result.files)
     # The reconstructed profile.yaml lists the pulled skill.

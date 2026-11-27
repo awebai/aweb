@@ -115,9 +115,13 @@ async def harness(privacy_app, monkeypatch):
     sdk = env.app.state.awid_registry_client
     read_revocations = type(sdk).get_team_revocations_for_certificates
 
-    async def observed_revocations(client, domain, name, certificate_ids, *, fresh=False):
+    async def observed_revocations(
+        client, domain, name, certificate_ids, *, fresh=False
+    ):
         if client is not sdk:
-            return await read_revocations(client, domain, name, certificate_ids, fresh=fresh)
+            return await read_revocations(
+                client, domain, name, certificate_ids, fresh=fresh
+            )
         controls.calls.append(clock.seconds)
         if controls.fail_at is not None and clock.seconds >= controls.fail_at:
             raise httpx.ConnectError("registry unavailable")
@@ -133,7 +137,9 @@ async def harness(privacy_app, monkeypatch):
                 certificate_id=certificate["certificate_id"],
             )
             controls.revoked = True
-        return await read_revocations(client, domain, name, certificate_ids, fresh=fresh)
+        return await read_revocations(
+            client, domain, name, certificate_ids, fresh=fresh
+        )
 
     class DB:
         grant_reads = 0
@@ -151,7 +157,9 @@ async def harness(privacy_app, monkeypatch):
 
         async def fetch_all(self, sql, *args):
             if "SELECT p.did, p.alias, p.address" in sql:
-                return [dict(did=identity.did_key, alias="alice", address=identity.address)]
+                return [
+                    dict(did=identity.did_key, alias="alice", address=identity.address)
+                ]
             return []
 
         async def fetch_value(self, sql, *args):
@@ -257,9 +265,13 @@ async def harness(privacy_app, monkeypatch):
         scoped.setattr(chat, "time", SimpleNamespace(monotonic=lambda: clock.seconds))
         for module in (chat, events):
             scoped.setattr(module, "asyncio", StreamLoop())
-        scoped.setattr(type(sdk), "get_team_revocations_for_certificates", observed_revocations)
+        scoped.setattr(
+            type(sdk), "get_team_revocations_for_certificates", observed_revocations
+        )
         scoped.setattr(grant_streams, "native_database_manager", grant_database)
-        yield SimpleNamespace(clock=clock, registry=controls, db=db, redis=redis, open=open_stream)
+        yield SimpleNamespace(
+            clock=clock, registry=controls, db=db, redis=redis, open=open_stream
+        )
 
 
 async def collect(response):
@@ -297,7 +309,10 @@ async def test_revoked_issuer_cannot_open_stream(harness, kind):
     with pytest.raises(HTTPException) as exc:
         await harness.open(kind)
     assert exc.value.status_code == 403
-    assert exc.value.detail == 'identity grant issuer revoked. This grant was issued from a certificate that is no longer current. Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS.'
+    assert (
+        exc.value.detail
+        == "identity grant issuer revoked. This grant was issued from a certificate that is no longer current. Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
+    )
 
 
 @pytest.mark.asyncio

@@ -34,7 +34,9 @@ def _origins(config: dict) -> dict[str, str]:
 
 def _pinned(role: str, addresses: list[str]) -> list[str]:
     if not 1 <= len(addresses) <= 8 or len(set(addresses)) != len(addresses):
-        raise Refused(f"{role}: needs one to eight distinct addresses, got {len(addresses)}")
+        raise Refused(
+            f"{role}: needs one to eight distinct addresses, got {len(addresses)}"
+        )
     for address in addresses:
         try:
             ipaddress.IPv4Address(address)
@@ -63,11 +65,17 @@ def _external(config: dict, own: set[str]) -> dict:
         try:
             address = ipaddress.IPv4Address(resolver)
         except ValueError:
-            raise Refused(f"egress.external.resolvers: {resolver!r} is not an IPv4 address") from None
+            raise Refused(
+                f"egress.external.resolvers: {resolver!r} is not an IPv4 address"
+            ) from None
         if resolver in own:
-            raise Refused(f"egress.external.resolvers: {resolver} is one of the deployment's own addresses")
+            raise Refused(
+                f"egress.external.resolvers: {resolver} is one of the deployment's own addresses"
+            )
         if not address.is_global or address.is_multicast or address.is_reserved:
-            raise Refused(f"egress.external.resolvers: {resolver} is not a public address")
+            raise Refused(
+                f"egress.external.resolvers: {resolver} is not a public address"
+            )
     return {
         "externalTargets": {role: {"origin": EXTERNAL_ROLES[role]} for role in roles},
         "externalResolverAddresses": resolvers,
@@ -90,14 +98,27 @@ def derive(config: dict, addresses: dict[str, list[str]], denied: list[str]) -> 
         records.append({"name": name, "text": text})
     policy = {
         "frontAddress": config["agents"]["resolverIp"],
-        "privateIngressAddresses": list(config["egress"].get("privateIngressAddresses", [])),
+        "privateIngressAddresses": list(
+            config["egress"].get("privateIngressAddresses", [])
+        ),
         "deniedAddresses": [_pinned("denied", [address])[0] for address in denied],
         "humanOrigin": config["secrets"]["consoleOrigin"],
         "authorityRecords": records,
-        "targets": {role: {"origin": origins[role], "addresses": _pinned(role, addresses[role])} for role in ROLES},
+        "targets": {
+            role: {"origin": origins[role], "addresses": _pinned(role, addresses[role])}
+            for role in ROLES
+        },
     }
-    own = {config["agents"]["resolverIp"], *policy["privateIngressAddresses"], *policy["deniedAddresses"],
-           *(address for target in policy["targets"].values() for address in target["addresses"])}
+    own = {
+        config["agents"]["resolverIp"],
+        *policy["privateIngressAddresses"],
+        *policy["deniedAddresses"],
+        *(
+            address
+            for target in policy["targets"].values()
+            for address in target["addresses"]
+        ),
+    }
     return {**policy, **_external(config, own)}
 
 
@@ -115,7 +136,12 @@ PROBE_MOUNTS = (
 AGENT_CA = "/etc/agent-trust/ca.pem"
 MIRRORS = "/mirrors"
 # One existing GET route per role that answers 200 and changes nothing.
-ALLOWED_PATHS = {"aweb": "/ready", "secrets": "/ready", "logs": "/ready", "registry": "/health"}
+ALLOWED_PATHS = {
+    "aweb": "/ready",
+    "secrets": "/ready",
+    "logs": "/ready",
+    "registry": "/health",
+}
 
 
 def ingress_routes(config: dict, policy: dict, services: list[str]) -> dict[str, dict]:
@@ -134,24 +160,40 @@ def ingress_routes(config: dict, policy: dict, services: list[str]) -> dict[str,
     for role in ROLES:
         if role == "registry" and registry_route == "external":
             if role in services:
-                raise Refused("registry: team.registryRoute is external, but registry is a service of this deployment;"
-                              " set team.registryRoute: local")
-            own = {policy["frontAddress"], *policy["privateIngressAddresses"], *policy["deniedAddresses"],
-                   *(address for other, target in policy["targets"].items() if other != role
-                     for address in target["addresses"])}
+                raise Refused(
+                    "registry: team.registryRoute is external, but registry is a service of this deployment;"
+                    " set team.registryRoute: local"
+                )
+            own = {
+                policy["frontAddress"],
+                *policy["privateIngressAddresses"],
+                *policy["deniedAddresses"],
+                *(
+                    address
+                    for other, target in policy["targets"].items()
+                    if other != role
+                    for address in target["addresses"]
+                ),
+            }
             for address in policy["targets"][role]["addresses"]:
                 if address in own:
-                    raise Refused(f"registry: team.registryRoute is external, but {address} is one of"
-                                  " the deployment's own addresses")
+                    raise Refused(
+                        f"registry: team.registryRoute is external, but {address} is one of"
+                        " the deployment's own addresses"
+                    )
             routes[role] = {"path": ALLOWED_PATHS[role], "external": True}
             continue
         if role not in services:
-            raise Refused(f"{role}: the ingress probe needs its backend log, and {role} is not a service of this deployment")
+            raise Refused(
+                f"{role}: the ingress probe needs its backend log, and {role} is not a service of this deployment"
+            )
         if role == "registry":
             for address in policy["targets"][role]["addresses"]:
                 if address not in policy["privateIngressAddresses"]:
-                    raise Refused(f"registry: team.registryRoute is local, but {address} is not one of the deployment's"
-                                  " private ingress addresses")
+                    raise Refused(
+                        f"registry: team.registryRoute is local, but {address} is not one of the deployment's"
+                        " private ingress addresses"
+                    )
         routes[role] = {"path": ALLOWED_PATHS[role], "log": f"/logs/{role}.log"}
     return routes
 
@@ -173,7 +215,9 @@ def boundary_plan(
     overlap, and the two backends no agent may reach."""
     for role, address in backends.items():
         if address not in policy["deniedAddresses"]:
-            raise Refused(f"{role}: {address} is not one of the policy's denied addresses")
+            raise Refused(
+                f"{role}: {address} is not one of the policy's denied addresses"
+            )
     agents = config["agents"]
     result = {
         "probeContainer": f"{project}-agent-probe",
@@ -185,19 +229,35 @@ def boundary_plan(
         "uid": agents.get("uid", 20001),
         "gid": agents.get("gid", 20001),
         "approvedProbeMounts": [
-            {"Type": "bind", "Source": f"{run_dir}/{source}", "Destination": target, "RW": writable}
+            {
+                "Type": "bind",
+                "Source": f"{run_dir}/{source}",
+                "Destination": target,
+                "RW": writable,
+            }
             for source, target, writable in PROBE_MOUNTS
-        ] + [
+        ]
+        + [
             {"Type": "bind", "Source": agents[key], "Destination": target, "RW": False}
-            for key, target in (("caFile", AGENT_CA), ("mirrorsDir", MIRRORS)) if key in agents
+            for key, target in (("caFile", AGENT_CA), ("mirrorsDir", MIRRORS))
+            if key in agents
         ],
         "protectedSources": list(protected_sources),
         "policy": policy,
         "allowedPaths": dict(ALLOWED_PATHS),
         "deniedBackends": [
-            {"role": "postgres", "address": backends["postgres"], "port": config.get("postgres", {}).get("port", 5432)},
+            {
+                "role": "postgres",
+                "address": backends["postgres"],
+                "port": config.get("postgres", {}).get("port", 5432),
+            },
             # Redis is on aweb's backend network alone.
-            {"role": "redis", "address": backends["redis"], "port": 6379, "controlNetwork": f"{project}_backend"},
+            {
+                "role": "redis",
+                "address": backends["redis"],
+                "port": 6379,
+                "controlNetwork": f"{project}_backend",
+            },
         ],
         "protectedPaths": [],
     }

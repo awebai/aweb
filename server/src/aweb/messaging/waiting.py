@@ -73,7 +73,9 @@ async def unregister_waiting(
     try:
         await unregister_waiting_strict(redis, session_id, agent_id)
     except Exception:
-        logger.warning("Failed to unregister waiting for %s in %s", agent_id, session_id)
+        logger.warning(
+            "Failed to unregister waiting for %s in %s", agent_id, session_id
+        )
 
 
 async def get_waiting_agents(
@@ -125,11 +127,15 @@ async def get_waiting_agents_by_session(
                 pipe.zscore(_chat_waiting_key(session_id), aid)
         scores = await pipe.execute()
 
-        waiting: dict[str, list[str]] = {session_id: [] for session_id in session_agents}
+        waiting: dict[str, list[str]] = {
+            session_id: [] for session_id in session_agents
+        }
         for (session_id, aid), score in zip(ordered_pairs, scores):
             if score is not None and score >= cutoff:
                 waiting.setdefault(session_id, []).append(aid)
         return waiting
     except Exception:
-        logger.warning("Failed to get waiting agents for %s sessions", len(session_agents))
+        logger.warning(
+            "Failed to get waiting agents for %s sessions", len(session_agents)
+        )
         return {session_id: [] for session_id in session_agents}

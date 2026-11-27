@@ -87,7 +87,11 @@ async def _refuse_later(payload: bytes):
 
 
 def _bundle(*names: str) -> dict:
-    return {"v": 1, "type": "aweb.id-chain", "certificates": [certificate(name) for name in names]}
+    return {
+        "v": 1,
+        "type": "aweb.id-chain",
+        "certificates": [certificate(name) for name in names],
+    }
 
 
 class Recorder:
@@ -118,11 +122,15 @@ def _sent_headers(request: httpx.Request, names) -> dict:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("make_signer", [signer_for, async_signer_for], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "make_signer", [signer_for, async_signer_for], ids=["sync", "async"]
+)
 async def test_registration_reproduces_the_frozen_example_byte_for_byte(
     recorded, monkeypatch, make_signer
 ):
-    monkeypatch.setattr(registry_module, "_utc_timestamp", lambda: EXAMPLE["payload"]["timestamp"])
+    monkeypatch.setattr(
+        registry_module, "_utc_timestamp", lambda: EXAMPLE["payload"]["timestamp"]
+    )
     recorded.response = httpx.Response(200, json=EXAMPLE["response"])
     bundle = decode_id_chain_header(EXAMPLE["headers"]["X-AWID-ID-Chain"])
 
@@ -141,12 +149,16 @@ async def test_registration_reproduces_the_frozen_example_byte_for_byte(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("make_signer", [signer_for, async_signer_for], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "make_signer", [signer_for, async_signer_for], ids=["sync", "async"]
+)
 async def test_signed_rotation_reproduces_the_frozen_request_byte_for_byte(
     recorded, monkeypatch, make_signer
 ):
     frozen = ROTATION["valid"]
-    monkeypatch.setattr(registry_module, "_utc_timestamp", lambda: frozen["payload"]["timestamp"])
+    monkeypatch.setattr(
+        registry_module, "_utc_timestamp", lambda: frozen["payload"]["timestamp"]
+    )
     recorded.response = httpx.Response(
         200,
         json={
@@ -203,7 +215,9 @@ def _awaitable(signer):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("signer", [refusing_signer, _refuse_later], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "signer", [refusing_signer, _refuse_later], ids=["sync", "async"]
+)
 async def test_a_refusing_signer_sends_nothing(recorded, signer):
     with pytest.raises(PermissionError):
         await recorded.client.register_id_certificate(
@@ -232,7 +246,9 @@ async def test_a_refusing_signer_sends_nothing(recorded, signer):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("wrap", [lambda signer: signer, _awaitable], ids=["sync", "async"])
+@pytest.mark.parametrize(
+    "wrap", [lambda signer: signer, _awaitable], ids=["sync", "async"]
+)
 @pytest.mark.parametrize(
     "bad_signer",
     [
@@ -243,7 +259,10 @@ async def test_a_refusing_signer_sends_nothing(recorded, signer):
             "did:aw:" + did_aw("bob")[7:],
             SigningKey(seed("bob")).sign(payload).signature,
         ),
-        lambda payload: [did_key("bob"), SigningKey(seed("bob")).sign(payload).signature],
+        lambda payload: [
+            did_key("bob"),
+            SigningKey(seed("bob")).sign(payload).signature,
+        ],
         _wrong_key("alice", did_key("bob")),
     ],
     ids=[
@@ -310,7 +329,9 @@ async def test_the_signed_payload_header_is_base64url_of_the_signed_bytes(record
     )
     [sent] = recorded.requests
     header = sent.headers["X-AWEB-Signed-Payload"]
-    signed = base64.b64decode(header + "=" * (-len(header) % 4), altchars=b"-_", validate=True)
+    signed = base64.b64decode(
+        header + "=" * (-len(header) % 4), altchars=b"-_", validate=True
+    )
     assert json.loads(signed)["domain"] == domain
     assert set("-_") & set(header) and not set("+/") & set(header)
 
@@ -349,15 +370,21 @@ async def test_an_uncoded_refusal_has_no_code(recorded):
 
 def _signed_payload(sent: httpx.Request) -> bytes:
     header = sent.headers["X-AWEB-Signed-Payload"]
-    return base64.b64decode(header + "=" * (-len(header) % 4), altchars=b"-_", validate=True)
+    return base64.b64decode(
+        header + "=" * (-len(header) % 4), altchars=b"-_", validate=True
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("effective_from", [None, "2026-10-26T00:05:00Z"])
-async def test_every_write_sends_exactly_the_shared_request_layout(recorded, effective_from):
+async def test_every_write_sends_exactly_the_shared_request_layout(
+    recorded, effective_from
+):
     bundle = _bundle("alice", "bob")
     claims = rotate_claims(
-        from_seq=1, previous_did_key=did_key("root"), new_did_key=did_key("root_rotated")
+        from_seq=1,
+        previous_did_key=did_key("root"),
+        new_did_key=did_key("root_rotated"),
     )
     await recorded.client.register_id_certificate(
         bundle,
@@ -483,7 +510,9 @@ async def test_a_registration_and_its_exact_retry_through_the_real_routes(live):
 
 
 @pytest.mark.asyncio
-async def test_the_gate_refuses_a_registration_signed_by_another_key_with_its_code(live):
+async def test_the_gate_refuses_a_registration_signed_by_another_key_with_its_code(
+    live,
+):
     with pytest.raises(RegistryError) as refused:
         await live.registry.register_id_certificate(
             _bundle("alice", "bob"),
@@ -515,7 +544,9 @@ async def test_a_root_revocation_through_the_real_routes(live):
         "effective_from": "2026-10-26T00:10:00.000000Z",
     }
     [bob] = [
-        i for i in (await _status(live, did_aw("bob")))["identities"] if i["id"] == did_aw("bob")
+        i
+        for i in (await _status(live, did_aw("bob")))["identities"]
+        if i["id"] == did_aw("bob")
     ]
     assert bob["revocation"] == receipt
 
@@ -563,7 +594,9 @@ async def test_a_signed_rotation_replaces_the_cached_namespace(live):
         previous_signer=signer_for("root"),
         new_signer=signer_for("root_rotated"),
     )
-    assert (await live.registry.get_namespace(DOMAIN)).controller_did == did_key("root_rotated")
+    assert (await live.registry.get_namespace(DOMAIN)).controller_did == did_key(
+        "root_rotated"
+    )
 
 
 class NamespaceRegistry:
@@ -616,7 +649,9 @@ async def test_a_namespace_read_during_a_rotation_is_not_served_after_it():
     registry.on_rotate = read_before_commit
     try:
         await _rotate(client)
-        assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root_rotated")
+        assert (await client.get_namespace(DOMAIN)).controller_did == did_key(
+            "root_rotated"
+        )
     finally:
         await client.aclose()
 
@@ -638,7 +673,9 @@ async def test_a_rotation_whose_answer_is_lost_leaves_no_cached_namespace():
         with pytest.raises(RegistryError) as lost:
             await _rotate(client)
         assert lost.value.code == "unavailable"
-        assert (await client.get_namespace(DOMAIN)).controller_did == did_key("root_rotated")
+        assert (await client.get_namespace(DOMAIN)).controller_did == did_key(
+            "root_rotated"
+        )
     finally:
         await client.aclose()
 
@@ -656,7 +693,10 @@ class WriteHook(httpx.ASGITransport):
     on_write = None
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        if self.on_write is not None and request.url.path in (REGISTER_PATH, REVOKE_PATH):
+        if self.on_write is not None and request.url.path in (
+            REGISTER_PATH,
+            REVOKE_PATH,
+        ):
             hook, self.on_write = self.on_write, None
             return await hook(request, super().handle_async_request)
         return await super().handle_async_request(request)
@@ -753,7 +793,11 @@ async def _registration(tree) -> Write:
     assert (await tree.replace_controller("root_rotated")).status_code == 200
     fields = copy.deepcopy(certificate("alice")["certificate"])
     fields.update(issuer_key=did_key("root_rotated"), issued_at="2026-10-26T00:06:00Z")
-    recovered = {"v": 1, "type": "aweb.id-chain", "certificates": [sign(fields, "root_rotated")]}
+    recovered = {
+        "v": 1,
+        "type": "aweb.id-chain",
+        "certificates": [sign(fields, "root_rotated")],
+    }
 
     def send():
         tree.clock.now = at("2026-10-26T00:06:00Z")
@@ -765,7 +809,10 @@ async def _registration(tree) -> Write:
         )
 
     return Write(
-        (_bundle("alice"), "alice"), (recovered, "alice"), ("root_replaced", "verified"), send
+        (_bundle("alice"), "alice"),
+        (recovered, "alice"),
+        ("root_replaced", "verified"),
+        send,
     )
 
 
@@ -793,7 +840,9 @@ WRITES = pytest.mark.parametrize(
 
 @WRITES
 @pytest.mark.asyncio
-async def test_a_write_is_read_back_at_once_through_the_cached_evidence(cached, prepare):
+async def test_a_write_is_read_back_at_once_through_the_cached_evidence(
+    cached, prepare
+):
     other = await _cache_other_domain(cached)
     write = await prepare(cached)
     assert (await _verified(cached, *write.before))["reason"] == write.reasons[0]
@@ -806,7 +855,9 @@ async def test_a_write_is_read_back_at_once_through_the_cached_evidence(cached, 
 
 @WRITES
 @pytest.mark.asyncio
-async def test_evidence_read_while_a_write_is_in_flight_is_not_served_after_it(cached, prepare):
+async def test_evidence_read_while_a_write_is_in_flight_is_not_served_after_it(
+    cached, prepare
+):
     write = await prepare(cached)
 
     async def read_before_commit(request, forward):
@@ -855,7 +906,9 @@ async def test_without_redis_a_write_still_succeeds(clocked_client, manual_clock
         await tree.vector_did(key_name)
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     client = CachedRegistryClient(
-        ORIGIN, UnreachableRedis(), transport=httpx.ASGITransport(app=clocked_client.app)
+        ORIGIN,
+        UnreachableRedis(),
+        transport=httpx.ASGITransport(app=clocked_client.app),
     )
     try:
         tree.clock.now = at("2026-10-26T00:03:00Z")

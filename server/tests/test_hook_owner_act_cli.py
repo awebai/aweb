@@ -49,28 +49,47 @@ def hooked_manifest(origin, **app_changes):
     doc["app_keys"][0]["purposes"].append("hook-event")
     doc["hooks"] = {
         "registration_version": 1,
-        "registrations": [{
-            "catalog": CATALOG, "hook": "post-command-hook", "tool": "audit-ingest",
-            "scopes": ["fixture:write", "fixture:append"],
-        }],
-        "productions": [{
-            "catalog": CATALOG, "hook": "post-manifest-command-hook",
-            "reads": ["workspace-read", "workspace-list"],
-        }],
+        "registrations": [
+            {
+                "catalog": CATALOG,
+                "hook": "post-command-hook",
+                "tool": "audit-ingest",
+                "scopes": ["fixture:write", "fixture:append"],
+            }
+        ],
+        "productions": [
+            {
+                "catalog": CATALOG,
+                "hook": "post-manifest-command-hook",
+                "reads": ["workspace-read", "workspace-list"],
+            }
+        ],
     }
     return (json.dumps(doc, indent=2) + "\n").encode()
 
 
 async def test_owner_activates_and_revokes_bindings_with_the_team_key(
-    privacy_app, origin, source_cli_binary, tmp_path,
+    privacy_app,
+    origin,
+    source_cli_binary,
+    tmp_path,
 ):
     env = privacy_app
     address = local_address()
-    destination = parse_destination({
-        "host": address, "port": origin.tls.port, "path": "/**", "methods": ["GET"],
-        "network": "internal", "cidr": f"{address}/32",
-    }, internal_destinations=InternalDestinations.ALLOWED)
-    env.app.state.manifest_fetcher = ManifestFetcher(egress=origin.fetcher.egress, destination=destination)
+    destination = parse_destination(
+        {
+            "host": address,
+            "port": origin.tls.port,
+            "path": "/**",
+            "methods": ["GET"],
+            "network": "internal",
+            "cidr": f"{address}/32",
+        },
+        internal_destinations=InternalDestinations.ALLOWED,
+    )
+    env.app.state.manifest_fetcher = ManifestFetcher(
+        egress=origin.fetcher.egress, destination=destination
+    )
     assert str(env.client.base_url).startswith("https://")
 
     async def admit_everyone(tx, subject, *, action, app_id, verified_origin=None):
@@ -85,11 +104,20 @@ async def test_owner_activates_and_revokes_bindings_with_the_team_key(
         certificate = json.loads(base64.b64decode(member.certificate))
         for field in ("member_did_aw", "member_address", "signature"):
             certificate.pop(field)
-        certificate["signature"] = sign_message(env.team_sk, canonical_json_bytes(certificate))
+        certificate["signature"] = sign_message(
+            env.team_sk, canonical_json_bytes(certificate)
+        )
         next((home / "team-certs").glob("*.pem")).write_text(json.dumps(certificate))
-        (home / "identity.yaml").write_text(json.dumps({
-            "schema_version": 2, "did": member.did, "custody": "self", "identity_scope": "local",
-        }))
+        (home / "identity.yaml").write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "did": member.did,
+                    "custody": "self",
+                    "identity_scope": "local",
+                }
+            )
+        )
         (home / "identity.yaml").chmod(0o600)
         return home
 
@@ -104,19 +132,42 @@ async def test_owner_activates_and_revokes_bindings_with_the_team_key(
     _pem(key_dir / f"{team_name}.key", "ED25519 PRIVATE KEY", env.team_sk)
     member_user_home.mkdir()
 
-    process_env = {**os.environ, "AW_HOME": str(tmp_path / "plugin-store"), "AW_NO_UPDATE_CHECK": "1",
-                   "SSL_CERT_FILE": str(origin.tls.certificates.ca_file),
-                   "GODEBUG": ",".join(filter(None, [os.environ.get("GODEBUG"), "x509sslcertoverrideplatform=1"]))}
-    for name in ("AW_IDENTITY_HOME", "AW_TEAM", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+    process_env = {
+        **os.environ,
+        "AW_HOME": str(tmp_path / "plugin-store"),
+        "AW_NO_UPDATE_CHECK": "1",
+        "SSL_CERT_FILE": str(origin.tls.certificates.ca_file),
+        "GODEBUG": ",".join(
+            filter(None, [os.environ.get("GODEBUG"), "x509sslcertoverrideplatform=1"])
+        ),
+    }
+    for name in (
+        "AW_IDENTITY_HOME",
+        "AW_TEAM",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+    ):
         process_env.pop(name, None)
-    fixture_no_proxy = ",".join(filter(None, [process_env.get("NO_PROXY") or process_env.get("no_proxy"), address]))
+    fixture_no_proxy = ",".join(
+        filter(
+            None, [process_env.get("NO_PROXY") or process_env.get("no_proxy"), address]
+        )
+    )
     process_env["NO_PROXY"] = process_env["no_proxy"] = fixture_no_proxy
 
     async def cli(*args, identity_home, user_home):
         process = await asyncio.create_subprocess_exec(
-            str(source_cli_binary), "--identity-home", str(identity_home), "--json", *args,
-            cwd=tmp_path, env={**process_env, "HOME": str(user_home)},
-            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            str(source_cli_binary),
+            "--identity-home",
+            str(identity_home),
+            "--json",
+            *args,
+            cwd=tmp_path,
+            env={**process_env, "HOME": str(user_home)},
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(process.communicate(), 45)
         return process.returncode, stdout.decode(), stderr.decode()
@@ -144,31 +195,56 @@ async def test_owner_activates_and_revokes_bindings_with_the_team_key(
 
     async def state(binding_id):
         return await env.db.fetch_value(
-            "SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id = $1::uuid", binding_id,
+            "SELECT state FROM {{tables.app_hook_bindings}} WHERE binding_id = $1::uuid",
+            binding_id,
         )
 
     # A member without the team key is refused before anything is fetched or signed.
     seen = len(origin.tls.seen)
-    code, out, error = await member("hooks", "activate", "fixture", registration["binding_id"], "--yes")
-    assert code != 0 and json.loads(out)["error"]["code"] == "owner_key_required", out + error
+    code, out, error = await member(
+        "hooks", "activate", "fixture", registration["binding_id"], "--yes"
+    )
+    assert code != 0 and json.loads(out)["error"]["code"] == "owner_key_required", (
+        out + error
+    )
     assert len(origin.tls.seen) == seen
     assert await state(registration["binding_id"]) == "pending"
 
     # Without a terminal the owner must confirm explicitly; nothing is sent.
-    code, out, error = await owner("hooks", "activate", "fixture", registration["binding_id"])
-    assert code != 0 and json.loads(out)["error"]["code"] == "confirmation_required", out + error
+    code, out, error = await owner(
+        "hooks", "activate", "fixture", registration["binding_id"]
+    )
+    assert code != 0 and json.loads(out)["error"]["code"] == "confirmation_required", (
+        out + error
+    )
     assert await state(registration["binding_id"]) == "pending"
 
     # The owner sees the fetched, digest-checked manifest's facts, then signs.
     seen = len(origin.tls.seen)
-    code, out, error = await owner("hooks", "activate", "fixture", registration["binding_id"], "--yes")
+    code, out, error = await owner(
+        "hooks", "activate", "fixture", registration["binding_id"], "--yes"
+    )
     assert code == 0, out + error
-    assert manifest_fixture.VARIANT in [s.request_line.split(" ")[1] for s in origin.tls.seen[seen:]]
-    for shown in (str(env.client.base_url).rstrip("/"), registration["digest"], "post-command-hook", "audit-ingest",
-                  "POST", "/v1/audit-ingest", "fixture:append", "fixture:write", registration["binding_id"]):
+    assert manifest_fixture.VARIANT in [
+        s.request_line.split(" ")[1] for s in origin.tls.seen[seen:]
+    ]
+    for shown in (
+        str(env.client.base_url).rstrip("/"),
+        registration["digest"],
+        "post-command-hook",
+        "audit-ingest",
+        "POST",
+        "/v1/audit-ingest",
+        "fixture:append",
+        "fixture:write",
+        registration["binding_id"],
+    ):
         assert shown in error, (shown, error)
     activated = json.loads(out)
-    assert (activated["binding_id"], activated["state"]) == (registration["binding_id"], "active")
+    assert (activated["binding_id"], activated["state"]) == (
+        registration["binding_id"],
+        "active",
+    )
     assert await env.db.fetch_value(
         "SELECT activation_act_sha256 IS NOT NULL FROM {{tables.app_hook_bindings}} WHERE binding_id = $1::uuid",
         registration["binding_id"],
@@ -177,12 +253,18 @@ async def test_owner_activates_and_revokes_bindings_with_the_team_key(
     # Activation grants only what the origin still declares at the pinned
     # digest: once it serves other bytes, the owner signs nothing.
     origin.publish(hooked_manifest(origin, version="9.9.9"))
-    code, out, error = await owner("hooks", "activate", "fixture", production["binding_id"], "--yes")
-    assert code != 0 and json.loads(out)["error"]["code"] == "binding_manifest_mismatch", out + error
+    code, out, error = await owner(
+        "hooks", "activate", "fixture", production["binding_id"], "--yes"
+    )
+    assert (
+        code != 0 and json.loads(out)["error"]["code"] == "binding_manifest_mismatch"
+    ), out + error
     assert await state(production["binding_id"]) == "pending"
 
     origin.publish(manifest)
-    code, out, error = await owner("hooks", "activate", "fixture", production["binding_id"], "--yes")
+    code, out, error = await owner(
+        "hooks", "activate", "fixture", production["binding_id"], "--yes"
+    )
     assert code == 0, out + error
     for shown in ("post-manifest-command-hook", "workspace-list", "workspace-read"):
         assert shown in error, (shown, error)
@@ -192,16 +274,29 @@ async def test_owner_activates_and_revokes_bindings_with_the_team_key(
     # succeeds while the origin serves other bytes, and while it is down.
     origin.publish(hooked_manifest(origin, version="9.9.9"))
     seen = len(origin.tls.seen)
-    code, out, error = await owner("hooks", "revoke", "fixture", registration["binding_id"], "--yes")
+    code, out, error = await owner(
+        "hooks", "revoke", "fixture", registration["binding_id"], "--yes"
+    )
     assert code == 0, out + error
     assert len(origin.tls.seen) == seen
-    for shown in (registration["digest"], "audit-ingest", "/v1/audit-ingest", "fixture:append", "fixture:write"):
+    for shown in (
+        registration["digest"],
+        "audit-ingest",
+        "/v1/audit-ingest",
+        "fixture:append",
+        "fixture:write",
+    ):
         assert shown in error, (shown, error)
     revoked = json.loads(out)
     assert (revoked["state"], revoked["ended_by"]) == ("revoked", "owner_act")
     assert await state(production["binding_id"]) == "active"
 
     await origin.tls.close()
-    code, out, error = await owner("hooks", "revoke", "fixture", production["binding_id"], "--yes")
+    code, out, error = await owner(
+        "hooks", "revoke", "fixture", production["binding_id"], "--yes"
+    )
     assert code == 0, out + error
-    assert (json.loads(out)["state"], json.loads(out)["ended_by"]) == ("revoked", "owner_act")
+    assert (json.loads(out)["state"], json.loads(out)["ended_by"]) == (
+        "revoked",
+        "owner_act",
+    )

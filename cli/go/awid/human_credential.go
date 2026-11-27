@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 // HumanCredential is the public credential a human-role act binds: the

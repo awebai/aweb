@@ -49,7 +49,7 @@ class FakeRemote:
         retained = Path("unit-evidence-run")
         entries = {
             "unit": Path("run-unit.log"),
-            "unit/test-server": retained / "test-egress/suite.log",
+            "unit/test-server": retained / "test-egress/test-server/suite.log",
         }
         rows = []
         for entry, relative in entries.items():
@@ -74,7 +74,7 @@ class FakeRemote:
                 + "\n"
             )
         (logs / retained / "summary.tsv").write_text(
-            "unit/test-server\tFAILED\ttest-egress/suite.log\t2s\n"
+            "unit/test-server\tFAILED\ttest-egress/test-server/suite.log\t2s\n"
         )
         (path / "ledger-after.tsv").write_bytes(before + "".join(rows).encode())
         return {
@@ -137,13 +137,13 @@ class RuntimeTests(GitFixture, unittest.TestCase):
             self.assertEqual(Path(row[5]).read_text(), f"failure evidence for {row[1]}")
         summary = ledger.parent / "gate-logs/unit-evidence-run/summary.tsv"
         self.assertEqual(
-            summary.read_text(), "unit/test-server\tFAILED\ttest-egress/suite.log\t2s\n"
+            summary.read_text(), "unit/test-server\tFAILED\ttest-egress/test-server/suite.log\t2s\n"
         )
         self.assertEqual(self.backend.items, [])
 
     def test_conflicting_nested_log_blocks_ledger_import(self):
         ledger = Path(self.config["ledger"])
-        log = ledger.parent / "gate-logs/unit-evidence-run/test-egress/suite.log"
+        log = ledger.parent / "gate-logs/unit-evidence-run/test-egress/test-server/suite.log"
         log.parent.mkdir(parents=True)
         log.write_bytes(b"original")
         runtime = self.runtime()

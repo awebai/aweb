@@ -118,7 +118,9 @@ async def test_warm_team_reads_do_not_query_dns(team_registries, registry_audien
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "team_registries", [None, "override-only"], indirect=True,
+    "team_registries",
+    [None, "override-only"],
+    indirect=True,
     ids=["same-team-at-default", "team-only-at-override"],
 )
 async def test_dns_outage_uses_only_the_answering_origins_grace(
@@ -163,7 +165,11 @@ async def test_dns_outage_cannot_turn_missing_team_into_authority_evidence(
 
     with pytest.raises(RegistryError) as unavailable:
         if fact == "key":
-            read_key = client.get_team_public_key_fresh if fresh else client.get_team_public_key
+            read_key = (
+                client.get_team_public_key_fresh
+                if fresh
+                else client.get_team_public_key
+            )
             await read_key(DOMAIN, name)
         else:
             await client.get_team_revocations_for_certificates(

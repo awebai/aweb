@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 // Onboarding HTTP helpers for the hosted onboarding endpoints.

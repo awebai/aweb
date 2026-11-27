@@ -107,11 +107,15 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
         "UPDATE {{tables.teams}} SET team_did_key=$1 WHERE team_id=$2", team_did, TEAM
     )
     await env.registry_db.execute(
-        "UPDATE {{tables.teams}} SET team_did_key=$1 WHERE name=$2", team_did, TEAM.split(":", 1)[0]
+        "UPDATE {{tables.teams}} SET team_did_key=$1 WHERE name=$2",
+        team_did,
+        TEAM.split(":", 1)[0],
     )
     # The team has always had this key: its members were accepted under it.
     await env.db.execute(
-        "UPDATE {{tables.agents}} SET accepted_team_did_key=$1 WHERE team_id=$2", team_did, TEAM
+        "UPDATE {{tables.agents}} SET accepted_team_did_key=$1 WHERE team_id=$2",
+        team_did,
+        TEAM,
     )
     cert = _make_certificate(
         team_sk, team_did, actor.did, team_id=TEAM, alias="bob", identity_scope="local"
@@ -127,7 +131,9 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
     )
     (home / "certificate.json").write_text(json.dumps(cert))
     membership = dict(team_id=TEAM, alias="bob", cert_path="certificate.json")
-    (home / "teams.yaml").write_text(json.dumps(dict(active_team=TEAM, memberships=[membership])))
+    (home / "teams.yaml").write_text(
+        json.dumps(dict(active_team=TEAM, memberships=[membership]))
+    )
     (home / "workspace.yaml").write_text(
         json.dumps(
             dict(
@@ -139,10 +145,14 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
     origin = str(env.client.base_url).rstrip("/")
     env.app.state.public_origin = origin
     child_env = {
-        k: v for k, v in os.environ.items() if not k.startswith(("AW_", "AWEB_", "AWID_", "OATS_"))
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("AW_", "AWEB_", "AWID_", "OATS_"))
     }
     child_env.update(
-        HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"), AW_NO_UPDATE_CHECK="1"
+        HOME=str(tmp_path),
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
+        AW_NO_UPDATE_CHECK="1",
     )
 
     async def run(selected, *args, success=True):
@@ -215,7 +225,9 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
                 "SELECT issued_at, expires_at FROM {{tables.identity_session_grants}} WHERE grant_id=$1::uuid",
                 finite["grant_id"],
             )
-            assert finite_row["expires_at"] - finite_row["issued_at"] == timedelta(seconds=60)
+            assert finite_row["expires_at"] - finite_row["issued_at"] == timedelta(
+                seconds=60
+            )
 
             for cause, terminal in (
                 ("owner", "grant_revoked"),
@@ -240,7 +252,9 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
                 minted = json.loads(await run(home, *args))
                 grant_id = minted["grant_id"]
                 assert minted["expires_at"] == "never"
-                shown = json.loads(await run(home, "id", "grant", "show", grant_id, "--json"))
+                shown = json.loads(
+                    await run(home, "id", "grant", "show", grant_id, "--json")
+                )
                 assert shown["expires_at"] == "never"
                 if cause == "owner":
                     # Cross the storage horizon without mocking a clock or auth.
@@ -272,7 +286,11 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
                 assert chat.status_code == 200, chat.text
                 session_id = chat.json()["session_id"]
                 query = urlencode(
-                    {"deadline": (datetime.now(timezone.utc) + timedelta(seconds=50)).isoformat()}
+                    {
+                        "deadline": (
+                            datetime.now(timezone.utc) + timedelta(seconds=50)
+                        ).isoformat()
+                    }
                 )
                 paths = [
                     f"/v1/events/stream?{query}",
@@ -286,7 +304,9 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
                             env.client.stream(
                                 "GET",
                                 path,
-                                headers=grant_headers(grant_home, grant_id, origin, path),
+                                headers=grant_headers(
+                                    grant_home, grant_id, origin, path
+                                ),
                                 timeout=40,
                             )
                         )
@@ -309,7 +329,9 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
                         )
                     denied = await env.client.get(
                         "/v1/messages/inbox",
-                        headers=grant_headers(grant_home, grant_id, origin, "/v1/messages/inbox"),
+                        headers=grant_headers(
+                            grant_home, grant_id, origin, "/v1/messages/inbox"
+                        ),
                     )
                     assert denied.status_code == 403, denied.text
 
@@ -317,7 +339,9 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
                         async for line in response.aiter_lines():
                             if expected_terminal in line:
                                 return
-                        raise AssertionError(f"stream closed without {expected_terminal}")
+                        raise AssertionError(
+                            f"stream closed without {expected_terminal}"
+                        )
 
                     await asyncio.wait_for(
                         asyncio.gather(*(terminal_event(r) for r in streams)), 35
@@ -325,7 +349,8 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
                     assert time.monotonic() - start <= 35
                 if cause == "subject":
                     await env.db.execute(
-                        "UPDATE {{tables.agents}} SET status='active' WHERE agent_id=$1", actor.id
+                        "UPDATE {{tables.agents}} SET status='active' WHERE agent_id=$1",
+                        actor.id,
                     )
         finally:
             custody.terminate()

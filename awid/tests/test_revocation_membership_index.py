@@ -42,20 +42,37 @@ class CountedRedis(Redis):
 async def crl(monkeypatch):
     clock, calls, upstream = [1000], [], [200, {"revoked"}]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
-    redis = CountedRedis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    redis = CountedRedis.from_url(
+        os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    )
     domain = uuid4().hex + ".example"
 
     def registry(request):
         assert request.method == "GET" and request.url.path.endswith("/revocations")
         calls.append(request)
-        return httpx.Response(upstream[0], json={"revocations": [
-            {"certificate_id": cid} for cid in sorted(upstream[1])
-        ], "has_more": False})
+        return httpx.Response(
+            upstream[0],
+            json={
+                "revocations": [{"certificate_id": cid} for cid in sorted(upstream[1])],
+                "has_more": False,
+            },
+        )
 
-    client = CachedRegistryClient("http://registry.test", redis, transport=httpx.MockTransport(registry))
+    client = CachedRegistryClient(
+        "http://registry.test", redis, transport=httpx.MockTransport(registry)
+    )
     key = client._team_revocations_cache_key(domain, "ops")
-    env = SimpleNamespace(client=client, redis=redis, domain=domain, clock=clock, calls=calls,
-                          upstream=upstream, key=key, index=key + ":membership", meta=key + ":membership-meta")
+    env = SimpleNamespace(
+        client=client,
+        redis=redis,
+        domain=domain,
+        clock=clock,
+        calls=calls,
+        upstream=upstream,
+        key=key,
+        index=key + ":membership",
+        meta=key + ":membership-meta",
+    )
     try:
         yield env
     finally:
@@ -65,12 +82,15 @@ async def crl(monkeypatch):
 
 
 async def selected(env, ids=("active", "revoked"), *, fresh=False):
-    return await env.client.get_team_revocations_for_certificates(env.domain, "ops", list(ids), fresh=fresh)
+    return await env.client.get_team_revocations_for_certificates(
+        env.domain, "ops", list(ids), fresh=fresh
+    )
 
 
 async def publish(env, values):
-    await env.client._write_cache_entry(env.key, value=set(values), ttl_seconds=60,
-                                       retention_seconds=960, encode=sorted)
+    await env.client._write_cache_entry(
+        env.key, value=set(values), ttl_seconds=60, retention_seconds=960, encode=sorted
+    )
 
 
 @pytest.mark.asyncio
@@ -90,7 +110,9 @@ async def test_first_warm_membership_read_uses_the_current_crl_key_index(crl):
 async def test_complete_list_stamp_and_index_publish_with_one_expiry(crl):
     await publish(crl, {"revoked"})
     assert await selected(crl) == {"revoked"}
-    assert await crl.redis.pexpiretime(crl.index) <= await crl.redis.pexpiretime(crl.key)
+    assert await crl.redis.pexpiretime(crl.index) <= await crl.redis.pexpiretime(
+        crl.key
+    )
     assert await crl.redis.pexpiretime(crl.meta) <= await crl.redis.pexpiretime(crl.key)
     # A new complete set in the SAME clock second cannot reuse an old index.
     await publish(crl, {"active"})
@@ -100,7 +122,10 @@ async def test_complete_list_stamp_and_index_publish_with_one_expiry(crl):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fault", ["missing", "expired", "wrong_type", "version", "old_writer", "list_missing"])
+@pytest.mark.parametrize(
+    "fault",
+    ["missing", "expired", "wrong_type", "version", "old_writer", "list_missing"],
+)
 async def test_broken_index_uses_complete_list_never_false_nonrevocation(crl, fault):
     await publish(crl, {"revoked"})
     assert await selected(crl) == {"revoked"}
@@ -115,8 +140,11 @@ async def test_broken_index_uses_complete_list_never_false_nonrevocation(crl, fa
         meta["prefix"] = "not-the-list-version"
         await crl.redis.set(crl.meta, json.dumps(meta), ex=960)
     elif fault == "old_writer":
-        await crl.redis.set(crl.key, json.dumps({"fetched_at": 1000, "fresh_until": 1060,
-                                               "value": ["active"]}), ex=960)
+        await crl.redis.set(
+            crl.key,
+            json.dumps({"fetched_at": 1000, "fresh_until": 1060, "value": ["active"]}),
+            ex=960,
+        )
     else:
         await crl.redis.delete(crl.key)
     assert await selected(crl) == ({"active"} if fault == "old_writer" else {"revoked"})
@@ -125,8 +153,11 @@ async def test_broken_index_uses_complete_list_never_false_nonrevocation(crl, fa
 
 @pytest.mark.asyncio
 async def test_upgrade_backfill_keeps_original_fetch_age_and_remaining_expiry(crl):
-    await crl.redis.set(crl.key, json.dumps({"fetched_at": 980, "fresh_until": 1040,
-                                           "value": ["revoked"]}), px=123456)
+    await crl.redis.set(
+        crl.key,
+        json.dumps({"fetched_at": 980, "fresh_until": 1040, "value": ["revoked"]}),
+        px=123456,
+    )
     original_expiry = await crl.redis.pexpiretime(crl.key)
     assert await selected(crl) == {"revoked"}
     stored = json.loads(await crl.redis.get(crl.key))
@@ -153,7 +184,9 @@ async def test_outage_preserves_original_age_and_explicit_fresh_never_uses_grace
 
 
 @pytest.mark.asyncio
-async def test_explicit_invalidation_and_authorization_refusal_remove_every_derived_key(crl):
+async def test_explicit_invalidation_and_authorization_refusal_remove_every_derived_key(
+    crl,
+):
     await publish(crl, {"revoked"})
     assert await selected(crl) == {"revoked"}
     await crl.client.invalidate_team_certificate_cache(crl.domain, "ops")
@@ -172,8 +205,9 @@ async def test_old_backfill_cannot_restore_a_concurrently_replaced_complete_list
     await publish(crl, {"revoked"})
     old = await crl.client._read_cache_entry(crl.key, decode=set)
     await publish(crl, {"active"})
-    assert not await revocation_cache.publish(crl.redis, crl.key, old["payload"],
-                                              retention_seconds=960, expected=old["raw"])
+    assert not await revocation_cache.publish(
+        crl.redis, crl.key, old["payload"], retention_seconds=960, expected=old["raw"]
+    )
     assert await selected(crl) == {"active"}
 
 
@@ -190,7 +224,9 @@ async def test_corrupt_empty_prefix_never_allows_an_index_without_its_list(crl):
 
 
 @pytest.mark.asyncio
-async def test_r9_generation_change_discards_index_and_team_invalidation_discards_all(crl):
+async def test_r9_generation_change_discards_index_and_team_invalidation_discards_all(
+    crl,
+):
     await publish(crl, {"revoked"})
     await crl.client._invalidate_team_certificate_cache_keys(crl.domain, "ops")
     assert await crl.redis.exists(crl.key) == 1
@@ -215,16 +251,31 @@ async def test_real_redis_membership_work_does_not_materialize_history(crl, hist
         tracemalloc.start()
         started = time.perf_counter()
         for _ in range(16):
-            result = (await selected(crl, wanted) if indexed else
-                      (await crl.client.get_team_revocations(crl.domain, "ops")).intersection(wanted))
+            result = (
+                await selected(crl, wanted)
+                if indexed
+                else (
+                    await crl.client.get_team_revocations(crl.domain, "ops")
+                ).intersection(wanted)
+            )
             assert result == values.intersection(wanted)
         elapsed = time.perf_counter() - started
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
-        return {"commands": len(crl.redis.commands), "returned_payload_bytes": crl.redis.payload_bytes,
-                "peak_traced_bytes": peak, "seconds": elapsed}
+        return {
+            "commands": len(crl.redis.commands),
+            "returned_payload_bytes": crl.redis.payload_bytes,
+            "peak_traced_bytes": peak,
+            "seconds": elapsed,
+        }
 
     before, after = await measure(False), await measure(True)
-    print("R8_CRL_COST " + json.dumps({"history": history, "before": before, "after": after}, sort_keys=True), flush=True)
+    print(
+        "R8_CRL_COST "
+        + json.dumps(
+            {"history": history, "before": before, "after": after}, sort_keys=True
+        ),
+        flush=True,
+    )
     assert after["returned_payload_bytes"] < 16 * 2048
     assert len(crl.calls) == 0

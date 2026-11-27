@@ -15,8 +15,8 @@ certificate must additionally EXIST at the AWID registry:
 - registry unavailable → same fail-closed 503 posture as the revocation
   check, honoring the cached client's internal staleness/grace semantics.
 
-When OFF, known registrations are measured without adding a refusal.
-Unavailable measurement retains the working flow.
+With configured enforcement OFF, authority still checks revocation and skips
+the registration catalogue. An explicit observation can measure it separately.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from starlette.requests import Request
 from awid.did import did_from_public_key
 from awid.registry import RegistryClient, RegistryError
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.certificate_registration import RegistrationState
 from aweb.member_team_key import current_membership
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.team_auth_deps import verify_request_certificate
@@ -68,22 +69,28 @@ class _FakeRegistry(LegacyTeamFacts, RegistryClient):
         self.revocations_error = revocations_error
         self.list_error = list_error
         self.list_calls = 0
+        self.revocation_calls = 0
         self.last_active_only: bool | None = None
 
     async def get_team_public_key(self, domain: str, name: str) -> str | None:
         return self.team_did_key
 
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
+        self.revocation_calls += 1
         if self.revocations_error is not None:
             raise self.revocations_error
         return set(self.revoked)
 
-    async def list_team_certificates(self, domain: str, name: str, *, active_only: bool = True):
+    async def list_team_certificates(
+        self, domain: str, name: str, *, active_only: bool = True
+    ):
         self.list_calls += 1
         self.last_active_only = active_only
         if self.list_error is not None:
             raise self.list_error
-        return [SimpleNamespace(certificate_id=cert_id) for cert_id in self.certificate_ids]
+        return [
+            SimpleNamespace(certificate_id=cert_id) for cert_id in self.certificate_ids
+        ]
 
 
 def _make_keypair():
@@ -109,18 +116,24 @@ def _make_certificate(team_sk, team_did_key, member_did_key, certificate_id="cer
     return cert
 
 
-def _signed_cert_request(registry: _FakeRegistry, certificate_id: str = "cert-001") -> Request:
+def _signed_cert_request(
+    registry: _FakeRegistry, certificate_id: str = "cert-001"
+) -> Request:
     """A request carrying a cryptographically valid certificate + signature
     (legacy compact envelope), whose app state holds the fake registry."""
     team_sk, team_did_key = _make_keypair()
     registry.team_did_key = team_did_key
     member_sk, member_did_key = _make_keypair()
-    cert = _make_certificate(team_sk, team_did_key, member_did_key, certificate_id=certificate_id)
+    cert = _make_certificate(
+        team_sk, team_did_key, member_did_key, certificate_id=certificate_id
+    )
     timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     body_sha256 = hashlib.sha256(b"").hexdigest()
     signature = sign_message(
         member_sk,
-        compact_team_auth_payload(team_id=TEAM_ID, timestamp=timestamp, body_sha256=body_sha256),
+        compact_team_auth_payload(
+            team_id=TEAM_ID, timestamp=timestamp, body_sha256=body_sha256
+        ),
     )
     headers = {
         "Authorization": f"DIDKey {member_did_key} {signature}",
@@ -164,7 +177,7 @@ def _identity_request(registry: _FakeRegistry):
 
 
 @pytest.mark.asyncio
-async def test_flag_off_unregistered_certificate_verifies_and_measures_registration(
+async def test_flag_off_unregistered_certificate_checks_revocation_without_registration(
     monkeypatch, db_infra
 ):
     monkeypatch.delenv(FLAG, raising=False)
@@ -175,12 +188,15 @@ async def test_flag_off_unregistered_certificate_verifies_and_measures_registrat
 
     assert cert_info["certificate_id"] == "cert-001"
     assert cert_info["team_id"] == TEAM_ID
-    # OFF path adds zero registry existence reads.
-    assert registry.list_calls == 1
+    assert cert_info["registration_decision"].state is RegistrationState.NOT_OBSERVED
+    assert registry.list_calls == 0
+    assert registry.revocation_calls == 1
 
 
 @pytest.mark.asyncio
-async def test_flag_on_unregistered_certificate_fails_with_distinct_verdict(monkeypatch, db_infra):
+async def test_flag_on_unregistered_certificate_fails_with_distinct_verdict(
+    monkeypatch, db_infra
+):
     monkeypatch.setenv(FLAG, "true")
     registry = _FakeRegistry(certificate_ids=["cert-other"])
     request = _signed_cert_request(registry)
@@ -212,7 +228,9 @@ async def test_flag_on_registered_certificate_passes(monkeypatch, db_infra):
 
 
 @pytest.mark.asyncio
-async def test_flag_on_revoked_certificate_keeps_revocation_verdict(monkeypatch, db_infra):
+async def test_flag_on_revoked_certificate_keeps_revocation_verdict(
+    monkeypatch, db_infra
+):
     """Ordering preserved: revocation is checked before existence, so a
     revoked certificate keeps its revocation verdict even when it would
     also fail the existence check."""
@@ -246,12 +264,16 @@ async def test_flag_on_registry_unavailable_fails_closed(monkeypatch, db_infra):
 
 
 @pytest.mark.asyncio
-async def test_flag_on_team_unknown_to_registry_means_not_registered(monkeypatch, db_infra):
+async def test_flag_on_team_unknown_to_registry_means_not_registered(
+    monkeypatch, db_infra
+):
     """A definitive registry 404 for the team's certificate listing is an
     answer (nothing is registered), not an outage — mirrors the revocation
     read's 404-means-empty behavior."""
     monkeypatch.setenv(FLAG, "true")
-    registry = _FakeRegistry(list_error=RegistryError("team not found", status_code=404))
+    registry = _FakeRegistry(
+        list_error=RegistryError("team not found", status_code=404)
+    )
     request = _signed_cert_request(registry)
 
     with pytest.raises(HTTPException) as excinfo:
@@ -282,15 +304,18 @@ _ROW = {
 
 
 @pytest.mark.asyncio
-async def test_identity_flag_off_unregistered_recorded_certificate_keeps_context(
+async def test_identity_flag_off_checks_revocation_without_registration_and_keeps_context(
     monkeypatch,
 ):
     monkeypatch.delenv(FLAG, raising=False)
     registry = _FakeRegistry(certificate_ids=[])
-    out = await current_membership(registry, dict(_ROW), request=_identity_request(registry))
+    out = await current_membership(
+        registry, dict(_ROW), request=_identity_request(registry)
+    )
     assert out["team_id"] == TEAM_ID
     assert out["alias"] == "alice"
-    assert registry.list_calls == 1
+    assert registry.list_calls == 0
+    assert registry.revocation_calls == 1
 
 
 @pytest.mark.asyncio
@@ -299,7 +324,9 @@ async def test_identity_flag_on_unregistered_recorded_certificate_strips_context
 ):
     monkeypatch.setenv(FLAG, "true")
     registry = _FakeRegistry(certificate_ids=["cert-other"])
-    out = await current_membership(registry, dict(_ROW), request=_identity_request(registry))
+    out = await current_membership(
+        registry, dict(_ROW), request=_identity_request(registry)
+    )
     assert out["team_id"] is None
     assert out["alias"] is None
     assert out["agent_id"] is None
@@ -314,7 +341,9 @@ async def test_identity_flag_on_registered_recorded_certificate_keeps_context(
 ):
     monkeypatch.setenv(FLAG, "true")
     registry = _FakeRegistry(certificate_ids=["cert-9"])
-    out = await current_membership(registry, dict(_ROW), request=_identity_request(registry))
+    out = await current_membership(
+        registry, dict(_ROW), request=_identity_request(registry)
+    )
     assert out["team_id"] == TEAM_ID
     assert out["agent_id"] == "agent-1"
 
@@ -325,7 +354,9 @@ async def test_identity_flag_on_revoked_certificate_still_strips_as_revoked(
 ):
     monkeypatch.setenv(FLAG, "true")
     registry = _FakeRegistry(revoked={"cert-9"}, certificate_ids=[])
-    out = await current_membership(registry, dict(_ROW), request=_identity_request(registry))
+    out = await current_membership(
+        registry, dict(_ROW), request=_identity_request(registry)
+    )
     assert out["team_id"] is None
     # Revocation verdict decided before the existence read is ever made.
     assert registry.list_calls == 0
@@ -336,7 +367,9 @@ async def test_identity_flag_on_registry_unavailable_fails_closed(monkeypatch):
     monkeypatch.setenv(FLAG, "true")
     registry = _FakeRegistry(list_error=httpx.ConnectError("registry down"))
     with pytest.raises(HTTPException) as excinfo:
-        await current_membership(registry, dict(_ROW), request=_identity_request(registry))
+        await current_membership(
+            registry, dict(_ROW), request=_identity_request(registry)
+        )
     assert excinfo.value.status_code == 503
 
 

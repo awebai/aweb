@@ -622,7 +622,9 @@ async def test_deliver_message_team_and_contacts_checks_multi_team_identity_memb
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_local_recipient_same_team_behavior_unchanged(privacy_app):
+async def test_deliver_message_local_recipient_same_team_behavior_unchanged(
+    privacy_app,
+):
     alice, bob = (privacy_app.actors[name] for name in ("alice", "bob"))
     message_id, _ = await _deliver_fixture_mail(
         privacy_app.infra,

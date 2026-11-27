@@ -61,7 +61,11 @@ async def test_real_address_conflict_uses_typed_refusal(
             owner = await client.register_did(owner_key, owner_seed)
             assert (
                 await client.register_address(
-                    "local", name, owner.did_aw, env.controller[0], current_did_key=owner_key
+                    "local",
+                    name,
+                    owner.did_aw,
+                    env.controller[0],
+                    current_did_key=owner_key,
                 )
             ).did_aw == owner.did_aw
 

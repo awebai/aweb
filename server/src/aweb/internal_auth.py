@@ -78,7 +78,9 @@ class ProxyVerificationConfig:
             )
 
     @classmethod
-    def capture(cls, configured: ProxyVerificationConfig | None = None) -> ProxyVerificationConfig:
+    def capture(
+        cls, configured: ProxyVerificationConfig | None = None
+    ) -> ProxyVerificationConfig:
         """Resolve explicit configuration or capture environment at construction only."""
         if configured is not None:
             if not isinstance(configured, cls):
@@ -86,9 +88,16 @@ class ProxyVerificationConfig:
                     "Pass a ProxyVerificationConfig before constructing the application."
                 )
             return configured
-        enabled = os.getenv("AWEB_TRUST_PROXY_HEADERS", "").strip().lower() in ("1", "true", "yes", "on")
+        enabled = os.getenv("AWEB_TRUST_PROXY_HEADERS", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
         return cls(
-            trust=ProxyHeaderTrust.SHARED_SECRET if enabled else ProxyHeaderTrust.DISABLED,
+            trust=ProxyHeaderTrust.SHARED_SECRET
+            if enabled
+            else ProxyHeaderTrust.DISABLED,
             shared_secret=os.getenv("AWEB_INTERNAL_AUTH_SECRET"),
         )
 
@@ -109,7 +118,8 @@ def application_proxy_verification(state: State | None) -> ProxyVerificationConf
     """Select this app's config; a resource reference wins over a host shadow."""
     resources = getattr(state, "native_resources", None)
     configured = (
-        getattr(resources, "proxy_verification", None) if resources is not None
+        getattr(resources, "proxy_verification", None)
+        if resources is not None
         else getattr(state, "proxy_verification", _DISABLED_PROXY_VERIFICATION)
     )
     if not isinstance(configured, ProxyVerificationConfig):
@@ -146,7 +156,9 @@ def build_internal_auth_header_value(
 
 
 def parse_internal_auth_context(
-    request: Request, *, proxy_verification: ProxyVerificationConfig | None = None,
+    request: Request,
+    *,
+    proxy_verification: ProxyVerificationConfig | None = None,
 ) -> Optional[InternalAuthContext]:
     """Parse and validate trusted proxy auth headers.
 
@@ -154,8 +166,12 @@ def parse_internal_auth_context(
     present. Malformed or invalid material raises 401. Constructors capture the
     configuration; request parsing never consults the environment.
     """
-    config = proxy_verification if proxy_verification is not None else application_proxy_verification(
-        getattr(request.scope.get("app"), "state", None)
+    config = (
+        proxy_verification
+        if proxy_verification is not None
+        else application_proxy_verification(
+            getattr(request.scope.get("app"), "state", None)
+        )
     )
     if config.trust is ProxyHeaderTrust.DISABLED:
         return None
@@ -178,14 +194,18 @@ def parse_internal_auth_context(
         try:
             user_id = str(uuid.UUID(user_id))
         except ValueError as exc:
-            raise HTTPException(status_code=401, detail="Authentication required") from exc
+            raise HTTPException(
+                status_code=401, detail="Authentication required"
+            ) from exc
         principal_type = "u"
         principal_id = user_id
     elif api_key_id:
         try:
             api_key_id = str(uuid.UUID(api_key_id))
         except ValueError as exc:
-            raise HTTPException(status_code=401, detail="Authentication required") from exc
+            raise HTTPException(
+                status_code=401, detail="Authentication required"
+            ) from exc
         principal_type = "k"
         principal_id = api_key_id
     else:
@@ -236,10 +256,7 @@ async def read_internal_actor_projection(aweb_db, internal: InternalAuthContext)
     row = await read_member_projection(aweb_db, agent_id=internal["actor_id"])
     if row is None:
         return None
-    if (
-        row["team_id"] != internal["team_id"]
-        or not member_row_active(row)
-    ):
+    if row["team_id"] != internal["team_id"] or not member_row_active(row):
         raise HTTPException(status_code=403, detail="Agent not connected")
     if not current_member(row):
         logger.warning(

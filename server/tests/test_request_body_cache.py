@@ -32,7 +32,9 @@ EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 @pytest.mark.parametrize("cached_only", [False, True])
 @pytest.mark.parametrize("version", [1, 2])
 @pytest.mark.parametrize("body", [b"", b'{"text":"signed bytes"}'])
-async def test_identity_request_auth_binds_cached_bytes(privacy_app, cached_only, version, body):
+async def test_identity_request_auth_binds_cached_bytes(
+    privacy_app, cached_only, version, body
+):
     """An embedding host's byte cache and the full middleware bind the same body."""
     env = privacy_app
     await admit_room_member(env, alias="alice")
@@ -60,21 +62,27 @@ async def test_identity_request_auth_binds_cached_bytes(privacy_app, cached_only
         "body_sha256": hashlib.sha256(body).hexdigest(),
     }
     if version == 2:
-        payload.update(v=2, aud=app.state.public_origin, method="POST", path="/authenticate")
+        payload.update(
+            v=2, aud=app.state.public_origin, method="POST", path="/authenticate"
+        )
     canonical = canonical_json_bytes(payload)
     headers = {
         "Authorization": f"DIDKey {did} {sign_message(bytes(key), canonical)}",
         "X-AWEB-Timestamp": timestamp,
     }
     if version == 2:
-        headers["X-AWEB-Signed-Payload"] = base64.urlsafe_b64encode(canonical).rstrip(b"=").decode()
+        headers["X-AWEB-Signed-Payload"] = (
+            base64.urlsafe_b64encode(canonical).rstrip(b"=").decode()
+        )
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url=app.state.public_origin
     ) as client:
         accepted = await client.post("/authenticate", content=body, headers=headers)
         assert accepted.status_code == 200, accepted.text
         assert accepted.json() == {"did_key": did}
-        changed = await client.post("/authenticate", content=body + b" ", headers=headers)
+        changed = await client.post(
+            "/authenticate", content=body + b" ", headers=headers
+        )
         assert changed.status_code == 401, changed.text
 
 
@@ -114,7 +122,9 @@ def _app():
 @pytest.mark.asyncio
 async def test_a_post_body_is_cached_hashed_and_still_parsed():
     body = b'{"text":"hello"}'
-    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
         response = await client.post(
             "/notes", content=body, headers={"content-type": "application/json"}
         )
@@ -129,7 +139,9 @@ async def test_a_post_body_is_cached_hashed_and_still_parsed():
 
 @pytest.mark.asyncio
 async def test_a_get_sees_an_empty_cached_body():
-    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
         response = await client.get("/notes")
     assert response.status_code == 200, response.text
     assert response.json() == {"cached": "", "sha256": EMPTY_SHA256}
@@ -137,7 +149,9 @@ async def test_a_get_sees_an_empty_cached_body():
 
 @pytest.mark.asyncio
 async def test_a_post_that_errors_still_gets_its_response():
-    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
         response = await asyncio.wait_for(
             client.post("/refuse", json={"text": "x"}),
             timeout=5,
@@ -202,7 +216,9 @@ async def test_non_http_scopes_pass_through_untouched():
 def test_create_app_keeps_no_base_http_middleware():
     app = create_app()
     assert RequestBodyCacheMiddleware in [entry.cls for entry in app.user_middleware]
-    assert not [entry.cls for entry in app.user_middleware if entry.cls is BaseHTTPMiddleware]
+    assert not [
+        entry.cls for entry in app.user_middleware if entry.cls is BaseHTTPMiddleware
+    ]
 
 
 async def _run(middleware, scope, chunks):
@@ -217,7 +233,9 @@ async def _run(middleware, scope, chunks):
     async def send(message):
         sent.append(message)
 
-    await middleware({"type": "http", "method": "POST", "headers": [], **scope}, receive, send)
+    await middleware(
+        {"type": "http", "method": "POST", "headers": [], **scope}, receive, send
+    )
     return seen, sent, read
 
 
@@ -345,7 +363,9 @@ def test_the_default_cap_admits_the_largest_released_client_body():
 async def test_create_app_takes_its_cap_from_the_environment(monkeypatch):
     monkeypatch.setenv("AWEB_MAX_REQUEST_BODY_BYTES", "1024")
     app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post(
             "/v1/messages",
             content=b"x" * 2048,

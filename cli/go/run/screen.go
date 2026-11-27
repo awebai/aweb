@@ -37,9 +37,9 @@ type ScreenController struct {
 	historyIndex  int
 	historyDraft  string
 	desiredColumn int
-	pasting      bool
-	lastWasCR    bool
-	pendingBytes []byte
+	pasting       bool
+	lastWasCR     bool
+	pendingBytes  []byte
 
 	events chan ControlEvent
 	doneCh chan error
@@ -741,10 +741,6 @@ func (s *ScreenController) renderFooterLocked() {
 	if s.footerCursorCol > 0 {
 		fmt.Fprintf(s.outputFile, "\033[%dC", s.footerCursorCol)
 	}
-}
-
-func (s *ScreenController) renderFooterLinesLocked(width int) []string {
-	return s.renderFooterLayoutLocked(width).lines
 }
 
 func (s *ScreenController) renderFooterLayoutLocked(width int) promptLayout {

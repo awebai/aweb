@@ -15,9 +15,9 @@ import (
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/internal/wake"
+	"github.com/awebai/aw/internal/wake/session"
 	"github.com/awebai/aw/run"
-	"github.com/awebai/aw/wake"
-	"github.com/awebai/aw/wake/session"
 	"github.com/spf13/cobra"
 )
 

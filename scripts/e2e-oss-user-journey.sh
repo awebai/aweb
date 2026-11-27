@@ -116,7 +116,7 @@ allocate_service_ports() {
   PORT_ALLOCATOR="$PROJECT-ports"
   docker run -d --name "$PORT_ALLOCATOR" \
     --label "aweb.e2e.project=$PROJECT" \
-    --cpus .1 --memory 32m --pids-limit 16 \
+    --memory 32m --pids-limit 16 \
     -p "${AWEB_PORT:-0}:8000" -p "${AWID_PORT:-0}:8010" \
     --entrypoint /bin/sleep redis:7-alpine infinity >/dev/null
   AWEB_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}' "$PORT_ALLOCATOR")"
@@ -155,7 +155,7 @@ allocate_customer_port() {
   CUSTOMER_PORT_ALLOCATOR="$CUSTOMER_PROJECT-port"
   docker run -d --name "$CUSTOMER_PORT_ALLOCATOR" \
     --label "aweb.e2e.project=$PROJECT" \
-    --cpus .1 --memory 32m --pids-limit 16 \
+    --memory 32m --pids-limit 16 \
     -p "0:8000" \
     --entrypoint /bin/sleep redis:7-alpine infinity >/dev/null
   CUSTOMER_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}' "$CUSTOMER_PORT_ALLOCATOR")"

@@ -54,7 +54,12 @@ async def check_token_cache_contract(make: Callable[[Clock], TokenCache]) -> Non
     await cache.put(key(version=2), "token-b", later)
     await cache.put(key(secret_id="sec-2"), "token-c", later)
     await cache.put(key(installation_id="inst-2"), "token-d", later)
-    assert await cache.evict_secret(installation_id="inst-1", team_id="backend:example.com", secret_id="sec-1") == 2
+    assert (
+        await cache.evict_secret(
+            installation_id="inst-1", team_id="backend:example.com", secret_id="sec-1"
+        )
+        == 2
+    )
     assert await cache.get(key()) is None
     assert await cache.get(key(version=2)) is None
     assert await cache.get(key(secret_id="sec-2")) == "token-c"

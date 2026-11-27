@@ -84,10 +84,15 @@ async def test_inflight_list_started_during_admission_owns_the_refresh(
     ):
         try:
             async with asyncio.timeout(5), asyncio.TaskGroup() as callers:
+
                 def start_read():
-                    return callers.create_task(sdk.refresh_team_certificates_after_miss(
-                        domain, team, certificate_id=certificate_id,
-                    ))
+                    return callers.create_task(
+                        sdk.refresh_team_certificates_after_miss(
+                            domain,
+                            team,
+                            certificate_id=certificate_id,
+                        )
+                    )
 
                 first = start_read()
                 await first_entered.wait()

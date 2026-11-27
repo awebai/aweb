@@ -399,20 +399,6 @@ func standaloneCreateEncryption(identity *awconfig.ResolvedIdentity, key ed25519
 	return record, assertion, state, path, nil
 }
 
-// idCreateTargetPaths are where the identity and its signing key go: the
-// identity home when one is selected, else the working directory's .aw.
-func idCreateTargetPaths(workingDir string, opts idCreateOptions) (string, string, error) {
-	if opts.IdentityHome == nil {
-		return awconfig.WorktreeIdentityPath(workingDir), awconfig.WorktreeSigningKeyPath(workingDir), nil
-	}
-	identityPath, err := awconfig.IdentityHomePath(*opts.IdentityHome, "identity.yaml")
-	if err != nil {
-		return "", "", err
-	}
-	signingKeyPath, err := awconfig.IdentityHomePath(*opts.IdentityHome, "signing.key")
-	return identityPath, signingKeyPath, err
-}
-
 func standaloneCreateSelection(workingDir string, opts idCreateOptions) (standaloneCreateResume, error) {
 	name, err := normalizeIDCreateName(opts.Name)
 	if err != nil {

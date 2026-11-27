@@ -73,22 +73,6 @@ func requireE2E(t *testing.T) {
 	}
 }
 
-// requestedSkewDirection binds a release-driver cell to this invocation. The
-// CLI/server journey is request/response shaped, so both matrix directions run
-// the complete mutation + readback contract rather than silently deduplicating
-// one direction.
-func requestedSkewDirection(t *testing.T) string {
-	t.Helper()
-	direction := strings.TrimSpace(os.Getenv("AW_SKEW_DIRECTION"))
-	switch direction {
-	case "", "a-to-b", "b-to-a":
-		return direction
-	default:
-		t.Fatalf("unsupported AW_SKEW_DIRECTION %q", direction)
-		return ""
-	}
-}
-
 func randSuffix(t *testing.T) string {
 	t.Helper()
 	buf := make([]byte, 6)
@@ -267,10 +251,6 @@ func TestRealStackSeededBlueprintVisible(t *testing.T) {
 
 func TestRealStackWorkspacePresenceAndLocksUseDistinctIdentifiers(t *testing.T) {
 	requireE2E(t)
-	direction := requestedSkewDirection(t)
-	if direction != "" {
-		t.Logf("release skew cell direction: %s", direction)
-	}
 	tm := newThrowawayTeam(t)
 
 	if err := os.Remove(filepath.Join(tm.workspace, ".aw", "workspace.yaml")); err != nil {
@@ -282,7 +262,7 @@ func TestRealStackWorkspacePresenceAndLocksUseDistinctIdentifiers(t *testing.T) 
 	resourceKey := "e2e-status-" + randSuffix(t)
 	tm.run(t, "lock", "acquire", "--resource-key", resourceKey, "--ttl-seconds", "60")
 
-	if direction == "" || direction == "b-to-a" {
+	{
 		// Server -> CLI: the selected CLI must decode the server response into
 		// distinct identities, attributed locks, and active presence.
 		status := tm.runJSON(t, "workspace", "status")
@@ -308,7 +288,7 @@ func TestRealStackWorkspacePresenceAndLocksUseDistinctIdentifiers(t *testing.T) 
 		}
 	}
 
-	if direction == "" || direction == "a-to-b" {
+	{
 		// CLI -> server: read the workspace identity from the local binding,
 		// then inspect raw authenticated server state. This proves the selected
 		// CLI's mutation reached the distinct agent principal rather than the

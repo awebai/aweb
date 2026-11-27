@@ -13,6 +13,7 @@ from aweb.application_state import native_application_state
 
 logger = logging.getLogger(__name__)
 
+
 class MutationDeliveryStatus(StrEnum):
     """Whether the serving callback ran and completed its native work."""
 
@@ -50,14 +51,19 @@ class MutationDeliveryFailed(RuntimeError):
 
     def __init__(self, outcome: MutationDeliveryOutcome) -> None:
         self.outcome = outcome
-        super().__init__("Mutation delivery is incomplete. Retry the pending delivery or cleanup operation.")
+        super().__init__(
+            "Mutation delivery is incomplete. Retry the pending delivery or cleanup operation."
+        )
 
 
 class MutationCallback(Protocol):
     """An embedding callback accepting positional event/context and an awaitable result."""
 
     def __call__(
-        self, event_type: str, context: dict, /,
+        self,
+        event_type: str,
+        context: dict,
+        /,
     ) -> Awaitable[MutationDeliveryOutcome | None]:
         """Complete native work or retain the compatible None-returning host result."""
         ...
@@ -68,12 +74,16 @@ def mutation_callback(request: Request) -> MutationCallback | None:
     return getattr(native_application_state(request.app.state), "on_mutation", None)
 
 
-async def fire_mutation_hook(request: Request, event_type: str, context: dict) -> MutationDeliveryOutcome:
+async def fire_mutation_hook(
+    request: Request, event_type: str, context: dict
+) -> MutationDeliveryOutcome:
     """Call app.state.on_mutation if registered. Never raises."""
     return await fire_mutation_callback(mutation_callback(request), event_type, context)
 
 
-async def fire_mutation_callback(callback: MutationCallback | None, event_type: str, context: dict) -> MutationDeliveryOutcome:
+async def fire_mutation_callback(
+    callback: MutationCallback | None, event_type: str, context: dict
+) -> MutationDeliveryOutcome:
     """Call an embedding application's on_mutation callback if there is one. Never raises."""
     if callback is None:
         return MutationDeliveryOutcome(status=MutationDeliveryStatus.NOT_CONFIGURED)

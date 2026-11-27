@@ -94,21 +94,30 @@ def registry_slot_reads(source: str, path: str) -> list[int]:
             if isinstance(node, (ast.Global, ast.Nonlocal))
             for name in node.names
         )
-        strings = {name: set(names) for name, names in strings.items() if name not in bound}
+        strings = {
+            name: set(names) for name, names in strings.items() if name not in bound
+        }
         resources = resources - bound
-        assignments = [node for node in local if isinstance(node, (ast.Assign, ast.AnnAssign))]
+        assignments = [
+            node for node in local if isinstance(node, (ast.Assign, ast.AnnAssign))
+        ]
         changed = True
         while changed:
             changed = False
             for node in assignments:
-                for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+                for target in (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                ):
                     if not isinstance(target, ast.Name):
                         continue
                     before = len(strings.get(target.id, set())), target.id in resources
                     strings.setdefault(target.id, set()).update(values(node.value))
                     if resource(node.value):
                         resources.add(target.id)
-                    changed |= before != (len(strings[target.id]), target.id in resources)
+                    changed |= before != (
+                        len(strings[target.id]),
+                        target.id in resources,
+                    )
 
     infer_aliases(tree.body)
 
@@ -117,10 +126,16 @@ def registry_slot_reads(source: str, path: str) -> list[int]:
             self.functions: list[str] = []
             self.class_parents = []
 
-        def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        def visit_FunctionDef(
+            self, node: ast.FunctionDef | ast.AsyncFunctionDef
+        ) -> None:
             nonlocal strings, resources
             previous = strings, resources
-            for expression in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults):
+            for expression in (
+                *node.decorator_list,
+                *node.args.defaults,
+                *node.args.kw_defaults,
+            ):
                 if expression is not None:
                     self.visit(expression)
             if node.returns is not None:
@@ -138,10 +153,17 @@ def registry_slot_reads(source: str, path: str) -> list[int]:
             if self.class_parents and self.class_parents[-1] is not None:
                 strings, resources = self.class_parents[-1]
             parameters = [
-                arg.arg for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+                arg.arg
+                for arg in (
+                    *node.args.posonlyargs,
+                    *node.args.args,
+                    *node.args.kwonlyargs,
+                )
             ]
             parameters.extend(
-                arg.arg for arg in (node.args.vararg, node.args.kwarg) if arg is not None
+                arg.arg
+                for arg in (node.args.vararg, node.args.kwarg)
+                if arg is not None
             )
             infer_aliases(node.body, parameters)
             self.functions.append(node.name)
@@ -172,11 +194,16 @@ def registry_slot_reads(source: str, path: str) -> list[int]:
 
         def visit(self, node: ast.AST) -> None:
             # These lifecycle functions define, replace and close the native slot.
-            owns_slot = path == "aweb/api.py" and bool(API_OWNERS.intersection(self.functions))
+            owns_slot = path == "aweb/api.py" and bool(
+                API_OWNERS.intersection(self.functions)
+            )
             attribute = node.target if isinstance(node, ast.AugAssign) else node
             slot_read = (
                 isinstance(attribute, ast.Attribute)
-                and (isinstance(node, ast.AugAssign) or isinstance(attribute.ctx, ast.Load))
+                and (
+                    isinstance(node, ast.AugAssign)
+                    or isinstance(attribute.ctx, ast.Load)
+                )
                 and (
                     attribute.attr == "awid_registry_client"
                     or attribute.attr == "registry_client"
@@ -213,9 +240,13 @@ class RegistryStateOwnerTests(unittest.TestCase):
         violations = [
             f"{path.relative_to(root)}:{line}"
             for path in sorted(root.rglob("*.py"))
-            for line in registry_slot_reads(path.read_text(), path.relative_to(root).as_posix())
+            for line in registry_slot_reads(
+                path.read_text(), path.relative_to(root).as_posix()
+            )
         ]
-        self.assertEqual(violations, [], "Registry consumers must use application_registry_client")
+        self.assertEqual(
+            violations, [], "Registry consumers must use application_registry_client"
+        )
 
     def test_receiver_names_and_getattr_cannot_hide_a_read(self) -> None:
         self.assertEqual(
@@ -240,7 +271,10 @@ class RegistryStateOwnerTests(unittest.TestCase):
             ("key = 'awid_registry_client'\nx = getattr(state, key)", 2),
             ("key: str = 'awid_registry_client'\nx = getattr(state, key)", 2),
             ("ref = vars(state)['native_resources']\nx = ref.registry_client", 2),
-            ("ref = state.__dict__.get('native_resources')\nx = ref.registry_client", 2),
+            (
+                "ref = state.__dict__.get('native_resources')\nx = ref.registry_client",
+                2,
+            ),
             ("key = 'awid_registry_client'\nx = vars(state)[key]", 2),
             ("x = state.__dict__.get('awid_registry_client')", 1),
             ("x = state.__dict__['awid_registry_client']", 1),
@@ -254,7 +288,9 @@ class RegistryStateOwnerTests(unittest.TestCase):
             ("ref = state.native_resources\nx = vars(ref).get('registry_client')", 2),
         ):
             with self.subTest(source=source):
-                self.assertEqual(registry_slot_reads(source, "aweb/consumer.py"), [line])
+                self.assertEqual(
+                    registry_slot_reads(source, "aweb/consumer.py"), [line]
+                )
 
     def test_aliases_respect_function_scope_and_shadowing(self) -> None:
         for source, expected in (
@@ -286,7 +322,9 @@ class RegistryStateOwnerTests(unittest.TestCase):
             ),
         ):
             with self.subTest(source=source):
-                self.assertEqual(registry_slot_reads(source, "aweb/consumer.py"), expected)
+                self.assertEqual(
+                    registry_slot_reads(source, "aweb/consumer.py"), expected
+                )
 
     def test_scope_headers_still_guard_evaluated_state_reads(self) -> None:
         for source, expected in (
@@ -298,9 +336,13 @@ class RegistryStateOwnerTests(unittest.TestCase):
             ("class Reader(state.awid_registry_client):\n    pass", [1]),
         ):
             with self.subTest(source=source):
-                self.assertEqual(registry_slot_reads(source, "aweb/consumer.py"), expected)
+                self.assertEqual(
+                    registry_slot_reads(source, "aweb/consumer.py"), expected
+                )
 
-    def test_explicit_runtime_registry_is_not_an_application_resource_read(self) -> None:
+    def test_explicit_runtime_registry_is_not_an_application_resource_read(
+        self,
+    ) -> None:
         self.assertEqual(
             registry_slot_reads("x = runtime.registry_client", "aweb/consumer.py"),
             [],
@@ -309,7 +351,8 @@ class RegistryStateOwnerTests(unittest.TestCase):
     def test_api_consumers_cannot_borrow_the_lifecycle_exception(self) -> None:
         self.assertEqual(
             registry_slot_reads(
-                "def consumer(state):\n    return state.awid_registry_client", "aweb/api.py"
+                "def consumer(state):\n    return state.awid_registry_client",
+                "aweb/api.py",
             ),
             [2],
         )

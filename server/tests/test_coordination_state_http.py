@@ -332,11 +332,13 @@ async def test_deletion_rolls_back_on_claim_release_failure_and_retries(
     assert repeated.status_code == 200, repeated.text
     assert repeated.json() == retried.json()
     contexts = [
-        ctx for event_type, ctx in env.dispatched
+        ctx
+        for event_type, ctx in env.dispatched
         if event_type == "task.deleted" and ctx["task_ref"] == ref
     ]
     assert [ctx["released_claim_workspace_ids"] for ctx in contexts] == [
-        [str(env.actors["alice"].workspace)], []
+        [str(env.actors["alice"].workspace)],
+        [],
     ]
 
 
@@ -349,7 +351,10 @@ async def test_deletion_notification_failure_reports_the_committed_release(
 
     env = privacy_app
     created = await request_as(
-        env, alias="alice", method="POST", path="/v1/tasks",
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
         payload={"title": "Committed deletion notification"},
     )
     assert created.status_code == 200, created.text
@@ -362,7 +367,9 @@ async def test_deletion_notification_failure_reports_the_committed_release(
     async with _redis_without_command(env, "publish") as restricted:
         with monkeypatch.context() as configured:
             configured.setattr(
-                env.app.state, "on_mutation", create_mutation_handler(restricted, env.infra)
+                env.app.state,
+                "on_mutation",
+                create_mutation_handler(restricted, env.infra),
             )
             response = await request_as(env, alias="alice", method="DELETE", path=path)
             assert response.status_code == 503, response.text
@@ -374,7 +381,8 @@ async def test_deletion_notification_failure_reports_the_committed_release(
     assert deleted.status_code == 404, deleted.text
     assert not await env.db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
-        TEAM, ref,
+        TEAM,
+        ref,
     )
     repeated = await request_as(env, alias="alice", method="DELETE", path=path)
     assert repeated.status_code == 200, repeated.text

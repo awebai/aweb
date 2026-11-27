@@ -39,12 +39,16 @@ class Administration(StrEnum):
     ROTATE_WITH_PREVIOUS = "rotate_with_previous"
 
 
-async def administrative_call(client, *, operation: Administration, seed: bytes, did: str):
+async def administrative_call(
+    client, *, operation: Administration, seed: bytes, did: str
+):
     stable_id = stable_id_from_did_key(did)
     actions = {
-        Administration.REGISTER_NAMESPACE: lambda: client.register_namespace(DOMAIN, did, seed),
-        Administration.UPDATE_NAMESPACE: lambda: client.update_namespace_delivery_origin(
-            DOMAIN, seed, None
+        Administration.REGISTER_NAMESPACE: lambda: client.register_namespace(
+            DOMAIN, did, seed
+        ),
+        Administration.UPDATE_NAMESPACE: lambda: (
+            client.update_namespace_delivery_origin(DOMAIN, seed, None)
         ),
         Administration.ROTATE_NAMESPACE: lambda: client.rotate_namespace_controller(
             DOMAIN, did, seed
@@ -78,10 +82,12 @@ async def administrative_call(client, *, operation: Administration, seed: bytes,
             team_controller_signing_key=seed,
             certificate_id="member",
         ),
-        Administration.PREPARED_REVOKE: lambda: client.revoke_team_certificate_with_proof(
-            DOMAIN,
-            TEAM,
-            **prepared_revoke(origin=client.registry_url),
+        Administration.PREPARED_REVOKE: lambda: (
+            client.revoke_team_certificate_with_proof(
+                DOMAIN,
+                TEAM,
+                **prepared_revoke(origin=client.registry_url),
+            )
         ),
         Administration.REGISTER_ADDRESS: lambda: client.register_address(
             DOMAIN,
@@ -90,8 +96,12 @@ async def administrative_call(client, *, operation: Administration, seed: bytes,
             seed,
             current_did_key=did,
         ),
-        Administration.UPDATE_ADDRESS: lambda: client.update_address(DOMAIN, "member", seed),
-        Administration.DELETE_ADDRESS: lambda: client.delete_address(DOMAIN, "member", seed),
+        Administration.UPDATE_ADDRESS: lambda: client.update_address(
+            DOMAIN, "member", seed
+        ),
+        Administration.DELETE_ADDRESS: lambda: client.delete_address(
+            DOMAIN, "member", seed
+        ),
         Administration.REASSIGN_ADDRESS: lambda: client.reassign_address(
             DOMAIN, "member", stable_id, seed
         ),
@@ -113,13 +123,15 @@ async def administrative_call(client, *, operation: Administration, seed: bytes,
             signer=signer_for("root"),
             expected_head=certificate_id("bob"),
         ),
-        Administration.ROTATE_WITH_PREVIOUS: lambda: client.rotate_namespace_with_previous_key(
-            "example.com",
-            from_seq=1,
-            previous_did_key=did_key("root"),
-            new_did_key=did_key("root_rotated"),
-            previous_signer=signer_for("root"),
-            new_signer=signer_for("root_rotated"),
+        Administration.ROTATE_WITH_PREVIOUS: lambda: (
+            client.rotate_namespace_with_previous_key(
+                "example.com",
+                from_seq=1,
+                previous_did_key=did_key("root"),
+                new_did_key=did_key("root_rotated"),
+                previous_signer=signer_for("root"),
+                new_signer=signer_for("root_rotated"),
+            )
         ),
     }
     return await actions[operation]()
@@ -182,7 +194,9 @@ async def test_administrative_mutation_pins_its_configured_registry_without_disc
             if "x-aweb-signed-payload" in headers:
                 signed = headers["x-aweb-signed-payload"]
                 assert (
-                    json.loads(base64.urlsafe_b64decode(signed + "=" * (-len(signed) % 4)))["aud"]
+                    json.loads(
+                        base64.urlsafe_b64decode(signed + "=" * (-len(signed) % 4))
+                    )["aud"]
                     == configured.origin
                 )
         assert routes == []

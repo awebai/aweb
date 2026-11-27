@@ -42,6 +42,7 @@ from aweb.messaging.recipient_bindings import (
     signed_recipient_matches,
 )
 
+
 @dataclass(frozen=True, kw_only=True)
 class RecipientIdentityBinding:
     """The identity a saved contact expects, never a routing authority."""
@@ -154,7 +155,9 @@ async def _resolve_address_identity(
             and bool(signed.get("to_did") or signed.get("to_stable_id"))
             and not bound
         )
-        if bound or (local_recipient_visible_to_auth(local, auth) and not needs_current):
+        if bound or (
+            local_recipient_visible_to_auth(local, auth) and not needs_current
+        ):
             recipient = identity_recipient(local, address)
             return replace(recipient, requires_local_address_authority=True)
 
@@ -163,9 +166,13 @@ async def _resolve_address_identity(
     resolution = None
     if registry is not None and (home_namespace or authority is None):
         try:
-            resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)
+            resolution = await registry.resolve_address(
+                domain, name, did_key=auth.did_key
+            )
         except AWID_DEPENDENCY_ERRORS as exc:
-            raise registry_dependency_refusal(exc, operation="AWID recipient address lookup") from exc
+            raise registry_dependency_refusal(
+                exc, operation="AWID recipient address lookup"
+            ) from exc
     elif authority is not None:
         try:
             resolution = await authority.resolve_contact(address, source_ip=source)

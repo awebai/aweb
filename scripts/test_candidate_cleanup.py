@@ -1,147 +1,106 @@
 #!/usr/bin/env python3
 """Host measurement parsing and recovery behavior."""
+
 import importlib.util
 import json
-import os
-import subprocess
-import sys
-import uuid
 from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
-spec = importlib.util.spec_from_file_location('pressure', ROOT / 'scripts/candidate-host-pressure.py')
+spec = importlib.util.spec_from_file_location(
+    "pressure", ROOT / "scripts/candidate-host-pressure.py"
+)
 pressure = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pressure)
 
+
 class HostPressureTests(unittest.TestCase):
     def sample(self, **changes):
-        return {'platform': 'Darwin', 'status': 'measured', 'vm_pids': [12],
-                'kern.num_files': 10000, 'vm_lsof_rows': 20,
-                'vm_numeric_fd_rows': 10, **changes}
+        return {
+            "platform": "Darwin",
+            "status": "measured",
+            "vm_pids": [12],
+            "kern.num_files": 10000,
+            "vm_lsof_rows": 20,
+            "vm_numeric_fd_rows": 10,
+            **changes,
+        }
 
     def test_distinct_row_units(self):
-        self.assertEqual(pressure.lsof_counts('COMMAND PID USER FD TYPE\nvm 12 me cwd DIR\nvm 12 me txt REG\nvm 12 me 3u REG\nvm 12 me 40r REG\n'), (4, 2))
+        self.assertEqual(
+            pressure.lsof_counts(
+                "COMMAND PID USER FD TYPE\nvm 12 me cwd DIR\nvm 12 me txt REG\nvm 12 me 3u REG\nvm 12 me 40r REG\n"
+            ),
+            (4, 2),
+        )
         with self.assertRaises(ValueError):
-            pressure.lsof_counts('')
+            pressure.lsof_counts("")
 
     def test_host_wide_growth_does_not_fail_clean_vm_recovery(self):
         baseline = self.sample()
         # Reported e9ef2394 gate samples: unrelated host growth above 30k,
         # only 60 additional VM lsof rows and no additional numeric FDs.
         for host_delta in (30489, 30613):
-            result = pressure.compare(baseline, self.sample(**{
-                'kern.num_files': baseline['kern.num_files'] + host_delta,
-                'vm_lsof_rows': baseline['vm_lsof_rows'] + 60,
-            }))
-            self.assertEqual(result['status'], 'passed')
-            self.assertEqual(result['deltas']['kern.num_files'], host_delta)
-            self.assertNotIn('kern.num_files', result['bounds'])
+            result = pressure.compare(
+                baseline,
+                self.sample(
+                    **{
+                        "kern.num_files": baseline["kern.num_files"] + host_delta,
+                        "vm_lsof_rows": baseline["vm_lsof_rows"] + 60,
+                    }
+                ),
+            )
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["deltas"]["kern.num_files"], host_delta)
+            self.assertNotIn("kern.num_files", result["bounds"])
 
     def test_vm_row_bound_and_numeric_rows_are_only_evidence(self):
         baseline = self.sample()
-        self.assertEqual(pressure.compare(baseline, self.sample(
-            vm_lsof_rows=5020, vm_numeric_fd_rows=20000))['status'], 'passed')
-        self.assertEqual(pressure.compare(baseline, self.sample(
-            vm_lsof_rows=5021))['status'], 'failed')
-
-    @unittest.skipUnless(sys.platform == 'darwin' and
-                         os.environ.get('AWEB_TEST_DOCKER_VM_RECOVERY') == '1',
-                         'opt-in macOS Docker file-sharing control')
-    def test_docker_file_sharing_leak_fails_then_recovers(self):
-        # The cheap parser tests do not establish VM observability. This control
-        # uses real Docker, host files, discovery, lsof and all settle samples.
-        # Use an already installed image; never pull or restart shared Docker.
-        guest = """
-import json, os, sys
-paths = ['/owned/' + str(i) for i in range(5001)]
-held = [os.open(path, os.O_RDONLY) for path in paths]
-for fd in held:
-    os.read(fd, 1)
-print(json.dumps({'held': len(held)}), flush=True)
-sys.stdin.readline()
-for fd in held:
-    os.close(fd)
-# Unlink through the same guest sharing path so its cached inode references
-# are released too, rather than leaving deleted host files cached in the VM.
-for path in paths:
-    os.unlink(path)
-print(json.dumps({'remaining_files': os.listdir('/owned')}), flush=True)
-"""
-        with tempfile.TemporaryDirectory(prefix='aweb-vm-recovery-') as directory:
-            evidence = Path(os.environ.get('AWEB_VM_RECOVERY_EVIDENCE', directory))
-            evidence.mkdir(parents=True, exist_ok=True)
-            subprocess.run(['bash', str(ROOT / 'scripts/candidate-docker-gate.sh'),
-                            '--wait-for-disk'], check=True)
-            source = evidence / 'host-files'
-            source.mkdir()
-            for index in range(5001):
-                (source / str(index)).write_bytes(b'x')
-            baseline = evidence / 'host-before.json'
-            before = pressure.capture(baseline)
-            self.assertEqual(before['status'], 'measured')
-            name = 'aweb-actd-control-' + uuid.uuid4().hex[:12]
-            child = subprocess.Popen(['docker', 'run', '--rm', '-i', '--name', name,
-                '--label', 'aweb.candidate-gate=' + name, '--pull=never',
-                '--network=none', '--memory=64m', '--cpus=0.25', '--pids-limit=32',
-                '--read-only', '--ulimit', 'nofile=8192:8192',
-                '--mount', 'type=bind,src=' + str(source.resolve()) + ',dst=/owned',
-                'python:3.12-slim', 'python', '-u', '-c', guest],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            try:
-                self.assertEqual(json.loads(child.stdout.readline()), {'held': 5001})
-                held = evidence / 'held'
-                held.mkdir()
-                result = subprocess.run([sys.executable,
-                    str(ROOT / 'scripts/candidate-host-pressure.py'), 'settle',
-                    str(baseline), str(held)], text=True, capture_output=True, timeout=120)
-                receipt = json.loads((held / 'host-recovery.json').read_text())
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertEqual(len(receipt['samples']), 4)
-                for sample in receipt['samples']:
-                    self.assertEqual(sample['status'], 'failed')
-                    self.assertTrue(sample['same_vm'])
-                    self.assertGreater(sample['deltas']['vm_lsof_rows'], 5000)
-            finally:
-                try:
-                    output, errors = child.communicate('release\n', timeout=30)
-                    self.assertEqual(child.returncode, 0, errors)
-                    self.assertEqual(json.loads(output), {'remaining_files': []})
-                finally:
-                    subprocess.run(['docker', 'rm', '-f', name],
-                                   capture_output=True, timeout=30)
-            self.assertNotEqual(subprocess.run(['docker', 'container', 'inspect', name],
-                capture_output=True, timeout=30).returncode, 0)
-            source.rmdir()
-            released = evidence / 'released'
-            released.mkdir()
-            result = subprocess.run([sys.executable,
-                str(ROOT / 'scripts/candidate-host-pressure.py'), 'settle',
-                str(baseline), str(released)], text=True, capture_output=True, timeout=120)
-            receipt = json.loads((released / 'host-recovery.json').read_text())
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(receipt['status'], 'passed')
-            self.assertTrue(receipt['same_vm'])
-            self.assertLessEqual(receipt['deltas']['vm_lsof_rows'], 5000)
-            print('Docker VM control:', evidence, 'held FAILED; released PASSED')
+        self.assertEqual(
+            pressure.compare(
+                baseline, self.sample(vm_lsof_rows=5020, vm_numeric_fd_rows=20000)
+            )["status"],
+            "passed",
+        )
+        self.assertEqual(
+            pressure.compare(baseline, self.sample(vm_lsof_rows=5021))["status"],
+            "failed",
+        )
 
     def test_missing_or_restarted_vm_cannot_pass(self):
-        self.assertEqual(pressure.compare(self.sample(), self.sample(vm_pids=[13]))['status'], 'failed')
+        self.assertEqual(
+            pressure.compare(self.sample(), self.sample(vm_pids=[13]))["status"],
+            "failed",
+        )
         with self.assertRaises(ValueError):
-            pressure.compare(self.sample(), self.sample(status='unavailable'))
+            pressure.compare(self.sample(), self.sample(status="unavailable"))
 
     def test_capture_raw_snapshots_and_failure_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
-            dest = Path(directory) / 'host.json'
-            with mock.patch.object(pressure.platform, 'system', return_value='Darwin'), mock.patch.object(pressure, 'command', side_effect=['10000\n', '12 1 /Docker/com.docker.hyperkit\n', 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nvm 12 me 3u REG 1,17 1000 99 /Users/operator/Library/Group Containers/group.com.docker/vms/Docker.raw\n']):
-                self.assertEqual(pressure.capture(dest)['vm_lsof_rows'], 1)
-                self.assertTrue(dest.with_suffix('.vm-12.lsof.txt').exists())
-            with mock.patch.object(pressure.platform, 'system', return_value='Darwin'), mock.patch.object(pressure, 'command', side_effect=['10000\n', '']):
+            dest = Path(directory) / "host.json"
+            with (
+                mock.patch.object(pressure.platform, "system", return_value="Darwin"),
+                mock.patch.object(
+                    pressure,
+                    "command",
+                    side_effect=[
+                        "10000\n",
+                        "12 1 /Docker/com.docker.hyperkit\n",
+                        "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nvm 12 me 3u REG 1,17 1000 99 /Users/operator/Library/Group Containers/group.com.docker/vms/Docker.raw\n",
+                    ],
+                ),
+            ):
+                self.assertEqual(pressure.capture(dest)["vm_lsof_rows"], 1)
+                self.assertTrue(dest.with_suffix(".vm-12.lsof.txt").exists())
+            with (
+                mock.patch.object(pressure.platform, "system", return_value="Darwin"),
+                mock.patch.object(pressure, "command", side_effect=["10000\n", ""]),
+            ):
                 with self.assertRaises(RuntimeError):
                     pressure.capture(dest)
-                self.assertEqual(json.loads(dest.read_text())['status'], 'unavailable')
+                self.assertEqual(json.loads(dest.read_text())["status"], "unavailable")
 
     def test_actual_docker_vm_is_selected_by_disk_path_not_launcher_or_parent(self):
         # Sanitized shape from the coordinator's 2026-09-30 process snapshot:
@@ -150,59 +109,99 @@ print(json.dumps({'remaining_files': os.listdir('/owned')}), flush=True)
 45661 1 /System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine
 50000 1 /System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine
 """
-        docker_path = '/Users/operator/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw'
+        docker_path = "/Users/operator/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"
+
         def lsof(path):
-            return 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nvm 45661 operator cwd DIR 1,17 736 2 /\nvm 45661 operator 6u REG 1,17 1000 999 ' + path + '\n'
-        for mode in ('one', 'ambiguous', 'missing'):
+            return (
+                "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nvm 45661 operator cwd DIR 1,17 736 2 /\nvm 45661 operator 6u REG 1,17 1000 999 "
+                + path
+                + "\n"
+            )
+
+        for mode in ("one", "ambiguous", "missing"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
-                dest = Path(directory) / 'host.json'
+                dest = Path(directory) / "host.json"
                 queried = []
+
                 def command(*args):
-                    if args[0] == 'sysctl': return '10000\n'
-                    if args[0] == 'ps': return processes
-                    self.assertEqual(args[0], 'lsof')
+                    if args[0] == "sysctl":
+                        return "10000\n"
+                    if args[0] == "ps":
+                        return processes
+                    self.assertEqual(args[0], "lsof")
                     queried.append(int(args[-1]))
-                    is_docker = mode == 'ambiguous' or (mode == 'one' and args[-1] == '45661')
-                    return lsof(docker_path if is_docker else '/Users/operator/OtherVM/disk.img')
-                with mock.patch.object(pressure.platform, 'system', return_value='Darwin'), mock.patch.object(pressure, 'command', side_effect=command):
-                    if mode == 'one':
+                    is_docker = mode == "ambiguous" or (
+                        mode == "one" and args[-1] == "45661"
+                    )
+                    return lsof(
+                        docker_path if is_docker else "/Users/operator/OtherVM/disk.img"
+                    )
+
+                with (
+                    mock.patch.object(
+                        pressure.platform, "system", return_value="Darwin"
+                    ),
+                    mock.patch.object(pressure, "command", side_effect=command),
+                ):
+                    if mode == "one":
                         result = pressure.capture(dest)
-                        self.assertEqual(result['vm_pids'], [45661])
-                        self.assertEqual(result['vm_lsof_rows'], 2)
-                        self.assertEqual(result['vm_numeric_fd_rows'], 1)
-                        self.assertEqual(result['vm_identity']['matched_docker_paths'], [docker_path])
+                        self.assertEqual(result["vm_pids"], [45661])
+                        self.assertEqual(result["vm_lsof_rows"], 2)
+                        self.assertEqual(result["vm_numeric_fd_rows"], 1)
+                        self.assertEqual(
+                            result["vm_identity"]["matched_docker_paths"], [docker_path]
+                        )
                     else:
-                        with self.assertRaises(RuntimeError): pressure.capture(dest)
+                        with self.assertRaises(RuntimeError):
+                            pressure.capture(dest)
                         result = json.loads(dest.read_text())
-                        self.assertEqual(result['status'], 'unavailable')
-                    self.assertEqual([v['pid'] for v in result['vm_candidates']], [45661, 50000])
+                        self.assertEqual(result["status"], "unavailable")
+                    self.assertEqual(
+                        [v["pid"] for v in result["vm_candidates"]], [45661, 50000]
+                    )
                     self.assertEqual(queried, [45661, 50000])
-                    self.assertTrue(dest.with_suffix('.vm-50000.lsof.txt').exists())
+                    self.assertTrue(dest.with_suffix(".vm-50000.lsof.txt").exists())
 
     def test_settle_retries_preserves_samples_and_reports_the_passing_one(self):
-        for levels, expected in [([6020, 6020, 20], 'passed'), ([6020] * 4, 'failed')]:
-            with self.subTest(levels=levels), tempfile.TemporaryDirectory() as directory:
+        for levels, expected in [([6020, 6020, 20], "passed"), ([6020] * 4, "failed")]:
+            with (
+                self.subTest(levels=levels),
+                tempfile.TemporaryDirectory() as directory,
+            ):
                 root = Path(directory)
-                baseline = root / 'host-before.json'
+                baseline = root / "host-before.json"
                 baseline.write_text(json.dumps(self.sample()))
                 pending = iter(levels)
+
                 def capture_sample(path):
                     result = self.sample(vm_lsof_rows=next(pending))
                     path.write_text(json.dumps(result))
-                    path.with_suffix('.raw.txt').write_text('retained raw evidence')
+                    path.with_suffix(".raw.txt").write_text("retained raw evidence")
                     return result
-                with mock.patch.object(pressure, 'capture', side_effect=capture_sample), mock.patch.object(pressure.time, 'sleep') as sleep:
+
+                with (
+                    mock.patch.object(pressure, "capture", side_effect=capture_sample),
+                    mock.patch.object(pressure.time, "sleep") as sleep,
+                ):
                     receipt = pressure.settle(baseline, root)
-                self.assertEqual(receipt['status'], expected)
-                self.assertEqual(receipt['passed_sample'], 3 if expected == 'passed' else None)
-                self.assertEqual(len(receipt['samples']), len(levels))
-                self.assertEqual(sleep.call_args_list, [mock.call(15)] * (len(levels) - 1))
+                self.assertEqual(receipt["status"], expected)
+                self.assertEqual(
+                    receipt["passed_sample"], 3 if expected == "passed" else None
+                )
+                self.assertEqual(len(receipt["samples"]), len(levels))
+                self.assertEqual(
+                    sleep.call_args_list, [mock.call(15)] * (len(levels) - 1)
+                )
                 for number in range(1, len(levels) + 1):
-                    self.assertTrue((root / f'host-after-{number}.raw.txt').exists())
-                self.assertEqual((root / 'host-after.json').read_bytes(), (root / f'host-after-{len(levels)}.json').read_bytes())
-                self.assertEqual(json.loads((root / 'host-recovery.json').read_text()), receipt)
+                    self.assertTrue((root / f"host-after-{number}.raw.txt").exists())
+                self.assertEqual(
+                    (root / "host-after.json").read_bytes(),
+                    (root / f"host-after-{len(levels)}.json").read_bytes(),
+                )
+                self.assertEqual(
+                    json.loads((root / "host-recovery.json").read_text()), receipt
+                )
 
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

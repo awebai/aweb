@@ -43,7 +43,9 @@ def test_pytest_uses_locked_dependencies_and_rejects_warnings() -> None:
     assert pytest_options["pythonpath"] == [".", "src"]
     assert pytest_options["filterwarnings"] == ["error"]
     assert pytest_options["addopts"] == ["--basetemp=.pytest_tmp"]
-    assert any(dependency.startswith("httpx2") for dependency in pyproject["dependency-groups"]["dev"])
+    assert any(
+        dependency.startswith("httpx2") for dependency in pyproject["dependency-groups"]["dev"]
+    )
 
 
 def test_make_test_uses_the_locked_uv_environment() -> None:
@@ -60,9 +62,7 @@ def test_ci_provides_postgres_so_database_tests_cannot_skip() -> None:
 
     assert any("postgres" in job.get("services", {}) for job in workflow["jobs"].values())
     commands = "\n".join(
-        step.get("run", "")
-        for job in workflow["jobs"].values()
-        for step in job["steps"]
+        step.get("run", "") for job in workflow["jobs"].values() for step in job["steps"]
     )
     assert "systemctl restart docker" not in commands
 
@@ -183,7 +183,8 @@ def test_ci_builds_the_e2e_stack_from_the_commit_under_test() -> None:
     checkouts = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
 
     foreign = [
-        step for step in checkouts
+        step
+        for step in checkouts
         if (step.get("with") or {}).get("repository") not in (None, "", "${{ github.repository }}")
     ]
     assert not foreign, (

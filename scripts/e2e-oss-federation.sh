@@ -766,6 +766,24 @@ if [[ "$SERVER_MODE" == "wheel" ]]; then
     || { echo "alpha canonical dependency inventory digest is invalid" >&2; exit 1; }
   [[ "$beta_inventory_sha256" =~ ^[0-9a-f]{64}$ ]] \
     || { echo "beta canonical dependency inventory digest is invalid" >&2; exit 1; }
+  if [[ -n "${AWEB_FED_E2E_WHEEL_EVIDENCE:-}" ]]; then
+    # What each container holds, as read inside it, for the release receipt.
+    python3 - "$AWEB_FED_E2E_WHEEL_EVIDENCE" \
+      "$(basename "$AWEB_ALPHA_WHEEL")" "$alpha_retained_wheel_sha256" "$alpha_installed_version" \
+      "$(basename "$AWEB_BETA_WHEEL")" "$beta_retained_wheel_sha256" "$beta_installed_version" <<'PY'
+import json
+import sys
+
+path, *values = sys.argv[1:]
+record = {
+    service: {"wheel": wheel, "container_wheel_sha256": "sha256:" + digest, "installed_version": version}
+    for service, (wheel, digest, version) in zip(("aweb-alpha", "aweb-beta"), (values[:3], values[3:]))
+}
+with open(path, "w") as handle:
+    json.dump(record, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+  fi
 else
   locked_server_mcp="$(lock_package_version "$SERVER_DIR/uv.lock" mcp)"
   installed_server_mcp="$(container_package_version aweb-alpha mcp)"

@@ -84,7 +84,9 @@ async def test_global_inviter_without_registry_pins_uses_real_discovery(
         discovery_calls = []
         discovery_body = bytearray()
         route = next(
-            route for route in env.app.routes if getattr(route, "path", "") == "/api/v1/discovery"
+            route
+            for route in env.app.routes
+            if getattr(route, "path", "") == "/api/v1/discovery"
         )
         original_discovery = route.app
 
@@ -127,10 +129,15 @@ async def test_global_inviter_without_registry_pins_uses_real_discovery(
             identity_scope="global",
         )
         (home / "identity.yaml").write_text(json.dumps(identity))
-        cert_path = "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
+        cert_path = (
+            "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
+        )
         (home / cert_path).write_bytes(base64.b64decode(actor.certificate))
         membership = dict(
-            team_id=TEAM, alias="bob", cert_path=cert_path, workspace_id=str(actor.workspace)
+            team_id=TEAM,
+            alias="bob",
+            cert_path=cert_path,
+            workspace_id=str(actor.workspace),
         )
         (home / "teams.yaml").write_text(
             json.dumps(dict(active_team=TEAM, memberships=[membership]))
@@ -141,7 +148,9 @@ async def test_global_inviter_without_registry_pins_uses_real_discovery(
         team_keys = tmp_path / ".awid" / "team-keys" / "example.test"
         team_keys.mkdir(parents=True)
         _pem(team_keys / f"{TEAM_NAME}.key", "ED25519 PRIVATE KEY", env.team_sk)
-        child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
+        child_env = {
+            k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))
+        }
         # The discovered registry is a loopback http listener that no
         # AWID_REGISTRY_URL names; the CLI reaches it in isolated development.
         child_env.update(
@@ -152,7 +161,9 @@ async def test_global_inviter_without_registry_pins_uses_real_discovery(
         )
         calls.clear()
         async with public_default_probe() as (proxy, default_calls):
-            child_env.update(HTTPS_PROXY=proxy, HTTP_PROXY=proxy, NO_PROXY="127.0.0.1,localhost")
+            child_env.update(
+                HTTPS_PROXY=proxy, HTTP_PROXY=proxy, NO_PROXY="127.0.0.1,localhost"
+            )
             process = await asyncio.create_subprocess_exec(
                 str(source_cli_binary),
                 "workspace",
@@ -174,7 +185,10 @@ async def test_global_inviter_without_registry_pins_uses_real_discovery(
             )
             assert default_calls == []
         assert ("GET", f"/v1/did/{stable}/key") in calls
-        assert ("POST", f"/v1/namespaces/example.test/teams/{TEAM_NAME}/certificates") in calls
+        assert (
+            "POST",
+            f"/v1/namespaces/example.test/teams/{TEAM_NAME}/certificates",
+        ) in calls
         result = json.loads(stdout)
         assert result["alias"] == "discovery-child"
         child_home = Path(result["worktree_path"]) / ".aw"
@@ -185,5 +199,7 @@ async def test_global_inviter_without_registry_pins_uses_real_discovery(
             TEAM,
         )
         assert row is not None and row["identity_scope"] == "local"
-        certs = await registry.list_team_certificates("example.test", TEAM_NAME, active_only=True)
+        certs = await registry.list_team_certificates(
+            "example.test", TEAM_NAME, active_only=True
+        )
         assert any(cert.alias == "discovery-child" for cert in certs)

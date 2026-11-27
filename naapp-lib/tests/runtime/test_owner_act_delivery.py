@@ -20,6 +20,7 @@ async def _started(runtime):
     async with runtime.lifespan(FastAPI()):
         yield
 
+
 pytest_plugins = ("tests.runtime.test_human_member",)
 
 

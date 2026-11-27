@@ -46,9 +46,15 @@ def test_folio_fills_template_kid_from_configured_key(
     assert document["app"] == MANIFEST["app"]
     assert document["tools"] == MANIFEST["tools"]
     assert document["events"] == MANIFEST["events"]
-    assert document["app_keys"][0] == {"kid": "folio:emit-1", "did_key": did_key, "purposes": ["app-event"]}
+    assert document["app_keys"][0] == {
+        "kid": "folio:emit-1",
+        "did_key": did_key,
+        "purposes": ["app-event"],
+    }
     assert document["app_keys"][1]["purposes"] == ["app-grant-read"]
     assert response.content == canonical_bytes(document)
     assert first.get("/manifests/v2.json").content == response.content
     # A separate construction with the same config serves byte-identical data.
-    assert TestClient(folio_api.create_app(settings)).get("/aweb-app.json").content == response.content
+    assert (
+        TestClient(folio_api.create_app(settings)).get("/aweb-app.json").content == response.content
+    )

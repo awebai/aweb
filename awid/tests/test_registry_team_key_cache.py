@@ -24,15 +24,24 @@ async def key_cache(monkeypatch):
         state["requests"] += 1
         clock[0] += state.get("advance", 0)
         if state["status"] != 200:
-            return httpx.Response(state["status"], json={"detail": "registry unavailable"})
-        return httpx.Response(200, json={
-            "team_id": "backend:example.com", "domain": "example.com",
-            "name": "backend", "team_did_key": state["key"], "created_at": "2026-01-01T00:00:00Z",
-        })
+            return httpx.Response(
+                state["status"], json={"detail": "registry unavailable"}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "team_id": "backend:example.com",
+                "domain": "example.com",
+                "name": "backend",
+                "team_did_key": state["key"],
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
 
     redis = FakeRedis()
     registry = CachedRegistryClient(
-        registry_url="http://registry.test", redis_client=redis,
+        registry_url="http://registry.test",
+        redis_client=redis,
         transport=httpx.MockTransport(handler),
     )
     try:
@@ -65,7 +74,9 @@ async def test_key_is_fresh_for_revocation_ttl_then_refetched(key_cache):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("age", [899, 900, 901])
-async def test_key_outage_grace_is_bounded_by_original_fetch_age(key_cache, caplog, age):
+async def test_key_outage_grace_is_bounded_by_original_fetch_age(
+    key_cache, caplog, age
+):
     env = key_cache
     assert registry_module._TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS == 900
     assert await _key(env) == "did:key:old"
@@ -105,7 +116,9 @@ async def test_failed_refresh_cannot_cross_grace_deadline(key_cache):
 @pytest.mark.asyncio
 async def test_key_read_does_not_inherit_long_lived_metadata(key_cache):
     env = key_cache
-    assert (await env.registry.get_team("example.com", "backend")).team_did_key == "did:key:old"
+    assert (
+        await env.registry.get_team("example.com", "backend")
+    ).team_did_key == "did:key:old"
     env.state["key"] = "did:key:new"
     assert await _key(env) == "did:key:new"
     assert env.state["requests"] == 2
@@ -131,7 +144,9 @@ async def test_key_not_found_is_not_cached_or_served_as_outage_grace(key_cache):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("generation_unavailable", [False, True])
-async def test_certificate_cache_invalidation_clears_key_even_if_generation_write_fails(key_cache, generation_unavailable):
+async def test_certificate_cache_invalidation_clears_key_even_if_generation_write_fails(
+    key_cache, generation_unavailable
+):
     class GenerationUnavailableRedis(FakeRedis):
         async def set(self, *args, **kwargs):
             raise OSError("Redis generation unavailable")
@@ -143,7 +158,9 @@ async def test_certificate_cache_invalidation_clears_key_even_if_generation_writ
     env.state["key"] = "did:key:new"
     if generation_unavailable:
         with pytest.raises(OSError, match="Redis generation unavailable"):
-            await env.registry.invalidate_team_certificate_cache("example.com", "backend")
+            await env.registry.invalidate_team_certificate_cache(
+                "example.com", "backend"
+            )
     else:
         await env.registry.invalidate_team_certificate_cache("example.com", "backend")
     assert await _key(env) == "did:key:new"

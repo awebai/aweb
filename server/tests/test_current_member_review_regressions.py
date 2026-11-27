@@ -11,7 +11,11 @@ from starlette.requests import Request
 
 from aweb.events import TaskCreatedEvent, publish_event, team_events_channel_name
 from aweb.application_state import application_registry_client
-from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
+from aweb.lifecycle import (
+    LifecycleActor,
+    LifecycleCascadeRequest,
+    apply_lifecycle_cascade,
+)
 from aweb.member_team_key import CurrentMembershipRequired
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.team_auth_deps import resolve_team_identity, verify_request_certificate
@@ -126,7 +130,131 @@ async def test_sender_membership_configuration_absence_is_unknown(pinning):
 
 
 @pytest.mark.asyncio
-async def test_unconfigured_team_registry_read_has_the_expected_503(pinning, monkeypatch):
+@pytest.mark.parametrize("standing", ["active", "revoked", "unavailable"])
+async def test_local_mail_reads_both_certificates_once_under_the_commit_lock(
+    pinning, monkeypatch, standing
+):
+    import httpx
+    from awid.team_certificate import decode_team_certificate
+
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
+    env = pinning
+    sender = await _admit(env, "batched-sender")
+    recipient = await _admit(env, "batched-recipient")
+    if standing == "revoked":
+        name, domain = TEAM.split(":", 1)
+        await application_registry_client(env.app.state).revoke_team_certificate(
+            domain,
+            name,
+            team_controller_signing_key=env.team_sk,
+            certificate_id=decode_team_certificate(recipient.certificate)[
+                "certificate_id"
+            ],
+        )
+
+    reads = []
+
+    def observe_revocations(request, response):
+        if request.url.path.endswith("/revocations"):
+            reads.append(request.url.path)
+            if standing == "unavailable" and len(reads) == 2:
+                raise httpx.ConnectError(
+                    "locked revocation read unavailable", request=request
+                )
+        return None
+
+    monkeypatch.setattr(env.registry.transport, "fault", observe_revocations)
+    before = await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}")
+    response = await _http(
+        env,
+        sender,
+        "POST",
+        "/v1/messages",
+        {
+            "to_alias": recipient.alias,
+            "body": "locked certificate standings",
+        },
+    )
+    assert (
+        response.status_code
+        == {"active": 200, "revoked": 404, "unavailable": 503}[standing]
+    ), response.text
+    assert len(reads) == 2  # Ingress, then sender and recipient together after locking.
+    after = await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}")
+    assert after == before + int(standing == "active")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other_available", [True, False])
+async def test_delivery_membership_batches_preserve_distinct_team_authority(
+    pinning, monkeypatch, other_available
+):
+    import httpx
+    from aweb.member_team_key import (
+        MemberReadLock,
+        current_member_team_ids_for_identities,
+    )
+    from aweb_naapp_testing import Member
+
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "false")
+    env = pinning
+    local = await _admit(env, "batched-local")
+    other_team = "batched-other:example.test"
+    other = Member(team_id=other_team, alias="batched-other")
+    await env.registry.add_team(other_team, other.team_did_key)
+    await env.registry.add_certificate(other.certificate(), team_key=other.team_key)
+    body = b"{}"
+    path = "/v1/connect"
+    response = await env.client.post(
+        path,
+        content=body,
+        headers={
+            **other.headers(
+                aud=env.app.state.public_origin, method="POST", path=path, body=body
+            ),
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 200, response.text
+    reads = []
+
+    def observe_revocations(request, response):
+        if request.url.path.endswith("/revocations"):
+            reads.append(request.url.path)
+            if not other_available and "/batched-other/" in request.url.path:
+                raise httpx.ConnectError(
+                    "other team's revocation read unavailable", request=request
+                )
+        return None
+
+    monkeypatch.setattr(env.registry.transport, "fault", observe_revocations)
+    registry = application_registry_client(env.app.state)
+    async with env.db.transaction() as tx:
+
+        async def memberships():
+            return await current_member_team_ids_for_identities(
+                tx,
+                [local.did],
+                [other.did_key],
+                registry_client=registry,
+                read_lock=MemberReadLock.SHARE,
+            )
+
+        if other_available:
+            assert await memberships() == ({TEAM}, {other_team})
+        else:
+            with pytest.raises(HTTPException) as refused:
+                await memberships()
+            assert refused.value.status_code == 503
+    assert sorted(path.split("/")[-2] for path in reads) == sorted(
+        [TEAM.split(":", 1)[0], "batched-other"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_team_registry_read_has_the_expected_503(
+    pinning, monkeypatch
+):
     env = pinning
     monkeypatch.setenv("AWEB_DISCOVERY_ORIGIN", SERVICE)
     admitted = await _register(env, env.team_sk, dry_run=True)
@@ -152,7 +280,9 @@ async def _archive_global_member(env, actor):
         env.redis,
         LifecycleCascadeRequest(
             operation="archive_global_agent",
-            actor=LifecycleActor(actor_id=None, actor_type="support", authority="operator"),
+            actor=LifecycleActor(
+                actor_id=None, actor_type="support", authority="operator"
+            ),
             team_id=TEAM,
             target_agent_id=str(actor.id),
             workspace_scope="all_for_agent",
@@ -192,7 +322,9 @@ async def test_workspace_rosters_follow_readmission_after_team_key_rotation(pinn
         assert (peer.alias in aliases) is expected, result
 
     async with mounted_mcp(
-        env.app, db_infra=env.infra, redis=env.redis,
+        env.app,
+        db_infra=env.infra,
+        redis=env.redis,
         registry_client=application_registry_client(env.app.state),
     ):
         await assert_peer_listed(True)
@@ -251,7 +383,9 @@ async def test_certificate_acceptance_refuses_http_if_the_checked_key_rotates(
             await resume.wait()
         return result
 
-    monkeypatch.setattr(team_auth_deps, "verify_request_certificate", pause_after_verification)
+    monkeypatch.setattr(
+        team_auth_deps, "verify_request_certificate", pause_after_verification
+    )
     async with asyncio.TaskGroup() as requests:
         old_request = requests.create_task(_http(env, actor, "GET", path))
         async with asyncio.timeout(5):
@@ -261,10 +395,12 @@ async def test_certificate_acceptance_refuses_http_if_the_checked_key_rotates(
 
     refused = old_request.result()
     assert refused.status_code == 403, refused.text
-    assert refused.json() == {"detail": (
-        "Team membership is no longer current. Reconnect with a certificate "
-        "issued under the team's current key."
-    )}
+    assert refused.json() == {
+        "detail": (
+            "Team membership is no longer current. Reconnect with a certificate "
+            "issued under the team's current key."
+        )
+    }
     assert await env.db.fetch_one(projection, actor.id) == before
 
 
@@ -286,6 +422,7 @@ async def test_certificate_acceptance_owner_refuses_a_missing_checked_key(pinnin
     ):
         await resolve_team_identity(env.db, info, request=request)
     assert await env.db.fetch_one(projection, actor.id) == before
+
 
 @pytest.mark.asyncio
 async def test_a_superseded_claim_is_released_when_a_current_member_claims(pinning):
@@ -309,9 +446,14 @@ async def test_a_superseded_claim_is_released_when_a_current_member_claims(pinni
         claimed = await _http(env, contender, "PATCH", path, {"status": "in_progress"})
         assert claimed.status_code == 200, claimed.text
         transitions = []
-        while message := await events.get_message(ignore_subscribe_messages=True, timeout=0.25):
+        while message := await events.get_message(
+            ignore_subscribe_messages=True, timeout=0.25
+        ):
             event = json.loads(message["data"])
-            if event.get("task_ref") == ref and event["type"] in {"task.claimed", "task.unclaimed"}:
+            if event.get("task_ref") == ref and event["type"] in {
+                "task.claimed",
+                "task.unclaimed",
+            }:
                 transitions.append((event["type"], event["alias"]))
     claims = await env.db.fetch_all(
         "SELECT c.alias, w.agent_id FROM {{tables.task_claims}} c "
@@ -320,14 +462,21 @@ async def test_a_superseded_claim_is_released_when_a_current_member_claims(pinni
         TEAM,
         ref,
     )
-    assert [(c["alias"], c["agent_id"]) for c in claims] == [(contender.alias, contender.id)]
+    assert [(c["alias"], c["agent_id"]) for c in claims] == [
+        (contender.alias, contender.id)
+    ]
     assert claimed.json()["assignee_alias"] == contender.alias
-    assert transitions == [("task.unclaimed", holder.alias), ("task.claimed", contender.alias)]
+    assert transitions == [
+        ("task.unclaimed", holder.alias),
+        ("task.claimed", contender.alias),
+    ]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["superseded", "inactive"])
-async def test_identity_context_filters_members_before_projection_writes(pinning, change):
+async def test_identity_context_filters_members_before_projection_writes(
+    pinning, change
+):
     from aweb.identity_auth_deps import lookup_identity_agent_context
     from aweb.identity_binding import verify_identity_binding
 
@@ -376,7 +525,9 @@ async def test_address_discovery_programming_error_is_not_stored_binding_authori
     request = Request(
         {
             **_request(env, actor).scope,
-            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+            "headers": [
+                (key.lower().encode(), value.encode()) for key, value in headers.items()
+            ],
         }
     )
 
@@ -386,7 +537,9 @@ async def test_address_discovery_programming_error_is_not_stored_binding_authori
         raise TypeError("invalid discovery call")
 
     monkeypatch.setattr(
-        type(env.app.state.awid_registry_client), "list_did_addresses", invalid_dependency_call
+        type(env.app.state.awid_registry_client),
+        "list_did_addresses",
+        invalid_dependency_call,
     )
     with pytest.raises(TypeError, match="invalid discovery call"):
         await resolve_identity_auth(request)
@@ -394,10 +547,20 @@ async def test_address_discovery_programming_error_is_not_stored_binding_authori
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "change", ["rotation", "rotation-and-readmission", "revocation", "inactive", "unchanged", "outage"]
+    "change",
+    [
+        "rotation",
+        "rotation-and-readmission",
+        "revocation",
+        "inactive",
+        "unchanged",
+        "outage",
+    ],
 )
 async def test_certificate_stream_rechecks_its_original_authority_on_grant_cadence(
-    pinning, change, monkeypatch,
+    pinning,
+    change,
+    monkeypatch,
 ):
     from aweb.grant_streams import (
         STREAM_AUTHORITY_RECHECK_SECONDS,
@@ -439,12 +602,16 @@ async def test_certificate_stream_rechecks_its_original_authority_on_grant_caden
 
 
 @pytest.mark.asyncio
-async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, monkeypatch):
+@pytest.mark.parametrize("change", ["rotation", "revocation"])
+async def test_an_open_certificate_event_stream_reuses_admission_and_rechecks(
+    pinning, monkeypatch, change
+):
     from datetime import datetime, timedelta, timezone
 
     from aweb import grant_streams
     from aweb.connection_scope import request_memo
     from aweb.routes import events
+    from awid.team_certificate import decode_team_certificate
 
     env = pinning
     actor = await _admit(env, "eventstreamoriginal")
@@ -463,27 +630,49 @@ async def test_an_open_certificate_event_stream_stops_after_rotation(pinning, mo
 
     monkeypatch.setattr(grant_streams, "read_member_projection", observe_member_read)
     monkeypatch.setattr(grant_streams, "current_membership", observe_standing)
-    assert grant_streams.STREAM_AUTHORITY_RECHECK_SECONDS == events.STREAM_AUTHORITY_RECHECK_SECONDS == 30
+    assert (
+        grant_streams.STREAM_AUTHORITY_RECHECK_SECONDS
+        == events.STREAM_AUTHORITY_RECHECK_SECONDS
+        == 30
+    )
     monkeypatch.setattr(grant_streams, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
     monkeypatch.setattr(events, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
     deadline = datetime.now(timezone.utc) + timedelta(seconds=5)
     async with env.client.stream(
-        "GET", "/v1/events/stream", headers=headers, params={"deadline": deadline.isoformat()}
+        "GET",
+        "/v1/events/stream",
+        headers=headers,
+        params={"deadline": deadline.isoformat()},
     ) as response:
         assert response.status_code == 200
         lines = response.aiter_lines()
         assert await _next_event(lines) == {"agent_id": str(actor.id), "team_id": TEAM}
-        await _change_key(env)
+        if change == "rotation":
+            await _change_key(env)
+        else:
+            name, domain = TEAM.split(":", 1)
+            await application_registry_client(env.app.state).revoke_team_certificate(
+                domain,
+                name,
+                team_controller_signing_key=env.team_sk,
+                certificate_id=decode_team_certificate(actor.certificate)[
+                    "certificate_id"
+                ],
+            )
         terminal = await _next_event(lines)
         assert terminal["type"] == "team_membership_not_current", terminal
         async with asyncio.timeout(5):
             assert [line async for line in lines if line.startswith("data: ")] == []
-    assert True in standing_checks
+    assert not any(standing_checks)
+    if change == "revocation":
+        assert standing_checks
     assert member_reads and not any(member_reads)
 
 
 @pytest.mark.asyncio
-async def test_an_open_certificate_status_stream_stops_after_rotation(pinning, monkeypatch):
+async def test_an_open_certificate_status_stream_stops_after_rotation(
+    pinning, monkeypatch
+):
     from aweb import grant_streams
 
     env = pinning
@@ -492,7 +681,9 @@ async def test_an_open_certificate_status_stream_stops_after_rotation(pinning, m
     headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
     assert grant_streams.STREAM_AUTHORITY_RECHECK_SECONDS == 30
     clock = [0.0]
-    monkeypatch.setattr(grant_streams, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(
+        grant_streams, "time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
 
     async with env.client.stream(
         "GET", "/v1/status/stream", headers=headers, params={"workspace_id": workspace}
@@ -503,13 +694,22 @@ async def test_an_open_certificate_status_stream_stops_after_rotation(pinning, m
             while not (await env.redis.pubsub_numsub(channel))[0][1]:
                 await asyncio.sleep(0.01)
         lines = response.aiter_lines()
-        await publish_event(env.redis, TaskCreatedEvent(workspace_id=workspace, task_ref="before-rotation"))
+        await publish_event(
+            env.redis,
+            TaskCreatedEvent(workspace_id=workspace, task_ref="before-rotation"),
+        )
         before = await _next_event(lines)
-        assert (before["type"], before["task_ref"]) == ("task.created", "before-rotation")
+        assert (before["type"], before["task_ref"]) == (
+            "task.created",
+            "before-rotation",
+        )
 
         await _change_key(env)
         clock[0] += grant_streams.STREAM_AUTHORITY_RECHECK_SECONDS
-        await publish_event(env.redis, TaskCreatedEvent(workspace_id=workspace, task_ref="after-rotation"))
+        await publish_event(
+            env.redis,
+            TaskCreatedEvent(workspace_id=workspace, task_ref="after-rotation"),
+        )
         terminal = await _next_event(lines)
         assert terminal["type"] == "team_membership_not_current", terminal
         async with asyncio.timeout(5):
@@ -517,16 +717,26 @@ async def test_an_open_certificate_status_stream_stops_after_rotation(pinning, m
 
 
 @pytest.mark.asyncio
-async def test_idle_certificate_status_stream_closes_at_cap_during_registry_read(pinning, monkeypatch):
+async def test_idle_certificate_status_stream_closes_at_cap_during_registry_read(
+    pinning, monkeypatch
+):
     from aweb import grant_streams
     from aweb.routes import status
     from messaging_actor_support import admit_messaging_actor
 
     env = pinning
-    actor = await admit_messaging_actor(env, alias="idlecertificatestream", team_id=TEAM, local=True)
+    actor = await admit_messaging_actor(
+        env, alias="idlecertificatestream", team_id=TEAM, local=True
+    )
     workspace = actor.workspace_id
-    headers = _signed_team_headers(actor.signing_key, actor.did_key, TEAM, actor.certificate)
-    assert grant_streams.STREAM_MAX_DURATION_SECONDS == status.STREAM_MAX_DURATION_SECONDS == 300
+    headers = _signed_team_headers(
+        actor.signing_key, actor.did_key, TEAM, actor.certificate
+    )
+    assert (
+        grant_streams.STREAM_MAX_DURATION_SECONDS
+        == status.STREAM_MAX_DURATION_SECONDS
+        == 300
+    )
     monkeypatch.setattr(status, "STREAM_MAX_DURATION_SECONDS", 2)
     monkeypatch.setattr(grant_streams, "STREAM_AUTHORITY_RECHECK_SECONDS", 0.05)
 
@@ -540,8 +750,15 @@ async def test_idle_certificate_status_stream_closes_at_cap_during_registry_read
                 await asyncio.sleep(0.01)
             env.registry.transport.calls.clear()
             monkeypatch.setattr(env.registry.transport, "delay", 30)
-            assert [line async for line in response.aiter_lines() if line.startswith("data: ")] == []
-        assert any(request.url.path.endswith("/revocations") for request in env.registry.transport.calls)
+            assert [
+                line
+                async for line in response.aiter_lines()
+                if line.startswith("data: ")
+            ] == []
+        assert any(
+            request.url.path.endswith("/revocations")
+            for request in env.registry.transport.calls
+        )
         assert (await env.redis.pubsub_numsub(channel))[0][1] == 0
 
 
@@ -571,9 +788,12 @@ async def test_certificate_stream_refuses_missing_checked_key(pinning):
     for identity in (team_identity, messaging_identity):
         assert identity.verified_team_did_key == env.team_did
         assert identity.certificate_verified is True
-        assert await grant_terminal_reason(
-            request, env.infra, replace(identity, verified_team_did_key=None)
-        ) == "team_membership_not_current"
+        assert (
+            await grant_terminal_reason(
+                request, env.infra, replace(identity, verified_team_did_key=None)
+            )
+            == "team_membership_not_current"
+        )
 
 
 @pytest.mark.asyncio
@@ -602,7 +822,10 @@ async def test_local_key_recipient_uses_the_authenticated_senders_team(pinning, 
     path, payload = (
         ("/v1/messages", {"to_did": recipient.did, "body": "selected team"})
         if kind == "mail"
-        else ("/v1/chat/sessions", {"to_dids": [recipient.did], "message": "selected team"})
+        else (
+            "/v1/chat/sessions",
+            {"to_dids": [recipient.did], "message": "selected team"},
+        )
     )
     response = await _http(env, sender, "POST", path, payload)
     assert response.status_code == 200, response.text
@@ -639,36 +862,58 @@ async def test_actor_lookup_cannot_use_a_current_row_in_a_different_team(pinning
     other_team = "actors:example.test"
     await register_messaging_team(env, team_id=other_team)
     foreign = await admit_messaging_actor(
-        env, alias="otherchatactor", team_id=other_team, signing_key=actor.sk, local=True,
+        env,
+        alias="otherchatactor",
+        team_id=other_team,
+        signing_key=actor.sk,
+        local=True,
     )
-    eligible = await resolve_actor_agent(env.infra, [identity.did_key], team_id=identity.team_id)
+    eligible = await resolve_actor_agent(
+        env.infra, [identity.did_key], team_id=identity.team_id
+    )
     assert eligible["agent_id"] == actor.id
     await _change_key(env)
-    foreign_row = await resolve_actor_agent(env.infra, [identity.did_key], team_id=other_team)
+    foreign_row = await resolve_actor_agent(
+        env.infra, [identity.did_key], team_id=other_team
+    )
     assert str(foreign_row["agent_id"]) == foreign.agent_id
 
-    assert await resolve_actor_agent(env.infra, [identity.did_key], team_id=identity.team_id) is None
+    assert (
+        await resolve_actor_agent(
+            env.infra, [identity.did_key], team_id=identity.team_id
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
-async def test_federation_participant_conflict_uses_the_federation_refusal_owner(route_pair):
+async def test_federation_participant_conflict_uses_the_federation_refusal_owner(
+    route_pair,
+):
     from messaging_actor_support import admit_messaging_actor
     from test_messages_http import _federated_mail_payload, _registered_routing_pair
 
     world = await _registered_routing_pair(route_pair)
     source, target = world.source, world.target
     other = await admit_messaging_actor(
-        target.env, alias="alternate", team_id=target.actor.team_id,
+        target.env,
+        alias="alternate",
+        team_id=target.actor.team_id,
         address=target.actor.address.rsplit("/", 1)[0] + "/alternate",
     )
 
     def payload(recipient, *, conversation_id=None):
         return _federated_mail_payload(
-            sender_sk=source.actor.signing_key, sender_did_key=source.actor.did_key,
-            sender_did_aw=source.actor.stable_id, sender_address=source.actor.address,
-            sender_delivery_origin=source.node.origin, target_delivery_origin=target.node.origin,
-            target_did_aw=recipient.stable_id, target_did_key=recipient.did_key,
-            target_address=recipient.address, conversation_id=conversation_id,
+            sender_sk=source.actor.signing_key,
+            sender_did_key=source.actor.did_key,
+            sender_did_aw=source.actor.stable_id,
+            sender_address=source.actor.address,
+            sender_delivery_origin=source.node.origin,
+            target_delivery_origin=target.node.origin,
+            target_did_aw=recipient.stable_id,
+            target_did_key=recipient.did_key,
+            target_address=recipient.address,
+            conversation_id=conversation_id,
         )
 
     path = "/v1/federation/messages"
@@ -702,7 +947,9 @@ async def test_federation_participant_conflict_uses_the_federation_refusal_owner
 
 
 @pytest.mark.asyncio
-async def test_mcp_recipient_binding_mismatch_describes_the_recipient(route_pair, monkeypatch):
+async def test_mcp_recipient_binding_mismatch_describes_the_recipient(
+    route_pair, monkeypatch
+):
     from dataclasses import replace
 
     from awid.did import did_key_from_signing_key
@@ -715,7 +962,9 @@ async def test_mcp_recipient_binding_mismatch_describes_the_recipient(route_pair
     world = await _registered_routing_pair(route_pair)
     alice, bob = world.source.actor, world.target.actor
     target = world.target.node
-    opened = await target.client.post("/v1/federation/messages", json=_mail_to_resident(world))
+    opened = await target.client.post(
+        "/v1/federation/messages", json=_mail_to_resident(world)
+    )
     assert opened.status_code == 200, opened.text
     conversation_id = opened.json()["conversation_id"]
 
@@ -728,34 +977,55 @@ async def test_mcp_recipient_binding_mismatch_describes_the_recipient(route_pair
     mapping = await registry.register_did(alice.did_key, alice.signing_key)
     assert mapping.did_aw == alice.stable_id
     await registry.register_address(
-        domain, name, alice.stable_id, controller, current_did_key=alice.did_key,
+        domain,
+        name,
+        alice.stable_id,
+        controller,
+        current_did_key=alice.did_key,
     )
     route_pair.dns.records[(f"_awid.{domain}", "TXT")] = [
         f'"awid=v1;controller={did_key_from_signing_key(controller)};registry={target.registry_origin}"'
     ]
     await admit_messaging_actor(
-        world.target.env, alias="movedalice", team_id=bob.team_id,
+        world.target.env,
+        alias="movedalice",
+        team_id=bob.team_id,
         existing_identity=replace(alice, address=""),
     )
     monkeypatch.setattr(
-        target.server.app.state, "federation_public_origins", (target.origin, world.source.node.origin),
+        target.server.app.state,
+        "federation_public_origins",
+        (target.origin, world.source.node.origin),
         raising=False,
     )
     actor = Actor(
-        bob.signing_key, bob.did_key, "bob", bob.stable_id, bob.address,
-        UUID(bob.agent_id), bob.certificate,
+        bob.signing_key,
+        bob.did_key,
+        "bob",
+        bob.stable_id,
+        bob.address,
+        UUID(bob.agent_id),
+        bob.certificate,
     )
 
     async with mounted_mcp(
-        target.server.app, db_infra=target.server.db, redis=target.server.app.state.redis,
+        target.server.app,
+        db_infra=target.server.db,
+        redis=target.server.app.state.redis,
         registry_client=registry,
     ):
-        args = {"conversation_id": conversation_id, "body": "continue the stored route", "plaintext": True}
+        args = {
+            "conversation_id": conversation_id,
+            "body": "continue the stored route",
+            "plaintext": True,
+        }
         admitted = await _tool(target, actor, "send_mail", args, identity_only=True)
         assert "error" not in admitted and admitted["message_id"], admitted
         replacement_key, _, replacement_did = _make_keypair()
         replacement = await registry.register_did(replacement_did, replacement_key)
-        await registry.reassign_address(domain, name, replacement.did_aw, bytes(controller))
+        await registry.reassign_address(
+            domain, name, replacement.did_aw, bytes(controller)
+        )
         refused = await _tool(target, actor, "send_mail", args, identity_only=True)
 
     assert refused == {
@@ -766,14 +1036,18 @@ async def test_mcp_recipient_binding_mismatch_describes_the_recipient(route_pair
         "SELECT message_id, from_did, to_did FROM {{tables.messages}} WHERE conversation_id=$1",
         UUID(conversation_id),
     )
-    assert {(str(row["message_id"]), row["from_did"], row["to_did"]) for row in stored} == {
+    assert {
+        (str(row["message_id"]), row["from_did"], row["to_did"]) for row in stored
+    } == {
         (opened.json()["message_id"], alice.stable_id, bob.stable_id),
         (admitted["message_id"], bob.stable_id, alice.stable_id),
     }
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind,stable_selector", [("mail", False), ("mail", True), ("chat", False)])
+@pytest.mark.parametrize(
+    "kind,stable_selector", [("mail", False), ("mail", True), ("chat", False)]
+)
 async def test_a_verified_global_key_is_not_scoped_to_the_senders_team(
     pinning, kind, stable_selector
 ):
@@ -830,14 +1104,18 @@ async def test_a_verified_global_key_is_not_scoped_to_the_senders_team(
 
 
 @pytest.mark.asyncio
-async def test_workspace_deletion_releases_its_claim_and_another_member_can_claim(pinning):
+async def test_workspace_deletion_releases_its_claim_and_another_member_can_claim(
+    pinning,
+):
     env = pinning
     holder = await _admit(env, "retainedclaimholder")
     contender = await _admit(env, "replacementclaimholder")
     created = await _http(env, holder, "POST", "/v1/tasks", {"title": "retained claim"})
     assert created.status_code == 200, created.text
     ref = created.json()["task_ref"]
-    claimed = await _http(env, holder, "PATCH", "/v1/tasks/" + ref, {"status": "in_progress"})
+    claimed = await _http(
+        env, holder, "PATCH", "/v1/tasks/" + ref, {"status": "in_progress"}
+    )
     assert claimed.status_code == 200, claimed.text
     claim = await env.db.fetch_one(
         "SELECT workspace_id, alias FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
@@ -852,19 +1130,26 @@ async def test_workspace_deletion_releases_its_claim_and_another_member_can_clai
     assert deleted.json()["identity_deleted"] is True
     assert not await env.db.fetch_value(
         "SELECT EXISTS(SELECT 1 FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2)",
-        TEAM, ref,
+        TEAM,
+        ref,
     )
-    replacement = await _http(env, contender, "PATCH", "/v1/tasks/" + ref, {"status": "in_progress"})
+    replacement = await _http(
+        env, contender, "PATCH", "/v1/tasks/" + ref, {"status": "in_progress"}
+    )
     assert replacement.status_code == 200, replacement.text
     assert replacement.json()["assignee_alias"] == contender.alias
     claims = await env.db.fetch_all(
-        "SELECT alias FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2", TEAM, ref,
+        "SELECT alias FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+        TEAM,
+        ref,
     )
     assert [row["alias"] for row in claims] == [contender.alias]
 
 
 @pytest.mark.asyncio
-async def test_warm_certificate_authentication_can_read_a_delivery_locked_member(pinning):
+async def test_warm_certificate_authentication_can_read_a_delivery_locked_member(
+    pinning,
+):
     """A7's locked recheck must not serialize an unchanged reader with delivery."""
     import asyncio
 
@@ -881,7 +1166,8 @@ async def test_warm_certificate_authentication_can_read_a_delivery_locked_member
     # an event stream before the delivery's commit/wake.
     async with env.db.transaction() as tx:
         await tx.fetch_value(
-            "SELECT agent_id FROM {{tables.agents}} WHERE agent_id=$1 FOR SHARE", actor.id,
+            "SELECT agent_id FROM {{tables.agents}} WHERE agent_id=$1 FOR SHARE",
+            actor.id,
         )
         async with asyncio.timeout(6):
             response = await _http(env, actor, "GET", "/v1/agents")

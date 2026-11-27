@@ -44,7 +44,9 @@ async def test_import_rejects_stale_signed_request_before_acquisition():
             await verify_controller_import(
                 context=context,
                 request=request,
-                controller_signature=sign_message(bytes([81]) * 32, request.signing_bytes()),
+                controller_signature=sign_message(
+                    bytes([81]) * 32, request.signing_bytes()
+                ),
             )
     assert error.value.reason is TeamControlRequestReason.TIMESTAMP_INVALID
 
@@ -61,6 +63,8 @@ async def test_import_rejects_noncanonical_team_before_acquisition():
             await verify_controller_import(
                 context=context,
                 request=request,
-                controller_signature=sign_message(bytes([81]) * 32, request.signing_bytes()),
+                controller_signature=sign_message(
+                    bytes([81]) * 32, request.signing_bytes()
+                ),
             )
     assert error.value.reason is TeamControlRequestReason.TEAM_SCOPE_INVALID

@@ -36,10 +36,14 @@ class RegistryRequestAuth:
         token = (self.service_token or "").strip() or None
         object.__setattr__(self, "service_token", token)
         object.__setattr__(
-            self, "member_signing_keys", MappingProxyType(dict(self.member_signing_keys))
+            self,
+            "member_signing_keys",
+            MappingProxyType(dict(self.member_signing_keys)),
         )
 
-    def headers(self, method: str, path: str, *, signed_by_caller: bool = False) -> dict[str, str]:
+    def headers(
+        self, method: str, path: str, *, signed_by_caller: bool = False
+    ) -> dict[str, str]:
         """The authentication headers of one request for ``path`` (its query
         is not signed). A request the caller signs itself keeps that
         signature: only the service token joins it."""
@@ -57,9 +61,16 @@ class RegistryRequestAuth:
         return path_signature_headers(method, read_path, key)
 
 
-def path_signature_headers(method: str, path: str, signing_key: bytes) -> dict[str, str]:
+def path_signature_headers(
+    method: str, path: str, signing_key: bytes
+) -> dict[str, str]:
     """``signing_key``'s signature of one request for exactly ``path``."""
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     payload = f"{timestamp}\n{method}\n{path}".encode("utf-8")
     did_key = did_key_from_signing_key(signing_key)
     return {

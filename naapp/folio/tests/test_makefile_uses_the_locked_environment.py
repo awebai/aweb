@@ -31,9 +31,7 @@ _MAKEFILE = Path(__file__).resolve().parents[1] / "Makefile"
 def _recipe_lines() -> list[str]:
     """Every command line in the Makefile - the tab-indented ones."""
     return [
-        line
-        for line in _MAKEFILE.read_text(encoding="utf-8").splitlines()
-        if line.startswith("\t")
+        line for line in _MAKEFILE.read_text(encoding="utf-8").splitlines() if line.startswith("\t")
     ]
 
 

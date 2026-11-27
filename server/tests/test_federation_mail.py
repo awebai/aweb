@@ -104,18 +104,21 @@ async def test_federation_does_not_echo_control_bearing_content_encoding():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("content_encoding", ["identity", " Identity "])
 async def test_federation_accepts_identity_encoded_response(content_encoding: str):
-    assert await deliver_federated_message(
-        delivery_origin="https://target.example",
-        envelope=_envelope(),
-        signature="signature",
-        transport=MockTransport(
-            lambda _request: Response(
-                200,
-                json={},
-                headers={"Content-Encoding": content_encoding},
-            )
-        ),
-    ) == {}
+    assert (
+        await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=MockTransport(
+                lambda _request: Response(
+                    200,
+                    json={},
+                    headers={"Content-Encoding": content_encoding},
+                )
+            ),
+        )
+        == {}
+    )
 
 
 @pytest.mark.asyncio
@@ -183,7 +186,9 @@ async def test_federation_delivery_enforces_overall_deadline_on_slow_body():
             delivery_origin="https://target.example",
             envelope=_envelope(),
             signature="signature",
-            transport=MockTransport(lambda _request: Response(200, stream=SlowResponseStream())),
+            transport=MockTransport(
+                lambda _request: Response(200, stream=SlowResponseStream())
+            ),
             timeout=0.01,
         )
 
@@ -213,17 +218,22 @@ async def test_federation_delivery_explicitly_disables_redirects(monkeypatch):
     ("extra_bytes", "should_succeed"),
     [(0, True), (1, False)],
 )
-async def test_federation_delivery_enforces_response_limit(extra_bytes: int, should_succeed: bool):
+async def test_federation_delivery_enforces_response_limit(
+    extra_bytes: int, should_succeed: bool
+):
     content = b"{}" + b" " * (MAX_FEDERATION_RESPONSE_BYTES - 2 + extra_bytes)
     transport = MockTransport(lambda _request: Response(200, content=content))
 
     if should_succeed:
-        assert await deliver_federated_message(
-            delivery_origin="https://target.example",
-            envelope=_envelope(),
-            signature="signature",
-            transport=transport,
-        ) == {}
+        assert (
+            await deliver_federated_message(
+                delivery_origin="https://target.example",
+                envelope=_envelope(),
+                signature="signature",
+                transport=transport,
+            )
+            == {}
+        )
     else:
         with pytest.raises(Exception, match="maximum|size|large|limit"):
             await deliver_federated_message(
@@ -256,7 +266,9 @@ class ChunkedStream(httpx.AsyncByteStream):
 def _json_padding_chunks(total_bytes: int, chunk_size: int = 64 * 1024) -> list[bytes]:
     """An empty JSON document padded to exactly total_bytes, split into chunks."""
     body = b"{}" + b" " * (total_bytes - 2)
-    return [body[offset : offset + chunk_size] for offset in range(0, len(body), chunk_size)]
+    return [
+        body[offset : offset + chunk_size] for offset in range(0, len(body), chunk_size)
+    ]
 
 
 @pytest.mark.asyncio
@@ -264,21 +276,28 @@ def _json_padding_chunks(total_bytes: int, chunk_size: int = 64 * 1024) -> list[
     ("extra_bytes", "should_succeed"),
     [(0, True), (1, False)],
 )
-async def test_federation_delivery_bounds_a_streamed_response(extra_bytes: int, should_succeed: bool):
+async def test_federation_delivery_bounds_a_streamed_response(
+    extra_bytes: int, should_succeed: bool
+):
     chunks = _json_padding_chunks(MAX_FEDERATION_RESPONSE_BYTES + extra_bytes)
     stream = ChunkedStream(chunks)
     transport = MockTransport(lambda _request: Response(200, stream=stream))
 
     if should_succeed:
-        assert await deliver_federated_message(
-            delivery_origin="https://target.example",
-            envelope=_envelope(),
-            signature="signature",
-            transport=transport,
-        ) == {}
+        assert (
+            await deliver_federated_message(
+                delivery_origin="https://target.example",
+                envelope=_envelope(),
+                signature="signature",
+                transport=transport,
+            )
+            == {}
+        )
         assert stream.chunks_yielded == len(chunks)
     else:
-        with pytest.raises(FederatedMailDeliveryError, match="maximum size of 10485760 bytes"):
+        with pytest.raises(
+            FederatedMailDeliveryError, match="maximum size of 10485760 bytes"
+        ):
             await deliver_federated_message(
                 delivery_origin="https://target.example",
                 envelope=_envelope(),
@@ -293,7 +312,9 @@ async def test_federation_delivery_abandons_a_streamed_response_at_the_bound():
     chunks = [b" " * chunk_size] * (2 * MAX_FEDERATION_RESPONSE_BYTES // chunk_size)
     stream = ChunkedStream(chunks)
 
-    with pytest.raises(FederatedMailDeliveryError, match="maximum size of 10485760 bytes"):
+    with pytest.raises(
+        FederatedMailDeliveryError, match="maximum size of 10485760 bytes"
+    ):
         await deliver_federated_message(
             delivery_origin="https://target.example",
             envelope=_envelope(),
@@ -319,12 +340,15 @@ async def test_federation_delivery_requires_one_json_document(
     transport = MockTransport(lambda _request: Response(200, content=b"{}" + suffix))
 
     if should_succeed:
-        assert await deliver_federated_message(
-            delivery_origin="https://target.example",
-            envelope=_envelope(),
-            signature="signature",
-            transport=transport,
-        ) == {}
+        assert (
+            await deliver_federated_message(
+                delivery_origin="https://target.example",
+                envelope=_envelope(),
+                signature="signature",
+                transport=transport,
+            )
+            == {}
+        )
     else:
         with pytest.raises(FederatedMailDeliveryError, match="invalid JSON"):
             await deliver_federated_message(
@@ -355,7 +379,10 @@ async def test_federation_delivery_enforces_error_limit(
         )
     assert "xx" not in str(caught.value)
     if should_reach_remote_error:
-        assert str(caught.value) == "Federated mail delivery to https://target.example failed: HTTP 500"
+        assert (
+            str(caught.value)
+            == "Federated mail delivery to https://target.example failed: HTTP 500"
+        )
         assert caught.value.reason == "HTTP 500"
     else:
         assert "maximum size of 65536 bytes" in str(caught.value)
@@ -376,7 +403,9 @@ async def test_federation_delivery_enforces_error_limit(
         b"",
     ],
 )
-async def test_federation_delivery_does_not_relay_an_untyped_error_answer(content: bytes):
+async def test_federation_delivery_does_not_relay_an_untyped_error_answer(
+    content: bytes,
+):
     transport = MockTransport(lambda _request: Response(500, content=content))
 
     with pytest.raises(FederatedMailDeliveryError) as caught:
@@ -386,7 +415,10 @@ async def test_federation_delivery_does_not_relay_an_untyped_error_answer(conten
             signature="signature",
             transport=transport,
         )
-    assert str(caught.value) == "Federated mail delivery to https://target.example failed: HTTP 500"
+    assert (
+        str(caught.value)
+        == "Federated mail delivery to https://target.example failed: HTTP 500"
+    )
     assert caught.value.reason == "HTTP 500"
     assert caught.value.status_code == 502
 
@@ -403,7 +435,9 @@ async def test_federation_delivery_does_not_relay_an_untyped_error_answer(conten
     ],
 )
 async def test_federation_delivery_relays_only_the_typed_refusal_reason(
-    status: int, reason: str, relayed_status: int,
+    status: int,
+    reason: str,
+    relayed_status: int,
 ):
     body = {
         "detail": "The recipient is not set up for messaging; internal note 8f3a",
@@ -421,7 +455,10 @@ async def test_federation_delivery_relays_only_the_typed_refusal_reason(
             signature="signature",
             transport=transport,
         )
-    assert str(caught.value) == f"Federated mail delivery to https://target.example failed: {reason}"
+    assert (
+        str(caught.value)
+        == f"Federated mail delivery to https://target.example failed: {reason}"
+    )
     assert caught.value.reason == reason
     assert caught.value.status_code == relayed_status
 
@@ -439,7 +476,11 @@ async def test_federation_delivery_logs_a_bounded_sanitized_error_answer(caplog)
                 signature="signature",
                 transport=transport,
             )
-    [message] = [record.getMessage() for record in caplog.records if record.name == "aweb.federation.mail"]
+    [message] = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "aweb.federation.mail"
+    ]
     assert "https://target.example" in message
     assert "bad [31m next line" in message
     assert "\x1b" not in message
@@ -453,13 +494,27 @@ async def test_federation_delivery_logs_a_bounded_sanitized_error_answer(caplog)
     ("status", "content", "reason", "envelope_type"),
     [
         (200, b"not json\x1b[31m\nnext " + b"y" * 60_000, "invalid JSON", "mail"),
-        (200, b'["not", "an object\\u001b", "' + b"y" * 60_000 + b'"]', "invalid response", "mail"),
-        (422, b'{"reason": "recipient_human_mail_only", "retryable": false, "recipients": [],'
-              b' "detail": "free text\\u001b ' + b"y" * 60_000 + b'"}', None, "chat"),
+        (
+            200,
+            b'["not", "an object\\u001b", "' + b"y" * 60_000 + b'"]',
+            "invalid response",
+            "mail",
+        ),
+        (
+            422,
+            b'{"reason": "recipient_human_mail_only", "retryable": false, "recipients": [],'
+            b' "detail": "free text\\u001b ' + b"y" * 60_000 + b'"}',
+            None,
+            "chat",
+        ),
     ],
 )
 async def test_federation_delivery_logs_the_remote_text_it_does_not_relay(
-    status, content, reason, envelope_type, caplog,
+    status,
+    content,
+    reason,
+    envelope_type,
+    caplog,
 ):
     from aweb.messaging.chat_policy import HumanChatRefused
 
@@ -475,8 +530,13 @@ async def test_federation_delivery_logs_the_remote_text_it_does_not_relay(
                 transport=transport,
             )
     if reason is not None:
-        assert str(caught.value) == f"Federated mail delivery to https://target.example failed: {reason}"
-    [record] = [record for record in caplog.records if record.name == "aweb.federation.mail"]
+        assert (
+            str(caught.value)
+            == f"Federated mail delivery to https://target.example failed: {reason}"
+        )
+    [record] = [
+        record for record in caplog.records if record.name == "aweb.federation.mail"
+    ]
     message = record.getMessage()
     assert record.levelno == logging.WARNING
     assert "https://target.example" in message
@@ -516,11 +576,17 @@ async def test_federation_delivery_reports_a_transport_failure_by_kind():
         ("beta.test/bob", []),
     ],
 )
-async def test_federation_delivery_bounds_human_chat_refusal_recipients(recipients, relayed):
+async def test_federation_delivery_bounds_human_chat_refusal_recipients(
+    recipients, relayed
+):
     from aweb.messaging.chat_policy import HumanChatRefused
 
-    body = {"reason": "recipient_human_mail_only", "retryable": False, "recipients": recipients,
-            "detail": "free text"}
+    body = {
+        "reason": "recipient_human_mail_only",
+        "retryable": False,
+        "recipients": recipients,
+        "detail": "free text",
+    }
     envelope = _envelope().model_copy(update={"type": "chat"})
 
     with pytest.raises(HumanChatRefused) as caught:

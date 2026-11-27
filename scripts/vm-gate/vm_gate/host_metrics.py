@@ -47,7 +47,10 @@ def capture(proc=Path("/proc")):
                 return None
             return text
         except OSError as error:
-            result["errors"][name] = {"type": type(error).__name__, "errno": error.errno}
+            result["errors"][name] = {
+                "type": type(error).__name__,
+                "errno": error.errno,
+            }
             return None
 
     info = read("cpuinfo")
@@ -71,11 +74,15 @@ def capture(proc=Path("/proc")):
         result["proc_stat"] = stat
         try:
             aggregate = next(
-                line.split()[1:] for line in stat.splitlines() if line.startswith("cpu ")
+                line.split()[1:]
+                for line in stat.splitlines()
+                if line.startswith("cpu ")
             )
             if len(aggregate) < 8:
                 raise ValueError("aggregate lacks steal/iowait fields")
-            result["cpu_ticks"] = dict(zip(CPU_FIELDS, map(int, aggregate), strict=False))
+            result["cpu_ticks"] = dict(
+                zip(CPU_FIELDS, map(int, aggregate), strict=False)
+            )
         except (StopIteration, ValueError) as error:
             result["errors"]["stat"] = {"type": type(error).__name__}
     result["pressure"] = {name: read("pressure/" + name) for name in ("cpu", "io")}

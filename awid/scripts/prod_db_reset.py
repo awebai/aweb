@@ -23,6 +23,7 @@ Use `--column-inserts` for the dump so we can restore into a schema with
 additional NULLABLE columns (e.g. `team_certificates.certificate` added
 in 0.5.x).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -65,11 +66,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
         value = value.strip()
         if not key:
             continue
-        if (
-            len(value) >= 2
-            and value[0] == value[-1]
-            and value[0] in {"'", '"'}
-        ):
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
         values[key] = value
     return values
@@ -84,13 +81,9 @@ def _config_from_env(env_file: Path) -> tuple[str, str]:
         or os.environ.get("DATABASE_URL")
     )
     if not database_url:
-        raise SystemExit(
-            f"AWID_DATABASE_URL not found in {env_file} or environment"
-        )
+        raise SystemExit(f"AWID_DATABASE_URL not found in {env_file} or environment")
     schema = (
-        values.get("AWID_DB_SCHEMA")
-        or os.environ.get("AWID_DB_SCHEMA")
-        or "awid"
+        values.get("AWID_DB_SCHEMA") or os.environ.get("AWID_DB_SCHEMA") or "awid"
     ).strip() or "awid"
     return database_url, schema
 
@@ -131,15 +124,13 @@ def _quote_ident(name: str) -> str:
 
 # Sanitize dumps for restore:
 #   - pg_dump 17+ emits `SET transaction_timeout = 0;` which PG 16 servers
-#     (Neon prod, the awid-up local stack) reject as unknown parameter.
+#     (Neon prod, a local awid compose stack) reject as unknown parameter.
 #   - The drop-and-migrate step rebuilds `schema_migrations` from the new
 #     migration file. Restoring the dumped rows would either collide on the
 #     primary key or pin an old checksum that pgdbm would reject on next boot.
 #     Strip schema_migrations DML so the freshly-applied migration record
 #     remains canonical.
-_INCOMPATIBLE_SET_PREFIXES = (
-    "SET transaction_timeout",
-)
+_INCOMPATIBLE_SET_PREFIXES = ("SET transaction_timeout",)
 
 
 def _is_schema_migrations_dml(line: str, schema: str) -> bool:
@@ -147,7 +138,10 @@ def _is_schema_migrations_dml(line: str, schema: str) -> bool:
     qualified = f"{schema}.schema_migrations"
     if head.startswith(f"INSERT INTO {qualified}"):
         return True
-    if head.startswith("SELECT pg_catalog.setval(") and "schema_migrations_id_seq" in head:
+    if (
+        head.startswith("SELECT pg_catalog.setval(")
+        and "schema_migrations_id_seq" in head
+    ):
         return True
     return False
 
@@ -183,9 +177,7 @@ def _sanitize_dump_in_place(path: Path, *, schema: str) -> None:
 def _row_counts(*, database_url: str, schema: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     for table in AWID_TABLES:
-        sql = (
-            f"SELECT COUNT(*) FROM {_quote_ident(schema)}.{_quote_ident(table)};"
-        )
+        sql = f"SELECT COUNT(*) FROM {_quote_ident(schema)}.{_quote_ident(table)};"
         try:
             out = _psql_query(database_url=database_url, sql=sql).strip()
             counts[table] = int(out) if out else 0
@@ -238,9 +230,7 @@ def cmd_dump(args: argparse.Namespace) -> None:
 def cmd_drop_schema(args: argparse.Namespace) -> None:
     database_url, schema = _config_from_env(args.env_file)
     if not args.yes:
-        raise SystemExit(
-            f"refusing to DROP SCHEMA {schema} CASCADE without --yes"
-        )
+        raise SystemExit(f"refusing to DROP SCHEMA {schema} CASCADE without --yes")
     print(
         f"DROP SCHEMA {_quote_ident(schema)} CASCADE on {_redact_url(database_url)}",
         flush=True,
@@ -405,9 +395,7 @@ def _redact_url(url: str) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    default_env = (
-        Path(__file__).resolve().parents[2] / ".env.awid-production"
-    )
+    default_env = Path(__file__).resolve().parents[2] / ".env.awid-production"
 
     parser = argparse.ArgumentParser(
         description="awid registry production DB lifecycle helpers.",

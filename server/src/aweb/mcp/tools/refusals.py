@@ -24,16 +24,17 @@ from aweb.messaging.refusals import (
     RecipientAddressNotFound,
 )
 from aweb.e2ee_messages import E2EERecipientKeyMismatch
-from aweb.federation.errors import LocalRecipientNotFoundError, RecipientNotResidentError
+from aweb.federation.errors import (
+    LocalRecipientNotFoundError,
+    RecipientNotResidentError,
+)
 from aweb.messaging.address_auth import unreachable_address_refusal
 from aweb.messaging.chat_send import LOCAL_DID_KEY_RECIPIENT_UNREACHABLE
 
 REGISTRY_CANNOT_CONFIRM_ADDRESS = (
     "the registry can't confirm {address} right now; try again, or check the address"
 )
-SENDER_KEY_NOT_PUBLISHED = (
-    "your encryption key isn't published yet; try again shortly, and if it persists contact support"
-)
+SENDER_KEY_NOT_PUBLISHED = "your encryption key isn't published yet; try again shortly, and if it persists contact support"
 SENDER_KEY_NOT_VERIFIABLE = (
     "your published encryption key can't be verified right now; try again shortly, "
     "and if it persists contact support"
@@ -71,7 +72,9 @@ class SendRefusalMode(Enum):
 def require_send_refusal_mode(mode: SendRefusalMode) -> None:
     """Reject unnamed formatting intent before interpreting any refusal subtype."""
     if not isinstance(mode, SendRefusalMode):
-        raise TypeError("Pass a named SendRefusalMode value before formatting a send refusal.")
+        raise TypeError(
+            "Pass a named SendRefusalMode value before formatting a send refusal."
+        )
 
 
 def send_refusal(
@@ -100,12 +103,17 @@ def send_refusal(
                 }
             )
         return json.dumps({"error": exc.detail, "reason": exc.code.value})
-    if isinstance(exc, RecipientIdentityBindingError) and exc.code is IdentityBindingCode.MISMATCH:
+    if (
+        isinstance(exc, RecipientIdentityBindingError)
+        and exc.code is IdentityBindingCode.MISMATCH
+    ):
         return json.dumps({"error": RECIPIENT_KEY_CHANGED, "reason": exc.code})
     if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):
         return json.dumps({"error": exc.message, "reason": exc.code})
     if isinstance(exc, RecipientAddressNotFound) and address:
-        return json.dumps({"error": unreachable_address_refusal(address), "reason": exc.code.value})
+        return json.dumps(
+            {"error": unreachable_address_refusal(address), "reason": exc.code.value}
+        )
     if isinstance(exc, MailConversationExists):
         return json.dumps({"error": exc.recovery_action, "reason": exc.code.value})
     if isinstance(exc, ContactIdentityBindingRequired):
@@ -114,7 +122,8 @@ def send_refusal(
         address
         and isinstance(exc, FederationAuthorityError)
         and not isinstance(exc, RecipientNotResidentError)
-        and exc.reason in ("recipient_identity_not_found", "local_recipient_route_missing")
+        and exc.reason
+        in ("recipient_identity_not_found", "local_recipient_route_missing")
     ):
         # Normalize before local-miss subtype details (including R2's typed
         # local recipient refusal). A registered global nonresident retains
@@ -126,16 +135,22 @@ def send_refusal(
             }
         )
     if isinstance(exc, (RecipientNotResidentError, LocalRecipientNotFoundError)):
-        return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
+        return json.dumps(
+            {"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable}
+        )
     if isinstance(exc, FederationAuthorityError):
         if exc.reason in (
             "recipient_identity_not_found",
             "local_recipient_route_missing",
         ):
             reason = (
-                DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value if address else exc.reason
+                DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND.value
+                if address
+                else exc.reason
             )
-            return json.dumps({"error": unreachable_address_refusal(address), "reason": reason})
+            return json.dumps(
+                {"error": unreachable_address_refusal(address), "reason": reason}
+            )
         next_action = None
         if address and exc.reason == "sender_registry_unavailable":
             next_action = REGISTRY_CANNOT_CONFIRM_ADDRESS.format(address=address)
@@ -159,9 +174,13 @@ def send_refusal(
         and isinstance(detail, dict)
         and detail.get("code") == "address_evidence_unavailable"
     ):
-        return json.dumps({"error": detail["message"], "reason": detail["code"], "retryable": True})
+        return json.dumps(
+            {"error": detail["message"], "reason": detail["code"], "retryable": True}
+        )
     if isinstance(exc.__cause__, E2EERecipientKeyMismatch):
         return json.dumps({"error": RECIPIENT_KEY_CHANGED})
     if detail == LOCAL_DID_KEY_RECIPIENT_UNREACHABLE:
         return json.dumps({"error": RECIPIENT_UNREACHABLE_IN_CONVERSATION})
-    return json.dumps({"error": detail if detail is not None else INTERNAL_SERVICE_ERROR_MESSAGE})
+    return json.dumps(
+        {"error": detail if detail is not None else INTERNAL_SERVICE_ERROR_MESSAGE}
+    )

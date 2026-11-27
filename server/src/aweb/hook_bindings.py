@@ -29,7 +29,12 @@ from awid.registry import RegistryClient
 from awid.team_key_acts import TeamKeyMemo
 from pgdbm import AsyncDatabaseManager
 
-from aweb.app_registry import normalize_app_id, normalize_digest, normalize_origin, validate_team_id
+from aweb.app_registry import (
+    normalize_app_id,
+    normalize_digest,
+    normalize_origin,
+    validate_team_id,
+)
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.certificate_evidence import EvidenceMode
 from aweb.team_key_reader import read_team_key
@@ -337,12 +342,17 @@ def core_owner_act_verifier(
         except AWID_DEPENDENCY_ERRORS as exc:
             raise OwnerActTeamKeyUnavailable(exc) from exc
         if not key:
-            raise Refused("owner_required", "the team has no controller key at its registry")
+            raise Refused(
+                "owner_required", "the team has no controller key at its registry"
+            )
         return key
 
     try:
         return OwnerActVerifier(
-            scope=OWNER_ACT_SCOPE, audience=audience, acts=CORE_ACTS, team_key_for=team_key_for
+            scope=OWNER_ACT_SCOPE,
+            audience=audience,
+            acts=CORE_ACTS,
+            team_key_for=team_key_for,
         )
     except Refused as refused:
         raise _service_error(refused) from refused
@@ -395,7 +405,9 @@ def _subject(binding: HookBinding) -> dict[str, Any]:
     )
 
 
-async def _binding(db, *, team_id: str, binding_id: UUID | str, lock: bool) -> HookBinding:
+async def _binding(
+    db, *, team_id: str, binding_id: UUID | str, lock: bool
+) -> HookBinding:
     try:
         binding_uuid = UUID(str(binding_id))
     except ValueError as exc:
@@ -459,13 +471,17 @@ async def _apply_owner_act(
 ) -> HookBinding:
     team_id = validate_team_id(team_id)
     # Refusals that need no signature come first; the transaction checks them again.
-    _require_live(await _binding(db, team_id=team_id, binding_id=binding_id, lock=False), act=act)
+    _require_live(
+        await _binding(db, team_id=team_id, binding_id=binding_id, lock=False), act=act
+    )
     try:
         prepared = await verifier.prepare(signing, signature, team_id=team_id)
     except Refused as refused:
         raise _service_error(refused) from refused
     if prepared.act_name != act:
-        raise ForbiddenError(f"act_not_allowed: this change takes {act}, not {prepared.act_name}")
+        raise ForbiddenError(
+            f"act_not_allowed: this change takes {act}, not {prepared.act_name}"
+        )
     act_sha256 = hashlib.sha256(signing).hexdigest()
     async with db.transaction() as tx:
         binding = await _binding(tx, team_id=team_id, binding_id=binding_id, lock=False)

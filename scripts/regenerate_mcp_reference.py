@@ -100,7 +100,9 @@ def validate_coverage(tools: Mapping[str, Any]) -> None:
         if not isinstance(tool.description, str) or not tool.description.strip():
             raise CoverageError(f"registered tool has no description: {name}")
         schema = tool.inputSchema
-        if not isinstance(schema, dict) or not isinstance(schema.get("properties"), dict):
+        if not isinstance(schema, dict) or not isinstance(
+            schema.get("properties"), dict
+        ):
             raise CoverageError(f"registered tool has unsupported input schema: {name}")
         output_schema = tool.outputSchema
         result = (output_schema or {}).get("properties", {}).get("result", {})

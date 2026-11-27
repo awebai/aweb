@@ -24,7 +24,9 @@ def check_chain_structure(chain: list[dict]) -> None:
         if cert["domain"] != domain:
             raise IdentityTreeRefusal("domain_mismatch")
         if cert["id"] in seen:
-            raise IdentityTreeRefusal("cycle" if cert["id"] == leaf["id"] else "duplicate_id")
+            raise IdentityTreeRefusal(
+                "cycle" if cert["id"] == leaf["id"] else "duplicate_id"
+            )
         if previous is None:
             if parent["kind"] != "namespace":
                 raise IdentityTreeRefusal("missing_parent")

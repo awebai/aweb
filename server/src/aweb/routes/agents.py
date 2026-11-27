@@ -53,7 +53,11 @@ from aweb.inbound_modes import (
     normalize_inbound_mode,
     set_identity_inbound_mode,
 )
-from aweb.member_team_key import MemberProjection, current_member, read_member_projection
+from aweb.member_team_key import (
+    MemberProjection,
+    current_member,
+    read_member_projection,
+)
 from aweb.role_name_compat import (
     normalize_optional_role_name,
     resolve_role_name_aliases,
@@ -66,7 +70,11 @@ from aweb.team_auth_deps import (
     team_identity_with_grant_scope,
 )
 
-from ..presence import update_agent_presence
+from ..presence import (
+    HostedHeartbeatPresence,
+    refresh_agent_presence,
+    update_agent_presence,
+)
 from aweb.config import get_presence_ttl_seconds
 from aweb.workspace_activity import (
     PresenceStatus,
@@ -492,6 +500,7 @@ async def list_agents(
         identity.team_id,
     )
 
+    # Redis or grant activity can make any workspace of a listed agent the newest.
     workspace_rows = await aweb_db.fetch_all(
         f"""SELECT w.workspace_id, w.agent_id, w.workspace_type, w.hostname,
                   w.team_id, w.last_seen_at, w.workspace_path, w.role AS ws_role,
@@ -499,18 +508,20 @@ async def list_agents(
            FROM {{{{tables.workspaces}}}} w
            LEFT JOIN {{{{tables.repos}}}} r ON r.id=w.repo_id AND r.deleted_at IS NULL
            {workspace_grant_liveness_join_sql(workspace="w", ttl_seconds_parameter="$2")}
-           WHERE w.team_id=$1 AND w.deleted_at IS NULL
+           WHERE w.team_id=$1 AND w.deleted_at IS NULL AND w.agent_id=ANY($3::uuid[])
            ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id,
                     grant_liveness.grant_liveness_last_seen_at DESC,
                     grant_liveness.grant_liveness_grant_id""",
         identity.team_id,
         get_presence_ttl_seconds(),
+        [row["agent_id"] for row in rows],
     )
     activity_by_id = await workspace_activity_by_id(
         aweb_db,
         redis,
         workspace_ids=[str(row["workspace_id"]) for row in workspace_rows],
         workspace_rows=workspace_rows,
+        presence_display_fields=("status", "role"),
         registry_client=application_registry_client(request.app.state),
         request=request,
         failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
@@ -671,13 +682,30 @@ async def heartbeat(
         raise HTTPException(status_code=409, detail="Agent has no active workspace")
 
     ttl_seconds = get_presence_ttl_seconds()
-    last_seen = await update_agent_presence(
-        redis,
-        workspace_id=str(workspace["workspace_id"]),
-        alias=identity.alias,
-        team_id=identity.team_id,
-        ttl_seconds=ttl_seconds,
-    )
+    workspace_id = str(workspace["workspace_id"])
+    hosted = getattr(request.state, "hosted_heartbeat_presence", None)
+    if (
+        isinstance(hosted, HostedHeartbeatPresence)
+        and hosted.workspace_id == workspace_id
+        and hosted.team_id == identity.team_id
+    ):
+        merged = await refresh_agent_presence(
+            redis,
+            workspace_id=workspace_id,
+            alias=identity.alias,
+            team_id=identity.team_id,
+            ttl_seconds=ttl_seconds,
+            projection=hosted.projection,
+        )
+        last_seen = merged["last_seen"]
+    else:
+        last_seen = await update_agent_presence(
+            redis,
+            workspace_id=workspace_id,
+            alias=identity.alias,
+            team_id=identity.team_id,
+            ttl_seconds=ttl_seconds,
+        )
 
     return HeartbeatResponse(
         agent_id=identity.agent_id,
@@ -714,7 +742,9 @@ async def _load_current_agent_inbound_mode(
                 status_code=409, detail="Agent inbound policy is unavailable"
             ) from exc
     if inbound_mode not in INBOUND_MODES:
-        raise HTTPException(status_code=409, detail="Agent inbound policy is unavailable")
+        raise HTTPException(
+            status_code=409, detail="Agent inbound policy is unavailable"
+        )
     return AgentInboundModeResponse(
         agent_id=str(row["agent_id"]),
         team_id=str(row["team_id"]),

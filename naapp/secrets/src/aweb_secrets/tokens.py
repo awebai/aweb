@@ -86,7 +86,8 @@ class ProcessTokenCache:
         evicted = [
             digest
             for digest, (key, _, _) in self._tokens.items()
-            if (key.installation_id, key.team_id, key.secret_id) == (installation_id, team_id, secret_id)
+            if (key.installation_id, key.team_id, key.secret_id)
+            == (installation_id, team_id, secret_id)
         ]
         for digest in evicted:
             del self._tokens[digest]

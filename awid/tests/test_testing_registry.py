@@ -30,7 +30,9 @@ def _did_key(key: SigningKey) -> str:
     return did_from_public_key(bytes(key.verify_key))
 
 
-def _certificate(team_key: SigningKey, member_key: SigningKey, certificate_id: str) -> dict:
+def _certificate(
+    team_key: SigningKey, member_key: SigningKey, certificate_id: str
+) -> dict:
     cert = {
         "version": 1,
         "certificate_id": certificate_id,
@@ -63,9 +65,15 @@ async def test_an_added_team_is_served_with_its_key(database_url) -> None:
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
         client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
-        assert await client.get_team_public_key("example.com", "backend") == _did_key(team_key)
-        await registry.rotate_team_key(TEAM_ID, _did_key(rotated := SigningKey.generate()))
-        assert await client.get_team_public_key("example.com", "backend") == _did_key(rotated)
+        assert await client.get_team_public_key("example.com", "backend") == _did_key(
+            team_key
+        )
+        await registry.rotate_team_key(
+            TEAM_ID, _did_key(rotated := SigningKey.generate())
+        )
+        assert await client.get_team_public_key("example.com", "backend") == _did_key(
+            rotated
+        )
 
 
 @pytest.mark.asyncio
@@ -89,9 +97,13 @@ async def test_fixture_setup_creates_a_namespace_before_its_team(database_url) -
     team_key = SigningKey.generate()
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
-        async with httpx.AsyncClient(transport=registry.transport, base_url=REGISTRY_URL) as client:
+        async with httpx.AsyncClient(
+            transport=registry.transport, base_url=REGISTRY_URL
+        ) as client:
             namespace = await client.get("/v1/namespaces/example.com")
-        assert namespace.status_code == 200, "fixture team has no registered namespace authority"
+        assert namespace.status_code == 200, (
+            "fixture team has no registered namespace authority"
+        )
         writes = [
             (request.method, request.url.path)
             for request in registry.transport.calls
@@ -125,9 +137,9 @@ async def test_fixture_setup_rejects_a_forged_certificate_without_writing(
 ) -> None:
     team_key, member_key = SigningKey.generate(), SigningKey.generate()
     certificate = _certificate(team_key, member_key, "cert-forged")
-    certificate["signature"] = _certificate(SigningKey.generate(), member_key, "cert-forged")[
-        "signature"
-    ]
+    certificate["signature"] = _certificate(
+        SigningKey.generate(), member_key, "cert-forged"
+    )["signature"]
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
         with pytest.raises(RegistryError) as refused:
@@ -137,7 +149,10 @@ async def test_fixture_setup_rejects_a_forged_certificate_without_writing(
             "certificate signature verification failed",
         )
         assert (
-            await registry.db.fetch_value("SELECT count(*) FROM {{tables.team_certificates}}") == 0
+            await registry.db.fetch_value(
+                "SELECT count(*) FROM {{tables.team_certificates}}"
+            )
+            == 0
         )
 
 
@@ -153,13 +168,21 @@ async def test_a_did_registers_and_rotates_through_awid(database_url) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_published_team_server_record_verifies_against_the_team_key(database_url) -> None:
+async def test_a_published_team_server_record_verifies_against_the_team_key(
+    database_url,
+) -> None:
     team_key = SigningKey.generate()
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
-        await registry.publish_team_server(TEAM_ID, team_key, server_url="https://aweb.example")
-        async with httpx.AsyncClient(transport=registry.transport, base_url=REGISTRY_URL) as client:
-            body = (await client.get("/v1/namespaces/example.com/teams/backend/server")).json()
+        await registry.publish_team_server(
+            TEAM_ID, team_key, server_url="https://aweb.example"
+        )
+        async with httpx.AsyncClient(
+            transport=registry.transport, base_url=REGISTRY_URL
+        ) as client:
+            body = (
+                await client.get("/v1/namespaces/example.com/teams/backend/server")
+            ).json()
         record = verify_team_server_record(
             body["record"],
             body["signature"],
@@ -173,7 +196,9 @@ async def test_a_published_team_server_record_verifies_against_the_team_key(data
 @pytest.mark.asyncio
 async def test_the_transport_records_requests_and_carries_faults(database_url) -> None:
     async with running_registry(database_url) as registry:
-        async with httpx.AsyncClient(transport=registry.transport, base_url=REGISTRY_URL) as client:
+        async with httpx.AsyncClient(
+            transport=registry.transport, base_url=REGISTRY_URL
+        ) as client:
             path = "/v1/namespaces/example.com/teams/backend"
             assert (await client.get(path)).status_code == 404
             assert [request.url.path for request in registry.transport.calls] == [path]
@@ -188,10 +213,16 @@ async def test_the_transport_records_requests_and_carries_faults(database_url) -
 
 
 @pytest.mark.asyncio
-async def test_the_registry_reports_its_health_with_the_redis_it_is_given(database_url) -> None:
-    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0")) as redis:
+async def test_the_registry_reports_its_health_with_the_redis_it_is_given(
+    database_url,
+) -> None:
+    async with Redis.from_url(
+        os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    ) as redis:
         async with running_registry(database_url, redis=redis) as registry:
-            client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
+            client = RegistryClient(
+                registry_url=REGISTRY_URL, transport=registry.transport
+            )
             health = await client.health()
     assert health["status"] == "ok"
     assert health["checks"]["redis"] == health["checks"]["database"] == "ok"
@@ -203,7 +234,9 @@ async def test_the_registry_without_redis_is_live_and_not_ready(database_url) ->
         client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
         with pytest.raises(RegistryError) as unhealthy:
             await client.health()
-        async with httpx.AsyncClient(transport=registry.transport, base_url=REGISTRY_URL) as http:
+        async with httpx.AsyncClient(
+            transport=registry.transport, base_url=REGISTRY_URL
+        ) as http:
             live = await http.get("/live")
     assert unhealthy.value.status_code == 503
     assert unhealthy.value.body["checks"] == {
@@ -220,13 +253,16 @@ async def test_fixture_namespace_custody_cannot_silently_change(database_url):
     async with running_registry(database_url) as registry:
         original, public_key = generate_keypair()
         assert (
-            await registry.ensure_namespace(domain="example.com", controller=original) is original
+            await registry.ensure_namespace(domain="example.com", controller=original)
+            is original
         )
         assert await registry.ensure_namespace(domain="example.com") is original
         other, _ = generate_keypair()
         with pytest.raises(ValueError) as refused:
             await registry.ensure_namespace(domain="example.com", controller=other)
-        assert str(refused.value).endswith("Pass its current signing key as controller=.")
+        assert str(refused.value).endswith(
+            "Pass its current signing key as controller=."
+        )
         namespace = await RegistryClient(
             registry_url=REGISTRY_URL, transport=registry.transport
         ).get_namespace("example.com")
@@ -251,7 +287,9 @@ async def test_fixture_dns_requires_a_published_namespace_authority(database_url
     async with running_registry(database_url) as registry:
         with pytest.raises(DnsVerificationError) as refused:
             await registry.namespace_authority("missing.example")
-        assert str(refused.value).endswith("Register the namespace through ensure_namespace first.")
+        assert str(refused.value).endswith(
+            "Register the namespace through ensure_namespace first."
+        )
         assert not registry.transport.calls
 
 

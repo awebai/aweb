@@ -197,10 +197,15 @@ def _candidate_domains(domain: str, registered_domain: str | None) -> list[str]:
         raise FederationAuthorityError("sender_registry_discovery_failed")
     labels = domain.split(".")
     boundary_labels = registered_domain.split(".")
-    return [".".join(labels[index:]) for index in range(len(labels) - len(boundary_labels) + 1)]
+    return [
+        ".".join(labels[index:])
+        for index in range(len(labels) - len(boundary_labels) + 1)
+    ]
 
 
-def _parse_awid_record(record: str, *, dns_name: str, context: OriginContext) -> RegistryAuthority:
+def _parse_awid_record(
+    record: str, *, dns_name: str, context: OriginContext
+) -> RegistryAuthority:
     fields: dict[str, str] = {}
     for raw_part in record.split(";"):
         part = raw_part.strip()
@@ -246,7 +251,11 @@ async def discover_registry_authority(
             continue
         if result.outcome != "record":
             raise FederationAuthorityError("sender_registry_discovery_failed")
-        records = tuple(record.strip() for record in result.records if record.strip().startswith("awid="))
+        records = tuple(
+            record.strip()
+            for record in result.records
+            if record.strip().startswith("awid=")
+        )
         if len(records) != 1:
             raise FederationAuthorityError("sender_registry_discovery_failed")
         authority = _parse_awid_record(records[0], dns_name=qname, context=context)
@@ -312,14 +321,21 @@ def _is_isolated_host(host: str) -> bool:
 
 
 def _isolated_http_enabled(host: str, context: OriginContext) -> bool:
-    if context.app_env.strip().lower() != "development" or not context.federation_test_enabled:
+    if (
+        context.app_env.strip().lower() != "development"
+        or not context.federation_test_enabled
+    ):
         return False
     try:
         listener = urlsplit(context.listener_origin)
     except ValueError:
         return False
     listener_host = listener.hostname or ""
-    return bool(listener_host) and _is_isolated_host(host) and _is_isolated_host(listener_host)
+    return (
+        bool(listener_host)
+        and _is_isolated_host(host)
+        and _is_isolated_host(listener_host)
+    )
 
 
 def canonical_registry_origin(raw: str, *, context: OriginContext | None = None) -> str:
@@ -434,11 +450,17 @@ def normalize_source_ip(
     if not any(peer in network for network in networks):
         return SourceIP(str(peer), False, False)
     try:
-        hops = [ipaddress.ip_address(value.strip()) for value in forwarded_for.split(",")]
+        hops = [
+            ipaddress.ip_address(value.strip()) for value in forwarded_for.split(",")
+        ]
     except ValueError:
         return SourceIP(None, False, True)
     source = next(
-        (hop for hop in reversed(hops) if not any(hop in network for network in networks)),
+        (
+            hop
+            for hop in reversed(hops)
+            if not any(hop in network for network in networks)
+        ),
         None,
     )
     return SourceIP(str(source) if source is not None else None, True, source is None)

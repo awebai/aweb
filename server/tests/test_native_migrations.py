@@ -10,14 +10,19 @@ def test_complete_native_migration_inventory_is_packaged():
     from aweb.migrations import native_migration_modules
 
     inventory = native_migration_modules()
-    assert [module.module_name for module in inventory] == ["aweb-aweb", "aweb_naapp_hooks"]
+    assert [module.module_name for module in inventory] == [
+        "aweb-aweb",
+        "aweb_naapp_hooks",
+    ]
     for module in inventory:
         assert module.migrations_path.is_dir()
         assert list(module.migrations_path.glob("*.sql")), module.module_name
 
 
 @pytest.mark.asyncio
-async def test_core_only_host_is_not_ready_until_owner_act_module_is_applied(shared_test_pool):
+async def test_core_only_host_is_not_ready_until_owner_act_module_is_applied(
+    shared_test_pool,
+):
     from aweb.migrations import (
         AppliedNativeMigrations,
         PendingNativeMigrations,
@@ -31,27 +36,41 @@ async def test_core_only_host_is_not_ready_until_owner_act_module_is_applied(sha
     try:
         db = infra.get_manager("aweb")
         inventory = native_migration_modules()
-        assert [module.module_name for module in inventory] == ["aweb-aweb", "aweb_naapp_hooks"]
+        assert [module.module_name for module in inventory] == [
+            "aweb-aweb",
+            "aweb_naapp_hooks",
+        ]
         fresh = await pending_native_migrations(db)
         assert isinstance(fresh, PendingNativeMigrations)
         assert not fresh.ready
-        assert {item.module_name for item in fresh.pending} == {"aweb-aweb", "aweb_naapp_hooks"}
+        assert {item.module_name for item in fresh.pending} == {
+            "aweb-aweb",
+            "aweb_naapp_hooks",
+        }
 
         # This is the old embedding behavior: apply core's directory only.
         await AsyncMigrationManager(
-            db, migrations_path=str(inventory[0].migrations_path),
+            db,
+            migrations_path=str(inventory[0].migrations_path),
             module_name=inventory[0].module_name,
         ).apply_pending_migrations()
         core_only = await pending_native_migrations(db)
         assert not core_only.ready
         assert {item.module_name for item in core_only.pending} == {"aweb_naapp_hooks"}
-        assert core_only.message.endswith("Run apply_native_migrations(db) before serving traffic.")
-        assert await db.fetch_value("SELECT to_regclass('aweb.owner_act_nonces')") is None
+        assert core_only.message.endswith(
+            "Run apply_native_migrations(db) before serving traffic."
+        )
+        assert (
+            await db.fetch_value("SELECT to_regclass('aweb.owner_act_nonces')") is None
+        )
 
         applied = await apply_native_migrations(db)
         assert isinstance(applied, AppliedNativeMigrations)
         assert {item.module_name for item in applied.applied} == {"aweb_naapp_hooks"}
-        assert await db.fetch_value("SELECT to_regclass('aweb.owner_act_nonces')") is not None
+        assert (
+            await db.fetch_value("SELECT to_regclass('aweb.owner_act_nonces')")
+            is not None
+        )
         assert (await pending_native_migrations(db)).ready
         assert (await apply_native_migrations(db)).applied == ()
     finally:
@@ -59,7 +78,9 @@ async def test_core_only_host_is_not_ready_until_owner_act_module_is_applied(sha
 
 
 @pytest.mark.asyncio
-async def test_native_initialization_satisfies_same_readiness_inventory(shared_test_pool):
+async def test_native_initialization_satisfies_same_readiness_inventory(
+    shared_test_pool,
+):
     from aweb.migrations import pending_native_migrations
 
     infra = DatabaseInfra()

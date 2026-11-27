@@ -39,7 +39,9 @@ def canonical_bytes(obj: Any) -> bytes:
     Matches the awid signing CanonicalJSON convention so a committed manifest and
     any consumer's serialization are byte-identical.
     """
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
 
 
 def write_manifest_file(path: Path, manifest: dict[str, Any]) -> None:
@@ -56,7 +58,11 @@ def template_key_entries(template: Mapping[str, Any]) -> list[dict[str, Any]]:
     for field in ("app_keys", "event_emitters"):
         value = template.get(field)
         if isinstance(value, list):
-            entries += [entry for entry in value if isinstance(entry, dict) and isinstance(entry.get("kid"), str)]
+            entries += [
+                entry
+                for entry in value
+                if isinstance(entry, dict) and isinstance(entry.get("kid"), str)
+            ]
     return entries
 
 
@@ -96,16 +102,20 @@ def fill_manifest(
     kids = template_kids(template)
     if any("did_key" in entry for entry in entries):
         raise ManifestError(
-            "manifest_template_invalid", "a manifest template commits no did_key; the deployment supplies it"
+            "manifest_template_invalid",
+            "a manifest template commits no did_key; the deployment supplies it",
         )
     undeclared = sorted(set(did_keys) - set(kids))
     if undeclared:
         raise ManifestError(
-            "manifest_template_invalid", f"did:keys for kids the template does not declare: {', '.join(undeclared)}"
+            "manifest_template_invalid",
+            f"did:keys for kids the template does not declare: {', '.join(undeclared)}",
         )
     missing = [kid for kid in kids if kid not in did_keys]
     if missing:
-        raise ManifestError("manifest_template_invalid", f"no did:key for declared kids: {', '.join(missing)}")
+        raise ManifestError(
+            "manifest_template_invalid", f"no did:key for declared kids: {', '.join(missing)}"
+        )
     prefixed = [event_type for event_type in _template_event_types(template) if "/" in event_type]
     if prefixed:
         raise ManifestError(
@@ -189,7 +199,9 @@ _ROLE = frozenset({"name", "label", "description"})
 # owner-act/1's audience grammar, kept dependency-free for the core reader.
 # The signed verifier and Go interpreter consume the same public contract.
 _OWNER_ORIGIN = re.compile(r"https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?")
-_HUMAN_ROLE_ACTS = frozenset({"human-credential.replace", "human-role.designate", "human-role.revoke"})
+_HUMAN_ROLE_ACTS = frozenset(
+    {"human-credential.replace", "human-role.designate", "human-role.revoke"}
+)
 _OWNER_ROLE = frozenset({"name", "label", "description", "acts", "notice_contact"})
 
 AGENT, SURFACE, HOOK = "agent", "surface", "hook"
@@ -268,6 +280,7 @@ def _decode_document(data: bytes, what: str = "manifest") -> Any:
 
 # Decoding mirrors the Go types: a v1 field that is null reads as its zero
 # value, a wrongly typed field is refused, and a v2 member is never null.
+
 
 def _v1_string(obj: Mapping[str, Any], key: str, where: str) -> str:
     value = obj.get(key)
@@ -356,19 +369,56 @@ def _v2_names(obj: Mapping[str, Any], key: str, where: str) -> list[str] | None:
     return list(value)
 
 
-_TOP = frozenset({"manifest_version", "app", "tools", "event_emitters", "events",
-                  "app_keys", "surfaces", "usage", "lifecycle", "hooks", "roles"})
+_TOP = frozenset(
+    {
+        "manifest_version",
+        "app",
+        "tools",
+        "event_emitters",
+        "events",
+        "app_keys",
+        "surfaces",
+        "usage",
+        "lifecycle",
+        "hooks",
+        "roles",
+    }
+)
 _V2_TOP = ("app_keys", "surfaces", "usage", "lifecycle", "hooks", "roles")
 _APP = frozenset({"id", "version", "origin", "llms_txt", "skills"})
-_TOOL = frozenset({"name", "description", "method", "path", "input_schema", "params", "body",
-                   "scopes", "auth", "mutation", "invocation_contexts"})
+_TOOL = frozenset(
+    {
+        "name",
+        "description",
+        "method",
+        "path",
+        "input_schema",
+        "params",
+        "body",
+        "scopes",
+        "auth",
+        "mutation",
+        "invocation_contexts",
+    }
+)
 _PARAM = frozenset({"name", "in"})
 _BODY = frozenset({"mode", "raw_param", "content_type"})
 _EMITTER = frozenset({"kid", "did_key"})
 _EVENT = frozenset({"type", "default_delivery_intent", "description"})
 _APP_KEY = frozenset({"kid", "did_key", "purposes"})
-_SURFACE = frozenset({"id", "label", "format", "list_tool", "read_tool", "invoke_tool", "answer_tool",
-                      "inputs", "events"})
+_SURFACE = frozenset(
+    {
+        "id",
+        "label",
+        "format",
+        "list_tool",
+        "read_tool",
+        "invoke_tool",
+        "answer_tool",
+        "inputs",
+        "events",
+    }
+)
 _INPUTS = frozenset({"resource", "invocation"})
 _SURFACE_EVENT = frozenset({"type", "resource_field", "revision_field"})
 _USAGE = frozenset({"format", "snapshot_tool"})
@@ -429,8 +479,11 @@ def _decode_tool(raw: Any, where: str) -> _Tool:
         path=_v1_string(tool, "path", where),
         input_schema=schema,
         params=params,
-        body=(_v1_string(body, "mode", "body"), _v1_string(body, "raw_param", "body"),
-              _v1_string(body, "content_type", "body")),
+        body=(
+            _v1_string(body, "mode", "body"),
+            _v1_string(body, "raw_param", "body"),
+            _v1_string(body, "content_type", "body"),
+        ),
         scopes=scopes,
         auth=_v1_string(tool, "auth", where),
         mutation=_v1_bool(tool, "mutation", where),
@@ -468,33 +521,50 @@ def _decode(doc: Any) -> dict[str, Any]:
     out["version"] = _v1_int(doc, "manifest_version", "manifest")
     app = _v1_object(doc.get("app"), "app", _APP)
     out["app"] = {key: _v1_string(app, key, "app") for key in _APP}
-    out["tools"] = [_decode_tool(item, f"tools[{i}]") for i, item in enumerate(_v1_list(doc.get("tools"), "tools"))]
+    out["tools"] = [
+        _decode_tool(item, f"tools[{i}]")
+        for i, item in enumerate(_v1_list(doc.get("tools"), "tools"))
+    ]
     emitters = []
     for i, item in enumerate(_v1_list(doc.get("event_emitters"), "event_emitters")):
         emitter = _v1_object(item, f"event_emitters[{i}]", _EMITTER)
-        emitters.append((_v1_string(emitter, "kid", "event_emitter"), _v1_string(emitter, "did_key", "event_emitter")))
+        emitters.append(
+            (
+                _v1_string(emitter, "kid", "event_emitter"),
+                _v1_string(emitter, "did_key", "event_emitter"),
+            )
+        )
     out["emitters"] = emitters
     out["events"] = _decode_events(doc["events"]) if "events" in doc else []
 
     keys = []
     for i, item in enumerate(_v2_list(doc.get("app_keys", []), "app_keys")):
         entry = _v2_object(item, f"app_keys[{i}]", _APP_KEY)
-        keys.append((_v2_string(entry, "kid", "app_key"), _v2_string(entry, "did_key", "app_key"),
-                     _v2_names(entry, "purposes", "app_key") or []))
+        keys.append(
+            (
+                _v2_string(entry, "kid", "app_key"),
+                _v2_string(entry, "did_key", "app_key"),
+                _v2_names(entry, "purposes", "app_key") or [],
+            )
+        )
     out["app_keys"] = keys
 
     surfaces = []
     for i, item in enumerate(_v2_list(doc.get("surfaces", []), "surfaces")):
         where = f"surfaces[{i}]"
         surface = _v2_object(item, where, _SURFACE)
-        decoded: dict[str, Any] = {key: _v2_string(surface, key, where) for key in _SURFACE - {"inputs", "events"}}
+        decoded: dict[str, Any] = {
+            key: _v2_string(surface, key, where) for key in _SURFACE - {"inputs", "events"}
+        }
         inputs = _v2_object(surface.get("inputs", {}), f"{where}.inputs", _INPUTS)
         decoded["resource"] = _v2_string(inputs, "resource", f"{where}.inputs")
         decoded["invocation"] = _v2_string(inputs, "invocation", f"{where}.inputs")
         events = []
         for j, raw in enumerate(_v2_list(surface.get("events", []), f"{where}.events")):
             event = _v2_object(raw, f"{where}.events[{j}]", _SURFACE_EVENT)
-            events.append({key: _v2_string(event, key, f"{where}.events[{j}]") for key in _SURFACE_EVENT})
+            events.append(
+                {key: _v2_string(event, key, f"{where}.events[{j}]") for key in _SURFACE_EVENT}
+            )
         decoded["events"] = events
         surfaces.append(decoded)
     out["surfaces"] = surfaces
@@ -513,23 +583,38 @@ def _decode(doc: Any) -> dict[str, Any]:
 
         def catalog(entry: Mapping[str, Any], where: str) -> tuple[str, int]:
             cat = _v2_object(entry.get("catalog", {}), f"{where}.catalog", _CATALOG)
-            return _v2_string(cat, "id", f"{where}.catalog"), _v2_int(cat, "version", f"{where}.catalog")
+            return _v2_string(cat, "id", f"{where}.catalog"), _v2_int(
+                cat, "version", f"{where}.catalog"
+            )
 
         registrations = []
         for i, item in enumerate(_v2_list(hooks.get("registrations", []), "hooks.registrations")):
             where = f"hooks.registrations[{i}]"
             reg = _v2_object(item, where, _REGISTRATION)
-            registrations.append({"catalog": catalog(reg, where), "hook": _v2_string(reg, "hook", where),
-                                  "tool": _v2_string(reg, "tool", where),
-                                  "scopes": _v2_names(reg, "scopes", where) or []})
+            registrations.append(
+                {
+                    "catalog": catalog(reg, where),
+                    "hook": _v2_string(reg, "hook", where),
+                    "tool": _v2_string(reg, "tool", where),
+                    "scopes": _v2_names(reg, "scopes", where) or [],
+                }
+            )
         productions = []
         for i, item in enumerate(_v2_list(hooks.get("productions", []), "hooks.productions")):
             where = f"hooks.productions[{i}]"
             prod = _v2_object(item, where, _PRODUCTION)
-            productions.append({"catalog": catalog(prod, where), "hook": _v2_string(prod, "hook", where),
-                                "reads": _v2_names(prod, "reads", where) or []})
-        out["hooks"] = {"registration_version": _v2_int(hooks, "registration_version", "hooks"),
-                        "registrations": registrations, "productions": productions}
+            productions.append(
+                {
+                    "catalog": catalog(prod, where),
+                    "hook": _v2_string(prod, "hook", where),
+                    "reads": _v2_names(prod, "reads", where) or [],
+                }
+            )
+        out["hooks"] = {
+            "registration_version": _v2_int(hooks, "registration_version", "hooks"),
+            "registrations": registrations,
+            "productions": productions,
+        }
     # Roles stay raw until validation, so every fault in them is role_invalid.
     out["roles"] = doc.get("roles")
     out["owner_acts"] = doc.get("owner_acts")
@@ -583,7 +668,7 @@ def _placeholders(path: str) -> set[str]:
         end = path.find("}", start + 1)
         if end < 0:
             return out
-        name = _go_trim(path[start + 1:end])
+        name = _go_trim(path[start + 1 : end])
         if name:
             out.add(name)
         position = end + 1
@@ -720,14 +805,22 @@ def _validate_v2_tools(declared: list[_Tool]) -> None:
         if "%" in tool.path:
             raise _invalid(f"tool {tool.name!r} path must not carry percent-encoding")
         if len([segment for segment in tool.path.split("/") if segment]) > _MAX_V2_PATH_SEGMENTS:
-            raise _invalid(f"tool {tool.name!r} path has more than {_MAX_V2_PATH_SEGMENTS} segments")
+            raise _invalid(
+                f"tool {tool.name!r} path has more than {_MAX_V2_PATH_SEGMENTS} segments"
+            )
     for tool in declared:
         if tool.contexts is None:
             continue
         if not tool.contexts:
-            raise _refuse("tool_contexts_invalid", f"tool {tool.name!r} invocation_contexts must not be empty")
-        if any(c not in _CONTEXTS for c in tool.contexts) or len(set(tool.contexts)) != len(tool.contexts):
-            raise _refuse("tool_contexts_invalid", f"tool {tool.name!r} invocation_contexts are invalid")
+            raise _refuse(
+                "tool_contexts_invalid", f"tool {tool.name!r} invocation_contexts must not be empty"
+            )
+        if any(c not in _CONTEXTS for c in tool.contexts) or len(set(tool.contexts)) != len(
+            tool.contexts
+        ):
+            raise _refuse(
+                "tool_contexts_invalid", f"tool {tool.name!r} invocation_contexts are invalid"
+            )
 
 
 def _validate_app_keys(keys: list[tuple[str, str, list[str]]]) -> None:
@@ -741,7 +834,9 @@ def _validate_app_keys(keys: list[tuple[str, str, list[str]]]) -> None:
             raise _refuse("app_keys_invalid", f"duplicate app key kid {kid!r}")
         kids.add(kid)
         if not _is_did_key_shaped(did_key):
-            raise _refuse("app_keys_invalid", f"app key {kid!r} did_key is not a well-formed did:key")
+            raise _refuse(
+                "app_keys_invalid", f"app key {kid!r} did_key is not a well-formed did:key"
+            )
         if not 1 <= len(purposes) <= 8:
             raise _refuse("app_keys_invalid", f"app key {kid!r} must declare 1 to 8 purposes")
         if not all(_PURPOSE.fullmatch(p) for p in purposes) or len(set(purposes)) != len(purposes):
@@ -753,7 +848,9 @@ def _resolve_event_type(event_type: str, app_id: str, declared: set[str]) -> str
     if "/" in event_type:
         local = event_type.removeprefix(app_id + "/")
         if local == event_type or "/" in local:
-            raise _refuse("surface_invalid", f"surface event {event_type!r} is not an event of app {app_id!r}")
+            raise _refuse(
+                "surface_invalid", f"surface event {event_type!r} is not an event of app {app_id!r}"
+            )
     if local not in declared:
         raise _refuse("surface_invalid", f"surface event {event_type!r} is not declared in events")
     return f"{app_id}/{local}"
@@ -793,8 +890,11 @@ def _validate_surfaces(d: dict[str, Any], app_id: str, tools: dict[str, _Tool]) 
         if len(s["events"]) > 16:
             raise _refuse("surface_invalid", f"surface {sid!r} events exceeds 16")
         for event in s["events"]:
-            if (not event["type"] or not _FIELD_NAME.fullmatch(event["resource_field"])
-                    or not _FIELD_NAME.fullmatch(event["revision_field"])):
+            if (
+                not event["type"]
+                or not _FIELD_NAME.fullmatch(event["resource_field"])
+                or not _FIELD_NAME.fullmatch(event["revision_field"])
+            ):
                 raise _refuse("surface_invalid", f"surface {sid!r} event binding is invalid")
         if sid in ids:
             raise _refuse("surface_invalid", f"duplicate surface id {sid!r}")
@@ -812,29 +912,51 @@ def _validate_surface_tools(s: dict[str, Any], tools: dict[str, _Tool]) -> None:
     if s["answer_tool"]:
         answer = tools.get(s["answer_tool"])
         if answer is None:
-            raise _refuse("surface_tool_invalid", f"surface {sid!r} answer_tool is not a declared tool")
+            raise _refuse(
+                "surface_tool_invalid", f"surface {sid!r} answer_tool is not a declared tool"
+            )
         if answer.effective_contexts != {SURFACE}:
-            raise _refuse("answer_tool_contexts_invalid",
-                          f"surface {sid!r} answer_tool must declare invocation_contexts exactly [\"surface\"]")
-    for role, name, get in (("list_tool", s["list_tool"], True), ("read_tool", s["read_tool"], True),
-                            ("invoke_tool", s["invoke_tool"], False), ("answer_tool", s["answer_tool"], False)):
+            raise _refuse(
+                "answer_tool_contexts_invalid",
+                f'surface {sid!r} answer_tool must declare invocation_contexts exactly ["surface"]',
+            )
+    for role, name, get in (
+        ("list_tool", s["list_tool"], True),
+        ("read_tool", s["read_tool"], True),
+        ("invoke_tool", s["invoke_tool"], False),
+        ("answer_tool", s["answer_tool"], False),
+    ):
         if not name:
             continue
         tool = tools.get(name)
         if tool is None:
-            raise _refuse("surface_tool_invalid", f"surface {sid!r} {role} {name!r} is not a declared tool")
+            raise _refuse(
+                "surface_tool_invalid", f"surface {sid!r} {role} {name!r} is not a declared tool"
+            )
         if SURFACE not in tool.effective_contexts:
-            raise _refuse("surface_tool_invalid", f"surface {sid!r} {role} {name!r} lacks the surface context")
+            raise _refuse(
+                "surface_tool_invalid", f"surface {sid!r} {role} {name!r} lacks the surface context"
+            )
         if tool.public:
-            raise _refuse("surface_tool_invalid", f"surface {sid!r} {role} {name!r} must be member-authenticated")
+            raise _refuse(
+                "surface_tool_invalid",
+                f"surface {sid!r} {role} {name!r} must be member-authenticated",
+            )
         if get and (_go_trim(tool.method).upper() != "GET" or tool.mutation):
-            raise _refuse("surface_tool_invalid", f"surface {sid!r} {role} {name!r} must be a non-mutating GET")
+            raise _refuse(
+                "surface_tool_invalid",
+                f"surface {sid!r} {role} {name!r} must be a non-mutating GET",
+            )
         if not get and not tool.mutation:
-            raise _refuse("surface_tool_invalid", f"surface {sid!r} {role} {name!r} must be a mutation")
+            raise _refuse(
+                "surface_tool_invalid", f"surface {sid!r} {role} {name!r} must be a mutation"
+            )
     if not s["invoke_tool"]:
         return
     if s["invoke_tool"] == s["answer_tool"]:
-        raise _refuse("answer_input_forbidden", f"surface {sid!r} invoke_tool cannot be its answer_tool")
+        raise _refuse(
+            "answer_input_forbidden", f"surface {sid!r} invoke_tool cannot be its answer_tool"
+        )
 
 
 def _answer_tools(surfaces: list[dict[str, Any]] | tuple[Mapping[str, Any], ...]) -> set[str]:
@@ -867,7 +989,10 @@ def _segments_reach(caller: list[str], target: list[str]) -> bool:
 
 
 def _can_reach_route(caller: _Tool, target: _Tool) -> bool:
-    (method_caller, segments_caller), (method_target, segments_target) = _route(caller), _route(target)
+    (method_caller, segments_caller), (method_target, segments_target) = (
+        _route(caller),
+        _route(target),
+    )
     return method_caller == method_target and _segments_reach(segments_caller, segments_target)
 
 
@@ -877,9 +1002,15 @@ def _validate_answer_routes(d: dict[str, Any], tools: dict[str, _Tool]) -> None:
     depth: the guarantee is the naapp refusing answer-kind actions."""
     for name in _answer_tools(d["surfaces"]):
         for tool in d["tools"]:
-            if _go_trim(tool.name) != name and AGENT in tool.effective_contexts and _can_reach_route(tool, tools[name]):
-                raise _refuse("answer_route_agent_visible",
-                              f"agent-visible tool {tool.name!r} can reach answer_tool {name!r}'s route")
+            if (
+                _go_trim(tool.name) != name
+                and AGENT in tool.effective_contexts
+                and _can_reach_route(tool, tools[name])
+            ):
+                raise _refuse(
+                    "answer_route_agent_visible",
+                    f"agent-visible tool {tool.name!r} can reach answer_tool {name!r}'s route",
+                )
 
 
 def _validate_answer_inputs(d: dict[str, Any]) -> None:
@@ -894,22 +1025,35 @@ def _validate_answer_inputs(d: dict[str, Any]) -> None:
         if "answer" in properties:
             raise _refuse("answer_input_forbidden", f"tool {name!r} declares an answer input")
         for param, placement in tool.params:
-            if _go_trim(placement) == "body" and "answer" in _schema_properties(properties.get(_go_trim(param))):
-                raise _refuse("answer_input_forbidden", f"tool {name!r} declares an answer inside {param!r}")
+            if _go_trim(placement) == "body" and "answer" in _schema_properties(
+                properties.get(_go_trim(param))
+            ):
+                raise _refuse(
+                    "answer_input_forbidden", f"tool {name!r} declares an answer inside {param!r}"
+                )
 
 
 def _validate_surface_inputs(s: dict[str, Any], tools: dict[str, _Tool]) -> None:
     sid = s["id"]
     for name in (s["read_tool"], s["invoke_tool"], s["answer_tool"]):
         if name and _tool_param(tools[name], s["resource"]) is None:
-            raise _refuse("surface_invalid", f"surface {sid!r} resource input is not a param of {name!r}")
+            raise _refuse(
+                "surface_invalid", f"surface {sid!r} resource input is not a param of {name!r}"
+            )
     for name in (s["invoke_tool"], s["answer_tool"]):
         if not name:
             continue
         param = _tool_param(tools[name], s["invocation"])
         properties = _schema_properties(tools[name].input_schema)
-        if param is None or param[1] != "body" or _schema_type(properties.get(param[0])) != "object":
-            raise _refuse("surface_invalid", f"surface {sid!r} invocation input is not an object body param of {name!r}")
+        if (
+            param is None
+            or param[1] != "body"
+            or _schema_type(properties.get(param[0])) != "object"
+        ):
+            raise _refuse(
+                "surface_invalid",
+                f"surface {sid!r} invocation input is not an object body param of {name!r}",
+            )
 
 
 def _validate_usage(usage: dict[str, str] | None, tools: dict[str, _Tool]) -> None:
@@ -937,9 +1081,13 @@ def _validate_lifecycle(lifecycle: dict[str, str] | None, tools: dict[str, _Tool
         if tool is None:
             raise _refuse("lifecycle_invalid", f"lifecycle {role} {name!r} is not a declared tool")
         if tool.public:
-            raise _refuse("lifecycle_invalid", f"lifecycle {role} {name!r} must be member-authenticated")
+            raise _refuse(
+                "lifecycle_invalid", f"lifecycle {role} {name!r} must be member-authenticated"
+            )
         if tool.mutation != mutation:
-            raise _refuse("lifecycle_invalid", f"lifecycle {role} {name!r} has the wrong mutation flag")
+            raise _refuse(
+                "lifecycle_invalid", f"lifecycle {role} {name!r} has the wrong mutation flag"
+            )
     if named == 0:
         raise _refuse("lifecycle_invalid", "lifecycle must name at least one tool")
 
@@ -953,10 +1101,14 @@ def _validate_hook_catalog(catalog: tuple[str, int], hook: str) -> None:
         raise _refuse("hooks_invalid", "hook name is invalid")
 
 
-def _validate_distinct(names: list[str], limit: int, pattern: re.Pattern[str] | None, what: str) -> None:
+def _validate_distinct(
+    names: list[str], limit: int, pattern: re.Pattern[str] | None, what: str
+) -> None:
     if len(names) > limit:
         raise _refuse("hooks_invalid", f"{what} exceeds {limit}")
-    if (pattern is not None and not all(pattern.fullmatch(n) for n in names)) or len(set(names)) != len(names):
+    if (pattern is not None and not all(pattern.fullmatch(n) for n in names)) or len(
+        set(names)
+    ) != len(names):
         raise _refuse("hooks_invalid", f"{what} are invalid or repeated")
 
 
@@ -970,21 +1122,39 @@ def _parse_roles(raw: Any) -> list[dict[str, str | None]]:
         raise _refuse("role_invalid", f"roles must be an array of 1 to {_MAX_ROLES} roles")
     roles: list[dict[str, str | None]] = []
     for item in raw:
-        if not isinstance(item, dict) or set(item) - _ROLE or any(value is None for value in item.values()):
+        if (
+            not isinstance(item, dict)
+            or set(item) - _ROLE
+            or any(value is None for value in item.values())
+        ):
             raise _refuse("role_invalid", "a role is an object of name, label and description")
-        name, label, description = item.get("name", ""), item.get("label", ""), item.get("description")
-        if not isinstance(name, str) or not isinstance(label, str) or not isinstance(description, (str, type(None))):
+        name, label, description = (
+            item.get("name", ""),
+            item.get("label", ""),
+            item.get("description"),
+        )
+        if (
+            not isinstance(name, str)
+            or not isinstance(label, str)
+            or not isinstance(description, (str, type(None)))
+        ):
             raise _refuse("role_invalid", "role members are strings")
         if len(name.encode("utf-8")) > _MAX_ROLE_NAME_BYTES or not _ROLE_NAME.fullmatch(name):
             raise _refuse("role_invalid", f"role name {name!r} is not a designatable role name")
         if any(role["name"] == name for role in roles):
             raise _refuse("role_invalid", f"duplicate role name {name!r}")
         if not _valid_role_text(label, _MAX_ROLE_LABEL):
-            raise _refuse("role_invalid", f"role {name!r} label must be 1 to {_MAX_ROLE_LABEL} characters "
-                          "with no control or bidi character")
+            raise _refuse(
+                "role_invalid",
+                f"role {name!r} label must be 1 to {_MAX_ROLE_LABEL} characters "
+                "with no control or bidi character",
+            )
         if description is not None and not _valid_role_text(description, _MAX_ROLE_DESCRIPTION):
-            raise _refuse("role_invalid", f"role {name!r} description must be 1 to {_MAX_ROLE_DESCRIPTION} "
-                          "characters with no control or bidi character")
+            raise _refuse(
+                "role_invalid",
+                f"role {name!r} description must be 1 to {_MAX_ROLE_DESCRIPTION} "
+                "characters with no control or bidi character",
+            )
         roles.append({"name": name, "label": label, "description": description})
     return roles
 
@@ -992,7 +1162,9 @@ def _parse_roles(raw: Any) -> list[dict[str, str | None]]:
 def _valid_role_text(text: str, max_runes: int) -> bool:
     if not text or len(text) > max_runes:
         return False
-    return not any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F or _is_bidi_control(ord(c)) for c in text)
+    return not any(
+        ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F or _is_bidi_control(ord(c)) for c in text
+    )
 
 
 def _parse_owner_acts(raw: Any, app_origin: str) -> Mapping[str, Any] | None:
@@ -1002,13 +1174,18 @@ def _parse_owner_acts(raw: Any, app_origin: str) -> Mapping[str, Any] | None:
     def invalid() -> ManifestError:
         return _refuse("owner_acts_invalid", "invalid owner-designated human roles or origin")
 
-    if (not isinstance(raw, dict) or not {"origin", "roles"} <= set(raw)
-            or set(raw) - {"origin", "roles", "session_actions"}):
+    if (
+        not isinstance(raw, dict)
+        or not {"origin", "roles"} <= set(raw)
+        or set(raw) - {"origin", "roles", "session_actions"}
+    ):
         raise invalid()
     origin, roles = raw["origin"], raw["roles"]
     if not isinstance(origin, str) or not _OWNER_ORIGIN.fullmatch(origin):
         raise invalid()
-    if (urlsplit(origin).hostname or "").rstrip(".") == (urlsplit(_go_trim(app_origin)).hostname or "").rstrip("."):
+    if (urlsplit(origin).hostname or "").rstrip(".") == (
+        urlsplit(_go_trim(app_origin)).hostname or ""
+    ).rstrip("."):
         raise invalid()
     if not isinstance(roles, list) or not 1 <= len(roles) <= 16:
         raise invalid()
@@ -1017,20 +1194,30 @@ def _parse_owner_acts(raw: Any, app_origin: str) -> Mapping[str, Any] | None:
         if not isinstance(role, dict) or set(role) - _OWNER_ROLE:
             raise invalid()
         name, label = role.get("name"), role.get("label")
-        if (not isinstance(name, str) or not _ROLE_NAME.fullmatch(name)
-                or name[0] not in "abcdefghijklmnopqrstuvwxyz" or len(name.encode("utf-8")) > 64
-                or name in names):
+        if (
+            not isinstance(name, str)
+            or not _ROLE_NAME.fullmatch(name)
+            or name[0] not in "abcdefghijklmnopqrstuvwxyz"
+            or len(name.encode("utf-8")) > 64
+            or name in names
+        ):
             raise invalid()
         names.add(name)
         if not isinstance(label, str) or not _valid_role_text(label, _MAX_ROLE_LABEL):
             raise invalid()
-        if "description" in role and (not isinstance(role["description"], str)
-                or not _valid_role_text(role["description"], _MAX_ROLE_DESCRIPTION)):
+        if "description" in role and (
+            not isinstance(role["description"], str)
+            or not _valid_role_text(role["description"], _MAX_ROLE_DESCRIPTION)
+        ):
             raise invalid()
         acts = role.get("acts")
-        if (not isinstance(acts, list) or not acts
-                or not all(isinstance(act, str) and act in _HUMAN_ROLE_ACTS for act in acts)
-                or acts != sorted(set(acts)) or type(role.get("notice_contact")) is not bool):
+        if (
+            not isinstance(acts, list)
+            or not acts
+            or not all(isinstance(act, str) and act in _HUMAN_ROLE_ACTS for act in acts)
+            or acts != sorted(set(acts))
+            or type(role.get("notice_contact")) is not bool
+        ):
             raise invalid()
     if "session_actions" in raw:
         _validate_session_actions(raw["session_actions"], names)
@@ -1038,7 +1225,10 @@ def _parse_owner_acts(raw: Any, app_origin: str) -> Mapping[str, Any] | None:
 
 
 _SESSION_ACTION_FIELDS = (_TOOL - {"scopes", "mutation", "invocation_contexts", "auth"}) | {
-    "role", "kind", "terminal_output", "completion"
+    "role",
+    "kind",
+    "terminal_output",
+    "completion",
 }
 
 
@@ -1062,7 +1252,11 @@ def _check_session_actions(raw: Any, roles: set[str]) -> None:
         if not isinstance(action, dict) or set(action) - _SESSION_ACTION_FIELDS:
             refuse()
         role, kind = action.get("role"), action.get("kind")
-        if not isinstance(role, str) or role not in roles or kind not in ("read", "stage", "draft", "confirm"):
+        if (
+            not isinstance(role, str)
+            or role not in roles
+            or kind not in ("read", "stage", "draft", "confirm")
+        ):
             refuse()
         tool_raw = {key: value for key, value in action.items() if key in _TOOL}
         params = tool_raw.get("params")
@@ -1070,9 +1264,12 @@ def _check_session_actions(raw: Any, roles: set[str]) -> None:
             tool_raw["params"] = []
             for param in params:
                 if isinstance(param, dict):
-                    if "protected" in param and (param["protected"] is not True
-                            or kind != "stage" or not isinstance(param.get("in"), str)
-                            or _go_trim(param["in"]) != "body"):
+                    if "protected" in param and (
+                        param["protected"] is not True
+                        or kind != "stage"
+                        or not isinstance(param.get("in"), str)
+                        or _go_trim(param["in"]) != "body"
+                    ):
                         refuse()
                     param = {key: value for key, value in param.items() if key != "protected"}
                 tool_raw["params"].append(param)
@@ -1080,8 +1277,9 @@ def _check_session_actions(raw: Any, roles: set[str]) -> None:
         _validate_tool(tool)
         if _go_trim(tool.method).upper() != ("GET" if kind == "read" else "POST"):
             refuse()
-        if kind == "read" and ("body" in action
-                or any(_go_trim(placement) == "body" for _, placement in tool.params)):
+        if kind == "read" and (
+            "body" in action or any(_go_trim(placement) == "body" for _, placement in tool.params)
+        ):
             refuse()
         if kind != "read" and (_go_trim(tool.body[0]) or "json") != "json":
             refuse()
@@ -1089,8 +1287,9 @@ def _check_session_actions(raw: Any, roles: set[str]) -> None:
             pointers = action["terminal_output"]
             if kind != "confirm" or not isinstance(pointers, list) or not 1 <= len(pointers) <= 16:
                 refuse()
-            if (not all(_valid_terminal_pointer(pointer) for pointer in pointers)
-                    or len(set(pointers)) != len(pointers)):
+            if not all(_valid_terminal_pointer(pointer) for pointer in pointers) or len(
+                set(pointers)
+            ) != len(pointers):
                 refuse()
         if ("completion" in action) != (kind == "confirm"):
             refuse()
@@ -1109,8 +1308,11 @@ def _check_session_actions(raw: Any, roles: set[str]) -> None:
         if not isinstance(read, str):
             refuse()
         read = _go_trim(read)
-        if (read not in actions or actions[read]["kind"] != "read"
-                or actions[read]["role"] != action["role"]):
+        if (
+            read not in actions
+            or actions[read]["kind"] != "read"
+            or actions[read]["role"] != action["role"]
+        ):
             refuse()
         read_inputs = {_go_trim(param) for param, _ in decoded[read].params}
         confirm_inputs = {_go_trim(param) for param, _ in decoded[name].params}
@@ -1120,17 +1322,21 @@ def _check_session_actions(raw: Any, roles: set[str]) -> None:
         if not isinstance(stops, list) or not 1 <= len(stops) <= 8:
             refuse()
         for predicate in [completion["ready"], completion["done"], *stops]:
-            if (not isinstance(predicate, dict) or set(predicate) != {"member", "in"}
-                    or not isinstance(predicate["member"], str)
-                    or not _FIELD_NAME.fullmatch(predicate["member"])):
+            if (
+                not isinstance(predicate, dict)
+                or set(predicate) != {"member", "in"}
+                or not isinstance(predicate["member"], str)
+                or not _FIELD_NAME.fullmatch(predicate["member"])
+            ):
                 refuse()
             values = predicate["in"]
             if not isinstance(values, list) or not 1 <= len(values) <= 16:
                 refuse()
             if not all(type(value) in (str, bool, int) for value in values):
                 refuse()
-            if (any(type(value) is int and abs(value) > (1 << 53) - 1 for value in values)
-                    or len({(type(value), value) for value in values}) != len(values)):
+            if any(type(value) is int and abs(value) > (1 << 53) - 1 for value in values) or len(
+                {(type(value), value) for value in values}
+            ) != len(values):
                 refuse()
 
 
@@ -1138,8 +1344,11 @@ def _valid_terminal_pointer(value: Any) -> bool:
     if not isinstance(value, str) or not value.startswith("/"):
         return False
     segments = value[1:].split("/")
-    return (1 <= len(segments) <= 8 and _FIELD_NAME.fullmatch(segments[-1]) is not None
-            and all(segment == "*" or _FIELD_NAME.fullmatch(segment) for segment in segments))
+    return (
+        1 <= len(segments) <= 8
+        and _FIELD_NAME.fullmatch(segments[-1]) is not None
+        and all(segment == "*" or _FIELD_NAME.fullmatch(segment) for segment in segments)
+    )
 
 
 def _is_bidi_control(code: int) -> bool:
@@ -1174,13 +1383,18 @@ def _validate_hooks(hooks: dict[str, Any] | None, tools: dict[str, _Tool]) -> No
     for reg in hooks["registrations"]:
         tool = tools.get(reg["tool"]) if reg["tool"] else None
         if tool is None or tool.effective_contexts != {HOOK}:
-            raise _refuse("hook_tool_invalid",
-                          f"hook registration tool {reg['tool']!r} must be a local tool declaring exactly [\"hook\"]")
+            raise _refuse(
+                "hook_tool_invalid",
+                f'hook registration tool {reg["tool"]!r} must be a local tool declaring exactly ["hook"]',
+            )
     for prod in hooks["productions"]:
         for read in prod["reads"]:
             tool = tools.get(read)
             if tool is None or tool.mutation:
-                raise _refuse("hook_tool_invalid", f"hook production read {read!r} must be a local non-mutating tool")
+                raise _refuse(
+                    "hook_tool_invalid",
+                    f"hook production read {read!r} must be a local non-mutating tool",
+                )
 
 
 @dataclass(frozen=True)
@@ -1236,7 +1450,9 @@ class Manifest:
             "surface_tools": list(self.surface_tools),
             "hook_tools": list(self.hook_tools),
             "install_scopes": list(self.install_scopes),
-            "app_keys": [{"kid": k, "did_key": d, "purposes": list(p)} for k, d, p in self.app_keys],
+            "app_keys": [
+                {"kid": k, "did_key": d, "purposes": list(p)} for k, d, p in self.app_keys
+            ],
             "surfaces": [copy.deepcopy(dict(s)) for s in self.surfaces],
             "usage": None if self.usage is None else dict(self.usage),
             "lifecycle": None if self.lifecycle is None else dict(self.lifecycle),
@@ -1273,7 +1489,9 @@ class Manifest:
         if contexts is None:
             raise _refuse("tool_not_found", f"tool {tool!r} not found")
         if caller not in contexts:
-            raise _refuse("tool_context_denied", f"tool {tool!r} is not available to {caller} callers")
+            raise _refuse(
+                "tool_context_denied", f"tool {tool!r} is not available to {caller} callers"
+            )
 
     def check_answer_payload(self, tool: str, body: Any) -> None:
         """Refuse a version 2 body that carries an ``answer`` member, top-level
@@ -1293,11 +1511,15 @@ def load_manifest(data: bytes, *, reserved_names: frozenset[str] = frozenset()) 
     document = _decode_document(data)
     d = _decode(document)
     if d["version"] not in SUPPORTED_MANIFEST_VERSIONS:
-        raise ManifestError("manifest_version_unsupported", f"unsupported manifest_version {d['version']}")
+        raise ManifestError(
+            "manifest_version_unsupported", f"unsupported manifest_version {d['version']}"
+        )
     app_id = _validate_common(d, reserved_names)
     tools = {_go_trim(tool.name): tool for tool in d["tools"]}
     if d["version"] == 1:
-        if any(tool.contexts is not None for tool in d["tools"]) or any(k in d["present"] for k in _V2_TOP):
+        if any(tool.contexts is not None for tool in d["tools"]) or any(
+            k in d["present"] for k in _V2_TOP
+        ):
             raise _invalid("a version 2 field requires manifest_version 2")
     else:
         _validate_v2(d, app_id, tools)
@@ -1305,30 +1527,67 @@ def load_manifest(data: bytes, *, reserved_names: frozenset[str] = frozenset()) 
     declared = _declared_events(d, app_id)
     app_keys = [(_go_trim(kid), _go_trim(did), ("app-event",)) for kid, did in d["emitters"]]
     app_keys += [(kid, did, tuple(purposes)) for kid, did, purposes in d["app_keys"]]
-    surfaces = [{
-        "id": s["id"], "label": s["label"], "format": s["format"],
-        "list_tool": s["list_tool"], "read_tool": s["read_tool"],
-        "invoke_tool": s["invoke_tool"] or None, "answer_tool": s["answer_tool"] or None,
-        "resource_param": s["resource"], "invocation_param": s["invocation"] or None,
-        "events": [{"type": _resolve_event_type(e["type"], app_id, declared),
-                    "resource_field": e["resource_field"], "revision_field": e["revision_field"]}
-                   for e in s["events"]],
-    } for s in d["surfaces"]]
+    surfaces = [
+        {
+            "id": s["id"],
+            "label": s["label"],
+            "format": s["format"],
+            "list_tool": s["list_tool"],
+            "read_tool": s["read_tool"],
+            "invoke_tool": s["invoke_tool"] or None,
+            "answer_tool": s["answer_tool"] or None,
+            "resource_param": s["resource"],
+            "invocation_param": s["invocation"] or None,
+            "events": [
+                {
+                    "type": _resolve_event_type(e["type"], app_id, declared),
+                    "resource_field": e["resource_field"],
+                    "revision_field": e["revision_field"],
+                }
+                for e in s["events"]
+            ],
+        }
+        for s in d["surfaces"]
+    ]
     hooks = None
     if d["hooks"] is not None:
         hooks = {
             "registration_version": d["hooks"]["registration_version"],
-            "registrations": [{"catalog_id": r["catalog"][0], "catalog_version": r["catalog"][1], "hook": r["hook"],
-                               "tool": r["tool"], "scopes": list(r["scopes"])} for r in d["hooks"]["registrations"]],
-            "productions": [{"catalog_id": p["catalog"][0], "catalog_version": p["catalog"][1], "hook": p["hook"],
-                             "reads": list(p["reads"])} for p in d["hooks"]["productions"]],
+            "registrations": [
+                {
+                    "catalog_id": r["catalog"][0],
+                    "catalog_version": r["catalog"][1],
+                    "hook": r["hook"],
+                    "tool": r["tool"],
+                    "scopes": list(r["scopes"]),
+                }
+                for r in d["hooks"]["registrations"]
+            ],
+            "productions": [
+                {
+                    "catalog_id": p["catalog"][0],
+                    "catalog_version": p["catalog"][1],
+                    "hook": p["hook"],
+                    "reads": list(p["reads"]),
+                }
+                for p in d["hooks"]["productions"]
+            ],
         }
     lifecycle = None
     if d["lifecycle"] is not None:
-        lifecycle = {role: d["lifecycle"][role] or None for role in ("export_tool", "delete_tool", "status_tool")}
+        lifecycle = {
+            role: d["lifecycle"][role] or None
+            for role in ("export_tool", "delete_tool", "status_tool")
+        }
     names = [(_go_trim(tool.name), tool.effective_contexts) for tool in d["tools"]]
-    install_scopes = sorted({scope for tool in d["tools"] if tool.effective_contexts & _DEFAULT_CONTEXTS
-                             for scope in tool.scopes})
+    install_scopes = sorted(
+        {
+            scope
+            for tool in d["tools"]
+            if tool.effective_contexts & _DEFAULT_CONTEXTS
+            for scope in tool.scopes
+        }
+    )
     return Manifest(
         document=document,
         manifest_version=d["version"],
@@ -1383,7 +1642,11 @@ def _identity(data: bytes) -> tuple[int, str]:
     version, app = doc.get("manifest_version"), doc.get("app")
     if version is None:
         version = 0
-    if isinstance(version, bool) or not isinstance(version, int) or not _INT64[0] <= version <= _INT64[1]:
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or not _INT64[0] <= version <= _INT64[1]
+    ):
         return 0, ""
     if app is None:
         return version, ""
@@ -1433,10 +1696,17 @@ def _parse_catalog(data: bytes) -> tuple[str, list[tuple[int, str, str]]]:
         if not isinstance(item, dict) or set(item) - {"manifest_version", "url", "digest"}:
             raise invalid("manifest catalog variant is malformed")
         mv, url, digest = item.get("manifest_version"), item.get("url"), item.get("digest")
-        if isinstance(mv, bool) or not isinstance(mv, int) or mv < 1 or any(mv == v for v, _, _ in out):
+        if (
+            isinstance(mv, bool)
+            or not isinstance(mv, int)
+            or mv < 1
+            or any(mv == v for v, _, _ in out)
+        ):
             raise invalid("manifest catalog variant versions must be distinct and positive")
         if not isinstance(url, str) or not _valid_variant_path(url):
-            raise invalid("manifest catalog variant url must be an absolute path under the install base")
+            raise invalid(
+                "manifest catalog variant url must be an absolute path under the install base"
+            )
         if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
             raise invalid("manifest catalog variant digest is invalid")
         out.append((mv, url, digest))
@@ -1459,7 +1729,9 @@ def select_variant(origin: str, supported: tuple[int, ...] | list[int], fetch: F
             raise ManifestError("legacy_unavailable", f"fetch legacy manifest: {exc}") from exc
         if status != 200:
             raise ManifestError("legacy_unavailable", f"legacy manifest answered HTTP {status}")
-        return Variant("legacy", _identity(data)[0], origin + LEGACY_MANIFEST_PATH, _digest(data), data)
+        return Variant(
+            "legacy", _identity(data)[0], origin + LEGACY_MANIFEST_PATH, _digest(data), data
+        )
     if status != 200:
         raise ManifestError("catalog_unavailable", f"manifest catalog answered HTTP {status}")
     app_id, variants = _parse_catalog(data)
@@ -1472,11 +1744,18 @@ def select_variant(origin: str, supported: tuple[int, ...] | list[int], fetch: F
     except Exception as exc:
         raise ManifestError("variant_unavailable", f"fetch manifest variant {path}: {exc}") from exc
     if status != 200:
-        raise ManifestError("variant_unavailable", f"manifest variant {path} answered HTTP {status}")
+        raise ManifestError(
+            "variant_unavailable", f"manifest variant {path} answered HTTP {status}"
+        )
     if _digest(data) != digest:
-        raise ManifestError("variant_digest_mismatch", f"manifest variant {path} does not match its catalog digest")
+        raise ManifestError(
+            "variant_digest_mismatch", f"manifest variant {path} does not match its catalog digest"
+        )
     if _identity(data) != (version, app_id):
-        raise ManifestError("variant_mismatch", f"manifest variant {path} is not version {version} of app {app_id!r}")
+        raise ManifestError(
+            "variant_mismatch",
+            f"manifest variant {path} is not version {version} of app {app_id!r}",
+        )
     return Variant("catalog", version, origin + path, digest, data)
 
 
@@ -1494,7 +1773,16 @@ def _same(a: Any, b: Any) -> bool:
     return bool(a == b)
 
 
-_MAPPED_TOOL_FIELDS = ("method", "path", "params", "input_schema", "body", "scopes", "auth", "mutation")
+_MAPPED_TOOL_FIELDS = (
+    "method",
+    "path",
+    "params",
+    "input_schema",
+    "body",
+    "scopes",
+    "auth",
+    "mutation",
+)
 
 
 def check_v2_variant(v2: bytes, v3: bytes) -> None:
@@ -1529,7 +1817,9 @@ def check_v1_variant(v1: bytes, v2: bytes) -> None:
         twin = v2_tools.get(name)
         if twin is None:
             raise incompatible(f"v1 tool {name!r} is not a v2 tool")
-        if any(not _same(tool.get(f, _MISSING), twin.get(f, _MISSING)) for f in _MAPPED_TOOL_FIELDS):
+        if any(
+            not _same(tool.get(f, _MISSING), twin.get(f, _MISSING)) for f in _MAPPED_TOOL_FIELDS
+        ):
             raise incompatible(f"v1 tool {name!r} maps differently in v2")
         if AGENT not in (new.tool_contexts(name) or frozenset()):
             raise incompatible(f"v1 tool {name!r} is not an agent tool in v2")

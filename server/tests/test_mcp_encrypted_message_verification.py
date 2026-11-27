@@ -16,7 +16,11 @@ import pytest
 
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_public_key
 from awid.e2ee_keys import build_encryption_key_assertion
-from aweb.e2ee_messages import decrypt_e2ee_message, encrypt_e2ee_message, generate_x25519_keypair
+from aweb.e2ee_messages import (
+    decrypt_e2ee_message,
+    encrypt_e2ee_message,
+    generate_x25519_keypair,
+)
 from aweb.mcp.auth import AuthContext
 from aweb.mcp.tools import chat as chat_tools
 from aweb.mcp.tools import contacts as contacts_tools
@@ -91,7 +95,10 @@ async def _insert_agents(aweb_db, *identities: dict) -> None:
 
 
 def _recipient_ref(identity: dict) -> dict:
-    return {key: identity[key] for key in ("address", "did", "stable_id", "team_id", "encryption_key")}
+    return {
+        key: identity[key]
+        for key in ("address", "did", "stable_id", "team_id", "encryption_key")
+    }
 
 
 def _custody(sender: dict, recipient: dict):
@@ -106,9 +113,15 @@ def _custody(sender: dict, recipient: dict):
             subject=str(payload.get("subject") or ""),
             message_id=str(payload["message_id"]),
             conversation_id=str(payload["conversation_id"]),
-            created_at=datetime.fromisoformat(str(payload["timestamp"]).replace("Z", "+00:00")),
+            created_at=datetime.fromisoformat(
+                str(payload["timestamp"]).replace("Z", "+00:00")
+            ),
         )
-        return {"content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": envelope}
+        return {
+            "content_mode": "encrypted_v2",
+            "message_version": 2,
+            "encrypted_envelope": envelope,
+        }
 
     async def decryptor(*, agent_id, row, **_kwargs) -> dict:
         reader = sender if agent_id == str(sender["agent_id"]) else recipient
@@ -124,13 +137,19 @@ def _custody(sender: dict, recipient: dict):
                 "private_key": reader["private_key"],
             },
         )
-        return {"subject": plain.get("subject") or "", "body": plain["body"], "decryptable": True}
+        return {
+            "subject": plain.get("subject") or "",
+            "body": plain["body"],
+            "decryptable": True,
+        }
 
     return encryptor, decryptor
 
 
 @pytest.mark.asyncio
-async def test_hosted_encrypted_chat_reads_verified_under_the_senders_address(aweb_cloud_db, monkeypatch):
+async def test_hosted_encrypted_chat_reads_verified_under_the_senders_address(
+    aweb_cloud_db, monkeypatch
+):
     m = _identity("m")
     bond = _identity("bond")
     await _insert_agents(aweb_cloud_db.aweb_db, m, bond)
@@ -140,7 +159,12 @@ async def test_hosted_encrypted_chat_reads_verified_under_the_senders_address(aw
     monkeypatch.setattr(chat_tools, "get_auth", lambda: _auth(m))
     sent = json.loads(
         await chat_tools.chat_send(
-            db, None, registry_client=None, hosted_encryptor=encryptor, to_alias="bond", message="Signed by m"
+            db,
+            None,
+            registry_client=None,
+            hosted_encryptor=encryptor,
+            to_alias="bond",
+            message="Signed by m",
         )
     )
     assert "error" not in sent, sent
@@ -149,7 +173,9 @@ async def test_hosted_encrypted_chat_reads_verified_under_the_senders_address(aw
     for reader in (m, bond):
         monkeypatch.setattr(chat_tools, "get_auth", lambda reader=reader: _auth(reader))
         history = json.loads(
-            await chat_tools.chat_history(db, session_id=conversation_id, hosted_decryptor=decryptor)
+            await chat_tools.chat_history(
+                db, session_id=conversation_id, hosted_decryptor=decryptor
+            )
         )
         [message] = history["messages"]
         assert message["body"] == "Signed by m", (reader["alias"], message)
@@ -157,7 +183,9 @@ async def test_hosted_encrypted_chat_reads_verified_under_the_senders_address(aw
         assert message["from_address"] == m["address"], (reader["alias"], message)
 
     # The same row with its ciphertext swapped no longer verifies.
-    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT message_id, encrypted_envelope FROM {{tables.chat_messages}}")
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT message_id, encrypted_envelope FROM {{tables.chat_messages}}"
+    )
     envelope = row["encrypted_envelope"]
     envelope = json.loads(envelope) if isinstance(envelope, str) else envelope
     envelope["ciphertext"] = envelope["ciphertext"][:-4] + "AAAA"
@@ -167,12 +195,18 @@ async def test_hosted_encrypted_chat_reads_verified_under_the_senders_address(aw
         row["message_id"],
     )
     monkeypatch.setattr(chat_tools, "get_auth", lambda: _auth(bond))
-    history = json.loads(await chat_tools.chat_history(db, session_id=conversation_id, hosted_decryptor=None))
+    history = json.loads(
+        await chat_tools.chat_history(
+            db, session_id=conversation_id, hosted_decryptor=None
+        )
+    )
     assert history["messages"][0]["verification_status"] == "failed"
 
 
 @pytest.mark.asyncio
-async def test_hosted_encrypted_chat_wait_reply_names_the_senders_address(aweb_cloud_db, monkeypatch):
+async def test_hosted_encrypted_chat_wait_reply_names_the_senders_address(
+    aweb_cloud_db, monkeypatch
+):
     m = _identity("m")
     bond = _identity("bond")
     await _insert_agents(aweb_cloud_db.aweb_db, m, bond)
@@ -181,7 +215,14 @@ async def test_hosted_encrypted_chat_wait_reply_names_the_senders_address(aweb_c
     m_encryptor, _ = _custody(m, bond)
     monkeypatch.setattr(chat_tools, "get_auth", lambda: _auth(m))
     sent = json.loads(
-        await chat_tools.chat_send(db, None, registry_client=None, hosted_encryptor=m_encryptor, to_alias="bond", message="ping")
+        await chat_tools.chat_send(
+            db,
+            None,
+            registry_client=None,
+            hosted_encryptor=m_encryptor,
+            to_alias="bond",
+            message="ping",
+        )
     )
     conversation_id = sent.get("conversation_id") or sent.get("session_id")
 
@@ -202,7 +243,9 @@ async def test_hosted_encrypted_chat_wait_reply_names_the_senders_address(aweb_c
 
 
 @pytest.mark.asyncio
-async def test_hosted_encrypted_mail_reads_verified_and_a_tampered_one_fails(aweb_cloud_db, monkeypatch):
+async def test_hosted_encrypted_mail_reads_verified_and_a_tampered_one_fails(
+    aweb_cloud_db, monkeypatch
+):
     m = _identity("m")
     bond = _identity("bond")
     await _insert_agents(aweb_cloud_db.aweb_db, m, bond)
@@ -212,7 +255,12 @@ async def test_hosted_encrypted_mail_reads_verified_and_a_tampered_one_fails(awe
     monkeypatch.setattr(mail_tools, "get_auth", lambda: _auth(m))
     sent = json.loads(
         await mail_tools.send_mail(
-            db, registry_client=None, hosted_encryptor=encryptor, to="bond", subject="Doc", body="Signed by m"
+            db,
+            registry_client=None,
+            hosted_encryptor=encryptor,
+            to="bond",
+            subject="Doc",
+            body="Signed by m",
         )
     )
     assert "error" not in sent, sent
@@ -224,7 +272,9 @@ async def test_hosted_encrypted_mail_reads_verified_and_a_tampered_one_fails(awe
     assert message["verification_status"] == "verified", message
     assert message["from_address"] == m["address"], message
 
-    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT message_id, encrypted_envelope FROM {{tables.messages}}")
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT message_id, encrypted_envelope FROM {{tables.messages}}"
+    )
     envelope = row["encrypted_envelope"]
     envelope = json.loads(envelope) if isinstance(envelope, str) else envelope
     envelope["signature"] = envelope["signature"][:-4] + "AAAA"
@@ -233,12 +283,16 @@ async def test_hosted_encrypted_mail_reads_verified_and_a_tampered_one_fails(awe
         json.dumps(envelope),
         row["message_id"],
     )
-    inbox = json.loads(await mail_tools.check_inbox(db, hosted_decryptor=None, unread_only=False))
+    inbox = json.loads(
+        await mail_tools.check_inbox(db, hosted_decryptor=None, unread_only=False)
+    )
     assert inbox["messages"][0]["verification_status"] == "failed"
 
 
 @pytest.mark.asyncio
-async def test_hosted_encrypted_mail_reads_verified_from_a_contact(aweb_cloud_db, monkeypatch):
+async def test_hosted_encrypted_mail_reads_verified_from_a_contact(
+    aweb_cloud_db, monkeypatch
+):
     m = _identity("m")
     bond = _identity("bond")
     await _insert_agents(aweb_cloud_db.aweb_db, m, bond)
@@ -247,7 +301,13 @@ async def test_hosted_encrypted_mail_reads_verified_from_a_contact(aweb_cloud_db
 
     monkeypatch.setattr(mail_tools, "get_auth", lambda: _auth(m))
     sent = json.loads(
-        await mail_tools.send_mail(db, registry_client=None, hosted_encryptor=encryptor, to="bond", body="Signed by m")
+        await mail_tools.send_mail(
+            db,
+            registry_client=None,
+            hosted_encryptor=encryptor,
+            to="bond",
+            body="Signed by m",
+        )
     )
     assert "error" not in sent, sent
     contact_id = await aweb_cloud_db.aweb_db.fetch_val(

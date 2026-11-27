@@ -159,8 +159,8 @@ def provision(root, sha, names, mode, receipt):
         for _, lock in projects
     }
     env = dict(os.environ, UV_OFFLINE="0" if mode == "prepare" else "1")
-    # Root image preparation reads the checkout later owned by UID1000.
-    # Trust only this operator-selected repository for child build backends.
+    # The checkout may belong to another UID than this process. Trust only
+    # this operator-selected repository for child build backends.
     env.update(
         GIT_CONFIG_COUNT="1",
         GIT_CONFIG_KEY_0="safe.directory",
@@ -170,7 +170,6 @@ def provision(root, sha, names, mode, receipt):
         env.pop(key, None)
     go_cache = go_build_cache(root=root, mode=PreparationMode(mode), env=env)
     rows = []
-    installed = set()
     for project, _ in projects:
         name = str(project.relative_to(root))
         sync = ["uv", "sync", "--frozen", "--project", str(project)]
@@ -204,37 +203,24 @@ def provision(root, sha, names, mode, receipt):
             failure=f"PACKAGE_ENVIRONMENT_INVALID[{name}]",
             capture=True,
         ).strip()
-        if version:
-            if mode == "prepare" and version not in installed:
-                run(
-                    [
-                        *base,
-                        "playwright",
-                        "install",
-                        "--with-deps",
-                        "--only-shell",
-                        "chromium",
-                    ],
-                    root=root,
-                    env=env,
-                    failure=f"PACKAGE_BROWSER_INSTALL_FAILED[{name}]",
-                )
-                installed.add(version)
-            elif mode == "verify":
-                run(
-                    [
-                        *base,
-                        "python",
-                        "-c",
-                        (
-                            "from playwright.sync_api import sync_playwright; "
-                            "p=sync_playwright().start(); b=p.chromium.launch(); b.close(); p.stop()"
-                        ),
-                    ],
-                    root=root,
-                    env=env,
-                    failure=f"PACKAGE_BROWSER_UNAVAILABLE[{name}]",
-                )
+        # The image installs the locked browser and its system libraries once,
+        # as root; preparation runs as UID 1000. Verification launches it
+        # through each project's own Playwright.
+        if version and mode == "verify":
+            run(
+                [
+                    *base,
+                    "python",
+                    "-c",
+                    (
+                        "from playwright.sync_api import sync_playwright; "
+                        "p=sync_playwright().start(); b=p.chromium.launch(); b.close(); p.stop()"
+                    ),
+                ],
+                root=root,
+                env=env,
+                failure=f"PACKAGE_BROWSER_UNAVAILABLE[{name}]",
+            )
         rows.append({"project": name, "playwright": version or None})
     after = {
         str(lock.relative_to(root)): hashlib.sha256(lock.read_bytes()).hexdigest()

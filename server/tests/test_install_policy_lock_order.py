@@ -21,7 +21,10 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture(autouse=True)
 def expected_source_tree():
-    assert Path(aweb.installations.__file__).resolve() == Path(__file__).parents[1] / "src/aweb/installations.py"
+    assert (
+        Path(aweb.installations.__file__).resolve()
+        == Path(__file__).parents[1] / "src/aweb/installations.py"
+    )
 
 
 async def compete(host, db, origin, calls):
@@ -35,7 +38,8 @@ async def compete(host, db, origin, calls):
         await tx.fetch_one(
             "SELECT installation_id FROM {{tables.team_app_installs}} "
             "WHERE team_id=$1 AND app_id=$2 FOR SHARE",
-            subject.team_id, app_id,
+            subject.team_id,
+            app_id,
         )
         readers.append(await tx.fetch_value("SELECT pg_backend_pid()"))
         first_read.set()
@@ -52,14 +56,16 @@ async def compete(host, db, origin, calls):
         except Exception as exc:
             logging.getLogger(__name__).exception(
                 "installation route error: policy_overlap=%s sqlstate=%s",
-                len(readers) == 2, getattr(exc, "sqlstate", None),
+                len(readers) == 2,
+                getattr(exc, "sqlstate", None),
             )
             raise
 
     # Exercise the real HTTP refusal, rather than propagating a server exception
     # into the test. No application component or database is substituted.
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=log_server_error, raise_app_exceptions=False), base_url="http://test",
+        transport=httpx.ASGITransport(app=log_server_error, raise_app_exceptions=False),
+        base_url="http://test",
     ) as client:
         tasks = []
         try:
@@ -106,16 +112,26 @@ async def calls_for(host, origin, *, approval, generation=None):
 
 
 @pytest.mark.parametrize("approval", [False, True], ids=["install", "approve"])
-async def test_same_app_repins_lock_before_policy_without_deadlock(host, db, origin, approval):
+async def test_same_app_repins_lock_before_policy_without_deadlock(
+    host, db, origin, approval
+):
     installed = await http_fixture.post(host.client, http_fixture.confirmation(origin))
     assert installed.status_code == 200, installed.text
-    calls = await calls_for(host, origin, approval=approval, generation=installed.json()["generation"])
+    calls = await calls_for(
+        host, origin, approval=approval, generation=installed.json()["generation"]
+    )
     responses, overlap = await compete(host, db, origin, calls)
-    assert sorted(r.status_code for r in responses) == [200, 409], [r.text for r in responses]
+    assert sorted(r.status_code for r in responses) == [200, 409], [
+        r.text for r in responses
+    ]
     refusal = next(r for r in responses if r.status_code == 409)
     assert refusal.json()["detail"]["code"] == "generation_conflict"
-    assert not overlap, "final policies read the same row before installation serialization"
-    assert await db.fetch_value("SELECT count(*) FROM {{tables.team_app_installs}}") == 1
+    assert not overlap, (
+        "final policies read the same row before installation serialization"
+    )
+    assert (
+        await db.fetch_value("SELECT count(*) FROM {{tables.team_app_installs}}") == 1
+    )
     assert await policy_fixture.successes(db) == 2
 
 
@@ -123,9 +139,13 @@ async def test_same_app_repins_lock_before_policy_without_deadlock(host, db, ori
 async def test_no_row_install_is_serialized_before_policy(host, db, origin, approval):
     calls = await calls_for(host, origin, approval=approval)
     responses, overlap = await compete(host, db, origin, calls)
-    assert sorted(r.status_code for r in responses) == [200, 422], [r.text for r in responses]
+    assert sorted(r.status_code for r in responses) == [200, 422], [
+        r.text for r in responses
+    ]
     refusal = next(r for r in responses if r.status_code == 422)
     assert refusal.json()["detail"]["code"] == "generation_required"
     assert not overlap, "absent installation did not serialize final policies"
-    assert await db.fetch_value("SELECT count(*) FROM {{tables.team_app_installs}}") == 1
+    assert (
+        await db.fetch_value("SELECT count(*) FROM {{tables.team_app_installs}}") == 1
+    )
     assert await policy_fixture.successes(db) == 1

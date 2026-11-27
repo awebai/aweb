@@ -34,7 +34,9 @@ async def relying_app(
     on_principal: Callable[[Request, Principal], Any] | None = None,
 ) -> AsyncIterator[tuple[httpx.AsyncClient, AWIDTeamCache]]:
     """A naapp whose every route authenticates the request and echoes the principal."""
-    cache = cache or AWIDTeamCache(registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport)
+    cache = cache or AWIDTeamCache(
+        registry_url=REGISTRY_URL, ttl_seconds=60, transport=registry.transport
+    )
     app = FastAPI()
 
     @app.api_route("/{route:path}", methods=["GET", "POST", "PUT", "DELETE"])
@@ -44,7 +46,9 @@ async def relying_app(
             kwargs["timestamp_skew_seconds"] = timestamp_skew_seconds
         if did_aw_profile is not None:
             kwargs["did_aw_profile"] = did_aw_profile
-        principal = await authenticate_request(request, public_origin=public_origin, team_cache=cache, **kwargs)
+        principal = await authenticate_request(
+            request, public_origin=public_origin, team_cache=cache, **kwargs
+        )
         if on_principal is not None:
             return await on_principal(request, principal)
         return {
@@ -59,7 +63,9 @@ async def relying_app(
             "cached_body": request.state.cached_body.decode(),
         }
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, root_path=root_path), base_url=public_origin) as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, root_path=root_path), base_url=public_origin
+    ) as client:
         yield client, cache
 
 

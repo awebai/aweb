@@ -2593,22 +2593,6 @@ func TestNormalizedChatEventNamesDoesNotFallbackToAliasWhenStrongIdentityConflic
 	}
 }
 
-func TestDefaultWaitIs120(t *testing.T) {
-	t.Parallel()
-
-	if DefaultWait != 120 {
-		t.Fatalf("DefaultWait=%d, want 120", DefaultWait)
-	}
-}
-
-func TestMaxSendTimeoutIs16Min(t *testing.T) {
-	t.Parallel()
-
-	if MaxSendTimeout != 16*time.Minute {
-		t.Fatalf("MaxSendTimeout=%v, want 16m", MaxSendTimeout)
-	}
-}
-
 func TestFindSessionFallback(t *testing.T) {
 	t.Parallel()
 

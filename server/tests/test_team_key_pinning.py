@@ -34,7 +34,9 @@ __all__ = ["privacy_app"]
 
 def _controller_headers(sk, did, payload):
     timestamp = datetime.now(timezone.utc).isoformat()
-    signature = sign_message(sk, canonical_json_bytes({**payload, "timestamp": timestamp}))
+    signature = sign_message(
+        sk, canonical_json_bytes({**payload, "timestamp": timestamp})
+    )
     return {"Authorization": f"DIDKey {did} {signature}", "X-AWEB-Timestamp": timestamp}
 
 
@@ -45,7 +47,9 @@ async def register_namespace_controller(env, did: str) -> None:
     assert did == env.namespace_did
 
 
-async def rotate_team_key(env, controller_sk, controller_did, new_team_did: str) -> None:
+async def rotate_team_key(
+    env, controller_sk, controller_did, new_team_did: str
+) -> None:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=env.registry_app),
         base_url="http://registry.test",
@@ -111,7 +115,8 @@ async def _connect(env, member):
 async def _roster(env, member):
     agent_sk, agent_did, certificate = member
     return await env.client.get(
-        "/v1/agents", headers=_signed_team_headers(agent_sk, agent_did, TEAM, certificate)
+        "/v1/agents",
+        headers=_signed_team_headers(agent_sk, agent_did, TEAM, certificate),
     )
 
 
@@ -149,7 +154,10 @@ async def test_substituted_registry_team_key_does_not_admit_a_forged_member(pinn
     connected = await _connect(env, forger)
     roster = await _roster(env, forger)
 
-    assert (connected.status_code, roster.status_code) == (401, 401), (connected.text, roster.text)
+    assert (connected.status_code, roster.status_code) == (401, 401), (
+        connected.text,
+        roster.text,
+    )
     assert (
         connected.json()["detail"]
         == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
@@ -186,7 +194,8 @@ async def test_rotation_signed_by_the_dns_controller_moves_the_pin(pinning):
     assert pin["team_key_act_at"] is not None
     bob = env.actors["bob"]
     former = await env.client.get(
-        "/v1/agents", headers=_signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate)
+        "/v1/agents",
+        headers=_signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate),
     )
     assert former.status_code == 401, former.text
 
@@ -220,14 +229,18 @@ async def test_an_older_act_cannot_roll_the_pin_back(pinning):
     await register_namespace_controller(env, env.namespace_did)
     first_sk, _, first_did = _make_keypair()
     await rotate_team_key(env, env.namespace_sk, env.namespace_did, first_did)
-    assert (await _connect(env, _member(first_sk, first_did, "erin"))).status_code == 200
+    assert (
+        await _connect(env, _member(first_sk, first_did, "erin"))
+    ).status_code == 200
     first_act = await env.registry_db.fetch_one(
         "SELECT * FROM {{tables.team_key_acts}} WHERE team_did_key = $1",
         first_did,
     )
     second_sk, _, second_did = _make_keypair()
     await rotate_team_key(env, env.namespace_sk, env.namespace_did, second_did)
-    assert (await _connect(env, _member(second_sk, second_did, "frank"))).status_code == 200
+    assert (
+        await _connect(env, _member(second_sk, second_did, "frank"))
+    ).status_code == 200
 
     # The registry serves the first key again, with its genuine but older act.
     await env.registry_db.execute(
@@ -256,12 +269,18 @@ async def test_before_enforcement_a_mismatch_is_logged_and_moves_the_pin(
 
     with caplog.at_level(logging.WARNING, logger="awid.team_key_acts"):
         # The staged measuring mode serves the registry's key, as before pinning.
-        response = await _connect(env, _member(substituted_sk, substituted_did, "measured"))
+        response = await _connect(
+            env, _member(substituted_sk, substituted_did, "measured")
+        )
 
     assert response.status_code == 200, response.text
     # The key certificates were verified under is the team's one current key here.
     assert (await _pin(env))["team_did_key"] == substituted_did
-    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("team_key_pin_")]
+    lines = [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("team_key_pin_")
+    ]
     assert lines == [
         f"team_key_pin_mismatch team={TEAM} pinned={env.team_did} served={substituted_did} reason=no_act enforced=false",
         f"team_key_pin_moved_without_act team={TEAM} from={env.team_did} to={substituted_did} reason=no_act",
@@ -315,20 +334,26 @@ async def test_an_embedding_app_without_a_resolver_still_authenticates(pinning):
     del env.app.state.awid_txt_resolver
     bob = env.actors["bob"]
     response = await env.client.get(
-        "/v1/agents", headers=_signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate)
+        "/v1/agents",
+        headers=_signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate),
     )
     assert response.status_code == 200, response.text
 
 
 @pytest.mark.asyncio
-async def test_a_warm_old_key_request_refuses_after_another_worker_moves_the_pin(pinning, monkeypatch):
+async def test_a_warm_old_key_request_refuses_after_another_worker_moves_the_pin(
+    pinning, monkeypatch
+):
     env = pinning
     fresh_registry = env.app.state.awid_registry_client
     member = _member(env.team_sk, env.team_did, "warm")
-    async with aclosing(CachedRegistryClient(
-        registry_url="https://pinning-cache.test", redis_client=env.redis,
-        transport=env.registry.transport,
-    )) as cached_registry:
+    async with aclosing(
+        CachedRegistryClient(
+            registry_url="https://pinning-cache.test",
+            redis_client=env.redis,
+            transport=env.registry.transport,
+        )
+    ) as cached_registry:
         monkeypatch.setattr(env.app.state, "awid_registry_client", cached_registry)
         assert (await _connect(env, member)).status_code == 200
         assert (await _roster(env, member)).status_code == 200
@@ -345,12 +370,18 @@ async def test_a_warm_old_key_request_refuses_after_another_worker_moves_the_pin
         worker_app.state.public_origin = env.app.state.public_origin
         worker_app.state.on_mutation = env.app.state.on_mutation
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=worker_app), base_url=env.client.base_url,
+            transport=httpx.ASGITransport(app=worker_app),
+            base_url=env.client.base_url,
         ) as worker:
-            moved = await _connect(SimpleNamespace(client=worker), _member(next_sk, next_did, "moved"))
+            moved = await _connect(
+                SimpleNamespace(client=worker), _member(next_sk, next_did, "moved")
+            )
             assert moved.status_code == 200, moved.text
         assert (await _pin(env))["team_did_key"] == next_did
-        assert await cached_registry.get_team_public_key("example.test", TEAM_NAME) == env.team_did
+        assert (
+            await cached_registry.get_team_public_key("example.test", TEAM_NAME)
+            == env.team_did
+        )
 
         roster = await _roster(env, member)
 

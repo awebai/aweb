@@ -24,9 +24,9 @@ from aweb_naapp.manifest import Manifest, ManifestError, canonical_bytes, load_m
 VECTORS = Path(__file__).resolve().parents[2] / "test-vectors" / "app-manifests"
 V2 = json.loads((VECTORS / "app-manifest-v2-v1.json").read_text(encoding="utf-8"))
 # The shared vector's well-shaped did:key that is no Ed25519 key.
-BAD_DID = next(
-    case for case in V2["cases"] if case["name"] == "app_key_bad_did"
-)["mutations"][0]["value"]
+BAD_DID = next(case for case in V2["cases"] if case["name"] == "app_key_bad_did")["mutations"][0][
+    "value"
+]
 
 
 @pytest.fixture
@@ -64,25 +64,32 @@ def _wrong_multicodec_did_key() -> str:
 
 
 def _v1(did_key: str) -> bytes:
-    return canonical_bytes({
-        "manifest_version": 1,
-        "app": {"id": "example", "origin": "https://example.test"},
-        "tools": [],
-        "event_emitters": [{"kid": "emit-1", "did_key": did_key}],
-    })
+    return canonical_bytes(
+        {
+            "manifest_version": 1,
+            "app": {"id": "example", "origin": "https://example.test"},
+            "tools": [],
+            "event_emitters": [{"kid": "emit-1", "did_key": did_key}],
+        }
+    )
 
 
 def _v2(did_key: str) -> bytes:
-    return canonical_bytes({
-        "manifest_version": 2,
-        "app": {"id": "example", "origin": "https://example.test"},
-        "tools": [],
-        "app_keys": [{"kid": "app-1", "did_key": did_key, "purposes": ["app-event"]}],
-    })
+    return canonical_bytes(
+        {
+            "manifest_version": 2,
+            "app": {"id": "example", "origin": "https://example.test"},
+            "tools": [],
+            "app_keys": [{"kid": "app-1", "did_key": did_key, "purposes": ["app-event"]}],
+        }
+    )
 
 
 # Each manifest version with the refusal code its did:key rule carries.
-VERSIONS = [pytest.param(_v1, "manifest_invalid", id="v1"), pytest.param(_v2, "app_keys_invalid", id="v2")]
+VERSIONS = [
+    pytest.param(_v1, "manifest_invalid", id="v1"),
+    pytest.param(_v2, "app_keys_invalid", id="v2"),
+]
 
 
 def _base58_length(byte_count: int) -> int:

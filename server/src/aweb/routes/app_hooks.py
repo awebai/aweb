@@ -122,16 +122,23 @@ async def _caller(request: Request, db_infra: DatabaseInfra):
     try:
         credential = await verify_app_credential(request, db, HOOK_RESOLVE)
         installed = await get_installed_app(
-            db, team_id=credential.team_id, app_id=credential.app_id, digest=credential.digest
+            db,
+            team_id=credential.team_id,
+            app_id=credential.app_id,
+            digest=credential.digest,
         )
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     if installed is None:
-        raise HTTPException(status_code=403, detail=PURPOSES[HOOK_RESOLVE].key_not_registered)
+        raise HTTPException(
+            status_code=403, detail=PURPOSES[HOOK_RESOLVE].key_not_registered
+        )
     return db, credential, installed
 
 
-def _parsed_selector(catalog_id: str, catalog_version: str, hook: str) -> HookSelector | None:
+def _parsed_selector(
+    catalog_id: str, catalog_version: str, hook: str
+) -> HookSelector | None:
     """The hook the path names, or None when no binding could ever name it."""
     if (
         not _CATALOG_ID.fullmatch(catalog_id)
@@ -143,7 +150,12 @@ def _parsed_selector(catalog_id: str, catalog_version: str, hook: str) -> HookSe
 
 
 async def _resolve(
-    kind: str, request: Request, db_infra: DatabaseInfra, catalog_id: str, catalog_version: str, hook: str
+    kind: str,
+    request: Request,
+    db_infra: DatabaseInfra,
+    catalog_id: str,
+    catalog_version: str,
+    hook: str,
 ) -> HookResolutionResponse:
     as_of = _as_of()
     db, credential, _ = await _caller(request, db_infra)
@@ -159,21 +171,27 @@ async def _resolve(
         selector=selector,
     ):
         raise HTTPException(status_code=403, detail=HOOK_BINDING_REQUIRED)
-    found = await active_bindings(db, team_id=credential.team_id, kind=kind, selector=selector)
+    found = await active_bindings(
+        db, team_id=credential.team_id, kind=kind, selector=selector
+    )
     bindings: list[HookProductionResponse] | list[HookBindingResponse]
     if kind == PRODUCTION:
         bindings = [
             HookProductionResponse(
                 **_binding_fields(binding),
                 keys=[
-                    HookKeyResponse(kid=key.kid, did_key=key.did_key, purposes=list(key.purposes))
+                    HookKeyResponse(
+                        kid=key.kid, did_key=key.did_key, purposes=list(key.purposes)
+                    )
                     for key in await hook_keys(db, binding)
                 ],
             )
             for binding in found
         ]
     else:
-        bindings = [HookBindingResponse(**_binding_fields(binding)) for binding in found]
+        bindings = [
+            HookBindingResponse(**_binding_fields(binding)) for binding in found
+        ]
     return HookResolutionResponse(
         team_id=credential.team_id,
         catalog={"id": selector.catalog_id, "version": selector.catalog_version},
@@ -197,7 +215,9 @@ async def hook_registrations_route(
 ) -> HookResolutionResponse:
     """Where to deliver: the team's active registrations of the hook, for a caller
     holding an active production of it."""
-    return await _resolve(REGISTRATION, request, db_infra, catalog_id, catalog_version, hook)
+    return await _resolve(
+        REGISTRATION, request, db_infra, catalog_id, catalog_version, hook
+    )
 
 
 @router.get(
@@ -213,14 +233,18 @@ async def hook_productions_route(
 ) -> HookResolutionResponse:
     """Who may produce: the team's active productions of the hook with their hook
     keys, for a caller holding an active registration of it."""
-    return await _resolve(PRODUCTION, request, db_infra, catalog_id, catalog_version, hook)
+    return await _resolve(
+        PRODUCTION, request, db_infra, catalog_id, catalog_version, hook
+    )
 
 
 def _selector(hook: str) -> HookSelector:
     parts = hook.split("/")
     selector = _parsed_selector(*parts) if len(parts) == 3 else None
     if selector is None:
-        raise HTTPException(status_code=400, detail="hook is <catalog_id>/<catalog_version>/<hook>")
+        raise HTTPException(
+            status_code=400, detail="hook is <catalog_id>/<catalog_version>/<hook>"
+        )
     return selector
 
 
@@ -235,14 +259,18 @@ async def own_hook_bindings_route(
     as_of = _as_of()
     db, credential, installed = await _caller(request, db_infra)
     if (binding_id is None) == (hook is None):
-        raise HTTPException(status_code=400, detail="give exactly one of binding_id or hook")
+        raise HTTPException(
+            status_code=400, detail="give exactly one of binding_id or hook"
+        )
     selector = _selector(hook) if hook is not None else None
     parsed_id = None
     if binding_id is not None:
         try:
             parsed_id = UUID(binding_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="binding_id is a UUID") from None
+            raise HTTPException(
+                status_code=400, detail="binding_id is a UUID"
+            ) from None
     bindings = await own_bindings(
         db,
         team_id=credential.team_id,

@@ -25,7 +25,9 @@ async def stalled_registry_url(*, byte_interval: float = 0.02) -> AsyncGenerator
     writers: set[asyncio.StreamWriter] = set()
     handlers: set[asyncio.Task[None]] = set()
 
-    async def answer_slowly(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def answer_slowly(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         try:
             await reader.readuntil(b"\r\n\r\n")
             writer.write(_HEAD)

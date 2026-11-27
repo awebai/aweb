@@ -89,7 +89,8 @@ def test_logs_refuses_hook_trust_material_it_cannot_load(
 
 
 @pytest.mark.parametrize(
-    "unset", ["LOGS_HOOK_INTERNAL_DESTINATIONS", "LOGS_HOOK_INTERNAL_CIDR", "LOGS_HOOK_INTERNAL_ORIGINS"]
+    "unset",
+    ["LOGS_HOOK_INTERNAL_DESTINATIONS", "LOGS_HOOK_INTERNAL_CIDR", "LOGS_HOOK_INTERNAL_ORIGINS"],
 )
 def test_logs_refuses_internal_hook_settings_given_in_part(
     tmp_path, database, purge_ledger_database, monkeypatch, unset

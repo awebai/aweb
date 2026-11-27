@@ -96,7 +96,9 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
                     certificate_id="secrets-service",
                     alias="secrets-service",
                 )
-                await registry.add_certificate(service_member.certificate(), team_key=service_member.team_key)
+                await registry.add_certificate(
+                    service_member.certificate(), team_key=service_member.team_key
+                )
                 key_file = tmp_path / "service-member.key"
                 key_file.write_text(
                     "-----BEGIN ED25519 PRIVATE KEY-----\n"
@@ -315,10 +317,15 @@ async def test_a_canonical_component_holder_logs_into_the_production_console(roo
     assert [event["payload"]["act"] for event in await envelopes(db, member.team_id)] == [
         "role.designated",
     ]
-    async with asyncio.timeout(5):
-        while dns.queries[("logs.example", "A")] == 0:
-            await asyncio.sleep(0.01)
-    assert dns.queries[("logs.example", "AAAA")] > 0
+    expected_queries = (("logs.example", "A"), ("logs.example", "AAAA"))
+    try:
+        async with asyncio.timeout(5):
+            while any(dns.queries[query] == 0 for query in expected_queries):
+                await asyncio.sleep(0.01)
+    except TimeoutError:
+        pytest.fail(
+            f"Expected DNS queries {expected_queries!r} within 5s. Observed {dict(dns.queries)!r}"
+        )
 
 
 async def test_the_production_console_serves_the_access_view_only_to_its_current_owner(root):

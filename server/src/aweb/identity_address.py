@@ -9,6 +9,7 @@ from fastapi import HTTPException
 class AddressResolutionState(StrEnum):
     NOT_REQUESTED = "not_requested"
     EMPTY = "empty"
+    WITHHELD = "withheld"
     VERIFIED = "verified"
     UNKNOWN = "unknown"
     CONTEXT_REQUIRED = "context_required"
@@ -38,7 +39,9 @@ class AddressResolution:
         }
         if len(addresses) != 1:
             return self
-        return replace(self, stored_binding_verified=True, stored_address=addresses.pop())
+        return replace(
+            self, stored_binding_verified=True, stored_address=addresses.pop()
+        )
 
 
 def require_address_evidence(auth) -> None:

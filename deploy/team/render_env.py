@@ -18,7 +18,9 @@ from urllib.parse import urlsplit
 import jsonschema
 import yaml
 
-SCHEMA = json.loads((Path(__file__).parent / "config.schema.json").read_text(encoding="utf-8"))
+SCHEMA = json.loads(
+    (Path(__file__).parent / "config.schema.json").read_text(encoding="utf-8")
+)
 
 
 class Refused(Exception):
@@ -37,7 +39,8 @@ def _resolved(node: dict) -> dict:
 
 def _check(config: object) -> None:
     errors = sorted(
-        jsonschema.Draft202012Validator(SCHEMA).iter_errors(config), key=lambda e: list(map(str, e.path))
+        jsonschema.Draft202012Validator(SCHEMA).iter_errors(config),
+        key=lambda e: list(map(str, e.path)),
     )
     if not errors:
         return
@@ -45,7 +48,9 @@ def _check(config: object) -> None:
     for error in errors:
         where = ".".join(map(str, error.path)) or "the file"
         if error.validator == "additionalProperties":
-            unknown = sorted(set(error.instance) - set(error.schema.get("properties", {})))
+            unknown = sorted(
+                set(error.instance) - set(error.schema.get("properties", {}))
+            )
             said.append(f"{where}: no such key: {', '.join(unknown)}")
         elif error.validator == "required":
             missing = sorted(set(error.validator_value) - set(error.instance))
@@ -73,7 +78,11 @@ def _with_defaults(schema: dict, value: dict) -> dict:
                 out[key] = _with_defaults(child, out[key])
         elif "default" in child:
             out[key] = copy.deepcopy(child["default"])
-        elif child.get("type") == "object" and not child.get("required") and key not in LAYERS:
+        elif (
+            child.get("type") == "object"
+            and not child.get("required")
+            and key not in LAYERS
+        ):
             filled = _with_defaults(child, {})
             if filled:
                 out[key] = filled
@@ -86,7 +95,9 @@ def normalize(config: object) -> dict:
     inserts none). A component the file leaves out stays out."""
     _check(config)
     return {
-        section: _with_defaults(SCHEMA["properties"][section], value) if isinstance(value, dict) else value
+        section: _with_defaults(SCHEMA["properties"][section], value)
+        if isinstance(value, dict)
+        else value
         for section, value in config.items()
     }
 
@@ -112,13 +123,16 @@ def _collect(schema: dict, value: object, out: dict[str, str]) -> None:
 # The components an operator can leave out, each in its own Compose file.
 OPTIONAL_COMPONENTS = ("secrets", "logs", "agents", "front")
 
+
 def render(config: object) -> dict[str, str]:
     """The settings of the Compose layer for this configuration."""
     config = normalize(config)
     if "compose" not in config:
         raise Refused("compose: missing; the Compose layer needs compose.secretsDir")
     if "servicesCidr" not in config.get("network", {}):
-        raise Refused("network.servicesCidr: missing; the Compose layer creates the services network with it")
+        raise Refused(
+            "network.servicesCidr: missing; the Compose layer creates the services network with it"
+        )
     if "agents" in config and "compose" not in config["agents"]:
         raise Refused("agents: missing compose; the Compose layer needs agents.compose")
     if "agents" in config:
@@ -138,15 +152,19 @@ def render(config: object) -> dict[str, str]:
         # The agents network's gateway is its subnet's first address; neither
         # egress nor the agent may hold it.
         gateway = str(next(ipaddress.ip_network(out["AGENTS_SUBNET"]).hosts()))
-        for key, address in (("agents.resolverIp", config["agents"]["resolverIp"]),
-                             ("agents.network.address", config["agents"]["network"]["address"])):
+        for key, address in (
+            ("agents.resolverIp", config["agents"]["resolverIp"]),
+            ("agents.network.address", config["agents"]["network"]["address"]),
+        ):
             if address == gateway:
                 raise Refused(f"{key}: is the agents network's gateway address")
         out["AGENTS_GATEWAY"] = gateway
         # The name the agent's own Compose file gives the network; the
         # deployment's agents network takes its place.
         out["AGENTS_NETWORK"] = "agents"
-        out["TEAM_LOGIN_DIR"] = f"{config['compose']['secretsDir']}/{out['AGENTS_SECRETS']}"
+        out["TEAM_LOGIN_DIR"] = (
+            f"{config['compose']['secretsDir']}/{out['AGENTS_SECRETS']}"
+        )
     # Secrets holds its custody key as a mounted file unless the operator names a KMS key.
     if "secrets" in config and "kmsKeyId" not in config["secrets"]:
         out["SECRETS_CUSTODY_KEY_FILE"] = "/run/secrets/secrets/custody-key"
@@ -160,7 +178,9 @@ def render(config: object) -> dict[str, str]:
     out["AWEB_REDIS_URL_FILE"] = "/run/secrets/aweb/redis-url"
     # aweb delivers federated mail and chat only to the servers the operator
     # lists, and to none unless it lists one.
-    out["AWEB_FEDERATION_OUTBOUND"] = ",".join(config["aweb"].get("federationOutbound", [])) or "off"
+    out["AWEB_FEDERATION_OUTBOUND"] = (
+        ",".join(config["aweb"].get("federationOutbound", [])) or "off"
+    )
     # aweb fetches app manifests from internal addresses only inside the services range.
     if "appInternalOrigins" in config["aweb"]:
         out["AWEB_APP_INTERNAL_CIDR"] = config["network"]["servicesCidr"]
@@ -170,12 +190,17 @@ def render(config: object) -> dict[str, str]:
             out[f"{app.upper()}_HOOK_INTERNAL_DESTINATIONS"] = "allowed"
             out[f"{app.upper()}_HOOK_INTERNAL_CIDR"] = config["network"]["servicesCidr"]
     # A component the operator leaves out has no file in the model.
-    files = ["compose.yaml", *(f"compose.{name}.yaml" for name in OPTIONAL_COMPONENTS if name in config)]
+    files = [
+        "compose.yaml",
+        *(f"compose.{name}.yaml" for name in OPTIONAL_COMPONENTS if name in config),
+    ]
     # The agent image's own fragments for the agents' optional inputs, from its
     # pinned source: the public CA they trust and the operator's Git mirrors.
     for key, fragment in (("caFile", "trust"), ("mirrorsDir", "mirrors")):
         if key in config.get("agents", {}):
-            files.append(f"{config['agents']['compose']['oatsSource']}/container/agent/compose.agent.{fragment}.yaml")
+            files.append(
+                f"{config['agents']['compose']['oatsSource']}/container/agent/compose.agent.{fragment}.yaml"
+            )
     out["COMPOSE_FILE"] = ":".join(files)
     if config["postgres"].get("bundled", True):
         out["COMPOSE_PROFILES"] = "postgres"
@@ -210,7 +235,9 @@ def render_front(config: object) -> str:
             continue
         origin = urlsplit(config[component][key])
         if origin.port not in (None, 443):
-            raise Refused(f"{component}.{key}: the front serves origins on port 443 only")
+            raise Refused(
+                f"{component}.{key}: the front serves origins on port 443 only"
+            )
         host = origin.hostname
         out += (
             f"{host}:443 {{\n  tls {FRONT_SECRETS}/certificate.pem {FRONT_SECRETS}/key.pem\n"
@@ -248,7 +275,10 @@ def main(argv: list[str]) -> int:
     front = len(argv) == 3 and argv[1] == "--front"
     human_approval = len(argv) == 3 and argv[1] == "--human-approval"
     if len(argv) != 2 and not front and not human_approval:
-        print("usage: render_env.py [--front|--human-approval] deployment.yaml", file=sys.stderr)
+        print(
+            "usage: render_env.py [--front|--human-approval] deployment.yaml",
+            file=sys.stderr,
+        )
         return 2
     path = argv[-1]
     try:
@@ -256,9 +286,13 @@ def main(argv: list[str]) -> int:
         if human_approval:
             sys.stdout.write(render_human_approval(config))
         else:
-            sys.stdout.write(render_front(config) if front else env_file(render(config)))
+            sys.stdout.write(
+                render_front(config) if front else env_file(render(config))
+            )
     except (OSError, yaml.YAMLError) as exc:
-        print(f"render_env: {path} cannot be read: {type(exc).__name__}", file=sys.stderr)
+        print(
+            f"render_env: {path} cannot be read: {type(exc).__name__}", file=sys.stderr
+        )
         return 1
     except Refused as refused:
         print(f"render_env: {refused}", file=sys.stderr)

@@ -105,9 +105,7 @@ def test_og_card_and_fingerprinted_css_served() -> None:
 def test_packaged_open_font_is_served_for_aweb_css() -> None:
     client = TestClient(_app())
     css = client.get("/css/aweb.css").text
-    for font_name in (
-        "Archivo-Latin-Variable.woff2",
-    ):
+    for font_name in ("Archivo-Latin-Variable.woff2",):
         assert f'url("/fonts/{font_name}")' in css
         response = client.get(f"/fonts/{font_name}")
         assert response.status_code == 200

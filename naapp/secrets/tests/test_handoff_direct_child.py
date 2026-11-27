@@ -44,9 +44,13 @@ async def certify_agent(journey, parent: Member, parent_chain: list[dict], alias
     agent.extra_cert_fields = {"member_did_aw": principal}
     await journey.world.registry.add_certificate(agent.certificate(), team_key=agent.team_key)
     fields = {
-        "v": 1, "type": "aweb.id-certificate", "id": principal, "domain": "example.com",
+        "v": 1,
+        "type": "aweb.id-certificate",
+        "id": principal,
+        "domain": "example.com",
         "parent": {"kind": "identity", "id": parent.extra_cert_fields["member_did_aw"]},
-        "kind": "agent", "issuer_key": parent.did_key,
+        "kind": "agent",
+        "issuer_key": parent.did_key,
         "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     signed = {
@@ -57,29 +61,41 @@ async def certify_agent(journey, parent: Member, parent_chain: list[dict], alias
     await journey.registry.register_id_certificate(
         {"v": 1, "type": "aweb.id-chain", "certificates": chain},
         signer=lambda payload: (agent.did_key, agent.member_key.sign(payload).signature),
-        expected_head=None, invitation_id=None,
+        expected_head=None,
+        invitation_id=None,
     )
     return agent, chain
 
 
 def start_body(journey, purpose: str = "session") -> bytes:
     key = SigningKey.generate()
-    return json.dumps({
-        "v": 1, "purpose": purpose, "client_key": did_key(key), "return": "loopback",
-        "redirect_uri": "http://127.0.0.1:54321/callback",
-        "verifier_sha256": hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest(),
-        "scope": {"installation_id": journey.scope.installation_id, "role": journey.scope.role,
-                  "principal": journey.scope.principal},
-    }).encode()
+    return json.dumps(
+        {
+            "v": 1,
+            "purpose": purpose,
+            "client_key": did_key(key),
+            "return": "loopback",
+            "redirect_uri": "http://127.0.0.1:54321/callback",
+            "verifier_sha256": hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest(),
+            "scope": {
+                "installation_id": journey.scope.installation_id,
+                "role": journey.scope.role,
+                "principal": journey.scope.principal,
+            },
+        }
+    ).encode()
 
 
 async def start(journey, signer: Member, chain: list[dict] | None, purpose: str = "session"):
     raw = start_body(journey, purpose)
-    headers = {"Content-Type": "application/json",
-               **signer.headers(aud=API, method="POST", path="/handoffs", body=raw)}
+    headers = {
+        "Content-Type": "application/json",
+        **signer.headers(aud=API, method="POST", path="/handoffs", body=raw),
+    }
     if chain is not None:
         headers["X-AWID-ID-Chain"] = encode_id_chain_header(
-            {"v": 1, "type": "aweb.id-chain", "certificates": chain})
+            {"v": 1, "type": "aweb.id-chain", "certificates": chain}
+        )
     return await journey.client.post(API + "/handoffs", content=raw, headers=headers)
 
 
@@ -89,14 +105,20 @@ async def handoffs(journey) -> int:
 
 async def retained(journey) -> bytes | None:
     holding = await read_holding(
-        journey.world.db, installation_id=journey.scope.installation_id, team_id=TEAM,
-        role=OWNER_ROLE, principal=journey.scope.principal)
+        journey.world.db,
+        installation_id=journey.scope.installation_id,
+        team_id=TEAM,
+        role=OWNER_ROLE,
+        principal=journey.scope.principal,
+    )
     return None if holding is None else holding.certificate
 
 
 @pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
 async def test_the_first_direct_child_start_after_designation_is_admitted(journey):
-    laptop, chain = await certify_agent(journey, journey.member, [journey.member.id_certificate], "laptop")
+    laptop, chain = await certify_agent(
+        journey, journey.member, [journey.member.id_certificate], "laptop"
+    )
     response = await start(journey, laptop, chain)
     assert response.status_code == 201, response.text
     state = await journey.client.get(f"/handoff/{response.json()['handoff_id']}/session")
@@ -108,7 +130,9 @@ async def test_the_first_direct_child_start_after_designation_is_admitted(journe
 
 @pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
 async def test_a_grandchild_or_an_unrelated_agent_is_refused_and_creates_nothing(journey):
-    laptop, chain = await certify_agent(journey, journey.member, [journey.member.id_certificate], "laptop")
+    laptop, chain = await certify_agent(
+        journey, journey.member, [journey.member.id_certificate], "laptop"
+    )
     desk, desk_chain = await certify_agent(journey, laptop, chain, "desk")
     before = await handoffs(journey)
     for signer, signer_chain in ((desk, desk_chain), (laptop, None)):
@@ -118,13 +142,22 @@ async def test_a_grandchild_or_an_unrelated_agent_is_refused_and_creates_nothing
 
 
 @pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
-async def test_a_renewed_holder_certificate_refuses_until_the_holders_credential_start_refreshes_it(journey):
-    laptop, chain = await certify_agent(journey, journey.member, [journey.member.id_certificate], "laptop")
+async def test_a_renewed_holder_certificate_refuses_until_the_holders_credential_start_refreshes_it(
+    journey,
+):
+    laptop, chain = await certify_agent(
+        journey, journey.member, [journey.member.id_certificate], "laptop"
+    )
     old = await retained(journey)
     # Renewal: a new certificate under alice's same key; the old one revoked.
-    renewed = Member(team_id=TEAM, team_key=journey.member.team_key, member_key=journey.member.member_key,
-                     alias="alice", certificate_id="cert-1-renewed",
-                     extra_cert_fields=dict(journey.member.extra_cert_fields))
+    renewed = Member(
+        team_id=TEAM,
+        team_key=journey.member.team_key,
+        member_key=journey.member.member_key,
+        alias="alice",
+        certificate_id="cert-1-renewed",
+        extra_cert_fields=dict(journey.member.extra_cert_fields),
+    )
     # One active certificate per alias: the old one is revoked as the new one is issued.
     await journey.world.registry.revoke(journey.member.certificate_id)
     await journey.world.registry.add_certificate(renewed.certificate(), team_key=renewed.team_key)
@@ -146,9 +179,14 @@ async def test_a_renewed_holder_certificate_refuses_until_the_holders_credential
 @pytest.mark.parametrize("journey", [REQUESTER], indirect=True)
 async def test_a_failed_credential_start_verification_refreshes_nothing(journey):
     old = await retained(journey)
-    stranger = Member(team_id=TEAM, team_key=SigningKey.generate(), member_key=journey.member.member_key,
-                      alias="alice", certificate_id="cert-forged",
-                      extra_cert_fields=dict(journey.member.extra_cert_fields))
+    stranger = Member(
+        team_id=TEAM,
+        team_key=SigningKey.generate(),
+        member_key=journey.member.member_key,
+        alias="alice",
+        certificate_id="cert-forged",
+        extra_cert_fields=dict(journey.member.extra_cert_fields),
+    )
     response = await start(journey, stranger, None, purpose="credential")
     # Team-auth refuses a certificate under another team key before any effect.
     assert response.status_code in (401, 403)
@@ -162,7 +200,9 @@ async def test_concurrent_credential_starts_on_one_holding_both_complete(journey
     async with joined() as tasks:
         async with holding_locked(journey) as blocker:
             for _ in range(2):
-                tasks.append(asyncio.create_task(start(journey, journey.member, None, purpose="credential")))
+                tasks.append(
+                    asyncio.create_task(start(journey, journey.member, None, purpose="credential"))
+                )
             await blocked_on(journey, blocker, count=2)
         responses = await asyncio.wait_for(asyncio.gather(*tasks), timeout=BOUND)
     assert [r.status_code for r in responses] == [201, 201], [r.text for r in responses]
@@ -219,8 +259,12 @@ async def holding_locked(journey):
     yields the holding backend's pid."""
     async with journey.world.db.transaction() as tx:
         held = await lock_holding(
-            tx, installation_id=journey.scope.installation_id, team_id=TEAM,
-            role=OWNER_ROLE, principal=journey.scope.principal)
+            tx,
+            installation_id=journey.scope.installation_id,
+            team_id=TEAM,
+            role=OWNER_ROLE,
+            principal=journey.scope.principal,
+        )
         assert held is not None
         yield await tx.fetch_value("SELECT pg_backend_pid()")
 
@@ -263,7 +307,9 @@ async def joined():
 @pytest.mark.parametrize("journey", [{"requester_parent": short_window_once}], indirect=True)
 async def test_a_requester_window_crossed_during_a_lock_wait_creates_nothing(journey):
     check = short_windows[-1]
-    laptop, chain = await certify_agent(journey, journey.member, [journey.member.id_certificate], "laptop")
+    laptop, chain = await certify_agent(
+        journey, journey.member, [journey.member.id_certificate], "laptop"
+    )
     before = await handoffs(journey)
     async with joined() as tasks:
         async with holding_locked(journey) as blocker:
@@ -275,7 +321,9 @@ async def test_a_requester_window_crossed_during_a_lock_wait_creates_nothing(jou
             await asyncio.sleep(max(0, check.deadline - time.monotonic_ns()) / 1e9 + 0.05)
             assert time.monotonic_ns() > check.deadline and not waiting.done()
         expired = await asyncio.wait_for(waiting, timeout=BOUND)
-    assert expired.status_code == 503 and expired.json() == {"detail": "principal_status_unavailable"}
+    assert expired.status_code == 503 and expired.json() == {
+        "detail": "principal_status_unavailable"
+    }
     assert await handoffs(journey) == before
     fresh = await start(journey, laptop, chain)
     assert fresh.status_code == 201, fresh.text
@@ -289,10 +337,21 @@ async def test_a_credential_replace_racing_a_credential_start_both_complete(jour
     who = PrincipalKey(TEAM, journey.scope.principal)
     async with joined() as tasks:
         async with holding_locked(journey) as blocker:
-            tasks.append(asyncio.create_task(apply_holder(
-                journey.world, "human-credential.replace", who, "holder@example.com",
-                member=journey.member, client=journey.registry)))
-            tasks.append(asyncio.create_task(start(journey, journey.member, None, purpose="credential")))
+            tasks.append(
+                asyncio.create_task(
+                    apply_holder(
+                        journey.world,
+                        "human-credential.replace",
+                        who,
+                        "holder@example.com",
+                        member=journey.member,
+                        client=journey.registry,
+                    )
+                )
+            )
+            tasks.append(
+                asyncio.create_task(start(journey, journey.member, None, purpose="credential"))
+            )
             await blocked_on(journey, blocker, count=2)
         _, response = await asyncio.wait_for(asyncio.gather(*tasks), timeout=BOUND)
     assert response.status_code == 201, response.text

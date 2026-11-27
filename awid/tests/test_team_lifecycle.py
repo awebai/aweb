@@ -21,7 +21,12 @@ from test_certificates import _signed_certificate_blob
 
 async def _register_identity(client, signing_key, did_key):
     did_aw = stable_id_from_did_key(did_key)
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
     proof = sign_message(
         signing_key,
@@ -56,9 +61,13 @@ async def _register_identity(client, signing_key, did_key):
     return did_aw
 
 
-async def _register_member_address(client, ns_key, ns_did, domain, name, member_key, member_did_key):
+async def _register_member_address(
+    client, ns_key, ns_did, domain, name, member_key, member_did_key
+):
     did_aw = await _register_identity(client, member_key, member_did_key)
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name=name)
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name=name
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
         json={
@@ -91,7 +100,9 @@ async def test_full_team_lifecycle(client, controller_identity):
     team_key, team_pub = generate_keypair()
     team_did = did_from_public_key(team_pub)
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="create_team", name="platform")
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="create_team", name="platform"
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/teams",
         # Public visibility: the lifecycle reads below are anonymous, which
@@ -115,13 +126,22 @@ async def test_full_team_lifecycle(client, controller_identity):
     alice_key, alice_pub = generate_keypair()
     alice_did_key = did_from_public_key(alice_pub)
     alice_did_aw = await _register_member_address(
-        client, ns_key, ns_did, domain, "alice", alice_key, alice_did_key,
+        client,
+        ns_key,
+        ns_did,
+        domain,
+        "alice",
+        alice_key,
+        alice_did_key,
     )
     alice_cert_id = str(uuid4())
 
     headers = _sign(
-        team_key, team_did, domain=domain,
-        operation="register_certificate", team_name="platform",
+        team_key,
+        team_did,
+        domain=domain,
+        operation="register_certificate",
+        team_name="platform",
         certificate_id=alice_cert_id,
     )
     resp = await client.post(
@@ -134,9 +154,14 @@ async def test_full_team_lifecycle(client, controller_identity):
             "alias": "alice",
             "identity_scope": "global",
             "certificate": _signed_certificate_blob(
-                team_key, certificate_id=alice_cert_id, team_id=f"platform:{domain}",
-                team_did_key=team_did, member_did_key=alice_did_key,
-                member_did_aw=alice_did_aw, member_address=f"{domain}/alice", alias="alice",
+                team_key,
+                certificate_id=alice_cert_id,
+                team_id=f"platform:{domain}",
+                team_did_key=team_did,
+                member_did_key=alice_did_key,
+                member_did_aw=alice_did_aw,
+                member_address=f"{domain}/alice",
+                alias="alice",
             ),
         },
         headers=headers,
@@ -148,8 +173,11 @@ async def test_full_team_lifecycle(client, controller_identity):
     bob_cert_id = str(uuid4())
 
     headers = _sign(
-        team_key, team_did, domain=domain,
-        operation="register_certificate", team_name="platform",
+        team_key,
+        team_did,
+        domain=domain,
+        operation="register_certificate",
+        team_name="platform",
         certificate_id=bob_cert_id,
     )
     resp = await client.post(
@@ -160,9 +188,13 @@ async def test_full_team_lifecycle(client, controller_identity):
             "alias": "bob",
             "identity_scope": "local",
             "certificate": _signed_certificate_blob(
-                team_key, certificate_id=bob_cert_id, team_id=f"platform:{domain}",
-                team_did_key=team_did, member_did_key=bob_did_key,
-                alias="bob", lifetime="local",
+                team_key,
+                certificate_id=bob_cert_id,
+                team_id=f"platform:{domain}",
+                team_did_key=team_did,
+                member_did_key=bob_did_key,
+                alias="bob",
+                lifetime="local",
             ),
         },
         headers=headers,
@@ -172,7 +204,9 @@ async def test_full_team_lifecycle(client, controller_identity):
     # ---------------------------------------------------------------
     # 4. List certificates (active_only) — both appear
     # ---------------------------------------------------------------
-    resp = await client.get(f"/v1/namespaces/{domain}/teams/platform/certificates?active_only=true")
+    resp = await client.get(
+        f"/v1/namespaces/{domain}/teams/platform/certificates?active_only=true"
+    )
     assert resp.status_code == 200
     certs = resp.json()["certificates"]
     assert len(certs) == 2
@@ -201,8 +235,11 @@ async def test_full_team_lifecycle(client, controller_identity):
     # 5. Revoke bob's certificate
     # ---------------------------------------------------------------
     headers = _sign(
-        team_key, team_did, domain=domain,
-        operation="revoke_certificate", team_name="platform",
+        team_key,
+        team_did,
+        domain=domain,
+        operation="revoke_certificate",
+        team_name="platform",
         certificate_id=bob_cert_id,
     )
     resp = await client.post(
@@ -216,7 +253,9 @@ async def test_full_team_lifecycle(client, controller_identity):
     # ---------------------------------------------------------------
     # 6. List certificates (active_only) — only alice
     # ---------------------------------------------------------------
-    resp = await client.get(f"/v1/namespaces/{domain}/teams/platform/certificates?active_only=true")
+    resp = await client.get(
+        f"/v1/namespaces/{domain}/teams/platform/certificates?active_only=true"
+    )
     assert resp.status_code == 200
     active_certs = resp.json()["certificates"]
     assert len(active_certs) == 1
@@ -266,8 +305,11 @@ async def test_full_team_lifecycle(client, controller_identity):
     new_team_did = did_from_public_key(new_team_pub)
 
     headers = _sign(
-        ns_key, ns_did, domain=domain,
-        operation="rotate_team_key", name="platform",
+        ns_key,
+        ns_did,
+        domain=domain,
+        operation="rotate_team_key",
+        name="platform",
         new_team_did_key=new_team_did,
     )
     resp = await client.post(
@@ -297,8 +339,11 @@ async def test_full_team_lifecycle(client, controller_identity):
     # 11. Revoke the remaining active certificate, then delete team
     # ---------------------------------------------------------------
     headers = _sign(
-        new_team_key, new_team_did, domain=domain,
-        operation="revoke_certificate", team_name="platform",
+        new_team_key,
+        new_team_did,
+        domain=domain,
+        operation="revoke_certificate",
+        team_name="platform",
         certificate_id=alice_cert_id,
     )
     resp = await client.post(
@@ -308,8 +353,12 @@ async def test_full_team_lifecycle(client, controller_identity):
     )
     assert resp.status_code == 200
 
-    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_team", team_name="platform")
-    resp = await client.delete(f"/v1/namespaces/{domain}/teams/platform", headers=headers)
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="delete_team", team_name="platform"
+    )
+    resp = await client.delete(
+        f"/v1/namespaces/{domain}/teams/platform", headers=headers
+    )
     assert resp.status_code == 200
 
     # Team is gone

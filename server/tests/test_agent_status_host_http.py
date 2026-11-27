@@ -20,12 +20,17 @@ from test_messages_http import _make_keypair, _signed_team_headers
 __all__ = ["privacy_app"]
 
 
-async def _team_request(env, actor, method, path, body=None, *, team_id=TEAM, certificate=None):
+async def _team_request(
+    env, actor, method, path, body=None, *, team_id=TEAM, certificate=None
+):
     identity = env.actors[actor]
     content = json.dumps(body).encode() if body is not None else b""
     headers = _signed_team_headers(
-        identity.sk, identity.did, team_id,
-        identity.certificate if certificate is None else certificate, content,
+        identity.sk,
+        identity.did,
+        team_id,
+        identity.certificate if certificate is None else certificate,
+        content,
     )
     headers["Content-Type"] = "application/json"
     return await env.client.request(method, path, content=content, headers=headers)
@@ -44,7 +49,11 @@ async def _controller_request(env, alias, *, host_did, previous_host_did, signer
             "timestamp": timestamp,
         }
     )
-    body = {"team_id": TEAM, "host_did": host_did, "previous_host_did": previous_host_did}
+    body = {
+        "team_id": TEAM,
+        "host_did": host_did,
+        "previous_host_did": previous_host_did,
+    }
     return await env.client.put(
         f"/v1/agents/{alias}/status-host",
         content=json.dumps(body).encode(),
@@ -95,7 +104,9 @@ async def test_designation_is_replaced_and_cleared(privacy_app):
     bob, carol = env.actors["bob"].did, env.actors["carol"].did
 
     assert (
-        await _team_request(env, "alice", "PUT", "/v1/agents/me/status-host", {"host_did": bob})
+        await _team_request(
+            env, "alice", "PUT", "/v1/agents/me/status-host", {"host_did": bob}
+        )
     ).status_code == 200
     replaced = await _team_request(
         env, "alice", "PUT", "/v1/agents/me/status-host", {"host_did": carol}
@@ -104,7 +115,9 @@ async def test_designation_is_replaced_and_cleared(privacy_app):
     assert (await _stored_host(env, "alice"))["host_did"] == carol
 
     for _ in range(2):
-        cleared = await _team_request(env, "alice", "DELETE", "/v1/agents/me/status-host")
+        cleared = await _team_request(
+            env, "alice", "DELETE", "/v1/agents/me/status-host"
+        )
         assert cleared.status_code == 200, cleared.text
         assert cleared.json()["host_did"] is None
     assert await _stored_host(env, "alice") is None
@@ -121,7 +134,10 @@ async def test_designation_is_replaced_and_cleared(privacy_app):
             "outsider",
             "host_not_member: host_did is not a current member of this team. Check the host name; if it exists, ask it to reconnect with a current team certificate.",
         ),
-        ("did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "host_not_did_key: host_did must be a did:key"),
+        (
+            "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+            "host_not_did_key: host_did must be a did:key",
+        ),
         ("", "host_not_did_key: host_did must be a did:key"),
     ],
 )
@@ -182,7 +198,9 @@ async def test_host_that_left_the_team_is_shown_inactive(privacy_app):
     env = privacy_app
     bob = env.actors["bob"].did
     assert (
-        await _team_request(env, "alice", "PUT", "/v1/agents/me/status-host", {"host_did": bob})
+        await _team_request(
+            env, "alice", "PUT", "/v1/agents/me/status-host", {"host_did": bob}
+        )
     ).status_code == 200
     await env.db.execute(
         "UPDATE {{tables.agents}} SET deleted_at = NOW(), status = 'deleted' WHERE agent_id = $1",
@@ -197,23 +215,33 @@ async def test_host_that_left_the_team_is_shown_inactive(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_controller_sets_and_clears_with_the_current_host_as_precondition(privacy_app):
+async def test_controller_sets_and_clears_with_the_current_host_as_precondition(
+    privacy_app,
+):
     env = privacy_app
     bob, carol = env.actors["bob"].did, env.actors["carol"].did
 
     first = await _controller_request(env, "alice", host_did=bob, previous_host_did="")
     assert first.status_code == 200, first.text
     assert first.json()["designated_by_did"] == env.team_did
-    assert await _stored_host(env, "alice") == {"host_did": bob, "designated_by_did": env.team_did}
+    assert await _stored_host(env, "alice") == {
+        "host_did": bob,
+        "designated_by_did": env.team_did,
+    }
 
-    stale = await _controller_request(env, "alice", host_did=carol, previous_host_did="")
+    stale = await _controller_request(
+        env, "alice", host_did=carol, previous_host_did=""
+    )
     assert stale.status_code == 409, stale.text
     assert (
-        stale.json()["detail"] == "status_host_changed: Status host changed since previous_host_did"
+        stale.json()["detail"]
+        == "status_host_changed: Status host changed since previous_host_did"
     )
     assert (await _stored_host(env, "alice"))["host_did"] == bob
 
-    cleared = await _controller_request(env, "alice", host_did="", previous_host_did=bob)
+    cleared = await _controller_request(
+        env, "alice", host_did="", previous_host_did=bob
+    )
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["host_did"] is None
     assert await _stored_host(env, "alice") is None
@@ -245,7 +273,9 @@ async def test_controller_path_refuses_a_non_member_host(privacy_app):
     env = privacy_app
     _, _, outsider = _make_keypair()
 
-    response = await _controller_request(env, "alice", host_did=outsider, previous_host_did="")
+    response = await _controller_request(
+        env, "alice", host_did=outsider, previous_host_did=""
+    )
 
     assert response.status_code == 422, response.text
     assert (

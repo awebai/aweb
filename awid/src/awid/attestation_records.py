@@ -77,9 +77,7 @@ def _from_b64url(value: str, error: type[ValueError]) -> bytes:
 
 def sign_record(signing_key: bytes, payload: dict[str, Any]) -> str:
     """Sign a record or attestation payload; returns base64url without padding."""
-    return _b64url(
-        sign_bytes(key=signing_key, payload=signing_bytes(payload))
-    )
+    return _b64url(sign_bytes(key=signing_key, payload=signing_bytes(payload)))
 
 
 def _verify(

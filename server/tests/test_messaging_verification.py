@@ -28,7 +28,12 @@ def test_message_verification_uses_signed_payload_did_when_row_has_stable_did():
     recipient_did_aw = "did:aw:bob-stable"
     conversation_id = str(uuid4())
     message_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = canonical_json_bytes(
         {
             "body": "hello",
@@ -90,7 +95,12 @@ def _encrypted_chat_row() -> dict:
     conversation_id = str(uuid4())
     envelope = encrypt_e2ee_chat(
         sender=alice,
-        recipients=[{key: bob[key] for key in ("address", "did", "stable_id", "team_id", "encryption_key")}],
+        recipients=[
+            {
+                key: bob[key]
+                for key in ("address", "did", "stable_id", "team_id", "encryption_key")
+            }
+        ],
         body="sealed",
         message_id=message_id,
         conversation_id=conversation_id,
@@ -110,8 +120,18 @@ def test_encrypted_message_with_a_valid_envelope_signature_is_verified():
     row = _encrypted_chat_row()
 
     assert message_verification_status(row) == "verified"
-    assert message_verification_status({**row, "encrypted_envelope": json.dumps(row["encrypted_envelope"])}) == "verified"
-    assert message_verification_status({**row, "from_did": row["encrypted_envelope"]["from"]["stable_id"]}) == "verified"
+    assert (
+        message_verification_status(
+            {**row, "encrypted_envelope": json.dumps(row["encrypted_envelope"])}
+        )
+        == "verified"
+    )
+    assert (
+        message_verification_status(
+            {**row, "from_did": row["encrypted_envelope"]["from"]["stable_id"]}
+        )
+        == "verified"
+    )
 
 
 def test_encrypted_message_with_a_tampered_envelope_fails():
@@ -119,14 +139,21 @@ def test_encrypted_message_with_a_tampered_envelope_fails():
     tampered = deepcopy(row["encrypted_envelope"])
     tampered["ciphertext"] = tampered["ciphertext"][:-4] + "AAAA"
 
-    assert message_verification_status({**row, "encrypted_envelope": tampered}) == "failed"
-    assert message_verification_status({**row, "encrypted_envelope": "{not json"}) == "failed"
+    assert (
+        message_verification_status({**row, "encrypted_envelope": tampered}) == "failed"
+    )
+    assert (
+        message_verification_status({**row, "encrypted_envelope": "{not json"})
+        == "failed"
+    )
 
 
 @pytest.mark.parametrize("field", ["message_id", "conversation_id", "from_did"])
 def test_encrypted_message_whose_envelope_belongs_to_another_row_fails(field):
     row = _encrypted_chat_row()
-    other = str(uuid4()) if field != "from_did" else _envelope_identity("mallory")["did"]
+    other = (
+        str(uuid4()) if field != "from_did" else _envelope_identity("mallory")["did"]
+    )
 
     assert message_verification_status({**row, field: other}) == "failed"
 
@@ -135,4 +162,7 @@ def test_encrypted_message_whose_envelope_belongs_to_another_row_fails(field):
 def test_encrypted_message_without_an_envelope_is_unverified(envelope):
     row = _encrypted_chat_row()
 
-    assert message_verification_status({**row, "encrypted_envelope": envelope}) == "unverified"
+    assert (
+        message_verification_status({**row, "encrypted_envelope": envelope})
+        == "unverified"
+    )

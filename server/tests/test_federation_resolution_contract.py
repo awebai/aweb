@@ -103,7 +103,9 @@ async def test_published_resolution_survives_cleanup_database_failure(
         """
     )
     # Fail the evidence lease only: the following discovery release must still run.
-    condition = "WHEN (OLD.scope_key LIKE 'origin:%')" if failed_cleanup == "lease" else ""
+    condition = (
+        "WHEN (OLD.scope_key LIKE 'origin:%')" if failed_cleanup == "lease" else ""
+    )
     await env.db.execute(
         f"CREATE TRIGGER refuse_authority_cleanup BEFORE DELETE ON {{{{tables.{table}}}}} "
         f"FOR EACH ROW {condition} EXECUTE FUNCTION {{{{tables.refuse_authority_cleanup}}}}()"
@@ -123,24 +125,33 @@ async def test_published_resolution_survives_cleanup_database_failure(
         if failed_cleanup == "lease":
             assert len(leases) == 1 and leases[0]["scope_key"].startswith("origin:")
             assert leases[0]["live"] is True
-            assert await env.db.fetch_value(
-                "SELECT count(*) FROM {{tables.federation_authority_permits}}"
-            ) == 0
+            assert (
+                await env.db.fetch_value(
+                    "SELECT count(*) FROM {{tables.federation_authority_permits}}"
+                )
+                == 0
+            )
         else:
             assert leases == []
-            assert await env.db.fetch_value(
-                "SELECT count(*) FROM {{tables.federation_authority_permits}} "
-                "WHERE expires_at > clock_timestamp()"
-            ) == 3
+            assert (
+                await env.db.fetch_value(
+                    "SELECT count(*) FROM {{tables.federation_authority_permits}} "
+                    "WHERE expires_at > clock_timestamp()"
+                )
+                == 3
+            )
         records = [r for r in caplog.records if r.name == "aweb.federation.activation"]
         assert len(records) == 1
         assert records[0].getMessage() == (
-            "federation_authority_cleanup_failed stage=" + failed_cleanup
+            "federation_authority_cleanup_failed stage="
+            + failed_cleanup
             + " failure_type=FederationAuthorityError"
         )
         assert records[0].exc_info is None
         assert "private cleanup dependency detail" not in records[0].getMessage()
-        await env.db.execute(f"DROP TRIGGER refuse_authority_cleanup ON {{{{tables.{table}}}}}")
+        await env.db.execute(
+            f"DROP TRIGGER refuse_authority_cleanup ON {{{{tables.{table}}}}}"
+        )
         second = await authority.resolve_contact(
             "foreign.test/bob", source_ip="203.0.113.5"
         )

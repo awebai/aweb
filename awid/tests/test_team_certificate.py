@@ -220,25 +220,36 @@ def test_checked_certificate_retains_immutable_artifact_and_fingerprint(monkeypa
 
 
 _SENDER_STANDING = json.loads(
-    (Path(__file__).resolve().parents[2] / "test-vectors/trust/sender-standing-v1.json").read_text()
+    (
+        Path(__file__).resolve().parents[2]
+        / "test-vectors/trust/sender-standing-v1.json"
+    ).read_text()
 )
 
 
 @pytest.mark.parametrize("case", _SENDER_STANDING["cases"], ids=lambda case: case["id"])
 def test_checked_certificate_standing_matches_the_shared_evidence(case):
-    from awid.team_certificate import check_team_certificate_evidence, verify_team_certificate_claims
+    from awid.team_certificate import (
+        check_team_certificate_evidence,
+        verify_team_certificate_claims,
+    )
 
     issued = certificate()
     cert_id = issued["certificate_id"]
     checked = verify_team_certificate_claims(
-        header(issued), subject_did_key=issued["member_did_key"], team_did_key=TEAM_DID_KEY,
+        header(issued),
+        subject_did_key=issued["member_did_key"],
+        team_did_key=TEAM_DID_KEY,
     )
     evidence = {
         "revoked_certificate_ids": {cert_id} if case["revoked"] else set(),
         "registered_certificate_ids": {cert_id} if case["registered"] else set(),
     }
     if case["certificate_refusal"] is None:
-        assert check_team_certificate_evidence(checked, **evidence)["certificate_id"] == cert_id
+        assert (
+            check_team_certificate_evidence(checked, **evidence)["certificate_id"]
+            == cert_id
+        )
     else:
         with pytest.raises(TeamCertificateError) as refused:
             check_team_certificate_evidence(checked, **evidence)

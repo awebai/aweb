@@ -9,7 +9,11 @@ from time import monotonic
 from uuid import UUID
 
 from fastapi import HTTPException, Request
-from aweb.grant_streams import grant_has_scope, grant_terminal_reason, require_valid_stream_grant
+from aweb.grant_streams import (
+    grant_has_scope,
+    grant_terminal_reason,
+    require_valid_stream_grant,
+)
 from aweb.identity_binding import verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.messaging.room import _active_member, _post_dict, _uuid
@@ -82,7 +86,9 @@ async def _refresh_room_authority(request, db, identity):
             raise HTTPException(status_code=401, detail="unknown_team")
         await require_valid_stream_grant(authority_request, db, identity)
     else:
-        raise HTTPException(status_code=403, detail="Room stream requires native membership authority")
+        raise HTTPException(
+            status_code=403, detail="Room stream requires native membership authority"
+        )
     binding = await verify_identity_binding(
         authority_request,
         did_key=identity.did_key,
@@ -189,7 +195,9 @@ async def ack_room_notice(db, actor, message_id):
     return {"message_id": str(message_id), "status": "acknowledged"}
 
 
-async def current_room_events(request, db, identity, authority: RoomAuthorityWindow | None = None):
+async def current_room_events(
+    request, db, identity, authority: RoomAuthorityWindow | None = None
+):
     """Pending room notices, after current membership authority admits them.
 
     With ``authority`` the check is reused while younger than 60 s, and an

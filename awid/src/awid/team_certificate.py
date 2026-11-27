@@ -102,9 +102,13 @@ class TeamCertificateError(ValueError):
     message.
     """
 
-    def __init__(self, reason: TeamCertificateReason | str, field: str | None = None) -> None:
+    def __init__(
+        self, reason: TeamCertificateReason | str, field: str | None = None
+    ) -> None:
         self.reason = TeamCertificateReason(reason)
-        super().__init__(self.reason.value if field is None else f"{self.reason}: {field}")
+        super().__init__(
+            self.reason.value if field is None else f"{self.reason}: {field}"
+        )
         self.field = field
 
 

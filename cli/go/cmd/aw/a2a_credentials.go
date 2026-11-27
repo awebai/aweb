@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/a2a"
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/internal/a2a"
 	"github.com/awebai/aw/internal/atomicfile"
 	"gopkg.in/yaml.v3"
 )

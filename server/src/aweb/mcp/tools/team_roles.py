@@ -12,7 +12,9 @@ async def roles_show(db_infra, *, only_selected: bool = False) -> str:
     """Show the active team roles for the authenticated team and current agent role."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     aweb_db = db_infra.get_manager("aweb")
     agent = await aweb_db.fetch_one(
         """
@@ -70,7 +72,9 @@ async def roles_list(db_infra) -> str:
     """List available roles from the active team roles bundle plus the agent's current role."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     aweb_db = db_infra.get_manager("aweb")
 
     agent = await aweb_db.fetch_one(

@@ -32,8 +32,12 @@ def infra(db):
 
 @pytest.fixture
 def actor():
-    auth = AuthContext(team_id="ops:example.com", agent_id=str(uuid4()),
-                       alias="actor", did_key="did:key:actor")
+    auth = AuthContext(
+        team_id="ops:example.com",
+        agent_id=str(uuid4()),
+        alias="actor",
+        did_key="did:key:actor",
+    )
     token = _auth_context.set(auth)
     try:
         yield auth
@@ -46,17 +50,28 @@ def actor():
 async def test_nudge_preserves_original_wire_fields(actor, shape):
     content = [TextContent(type="text", text='{"original": "unchanged"}')]
     structured = {"result": "original"}
-    full = CallToolResult(content=content, structuredContent=structured,
-                          _meta={"opaque": ["keep"]}, vendor_extra="keep")
-    inputs = {"result": full, "content": content,
-              "tuple": (content, structured), "structured": structured}
+    full = CallToolResult(
+        content=content,
+        structuredContent=structured,
+        _meta={"opaque": ["keep"]},
+        vendor_extra="keep",
+    )
+    inputs = {
+        "result": full,
+        "content": content,
+        "tuple": (content, structured),
+        "structured": structured,
+    }
     before = full.model_dump(mode="json", by_alias=True)
-    result = await append_pending_nudge(inputs[shape], infra(CountDB(
-        {"unread_mail": 2, "unread_chat_messages": 1})))
+    result = await append_pending_nudge(
+        inputs[shape], infra(CountDB({"unread_mail": 2, "unread_chat_messages": 1}))
+    )
     assert isinstance(result, CallToolResult)
-    expected_text = ("[aweb] You have 2 unread mail messages and 1 unread chat message. "
-                     "Read mail with check_mail. Read chats with check_chats and read_chat, "
-                     "then mark them read with mark_chat_read.")
+    expected_text = (
+        "[aweb] You have 2 unread mail messages and 1 unread chat message. "
+        "Read mail with check_mail. Read chats with check_chats and read_chat, "
+        "then mark them read with mark_chat_read."
+    )
     assert result.content[-1].text == expected_text
     if shape == "structured":
         assert result.content[0].text == json.dumps(structured, indent=2)
@@ -71,37 +86,73 @@ async def test_nudge_preserves_original_wire_fields(actor, shape):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mail,chat,expected", [
-    (1, 0, "[aweb] You have 1 unread mail message. Read it with check_mail."),
-    (2, 0, "[aweb] You have 2 unread mail messages. Read them with check_mail."),
-    (0, 1, "[aweb] You have 1 unread chat message. Read it with check_chats and read_chat, "
-           "then mark it read with mark_chat_read."),
-    (0, 2, "[aweb] You have 2 unread chat messages. Read them with check_chats and read_chat, "
-           "then mark them read with mark_chat_read."),
-    (1, 1, "[aweb] You have 1 unread mail message and 1 unread chat message. "
-           "Read mail with check_mail. Read chats with check_chats and read_chat, "
-           "then mark them read with mark_chat_read."),
-    (1, 2, "[aweb] You have 1 unread mail message and 2 unread chat messages. "
-           "Read mail with check_mail. Read chats with check_chats and read_chat, "
-           "then mark them read with mark_chat_read."),
-    (2, 1, "[aweb] You have 2 unread mail messages and 1 unread chat message. "
-           "Read mail with check_mail. Read chats with check_chats and read_chat, "
-           "then mark them read with mark_chat_read."),
-    (2, 2, "[aweb] You have 2 unread mail messages and 2 unread chat messages. "
-           "Read mail with check_mail. Read chats with check_chats and read_chat, "
-           "then mark them read with mark_chat_read."),
-])
-async def test_nudge_copy_names_only_pending_kinds_and_full_chat_path(actor, mail, chat, expected):
+@pytest.mark.parametrize(
+    "mail,chat,expected",
+    [
+        (1, 0, "[aweb] You have 1 unread mail message. Read it with check_mail."),
+        (2, 0, "[aweb] You have 2 unread mail messages. Read them with check_mail."),
+        (
+            0,
+            1,
+            "[aweb] You have 1 unread chat message. Read it with check_chats and read_chat, "
+            "then mark it read with mark_chat_read.",
+        ),
+        (
+            0,
+            2,
+            "[aweb] You have 2 unread chat messages. Read them with check_chats and read_chat, "
+            "then mark them read with mark_chat_read.",
+        ),
+        (
+            1,
+            1,
+            "[aweb] You have 1 unread mail message and 1 unread chat message. "
+            "Read mail with check_mail. Read chats with check_chats and read_chat, "
+            "then mark them read with mark_chat_read.",
+        ),
+        (
+            1,
+            2,
+            "[aweb] You have 1 unread mail message and 2 unread chat messages. "
+            "Read mail with check_mail. Read chats with check_chats and read_chat, "
+            "then mark them read with mark_chat_read.",
+        ),
+        (
+            2,
+            1,
+            "[aweb] You have 2 unread mail messages and 1 unread chat message. "
+            "Read mail with check_mail. Read chats with check_chats and read_chat, "
+            "then mark them read with mark_chat_read.",
+        ),
+        (
+            2,
+            2,
+            "[aweb] You have 2 unread mail messages and 2 unread chat messages. "
+            "Read mail with check_mail. Read chats with check_chats and read_chat, "
+            "then mark them read with mark_chat_read.",
+        ),
+    ],
+)
+async def test_nudge_copy_names_only_pending_kinds_and_full_chat_path(
+    actor, mail, chat, expected
+):
     original = CallToolResult(content=[TextContent(type="text", text="original")])
-    result = await append_pending_nudge(original, infra(CountDB(
-        {"unread_mail": mail, "unread_chat_messages": chat})))
+    result = await append_pending_nudge(
+        original, infra(CountDB({"unread_mail": mail, "unread_chat_messages": chat}))
+    )
     assert result.content[-1].text == expected
     assert result.content[:-1] == original.content
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("counts", [None, {"unread_mail": 0, "unread_chat_messages": 0},
-                                    RuntimeError("database query failed")])
+@pytest.mark.parametrize(
+    "counts",
+    [
+        None,
+        {"unread_mail": 0, "unread_chat_messages": 0},
+        RuntimeError("database query failed"),
+    ],
+)
 async def test_no_nudge_returns_same_object(actor, counts):
     original = ([TextContent(type="text", text="original")], {"result": "original"})
     assert await append_pending_nudge(original, infra(CountDB(counts))) is original
@@ -109,8 +160,11 @@ async def test_no_nudge_returns_same_object(actor, counts):
 
 @pytest.mark.asyncio
 async def test_error_and_missing_actor_are_unchanged(actor):
-    error = CallToolResult(content=[TextContent(type="text", text="error")], isError=True,
-                           _meta={"keep": True})
+    error = CallToolResult(
+        content=[TextContent(type="text", text="error")],
+        isError=True,
+        _meta={"keep": True},
+    )
     # No database is available: errors and unscoped contexts must not query it.
     assert await append_pending_nudge(error, None) is error
     actor.agent_id = None
@@ -121,45 +175,88 @@ async def test_error_and_missing_actor_are_unchanged(actor):
 async def mailbox(aweb_cloud_db, actor):
     db = aweb_cloud_db.aweb_db
     await _insert_team(db, actor.team_id)
-    actor.agent_id = await _insert_agent(db, team_id=actor.team_id, alias="actor",
-                                        did_key=actor.did_key, did_aw="did:aw:actor",
-                                        address="example.com/actor")
-    other = await _insert_agent(db, team_id=actor.team_id, alias="other",
-                               did_key="did:key:other", did_aw=None, address=None)
-    await db.execute("UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
-                     UUID(actor.agent_id))
+    actor.agent_id = await _insert_agent(
+        db,
+        team_id=actor.team_id,
+        alias="actor",
+        did_key=actor.did_key,
+        did_aw="did:aw:actor",
+        address="example.com/actor",
+    )
+    other = await _insert_agent(
+        db,
+        team_id=actor.team_id,
+        alias="other",
+        did_key="did:key:other",
+        did_aw=None,
+        address=None,
+    )
+    await db.execute(
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        UUID(actor.agent_id),
+    )
     actor.did_aw = "did:aw:actor"
 
     async def mail(to_did, *, read=False):
-        await db.execute("""INSERT INTO {{tables.messages}}
+        await db.execute(
+            """INSERT INTO {{tables.messages}}
             (message_id, from_did, to_did, from_alias, to_alias, subject, body, read_at)
             VALUES ($1, 'did:key:other', $2, 'other', 'actor', 'DO NOT EXPOSE',
-                    'DO NOT EXPOSE', CASE WHEN $3 THEN NOW() END)""", uuid4(), to_did, read)
+                    'DO NOT EXPOSE', CASE WHEN $3 THEN NOW() END)""",
+            uuid4(),
+            to_did,
+            read,
+        )
 
     async def chat(did, *, duplicate=False):
         sid = uuid4()
-        await db.execute("""INSERT INTO {{tables.chat_sessions}}
+        await db.execute(
+            """INSERT INTO {{tables.chat_sessions}}
             (session_id, team_id, created_by) VALUES ($1,$2,$3)""",
-                         sid, actor.team_id, actor.did_key)
-        for participant_did, agent_id in [(did, actor.agent_id), ("did:key:other", other)]:
-            await db.execute("""INSERT INTO {{tables.chat_participants}}
+            sid,
+            actor.team_id,
+            actor.did_key,
+        )
+        for participant_did, agent_id in [
+            (did, actor.agent_id),
+            ("did:key:other", other),
+        ]:
+            await db.execute(
+                """INSERT INTO {{tables.chat_participants}}
                 (session_id, did, agent_id, alias, current_did_key)
                 VALUES ($1,$2,$3,'participant',$4)""",
-                sid, participant_did, UUID(agent_id),
-                actor.did_key if participant_did == actor.did_aw else None)
+                sid,
+                participant_did,
+                UUID(agent_id),
+                actor.did_key if participant_did == actor.did_aw else None,
+            )
         if duplicate:
-            await db.execute("""INSERT INTO {{tables.chat_participants}}
+            await db.execute(
+                """INSERT INTO {{tables.chat_participants}}
                 (session_id, did, agent_id, alias) VALUES ($1,$2,$3,'participant')""",
-                sid, actor.did_key, UUID(actor.agent_id))
+                sid,
+                actor.did_key,
+                UUID(actor.agent_id),
+            )
         ids = [uuid4() for _ in range(3)]
         for mid, sender in zip(ids, ["did:key:other", "did:key:other", did]):
-            await db.execute("""INSERT INTO {{tables.chat_messages}}
+            await db.execute(
+                """INSERT INTO {{tables.chat_messages}}
                 (message_id, session_id, from_did, from_alias, body)
-                VALUES ($1,$2,$3,'sender','DO NOT EXPOSE')""", mid, sid, sender)
+                VALUES ($1,$2,$3,'sender','DO NOT EXPOSE')""",
+                mid,
+                sid,
+                sender,
+            )
         # Read one incoming message by the actor, and the other by another actor.
         for reader, mid in [(did, ids[0]), ("did:key:other", ids[1])]:
-            await db.execute("""INSERT INTO {{tables.chat_message_reads}}
-                (session_id,did,message_id) VALUES ($1,$2,$3)""", sid, reader, mid)
+            await db.execute(
+                """INSERT INTO {{tables.chat_message_reads}}
+                (session_id,did,message_id) VALUES ($1,$2,$3)""",
+                sid,
+                reader,
+                mid,
+            )
         return sid
 
     return SimpleNamespace(db=db, mail=mail, chat=chat)
@@ -186,8 +283,15 @@ async def test_counts_bound_aliases_and_chat_reads_without_consuming(actor, mail
     assert len(result.content) == 2
     assert "1 unread mail message and 1 unread chat message" in result.content[-1].text
     assert "DO NOT EXPOSE" not in result.model_dump_json()
-    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}} WHERE read_at IS NULL") == 3
-    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_message_reads}}") == 4
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.messages}} WHERE read_at IS NULL"
+        )
+        == 3
+    )
+    assert (
+        await db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_message_reads}}") == 4
+    )
     # An unrelated team cannot select the same actor row.
     actor.team_id = "unrelated:example.com"
     assert await append_pending_nudge(original, infra(ReadOnlyDB())) is original
@@ -209,15 +313,28 @@ async def test_chat_counts_preserve_existing_participant_read_semantics(actor, m
 
     sid = await mailbox.chat("did:aw:actor", duplicate=True)
     mid = uuid4()
-    await mailbox.db.execute("""INSERT INTO {{tables.chat_messages}}
+    await mailbox.db.execute(
+        """INSERT INTO {{tables.chat_messages}}
         (message_id, session_id, from_did, from_alias, body)
-        VALUES ($1,$2,$3,'actor','own message under another bound DID')""", mid, sid, actor.did_key)
-    await mailbox.db.execute("""INSERT INTO {{tables.chat_message_reads}}
-        (session_id, did, message_id) VALUES ($1,$2,$3)""", sid, actor.did_key, mid)
+        VALUES ($1,$2,$3,'actor','own message under another bound DID')""",
+        mid,
+        sid,
+        actor.did_key,
+    )
+    await mailbox.db.execute(
+        """INSERT INTO {{tables.chat_message_reads}}
+        (session_id, did, message_id) VALUES ($1,$2,$3)""",
+        sid,
+        actor.did_key,
+        mid,
+    )
     # A historical own send is attributed only through this participant's own
     # same-thread key; the duplicate key participant supplies no authority.
-    existing = await get_pending_conversations(infra(mailbox.db),
-        participant_did="did:aw:actor", participant_agent_id=actor.agent_id)
+    existing = await get_pending_conversations(
+        infra(mailbox.db),
+        participant_did="did:aw:actor",
+        participant_agent_id=actor.agent_id,
+    )
     assert existing[0]["unread_count"] == 1
     result = await append_pending_nudge([], infra(mailbox.db))
     assert "You have 1 unread chat message." in result.content[-1].text
@@ -226,7 +343,10 @@ async def test_chat_counts_preserve_existing_participant_read_semantics(actor, m
 @pytest.mark.asyncio
 async def test_mounted_core_result_nudge_and_post_consumption_snapshot(server):
     import httpx
-    from aweb.internal_auth import application_proxy_verification, build_internal_auth_header_value
+    from aweb.internal_auth import (
+        application_proxy_verification,
+        build_internal_auth_header_value,
+    )
     from test_mcp_mutation_hook_parity import TEAM
 
     env = server
@@ -249,10 +369,18 @@ async def test_mounted_core_result_nudge_and_post_consumption_snapshot(server):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=env.app), base_url="http://test"
     ) as client:
+
         async def call(name):
-            response = await client.post("/parity-mcp/", headers=headers, json={
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": name, "arguments": {}}})
+            response = await client.post(
+                "/parity-mcp/",
+                headers=headers,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": name, "arguments": {}},
+                },
+            )
             assert response.status_code == 200, response.text
             return response.json()["result"]
 
@@ -262,7 +390,8 @@ async def test_mounted_core_result_nudge_and_post_consumption_snapshot(server):
         assert nudged["content"][:-1] == baseline["content"]
         assert "You have 1 unread mail message." in nudged["content"][-1]["text"]
         assert {k: v for k, v in nudged.items() if k != "content"} == {
-            k: v for k, v in baseline.items() if k != "content"}
+            k: v for k, v in baseline.items() if k != "content"
+        }
         # The count query is AFTER the called tool, so consumed mail is not
         # advertised again on the result of the call that consumed it.
         read = await call("check_mail")
@@ -271,25 +400,47 @@ async def test_mounted_core_result_nudge_and_post_consumption_snapshot(server):
 
 
 @pytest.mark.asyncio
-async def test_nudge_counts_only_canonical_threads_with_own_key_attribution(actor, mailbox):
+async def test_nudge_counts_only_canonical_threads_with_own_key_attribution(
+    actor, mailbox
+):
     db = mailbox.db
     cid = uuid4()
-    await db.execute("""INSERT INTO {{tables.conversations}}
+    await db.execute(
+        """INSERT INTO {{tables.conversations}}
         (conversation_id, conversation_type, created_by_did)
-        VALUES ($1, 'mail', 'did:key:other')""", cid)
-    await db.execute("""INSERT INTO {{tables.conversation_participants}}
+        VALUES ($1, 'mail', 'did:key:other')""",
+        cid,
+    )
+    await db.execute(
+        """INSERT INTO {{tables.conversation_participants}}
         (conversation_id, did, alias, current_did_key, transport_hint)
-        VALUES ($1, $2, 'actor', $3, 'local')""", cid, actor.did_aw, actor.did_key)
+        VALUES ($1, $2, 'actor', $3, 'local')""",
+        cid,
+        actor.did_aw,
+        actor.did_key,
+    )
     # The retained old key is attribution inside this thread only.
-    await db.execute("""INSERT INTO {{tables.messages}}
+    await db.execute(
+        """INSERT INTO {{tables.messages}}
         (from_did, to_did, subject, body, conversation_id)
         VALUES ('did:key:other', $2, 'private', 'private', $1),
-               ($2, 'did:key:other', 'own', 'own', $1)""", cid, actor.did_key)
+               ($2, 'did:key:other', 'own', 'own', $1)""",
+        cid,
+        actor.did_key,
+    )
     # A key-only participant in another thread does not authorize the global actor.
     await mailbox.chat(actor.did_key)
     # Pre-thread mail to a global actor's key remains literal-key mail.
     await mailbox.mail(actor.did_key)
     original = CallToolResult(content=[TextContent(type="text", text="unchanged")])
     result = await append_pending_nudge(original, infra(db))
-    assert result.content[-1].text == "[aweb] You have 1 unread mail message. Read it with check_mail."
-    assert await db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}} WHERE read_at IS NOT NULL") == 0
+    assert (
+        result.content[-1].text
+        == "[aweb] You have 1 unread mail message. Read it with check_mail."
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.messages}} WHERE read_at IS NOT NULL"
+        )
+        == 0
+    )

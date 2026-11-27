@@ -144,6 +144,53 @@ async def f(db, schema):
         )
         self.assertEqual(self.run_check().returncode, 0)
 
+    def reviewed_identity(self):
+        result = self.run_check("--reviewed-identity")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def commit(self, message):
+        self.git("add", ".")
+        self.git(
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            message,
+        )
+        return self.git("rev-parse", "HEAD")
+
+    def test_reviewed_identity_follows_main_ceilings_content_only(self):
+        first = self.reviewed_identity()
+        self.assertRegex(first, r"^sha256:[0-9a-f]{64}$")
+        # Main moves without touching the ceilings: the reviewed input is unchanged.
+        self.write("server/tests/test_world.py", "VALUE = 1\n")
+        self.git("update-ref", "refs/remotes/origin/main", self.commit("unrelated"))
+        self.assertEqual(self.reviewed_identity(), first)
+        # The candidate's own ceilings are not the reviewed input.
+        self.write(
+            "tools/product-table-write-ceilings.json",
+            '{"schema_version":1,"nonliteral_files":{},"files":{"a.py":1}}\n',
+        )
+        self.assertEqual(self.reviewed_identity(), first)
+        # Main changes its ceilings: the reviewed input changes.
+        self.git("update-ref", "refs/remotes/origin/main", self.commit("ceilings"))
+        changed = self.reviewed_identity()
+        self.assertRegex(changed, r"^sha256:[0-9a-f]{64}$")
+        self.assertNotEqual(changed, first)
+        # Main without the file is a distinct, explicit input.
+        self.git("rm", "-q", "tools/product-table-write-ceilings.json")
+        self.git("update-ref", "refs/remotes/origin/main", self.commit("no ceilings"))
+        self.assertEqual(self.reviewed_identity(), "absent")
+        # Without synchronized main there is no reviewed input to name.
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        result = self.run_check("--reviewed-identity")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("synchronized main", result.stderr)
+        self.assertEqual(result.stdout, "")
+
     def test_existing_allowance_can_only_decrease_new_files_get_zero(self):
         self.write(
             "tools/product-table-write-ceilings.json",
@@ -207,7 +254,8 @@ async def f(db, schema):
                     result.returncode, expected, result.stdout + result.stderr
                 )
                 calls = (self.root / "calls").read_text().splitlines()
-                self.assertEqual(calls[0], "check-python-static")
+                # The check ran its real recipe, and the later targets still ran.
+                self.assertNotIn("check-product-table-writes", calls)
                 self.assertIn("test-shipping", calls)
                 self.assertIn(
                     "checks/check-product-table-writes\t"

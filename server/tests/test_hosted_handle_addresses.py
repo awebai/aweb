@@ -8,16 +8,34 @@ from aweb.routes.messages import SendMessageRequest
 
 
 def test_normalize_hosted_handle_reference_contract():
-    assert normalize_hosted_handle_reference("@jane/c3po", require_agent=True) == "jane.aweb.ai/c3po"
-    assert normalize_hosted_handle_reference("@acme.com/c3po", require_agent=True) == "acme.com/c3po"
-    assert normalize_hosted_handle_reference("@Jane/C3PO", require_agent=True) == "jane.aweb.ai/C3PO"
+    assert (
+        normalize_hosted_handle_reference("@jane/c3po", require_agent=True)
+        == "jane.aweb.ai/c3po"
+    )
+    assert (
+        normalize_hosted_handle_reference("@acme.com/c3po", require_agent=True)
+        == "acme.com/c3po"
+    )
+    assert (
+        normalize_hosted_handle_reference("@Jane/C3PO", require_agent=True)
+        == "jane.aweb.ai/C3PO"
+    )
     assert normalize_hosted_handle_reference("@jane") == "jane.aweb.ai"
     assert normalize_hosted_handle_reference("@jane", require_agent=True) == "@jane"
     assert normalize_hosted_handle_reference("@") == "@"
     assert normalize_hosted_handle_reference("@jane/", require_agent=True) == "@jane/"
-    assert normalize_hosted_handle_reference("@jane/c3po/extra", require_agent=True) == "@jane/c3po/extra"
-    assert normalize_hosted_handle_reference("@jane..aweb.ai/c3po", require_agent=True) == "@jane..aweb.ai/c3po"
-    assert normalize_hosted_handle_reference("@.jane/c3po", require_agent=True) == "@.jane/c3po"
+    assert (
+        normalize_hosted_handle_reference("@jane/c3po/extra", require_agent=True)
+        == "@jane/c3po/extra"
+    )
+    assert (
+        normalize_hosted_handle_reference("@jane..aweb.ai/c3po", require_agent=True)
+        == "@jane..aweb.ai/c3po"
+    )
+    assert (
+        normalize_hosted_handle_reference("@.jane/c3po", require_agent=True)
+        == "@.jane/c3po"
+    )
 
 
 def test_mail_request_normalizes_hosted_handle_target_fields():
@@ -25,7 +43,9 @@ def test_mail_request_normalizes_hosted_handle_target_fields():
     assert alias_payload.to_alias is None
     assert alias_payload.to_address == "jane.aweb.ai/c3po"
 
-    address_payload = SendMessageRequest(to_address="@jane/c3po", subject="", body="hello")
+    address_payload = SendMessageRequest(
+        to_address="@jane/c3po", subject="", body="hello"
+    )
     assert address_payload.to_address == "jane.aweb.ai/c3po"
 
     for value in ["@jane..aweb.ai/c3po", "@.jane/c3po", "@jane/"]:
@@ -34,7 +54,9 @@ def test_mail_request_normalizes_hosted_handle_target_fields():
         except ValidationError:
             pass
         else:
-            raise AssertionError(f"{value!r} should be rejected as an invalid hosted handle address")
+            raise AssertionError(
+                f"{value!r} should be rejected as an invalid hosted handle address"
+            )
 
 
 def test_chat_request_normalizes_hosted_handle_target_fields():
@@ -51,4 +73,6 @@ def test_chat_request_normalizes_hosted_handle_target_fields():
         except ValidationError:
             pass
         else:
-            raise AssertionError(f"{value!r} should be rejected as an invalid hosted handle address")
+            raise AssertionError(
+                f"{value!r} should be rejected as an invalid hosted handle address"
+            )

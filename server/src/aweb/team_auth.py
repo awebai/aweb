@@ -101,7 +101,9 @@ def parse_and_verify_certificate(
 
 def project_verified_team_certificate(cert: Mapping[str, Any]) -> dict[str, Any]:
     """Project the fields used after the caller verifies certificate authority."""
-    identity_scope = normalize_identity_scope(cert.get("identity_scope") or cert.get("lifetime"))
+    identity_scope = normalize_identity_scope(
+        cert.get("identity_scope") or cert.get("lifetime")
+    )
     return {
         "team_id": cert["team_id"],
         "alias": cert["alias"],
@@ -142,7 +144,9 @@ def verify_dashboard_token(
 
     try:
         # docs/aweb-sot.md:1260,1280-1286: dashboard authority is short-lived.
-        payload = pyjwt.decode(token, secret, algorithms=["HS256"], options={"require": ["exp"]})
+        payload = pyjwt.decode(
+            token, secret, algorithms=["HS256"], options={"require": ["exp"]}
+        )
     except pyjwt.MissingRequiredClaimError as exc:
         if exc.claim == "exp":
             raise ValueError(

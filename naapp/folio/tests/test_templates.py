@@ -23,9 +23,16 @@ def test_render_pitch_template_validates_and_renders_markdown_slots() -> None:
                 ],
                 "sections": [
                     {"heading": "Problem", "body": "Agents need **durable** handoffs."},
-                    {"heading": "Solution", "body": "Use append-only docs and themed present links."},
+                    {
+                        "heading": "Solution",
+                        "body": "Use append-only docs and themed present links.",
+                    },
                 ],
-                "ask": {"headline": "Ask", "body": "Approve launch.", "items": ["Ship folio", "Watch deploy"]},
+                "ask": {
+                    "headline": "Ask",
+                    "body": "Approve launch.",
+                    "items": ["Ship folio", "Watch deploy"],
+                },
             },
         }
     )
@@ -46,12 +53,16 @@ def test_template_renderer_rejects_unknown_or_extra_slots() -> None:
     assert "Unknown template" in str(unknown.value.detail)
 
     with pytest.raises(HTTPException) as extra:
-        render_declarative_template({"name": "memo", "slots": {"cover": {"title": "Hi"}, "metrics": []}})
+        render_declarative_template(
+            {"name": "memo", "slots": {"cover": {"title": "Hi"}, "metrics": []}}
+        )
     assert extra.value.status_code == 422
     assert "Unsupported slot" in str(extra.value.detail)
 
     with pytest.raises(HTTPException) as extra_field:
-        render_declarative_template({"name": "memo", "slots": {"cover": {"title": "Hi", "html": "<script>"}}})
+        render_declarative_template(
+            {"name": "memo", "slots": {"cover": {"title": "Hi", "html": "<script>"}}}
+        )
     assert extra_field.value.status_code == 422
     assert "Unsupported field" in str(extra_field.value.detail)
 
@@ -87,7 +98,12 @@ def test_template_renderer_escapes_table_pipes_and_rejects_bad_shapes() -> None:
     assert "| A\\|B | 1\\|2 | C\\|D |" in body
 
     with pytest.raises(HTTPException) as bad:
-        render_declarative_template({"name": "pitch", "slots": {"cover": {"title": "Pitch"}, "sections": {"heading": "not a list"}}})
+        render_declarative_template(
+            {
+                "name": "pitch",
+                "slots": {"cover": {"title": "Pitch"}, "sections": {"heading": "not a list"}},
+            }
+        )
     assert bad.value.status_code == 422
     assert "sections" in str(bad.value.detail)
 
@@ -132,7 +148,9 @@ def test_create_document_route_renders_template_body(monkeypatch) -> None:
     app, client = _create_document_test_app()
     captured: dict[str, object] = {}
 
-    async def fake_create_document(_database, *, principal, events, slug: str, title: str, body: str) -> dict:
+    async def fake_create_document(
+        _database, *, principal, events, slug: str, title: str, body: str
+    ) -> dict:
         captured.update(slug=slug, title=title, body=body)
         return {
             "document_id": "11111111-1111-4111-8111-111111111111",
@@ -160,7 +178,13 @@ def test_create_document_route_renders_template_body(monkeypatch) -> None:
         json={
             "slug": "pitch",
             "title": "Pitch",
-            "template": {"name": "memo", "slots": {"cover": {"title": "Memo"}, "sections": [{"heading": "Hi", "body": "There"}]}},
+            "template": {
+                "name": "memo",
+                "slots": {
+                    "cover": {"title": "Memo"},
+                    "sections": [{"heading": "Hi", "body": "There"}],
+                },
+            },
         },
     )
 
@@ -170,7 +194,11 @@ def test_create_document_route_renders_template_body(monkeypatch) -> None:
 
 def test_append_template_version_route_renders_template_body(monkeypatch) -> None:
     app = folio_api.create_app()
-    route = next(route for route in app.routes if getattr(route, "path", None) == "/v1/documents/{slug}/versions/template")
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/v1/documents/{slug}/versions/template"
+    )
     principal_dependency = route.dependant.dependencies[0].call
     db_dependency = route.dependant.dependencies[1].call
     app.dependency_overrides[principal_dependency] = lambda: SimpleNamespace(team_id="default:test")

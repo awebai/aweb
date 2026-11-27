@@ -34,7 +34,11 @@ async def test_verify_domain_parses_awid_txt_record_with_explicit_registry(monke
     async def _resolve(qname: str, rrtype: str):
         assert qname == "_awid.acme.com"
         assert rrtype == "TXT"
-        return [_TxtRecord(f"awid=v1; controller={did_key}; registry=https://registry.acme.test;")]
+        return [
+            _TxtRecord(
+                f"awid=v1; controller={did_key}; registry=https://registry.acme.test;"
+            )
+        ]
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
 
@@ -71,7 +75,11 @@ async def test_discover_authoritative_registry_inherits_from_parent_record(monke
         if qname == "_awid.project.aweb.ai":
             raise NXDOMAIN()
         if qname == "_awid.aweb.ai":
-            return [_TxtRecord(f"awid=v1; controller={did_key}; registry=https://registry.aweb.test;")]
+            return [
+                _TxtRecord(
+                    f"awid=v1; controller={did_key}; registry=https://registry.aweb.test;"
+                )
+            ]
         raise AssertionError(f"unexpected qname {qname}")
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
@@ -82,23 +90,34 @@ async def test_discover_authoritative_registry_inherits_from_parent_record(monke
 
 
 @pytest.mark.asyncio
-async def test_discover_registry_override_returns_only_explicit_registry_records(monkeypatch):
+async def test_discover_registry_override_returns_only_explicit_registry_records(
+    monkeypatch,
+):
     did_key = _did_key()
 
     async def _resolve(qname: str, _rrtype: str):
         if qname == "_awid.project.aweb.ai":
             raise NXDOMAIN()
         if qname == "_awid.aweb.ai":
-            return [_TxtRecord(f"awid=v1; controller={did_key}; registry=https://registry.aweb.test;")]
+            return [
+                _TxtRecord(
+                    f"awid=v1; controller={did_key}; registry=https://registry.aweb.test;"
+                )
+            ]
         raise AssertionError(f"unexpected qname {qname}")
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
 
-    assert await discover_registry_override("project.aweb.ai") == "https://registry.aweb.test"
+    assert (
+        await discover_registry_override("project.aweb.ai")
+        == "https://registry.aweb.test"
+    )
 
 
 @pytest.mark.asyncio
-async def test_discover_registry_override_returns_none_when_registry_field_absent(monkeypatch):
+async def test_discover_registry_override_returns_none_when_registry_field_absent(
+    monkeypatch,
+):
     did_key = _did_key()
 
     async def _resolve(_qname: str, _rrtype: str):
@@ -110,13 +129,18 @@ async def test_discover_registry_override_returns_none_when_registry_field_absen
 
 
 @pytest.mark.asyncio
-async def test_discover_authoritative_registry_falls_back_to_default_when_absent(monkeypatch):
+async def test_discover_authoritative_registry_falls_back_to_default_when_absent(
+    monkeypatch,
+):
     async def _resolve(_qname: str, _rrtype: str):
         raise NXDOMAIN()
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
 
-    assert await discover_authoritative_registry("missing.example") == DEFAULT_AWID_REGISTRY_URL
+    assert (
+        await discover_authoritative_registry("missing.example")
+        == DEFAULT_AWID_REGISTRY_URL
+    )
 
 
 @pytest.mark.asyncio
@@ -134,7 +158,10 @@ async def test_discovery_caps_ancestor_walk_at_registered_domain_boundary(monkey
         lambda _domain: "project.github.io",
     )
 
-    assert await discover_authoritative_registry("project.github.io") == DEFAULT_AWID_REGISTRY_URL
+    assert (
+        await discover_authoritative_registry("project.github.io")
+        == DEFAULT_AWID_REGISTRY_URL
+    )
     assert queries == ["_awid.project.github.io"]
 
 
@@ -148,9 +175,14 @@ async def test_discovery_ignores_unrelated_txt_records_and_falls_back(monkeypatc
         raise AssertionError(f"unexpected qname {qname}")
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
-    monkeypatch.setattr(dns_verify, "_registered_domain_boundary", lambda _domain: "aweb.ai")
+    monkeypatch.setattr(
+        dns_verify, "_registered_domain_boundary", lambda _domain: "aweb.ai"
+    )
 
-    assert await discover_authoritative_registry("project.aweb.ai") == DEFAULT_AWID_REGISTRY_URL
+    assert (
+        await discover_authoritative_registry("project.aweb.ai")
+        == DEFAULT_AWID_REGISTRY_URL
+    )
 
 
 def test_awid_txt_helpers_emit_release_contract() -> None:
@@ -199,7 +231,9 @@ async def test_discovery_treats_timeout_as_hard_failure(monkeypatch):
         raise AssertionError(f"unexpected qname {qname}")
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
-    monkeypatch.setattr(dns_verify, "_registered_domain_boundary", lambda _domain: "aweb.ai")
+    monkeypatch.setattr(
+        dns_verify, "_registered_domain_boundary", lambda _domain: "aweb.ai"
+    )
 
     with pytest.raises(DnsVerificationError, match="DNS lookup failed"):
         await discover_authoritative_registry("project.aweb.ai")
@@ -221,7 +255,11 @@ async def test_verify_domain_rejects_private_ip_registry(monkeypatch):
     did_key = _did_key()
 
     async def _resolve(_qname: str, _rrtype: str):
-        return [_TxtRecord(f"awid=v1; controller={did_key}; registry=https://169.254.169.254;")]
+        return [
+            _TxtRecord(
+                f"awid=v1; controller={did_key}; registry=https://169.254.169.254;"
+            )
+        ]
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
 
@@ -234,7 +272,9 @@ async def test_verify_domain_rejects_localhost_registry(monkeypatch):
     did_key = _did_key()
 
     async def _resolve(_qname: str, _rrtype: str):
-        return [_TxtRecord(f"awid=v1; controller={did_key}; registry=https://localhost;")]
+        return [
+            _TxtRecord(f"awid=v1; controller={did_key}; registry=https://localhost;")
+        ]
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
 
@@ -247,7 +287,11 @@ async def test_verify_domain_requires_https_registry_in_production(monkeypatch):
     did_key = _did_key()
 
     async def _resolve(_qname: str, _rrtype: str):
-        return [_TxtRecord(f"awid=v1; controller={did_key}; registry=http://registry.example;")]
+        return [
+            _TxtRecord(
+                f"awid=v1; controller={did_key}; registry=http://registry.example;"
+            )
+        ]
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
     monkeypatch.setenv("APP_ENV", "production")
@@ -261,7 +305,11 @@ async def test_verify_domain_rejects_http_registry_by_default(monkeypatch):
     did_key = _did_key()
 
     async def _resolve(_qname: str, _rrtype: str):
-        return [_TxtRecord(f"awid=v1; controller={did_key}; registry=http://registry.example;")]
+        return [
+            _TxtRecord(
+                f"awid=v1; controller={did_key}; registry=http://registry.example;"
+            )
+        ]
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
     monkeypatch.delenv("APP_ENV", raising=False)
@@ -276,7 +324,11 @@ async def test_verify_domain_allows_http_registry_in_explicit_development(monkey
     did_key = _did_key()
 
     async def _resolve(_qname: str, _rrtype: str):
-        return [_TxtRecord(f"awid=v1; controller={did_key}; registry=http://registry.example;")]
+        return [
+            _TxtRecord(
+                f"awid=v1; controller={did_key}; registry=http://registry.example;"
+            )
+        ]
 
     monkeypatch.setattr("dns.asyncresolver.resolve", _resolve)
     monkeypatch.setenv("APP_ENV", "development")

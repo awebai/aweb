@@ -782,3 +782,7 @@ func parseDIDKeyAuthorizationForTest(value string) (string, string, error) {
 	}
 	return parts[1], parts[2], nil
 }
+
+func localIdentityKeyReplacementAuthPayload(alias string, payload localIdentityKeyReplacementRequest, timestamp string) ([]byte, error) {
+	return awid.LocalIdentityKeyReplacementPayload(awid.LocalIdentityKeyReplacementPayloadInput{Alias: alias, Request: payload, Timestamp: timestamp})
+}

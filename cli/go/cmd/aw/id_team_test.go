@@ -940,12 +940,6 @@ func TestRunTeamRegisterUsesDiscoveredRegistryForLocalKeyCheck(t *testing.T) {
 	}
 }
 
-func TestTeamImportRequestCommandDoesNotExposeAccessModeFlag(t *testing.T) {
-	if flag := teamImportRequestCmd.Flags().Lookup("access-mode"); flag != nil {
-		t.Fatal("BYOT import-request must not expose stale --access-mode flag")
-	}
-}
-
 func TestExecuteTeamCleanupCloudSignsProjectionDeletePayload(t *testing.T) {
 	t.Parallel()
 

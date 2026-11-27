@@ -113,7 +113,9 @@ class AWIDAttestationRecords:
         if cached is not None and time.monotonic_ns() < cached[0]:
             return cached[1]
         try:
-            async with httpx.AsyncClient(transport=self._transport, timeout=self._timeout) as client:
+            async with httpx.AsyncClient(
+                transport=self._transport, timeout=self._timeout
+            ) as client:
                 response = await client.get(self.registry_url + path)
         except httpx.HTTPError as exc:
             raise AttestationRefused("authority_unavailable", "registry read failed") from exc
@@ -123,12 +125,22 @@ class AWIDAttestationRecords:
             try:
                 body = response.json()
             except ValueError as exc:
-                raise AttestationRefused("authority_unavailable", "registry returned invalid JSON") from exc
-            if not isinstance(body, dict) or not isinstance(body.get("record"), dict) or not isinstance(body.get("signature"), str):
-                raise AttestationRefused("authority_unavailable", "registry returned an unexpected record shape")
+                raise AttestationRefused(
+                    "authority_unavailable", "registry returned invalid JSON"
+                ) from exc
+            if (
+                not isinstance(body, dict)
+                or not isinstance(body.get("record"), dict)
+                or not isinstance(body.get("signature"), str)
+            ):
+                raise AttestationRefused(
+                    "authority_unavailable", "registry returned an unexpected record shape"
+                )
             value = {"record": body["record"], "signature": body["signature"]}
         else:
-            raise AttestationRefused("authority_unavailable", f"registry answered {response.status_code}")
+            raise AttestationRefused(
+                "authority_unavailable", f"registry answered {response.status_code}"
+            )
         self._cache[path] = (time.monotonic_ns() + seconds_to_ns(self.ttl_seconds), value)
         return value
 
@@ -138,18 +150,29 @@ class AWIDAttestationRecords:
         return f"/v1/namespaces/{quote(domain, safe='')}/teams/{quote(name, safe='')}"
 
     async def member_custody(self, team_id: str, certificate_id: str) -> SignedRecord | None:
-        return await self._get(f"{self._team_path(team_id)}/certificates/{quote(certificate_id, safe='')}/custody")
+        return await self._get(
+            f"{self._team_path(team_id)}/certificates/{quote(certificate_id, safe='')}/custody"
+        )
 
     async def team_custodian(self, team_id: str, custodian_id: str) -> SignedRecord | None:
-        return await self._get(f"{self._team_path(team_id)}/custodians/{quote(custodian_id, safe='')}")
+        return await self._get(
+            f"{self._team_path(team_id)}/custodians/{quote(custodian_id, safe='')}"
+        )
 
     async def member_person(self, team_id: str, certificate_id: str) -> SignedRecord | None:
-        return await self._get(f"{self._team_path(team_id)}/certificates/{quote(certificate_id, safe='')}/person")
+        return await self._get(
+            f"{self._team_path(team_id)}/certificates/{quote(certificate_id, safe='')}/person"
+        )
 
 
 def _registered(
-    signed: SignedRecord | None, *, current_team_did_key: str, expected: dict[str, Any],
-    absent_code: str, invalid_code: str, stale_code: str,
+    signed: SignedRecord | None,
+    *,
+    current_team_did_key: str,
+    expected: dict[str, Any],
+    absent_code: str,
+    invalid_code: str,
+    stale_code: str,
 ) -> dict[str, Any]:
     """Check one stored record against the current team key and the expected fields."""
     if signed is None:
@@ -197,21 +220,29 @@ async def verify_principal_attestation(
     except AttestationError as exc:
         raise AttestationRefused("attestation_invalid", str(exc)) from exc
     if signed_payload is None:
-        raise AttestationRefused("attestation_binding_mismatch", "attestations apply to team-auth v2 requests only")
+        raise AttestationRefused(
+            "attestation_binding_mismatch", "attestations apply to team-auth v2 requests only"
+        )
     if (
         payload["team_id"] != team_id
         or payload["certificate_id"] != certificate_id
         or payload["member_did_key"] != member_did_key
         or payload["request_binding"] != hashlib.sha256(signed_payload).hexdigest()
     ):
-        raise AttestationRefused("attestation_binding_mismatch", "attestation is for another request")
+        raise AttestationRefused(
+            "attestation_binding_mismatch", "attestation is for another request"
+        )
     iat = parse_attestation_time(payload["iat"])
     exp = parse_attestation_time(payload["exp"])
     lifetime = (exp - iat).total_seconds()
     if lifetime <= 0 or lifetime > ATTESTATION_MAX_LIFETIME_SECONDS:
-        raise AttestationRefused("attestation_expired", "exp must be after iat and at most 300 s later")
+        raise AttestationRefused(
+            "attestation_expired", "exp must be after iat and at most 300 s later"
+        )
     if iat > now + MAX_IAT_AHEAD or exp <= now:
-        raise AttestationRefused("attestation_expired", "attestation is outside its validity window")
+        raise AttestationRefused(
+            "attestation_expired", "attestation is outside its validity window"
+        )
     try:
         verify_attestation_signature(payload, signature)
     except AttestationError as exc:
@@ -226,8 +257,10 @@ async def verify_principal_attestation(
         await records.member_custody(team_id, certificate_id),
         current_team_did_key=current_team_did_key,
         expected={
-            "team_id": team_id, "certificate_id": certificate_id,
-            "member_did_key": member_did_key, "custodian_id": payload["custodian_id"],
+            "team_id": team_id,
+            "certificate_id": certificate_id,
+            "member_did_key": member_did_key,
+            "custodian_id": payload["custodian_id"],
         },
         **codes,
     )
@@ -262,7 +295,11 @@ async def read_member_person(
     record = _registered(
         signed,
         current_team_did_key=current_team_did_key,
-        expected={"team_id": team_id, "certificate_id": certificate_id, "member_did_key": member_did_key},
+        expected={
+            "team_id": team_id,
+            "certificate_id": certificate_id,
+            "member_did_key": member_did_key,
+        },
         absent_code="member_person_invalid",
         invalid_code="member_person_invalid",
         stale_code="member_person_record_stale",
@@ -292,7 +329,11 @@ def caller_context(verified: VerifiedAttestation | None) -> str:
     """The invocation context of a request with this verified attestation:
     ``agent`` without one, ``surface`` for the dashboard channel. No request
     calls in the ``hook`` context through team-auth."""
-    attestation = None if verified is None else Attestation(verified=True, payload={"channel": verified.channel})
+    attestation = (
+        None
+        if verified is None
+        else Attestation(verified=True, payload={"channel": verified.channel})
+    )
     try:
         return manifest_caller_context(attestation)
     except ManifestError as exc:

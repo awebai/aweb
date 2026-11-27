@@ -3,6 +3,7 @@
 Record schemas and semantics are in docs/human-channels-contract-v1.md. None of
 these Protocols is an authorization adapter or an implementation stub service.
 """
+
 from __future__ import annotations
 
 from typing import AsyncContextManager, Protocol, TYPE_CHECKING
@@ -20,6 +21,7 @@ class HumanChannelsUnitOfWork(Protocol):
     exact connection. They must not begin/commit independently or access OSS SQL.
     Network calls, signer/key lookup and event publication are outside the lock.
     """
+
     @property
     def transaction(self) -> Connection:
         """The supported asyncpg connection for caller-owned persistence only."""
@@ -44,29 +46,39 @@ class HumanChannelsUnitOfWork(Protocol):
 
 class HumanChannelsService(Protocol):
     """All calls take verified existing messaging auth, never a claimed owner ID."""
+
     async def capabilities(self, auth: MessagingAuth) -> ContractRecord:
         """Capabilities: implemented/enabled/refused, not just package version."""
         ...
 
-    async def resolve(self, auth: MessagingAuth, request: ContractRecord) -> ContractRecord:
+    async def resolve(
+        self, auth: MessagingAuth, request: ContractRecord
+    ) -> ContractRecord:
         """ResolveRequest -> AuthorityFacts, selected team/participant only."""
         ...
 
-    async def prepare(self, auth: MessagingAuth, request: ContractRecord) -> ContractRecord:
+    async def prepare(
+        self, auth: MessagingAuth, request: ContractRecord
+    ) -> ContractRecord:
         """PrepareRequest -> PreparedSend; crypto/I/O now, current-authority recheck at accept."""
         ...
 
-    def unit_of_work(self, auth: MessagingAuth) -> AsyncContextManager[HumanChannelsUnitOfWork]:
-        ...
+    def unit_of_work(
+        self, auth: MessagingAuth
+    ) -> AsyncContextManager[HumanChannelsUnitOfWork]: ...
 
-    async def ingress_result(self, auth: MessagingAuth, key: ContractRecord) -> ContractRecord:
+    async def ingress_result(
+        self, auth: MessagingAuth, key: ContractRecord
+    ) -> ContractRecord:
         """IngressKey -> IngressResult; issuer must equal authenticated principal.
 
         Current authority is required; another issuer's result is not disclosed.
         """
         ...
 
-    async def list(self, auth: MessagingAuth, request: ContractRecord) -> ContractRecord:
+    async def list(
+        self, auth: MessagingAuth, request: ContractRecord
+    ) -> ContractRecord:
         """PageRequest -> PageResult: ALL authorized mail/session/message handles, not just pair UI."""
         ...
 
@@ -74,31 +86,45 @@ class HumanChannelsService(Protocol):
         """SessionView; current member/key/bridge/history-control context."""
         ...
 
-    async def create_session(self, auth: MessagingAuth, request: ContractRecord) -> ContractRecord:
+    async def create_session(
+        self, auth: MessagingAuth, request: ContractRecord
+    ) -> ContractRecord:
         """SessionCreate -> SessionView after owner/recipient/disclosure consent."""
         ...
 
-    async def change_membership(self, auth: MessagingAuth, intent: ContractRecord) -> ContractRecord:
+    async def change_membership(
+        self, auth: MessagingAuth, intent: ContractRecord
+    ) -> ContractRecord:
         """SignedArtifact of MembershipIntent -> SessionView; add/remove/leave/delegate/transfer/history."""
         ...
 
-    async def checkpoint(self, auth: MessagingAuth, intent: ContractRecord) -> ContractRecord:
+    async def checkpoint(
+        self, auth: MessagingAuth, intent: ContractRecord
+    ) -> ContractRecord:
         """SignedArtifact of CheckpointIntent -> signed CheckpointReceipt or NarrowStopAck."""
         ...
 
-    async def checkpoint_receipt(self, auth: MessagingAuth, session_id: str, transition_id: str) -> ContractRecord:
+    async def checkpoint_receipt(
+        self, auth: MessagingAuth, session_id: str, transition_id: str
+    ) -> ContractRecord:
         """Original signed CheckpointReceipt; public control-history grant required."""
         ...
 
-    async def message_acceptance(self, auth: MessagingAuth, session_id: str, message_id: str) -> ContractRecord:
+    async def message_acceptance(
+        self, auth: MessagingAuth, session_id: str, message_id: str
+    ) -> ContractRecord:
         """Original signed MessageAcceptance; message interval authorization required."""
         ...
 
-    async def verify_presence(self, auth: MessagingAuth, intent: ContractRecord) -> ContractRecord:
+    async def verify_presence(
+        self, auth: MessagingAuth, intent: ContractRecord
+    ) -> ContractRecord:
         """SignedArtifact of PresenceIntent -> VerifiedPresence; Cloud persists settings/generation."""
         ...
 
-    async def verify_presence_binding(self, auth: MessagingAuth, intent: ContractRecord) -> ContractRecord:
+    async def verify_presence_binding(
+        self, auth: MessagingAuth, intent: ContractRecord
+    ) -> ContractRecord:
         """SignedArtifact of PresenceBindingIntent -> VerifiedPresenceBinding; shared/dedicated only.
 
         This verifier never treats native suppression approval as binding consent.
@@ -106,10 +132,14 @@ class HumanChannelsService(Protocol):
         """
         ...
 
-    async def native_operation(self, auth: MessagingAuth, request: ContractRecord) -> ContractRecord:
+    async def native_operation(
+        self, auth: MessagingAuth, request: ContractRecord
+    ) -> ContractRecord:
         """SignedArtifact of NativeOperationRequest -> signed NativeOperation; durable owner/fence, no automatic restart."""
         ...
 
-    async def commit_native_reply(self, auth: MessagingAuth, request: ContractRecord) -> ContractRecord:
+    async def commit_native_reply(
+        self, auth: MessagingAuth, request: ContractRecord
+    ) -> ContractRecord:
         """SignedArtifact of NativeReply -> original AcceptedSend; fenced reply-slot + outbox commit."""
         ...

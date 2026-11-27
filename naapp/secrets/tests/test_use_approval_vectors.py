@@ -70,10 +70,15 @@ def test_secret_kinds_are_the_auth_schemes():
 def test_use_policy_reference_binds_the_installation_team_grant_and_digest(case):
     request = case["request"]
     assert case["policy"] == {
-        "ref": "|".join((
-            "secrets.use", request["installation_id"], request["team_id"],
-            request["grant_id"], request["policy_digest"],
-        )),
+        "ref": "|".join(
+            (
+                "secrets.use",
+                request["installation_id"],
+                request["team_id"],
+                request["grant_id"],
+                request["policy_digest"],
+            )
+        ),
         "version": 1,
     }
 
