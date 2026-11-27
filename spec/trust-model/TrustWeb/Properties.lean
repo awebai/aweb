@@ -1339,4 +1339,55 @@ theorem Reachable.cutOffAreRevoked {ask : AskRule} {s : State} (hr : Reachable a
       | sendOwn _ => exact ih
       | sendGrant _ _ => exact ih
 
+/-- In one act. If a key is with a key holder after an accepted act and not
+before, the asker is whoever controls that key, and the record after is the
+record before with that key held. -/
+theorem only_entrust_puts_a_key_with_a_holder {ask : AskRule} {s s' : State} {who : Party}
+    {key : OrgKey} (hstep : Step ask s who s') (hin : key ∈ s'.held) (hout : key ∉ s.held) :
+    who = .controller key ∧ s' = { s with held := key :: s.held } := by
+  cases hstep with
+  | entrust _ =>
+      rename_i key'
+      rcases List.mem_cons.mp hin with rfl | h
+      · exact ⟨rfl, rfl⟩
+      · exact absurd h hout
+  | replaceRoot _ => exact absurd (List.mem_filter.mp hin).1 hout
+  | release _ _ => exact absurd (List.mem_filter.mp hin).1 hout
+  | rekeyTeam _ _ => exact absurd (List.mem_filter.mp hin).1 hout
+  | createOrg _ => exact absurd hin hout
+  | readmitByRoot _ _ _ _ => exact absurd hin hout
+  | readmitByParent _ _ _ _ => exact absurd hin hout
+  | registerByRoot _ _ _ _ => exact absurd hin hout
+  | registerByParent _ _ _ _ => exact absurd hin hout
+  | revokeSelf _ => exact absurd hin hout
+  | revokeChild _ _ _ => exact absurd hin hout
+  | revokeByOrg _ _ => exact absurd hin hout
+  | admit _ _ _ => exact absurd hin hout
+  | admitAdmin _ _ _ => exact absurd hin hout
+  | remove _ _ => exact absurd hin hout
+  | leave _ _ _ => exact absurd hin hout
+  | invite _ _ _ => exact absurd hin hout
+  | redeem _ _ _ => exact absurd hin hout
+  | mintGrant _ _ => exact absurd hin hout
+  | revokeGrant _ => exact absurd hin hout
+  | sendOwn _ => exact absurd hin hout
+  | sendGrant _ _ => exact absurd hin hout
+
+/-- In every reachable record in which a key is with a key holder, there is a
+reachable record in which it is not, from which an act asked for by whoever
+controls the key puts it with a key holder. -/
+theorem held_key_was_entrusted {ask : AskRule} {s : State} (hr : Reachable ask s)
+    {key : OrgKey} (hk : key ∈ s.held) :
+    ∃ t, Reachable ask t ∧ key ∉ t.held ∧
+      Step ask t (.controller key) { t with held := key :: t.held } := by
+  induction hr with
+  | start _ => cases hk
+  | step hr' hstep ih =>
+      rename_i t t' _
+      by_cases hold : key ∈ t.held
+      · exact ih hold
+      · obtain ⟨hw, he⟩ := only_entrust_puts_a_key_with_a_holder hstep hk hold
+        subst hw
+        exact ⟨t, hr', hold, he ▸ hstep⟩
+
 end TrustWeb

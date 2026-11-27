@@ -811,7 +811,7 @@ theorem root_replacement_can_leave_no_admin (ask : AskRule) :
   obtain ⟨s', hstep, _, hnone⟩ := dns_owner_can_always_take_over (admin_org_exists hr ha)
   exact ⟨s, s', hr, hheld, ha, hstep, fun k ⟨_, kind, hv⟩ => hnone k kind hv⟩
 
-/-- As built. Under any rule there is a record the system reaches in which a
+/-- Under any rule there is a record the system reaches in which a
 grant `g` stands, its subject is revoked, and `g` is not live; and an act
 asked for by whoever controls organisation 0's root key, after which the
 grants are as before, `g` is live, and `g` may send. In the construction the

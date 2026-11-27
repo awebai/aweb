@@ -30,8 +30,8 @@ def skipped : List String :=
 def leanNames : List String :=
   ["propext", "Classical.choice", "Quot.sound", "List"]
 
-/-- The namespaces a name may resolve under: the model's types, the predicate
-`AdminTeamLocked`, and this check's own. -/
+/-- The namespaces a name may resolve under: the model's inductive and
+structure types, the predicate `AdminTeamLocked`, and this check's own. -/
 def modelTypes : List Name :=
   [`Kind, `Issuer, `Team, `OrgKey, `Party, `Cert, `Membership, `ActKind, `Approver,
    `Rule, `Grant, `Invite, `Message, `State, `Person, `Valid, `ChainToRoot,

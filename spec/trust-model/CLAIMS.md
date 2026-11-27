@@ -78,7 +78,7 @@ One line for every sentence that says something about the model, apart from a th
 | 11 | A rule naming the other as approver means the approvals include its own | definition | `Satisfies` for `.exactly` |
 | 11a | A planned check, present under every rule | source, definition | `KeepsAnAdmin` is one of the planned parts (the source readings); it is a premise of `Step` constructors, and `Step` takes any `ask` |
 | 11a | This is about a team certificate going | result | The hypothesis |
-| 11a | A revocation can still leave no admin: three cases | result | Rows 44, 47; `root_replacement_can_leave_no_admin` |
+| 11a | A revocation can still leave no admin: three cases, resting on the planned `entrust` | result | Rows 44, 47; `root_replacement_can_leave_no_admin`; `held_key_was_entrusted` |
 | 15 | The model does not record which approvals an act carried; the act is accepted only with such approvals | definition | `approvals` is an implicit argument of the constructor, not part of `State` |
 | 16 | Construction note; so 2 holds | construction, result | The proof; row 2 holds for any act |
 | 16 | As built, an agent may ask where the policy has an anyPerson rule for adding a person; not stated as a theorem | definition | `builtRule`'s second disjunct |
@@ -97,9 +97,10 @@ One line for every sentence that says something about the model, apart from a th
 | 28 | Nor does the protocol | source | the source readings |
 | 35, 48, 49 | A warning | process | A label |
 | 25, 42 | Resting on the planned premise that `redeem`'s team (and, in a record the system can reach, `invite`'s) is not the admin team | definition, source | The proofs close the `redeem` case with `i.team ≠ .admin`; only `invite` creates an invitation, also with `i.team ≠ .admin`; both planned |
+| 44, 47, 48, 49 | The record's held key rests on the planned `entrust` | result, source | `held_key_was_entrusted`, `only_entrust_puts_a_key_with_a_holder`; `entrust` is a planned part |
 | 11a | Before and after the act | result | The hypothesis that the admin team's key is held after the act; a re-key removes it |
 | 21 | Admission asked for by an invitation's bearer; a native invitation is accepted with the team controller's own key, that controller's act | source, act | `cli/go/cmd/aw/id_team.go` line 1764 at 5c2ee7bad3; the security owner's note; `admit` asked by the team key's controller |
-| 50 | A grant is added only by its subject, so grants from a team's superseded certificates do not come back | result | Row 19 |
+| 50 | A grant is added only by its subject, so a grant from the team does not come back unless its subject gives it again | result | Row 19 |
 | 51 | Construction note | construction | The proof |
 | 51 | This is how aweb behaves as built | source | `server/src/aweb/identity_grant_auth.py` lines 196 to 217, `server/src/aweb/member_team_key.py` lines 745 to 757, at 5c2ee7bad3; the protocol seat's check (mail f8b91c44) |
 | 52 | Design, aweb-adzf.9, a planned effect that is not an act of the model | source, definition | The seat's ruling (mail e1749dfc); `plannedReplaceRoot` is a definition, not a `Step` constructor |
@@ -110,7 +111,7 @@ One line for every sentence that says something about the model, apart from a th
 | 40 | The rest of 38's three cases follows from 38 | result | Row 38 applies to any valid person |
 | 41 | In every record such a key exists | result | `exists_fresh_key` |
 | 42 | Locked means ...; then the organisation has no admin | definition, result | `AdminTeamLocked`; `AdminTeamLocked.no_admin` |
-| 43 | A re-key keeps only the certificates of the members it re-signs, and removes the grants from the team | result | Row 50 |
+| 43 | A re-key keeps standing only the certificates of the members it keeps, and removes the grants from the team | result | Row 50 |
 
 ### What must never happen
 
@@ -124,7 +125,7 @@ One block per cell, in the table's order.
 | | A key with no identity certificate can act in a team on its team certificate alone | definition | `InTeam`; `CanAct`'s first disjunct |
 | | And so give a grant | act | `mintGrant` needs `InTeam` and a session key no current grant uses; some key is always unused (`unused_session_key`) |
 | | In a team or not, it can send attributed to itself | act | `sendOwn` needs only `CanAct` |
-| | In a record the system can reach, by the planned `leave`, it can leave a team whose key is held | act, result | `leave` needs the certificate, the held key and `KeepsAnAdmin`, and no validity or registration; `KeepsAnAdmin` is vacuous outside the admin team, and a key with no identity certificate never holds an admin-team certificate in a reachable record (`admin_certificate_member_is_registered`, which rests on `new_admin_certificate_needs_valid_member`, so on the planned premises of `admitAdmin`, `admit` and `redeem`, and on `certificate_is_permanent`) |
+| | In a record the system can reach, by the planned `leave` and resting on the planned premises of `admitAdmin`, `admit` and `redeem`, it can leave a team whose key is held | act, result | `leave` needs the certificate, the held key and `KeepsAnAdmin`, and no validity or registration; `KeepsAnAdmin` is vacuous outside the admin team, and a key with no identity certificate never holds an admin-team certificate in a reachable record (`admin_certificate_member_is_registered`, which rests on `new_admin_certificate_needs_valid_member`, so on the planned premises of `admitAdmin`, `admit` and `redeem`, and on `certificate_is_permanent`) |
 | | A team certificate counts without the root having set the team's key | definition | `InTeam`, `GrantLive` and `admit` have no premise about the root or `rekeyTeam` |
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule` (`Admin` needs `Valid`), `teamRule` |
 | A revoked member keeps authority | Proved in reachable records: not valid, not an admin, cannot act in a team, cannot send with its own key, no live grant | result | Rows 7, 20; `sendOwn` needs `CanAct` |
@@ -158,7 +159,7 @@ One block per cell, in the table's order.
 | A key leaves its holder except ... | Proved for one act | result | Row 28 |
 | The last admin's team certificate | A planned check, proved for one act | result | Row 11a |
 | | The team key's controller can still remove anyone | result | Row 10 |
-| | A revocation can still leave no admin: of the last admin, of an agent admin's issuer, or by a root replacement | result | Rows 44, 47; `root_replacement_can_leave_no_admin` |
+| | A revocation can still leave no admin: of the last admin, of an agent admin's issuer, or by a root replacement, resting on the planned `entrust` | result | Rows 44, 47; `root_replacement_can_leave_no_admin`; `held_key_was_entrusted` |
 | | So can a re-key of the admin team by the root's controller while the root key is not held; through a held root key it must keep an admin | result, act | Row 45; `rekeyTeam`'s premise |
 | An outsider is an admin | True by the definition | definition | `Admin` needs `Valid s o k kind` |
 | A certificate for one team accepted for another | True by the definition | definition | `HasTeamCert` matches organisation and team |
@@ -196,10 +197,12 @@ Each item pairs a sentence about the model with one about the real system.
 | Creating and deleting teams is not modelled | definition | `OrgKey` and `Team` are fixed; no act creates a team |
 | A root replacement leaves the team keys where they were | act | `replaceRoot` filters only `.root o` from `held` |
 | The root re-keys a team by a separate act | act | `rekeyTeam` |
-| A re-key takes the team's key out of `held`, keeps only the given members' certificates, and ends every grant from the team | act | `rekeyTeam` filters `held`, `members` (keeping `keep`) and `grants` |
+| A re-key takes the team's key out of `held`, keeps standing only the given members' certificates, and ends every grant from the team | act | `rekeyTeam` filters `held`, `members` (keeping `keep`) and `grants` |
 | Asked through a held root key for the admin team, it must keep an admin | act | `rekeyTeam`'s premise on `keep` |
+| As `remove` must when the admin team's key is held, and `leave` always must | act | `remove`'s `KeepsAnAdmin` premise applies when the team's key is held; `leave`'s always |
 | Really the rotation re-signs the members it is given with new certificates in the same act | source | awid `rotate_team_key` at 5c2ee7bad3; the protocol seat's E7.3 disposition |
 | A legacy grant with no stored issuing certificate stays eligible once its subject is a member again | source | `server/src/aweb/identity_grant_status.py` lines 125 to 130 at 5c2ee7bad3 |
+| The model's grants have no such case | definition, act | `Grant` stores no issuing certificate; `remove`, `leave` and `rekeyTeam` remove the grants on a team certificate that goes |
 | Really the rotation also re-signs the member certificates it is given | source | awid `rotate_team_key` at 5c2ee7bad3 |
 | `controller key` is whoever controls that key now; the old one cannot be named | definition | `Party.controller` names a key, not a holder |
 | The operator is not modelled; whoever controls a key asks directly only while it is not held | definition | `Authorised`'s first branch needs `key ∉ s.held`; `entrust` needs `key ∉ s.held` |
@@ -272,6 +275,8 @@ Each item pairs a sentence about the model with one about the real system.
 | `runs_without_key_holder` | The statement does not say who issued whom | result | The statement |
 | `no_admin_no_new_admin_certificate` | Re-admissions change no team certificate | act | `readmitByRoot`, `readmitByParent` |
 | `AdminTeamLocked` | Its body, read literally | definition | Body |
+| `plannedReplaceRoot` | The record `replaceRoot` gives, with the grants on the identities it cuts off removed | definition | Its body |
+| `plannedReplaceRoot`, `planned_replacement_ends_cut_off_grants` | Planned, aweb-adzf.9; Design | source | The protocol seat's ruling (mail e1749dfc) |
 | several | Construction notes | construction | The proofs |
 
 ## TrustWeb/Operations.lean
@@ -280,6 +285,7 @@ Each item pairs a sentence about the model with one about the real system.
 |---|---|---|---|
 | module doc | What the file holds | process | File contents |
 | `Assignment`, `teamRule` | Their bodies, read literally | definition | Bodies |
+| `assigned_team_can_take_key_back`, `only_assigned_team_takes_key_back`, rows 33 and 34 | "Any assignment" | result | Both quantify over `assign` |
 | `invitation_reaches_an_assigned_team` | `admit`, `invite`, `redeem` exclude the admin team; no premise excludes an assigned team | act | Their premises |
 | `invitation_reaches_an_assigned_team` | Not proved for every assignment and team | result | The statement is one example |
 | `invitation_reaches_an_assigned_team`, `invitation_then_own_request_makes_an_admin`, `outsider_becomes_admin_in_three_acts` | Construction notes | construction | The proofs |
