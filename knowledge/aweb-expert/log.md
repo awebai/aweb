@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-tasks-app, with backing notes installation-fence-serializes-team-requests.md and aw-omits-empty-bodies-and-takes-arrays-as-json.md.
+* **Creation**: lesson [a race test proves a lock only if the racers wait on that lock](/aweb-expert/lessons/a-race-test-proves-a-lock-only-if-the-racers-wait-on-it.md), which applies [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md) to race tests.
+* **Creation**: lesson [aw omits an empty request body and takes array parameters as JSON](/aweb-expert/lessons/aw-omits-an-empty-body-and-takes-arrays-as-json.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
