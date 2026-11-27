@@ -1,6 +1,10 @@
 # Human channels: OSS build tasks and integration gates
 
-Status: build-plan proposal for aweb-acft.11; implementation has not started.
+Status: build plan for aweb-acft.11. Built: P0
+([human channels contract v1](human-channels-contract-v1.md)), P3 (migration
+`033_typed_chat_participants.sql`), and the server side of P2 and P8
+(`server/src/aweb/human_channels/`). P1, P4 to P7 and P9 have no implementation
+in this repository.
 Canonical shared plan: [Cloud build plan](https://github.com/awebai/ac/blob/main/docs/human-channels-build-plan.md)
 (prepared in parallel; the review handoff pins its exact SHA). That document owns
 C, both platform adapters, resources and the overall graph. This sibling owns

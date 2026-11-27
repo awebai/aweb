@@ -80,6 +80,16 @@ This does not grant it authority to set an identity-wide policy.
 The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
 `did:aw` for the change; a stored membership claim cannot select its write scope.
 
+A hosting layer such as Cloud uses the public `aweb.inbound_modes` services
+rather than a second mode table or locking algorithm.
+`effective_inbound_mode(db, did_aw)` reads the identity policy. Within a caller
+transaction, `for_share=True` locks all rows in stable order for delivery;
+`for_update=True` locks before checking mutation authority.
+`set_identity_inbound_mode(tx, did_aw, mode)` locks and updates all live rows;
+the caller must establish identity-level authority in that same transaction.
+The lock options are mutually exclusive. A provisioning default is used only if
+there are no existing rows, never for missing policies.
+
 `aweb.messaging.delivery_policy.authorize_delivery` owns this rule for native
 and federated sends. Same-team admission intersects all current active team
 memberships of both verified identities through the native member owner. A

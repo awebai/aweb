@@ -1,6 +1,6 @@
 # Team room v1
 
-Status: **approved contract; implementation awaiting release**. Task: `aweb-acpi`. This advances goal 1,
+Status: **approved contract; released in aw-v1.36.53 and server-v1.27.45**. Task: `aweb-acpi`. This advances goal 1,
 “Make aweb.ai a significant business”, by allowing a team announcement without
 manual recipient fan-out. Identity/auth review accepted the original contract
 at `960c13f371397d3af9229cf4644b51a62715ecb9` (Athena, mail

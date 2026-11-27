@@ -19,7 +19,7 @@ What this repository contributes to the workspace lives here:
 
 A soul directory must not contain a `knowledge/` bundle: OATS refuses to spawn
 such a soul, so `souls/*/knowledge/` is gitignored. The `agents/` tree holds
-the souls' earlier records, which OATS v2 does not discover.
+only the shared `agents/instructions.md`.
 
 ## Public contributors
 

@@ -1,7 +1,8 @@
 # The handoff on the wire
 
-Status: **proposed** (aweb-acwd.4.6 for `aw`, aweb-acwd.4.2 for `aweb_naapp`).
-It is not frozen until both sides ACK. It fixes the field names, encodings and
+Status: **built on both sides** (aweb-acwd.4.6 for `aw`, in
+`cli/go/internal/handoff` since aw-v1.36.59; aweb-acwd.4.2 for `aweb_naapp`, in
+`aweb_naapp/console/handoff_*.py`). It fixes the field names, encodings and
 refusals that [Human confirmation started from `aw`](human-confirmation-from-aw.md#the-handoff)
 leaves open. Every rule of that contract stands, and where this text and the
 contract differ, the contract wins.

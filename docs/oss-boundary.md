@@ -29,10 +29,8 @@ tests, and documentation. Public contracts must not require a separate
 application checkout or unpublished implementation note to explain their
 meaning.
 
-The `agents/` tree is retained here by explicit maintainer decision. Its team
-architecture, roles, profiles, and deliberately curated instance content are
-engineering assets used to develop the framework. Contributors should treat
-those assets as part of this repository rather than moving them piecemeal.
+The `agents/` tree holds `agents/instructions.md`, the shared agent
+instructions. The souls used to develop the framework live in `souls/`.
 
 ## What belongs with an application owner
 
