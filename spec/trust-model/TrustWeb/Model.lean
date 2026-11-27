@@ -104,7 +104,7 @@ planned things.
 
 namespace TrustWeb
 
-/-- A key. Whoever holds it can sign as it. An identity is its key (A6). -/
+/-- A key. Whoever holds it can sign as it. An identity is its key (A7). -/
 abbrev Key := Nat
 
 /-- An organisation: a domain. -/
@@ -279,7 +279,8 @@ inductive ChainToRoot (s : State) (o : Org) : Key → Prop where
       ChainToRoot s o p → ChainToRoot s o k
 
 /-- `AnswersFor s o a h`: person `h` answers for `a`. A person answers for
-themselves. For an agent it is the nearest person up its chain. An agent whose
+themselves. For an agent it is the nearest person up its chain; with one
+certificate each, the only one (`answerer_unique`). An agent whose
 chain reaches the root through agents only has nobody. -/
 inductive AnswersFor (s : State) (o : Org) : Key → Key → Prop where
   | self {h : Key} : Valid s o h .person → AnswersFor s o h h
@@ -296,7 +297,9 @@ def HasTeamCert (s : State) (o : Org) (t : Team) (k : Key) : Prop :=
   ⟨o, t, k⟩ ∈ s.members
 
 /-- `CanAct s k`: `k` is not a registered identity, or it is one and is valid
-now in its own organisation. A revoked or cut-off identity cannot act. -/
+now in some organisation (with one certificate each, its own). Where only
+registered identities are revoked, as in every reachable record, a revoked or
+cut-off identity cannot act (`revoked_cannot_act`). -/
 def CanAct (s : State) (k : Key) : Prop :=
   ¬ Registered s k ∨ ∃ o' kind, Valid s o' k kind
 
@@ -334,8 +337,10 @@ abbrev AskRule := State → Org → ActKind → Key → Prop
 /-- As built. The self-hosted key holder adds a person in two cases. With no
 approval configured, a valid person of the organisation asks. With a person's
 approval configured for adding a person, any valid member of the organisation
-asks, agent included, and `Approved` then requires a person's approval. It
-signs nothing else on a member's request, and never gives a key back. -/
+asks, agent included, and `Approved` then requires a person's approval. The
+same request re-admits a cut-off person directly under the root
+(`readmitByRoot`, which asks for `registerOf .person`). It signs nothing else
+on a member's request, and never gives a key back. -/
 def builtRule : AskRule :=
   fun s o act k => act = .registerPerson ∧
     (Valid s o k .person ∨
@@ -488,7 +493,8 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
       (∀ j, j ∈ s.invites → j.token ≠ i.token) →
       Step ask s who { s with invites := i :: s.invites }
   /-- Whoever holds an invitation's secret joins its team as `k`, a key the
-  joiner holds (A3). Nothing else is checked. -/
+  joiner holds (A3). Also checked: the team is not an admin team, and an
+  unregistered `k` is in no other team. Who holds the secret is not checked. -/
   | redeem {s : State} {i : Invite} {k : Key} :
       i ∈ s.invites → i.team ≠ .admin → OneTeamIfLocal s k →
       Step ask s (.bearer i.token)

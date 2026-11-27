@@ -3,8 +3,11 @@ import TrustWeb.Properties
 /-!
 # What must be possible
 
-The other results say what never happens. These say what can happen: each
-shows a record the system reaches in which something works.
+The other results say what never happens. These say what can happen, and
+where it stops: records the system reaches in which something works, acts
+that go through when their conditions hold, and two limits beside the
+abilities they bound (a policy that asks for a person refuses approvals with
+none, and an organisation with no admin cannot add one in one act).
 -/
 
 namespace TrustWeb
@@ -252,11 +255,13 @@ theorem locked_organisation_unlocks_by_readmission :
 /-- **Design. An organisation with no person at all can run.** There is a
 record the system reaches under the admin rule in which nobody is a person of
 organisation 0, and 1 is an admin and a valid agent of it; an act that 1 asks
-for is accepted, after which 2 holds a certificate of team 7 of 0. -/
+for is accepted, after which 2 holds a certificate of team 7 of 0 that it did
+not hold before. -/
 theorem agent_only_org_runs :
     ∃ s s', Reachable adminRule s ∧ (∀ k, ¬ Person s 0 k) ∧ Admin s 0 1 ∧
       Valid s 0 1 .agent ∧ Step adminRule s (.id 1) s' ∧
-      (⟨0, .named 7, 2⟩ : Membership) ∈ s'.members := by
+      (⟨0, .named 7, 2⟩ : Membership) ∈ s'.members ∧
+      (⟨0, .named 7, 2⟩ : Membership) ∉ s.members := by
   let c : Cert := ⟨0, 1, .agent, .root⟩
   let ma : Membership := ⟨0, .admin, 1⟩
   let tk : OrgKey := .team 0 (.named 7)
@@ -285,7 +290,8 @@ theorem agent_only_org_runs :
   refine ⟨s4, _, r4, ?_, a4, v4,
     Step.admit (m := ⟨0, .named 7, 2⟩) (who := .id 1) (approvals := []) (by simp)
       (.inr ⟨by simp [s4, tk], 1, rfl, a4, ?_⟩)
-      (.inr (by intro m' hm'; simp [s4, s3, ma] at hm'; subst hm'; simp)), by simp⟩
+      (.inr (by intro m' hm'; simp [s4, s3, ma] at hm'; subst hm'; simp)), by simp,
+    by simp [s4, s3, ma]⟩
   · intro k hp
     obtain ⟨d, hd, _, hk, _⟩ := hp.cert
     simp [s4, s3, s2, c] at hd

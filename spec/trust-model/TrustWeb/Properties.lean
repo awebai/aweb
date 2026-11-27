@@ -326,7 +326,8 @@ theorem controller_can_remove_admin {ask : AskRule} {s : State} {o : Org}
 admin team's key is with a key holder, `a` is an admin, the approvals satisfy
 the policy for a removal, and `b` is not `a`, there is an accepted act under
 the admin rule that `a` asks for, after which `b` is not an admin. Where the
-policy names `b` as an approver, those approvals include `b`'s. -/
+policy has a rule for a removal in this organisation naming `b` as its
+approver, those approvals include `b`'s. -/
 theorem admin_can_remove_admin {s : State} {o : Org}
     (hheld : OrgKey.team o .admin ∈ s.held) {a : Key}
     (ha : Admin s o a) {approvals : List Key} (happ : Approved s o .remove approvals)
@@ -544,7 +545,7 @@ theorem built_person_needs_a_person {s s' : State} {who : Party} {o : Org} {k : 
           · exact ⟨c, rfl, hkind, rfl, .inr (.inl ⟨p, rfl, hv⟩)⟩
           · rw [hkind] at h; cases h
 
-/-- **In the design, an agent can ask for a person.** There is a record the
+/-- **Under the planned rule, an agent can ask for a person.** There is a record the
 system reaches under the admin rule, and an agent `a` valid in organisation 0,
 such that an act `a` asks for is accepted and afterwards `k` holds a chain of
 person certificates in 0 that it did not hold before. In the construction the
@@ -604,16 +605,23 @@ theorem Authorised.not_bearer {ask : AskRule} {s : State} {key : OrgKey} {act : 
   intro h
   rcases h with ⟨_, h⟩ | ⟨_, _, h, _⟩ <;> cases h
 
-/-- **In one act, a grant holder changes no certificate, revocation, grant,
-held key or invitation.** If an act asked for by whoever holds a session key
-is accepted, the identity certificates, revocations, team certificates,
-grants, held keys and invitations are as before. -/
+theorem Authorised.not_dns {ask : AskRule} {s : State} {key : OrgKey} {act : ActKind}
+    {o : Org} {approvals : List Key} : ¬ Authorised ask s key act (.dns o) approvals := by
+  intro h
+  rcases h with ⟨_, h⟩ | ⟨_, _, h, _⟩ <;> cases h
+
+/-- **In one act, a grant holder can only send.** If an act asked for by
+whoever holds session key `x` is accepted, there is a grant with session key
+`x` that is live and may send, and the record after the act is the record
+before with one message attributed to the grant's subject added. -/
 theorem session_only_sends {ask : AskRule} {s s' : State} {x : Key}
     (hstep : Step ask s (.session x) s') :
-    s'.certs = s.certs ∧ s'.revoked = s.revoked ∧ s'.members = s.members ∧
-      s'.grants = s.grants ∧ s'.held = s.held ∧ s'.invites = s.invites := by
+    ∃ g, g.session = x ∧ GrantLive s g ∧ g.maySend = true ∧
+      s' = { s with sent := ⟨g.subject⟩ :: s.sent } := by
   cases hstep with
-  | sendGrant _ _ => exact ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+  | sendGrant hlive hsend =>
+      rename_i g
+      exact ⟨g, rfl, hlive, hsend, rfl⟩
   | registerByRoot _ _ _ h => exact absurd h Authorised.not_session
   | revokeByOrg _ h => exact absurd h Authorised.not_session
   | admit _ h _ => exact absurd h Authorised.not_session
@@ -651,40 +659,41 @@ theorem bearer_only_joins {ask : AskRule} {s s' : State} {t : Nat}
   | readmitByRoot _ _ _ h => exact absurd h Authorised.not_bearer
 
 /-- **In one act, a message is attributed to an identity only if that
-identity, able to act, sent it, or a live grant on it that may send did.** -/
+identity, able to act, sent it, or a live grant on it that may send did.** If
+an accepted act changes the messages, it added one message `m`, and either the
+asker is `m`'s sender as an identity and can act, or the asker holds the
+session key of a grant on `m`'s sender that is live and may send. -/
 theorem message_from_owner_or_live_grant {ask : AskRule} {s s' : State} {who : Party}
-    {m : Message} (hstep : Step ask s who s') (hnew : m ∈ s'.sent) (hold : m ∉ s.sent) :
-    (who = .id m.sender ∧ CanAct s m.sender) ∨
-      ∃ g, who = .session g.session ∧ GrantLive s g ∧ g.subject = m.sender ∧ g.maySend = true := by
+    (hstep : Step ask s who s') (hchg : s'.sent ≠ s.sent) :
+    ∃ m, s'.sent = m :: s.sent ∧
+      ((who = .id m.sender ∧ CanAct s m.sender) ∨
+        ∃ g, who = .session g.session ∧ GrantLive s g ∧ g.subject = m.sender ∧ g.maySend = true) := by
   cases hstep with
-  | createOrg _ => exact absurd hnew hold
-  | entrust _ => exact absurd hnew hold
-  | registerByRoot _ _ _ _ => exact absurd hnew hold
-  | registerByParent _ _ _ _ => exact absurd hnew hold
-  | revokeSelf _ => exact absurd hnew hold
-  | revokeChild _ _ _ => exact absurd hnew hold
-  | revokeByOrg _ _ => exact absurd hnew hold
-  | admit _ _ _ => exact absurd hnew hold
-  | admitAdmin _ _ _ => exact absurd hnew hold
-  | remove _ _ => exact absurd hnew hold
-  | leave _ _ _ => exact absurd hnew hold
-  | invite _ _ _ => exact absurd hnew hold
-  | redeem _ _ _ => exact absurd hnew hold
-  | mintGrant _ _ => exact absurd hnew hold
-  | revokeGrant _ => exact absurd hnew hold
-  | release _ _ => exact absurd hnew hold
-  | replaceRoot _ => exact absurd hnew hold
-  | readmitByRoot _ _ _ _ => exact absurd hnew hold
-  | readmitByParent _ _ _ _ => exact absurd hnew hold
+  | createOrg _ => exact absurd rfl hchg
+  | entrust _ => exact absurd rfl hchg
+  | registerByRoot _ _ _ _ => exact absurd rfl hchg
+  | registerByParent _ _ _ _ => exact absurd rfl hchg
+  | revokeSelf _ => exact absurd rfl hchg
+  | revokeChild _ _ _ => exact absurd rfl hchg
+  | revokeByOrg _ _ => exact absurd rfl hchg
+  | admit _ _ _ => exact absurd rfl hchg
+  | admitAdmin _ _ _ => exact absurd rfl hchg
+  | remove _ _ => exact absurd rfl hchg
+  | leave _ _ _ => exact absurd rfl hchg
+  | invite _ _ _ => exact absurd rfl hchg
+  | redeem _ _ _ => exact absurd rfl hchg
+  | mintGrant _ _ => exact absurd rfl hchg
+  | revokeGrant _ => exact absurd rfl hchg
+  | release _ _ => exact absurd rfl hchg
+  | replaceRoot _ => exact absurd rfl hchg
+  | readmitByRoot _ _ _ _ => exact absurd rfl hchg
+  | readmitByParent _ _ _ _ => exact absurd rfl hchg
   | sendOwn hca =>
-      rcases List.mem_cons.mp hnew with rfl | h
-      · exact .inl ⟨rfl, hca⟩
-      · exact absurd h hold
+      rename_i k
+      exact ⟨⟨k⟩, rfl, .inl ⟨rfl, hca⟩⟩
   | sendGrant hlive hsend =>
       rename_i g
-      rcases List.mem_cons.mp hnew with rfl | h
-      · exact .inr ⟨g, rfl, hlive, rfl, hsend⟩
-      · exact absurd h hold
+      exact ⟨⟨g.subject⟩, rfl, .inr ⟨g, rfl, hlive, rfl, hsend⟩⟩
 
 /-- **In one act, only the identity itself gives a grant on itself.** -/
 theorem new_grant_by_subject {ask : AskRule} {s s' : State} {who : Party} {g : Grant}
@@ -1006,6 +1015,37 @@ theorem built_key_leaves_only_by_dns {s s' : State} {who : Party} {key : OrgKey}
   rcases key_leaves_holder_only_two_ways hstep hin hout with h | ⟨_, _, hask⟩
   · exact h
   · cases hask.1
+
+/-- **In one act, a key that leaves its holder at the domain owner's request
+is the root key, and the organisation is left with no valid identity.** If an
+act asked for by `o`'s domain owner is accepted, and a key is with a key holder
+before it and not after, the key is `o`'s root key and no identity is valid in
+`o` after the act. The construction is an independent reader's. -/
+theorem dns_takes_out_only_the_root {ask : AskRule} {s s' : State} {o : Org}
+    {key : OrgKey} (hstep : Step ask s (.dns o) s') (hin : key ∈ s.held) (hout : key ∉ s'.held) :
+    key = .root o ∧ ∀ k kind, ¬ Valid s' o k kind := by
+  cases hstep with
+  | createOrg _ => exact absurd hin hout
+  | registerByRoot _ _ _ h => exact absurd h Authorised.not_dns
+  | revokeByOrg _ h => exact absurd h Authorised.not_dns
+  | admit _ h _ => exact absurd h Authorised.not_dns
+  | admitAdmin _ _ h => exact absurd h Authorised.not_dns
+  | remove h _ => exact absurd h Authorised.not_dns
+  | invite _ h _ => exact absurd h Authorised.not_dns
+  | release _ h => exact absurd h Authorised.not_dns
+  | readmitByRoot _ _ _ h => exact absurd h Authorised.not_dns
+  | replaceRoot ho =>
+      refine ⟨?_, ?_⟩
+      · apply Decidable.byContradiction
+        intro hne
+        exact hout (List.mem_filter.mpr ⟨hin, by simpa using hne⟩)
+      · intro k kind hv
+        obtain ⟨c, hc, hcs, _, hco⟩ := hv.cert
+        refine revoked_not_valid ?_ hv
+        by_cases hr : k ∈ s.revoked
+        · exact List.mem_append_right _ hr
+        · refine List.mem_append_left _ (List.mem_map.mpr ⟨c, List.mem_filter.mpr ⟨hc, ?_⟩, hcs⟩)
+          simp [hco, hcs, hr]
 
 /-- **Design. An organisation can take a key back.** If the key is with a key
 holder, `a` is an admin of its organisation, and the approvals satisfy the

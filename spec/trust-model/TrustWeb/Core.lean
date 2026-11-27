@@ -3,12 +3,17 @@ import TrustWeb.Properties
 /-!
 # The core: the fewest acts that carry the five
 
-Five properties that must always stay true:
+Five properties, chosen to test how far the model can be reduced. Each is
+stated in the core as its theorem says (`core_one` to `core_five`); in short,
+with its limits:
 
-1. An agent can never pass as a person.
-2. Removing an admin needs nobody's cooperation.
-3. Nothing has authority without a chain of signed statements back to a root.
-4. A revoked member has no authority.
+1. An agent does not pass as a person.
+2. Removing an admin needs nobody's cooperation where the admin team's key or
+   the root key is not with a key holder. Through a key holder it needs
+   another admin: where both keys are with a key holder and there is one
+   admin, no core act removes that admin without it.
+3. Every admin has a chain of signed statements back to a root.
+4. A revoked member is not valid, not an admin, and cannot act in a team.
 5. An organisation with no policy requires no approval.
 
 `CoreStep` keeps six of the model's 21 acts. This file proves that the
