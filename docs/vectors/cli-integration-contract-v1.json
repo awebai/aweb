@@ -27,7 +27,7 @@
     "acceptance": "exact; checked at start on the exact aw executable before any effect; refuse when missing, malformed or not the accepted number"
   },
   "rules": {
-    "invocation": "argument array, never a shell; --json on every listed command except output exit-only; secrets on stdin",
+    "invocation": "argument array, never a shell; --json on every listed command except output exit-only; secrets on stdin; --flag value and --flag=value are the same",
     "selector": "--identity-home ABSOLUTE_PATH before the subcommand; then AWEB_IDENTITY_HOME; then ./.aw; an unloadable selection fails without fallback",
     "stdout": "json commands: exactly one JSON document on success; key order, whitespace and the name key are not promised; unlisted keys are ignored",
     "stderr": "not part of the contract",
@@ -2476,6 +2476,13 @@
     "--preflight on invitation minting"
   ],
   "released_oats_not_promised": [
+    "aw workspace delete ALIAS_OR_ID --json (plain): receipt keeps alias_released, identity_deleted, alias_released_reason and its values",
+    "aw workspace delete through an external identity home, team not hosted: exit 2 and its exact one-line stderr refusal (reason: team_not_hosted)",
+    "aw workspace status --limit N --json (roster: selected_team, team entries, team_has_more, workspace)",
+    "aw id team members --team NAME --json",
+    "aw init --do-not-touch-agents-md without --json, AWEB_URL and AWEB_API_KEY set",
+    "aw init --join-from R --join-team T --name N --json --do-not-touch-agents-md",
+    "printed controller command: aw id team remove-member --namespace D --team N --cert-id C [--registry ORIGIN]",
     "aw heartbeat",
     "aw team list --json",
     "aw team invite --team-id T --json",

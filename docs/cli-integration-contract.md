@@ -68,7 +68,8 @@ reply was lost now exits 0 when `aw` reads back that the grant was revoked.
 shell, and passes `--json` to every listed command except the exit-only ones
 (`wake register` and `wake deregister`, section 3.8). Under `--json` no update
 check runs. Secrets (invite tokens) are passed on stdin where the command says
-so, never as arguments.
+so, never as arguments. A flag's value may follow it as the next argument or
+be joined to it with `=`: `--team T` and `--team=T` are the same.
 
 **Selecting the identity.** `--identity-home PATH`, placed before the
 subcommand, selects the identity `aw` acts as; PATH is the absolute credential
@@ -482,8 +483,10 @@ with it, which is today's file plus:
 
 - `cli_error_codes`: `username_unavailable`, `certificate_binding_unavailable`
   and the retirement refusals `not_own_workspace`, `global_identity`,
-  `team_not_hosted` and `no_workspace_credential` (today documented as
-  `alias_released_reason` values);
+  `team_not_hosted` and `no_workspace_credential`. These are also
+  `alias_released_reason` values in plain `aw workspace delete`'s receipt, and
+  they stay there (section 7): the edition adds them as codes and takes nothing
+  away from the receipt;
 - `release`: the effect `retire_member` and the outcome `pending`.
 
 Not in the list, by ownership: invite inspection's codes (owned by
@@ -537,11 +540,36 @@ Version 1 is what the framework in aweb may rely on. Released OATS aweb
 providers, v1.17 and later, which deployments still run, also call `aw` in
 ways version 1 does not list. Those keep working under aweb's rule that a
 released client is a permanent constraint until it is measured that nothing
-sends it, but they are not promises to the new framework:
+sends it, but they are not promises to the new framework. Each is kept with
+the keys and values the providers read:
 
+- plain `aw workspace delete ALIAS_OR_ID --json`, at retire from the
+  instance's own directory and at leave with `--identity-home`. Its receipt
+  keeps `alias_released`, `identity_deleted` and `alias_released_reason`, whose
+  values include `team_not_hosted`, `not_own_workspace`,
+  `controller_key_missing`, `retired_revocation_pending`, `global_identity` and
+  `no_workspace_credential`. Through an external identity home on a team that
+  is not hosted, the refusal keeps exit 2 and its one stderr line,
+  `refusing aw workspace delete through external identity home for principal
+  P; only own hosted local self-release is supported for an external identity
+  home (reason: team_not_hosted)`, which the providers match exactly;
+- `aw workspace status --limit N --json`, for the roster: `selected_team`,
+  `team` (each entry's `alias`, `status`, `last_seen`, `hostname`, `role`,
+  `workspace_path`, `context_kind`, `agent_identity_scope`), `team_has_more`
+  and `workspace`;
+- `aw id team members --team NAME --json`, for the roster when the team id
+  has no colon, with the answer of section 3.6;
+- `aw init --do-not-touch-agents-md`, without `--json`, with `AWEB_URL` and
+  `AWEB_API_KEY` set, for the deployment root's first initialisation;
+- `aw init --join-from R --join-team T --name N --json
+  --do-not-touch-agents-md`, the join of section 3.3 with that flag;
+- the command the roster prints for a team controller to run, `aw id team
+  remove-member --namespace D --team N --cert-id C [--registry ORIGIN]`: its
+  spelling is kept, so released rosters do not print a dead command;
 - `aw heartbeat`; `aw team list --json`; `aw team invite --team-id T --json`;
   `aw team join TOKEN --name N --json`, with the token as an argument (up to
-  v1.41); `aw --team T init` and `aw init` without `--do-not-touch-agents-md`;
+  v1.41); `aw --team T init`, and `aw init` without
+  `--do-not-touch-agents-md`;
 - `aw id team accept-invite TOKEN ...` with the token as an argument (up to
   v1.35); `aw id grant show` and `revoke` without `--team` (up to v1.42);
   `aw id team members ... --registry ORIGIN` (v1.42);
