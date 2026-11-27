@@ -293,12 +293,21 @@ gate sizes itself from the machine it runs on.
   its user (`gateuser`; a root step is refused), its command, its expected exit
   (a code, or `"nonzero"` for a red control), the lines it must and must not
   print, structured checks on a line's JSON, the files it must leave, the files
-  it takes from an earlier step it needs, and the named artifacts it keeps.
+  it takes from an earlier step it needs, and the named artifacts it keeps:
+  `artifacts` must each match a regular file inside the step's checkout or
+  run directory, links resolved, or the step is red; `optional_artifacts` are
+  kept when present. A path starting `{run_dir}/` is under the step's run
+  directory, any other under its checkout, for files, inputs and artifacts
+  alike; JSON checks compare type as well as value.
   The spec may name a registry image pinned by digest, which the guest starts
-  on loopback before the steps and removes after them. In the guest,
-  `servers_run.py` checks each source out at its commit, timestamps every line
+  on loopback before the steps and removes after them. The guest gets the
+  reviewed spec's bytes and runs nothing unless their sha256 is the admitted
+  one. In the guest, `servers_run.py` checks each source out at its commit, timestamps every line
   of each step's output as it arrives and keeps its raw exit apart from its
-  verdict; a step whose needs did not pass is recorded unrun. The receipt
+  verdict; a step whose needs did not pass is recorded unrun. Each step's
+  raw exit is recorded before its evidence is read, so a failure collecting
+  it, or of the runner itself, leaves the exit and makes the receipt
+  infrastructure, not red. The receipt
   carries the spec's digest, each source's author and shipped bundle digests
   and the commit the guest checked out, and the runner's full record. Green
   needs every source at its commit, every step passed and the registry

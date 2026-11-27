@@ -46,6 +46,7 @@ STEP_FIELDS = {
     "files",
     "inputs",
     "artifacts",
+    "optional_artifacts",
 }
 
 
@@ -110,7 +111,9 @@ def admit_step(step, seen, sources):
     for relative in (
         step.get("files", [])
         + step.get("artifacts", [])
+        + step.get("optional_artifacts", [])
         + [i["to"] for i in step.get("inputs", [])]
+        + [i["path"] for i in step.get("inputs", [])]
     ):
         path = relative.removeprefix("{run_dir}/")
         if (
@@ -178,21 +181,10 @@ def admit(spec_path, repo, sha):
     for step in steps:
         admit_step(step, seen, sources)
         seen[step["name"]] = step
-    guest = {
-        "sources": {
-            name: {
-                "ref": source["ref"],
-                "commit": source["commit"],
-                "shipped_bundle_sha256": source["bundle_sha256"],
-            }
-            for name, source in sources.items()
-        },
-        "steps": steps,
-        **({"registry": registry} if registry else {}),
-    }
     return {
         "spec_sha256": "sha256:" + hashlib.sha256(text).hexdigest(),
-        "guest": guest,
+        # The guest gets the reviewed bytes themselves, read once here.
+        "spec_bytes": text,
         "bundles": shipped,
         "sources": {
             name: {
@@ -205,10 +197,11 @@ def admit(spec_path, repo, sha):
     }
 
 
-def command():
-    """The guest step: the runner over the shipped spec; its exit is the run's verdict."""
+def command(spec_sha256):
+    """The guest step: the runner over the shipped spec, which it checks against the admitted digest."""
     return (
         f"python3 {REMOTE}/operator/vm_gate/servers_run.py {GUEST_SPEC} {GUEST_OUT} "
+        f"--spec-sha256 {spec_sha256} "
         f"--bundles {GUEST_BUNDLES} --sources {GUEST_SOURCES} --runs {GUEST_RUNS}"
     )
 
@@ -228,7 +221,7 @@ class ServersExecutor(Executor):
             "servers-directories",
         )
         spec = Path(self.directory) / "servers-spec.json"
-        spec.write_text(json.dumps(self.servers["guest"], indent=2) + "\n")
+        spec.write_bytes(self.servers["spec_bytes"])
         self.upload(spec, GUEST_SPEC, mode="0444")
         for name, bundle in self.servers["bundles"].items():
             local = Path(self.directory) / f"{name}.bundle"
@@ -244,6 +237,21 @@ def result(evidence):
     return (json.loads(path.read_text()) if path.exists() else None), (
         int(value) if value.isdigit() else None
     )
+
+
+def infrastructure(record):
+    """Why the run's record cannot be judged, or None: no record, another spec, or a runner or collector failure."""
+    run = record.get("result")
+    if run is None:
+        return "the runner left no record"
+    if run.get("spec_sha256") != record.get("spec_sha256"):
+        return f"the guest ran spec {run.get('spec_sha256')}, not the admitted {record.get('spec_sha256')}"
+    if run.get("error"):
+        return "the runner failed: " + run["error"]
+    failed = [step["name"] for step in run["steps"] if step.get("collector_error")]
+    if failed:
+        return "evidence collection failed for " + ", ".join(failed)
+    return None
 
 
 def green(record):

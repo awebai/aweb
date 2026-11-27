@@ -616,10 +616,19 @@ class ProjectJob(CloudFixture, unittest.TestCase):
             }
         path = self.root / f"spec-{len(list(self.root.glob('spec-*.json')))}.json"
         path.write_text(json.dumps(spec))
+        self.spec_digest = digest(path.read_bytes())
         return path
 
     def servers_evidence(
-        self, *, verdict="passed", removed=True, guest_commit=None, exit_code="0"
+        self,
+        *,
+        verdict="passed",
+        removed=True,
+        guest_commit=None,
+        exit_code="0",
+        spec_sha256=None,
+        error=None,
+        collector_error=None,
     ):
         result = {
             "sources": {
@@ -642,10 +651,12 @@ class ProjectJob(CloudFixture, unittest.TestCase):
                     "exit": 0,
                     "verdict": verdict,
                     "reason": None,
+                    "collector_error": collector_error,
                 }
             ],
             "versions": {"docker": "29.9.3", "compose": "2.40.0"},
-            "error": None,
+            "error": error,
+            "spec_sha256": spec_sha256 or self.spec_digest,
         }
         self.evidence = {
             "var/log/vm-gate/servers/result.json": json.dumps(result),
@@ -687,10 +698,9 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         )
         self.assertEqual(receipt["result"]["steps"][0]["uid"], 1000)
         servers = call["executor_factory"].keywords["servers"]
-        self.assertEqual(
-            servers["guest"]["sources"]["servers"]["shipped_bundle_sha256"], bundle
-        )
-        self.assertNotIn("bundle", servers["guest"]["sources"]["servers"])
+        # The guest gets the reviewed bytes and checks their digest itself.
+        self.assertEqual(servers["spec_bytes"], spec.read_bytes())
+        self.assertIn(f"--spec-sha256 {digest(spec.read_bytes())} ", call["command"])
 
     def test_servers_is_red_unless_every_step_passed_and_the_registry_is_gone(self):
         spec = self.servers_spec()
@@ -711,6 +721,19 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         code, receipt = self.invoke_servers(spec)
         self.assertEqual(code, 70, receipt)
         self.assertIsNone(receipt["result"])
+        for evidence, reason in (
+            ({"spec_sha256": "sha256:" + "0" * 64}, "not the admitted"),
+            ({"error": "KeyError: 'user'"}, "the runner failed"),
+            (
+                {"collector_error": "OSError: disk full", "verdict": "failed"},
+                "evidence collection failed for d",
+            ),
+        ):
+            with self.subTest(reason=reason):
+                self.servers_evidence(**evidence)
+                code, receipt = self.invoke_servers(spec)
+                self.assertEqual(code, 70, receipt)
+                self.assertIn(reason, receipt["result_error"])
 
     def test_servers_refusals_write_a_receipt_and_start_no_machine(self):
         root_step = [

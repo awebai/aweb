@@ -8,7 +8,10 @@ the step's raw exit apart from its verdict, checks the step's required and
 forbidden lines and files, and collects only the step's named artifacts; then it
 removes the registry. result.json records every outcome, failures included.
 
-    python3 servers_run.py SPEC OUT [--sources DIR] [--bundles DIR] [--runs DIR]
+The spec arrives as the reviewed bytes; nothing runs unless its sha256 is the
+one the controller admitted.
+
+    python3 servers_run.py SPEC OUT --spec-sha256 D [--sources DIR] [--bundles DIR] [--runs DIR]
 """
 
 import argparse
@@ -40,7 +43,7 @@ def check_out(name, source, bundles, sources):
         "guest_commit": None,
         "error": None,
     }
-    if record["shipped_bundle_sha256"] != source["shipped_bundle_sha256"]:
+    if record["shipped_bundle_sha256"] != source["bundle_sha256"]:
         record["error"] = (
             "the bundle in the guest is not the bundle the controller shipped"
         )
@@ -102,18 +105,31 @@ def untimed(log_path):
     ]
 
 
+class Missing:
+    """A path that names nothing in the document: never equal to anything."""
+
+    def __repr__(self):
+        return "<missing>"
+
+
+MISSING = Missing()
+
+
 def values(document, path):
-    """The values at a dotted path; `*` steps through every value of a mapping."""
+    """The values at a dotted path; `*` steps through every value of a mapping.
+
+    A part a mapping lacks yields MISSING rather than nothing, so a check over
+    every role cannot pass on a role with no value."""
     found = [document]
     for part in path.split("."):
         nxt = []
         for item in found:
             if not isinstance(item, dict):
-                continue
-            if part == "*":
+                nxt.append(MISSING)
+            elif part == "*":
                 nxt.extend(item.values())
-            elif part in item:
-                nxt.append(item[part])
+            else:
+                nxt.append(item.get(part, MISSING))
         found = nxt
     return found
 
@@ -147,7 +163,12 @@ def json_check(lines, check):
             else [document]
         )
         if "equals" in assertion:
-            ok = bool(found) and all(value == assertion["equals"] for value in found)
+            # Strict: a JSON 0 is not false, and false is not 0.
+            ok = bool(found) and all(
+                type(value) is type(assertion["equals"])
+                and value == assertion["equals"]
+                for value in found
+            )
         elif "greater_than" in assertion:
             ok = bool(found) and all(
                 isinstance(value, (int, float))
@@ -162,29 +183,78 @@ def json_check(lines, check):
             )
         else:
             ok = False
-        outcomes.append({**assertion, "ok": ok, "found": found})
+        outcomes.append(
+            {
+                **assertion,
+                "ok": ok,
+                "found": [repr(v) if v is MISSING else v for v in found],
+            }
+        )
     return {"ok": all(outcome["ok"] for outcome in outcomes), "assert": outcomes}
 
 
-def run_step(step, results, paths):
+def declared(relative, cwd, run_dir):
+    """A declared path: under the step's run directory when it starts {run_dir}/, else its checkout."""
+    if relative.startswith("{run_dir}/"):
+        return Path(run_dir), relative.removeprefix("{run_dir}/")
+    return Path(cwd), relative
+
+
+def contained(path, base):
+    """The real path of a regular file inside base, links resolved; None for anything else."""
+    try:
+        real = Path(path).resolve(strict=True)
+        real.relative_to(Path(base).resolve())
+    except (OSError, ValueError):
+        return None
+    return real if real.is_file() else None
+
+
+def keep(patterns, cwd, run_dir, artifacts, record):
+    """Copy each match of the patterns that is a contained regular file; return the patterns matching none."""
+    unmatched = []
+    for relative in patterns:
+        base, pattern = declared(relative, cwd, run_dir)
+        matched = False
+        for found in sorted(base.glob(pattern)):
+            real = contained(found, base)
+            if real is None:
+                continue
+            target = artifacts / found.relative_to(base)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(real, target)
+            digest = sha256(target)
+            if digest != sha256(real):
+                raise OSError(f"the kept copy of {found} differs from it")
+            record["artifacts"][str(target.relative_to(artifacts))] = digest
+            matched = True
+        if not matched:
+            unmatched.append(relative)
+    return unmatched
+
+
+def run_step(step, results, paths, record, save):
     name = step["name"]
-    record = {
-        "name": name,
-        "user": step["user"],
-        "uid": None,
-        "command": step["command"],
-        "expect_exit": step["expect_exit"],
-        "exit": None,
-        "require": {},
-        "forbid": {},
-        "files": {},
-        "inputs": {},
-        "json": {},
-        "artifacts": {},
-        "verdict": "unrun",
-        "reason": None,
-        "log": None,
-    }
+    record.update(
+        {
+            "name": name,
+            "user": step["user"],
+            "uid": None,
+            "command": step["command"],
+            "expect_exit": step["expect_exit"],
+            "exit": None,
+            "require": {},
+            "forbid": {},
+            "files": {},
+            "inputs": {},
+            "json": {},
+            "artifacts": {},
+            "verdict": "unrun",
+            "reason": None,
+            "log": None,
+            "collector_error": None,
+        }
+    )
     blocked = [
         need
         for need in step.get("needs", [])
@@ -192,30 +262,54 @@ def run_step(step, results, paths):
     ]
     if blocked:
         record["reason"] = f"needs {', '.join(blocked)}, which did not pass"
-        return record
+        return
     cwd = Path(paths["sources"]) / step["cwd"]
     run_dir = Path(paths["runs"]) / name
     for item in step.get("inputs", []):
         producer = results.get(item["from"]) or {}
         produced = (producer.get("files") or {}).get(item["path"])
-        origin = Path(paths["sources"]) / producer.get("cwd", "") / item["path"]
-        if produced is None or not origin.is_file() or sha256(origin) != produced:
+        origin = None
+        if producer.get("cwd") is not None:
+            base, relative = declared(
+                item["path"],
+                Path(paths["sources"]) / producer["cwd"],
+                producer["run_dir"],
+            )
+            origin = contained(base / relative, base)
+        if produced is None or origin is None or sha256(origin) != produced:
             record["verdict"] = "failed"
             record["reason"] = (
                 f"{item['from']}'s {item['path']} is missing or changed since {item['from']} ran"
             )
-            return record
-        target = cwd / item["to"]
+            return
+        base, relative = declared(item["to"], cwd, run_dir)
+        target = base / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(origin, target)
         record["inputs"][item["to"]] = produced
     record["uid"] = os.getuid()
     record["cwd"] = step["cwd"]
+    record["run_dir"] = str(run_dir)
     command = step["command"].replace("{run_dir}", str(run_dir))
     env = dict(os.environ, PYTHONUNBUFFERED="1")
     log = Path(paths["out"]) / f"{name}.log"
     record["log"] = str(log)
     record["exit"] = timestamped(command, cwd, env, log)
+    # The raw exit is on disk before any evidence is read.
+    save()
+    try:
+        evaluate(step, record, cwd, run_dir, paths)
+    except Exception as error:
+        record["collector_error"] = f"{type(error).__name__}: {error}"
+        record["verdict"] = "failed"
+        record["reason"] = "the step's evidence could not be collected"
+        raise
+
+
+def evaluate(step, record, cwd, run_dir, paths):
+    """The step's checks over its log, files and artifacts, and its verdict."""
+    name = step["name"]
+    log = Path(record["log"])
     record["log_sha256"] = sha256(log)
     lines = untimed(log)
     for pattern in step.get("require", []):
@@ -225,18 +319,12 @@ def run_step(step, results, paths):
     for check in step.get("json", []):
         record["json"][check["prefix"]] = json_check(lines, check)
     for relative in step.get("files", []):
-        path = cwd / relative
-        record["files"][relative] = sha256(path) if path.is_file() else None
+        base, path = declared(relative, cwd, run_dir)
+        real = contained(base / path, base)
+        record["files"][relative] = sha256(real) if real else None
     artifacts = Path(paths["out"]) / "artifacts" / name
-    for relative in step.get("artifacts", []):
-        base = run_dir if relative.startswith("{run_dir}/") else cwd
-        pattern = relative.removeprefix("{run_dir}/")
-        for found in sorted(base.glob(pattern)):
-            if found.is_file():
-                target = artifacts / found.relative_to(base)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(found, target)
-                record["artifacts"][str(target.relative_to(artifacts))] = sha256(target)
+    missing = keep(step.get("artifacts", []), cwd, run_dir, artifacts, record)
+    keep(step.get("optional_artifacts", []), cwd, run_dir, artifacts, record)
     expected = step["expect_exit"]
     exit_ok = (
         record["exit"] == expected if isinstance(expected, int) else record["exit"] != 0
@@ -257,6 +345,7 @@ def run_step(step, results, paths):
         for f, digest in record["files"].items()
         if digest is None
     ]
+    failures += [f"required artifact missing: {relative}" for relative in missing]
     failures += [
         f"JSON check failed: {prefix}"
         for prefix, outcome in record["json"].items()
@@ -264,18 +353,17 @@ def run_step(step, results, paths):
     ]
     record["verdict"] = "failed" if failures else "passed"
     record["reason"] = "; ".join(failures) or None
-    return record
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("spec", type=Path)
     parser.add_argument("out", type=Path)
+    parser.add_argument("--spec-sha256", required=True)
     parser.add_argument("--bundles", default="/opt/vm-gate/bundles")
     parser.add_argument("--sources", default="/opt/vm-gate/sources")
     parser.add_argument("--runs", default="/opt/vm-gate/runs")
     args = parser.parse_args(argv)
-    spec = json.loads(args.spec.read_text())
     args.out.mkdir(parents=True, exist_ok=True)
     for directory in (args.sources, args.runs):
         Path(directory).mkdir(parents=True, exist_ok=True)
@@ -286,13 +374,21 @@ def main(argv=None):
         "steps": [],
         "versions": {},
         "error": None,
+        "spec_sha256": sha256(args.spec),
     }
 
     def record():
         (args.out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
 
-    registry = spec.get("registry")
+    spec = {"steps": []}
+    registry = None
     try:
+        if result["spec_sha256"] != args.spec_sha256:
+            raise ValueError(
+                f"the spec is {result['spec_sha256']}, not the reviewed {args.spec_sha256}"
+            )
+        spec = json.loads(args.spec.read_text())
+        registry = spec.get("registry")
         for tool, argv in (
             ("docker", ["docker", "version", "--format", "{{.Server.Version}}"]),
             ("compose", ["docker", "compose", "version", "--short"]),
@@ -330,19 +426,28 @@ def main(argv=None):
             record()
         results = {}
         for step in spec["steps"]:
-            if ready:
-                outcome = run_step(step, results, paths)
-            else:
-                outcome = {
-                    "name": step["name"],
-                    "verdict": "unrun",
-                    "reason": "sources or registry not ready",
-                }
-            results[step["name"]] = outcome
+            outcome = {
+                "name": step["name"],
+                "verdict": "unrun",
+                "reason": "sources or registry not ready",
+            }
             result["steps"].append(outcome)
+            results[step["name"]] = outcome
+            if ready:
+                run_step(step, results, paths, outcome, record)
             record()
     except Exception as error:  # The run's record survives the runner's own failure.
         result["error"] = f"{type(error).__name__}: {error}"
+        listed = {step["name"] for step in result["steps"]}
+        for step in spec["steps"]:
+            if step.get("name") not in listed:
+                result["steps"].append(
+                    {
+                        "name": step.get("name"),
+                        "verdict": "unrun",
+                        "reason": "the runner stopped",
+                    }
+                )
     finally:
         if result["registry"] and result["registry"]["started"]:
             removed = run(["docker", "rm", "-f", registry["name"]])
@@ -350,6 +455,7 @@ def main(argv=None):
         record()
     green = (
         result["error"] is None
+        and bool(spec["steps"])
         and len(result["steps"]) == len(spec["steps"])
         and all(source["error"] is None for source in result["sources"].values())
         and all(step["verdict"] == "passed" for step in result["steps"])

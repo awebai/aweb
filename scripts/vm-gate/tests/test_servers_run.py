@@ -76,7 +76,7 @@ class ServersRun(unittest.TestCase):
             self.sources[name] = {
                 "ref": "refs/heads/main",
                 "commit": git(repo, "rev-parse", "HEAD"),
-                "shipped_bundle_sha256": "sha256:"
+                "bundle_sha256": "sha256:"
                 + hashlib.sha256(bundle.read_bytes()).hexdigest(),
             }
         stubs = self.root / "stubs"
@@ -97,7 +97,7 @@ class ServersRun(unittest.TestCase):
             "image": "docker.io/library/registry@sha256:" + "a" * 64,
         }
 
-    def run_spec(self, steps, registry=True):
+    def run_spec(self, steps, registry=True, spec_sha256=None):
         spec = {
             "sources": self.sources,
             "steps": steps,
@@ -105,10 +105,13 @@ class ServersRun(unittest.TestCase):
         }
         path = self.root / "spec.json"
         path.write_text(json.dumps(spec))
+        reviewed = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
         code = servers_run.main(
             [
                 str(path),
                 str(self.out),
+                "--spec-sha256",
+                spec_sha256 or reviewed,
                 "--bundles",
                 str(self.bundles),
                 "--sources",
@@ -154,7 +157,8 @@ class ServersRun(unittest.TestCase):
             ],
             forbid=[r"^DOWN FAILED"],
             json=D_CHECKS,
-            artifacts=["{run_dir}/compose.log"],
+            artifacts=["{run_dir}/images/release.json"],
+            optional_artifacts=["{run_dir}/journey/compose.log"],
         )
 
     def d_output(
@@ -174,7 +178,10 @@ class ServersRun(unittest.TestCase):
             'TIMINGS: {"total": 900}',
         ]
         body = "; ".join(f"echo {json.dumps(line)}" for line in lines)
-        return f"mkdir -p {{run_dir}} && echo compose > {{run_dir}}/compose.log && echo secret > {{run_dir}}/world.env && {body}; exit {code}"
+        return (
+            f"mkdir -p {{run_dir}}/images {{run_dir}}/journey && echo '{{}}' > {{run_dir}}/images/release.json"
+            f" && echo secret > {{run_dir}}/journey/world.env && {body}; exit {code}"
+        )
 
     def test_a_green_d_passes_every_check_and_collects_only_named_artifacts(self):
         code, result = self.run_spec([self.d_step(self.d_output())])
@@ -185,8 +192,12 @@ class ServersRun(unittest.TestCase):
         )
         self.assertTrue(all(d["require"].values()) and not any(d["forbid"].values()))
         self.assertTrue(all(check["ok"] for check in d["json"].values()))
-        self.assertEqual(list(d["artifacts"]), ["compose.log"])
-        self.assertFalse((self.out / "artifacts/D/world.env").exists())
+        self.assertEqual(list(d["artifacts"]), ["images/release.json"])
+        self.assertFalse((self.out / "artifacts/D/journey/world.env").exists())
+        spec = (self.root / "spec.json").read_bytes()
+        self.assertEqual(
+            result["spec_sha256"], "sha256:" + hashlib.sha256(spec).hexdigest()
+        )
         self.assertEqual(
             {
                 name: record["guest_commit"]
@@ -343,7 +354,7 @@ class ServersRun(unittest.TestCase):
         self.assertIn("missing or changed since B ran", result["steps"][2]["reason"])
 
     def test_a_bundle_other_than_the_shipped_one_runs_nothing(self):
-        self.sources["naapp"]["shipped_bundle_sha256"] = "sha256:" + "0" * 64
+        self.sources["naapp"]["bundle_sha256"] = "sha256:" + "0" * 64
         code, result = self.run_spec([self.d_step(self.d_output())])
         self.assertEqual(code, 1)
         self.assertIn(
@@ -368,14 +379,141 @@ class ServersRun(unittest.TestCase):
     def test_a_runner_failure_keeps_earlier_exits_and_removes_the_registry(self):
         broken = self.step("second", "true")
         del broken["user"]
-        code, result = self.run_spec([self.step("first", "exit 0"), broken])
+        code, result = self.run_spec(
+            [self.step("first", "exit 0"), broken, self.step("third", "true")]
+        )
         self.assertEqual(code, 1)
         self.assertIn("KeyError", result["error"])
         self.assertEqual(
-            [(s["name"], s["exit"]) for s in result["steps"]], [("first", 0)]
+            [(s["name"], s.get("exit"), s["verdict"]) for s in result["steps"]],
+            [
+                ("first", 0, "passed"),
+                ("second", None, "unrun"),
+                ("third", None, "unrun"),
+            ],
         )
         self.assertTrue(result["registry"]["removed"])
         self.assertEqual((self.out / "exit").read_text(), "1\n")
+
+    def test_a_passing_step_without_a_required_artifact_is_red_and_an_optional_one_may_be_absent(
+        self,
+    ):
+        command = self.d_output().replace(
+            "echo '{}' > {run_dir}/images/release.json", "true"
+        )
+        code, result = self.run_spec([self.d_step(command)])
+        self.assertEqual(code, 1)
+        [d] = result["steps"]
+        self.assertEqual(d["exit"], 0)
+        self.assertEqual(
+            d["reason"], "required artifact missing: {run_dir}/images/release.json"
+        )
+
+    def test_an_artifact_that_links_outside_its_base_is_not_kept(self):
+        outside = self.root / "outside-secret"
+        outside.write_text("secret")
+        command = self.d_output().replace(
+            "echo '{}' > {run_dir}/images/release.json",
+            f"ln -s {outside} {{run_dir}}/images/release.json",
+        )
+        code, result = self.run_spec([self.d_step(command)])
+        self.assertEqual(code, 1)
+        [d] = result["steps"]
+        self.assertEqual(d["artifacts"], {})
+        self.assertIn("required artifact missing", d["reason"])
+
+    def test_a_role_without_its_value_or_with_a_number_for_false_is_red(self):
+        for roles in (
+            ROLES.replace('"logs": {"super": false}', '"logs": {}'),
+            ROLES.replace('"logs": {"super": false}', '"logs": {"super": 0}'),
+            ROLES.replace('"logs": {"super": false}', '"logs": "none"'),
+        ):
+            with self.subTest(roles=roles):
+                self.clear_run()
+                code, result = self.run_spec([self.d_step(self.d_output(roles=roles))])
+                self.assertEqual(code, 1)
+                self.assertIn(
+                    "JSON check failed: EXTERNAL POSTGRES ROLES:",
+                    result["steps"][0]["reason"],
+                )
+
+    def test_a_collector_failure_keeps_the_current_steps_exit_apart_from_its_verdict(
+        self,
+    ):
+        with patch(
+            "vm_gate.servers_run.shutil.copyfile", side_effect=OSError("disk full")
+        ):
+            code, result = self.run_spec(
+                [self.d_step(self.d_output(code=0)), self.step("after", "true")]
+            )
+        self.assertEqual(code, 1)
+        d = result["steps"][0]
+        self.assertEqual(d["exit"], 0)
+        self.assertEqual(d["collector_error"], "OSError: disk full")
+        self.assertIn("OSError: disk full", result["error"])
+        self.assertEqual([s["verdict"] for s in result["steps"]], ["failed", "unrun"])
+        self.assertTrue(result["registry"]["removed"])
+
+    def test_a_spec_other_than_the_reviewed_one_runs_nothing(self):
+        code, result = self.run_spec(
+            [self.d_step(self.d_output())], spec_sha256="sha256:" + "0" * 64
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("not the reviewed", result["error"])
+        self.assertEqual(
+            (result["steps"], result["sources"], result["registry"]), ([], {}, None)
+        )
+        self.assertNotIn(
+            "run -d", self.calls.read_text() if self.calls.exists() else ""
+        )
+
+    def test_b_manifest_in_its_run_directory_reaches_both_consumers(self):
+        steps = [
+            self.step(
+                "b",
+                "mkdir -p {run_dir}/images && echo '{\"images\": 6}' > {run_dir}/images/release.json",
+                files=["{run_dir}/images/release.json"],
+            ),
+            self.step(
+                "a",
+                "test -f images/release.json && echo 'checkout mode 700' && echo 'missing role'; exit 1",
+                cwd="naapp",
+                expect_exit="nonzero",
+                needs=["b"],
+                require=["checkout mode 700", "missing role"],
+                inputs=[
+                    {
+                        "from": "b",
+                        "path": "{run_dir}/images/release.json",
+                        "to": "images/release.json",
+                    }
+                ],
+            ),
+            self.step(
+                "c",
+                "test -f images/release.json && echo adiw=PASS",
+                cwd="servers",
+                needs=["b", "a"],
+                require=["^adiw=PASS$"],
+                inputs=[
+                    {
+                        "from": "b",
+                        "path": "{run_dir}/images/release.json",
+                        "to": "images/release.json",
+                    }
+                ],
+            ),
+        ]
+        code, result = self.run_spec(steps)
+        self.assertEqual(code, 0, result)
+        manifest = result["steps"][0]["files"]["{run_dir}/images/release.json"]
+        self.assertEqual(
+            manifest, "sha256:" + hashlib.sha256(b'{"images": 6}\n').hexdigest()
+        )
+        self.assertEqual(
+            [s["inputs"] for s in result["steps"][1:]],
+            [{"images/release.json": manifest}] * 2,
+        )
 
 
 if __name__ == "__main__":

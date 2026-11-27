@@ -194,8 +194,11 @@ def exit_code(record):
                 return RED
             if server.get("container_wheel_sha256") != record["files"][name]:
                 return RED
-    if record["project"] == "servers" and not servers.green(record):
-        return RED
+    if record["project"] == "servers":
+        if servers.infrastructure(record):
+            return INFRASTRUCTURE
+        if not servers.green(record):
+            return RED
     if record["project"] == "ac":
         if (
             record.get("aweb_source")
@@ -256,7 +259,7 @@ def project_job(args, *, factory=None, out=None):
         elif args.project == "servers":
             spec = servers.admit(args.steps, repo, args.sha)
             record.update(
-                command=servers.command(),
+                command=servers.command(spec["spec_sha256"]),
                 spec=str(Path(args.steps).resolve()),
                 spec_sha256=spec["spec_sha256"],
                 sources=spec["sources"],
@@ -360,6 +363,7 @@ def project_job(args, *, factory=None, out=None):
         )
         if args.project == "servers":
             record["result"], record["suite_exit"] = servers.result(evidence)
+            record["result_error"] = servers.infrastructure(record)
             if record["result"]:
                 for name, guest in record["result"]["sources"].items():
                     if name in record["sources"]:
@@ -425,7 +429,7 @@ def servers_runtime(config, launcher, directory, target, run_id, spec, factory):
         config=config,
         directory=directory,
         source=source,
-        command=servers.command(),
+        command=servers.command(spec["spec_sha256"]),
         args=target,
         run_id=run_id,
         executor_factory=partial(servers.ServersExecutor, servers=spec),
