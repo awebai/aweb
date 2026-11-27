@@ -82,7 +82,12 @@ async def migrated_test_database(
     modules: Iterable[tuple[str, Path]],
     migrate: Callable[[Pool], Awaitable[None]],
 ):
-    """Build once for the requesting worker and expose only disconnected templates."""
+    """Build once for the requesting worker and expose only disconnected templates.
+
+    The name-length guard mirrors the prefix, eight-hex token and separator
+    in pgdbm 0.5.0's testing.py (AsyncTestDatabase.create_test_database).
+    Recheck the byte count when upgrading pgdbm.
+    """
     config = selected_test_database_config()
     worker = os.environ.get("PYTEST_XDIST_WORKER", "serial")
     digest = _migration_digest(modules)
