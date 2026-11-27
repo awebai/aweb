@@ -238,7 +238,7 @@
     "server/tests/test_human_channels_native_send.py": 5,
     "server/tests/test_human_channels_participants.py": 27,
     "server/tests/test_human_channels_presence.py": 2,
-    "server/tests/test_human_chat_policy.py": 11,
+    "server/tests/test_human_chat_policy.py": 10,
     "server/tests/test_id_chain_message_metadata.py": 1,
     "server/tests/test_id_chain_request_auth.py": 3,
     "server/tests/test_identity_address_outcome_native.py": 5,
