@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as ed from "@noble/ed25519";
-import { createActivityEmitter } from "../src/activity/runtime.js";
 import { APIError, type APIClient } from "../src/api/client.js";
 import { formatEventStreamState, streamAgentEvents, type EventStreamOptions, type EventStreamState } from "../src/api/events.js";
 import {
@@ -381,13 +380,11 @@ describe("credentials", () => {
       identityHome: config.identityHome!, kind: "claude-channel", did: config.did, stableID: config.stableID,
     });
     const renewReceipt = vi.spyOn(receipt, "renewDID");
-    const activity = createActivityEmitter(config, client);
-    const renewSigner = vi.spyOn(activity, "renewSigner");
     const { certificates, fetchMock } = stubFetch(answers(401), streams(frame("connected")));
     const stream = run(client as never, {
       random: () => 0,
       reloadCredentials: createChannelCredentialReload({
-        client, config, load: () => resolveConfig(workdir), self, trust, receipt, activity: () => activity,
+        client, config, load: () => resolveConfig(workdir), self, trust, receipt,
       }),
     });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -422,7 +419,6 @@ describe("credentials", () => {
     const toRetiredKey = await trust.normalizeTrust(new PinStore(), "verified", "peer", "did:key:zpeer", undefined, config.did, undefined);
     expect(toRetiredKey.status).toBe("identity_mismatch");
     expect(renewReceipt).toHaveBeenCalledWith(rotated.did);
-    expect(renewSigner).toHaveBeenCalledWith(expect.objectContaining({ did: rotated.did, seed: rotatedSeed, stableID: config.stableID }));
 
     stream.abort.abort();
     await stream.done;

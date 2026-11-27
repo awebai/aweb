@@ -11122,12 +11122,10 @@ async function dispatchChatEvent(options, dispatched, event) {
     }
     const transport = { session_id: event.session_id, message_id: msg.message_id };
     if (conversationID) transport.conversation_id = conversationID;
-    const encrypted = isEncryptedMessage(msg);
     emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
     if (!decrypt) {
-      options.onChatPresented?.(event.session_id, { encrypted });
       await deliverAwakening(options, presentMessageAwakening({
         kind: "chat",
         content: "",
@@ -11161,7 +11159,6 @@ async function dispatchChatEvent(options, dispatched, event) {
     if (event.sender_waiting) meta.sender_waiting = "true";
     if (msg.sender_leaving) meta.sender_leaving = "true";
     emitTrace(options, "notification_started", messageEvent, lane);
-    options.onChatPresented?.(event.session_id, { encrypted });
     await deliverAwakening(options, presentMessageAwakening({
       kind: "chat",
       content: msg.body,

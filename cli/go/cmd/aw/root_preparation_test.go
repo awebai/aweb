@@ -17,7 +17,6 @@ func TestRootPreparationPolicyNamesIdentityAndMaintenanceBoundaries(t *testing.T
 		{"offline-verification", verifyCmd, rootPreparationOffline},
 		{"offline-audit", auditVerifyCmd, rootPreparationOffline},
 		{"neutral-version", versionCmd, rootPreparationNeutral},
-		{"activity-producer", activityCmd, rootPreparationLocalOnly},
 		{"certificate-install", teamInstallCertCmd, rootPreparationLocalOnly},
 		{"invite-inspection", teamInviteInspectCmd, rootPreparationNoRenewal},
 		{"ordinary-request", mailSendCmd, rootPreparationFull},
@@ -36,7 +35,7 @@ func TestRootPreparationPolicyNamesIdentityAndMaintenanceBoundaries(t *testing.T
 	if got, err := rootPreparationForCommand(child); err != nil || got != rootPreparationLocalOnly {
 		t.Fatalf("producer child=%v %v", got, err)
 	}
-	sameName := &cobra.Command{Use: "activity"}
+	sameName := &cobra.Command{Use: teamInstallCertCmd.Name()}
 	if got, err := rootPreparationForCommand(sameName); err != nil || got != rootPreparationFull {
 		t.Fatalf("unrelated same-name command=%v %v", got, err)
 	}

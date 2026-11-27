@@ -787,7 +787,6 @@ router entry.
 <!-- BEGIN SOURCE INVENTORY: aweb-routers -->
 - `attachment`
 - `agents`
-- `agent_activity`
 - `apps`
 - `hook_bindings`
 - `app_hooks`

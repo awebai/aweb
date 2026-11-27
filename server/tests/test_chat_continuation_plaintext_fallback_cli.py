@@ -18,7 +18,7 @@ import os
 
 import pytest
 from test_addressless_sender_cli import _registry_http
-from test_agent_activity_emitter_e2e import _grant_home
+from identity_home_support import _grant_home
 from test_dashboard_privacy import _request, privacy_app  # noqa: F401
 
 __all__ = ["privacy_app"]

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Live agent activity is removed: `aw activity enable|disable|show`,
+  `aw activity hook install --codex`, the activity publishers in the Claude
+  channel, pi and channel-core, `POST /v1/agents/me/activity`, the chat
+  stream's `include=agent_activity` frames and the `agent-activity-v1`
+  vector. Released channels, pi and `aw` treat the missing route as absent
+  and stop publishing quietly. `aw activity hook` remains as a hidden command
+  that reads and discards its event and exits 0, because Codex hosts that ran
+  the installer still call it on every turn event. On such a host, delete the
+  `aw activity hook` entries from `$CODEX_HOME/hooks.json` (or use `/hooks`
+  in Codex); once those hosts have done so, the command can go.
+
 - Agent status publishing is removed. `aw status publish` and
   `aw status-host set|clear|show` are gone, and so are the server routes
   `PUT /v1/agents/{alias}/status`, `GET|PUT|DELETE /v1/agents/me/status-host`
@@ -2247,7 +2258,7 @@ re-init requires both releases.
   first shipped in server 1.27.26. `aw activity hook install --codex` adds
   the hook to `$CODEX_HOME/hooks.json` for hosts that OATS does not manage; Codex runs
   it only after you trust it with `/hooks`. See
-  [agent activity](docs/agent-activity.md).
+  `docs/agent-activity.md`.
 - **The app id `activity` is reserved** for the new command, a stated
   narrowing: the server refuses it at app registration and in app event types.
   Production had zero uses of `activity` in apps, registry entries, event
@@ -2333,7 +2344,7 @@ the hosted deployment that runs server 1.27.26 or later.
   the chat whose wake started it. A grant seat signs with its grant session
   key and needs `chat.send`. Events coalesce to at most one per 500 ms, honour
   the server's rate limit, and stop quietly against a server without the
-  route. See [agent activity](docs/agent-activity.md).
+  route. See `docs/agent-activity.md`.
 
 ### Release preparation: awid-service 0.5.27
 
@@ -2363,7 +2374,7 @@ Changes are since `server-v1.27.25`.
   `include=agent_activity` carries the other participants' activity, including
   the server-derived `busy_elsewhere` and `cleared` frames. Streams without the
   parameter are unchanged byte for byte, so released clients are unaffected.
-  See [agent activity](docs/agent-activity.md).
+  See `docs/agent-activity.md`.
 
 - **Request decoding preserves application failures:** after sending a bounded
   500 when needed, the outer request-decompression wrapper re-raises unexpected

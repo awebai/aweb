@@ -18,7 +18,7 @@ to refresh it.
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `verify`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
-| Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
+| Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `validate`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
@@ -3750,70 +3750,6 @@ Flags:
 - `--max-streams int Stream bound reported when the daemon is down (default 128)`
 - `--min-daemon-version string Required daemon release version for the readiness verdict`
 - `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
-
-## `activity`
-
-### `activity`
-
-Turn this agent's live activity publishing on or off
-
-Subcommands:
-- `disable` Stop publishing this agent's live activity
-- `enable` Publish this agent's live activity to the chats it serves
-- `hook` Publish live activity from a Codex hook event on stdin
-- `show` Show whether this agent publishes live activity
-
-Flags:
-- `-h, --help help for activity`
-
-## `activity disable`
-
-### `activity disable`
-
-Stop publishing this agent's live activity
-
-Flags:
-- `-h, --help help for disable`
-
-## `activity enable`
-
-### `activity enable`
-
-Publish this agent's live activity to the chats it serves
-
-Flags:
-- `-h, --help help for enable`
-
-## `activity hook`
-
-### `activity hook`
-
-Publish live activity from a Codex hook event on stdin
-
-Subcommands:
-- `install` Install the activity hook into a runtime's hook configuration
-
-Flags:
-- `-h, --help help for hook`
-
-## `activity hook install`
-
-### `activity hook install`
-
-Install the activity hook into a runtime's hook configuration
-
-Flags:
-- `--codex Install into Codex's user hooks ($CODEX_HOME/hooks.json)`
-- `-h, --help help for install`
-
-## `activity show`
-
-### `activity show`
-
-Show whether this agent publishes live activity
-
-Flags:
-- `-h, --help help for show`
 
 ## `agent`
 

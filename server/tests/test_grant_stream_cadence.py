@@ -229,7 +229,6 @@ async def harness(privacy_app, monkeypatch):
                 deadline=deadline,
                 after=None,
                 after_seq=None,
-                include=None,
                 db=db,
                 redis=None,
                 auth=auth,

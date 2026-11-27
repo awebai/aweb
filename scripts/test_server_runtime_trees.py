@@ -39,10 +39,7 @@ if os.environ.get("HOLD_DIST_GAP"):
 core = root / "channel-core/dist"
 for name, content in {
  "api/client.js": "export class APIClient {}",
- "activity/emitter.js": "export class ActivityEmitter { async drained() {} }",
- "activity/publish.js": "export async function publishActivity() {}",
- "index.js": """export function createActivityEmitter() {}
-export function createChannelClient() {}
+ "index.js": """export function createChannelClient() {}
 export function createRegistryResolver() {}
 export class SenderTrustManager {}
 export async function loadPinStore() {}
@@ -131,20 +128,15 @@ class RuntimeTrees(unittest.TestCase):
                 patch.object(runtime.tempfile, "gettempdir", return_value=str(top)),
                 patch.dict(os.environ, environment),
             ):
-                emitter = consumer_paths("test_agent_activity_emitter_e2e.py", "gw0")
                 trust = consumer_paths("test_e2ee_local_sender_read_trust.py", "gw0")
                 other = consumer_paths("test_e2ee_local_sender_read_trust.py", "gw1")[
                     "REPO"
                 ]
-                reader = emitter["REPO"]
-                self.assertEqual(reader, trust["REPO"])
+                reader = trust["REPO"]
                 self.assertNotEqual(
                     reader, ROOT
                 )  # Red if real consumers revert to shared REPO.
                 self.assertNotEqual(reader, other)
-                self.assertEqual(
-                    emitter["HOST"], reader / "server/tests/activity_emitter_host.mjs"
-                )
                 restart = ast.parse(
                     (
                         ROOT / "server/tests/test_connection_notice_restart.py"
@@ -203,7 +195,9 @@ class RuntimeTrees(unittest.TestCase):
                     old = subprocess.run(
                         [
                             "node",
-                            str(source / "server/tests/activity_emitter_host.mjs"),
+                            str(ROOT / "server/tests/channel_core_session_host.mjs"),
+                            str(source / "channel-core/dist/index.js"),
+                            str(top),
                         ],
                         input='{"seed_hex":"","steps":[]}',
                         text=True,
@@ -215,7 +209,7 @@ class RuntimeTrees(unittest.TestCase):
                     # Take launch arguments from the actual kept consumers,
                     # so a future shared-path regression fails this control.
                     values = dict(trust, root=top, command_dir=top, name="core")
-                    commands = [["node", str(emitter["HOST"])]]
+                    commands = []
                     trust_tree = ast.parse(
                         (
                             ROOT / "server/tests/test_e2ee_local_sender_read_trust.py"
@@ -303,7 +297,6 @@ class RuntimeTrees(unittest.TestCase):
 
     def test_module_fixtures_never_rebuild_an_active_worker_tree(self):
         for filename, function in [
-            ("test_agent_activity_emitter_e2e.py", "channel_core_build"),
             ("test_e2ee_local_sender_read_trust.py", "runtime_packages"),
         ]:
             node = next(

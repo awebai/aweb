@@ -591,30 +591,6 @@ collector refusals, including purpose separation in both directions and a
 key that does not declare `app-usage`. See [app usage](../app-usage.md) §4.
 
 
-### `agent-activity-v1.json`
-
-The signed agent activity event an agent's host publishes during a turn
-(aweb-acah.2, `POST /v1/agents/me/activity`; contract in
-[`agent-activity.md`](../agent-activity.md)). It pins the canonical bytes, the
-base64url `signed_payload`, and the Ed25519 signature (raw standard base64
-without padding) for fixed agent, other and grant-session test keys. Each case
-carries its evaluation time and, where it differs from the default, the
-authenticated caller the event binds to. Positive cases cover each phase, an
-unattributed session, a tool without a summary, the byte caps measured after
-UTF-8 encoding, the 60-second validity edge, the clock-skew edge, a local
-identity without a stable id, and a grant session signer. Each negative has one
-expected refusal code and, apart from the structural oversize and wrong-type
-cases, exactly one fault: oversize and non-canonical
-bytes, a wrong signature, a chat message and a status offered as activity,
-unknown and missing fields, each shape rule, the server-only `busy_elsewhere`
-and `cleared` phases, signer, team and stable-id bindings, the validity window, clock skew and
-expiry. Two route refusals pin the shared 404 for an absent session and a
-session the caller is not in. A cross-type entry is a producer construction
-check: message bytes built with `canonical_payload` never equal activity bytes.
-Ingress separation is the required `type` at every route. Athena and the
-protocol reviewer ACKed these bytes at `4502edac0` before either side
-implemented them; changing them needs a new version.
-
 ### `passkey-evidence-v1.json`
 
 Decision 84's retained assertion, frozen context, exact framed SHA-256 input

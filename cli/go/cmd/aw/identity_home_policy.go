@@ -11,8 +11,9 @@ var identityHomeNeutralCommandExemptions = map[*cobra.Command]struct{}{
 	upgradeCmd:               {},
 }
 
-// offlineCommands is the complete pointer-identity set of commands that verify
-// exported inputs without principal state (aw verify also reads DNS/public status).
+// offlineCommands is the complete pointer-identity set of commands that run
+// without principal state: they verify exported inputs (aw verify also reads
+// DNS/public status), or discard them (aw activity hook).
 // No identity home is resolved for them, not
 // even the pre-dispatch selector that plugins need, so no principal selector,
 // however stale or malformed, can stop them. Each is also identity-home neutral.

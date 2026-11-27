@@ -141,14 +141,14 @@ Temporary paths and the session CLI build use pytest's worker-specific
 `tmp_path_factory`; each worker builds the same checkout CLI independently.
 Live HTTP/DNS/fault-proxy listeners use kernel-assigned ports.
 
-The activity emitter, trust-presentation and connection-restart modules share a
-session fixture for each worker's Node runtime tree. It copies the three
+The trust-presentation and connection-restart modules share a session fixture
+for each worker's Node runtime tree. It copies the three
 packages and their already installed dependencies into a private run/worker
 path, preserving dependency `dist` files and rebinding workspace symlinks to
 that worker's core. Both plugin builds finish before the first reader starts;
-subsequent module fixtures never rebuild that tree. Activity's host is copied
-so its relative core imports stay private; channel, Pi and core readers use the
-same worker root, including the restart module's imported fixture. Teardown
+subsequent module fixtures never rebuild that tree. Channel, Pi and core
+readers use the same worker root, including the restart module's imported
+fixture. Teardown
 removes only that worker's tree. The serial fixture/build path stays unchanged.
 There is no writer-only lock: workers cannot remove another reader's artifacts.
 
