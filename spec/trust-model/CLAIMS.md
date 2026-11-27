@@ -45,7 +45,7 @@ One line for every sentence that says something about the model, apart from a th
 | A row with no rule named holds for every `AskRule` | process | Such theorems quantify over `ask` |
 | As built is `builtRule`, Design is `adminRule`, a team rule is `teamRule`; a Design row claims nothing about `builtRule` | process | Reading convention |
 | Four parts are planned, not built | source | The source readings: the built key holder has no command to take a key in or give one back; the registry has no last-admin check and does not know the admin team; the built leave command leaves the certificate standing |
-| They are present under every rule, `builtRule` included | definition | `entrust`, `release`, `leave` are constructors of `Step`; `KeepsAnAdmin` and `i.team ≠ .admin` are premises of its constructors; `Step` takes any `ask` |
+| They are present under every rule, `builtRule` included; under `builtRule` `release` is never accepted | definition | `entrust`, `release`, `leave` are constructors of `Step`; `KeepsAnAdmin` and `i.team ≠ .admin` are premises of its constructors; `Step` takes any `ask`; `release` needs `key ∈ s.held`, so `Authorised`'s held branch, and `builtRule` never allows `.release` |
 
 ### Evidence of how a person was enrolled
 
@@ -140,7 +140,7 @@ One block per cell, in the table's order.
 | An invitation's holder becomes a person or an admin | Proved for one act, under every rule | result | Rows 21, 6 quantify over every `AskRule` |
 | | Not proved for several acts | process | No theorem states it |
 | | Under a team rule that gives admitting admins to a named team, it happens in two acts | result | Row 48 |
-| | The joiner must already be a valid member | result | `invitation_route_starts_from_a_member` |
+| | If the joiner holds no team certificate of the organisation before the invitation is used, it must already be a valid member | result | `invitation_route_starts_from_a_member` and its hypothesis |
 | | As 35 shows for giving a key back | result | Row 35 |
 | An agent approves where a person is required | Proved for every approval | result | Rows 4, 23 |
 | Being issued an identity gives team membership | Proved for one act | result | `registering_gives_no_team` |
@@ -184,7 +184,7 @@ Each item pairs a sentence about the model with one about the real system.
 | Creating and deleting teams is not modelled | definition | `OrgKey` and `Team` are fixed; no act creates a team |
 | A root replacement leaves the team keys where they were | act | `replaceRoot` filters only `.root o` from `held` |
 | The root re-keys a team by a separate act | act | `rekeyTeam` |
-| A re-key only changes which key is the team's | act | `rekeyTeam` changes only `held` |
+| A re-key takes the team's key out of `held`, and changes nothing else | act | `rekeyTeam` filters only `held` |
 | Really the rotation also re-signs the member certificates it is given | source | awid `rotate_team_key` at 5c2ee7bad3 |
 | `controller key` is whoever controls that key now; the old one cannot be named | definition | `Party.controller` names a key, not a holder |
 | The operator is not modelled; whoever controls a key asks directly only while it is not held | definition | `Authorised`'s first branch needs `key ∉ s.held`; `entrust` needs `key ∉ s.held` |
