@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The root Makefile's entry points resolve, as make itself reads them."""
 
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -17,12 +18,15 @@ RECIPE = ("commands to execute", "recipe to execute")
 
 
 def make(directory, *args):
+    # make translates its database headings with gettext; the C locale keeps
+    # the English markers this file reads.
     return subprocess.run(
         ["make", "--no-print-directory", *args],
         cwd=directory,
         capture_output=True,
         text=True,
         timeout=60,
+        env=dict(os.environ, LC_ALL="C"),
     )
 
 
