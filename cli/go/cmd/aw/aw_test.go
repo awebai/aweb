@@ -277,9 +277,9 @@ func TestTeamHelpSeparatesEverydayMembershipFromAdministration(t *testing.T) {
 		}
 	}
 
-	// Every former command path remains executable as a hidden compatibility
+	// This former command path remains executable as a hidden compatibility
 	// alias, with the same flags and handler as its canonical admin path.
-	for _, name := range []string{"agent-status", "create", "remove-agent", "replace-key"} {
+	for _, name := range []string{"create"} {
 		legacyHelp := runHelp("team", name, "--help")
 		if !strings.Contains(legacyHelp, "aw team "+name) {
 			t.Fatalf("legacy team %s help does not preserve its command path:\n%s", name, legacyHelp)
@@ -407,14 +407,7 @@ func TestDeprecatedVocabularyFlagsWarn(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "persistent to member-global", args: []string{"id", "team", "invite", "--persistent", "--help"}, want: "Flag --persistent has been deprecated, use --member-global"},
-		{name: "ephemeral to member-local", args: []string{"id", "team", "invite", "--ephemeral", "--help"}, want: "Flag --ephemeral has been deprecated, use --member-local"},
-		{name: "lifetime to global", args: []string{"id", "team", "add-member", "--lifetime", "persistent", "--help"}, want: "Flag --lifetime has been deprecated, use --global or --local"},
-		{name: "global to member-global", args: []string{"id", "team", "invite", "--global", "--help"}, want: "Flag --global has been deprecated, use --member-global"},
-		{name: "local to member-local", args: []string{"id", "team", "invite", "--local", "--help"}, want: "Flag --local has been deprecated, use --member-local"},
 		{name: "alias to name", args: []string{"id", "team", "accept-invite", "--alias", "bob", "--help"}, want: "Flag --alias has been deprecated, use --name"},
-		{name: "id team add to accept-invite", args: []string{"id", "team", "add", "--help"}, want: "Command \"add\" is deprecated, use `aw id team accept-invite --global <token>` or `aw team join --global <token>`"},
-		{name: "init local-name to name", args: []string{"init", "--local-name", "bob", "--help"}, want: "Flag --local-name has been deprecated, use --name"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

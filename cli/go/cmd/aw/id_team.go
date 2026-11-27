@@ -168,13 +168,6 @@ type teamCleanupCloudOutput struct {
 	AuditID                       string `json:"audit_id,omitempty"`
 }
 
-type teamAddOutput struct {
-	Status   string `json:"status"`
-	TeamID   string `json:"team_id"`
-	Alias    string `json:"alias"`
-	CertPath string `json:"cert_path"`
-}
-
 type teamSwitchOutput struct {
 	Status     string `json:"status"`
 	ActiveTeam string `json:"active_team"`
@@ -289,33 +282,26 @@ var (
 	teamCreateRequestID   string
 	teamCreateShowToken   bool
 
-	teamInviteTeam                  string
-	teamInviteNamespace             string
-	teamInviteLocal                 bool
-	teamInviteGlobal                bool
-	teamInviteMemberLocal           bool
-	teamInviteMemberGlobal          bool
-	teamInviteDeprecatedLocalScope  bool
-	teamInviteDeprecatedGlobalScope bool
+	teamInviteTeam         string
+	teamInviteNamespace    string
+	teamInviteMemberLocal  bool
+	teamInviteMemberGlobal bool
 
 	teamAcceptAlias     string
 	teamAcceptAddress   string
 	teamAcceptLocal     bool
 	teamAcceptGlobal    bool
 	teamAcceptNoAddress bool
-	teamAddAlias        string
-	teamAddAddress      string
 
-	teamAddTeam                       string
-	teamAddNamespace                  string
-	teamAddMember                     string
-	teamAddMemberDID                  string
-	teamAddMemberAlias                string
-	teamAddMemberLocal                bool
-	teamAddMemberGlobal               bool
-	teamAddMemberDeprecatedScopeValue string
-	teamAddMemberDIDAW                string
-	teamAddMemberAddress              string
+	teamAddTeam          string
+	teamAddNamespace     string
+	teamAddMember        string
+	teamAddMemberDID     string
+	teamAddMemberAlias   string
+	teamAddMemberLocal   bool
+	teamAddMemberGlobal  bool
+	teamAddMemberDIDAW   string
+	teamAddMemberAddress string
 
 	teamFetchCertTeam      string
 	teamFetchCertNamespace string
@@ -449,14 +435,6 @@ var teamAcceptInviteCmd = &cobra.Command{
 	RunE: runTeamAcceptInvite,
 }
 
-var teamAddCmd = &cobra.Command{
-	Use:        "add <invite-token>",
-	Short:      "Deprecated alias for accept-invite with a global identity",
-	Deprecated: "use `aw id team accept-invite --global <token>` or `aw team join --global <token>`",
-	Args:       cobra.ExactArgs(1),
-	RunE:       runTeamAdd,
-}
-
 var teamSwitchCmd = &cobra.Command{
 	Use:   "switch <team_id>",
 	Short: "Switch the active team for this identity",
@@ -529,7 +507,7 @@ var teamRegisterCmd = &cobra.Command{
 		"local team controller key and sends only public/signed team facts to the\n" +
 		"service. It never uploads namespace or team controller private keys and does\n" +
 		"not initialize any agent workspace. Services may return their own next steps,\n" +
-		"such as `aw service init` or `aw claim-human`.",
+		"such as `aw workspace connect` or `aw claim-human`.",
 	RunE: runTeamRegister,
 }
 
@@ -576,14 +554,6 @@ func init() {
 	teamInviteCmd.Flags().StringVar(&teamInviteNamespace, "namespace", "", "Namespace domain")
 	teamInviteCmd.Flags().BoolVar(&teamInviteMemberLocal, "member-local", false, "Create local workspace member invite (default)")
 	teamInviteCmd.Flags().BoolVar(&teamInviteMemberGlobal, "member-global", false, "Create global member invite")
-	teamInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Deprecated alias for --member-local")
-	teamInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Deprecated alias for --member-global")
-	teamInviteCmd.Flags().BoolVar(&teamInviteDeprecatedLocalScope, "ephemeral", false, "Deprecated alias for --member-local")
-	teamInviteCmd.Flags().BoolVar(&teamInviteDeprecatedGlobalScope, "persistent", false, "Deprecated alias for --member-global")
-	markDeprecatedHiddenFlag(teamInviteCmd, "local", "member-local")
-	markDeprecatedHiddenFlag(teamInviteCmd, "global", "member-global")
-	markDeprecatedHiddenFlag(teamInviteCmd, "ephemeral", "member-local")
-	markDeprecatedHiddenFlag(teamInviteCmd, "persistent", "member-global")
 	teamCmd.AddCommand(teamInviteCmd)
 
 	teamAcceptInviteCmd.Flags().String("token-file", "", "Read the invite token from this file instead of an argument")
@@ -598,12 +568,6 @@ func init() {
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Advanced: existing owned address to place in the global member certificate")
 	teamCmd.AddCommand(teamAcceptInviteCmd)
 
-	teamAddCmd.Flags().StringVar(&teamAddAlias, "name", "", "Member name for the added team membership (defaults to the current identity name)")
-	teamAddCmd.Flags().StringVar(&teamAddAlias, "alias", "", "Deprecated alias for --name")
-	markDeprecatedHiddenFlag(teamAddCmd, "alias", "name")
-	teamAddCmd.Flags().StringVar(&teamAddAddress, "address", "", "Registered address to place in the global member certificate")
-	teamAddCmd.Flags().BoolVar(&teamAcceptNoAddress, "no-address", false, "Join with did:aw continuity but no member address")
-	teamCmd.AddCommand(teamAddCmd)
 	teamCmd.AddCommand(teamSwitchCmd)
 	teamCmd.AddCommand(teamListCmd)
 	teamCmd.AddCommand(teamLeaveCmd)
@@ -617,8 +581,6 @@ func init() {
 	markDeprecatedHiddenFlag(teamAddMemberCmd, "alias", "name")
 	teamAddMemberCmd.Flags().BoolVar(&teamAddMemberLocal, "local", false, "Issue a local workspace member certificate for --did (default)")
 	teamAddMemberCmd.Flags().BoolVar(&teamAddMemberGlobal, "global", false, "Issue a global member certificate for --did")
-	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDeprecatedScopeValue, "lifetime", "", "Deprecated identity scope selector")
-	markDeprecatedHiddenFlag(teamAddMemberCmd, "lifetime", "global or --local")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDIDAW, "did-aw", "", "Optional stable did:aw when using --did")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAddress, "address", "", "Global member address when using --did; must resolve to --did-aw")
 	teamCmd.AddCommand(teamAddMemberCmd)
@@ -778,8 +740,8 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, style teamInvite
 	if err != nil {
 		return err
 	}
-	global := teamInviteMemberGlobal || teamInviteGlobal || teamInviteDeprecatedGlobalScope
-	local := teamInviteMemberLocal || teamInviteLocal || teamInviteDeprecatedLocalScope
+	global := teamInviteMemberGlobal
+	local := teamInviteMemberLocal
 	if global && local {
 		return usageError("--member-global and --member-local cannot be used together")
 	}
@@ -1345,50 +1307,6 @@ func writeExternalLocalIdentityStateIfNeeded(identityHome string, cert *awid.Tea
 		IdentityScope: awid.IdentityModeLocal,
 		CreatedAt:     createdAt,
 	})
-}
-
-func runTeamAdd(cmd *cobra.Command, args []string) error {
-	workingDir, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	home, err := identityHomeForDir(workingDir)
-	if err != nil {
-		return err
-	}
-	teamAddMemberAddress := strings.TrimSpace(teamAddAddress)
-	if teamAddMemberAddress == "" && !teamAcceptNoAddress {
-		identity, readErr := loadOptionalInviteIdentity(teamMembershipLocation{WorkingDir: workingDir, IdentityHome: home.Root})
-		if readErr != nil {
-			return readErr
-		}
-		if identity != nil {
-			teamAddMemberAddress = strings.TrimSpace(identity.Address)
-		}
-	}
-	accepted, err := acceptAndStoreTeamInvite(teamInviteStoreRequest{
-		Acceptance: teamInviteAcceptanceRequest{
-			WorkingDir: workingDir,
-			Token:      args[0],
-			Options: teamAcceptInviteOptions{
-				IdentityHome: externalIdentityHomeRoot(home),
-				Name:         teamAddAlias,
-				Address:      teamAddMemberAddress,
-				Scope:        awid.IdentityModeGlobal,
-				NoAddress:    teamAcceptNoAddress,
-			},
-		},
-		Store: teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), Activation: membershipPreserveActive, Duplicates: membershipRejectDuplicate},
-	})
-	if err != nil {
-		return err
-	}
-	return printOutput(teamAddOutput{
-		Status:   "added",
-		TeamID:   accepted.Output.TeamID,
-		Alias:    accepted.Output.Alias,
-		CertPath: accepted.Output.CertPath,
-	}, formatTeamAdd)
 }
 
 func runTeamSwitch(cmd *cobra.Command, args []string) error {
@@ -2289,17 +2207,6 @@ func resolveTeamAddMemberScope(cmd *cobra.Command) (string, error) {
 	}
 	if teamAddMemberGlobal {
 		requestedScope = awid.IdentityModeGlobal
-	}
-
-	if cmd.Flags().Changed("lifetime") {
-		legacyScope := awid.IdentityScopeFromLegacyLifetime(teamAddMemberDeprecatedScopeValue)
-		if legacyScope == "" {
-			return "", usageError("--lifetime must be ephemeral or persistent")
-		}
-		if (teamAddMemberGlobal || teamAddMemberLocal) && requestedScope != legacyScope {
-			return "", usageError("--lifetime conflicts with --global or --local")
-		}
-		requestedScope = legacyScope
 	}
 	return requestedScope, nil
 }

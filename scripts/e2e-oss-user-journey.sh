@@ -8,7 +8,7 @@
 #   3. Registers a namespace, creates a team, invites bob
 #   4. Both agents connect to aweb via certificate auth
 #   5. Registers an externally controlled AWID team with the aweb service
-#   6. Initializes existing team members through aw service init
+#   6. Connects existing team members through aw workspace connect
 #   7. Exercises mail, chat, tasks, locks
 #   8. Revokes bob's membership and verifies rejection
 #
@@ -963,7 +963,7 @@ echo "=== Phase 4: Alice joins team ==="
 capture_success alice_invite_out "alice_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
-  --global \
+  --member-global \
   --json
 
 ALICE_INVITE_TOKEN="$(echo "$alice_invite_out" | jq_field token)"
@@ -1060,7 +1060,7 @@ assert_not_empty "bob did_aw" "$BOB_DID_AW"
 capture_success bob_invite_out "bob_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
-  --global \
+  --member-global \
   --json
 
 BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
@@ -1738,10 +1738,10 @@ capture_success service_register_apply "service_register_apply" run_aw_in "$SERV
   --service "$AWEB_URL" \
   --json
 service_register_status="$(echo "$service_register_apply" | jq_field status)"
-service_register_next_init="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'service init' in s.get('command','')), ''))" 2>/dev/null || echo "")"
+service_register_next_connect="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'workspace connect' in s.get('command','')), ''))" 2>/dev/null || echo "")"
 service_register_next_claim="$(echo "$service_register_apply" | python3 -c "import sys,json; text=sys.stdin.read(); start=text.find('{'); d=json.loads(text[start:]); print(next((s.get('command','') for s in d.get('next_steps',[]) if 'claim-human' in s.get('command','')), ''))" 2>/dev/null || echo "")"
 assert_eq "service register apply status" "created" "$service_register_status"
-assert_contains "service register returns service init next step" "$service_register_next_init" "aw service init --service $AWEB_URL --team $SERVICE_TEAM_ID"
+assert_contains "service register returns workspace connect next step" "$service_register_next_connect" "aw workspace connect --service $AWEB_URL --team $SERVICE_TEAM_ID"
 assert_contains "service register returns claim-human next step" "$service_register_next_claim" "aw claim-human --email you@example.com"
 
 service_team_rows="$(psql_scalar "SELECT COUNT(*) FROM aweb.teams WHERE team_id = '$SERVICE_TEAM_ID' AND team_did_key = '$SERVICE_TEAM_DID';")"
@@ -1751,8 +1751,8 @@ assert_eq "service register creates team projection" "1" "$service_team_rows"
 assert_eq "service register creates no agents" "0" "$service_agents_before"
 assert_eq "service register creates no workspaces" "0" "$service_workspaces_before"
 
-run_success "service alpha init" run_aw_in "$SERVICE_ALPHA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
-run_success "service beta init" run_aw_in "$SERVICE_BETA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
+run_success "service alpha workspace connect" run_aw_in "$SERVICE_ALPHA_DIR" workspace connect --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
+run_success "service beta workspace connect" run_aw_in "$SERVICE_BETA_DIR" workspace connect --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
 service_alpha_active="$(yaml_field "$SERVICE_ALPHA_DIR/.aw/teams.yaml" active_team)"
 service_beta_active="$(yaml_field "$SERVICE_BETA_DIR/.aw/teams.yaml" active_team)"
 service_alpha_workspace_alias="$(workspace_membership_field "$SERVICE_ALPHA_DIR/.aw/workspace.yaml" "$SERVICE_TEAM_ID" alias)"
@@ -1764,13 +1764,13 @@ assert_eq "service beta workspace membership" "beta" "$service_beta_workspace_al
 
 service_agents_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.agents WHERE team_id = '$SERVICE_TEAM_ID' AND deleted_at IS NULL;")"
 service_workspaces_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.workspaces WHERE team_id = '$SERVICE_TEAM_ID' AND deleted_at IS NULL;")"
-assert_eq "service init creates two agents" "2" "$service_agents_after"
-assert_eq "service init creates two workspaces" "2" "$service_workspaces_after"
+assert_eq "workspace connect creates two agents" "2" "$service_agents_after"
+assert_eq "workspace connect creates two workspaces" "2" "$service_workspaces_after"
 
 run_success "service registered team mail send --plaintext" run_aw_in "$SERVICE_ALPHA_DIR" mail send --plaintext \
   --to beta \
   --subject "Service registered team e2e" \
-  --body "service init path works"
+  --body "workspace connect path works"
 capture_success service_beta_inbox "service_beta_inbox" run_aw_in "$SERVICE_BETA_DIR" mail inbox --json --show-all
 service_beta_subject="$(echo "$service_beta_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('subject','') for m in msgs if m.get('subject')=='Service registered team e2e'), ''))" 2>/dev/null || echo "")"
 assert_eq "service registered team mail works" "Service registered team e2e" "$service_beta_subject"
@@ -2083,7 +2083,7 @@ assert_eq "partner bob address" "partner.local/bob" "$PARTNER_BOB_ADDRESS"
 capture_success partner_bob_invite_out "partner_bob_invite_out" run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
-  --global \
+  --member-global \
   --json
 PARTNER_BOB_INVITE_TOKEN="$(echo "$partner_bob_invite_out" | jq_field token)"
 assert_not_empty "partner bob invite token" "$PARTNER_BOB_INVITE_TOKEN"
@@ -2101,7 +2101,7 @@ assert_eq "partner bob init exit" "0" "$partner_bob_init_exit"
 capture_success partner_alice_invite_out "partner_alice_invite_out" run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
-  --global \
+  --member-global \
   --json
 PARTNER_ALICE_INVITE_TOKEN="$(echo "$partner_alice_invite_out" | jq_field token)"
 assert_not_empty "partner alice invite token" "$PARTNER_ALICE_INVITE_TOKEN"

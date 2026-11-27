@@ -198,11 +198,11 @@ Connect an existing AWID identity and team certificate to an aw-compatible servi
 
 Service commands do not create identities, register AWID teams, mutate team
 membership, or call BYOD onboarding flows. Use `aw id team register` to add a
-team projection to a service first, then run `aw service init` from each
+team projection to a service first, then run `aw workspace connect` from each
 certified agent workspace.
 
 Subcommands:
-- `init` Initialize this workspace against a service using an existing team certificate
+- `init` Compatibility route to aw workspace connect; use aw workspace connect
 
 Flags:
 - `-h, --help help for service`
@@ -210,6 +210,9 @@ Flags:
 ## `service init`
 
 ### `service init`
+
+Compatibility route to `aw workspace connect`, kept for existing callers; new
+setup uses `aw workspace connect`. Same handler and flags.
 
 Initialize this workspace against a service using the existing .aw signing key
 and team certificate in this directory. With --identity-home, initialize and
@@ -246,7 +249,7 @@ Flags:
 
 Legacy convenience for existing users: create a sibling git worktree and initialize a new coordination workspace in it.
 
-New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.
+New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or aw workspace connect unless this command is reduced to a transparent wrapper with no identity/team orchestration.
 
 If the service cannot report the team for AWEB_API_KEY, creation uses the current workspace's existing authority.
 
@@ -263,7 +266,7 @@ Connect this workspace to a service using the existing .aw signing key and team 
 With --identity-home, connect the selected external identity root and bind the
 service workspace state under that root, not the caller's current directory.
 This is the first-class workspace connection verb. It does not create identities,
-create teams, or change AWID team membership. It is equivalent to `aw service init`.
+create teams, or change AWID team membership.
 
 Flags:
 - `-h, --help help for connect`
@@ -1553,7 +1556,7 @@ Flags:
 
 Install an issued team membership certificate file into the explicit
 --identity-home whose identity it names. The certificate is checked against
-the registry before anything is written; then `aw service init` connects
+the registry before anything is written; then `aw workspace connect` connects
 the home's workspace.
 
 Running it again with the same certificate reports already_installed and
@@ -1645,7 +1648,7 @@ This command is service-generic: it signs a registration request with the
 local team controller key and sends only public/signed team facts to the
 service. It never uploads namespace or team controller private keys and does
 not initialize any agent workspace. Services may return their own next steps,
-such as `aw service init` or `aw claim-human`.
+such as `aw workspace connect` or `aw claim-human`.
 
 Flags:
 - `--dry-run Preview registration without mutating the service projection`

@@ -29,7 +29,6 @@ from aweb.app_events import (
     AppEventRecord,
     AppEventSubscription,
     current_app_events_for_agent,
-    delete_app_event_subscription,
     emit_app_event,
     list_app_event_subscriptions,
     upsert_app_event_subscription,
@@ -930,26 +929,6 @@ async def list_app_event_subscriptions_route(
     return AppEventSubscriptionsResponse(
         subscriptions=[_subscription_response(item) for item in subscriptions]
     )
-
-
-@router.delete("/subscriptions/{subscription_id}")
-async def delete_app_event_subscription_route(
-    subscription_id: str,
-    request: Request,
-    db=Depends(get_db),
-) -> dict[str, str]:
-    identity = await get_team_identity(request, db)
-    aweb_db = db.get_manager("aweb")
-    with agent_wake_scope(agent_wake_publisher(request.app.state)):
-        deleted = await delete_app_event_subscription(
-            aweb_db,
-            team_id=identity.team_id,
-            agent_id=identity.agent_id,
-            subscription_id=subscription_id,
-        )
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Subscription not found")
-    return {"subscription_id": subscription_id, "status": "deleted"}
 
 
 _missing_wake_hub_reported = False

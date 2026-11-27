@@ -774,7 +774,7 @@ func TestTeamRemoveAgentBinaryRefusesAForeignNamespaceBeforeDeletingAnything(t *
 	did := awid.ComputeDIDKey(pub)
 	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, aweb.URL, "backend:acme.com", "operator", did, signingKey)
 
-	run := exec.CommandContext(ctx, bin, "team", "remove-agent", "evil.com/retiree",
+	run := exec.CommandContext(ctx, bin, "team", "admin", "remove-agent", "evil.com/retiree",
 		"--team-id", "backend:acme.com", "--registry", registry.URL, "--json")
 	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+registry.URL)
 	run.Dir = tmp

@@ -239,7 +239,7 @@ func TestTeamRemoveAgentBinaryUsesHostedPrepareBeforeExactRelease(t *testing.T) 
 	}
 	did := awid.ComputeDIDKey(publicKey)
 	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, server.URL, hostedRemovalTestTeam, "operator", did, signingKey)
-	run := exec.CommandContext(ctx, bin, "team", "remove-agent", "alice.aweb.ai/retiree",
+	run := exec.CommandContext(ctx, bin, "team", "admin", "remove-agent", "alice.aweb.ai/retiree",
 		"--team-id", hostedRemovalTestTeam, "--aweb-url", server.URL,
 		"--api-key", "owner-admin-test-key", "--json")
 	run.Env = idCreateCommandEnv(tmp)

@@ -71,9 +71,14 @@ func registerTeamAdminCommand(cmd *cobra.Command, groupID string) {
 	compatibilityAlias.Hidden = true
 	compatibilityAlias.GroupID = ""
 
+	addTeamAdminCommand(cmd, groupID)
+	teamHumanCmd.AddCommand(&compatibilityAlias)
+}
+
+// addTeamAdminCommand registers cmd only under aw team admin.
+func addTeamAdminCommand(cmd *cobra.Command, groupID string) {
 	cmd.GroupID = groupID
 	teamAdminCmd.AddCommand(cmd)
-	teamHumanCmd.AddCommand(&compatibilityAlias)
 }
 
 var teamHumanCreateCmd = &cobra.Command{
@@ -214,8 +219,6 @@ func init() {
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "first-agent-name", "", "Initial workspace member name (defaults to <name>)")
 	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateFirstLocal, "first-agent-local", false, "Enroll the first agent as a local team-scoped identity (default)")
 	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateFirstGlobal, "first-agent-global", false, "Enroll the first agent as a global identity, reusing an existing global identity or creating one when founding with hosted/namespace authority")
-	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateAlias, "alias", "", "Deprecated alias for --first-agent-name")
-	markDeprecatedHiddenFlag(teamHumanCreateCmd, "alias", "first-agent-name")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateUsername, "username", "", "Hosted username to create when founding through managed aweb onboarding")
 	registerTeamAdminCommand(teamHumanCreateCmd, teamAdminGroupOperations)
 
@@ -223,17 +226,11 @@ func init() {
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
 	teamHumanInviteCmd.Flags().BoolVar(&teamInviteMemberLocal, "member-local", false, "Create local workspace member invite (default)")
 	teamHumanInviteCmd.Flags().BoolVar(&teamInviteMemberGlobal, "member-global", false, "Create global member invite")
-	teamHumanInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Deprecated alias for --member-local")
-	teamHumanInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Deprecated alias for --member-global")
-	markDeprecatedHiddenFlag(teamHumanInviteCmd, "local", "member-local")
-	markDeprecatedHiddenFlag(teamHumanInviteCmd, "global", "member-global")
 	teamHumanInviteCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamHumanInviteCmd)
 
 	teamHumanJoinCmd.Flags().String("parent", "", "Same-machine creator home for a fresh child, independent of the invite")
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
-	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Deprecated alias for --name")
-	markDeprecatedHiddenFlag(teamHumanJoinCmd, "alias", "name")
 	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptLocal, "local", false, "Join with a local workspace identity (default)")
 	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptGlobal, "global", false, "Join by reusing the existing global identity in this workspace")
 	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptNoAddress, "no-address", false, "For --global, join with did:aw continuity but no member address")
@@ -253,7 +250,7 @@ func init() {
 	teamHumanCmd.AddCommand(teamHumanSwitchCmd)
 	teamHumanCmd.AddCommand(teamHumanLeaveCmd)
 	teamHumanAgentStatusCmd.Flags().StringVar(&teamHumanAgentStatusTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to read from (defaults to active team)")
-	registerTeamAdminCommand(teamHumanAgentStatusCmd, teamAdminGroupOperations)
+	addTeamAdminCommand(teamHumanAgentStatusCmd, teamAdminGroupOperations)
 
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to remove from (defaults to active team)")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveRegistryURL, "registry", "", "Registry origin override")
@@ -262,7 +259,7 @@ func init() {
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveResumeOperation, "resume-operation", "", "Resume exact hosted removal operation ID; no member address is accepted")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAbortOperation, "abort-operation", "", "Abort exact hosted removal operation ID before coordination release")
 	teamHumanRemoveAgentCmd.Flags().BoolVar(&teamHumanRemoveListPending, "list-pending", false, "List owner/admin hosted removal operations requiring recovery")
-	registerTeamAdminCommand(teamHumanRemoveAgentCmd, teamAdminGroupOperations)
+	addTeamAdminCommand(teamHumanRemoveAgentCmd, teamAdminGroupOperations)
 	teamHumanCmd.AddCommand(teamAdminCmd)
 	rootCmd.AddCommand(teamHumanCmd)
 }

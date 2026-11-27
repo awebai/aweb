@@ -197,9 +197,8 @@ aw workspace connect \
   --team engineering:example.com
 ```
 
-`fetch-cert` installs membership but does not connect a service.
-`aw service init --service ... --team ...` is the equivalent service-oriented
-connection primitive; use the exact command supplied by the chosen service.
+`fetch-cert` installs membership but does not connect a service; use the exact
+connection command supplied by the chosen service.
 These steps create the runtime projection; they do not transfer controller keys
 or change who can administer the AWID team. Invite-token joins are different:
 follow their output, because a hosted join may already be connected and must not
