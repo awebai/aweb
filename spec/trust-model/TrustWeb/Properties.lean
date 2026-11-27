@@ -735,7 +735,7 @@ theorem new_grant_by_subject {ask : AskRule} {s s' : State} {who : Party} {g : G
 revoked or lacks the team certificate the grant came from, the grant is not
 live. In every reachable record only registered identities are revoked
 (`Reachable.revokedAreRegistered`). The revoking acts leave the grants as they
-are (`revokeSelf`, `revokeChild`, `revokeByOrg`). -/
+are (`revokeSelf`, `revokeChild`, `revokeByOrg`, `replaceRoot`). -/
 theorem grant_ends_with_subject {s : State} (hrr : RevokedAreRegistered s) {g : Grant}
     (h : g.subject ∈ s.revoked ∨ ¬ HasTeamCert s g.org g.team g.subject) : ¬ GrantLive s g := by
   intro ⟨_, hin⟩

@@ -721,4 +721,92 @@ theorem unused_session_key (s : State) : ∃ x : Key, ∀ g, g ∈ s.grants → 
   refine ⟨x, fun g hg => ?_⟩
   exact hx ⟨0, g.session, .person, .root⟩ (List.mem_map.mpr ⟨g, hg, rfl⟩)
 
+/-- If `o`'s root key is with a key holder, no act asked for by whoever
+controls it is accepted. -/
+theorem root_controller_cannot_act_while_held {ask : AskRule} {s s' : State} {o : Org}
+    (hheld : OrgKey.root o ∈ s.held) : ¬ Step ask s (.controller (.root o)) s' := by
+  intro hstep
+  have ctrl : ∀ {key : OrgKey} {act : ActKind} {approvals : List Key},
+      Authorised ask s key act (.controller (.root o)) approvals → key = .root o ∧ key ∉ s.held := by
+    intro key act approvals h
+    rcases h with ⟨hn, hw⟩ | ⟨_, _, hw, _⟩
+    · cases hw; exact ⟨rfl, hn⟩
+    · cases hw
+  cases hstep with
+  | entrust hn => exact hn hheld
+  | readmitByRoot _ _ _ h => exact (ctrl h).2 ((ctrl h).1 ▸ hheld)
+  | release hk h => exact (ctrl h).2 hk
+  | rekeyTeam h => exact (ctrl h).2 ((ctrl h).1 ▸ hheld)
+  | registerByRoot _ _ _ h => exact (ctrl h).2 ((ctrl h).1 ▸ hheld)
+  | revokeByOrg _ h => exact (ctrl h).2 ((ctrl h).1 ▸ hheld)
+  | admit _ h _ => cases (ctrl h).1
+  | admitAdmin _ _ h => cases (ctrl h).1
+  | remove h _ => cases (ctrl h).1
+  | invite _ h _ => cases (ctrl h).1
+
+/-- In every reachable record, every registered certificate issued by the root
+is of an organisation that exists. -/
+theorem root_cert_org_exists {ask : AskRule} {s : State} (hr : Reachable ask s) :
+    ∀ c, c ∈ s.certs → c.issuer = .root → c.org ∈ s.orgs := by
+  induction hr with
+  | start _ => intro c hc; cases hc
+  | step _ hstep ih =>
+      rename_i t t' _ _
+      have keep : ∀ c, c ∈ t.certs → c.issuer = .root → c.org ∈ t.orgs := ih
+      cases hstep with
+      | createOrg _ => intro c hc hi; exact List.mem_cons_of_mem _ (keep c hc hi)
+      | registerByRoot _ ho _ _ =>
+          intro c hc hi
+          rcases List.mem_cons.mp hc with rfl | hc
+          · exact ho
+          · exact keep c hc hi
+      | registerByParent hi' _ _ _ =>
+          intro c hc hi
+          rcases List.mem_cons.mp hc with rfl | hc
+          · rw [hi'] at hi; cases hi
+          · exact keep c hc hi
+      | replaceRoot _ => exact keep
+      | readmitByRoot _ _ _ _ => exact keep
+      | readmitByParent _ _ _ _ => exact keep
+      | release _ _ => exact keep
+      | rekeyTeam _ => exact keep
+      | entrust _ => exact keep
+      | revokeSelf _ => exact keep
+      | revokeChild _ _ _ => exact keep
+      | revokeByOrg _ _ => exact keep
+      | admit _ _ _ => exact keep
+      | admitAdmin _ _ _ => exact keep
+      | remove _ _ => exact keep
+      | leave _ _ _ => exact keep
+      | invite _ _ _ => exact keep
+      | redeem _ _ _ => exact keep
+      | mintGrant _ _ => exact keep
+      | revokeGrant _ => exact keep
+      | sendOwn _ => exact keep
+      | sendGrant _ _ => exact keep
+
+/-- If certificates lead from `k` to `o`'s root, a registered certificate of
+`o` is issued by the root. -/
+theorem chain_has_root_cert {s : State} {o : Org} {k : Key} (h : ChainToRoot s o k) :
+    ∃ c, c ∈ s.certs ∧ c.org = o ∧ c.issuer = .root := by
+  induction h with
+  | root hc ho hi _ => exact ⟨_, hc, ho, hi⟩
+  | link _ _ _ _ _ ih => exact ih
+
+/-- In every reachable record, an organisation with an admin exists. -/
+theorem admin_org_exists {ask : AskRule} {s : State} (hr : Reachable ask s) {o : Org} {k : Key}
+    (ha : Admin s o k) : o ∈ s.orgs := by
+  obtain ⟨c, hc, ho, hi⟩ := chain_has_root_cert (admin_has_chain_to_root ha)
+  exact ho ▸ root_cert_org_exists hr c hc hi
+
+/-- Under any rule there is a record the system reaches in which the admin
+team's key of 0 is with a key holder and 1 is an admin of 0, and an act asked
+for by 0's domain owner after which 0 has no admin. -/
+theorem root_replacement_can_leave_no_admin (ask : AskRule) :
+    ∃ s s', Reachable ask s ∧ OrgKey.team 0 .admin ∈ s.held ∧ Admin s 0 1 ∧
+      Step ask s (.dns 0) s' ∧ ∀ k, ¬ Admin s' 0 k := by
+  obtain ⟨s, _, hr, hheld, ha, _, _⟩ := revocation_can_leave_no_admin ask
+  obtain ⟨s', hstep, _, hnone⟩ := dns_owner_can_always_take_over (admin_org_exists hr ha)
+  exact ⟨s, s', hr, hheld, ha, hstep, fun k ⟨_, kind, hv⟩ => hnone k kind hv⟩
+
 end TrustWeb

@@ -75,8 +75,9 @@ One line for every sentence that says something about the model, apart from a th
 | 9 | Whoever issued it; about the record, not an act | result | The statement quantifies over the issuer and has no `Step` |
 | 10 | The asker is the key's controller alone | definition | `Authorised`'s first branch: no policy |
 | 11 | A rule naming the other as approver means the approvals include its own | definition | `Satisfies` for `.exactly` |
+| 11a | A planned check, present under every rule | source, definition | `KeepsAnAdmin` is one of the planned parts (the source readings); it is a premise of `Step` constructors, and `Step` takes any `ask` |
 | 11a | This is about a team certificate going | result | The hypothesis |
-| 11a | A revocation can still leave no admin: three cases | result | Rows 44, 47; row 27 applied to 44's record |
+| 11a | A revocation can still leave no admin: three cases | result | Rows 44, 47; `root_replacement_can_leave_no_admin` |
 | 15 | The model does not record which approvals an act carried; the act is accepted only with such approvals | definition | `approvals` is an implicit argument of the constructor, not part of `State` |
 | 16 | Construction note; so 2 holds | construction, result | The proof; row 2 holds for any act |
 | 16 | As built, an agent may ask where the policy has an anyPerson rule for adding a person; not stated as a theorem | definition | `builtRule`'s second disjunct |
@@ -127,8 +128,8 @@ One block per cell, in the table's order.
 | | With one certificate each, a member-issued one is admitted again only by that member, while valid | act | `readmitByRoot` needs `c.issuer = .root`; `readmitByParent` is asked by `.id p` with `c.issuer = .member p` and `Valid s c.org p pk`; with row 14, `c` is the identity's only certificate; only these two acts take an identity out of `revoked` |
 | An identity changes organisation or kind | Proved for one act that no certificate is removed; in reachable records one certificate | result | `certificate_is_permanent`; row 14 |
 | | Not proved for several acts | process | No theorem states it |
-| Controlling one organisation's key changes something in another | Not true of what is built: one organisation's root controller can stop an identity acting in another's team and make its grant there not live | result | Row 46 |
-| | It can revoke its own identity | act | `revokeByOrg` |
+| Controlling one organisation's key changes something in another | Not true of what is built: while no key holder holds an organisation's root key, its controller can stop an identity acting in another's team and make its grant there not live | result | Row 46 |
+| | It can revoke its own identity | act | `revokeByOrg`; while the root key is held, no act its controller asks for is accepted (`root_controller_cannot_act_while_held`) |
 | | A revoked identity cannot act in any team, in reachable records | result | Row 7 |
 | | Proved for one act: new identity and new or removed team certificates are of the key's organisation; a newly revoked identity has a certificate of it | result | `controller_stays_in_its_organisation` |
 | | With one certificate each, of no other | result | Same theorem's last conjunct; row 14 |
@@ -148,7 +149,7 @@ One block per cell, in the table's order.
 | A key leaves its holder except ... | Proved for one act | result | Row 28 |
 | The last admin's team certificate | A planned check, proved for one act | result | Row 11a |
 | | The team key's controller can still remove anyone | result | Row 10 |
-| | A revocation can still leave no admin: of the last admin, of an agent admin's issuer, or by a root replacement | result | Rows 44, 47; row 27 applied to 44's record |
+| | A revocation can still leave no admin: of the last admin, of an agent admin's issuer, or by a root replacement | result | Rows 44, 47; `root_replacement_can_leave_no_admin` |
 | An outsider is an admin | True by the definition | definition | `Admin` needs `Valid s o k kind` |
 | A certificate for one team accepted for another | True by the definition | definition | `HasTeamCert` matches organisation and team |
 | An approval reused | Assumed | assumption | A6 |
@@ -233,7 +234,7 @@ Each item pairs a sentence about the model with one about the real system.
 | `new_admin_needs_controller_or_asker` | So it is not an invitation's holder | result | `.bearer` is neither disjunct |
 | `revoked_has_no_authority`, `revoked_cannot_act`, `grant_ends_with_subject` | In reachable records only registered identities are revoked | result | `Reachable.revokedAreRegistered` |
 | `revoked_cannot_act` | Sending, acting in a team and a live grant need `CanAct` | act, definition | `sendOwn`, `InTeam`, `GrantLive` |
-| `grant_ends_with_subject` | The revoking acts leave the grants as they are | act | `revokeSelf`, `revokeChild`, `revokeByOrg` change no `grants` |
+| `grant_ends_with_subject` | The revoking acts leave the grants as they are | act | `revokeSelf`, `revokeChild`, `revokeByOrg`, `replaceRoot` change no `grants` |
 | `person_survives_others` | About the record, not an act | result | The statement has no `Step` |
 | `orphaned_agent_cannot_act_in_team` | Its team certificates are not looked at | result | The statement |
 | `admin_can_remove_admin` | A rule naming `b` as approver means the approvals include `b`'s | definition | `Satisfies .exactly` |
@@ -271,6 +272,7 @@ Each item pairs a sentence about the model with one about the real system.
 | module doc | An experiment: six of the acts, and results proved for them | definition, process | `CoreStep` has six constructors; the author's intent |
 | `CoreStep` | The six acts of the core, each exactly as in `Step` | definition | Its constructors |
 | `CoreReachable` | The records the core can reach | definition | Its constructors mirror `Reachable` over `CoreStep`; `CoreReachable.toReachable` |
+| title, section heading | "Six acts and five properties"; "The five, in the core" | process | The theorems `core_one` to `core_five`, with `core_two_design` beside `core_two` |
 | `core_one` | `agents_cannot_approve_as_person` holds in any record | result | That theorem takes any `s` |
 | `core_three` | The three rules let only valid members ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule`, `teamRule` |
 
