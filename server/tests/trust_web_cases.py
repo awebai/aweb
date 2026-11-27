@@ -325,7 +325,24 @@ class Disagreement:
     mismatches: tuple[str, ...]
 
 
-DISAGREEMENTS: dict[str, Disagreement] = {}
+# The server sees a team-certificate revocation only after its cached
+# revocation list refreshes (60 s fresh, 60 s stale: docs/aweb-sot.md:448-466);
+# the model assumes one current record (A4). Shown by experiment in the task.
+_REVOCATION_WINDOW = "aweb-adyz.2"
+
+DISAGREEMENTS: dict[str, Disagreement] = {
+    "mint-grant-after-removal-refused": Disagreement(
+        _REVOCATION_WINDOW,
+        (
+            "decision: expected refused (mintGrant.InTeam), code allowed",
+            'observe grantLive({"session": "s1"}): expected after false, read true',
+        ),
+    ),
+    "remove-member-ends-its-grant": Disagreement(
+        _REVOCATION_WINDOW,
+        ('observe grantLive({"session": "s1"}): expected after false, read true',),
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -936,7 +953,7 @@ async def run_case(stack: Stack, case: Case) -> Run:
 
 @dataclass(frozen=True)
 class WireRefusal:
-    """The refusal a premise's failure is expected to produce at its route:
+    """A refusal a premise's failure is expected to produce at its route:
     the status with the structured code, or with the released detail where
     the route sends no code."""
 
@@ -956,41 +973,87 @@ class WireRefusal:
         return f"{self.status} {self.code or repr(self.detail)}"
 
 
-TEAM_CONTROLLER_ONLY = WireRefusal(
-    403,
-    detail="Only the team controller can perform this action",
-    source="awid/src/awid_service/routes/teams.py:143-148",
+@dataclass(frozen=True)
+class PremiseRefusals:
+    """Every reviewed wire form of one premise's failure. A premise has more
+    than one only where the route tells apart cases the model's premise joins."""
+
+    forms: tuple[WireRefusal, ...]
+
+    def matches(self, refusal: Refusal) -> bool:
+        return any(form.matches(refusal) for form in self.forms)
+
+    def describe(self) -> str:
+        return " or ".join(form.describe() for form in self.forms)
+
+
+TEAM_CONTROLLER_ONLY = PremiseRefusals(
+    (
+        WireRefusal(
+            403,
+            detail="Only the team controller can perform this action",
+            source="awid/src/awid_service/routes/teams.py:143-148",
+        ),
+    )
 )
 
 # Reviewed: each entry cites where its route refuses for that premise.
-REFUSALS: dict[str, WireRefusal] = {
-    "registerByRoot.Authorised": WireRefusal(
-        422,
-        code="issuer_key_not_current",
-        source="awid/src/awid_service/id_registration.py:197-201",
+REFUSALS: dict[str, PremiseRefusals] = {
+    "registerByRoot.Authorised": PremiseRefusals(
+        (
+            WireRefusal(
+                422,
+                code="issuer_key_not_current",
+                source="awid/src/awid_service/id_registration.py:197-201",
+            ),
+        )
     ),
-    "registerByParent.MayIssue": WireRefusal(
-        422,
-        code="human_issuer_is_agent",
-        source="awid/src/awid_service/id_registration.py:220-221",
+    "registerByParent.MayIssue": PremiseRefusals(
+        (
+            WireRefusal(
+                422,
+                code="human_issuer_is_agent",
+                source="awid/src/awid_service/id_registration.py:220-221",
+            ),
+        )
     ),
-    "registerByParent.Valid": WireRefusal(
-        422,
-        code="parent_revoked",
-        source="awid/src/awid_service/id_registration.py:222-223",
+    # The model's Valid parent: the registry refuses a revoked parent itself,
+    # then the parent's whole current chain with the verifier's reason.
+    "registerByParent.Valid": PremiseRefusals(
+        (
+            WireRefusal(
+                422,
+                code="parent_revoked",
+                source="awid/src/awid_service/id_registration.py:222-223",
+            ),
+            WireRefusal(
+                422,
+                code="revoked",
+                source="awid/src/awid_service/id_registration.py:116-130, "
+                "awid/src/awid/id_certificates.py:857-859",
+            ),
+        )
     ),
-    "revokeChild.Valid": WireRefusal(
-        403,
-        code="revocation_forbidden",
-        source="awid/src/awid_service/id_revocation.py:86-98",
-    ),
-    "mintGrant.InTeam": WireRefusal(
-        401,
-        code="certificate_revoked",
-        source="server/src/aweb/team_auth.py:40-47",
+    "revokeChild.Valid": PremiseRefusals(
+        (
+            WireRefusal(
+                403,
+                code="revocation_forbidden",
+                source="awid/src/awid_service/id_revocation.py:86-98",
+            ),
+        )
     ),
     "admit.Authorised": TEAM_CONTROLLER_ONLY,
     "remove.Authorised": TEAM_CONTROLLER_ONLY,
+    "mintGrant.InTeam": PremiseRefusals(
+        (
+            WireRefusal(
+                401,
+                code="certificate_revoked",
+                source="server/src/aweb/team_auth.py:40-47",
+            ),
+        )
+    ),
 }
 
 

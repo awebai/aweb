@@ -212,7 +212,7 @@ async def test_the_comparator_fails_on_a_deliberately_wrong_expectation(stack_fa
     assert premise_mismatch.startswith(
         "reason: premise registerByParent.Valid expects "
     ), premise_mismatch
-    [cert] = allowed.observe
+    cert = allowed.observe[0]
     wrong_kind = dataclasses.replace(cert, expected={**cert.expected, "kind": "person"})
     assert compare(_expecting(allowed, observe=(wrong_kind,)), allowed_run) == [
         f"observe {cert.label()}: expected after "
