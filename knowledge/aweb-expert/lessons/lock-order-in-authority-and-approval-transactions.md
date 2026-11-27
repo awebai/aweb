@@ -1,9 +1,9 @@
 ---
 type: Lesson
 title: Lock order in authority and approval transactions
-description: Lock authority before the approvals it can revoke, prelock row sets explicitly in a sorted order, recheck expiry and authority after every blocking wait, and prepare every lock a later read will take; each rule cost a deadlock or a refusal that came too late.
-tags: [lesson, postgresql, concurrency, authorization, naapp]
-timestamp: 2026-10-24
+description: Lock authority before the approvals it can revoke, prelock row sets explicitly in a sorted order, recheck expiry and authority after every blocking wait (comparing revision and live holder, since expiry leaves a revision unchanged), judge existence and the tenant boundary before any lease, and prepare every lock a later read will take; each rule cost a deadlock, a late refusal or a wrong answer.
+tags: [lesson, postgresql, concurrency, authorization, leases, naapp]
+timestamp: 2026-11-27
 ---
 
 Learned while building the shared approval primitive and the secrets naapp's
@@ -28,6 +28,19 @@ tests; this records the general rules for designing the next lock path.
   earlier. Recheck after the last await, keep the tentative consume, outcome and
   audit writes inside a savepoint, and void them outside it; a refusal issued
   after the savepoint was released left those writes committed.
+- **A revision match is not a liveness match.** When an expiring lease, claim
+  or lock is guarded by a revision, expiry happens in time and not in storage:
+  nothing bumps the revision. A check that the state is "as the caller saw it"
+  must therefore compare the pair (revision, live holder at the post-wait time),
+  and a pre-wait observation must record that same pair, not the revision
+  alone. Comparing revisions alone passes every test except the expiry
+  boundary: one override path accepted a claim that had expired at an
+  unchanged revision, while its sibling path refused it. Test the
+  expired-since-seen case and a related row that expires during the wait.
+- **Judge the boundary before the lease.** Decide existence, the installation
+  or tenant boundary, and status first, then compare leases or revisions. A
+  lease mismatch checked first hides the not-found answer and so reveals that a
+  missing or foreign row exists.
 - **Read-only is not "no new locks".** A later plain read takes relation and
   index locks even when the rows are already held. To promise no new locks in a
   final phase, perform that read during preparation and discard its result;
@@ -51,3 +64,13 @@ Harvested 2026-10-25 from seat `aweb-expert-naapp-approvals` (notes
 `read-only-is-not-no-new-locks.md`,
 `batch-lock-tests-need-a-later-distinct-blocker.md`; review NACKs 4b06b9d7 and
 77a3c74c).
+
+The revision-versus-liveness and boundary-first rules: Evidence: OKF proposal
+from aweb-expert/aweb-expert-tasks-app, 2026-11-27;
+notes/revision-match-is-not-liveness.md. The protocol review of the Tasks app
+decision functions found both defects. The fix added a test row for each case
+(expired since seen, a descendant expired during the wait, a missing root with
+an unseen descendant, a stale root with a foreign descendant, a closed root
+with a stale revision), and each was red before it. The reviewer reran the
+table through a revision-only adapter, and exactly those five rows regressed.
+Limit: one implementation, of pure decision functions.
