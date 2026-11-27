@@ -53,6 +53,10 @@ class Executor:
         compose = "COMPOSE_PROJECT_NAME=" + Q(project) + " " if project else ""
         return f"env -i {compose}HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator "
 
+    def runner_cwd(self):
+        """Where the gate's supervisor starts: Python loads its modules from here first."""
+        return f"{REMOTE}/source"
+
     def runner_prefix(self):
         """Who runs the gate: the gate user, UID 1000, with the gate's environment."""
         return "runuser -u gateuser -- " + self.env()
@@ -292,7 +296,7 @@ exit "$status"
         ledger = Q(self.config["ledger"])
         logs = Q(str(Path(self.config["ledger"]).parent / "gate-logs"))
         command = (
-            f"cd {REMOTE}/source && setsid --wait nohup "
+            f"cd {self.runner_cwd()} && setsid --wait nohup "
             + self.runner_prefix()
             + f"AWEB_GATE_LEDGER={ledger} AWEB_GATE_LOG_DIR={logs} GATE_OWNER={Q(self.config['owner'])} "
             + f"timeout --signal=TERM --kill-after={TIMEOUT_KILL_GRACE}s {timeout} "

@@ -33,6 +33,9 @@ GUEST_BUNDLES = REMOTE + "/bundles"
 GUEST_SOURCES = REMOTE + "/sources"
 GUEST_RUNS = REMOTE + "/runs"
 GUEST_OUT = LOGS + "/servers"
+# A root spec's run starts here: root's alone, so nothing the gate user wrote
+# is on the path Python loads the supervisor and runner from.
+ROOT_RUN = REMOTE + "/root-run"
 STEP_FIELDS = {
     "name",
     "user",
@@ -245,19 +248,32 @@ class ServersExecutor(Executor):
             return self.env(root=True)
         return super().runner_prefix()
 
+    def runner_cwd(self):
+        return ROOT_RUN if self.servers["root"] else super().runner_cwd()
+
     def launch_program(self):
-        """A root spec's launch: the host contract has already held as the gate
-        user in prepare, with its UID-0 refusal; this run asserts root instead."""
+        """A root spec's launch: it runs as root from root's own directory.
+
+        The host contract has already held as the gate user in prepare, with its
+        UID-0 refusal. The checkout belongs to the gate user, so its status is
+        read as that user: Git refuses another owner's checkout to root."""
         if not self.servers["root"]:
             return super().launch_program()
-        return (
-            super()
-            .launch_program()
-            .replace(
-                'test "$(id -u)" = 1000\n' + self.host_check() + "\n",
-                'test "$(id -u)" = 0\n',
-            )
-        )
+        return f"""#!/bin/bash
+set -euo pipefail
+cd {ROOT_RUN}
+test "$(id -u)" = 0
+id > {LOGS}/identity.txt
+date -u +%FT%TZ > {LOGS}/gate-start
+set +e
+{self.focused_shell()} > {LOGS}/gate-output.log 2>&1
+status=$?
+set -e
+printf '%s\\n' "$status" > {LOGS}/gate-exit
+date -u +%FT%TZ > {LOGS}/gate-end
+runuser -u gateuser -- git -C {REMOTE}/source status --porcelain --untracked-files=all > {LOGS}/source-after
+exit "$status"
+"""
 
     def prepare(self, server, timeout):
         super().prepare(server, timeout)
@@ -275,10 +291,28 @@ class ServersExecutor(Executor):
         spec = Path(self.directory) / "servers-spec.json"
         spec.write_bytes(self.servers["spec_bytes"])
         self.upload(spec, GUEST_SPEC, mode="0444")
+        if self.servers["root"]:
+            self.protect_root_path()
         for name, bundle in self.servers["bundles"].items():
             local = Path(self.directory) / f"{name}.bundle"
             shutil.copyfile(bundle, local)
             self.upload(local, f"{GUEST_BUNDLES}/{name}.bundle", mode="0444")
+
+    def protect_root_path(self):
+        """What a root run executes, loads and writes its completion to is root's alone.
+
+        Prepare left the launch script and the log directory with the gate
+        user, and nothing runs as the gate user after it in a root spec."""
+        launch = hashlib.sha256(
+            (Path(self.directory) / "launch.sh").read_bytes()
+        ).hexdigest()
+        self.run(
+            f"install -d -m 0700 -o root -g root {ROOT_RUN} && "
+            f"chown root:root {REMOTE}/launch.sh && chmod 0700 {REMOTE}/launch.sh && "
+            f"echo {launch}  {REMOTE}/launch.sh | sha256sum -c - && "
+            f"chown -R root:root {LOGS} && chmod 0755 {LOGS}",
+            "servers-root-path",
+        )
 
 
 def result(evidence):

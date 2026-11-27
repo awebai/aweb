@@ -9,7 +9,10 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from unittest.mock import patch
+
 from vm_gate.errors import Infrastructure
+from vm_gate.executor import Executor
 from vm_gate.servers import ServersExecutor
 
 SHA = "b" * 40
@@ -111,6 +114,129 @@ class RootRunTimeout(unittest.TestCase):
             self.assertEqual(
                 json.loads(archived.read_text())["steps"][0]["name"], "ruleset"
             )
+
+
+class RecordingTransport:
+    """Every command the executor sends; a completed gate whose exit and receipt agree."""
+
+    def __init__(self, exit_code=0):
+        self.commands = []
+        self.exit_code = exit_code
+
+    def run(self, command, *, timeout, check):
+        self.commands.append(command)
+        if command == "cat /var/log/vm-gate/supervisor-receipt.json":
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"raw_exit": self.exit_code, "grace_expired": False}),
+                stderr="",
+            )
+        if command == "cat /var/log/vm-gate/gate-exit":
+            return SimpleNamespace(
+                returncode=0, stdout=f"{self.exit_code}\n", stderr=""
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def copy(self, source, target, *, timeout, download=False):
+        pass
+
+
+class RootLaunchPath(unittest.TestCase):
+    def executor(self, directory, root):
+        executor = ServersExecutor(
+            {"ledger": "/tmp/fixture/ledger", "owner": "fixture"},
+            directory,
+            {"sha": SHA},
+            "python3 servers_run.py",
+            None,
+            servers={"root": root, "spec_bytes": b"{}", "bundles": {}},
+        )
+        executor.transport = RecordingTransport()
+        executor.deadline = 10**12
+        (Path(directory) / "launch.sh").write_text(executor.launch_program())
+        return executor
+
+    def prepared(self, root):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        executor = self.executor(Path(tmp.name), root)
+        with patch.object(Executor, "prepare", lambda self, server, timeout: None):
+            executor.prepare({}, 30)
+        return executor, "\n".join(executor.transport.commands)
+
+    def test_a_root_spec_owns_its_launcher_working_directory_and_completion_records(
+        self,
+    ):
+        executor, commands = self.prepared(True)
+        digest = hashlib.sha256(
+            (executor.directory / "launch.sh").read_bytes()
+        ).hexdigest()
+        self.assertIn(
+            "install -d -m 0700 -o root -g root /opt/vm-gate/root-run", commands
+        )
+        self.assertIn(
+            "chown root:root /opt/vm-gate/launch.sh && chmod 0700 /opt/vm-gate/launch.sh",
+            commands,
+        )
+        self.assertIn(
+            f"echo {digest}  /opt/vm-gate/launch.sh | sha256sum -c -", commands
+        )
+        self.assertIn(
+            "chown -R root:root /var/log/vm-gate && chmod 0755 /var/log/vm-gate",
+            commands,
+        )
+        self.assertIn(
+            "-m 0700 -o root -g root /opt/vm-gate/sources /opt/vm-gate/runs", commands
+        )
+
+    def test_a_gate_user_spec_keeps_its_own_path(self):
+        executor, commands = self.prepared(False)
+        for root_only in (
+            "root-run",
+            "chown root:root /opt/vm-gate/launch.sh",
+            "chown -R root:root /var/log/vm-gate",
+        ):
+            self.assertNotIn(root_only, commands)
+        self.assertIn(
+            "-m 0755 -o gateuser -g gateuser /opt/vm-gate/sources /opt/vm-gate/runs",
+            commands,
+        )
+
+    def test_a_root_launch_runs_from_its_own_directory_and_reads_the_checkout_as_its_owner(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            rooted = self.executor(Path(tmp), True).launch_program()
+            plain = self.executor(Path(tmp), False).launch_program()
+        self.assertIn("cd /opt/vm-gate/root-run\n", rooted)
+        self.assertIn('test "$(id -u)" = 0\n', rooted)
+        self.assertNotIn("host_contract", rooted)
+        self.assertIn(
+            "runuser -u gateuser -- git -C /opt/vm-gate/source status --porcelain --untracked-files=all"
+            " > /var/log/vm-gate/source-after",
+            rooted,
+        )
+        self.assertIn("cd /opt/vm-gate/source\n", plain)
+        self.assertIn('test "$(id -u)" = 1000\n', plain)
+        self.assertIn(
+            "git status --porcelain --untracked-files=all > /var/log/vm-gate/source-after",
+            plain,
+        )
+
+    def test_a_successful_root_run_keeps_its_exit_through_the_receipt(self):
+        for root, cwd, user in (
+            (True, "/opt/vm-gate/root-run", "HOME=/root"),
+            (False, "/opt/vm-gate/source", "runuser -u gateuser --"),
+        ):
+            with self.subTest(root=root), tempfile.TemporaryDirectory() as tmp:
+                executor = self.executor(Path(tmp), root)
+                self.assertEqual(executor.execute({}, 30), 0)
+                [launch] = [c for c in executor.transport.commands if "launch.sh" in c]
+                self.assertTrue(
+                    launch.startswith(f"cd {cwd} && setsid --wait nohup "), launch
+                )
+                self.assertIn(user, launch)
+                self.assertEqual("runuser" in launch, not root)
 
 
 if __name__ == "__main__":
