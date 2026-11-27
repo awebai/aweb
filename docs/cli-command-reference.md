@@ -202,7 +202,7 @@ team projection to a service first, then run `aw workspace connect` from each
 certified agent workspace.
 
 Subcommands:
-- `init` Initialize this workspace against a service using an existing team certificate
+- `init` Compatibility route to aw workspace connect; use aw workspace connect
 
 Flags:
 - `-h, --help help for service`
@@ -210,6 +210,9 @@ Flags:
 ## `service init`
 
 ### `service init`
+
+Compatibility route to `aw workspace connect`, kept for existing callers; new
+setup uses `aw workspace connect`. Same handler and flags.
 
 Initialize this workspace against a service using the existing .aw signing key
 and team certificate in this directory. With --identity-home, initialize and

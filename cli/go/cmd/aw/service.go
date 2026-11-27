@@ -26,8 +26,10 @@ var serviceCmd = &cobra.Command{
 
 var serviceInitCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize this workspace against a service using an existing team certificate",
-	Long: "Initialize this workspace against a service using the existing .aw signing key\n" +
+	Short: "Compatibility route to aw workspace connect; use aw workspace connect",
+	Long: "Compatibility route to `aw workspace connect`, kept for existing callers; new\n" +
+		"setup uses `aw workspace connect`. Same handler and flags.\n\n" +
+		"Initialize this workspace against a service using the existing .aw signing key\n" +
 		"and team certificate in this directory. With --identity-home, initialize and\n" +
 		"bind the selected external identity root instead of the caller's current\n" +
 		"directory. This command only connects this workspace to the service; it does\n" +

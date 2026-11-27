@@ -8,7 +8,7 @@
 #   3. Registers a namespace, creates a team, invites bob
 #   4. Both agents connect to aweb via certificate auth
 #   5. Registers an externally controlled AWID team with the aweb service
-#   6. Initializes existing team members through aw service init
+#   6. Connects existing team members through aw workspace connect
 #   7. Exercises mail, chat, tasks, locks
 #   8. Revokes bob's membership and verifies rejection
 #
@@ -1751,8 +1751,8 @@ assert_eq "service register creates team projection" "1" "$service_team_rows"
 assert_eq "service register creates no agents" "0" "$service_agents_before"
 assert_eq "service register creates no workspaces" "0" "$service_workspaces_before"
 
-run_success "service alpha init" run_aw_in "$SERVICE_ALPHA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
-run_success "service beta init" run_aw_in "$SERVICE_BETA_DIR" service init --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
+run_success "service alpha workspace connect" run_aw_in "$SERVICE_ALPHA_DIR" workspace connect --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
+run_success "service beta workspace connect" run_aw_in "$SERVICE_BETA_DIR" workspace connect --service "$AWEB_URL" --team "$SERVICE_TEAM_ID"
 service_alpha_active="$(yaml_field "$SERVICE_ALPHA_DIR/.aw/teams.yaml" active_team)"
 service_beta_active="$(yaml_field "$SERVICE_BETA_DIR/.aw/teams.yaml" active_team)"
 service_alpha_workspace_alias="$(workspace_membership_field "$SERVICE_ALPHA_DIR/.aw/workspace.yaml" "$SERVICE_TEAM_ID" alias)"
@@ -1764,13 +1764,13 @@ assert_eq "service beta workspace membership" "beta" "$service_beta_workspace_al
 
 service_agents_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.agents WHERE team_id = '$SERVICE_TEAM_ID' AND deleted_at IS NULL;")"
 service_workspaces_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.workspaces WHERE team_id = '$SERVICE_TEAM_ID' AND deleted_at IS NULL;")"
-assert_eq "service init creates two agents" "2" "$service_agents_after"
-assert_eq "service init creates two workspaces" "2" "$service_workspaces_after"
+assert_eq "workspace connect creates two agents" "2" "$service_agents_after"
+assert_eq "workspace connect creates two workspaces" "2" "$service_workspaces_after"
 
 run_success "service registered team mail send --plaintext" run_aw_in "$SERVICE_ALPHA_DIR" mail send --plaintext \
   --to beta \
   --subject "Service registered team e2e" \
-  --body "service init path works"
+  --body "workspace connect path works"
 capture_success service_beta_inbox "service_beta_inbox" run_aw_in "$SERVICE_BETA_DIR" mail inbox --json --show-all
 service_beta_subject="$(echo "$service_beta_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('subject','') for m in msgs if m.get('subject')=='Service registered team e2e'), ''))" 2>/dev/null || echo "")"
 assert_eq "service registered team mail works" "Service registered team e2e" "$service_beta_subject"
