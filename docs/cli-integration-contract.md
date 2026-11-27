@@ -552,7 +552,11 @@ the keys and values the providers read:
   is not hosted, the refusal keeps exit 2 and its one stderr line,
   `refusing aw workspace delete through external identity home for principal
   P; only own hosted local self-release is supported for an external identity
-  home (reason: team_not_hosted)`, which the providers match exactly;
+  home (reason: team_not_hosted)`. P is the first nonempty of the selected
+  home's `stable_id`, `address` and `did` in its `identity.yaml`, else the
+  selected identity-home path. The providers compare the whole trimmed stderr
+  with that line exactly, so both the words and how P is rendered are kept.
+  This refusal stays outside the version 1 rules, which read `error.code`;
 - `aw workspace status --limit N --json`, for the roster: `selected_team`,
   `team` (each entry's `alias`, `status`, `last_seen`, `hostname`, `role`,
   `workspace_path`, `context_kind`, `agent_identity_scope`), `team_has_more`
@@ -564,8 +568,11 @@ the keys and values the providers read:
 - `aw init --join-from R --join-team T --name N --json
   --do-not-touch-agents-md`, the join of section 3.3 with that flag;
 - the command the roster prints for a team controller to run, `aw id team
-  remove-member --namespace D --team N --cert-id C [--registry ORIGIN]`: its
-  spelling is kept, so released rosters do not print a dead command;
+  remove-member --namespace D --team N --cert-id C [--registry ORIGIN]
+  --json`: its spelling is kept, so released rosters do not print a dead
+  command. In the roster, `--registry` is the provider's currently configured
+  registry origin, never a locator from a cleanup record; the retained-record
+  writer prints the same command with its stored origin;
 - `aw heartbeat`; `aw team list --json`; `aw team invite --team-id T --json`;
   `aw team join TOKEN --name N --json`, with the token as an argument (up to
   v1.41); `aw --team T init`, and `aw init` without
