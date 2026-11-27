@@ -100,7 +100,8 @@ in the shared coordination skill before declaring service evidence unavailable.
   push, a verdict, a sent mail) before retrying one.
 - **Tasks** live in the Tasks app installed on team aweb: run `aw tasks …` from
   your home. For task verbs the active team instructions win over the
-  `aweb-coordination` skill, which still describes the built-in board.
+  `aweb-coordination` and `aweb-tasks` skills, which still describe the
+  built-in board.
 - Only the coordinator spawns or retires aweb instances. Ask it when your
   assignment needs another one.
 - `soul.yaml` supplies a default launch. A spawn may explicitly choose any
