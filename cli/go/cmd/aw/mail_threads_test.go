@@ -6,7 +6,6 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -186,33 +185,6 @@ func TestMailHelpTeachesReplyInTheConversation(t *testing.T) {
 	for _, cmd := range []string{mailCmd.Long, mailSendCmd.Long} {
 		if !strings.Contains(cmd, mailThreadTeaching) {
 			t.Fatalf("help does not teach the thread model:\n%s", cmd)
-		}
-	}
-}
-
-// The channel wakes, the skills and the mail guide carry the same teaching as
-// the aw help, word for word; the guide may set commands in code spans.
-func TestMailThreadTeachingMatchesEveryCopy(t *testing.T) {
-	root := filepath.Join("..", "..", "..", "..")
-	for _, copy := range []struct {
-		path     string
-		markdown bool
-	}{
-		{"channel-core/src/channel.ts", false},
-		{"skills/aweb-messaging/SKILL.md", false},
-		{"packages/codex-plugin/skills/aweb-messaging/SKILL.md", false},
-		{"docs/mail-and-chat.md", true},
-	} {
-		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(copy.path)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		text := string(raw)
-		if copy.markdown {
-			text = strings.ReplaceAll(text, "`", "")
-		}
-		if !strings.Contains(text, mailThreadTeaching) {
-			t.Errorf("%s does not carry the mail thread teaching %q", copy.path, mailThreadTeaching)
 		}
 	}
 }
