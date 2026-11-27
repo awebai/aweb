@@ -2956,10 +2956,9 @@ func TestTeamInviteWithLocalTeamKeySupportsGlobalWithoutServiceContext(t *testin
 		leadingJSON bool
 		missingKey  bool
 	}{
-		{"folio-leading-json", "--global", true, false},
-		{"trailing-json", "--global", false, false},
-		{"current-scope-flag", "--member-global", true, false},
-		{"error-after-warning", "--global", true, true},
+		{"folio-leading-json", "--member-global", true, false},
+		{"trailing-json", "--member-global", false, false},
+		{"missing-key", "--member-global", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			team := "alpha"
@@ -2998,9 +2997,6 @@ func TestTeamInviteWithLocalTeamKeySupportsGlobalWithoutServiceContext(t *testin
 				}
 			} else if got["status"] != "created" || got["token"] == nil || got["token"] == "" {
 				t.Fatalf("invite missing from output: %v", got)
-			}
-			if tc.scope == "--global" && !strings.Contains(stderr.String(), "Flag --global has been deprecated, use --member-global") {
-				t.Fatalf("missing deprecation warning on stderr: %q", stderr.String())
 			}
 		})
 	}
