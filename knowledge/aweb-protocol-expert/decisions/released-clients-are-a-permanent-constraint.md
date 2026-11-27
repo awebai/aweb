@@ -3,7 +3,7 @@ type: Decision
 title: Released clients are a permanent constraint
 description: Once a client that sends a shape is published, the server accepts that shape until it is measured that nothing sends it; contract changes are additive by default, narrowing names every consumer and proves each deploys atomically, and removal is a separate change.
 tags: [decision, compatibility, release, clients, contracts]
-timestamp: 2026-11-04
+timestamp: 2026-11-27
 ---
 
 Decided on 2026-07-27 after a chat mark-read change made a new field required
@@ -67,6 +67,11 @@ Rulings and review misses from October 2026 mark the edges of the rule.
   serving is v2-only. The waiver named those surfaces and excluded server
   deploy-seed configuration. It does not repeal this rule or authorise other
   narrowing; any other exception needs its own explicit ruling.
+- **A fresh product gating its own admission does not narrow a released
+  contract** (2026-11-27). Requiring a creator-signed chain at the new
+  product's grantor leaves the shared disposition and every frozen deployment's
+  acceptance unchanged; see
+  [new-product admission requires a creator-signed chain](/aweb-protocol-expert/decisions/new-product-admission-requires-a-creator-signed-chain.md).
 
 Provenance for this section: harvested 2026-10-25 from seats
 `aweb-protocol-expert-agent-activity` (security reviewer d86327c5 and
