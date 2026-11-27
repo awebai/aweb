@@ -68,16 +68,6 @@ def authority_result_scope_payload(
     }
 
 
-def authority_result_ttl_seconds(result_kind: str, requested_seconds: int) -> int:
-    if requested_seconds < 1:
-        raise ValueError("invalid authority result ttl")
-    maximum = {
-        "dns_transport_failure": 5,
-        "authoritative_not_found": 15,
-    }.get(result_kind, 60)
-    return min(requested_seconds, maximum)
-
-
 @dataclass(frozen=True)
 class AuthorityWorkResult:
     scope_key: str
