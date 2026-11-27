@@ -1,0 +1,13 @@
+\set ON_ERROR_STOP on
+SELECT current_setting('server_version_num')::int >= 170000 AS has_checkpointer \gset
+\if :has_checkpointer
+SELECT clock_timestamp() AS sampled_at, current_setting('server_version') AS version,
+       pg_postmaster_start_time() AS postmaster_start, stats_reset,
+       num_requested AS requested, num_timed AS timed
+FROM pg_stat_checkpointer;
+\else
+SELECT clock_timestamp() AS sampled_at, current_setting('server_version') AS version,
+       pg_postmaster_start_time() AS postmaster_start, stats_reset,
+       checkpoints_req AS requested, checkpoints_timed AS timed
+FROM pg_stat_bgwriter;
+\endif
