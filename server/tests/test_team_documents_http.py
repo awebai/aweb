@@ -284,8 +284,13 @@ async def test_team_roles_routes_carry_the_ids_the_cli_reads(privacy_app):
     }
     deactivated = await _request(env, "POST", "/v1/roles/deactivate")
     assert deactivated.status_code == 200, deactivated.text
-    assert deactivated.json()["deactivated"] is True
-    assert deactivated.json()["active_team_roles_id"] != new_id
+    replaced = deactivated.json()
+    assert replaced["deactivated"] is True
+    # The deactivation's id and version are the empty bundle now active.
+    now_active = (await _request(env, "GET", "/v1/roles/active")).json()
+    assert replaced["active_team_roles_id"] == now_active["team_roles_id"] != new_id
+    assert replaced["version"] == now_active["version"]
+    assert now_active["roles"] == {}
 
 
 @pytest.mark.asyncio
@@ -326,6 +331,7 @@ async def test_team_instructions_routes_carry_the_ids_the_cli_reads(privacy_app)
     assert active["team_instructions_id"] == active["active_team_instructions_id"]
     assert active["team_instructions_id"] == new_id
     assert active["document"]["body_md"] == "second"
+    assert active["document"]["format"] == "markdown"
     history = (await _request(env, "GET", "/v1/instructions/history")).json()
     assert {
         v["team_instructions_id"] for v in history["team_instructions_versions"]
