@@ -139,11 +139,11 @@ var mailSendCmd = &cobra.Command{
 		"carries the ID chain and no saved enrollment or creation evidence.\n" +
 		"Use aw id proof to export that evidence for someone else to verify.",
 	Args: func(cmd *cobra.Command, args []string) error {
+		if mailSendNewConversation && cmd.Flags().Changed("conversation-id") {
+			return usageError("--new-conversation and --conversation-id cannot be combined")
+		}
 		recipient := strings.TrimSpace(mailSendTo+mailSendToDID+mailSendToAddress) != ""
 		if strings.TrimSpace(mailSendConversationID) != "" {
-			if mailSendNewConversation {
-				return usageError("--new-conversation and --conversation-id cannot be combined")
-			}
 			if recipient {
 				return usageError("--conversation-id cannot be combined with recipient flags")
 			}

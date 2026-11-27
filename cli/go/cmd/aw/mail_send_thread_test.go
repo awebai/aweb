@@ -254,25 +254,35 @@ func TestAwMailSendRefusesNewConversationWithConversationID(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	_, priv, _ := ed25519.GenerateKey(nil)
 	self := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
-	var mu sync.Mutex
-	calls := 0
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		calls++
-		http.NotFound(w, r)
-	}))
-	home := t.TempDir()
-	writeSelectionFixtureForTest(t, home, testSelectionFixture{AwebURL: server.URL, TeamID: "devteam:test.local", Alias: "gsk", WorkspaceID: "workspace-1", DID: self, Address: "test.local/gsk", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: priv, CreatedAt: "2026-05-02T00:00:00Z"})
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--new-conversation", "--conversation-id", "11111111-1111-4111-8111-111111111111", "--body", "nonce", "--json")
-	run.Dir = home
-	run.Env = append(testCommandEnv(home), "AWEB_URL="+server.URL, "AWEB_IDENTITY_HOME=", "AW_NO_UPDATE_CHECK=1")
-	var stderr bytes.Buffer
-	run.Stderr = &stderr
-	err := run.Run()
-	mu.Lock()
-	defer mu.Unlock()
-	if exitCode(err) != 2 || calls != 0 || !strings.Contains(stderr.String(), "--new-conversation and --conversation-id cannot be combined") {
-		t.Fatalf("want a usage refusal with no requests: exit=%d calls=%d stderr=%s", exitCode(err), calls, &stderr)
+	// Any explicit --conversation-id is refused, blank ones included, so a
+	// request for a fresh thread can never fall through to another path.
+	for name, conversationID := range map[string]string{
+		"conversation": "11111111-1111-4111-8111-111111111111",
+		"empty":        "",
+		"whitespace":   "   ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			calls := 0
+			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				calls++
+				http.NotFound(w, r)
+			}))
+			home := t.TempDir()
+			writeSelectionFixtureForTest(t, home, testSelectionFixture{AwebURL: server.URL, TeamID: "devteam:test.local", Alias: "gsk", WorkspaceID: "workspace-1", DID: self, Address: "test.local/gsk", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: priv, CreatedAt: "2026-05-02T00:00:00Z"})
+			run := exec.CommandContext(ctx, bin, "mail", "send", "--new-conversation", "--conversation-id", conversationID, "--to", "alice", "--subject", "Status", "--body", "nonce", "--json")
+			run.Dir = home
+			run.Env = append(testCommandEnv(home), "AWEB_URL="+server.URL, "AWEB_IDENTITY_HOME=", "AW_NO_UPDATE_CHECK=1")
+			var stderr bytes.Buffer
+			run.Stderr = &stderr
+			err := run.Run()
+			mu.Lock()
+			defer mu.Unlock()
+			if exitCode(err) != 2 || calls != 0 || !strings.Contains(stderr.String(), "--new-conversation and --conversation-id cannot be combined") {
+				t.Fatalf("want a usage refusal with no requests: exit=%d calls=%d stderr=%s", exitCode(err), calls, &stderr)
+			}
+		})
 	}
 }
