@@ -320,6 +320,24 @@ Each item pairs a sentence about the model with one about the real system.
 | `Enrolment`, `Assertion` and the three definitions | Near-literal readings of their bodies | definition | Bodies |
 | `Enrolment.controller`, `Enrolment.hostedEmail` | What each tag names: an assertion by the organisation's domain controller; one by a hosted service, for an email enrolment | source | `docs/id-certificates.md`; the protocol seat's wording |
 
+## TrustWeb/Spheres.lean and the README's trust spheres section
+
+| Where | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| README, module doc | `Spheres.lean` adds where secrets sit and changes nothing in the model | process | The file imports the model and declares only new names; no other model file changes |
+| README | A sphere is any place whose secrets are reachable together; the layer does not say what a sphere is | definition | `Sphere` is a number; nothing else is said of it |
+| README, `Party.secret` | Each party asks with one secret, of five kinds | definition | `Secret`, `Party.secret` |
+| README, `World` | A world is a record and the secrets each sphere holds | definition | `World` |
+| README, `WStep` | A step is an act asked from a sphere holding the asker's secret, or a leak from a persuadable sphere to one it talks to | definition | `WStep.act`, `WStep.leak` |
+| README | Who talks to whom and who is persuadable are parameters | definition | `WStep`'s and `WReachable`'s arguments |
+| README, three defs | The three worlds | definition | `noneSwayed`, `agentsSwayed`, `agentsAndPersonsSwayed` |
+| `WReachable`, `Flows`, `Occupant` | Their meaning | definition | Their bodies |
+| 60 | Construction note | construction | The proof |
+| README | An approval is not tied to a sphere; approvals rest on assumption 6; a persuaded person's approval is not modelled | definition, assumption | `Step`'s constructors take `approvals` as an implicit argument that `WStep` does not see; A6 |
+| README | Every secret is placed from the start | definition | `WReachable.start` takes `init`; no step adds a secret except `leak` |
+| README | Holding a secret before its record exists gives nothing, since every act that uses it checks the record | act | `redeem` needs the invitation unused; `sendGrant` needs the grant live; acts as an identity or with an organisation key check the record through their premises |
+| README | A re-key or a root replacement moves no secret; any copy of an organisation key still counts, which can only overstate what a sphere can do | definition | `WStep.act` keeps `holds`; `Party.secret` maps a key's controller to the key's name, not to a version of it |
+
 ## TrustWeb/DocNames.lean
 
 Its doc comments are about the build, not the model.

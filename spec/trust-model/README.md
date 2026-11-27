@@ -105,6 +105,23 @@ The evidence is a list of assertions outside the record: the definitions in `Evi
 | 39 | If an identity is a controller-asserted person, it answers for itself | `controller_asserted_person_answers_for_itself` |
 | 40 | Under any rule there is a record the system can reach with a valid person for which the controller's assertion alone makes it a controller-asserted person, the hosted service's email assertion alone makes it email-enrolled, and no assertion leaves its enrolment unspecified. The rest of 38's three cases follows from 38 | `enrolment_case_is_reachable` |
 
+## Trust spheres (a layer on the model)
+
+`Spheres.lean` adds where secrets sit to the model and changes nothing in it. A sphere is any place whose secrets are reachable together; the layer does not say what a sphere is. Each party asks with one secret (`Party.secret`): the domain's DNS credential, an organisation key, an identity key, a session key or an invitation's secret. A world is a record of the model and the secrets each sphere holds (`World`). A step is an act of the model asked for from a sphere that holds the asker's secret, or a leak: a persuadable sphere gives one of its secrets to a sphere it talks to (`WStep`). Who talks to whom and who is persuadable are parameters. Three settings of the second are the three worlds: no sphere persuadable (`noneSwayed`), agents' spheres persuadable (`agentsSwayed`), and agents' and persons' spheres persuadable (`agentsAndPersonsSwayed`).
+
+| # | In plain words | Lean name |
+|---|---|---|
+| 53 | In every world the layer reaches, the record is a record the model reaches under the same rule | `WReachable.record_reachable` |
+| 54 | In one step, if the record changes, some sphere holds the secret of a party, and an act of the model asked for by that party takes the record before to the record after | `WStep.record_change` |
+| 55 | In every world the layer reaches, if a sphere holds a secret, some sphere held it in the initial placement and a chain of spheres runs from there to it, each sphere that passes the secret on persuadable and talking to the next | `held_secret_flowed` |
+| 56 | If a secret flows from one sphere to a different one, the first is persuadable. So in every world the layer reaches, a sphere holding a secret either held it initially, or got it from a persuadable sphere that held it initially | `Flows.source_persuadable`, `held_secret_came_from_persuadable` |
+| 57 | World 1: in every world the layer reaches with no sphere persuadable, a sphere holds a secret only if it held it initially | `world1_secrets_stay` |
+| 58 | World 2: in every world the layer reaches with agents' spheres persuadable, a secret that no agent's sphere held initially is held only where it was held initially | `world2_non_agent_secret_stays` |
+| 59 | World 3: in every world the layer reaches with agents' and persons' spheres persuadable, a secret that no agent's or person's sphere held initially is held only where it was held initially | `world3_other_secret_stays` |
+| 60 | Any rule, any persuadable spheres that include sphere 1: with sphere 1 the only initial holder of identity 5's key and sphere 1 talking to sphere 0, there is a reachable world in which sphere 0 holds that key and a message attributed to 5 has been sent. With no sphere persuadable, no reachable world has sphere 0 holding that key. (In the construction sphere 1 gives the key to sphere 0, and sphere 0 sends as 5) | `persuaded_key_lets_another_sphere_send`, `world1_key_stays_put` |
+
+The layer's limits. An approval is not tied to a sphere: the act's approvals are hidden in the model's step, so approvals still rest on assumption 6, and a persuaded person's approval is not modelled. Every secret is placed from the start, so the layer does not say where a newly made key or token is first held; holding a secret before its record exists gives nothing, since every act that uses it checks the record. A re-key or a root replacement moves no secret: any copy of an organisation key still counts, which can only overstate what a sphere can do.
+
 ## What must never happen
 
 | What must never happen | Where it stands |
