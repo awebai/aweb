@@ -2,7 +2,7 @@
 
 **Experimental formal model of selected aweb trust rules. Proofs are checked by Lean. Comparison against running implementations is pending.**
 
-One independent reading of the plain sentences against the Lean statements is worked in; a second is under way.
+Two independent readings of the plain sentences against the Lean statements are worked in; a third is to follow.
 
 This is a formal model of who may do what in aweb: organisations, their members, teams, admins, keys, grants and invitations. It is written in Lean 4, and every result in it is proved and checked by Lean. It is licensed under this repository's licence (MIT).
 
@@ -26,7 +26,7 @@ If it builds, every proof is correct. The toolchain is pinned to Lean 4.36.0 and
 
 - `TrustWeb/Model.lean`: what exists, the current record, and the acts that change it.
 - `TrustWeb/Properties.lean`: the results. Each has its plain reading above it.
-- `TrustWeb/Abilities.lean`: what must be possible, shown by records the system reaches.
+- `TrustWeb/Abilities.lean`: what must be possible: records the system reaches, and acts that go through.
 - `TrustWeb/Operations.lean`: each operation belongs to a team, the general form of the admin rule.
 - `TrustWeb/Core.lean`: an experiment: the fewest acts that still carry five chosen properties.
 
@@ -63,60 +63,60 @@ Four more things in the model are planned and not built. They are present under 
 
 ## What is proved
 
-How to read these rows. Each row says what its theorem says, with its conditions. **"In one act"** means the result is about a single accepted act; it is not a claim about any sequence of acts. **"In a record the system can reach"** means the result needs facts that hold after any sequence of accepted acts from an empty record. **Design** means the result is about the planned rule, not about what is built.
+How to read these rows. Each row first gives its theorem's conditions and conclusion, in the order the theorem states them; anything after that is a reading of it, and says what the statement leaves out. **"In one act"** means the result is about a single accepted act; it is not a claim about any sequence of acts. **"In a record the system can reach"** means the result needs facts that hold after any sequence of accepted acts from an empty record. **"One certificate each"** means the condition that every identity has at most one certificate, which holds in every record the system can reach (14). **Design** means the result is about the planned rule, not about what is built. A row with no rule named holds under every rule.
 
 ### Identities, admins, revocation
 
 | # | In plain words | Lean name |
 |---|---|---|
-| 1 | In a record the system can reach, nobody is valid as an agent and as a person | `one_kind` (with 14) |
-| 2 | In one act: if someone holds a chain of person certificates after the act and did not before, then the act registered a person certificate whose issuer is the root or a member who is a valid person, never an agent. The statement does not say whose certificate it is. It is about who signs, not who asked (see 16). It looks at certificates only, not at revocation, and does not cover an identity being admitted again | `new_person_is_vouched_for` |
-| 3 | Add to the record any certificates that are neither issued by the root nor issued by someone already a person: nobody becomes a person. (A certificate issued by a person does make one; the rule about issuers is what is checked, not the registry's admission) | `no_person_from_outside` |
-| 4 | If none of the approvers is a valid person, a rule that asks for a person's approval is not satisfied | `agents_cannot_approve_as_person` |
-| 5 | Every valid member, and every admin, has certificates leading from it to its organisation's root. This says the certificates exist. It says nothing about whether the issuers are valid or revoked, and nothing about a key with no identity certificate acting in a team | `valid_has_chain_to_root`, `admin_has_chain_to_root` |
-| 6 | In one act: an admin-team certificate is added only when whoever controls the admin team's key asks directly, or someone the rule lets ask does. An invitation does not add one in that act. Nothing is proved about several acts | `new_admin_needs_controller_or_asker` |
-| 7 | A revoked identity is not valid. In a record the system can reach it is also not an admin, cannot act in any team, and is not among the identities that can act, which sending with its own key requires | `revoked_not_valid`, `revoked_has_no_authority`, `revoked_cannot_act` |
-| 8 | In a record the system can reach: if the member that issued an agent is revoked, the agent is not valid and cannot act in any team, though its team certificates still stand | `revoking_parent_ends_agent`, `orphaned_agent_cannot_act_in_team` |
-| 9 | A valid person stays valid when any other identity is revoked, their inviter included | `person_survives_others` |
-| 10 | When the admin team's key is not with a key holder, whoever controls it can remove any admin's team certificate, with nobody's cooperation and no approval. When the root key is not with a key holder, whoever controls it can end any admin by revoking that admin's identity | `controller_can_remove_admin`, `root_can_end_admin` |
-| 11 | Design: when the admin team's key is with a key holder, an admin can have any other admin's team certificate removed, with the approvals the policy names for a removal. If the policy names the removed admin as an approver, that admin's approval is among them | `admin_can_remove_admin` |
-| 11a | Design, in one act: when the admin team's key is with a key holder and an admin's team certificate goes, another admin remains afterwards. This is about team certificates only. An organisation can still be left with no admin by a revocation: of the admin, of a member above it, or by a root replacement | `key_holder_keeps_an_admin` |
-| 12 | If an organisation's policy has no rule, every kind of act is approved with no approvals | `no_policy_no_approval` |
-| 13 | Whoever answers for a member is a valid person. In a record the system can reach there is at most one | `answerer_is_valid_person`, `answerer_unique` |
-| 14 | In every record the system can reach, an identity has one certificate, only registered identities are revoked, and an unregistered identity is in at most one team | `Reachable.oneCertEach`, `Reachable.revokedAreRegistered`, `Reachable.localInOneTeam` |
-| 15 | As built, in one act: if someone holds a chain of person certificates after the act and did not before, then whoever controls some organisation key asked directly, or a valid person exists in some organisation. **Under review:** the statement is weaker than intended. It does not say that the person asked or approved, or is of the same organisation | `built_person_needs_a_person` |
-| 16 | Design: there is a record in which an agent admin asks the key holder and a person is registered. The root key is the issuer, so 2 holds. (An independent reader showed the record can be reached) | `design_agent_admin_can_ask_for_person` |
+| 1 | If every identity has one certificate each, no identity is valid as an agent in one organisation and as a person in any organisation | `one_kind` (with 14) |
+| 2 | In one act: if after an accepted act someone holds a chain of person certificates in an organisation and did not before, the act added one certificate; it is a person certificate; and its issuer is the root, or a member that was a valid person of the certificate's organisation before the act. The statement does not say whose certificate it is, or that it is of that organisation (15 does, as built). It looks at certificates only, not at revocation, so admitting an identity again is not covered. It is about who signs, not who asked | `new_person_is_vouched_for` |
+| 3 | If every certificate in a list is not issued by the root, and its issuer is not a person of the certificate's organisation in the record, then adding the list to the record makes nobody a person who was not one. (A certificate issued by a person does make one; what is checked is the rule about issuers, not the registry's admission) | `no_person_from_outside` |
+| 4 | If no approver is a valid person of the organisation, the approvals do not satisfy a rule asking for any person | `agents_cannot_approve_as_person` |
+| 5 | If an identity is a valid member of an organisation, of either kind, certificates lead from it to the organisation's root; the same if it is an admin. Leading means registered certificates of that organisation, each issued by the next, up to one issued by the root. It says nothing about the kinds, about revocation or about whether the issuers are valid, and nothing about a key with no identity certificate acting in a team | `valid_has_chain_to_root`, `admin_has_chain_to_root` |
+| 6 | In one act: if an accepted act adds a team certificate of an admin team, the asker is whoever controls that admin team's key, or an identity the rule lets ask for admitting an admin in that organisation. So it is not an invitation's holder, in that act. Nothing is proved about several acts | `new_admin_needs_controller_or_asker` |
+| 7 | If an identity is revoked, it is not valid in any organisation, of either kind. If, besides, only registered identities are revoked (true in every record the system can reach, 14), it is not an admin of any organisation, cannot act in any team, and is not among the identities that can act, which sending with its own key requires | `revoked_not_valid`, `revoked_has_no_authority`, `revoked_cannot_act` |
+| 8 | If every identity has one certificate each, an agent certificate is registered, and the member that issued it is revoked, then its subject is not valid in any organisation, of either kind, and cannot act in any team. Its team certificates are not looked at: they still stand | `revoking_parent_ends_agent`, `orphaned_agent_cannot_act_in_team` |
+| 9 | If an identity is a valid person of an organisation, adding any other identity to the revoked leaves it a valid person of that organisation, whoever issued it. This is about the record, not about an act | `person_survives_others` |
+| 10 | If the admin team's key is not with a key holder, then for any identity there is an accepted act, asked for by whoever controls that key, after which it is not an admin. If the root key is not with a key holder and an identity is an admin, there is an accepted act, asked for by whoever controls the root key, after which it is not an admin. The asker is the key's controller alone | `controller_can_remove_admin`, `root_can_end_admin` |
+| 11 | Design: if the admin team's key is with a key holder, an identity is an admin, some approvals satisfy the policy for a removal, and another identity is given, there is an accepted act under the admin rule, asked for by the admin, after which the other is not an admin. If the policy names the other as an approver, those approvals include its own | `admin_can_remove_admin` |
+| 11a | A planned check, present under every rule, in one act: if the admin team's key is with a key holder, and an identity holds an admin-team certificate before an accepted act and not after, then some other identity is an admin after it. This is about a team certificate going. A revocation can still leave an organisation with no admin: of the admin, of a member above it, or by a root replacement | `key_holder_keeps_an_admin` |
+| 12 | If no rule of the policy is for an organisation, every kind of act is approved for it with no approvals | `no_policy_no_approval` |
+| 13 | If a person answers for a member, that person is a valid person of the member's organisation. If every identity has one certificate each and two persons answer for the same member, they are the same | `answerer_is_valid_person`, `answerer_unique` |
+| 14 | In every record the system can reach, under any rule: two certificates for the same identity are the same certificate; every revoked identity has a certificate; and two team certificates of the same identity with no certificate are the same | `Reachable.oneCertEach`, `Reachable.revokedAreRegistered`, `Reachable.localInOneTeam` |
+| 15 | As built, in one act: if after an accepted act someone holds a chain of person certificates in an organisation and did not before, the act added one person certificate of that organisation, and one of three things holds. Whoever controls its root key asked directly, the key not being with a key holder. Or a valid person of the organisation asked. Or the root key is with a key holder, a valid member of the organisation asked, and approvals exist that satisfy its policy for adding a person and include a valid person of it. The model does not record which approvals an act carried; the act is accepted only with such approvals | `built_person_needs_a_person` |
+| 16 | Design: there is a record the system can reach under the admin rule, and an agent valid in an organisation, such that an act the agent asks for is accepted, and afterwards someone holds a chain of person certificates in that organisation who did not before. (In the construction the agent is an admin, the root key is with a key holder, and the root is the new certificate's issuer, so 2 holds) | `design_agent_admin_can_ask_for_person` |
 
 ### Grants and invitations
 
 | # | In plain words | Lean name |
 |---|---|---|
-| 17 | In one act, whoever holds a grant's session key changes no identity certificate, revocation, team certificate, grant, held key or invitation | `session_only_sends` |
-| 18 | In one act: a new message is attributed to an identity only if that identity asked and can act, or a grant on it that is live and may send was used | `message_from_owner_or_live_grant` |
-| 19 | In one act: a new grant on an identity appears only when that identity asks | `new_grant_by_subject` |
-| 20 | In a record the system can reach, a grant is not live while its subject is revoked. In any record, it is not live while its subject lacks the team certificate it came from. In one act: when a team certificate goes, no grant from it remains | `grant_ends_with_subject`, `grant_ends_with_its_certificate` |
-| 21 | In one act, whoever holds an invitation's secret changes no identity certificate, revocation, grant or held key. The only new team certificate is for the organisation and team of an invitation carrying that secret, and never for an admin team. The joiner is whatever key the holder names; that it holds that key is assumed (assumption 3) | `bearer_only_joins` |
+| 17 | In one act: if an act asked for by whoever holds a session key is accepted, the identity certificates, revocations, team certificates, grants, held keys and invitations are as before. The other parts of the record are not stated | `session_only_sends` |
+| 18 | In one act: if an accepted act adds a message attributed to an identity, either that identity asked and can act, or the asker holds the session key of a grant on that identity that is live and may send | `message_from_owner_or_live_grant` |
+| 19 | In one act: if an accepted act adds a grant, its subject asked, as an identity | `new_grant_by_subject` |
+| 20 | If only registered identities are revoked (true in every record the system can reach, 14), and a grant's subject is revoked or lacks the team certificate the grant came from, the grant is not live. In one act: if an identity holds a team certificate before an accepted act and not after, no grant on it from that team remains after it | `grant_ends_with_subject`, `grant_ends_with_its_certificate` |
+| 21 | In one act: if an act asked for by whoever holds an invitation's secret is accepted, the identity certificates, revocations, grants and held keys are as before, and each team certificate it adds is not of an admin team and is for the organisation and team of an unused invitation with that secret. The joiner is whatever key the holder names; that the joiner holds that key is assumed (3) | `bearer_only_joins` |
 
 ### DNS, and leaving a key holder
 
 | # | In plain words | Lean name |
 |---|---|---|
-| 27 | For an organisation that exists, the domain's owner can always replace the root; no premise can refuse it. Afterwards no identity of the organisation is valid and the root key is not with a key holder | `dns_owner_can_always_take_over` |
-| 28 | In one act: a key leaves its holder only if the domain's owner asked, or an identity the rule lets ask had it given back | `key_leaves_holder_only_two_ways` |
-| 29 | As built, in one act: a key leaves its holder only if the domain's owner asked | `built_key_leaves_only_by_dns` |
-| 30 | Design: when a key is with a key holder, an admin with the approvals the policy names can have it given back. No identity certificate, revocation or team certificate changes | `organisation_can_take_key_back` |
-| 31 | When the root key is not with a key holder, whoever controls it can admit again an identity that was issued by the root and cut off by a replacement. It is valid again with the same key, kind and organisation | `replaced_organisation_can_readmit` |
+| 27 | If an organisation exists, there is an accepted act asked for by its domain's owner after which its root key is not with a key holder and no identity is valid in it, of either kind. (The act is the root replacement, whose only premise is that the organisation exists) | `dns_owner_can_always_take_over` |
+| 28 | In one act: if a key is with a key holder before an accepted act and not after, the asker is the domain's owner of the key's organisation, or an identity the rule lets ask for giving a key back. When it is the domain's owner, the act replaced the root: the holder no longer holds the organisation's current root key. Neither the model nor the protocol shows that the holder no longer has the former private key | `key_leaves_holder_only_two_ways` |
+| 29 | As built, in one act: under the same conditions, the asker is the domain's owner of the key's organisation | `built_key_leaves_only_by_dns` |
+| 30 | Design: if a key is with a key holder, an identity is an admin of the key's organisation, and some approvals satisfy its policy for giving a key back, there is an accepted act under the admin rule, asked for by the admin, after which the key is not with a key holder and the identity certificates, revocations and team certificates are as before | `organisation_can_take_key_back` |
+| 31 | If a certificate issued by the root is registered, its subject is cut off by a root replacement, and the root key is not with a key holder, there is an accepted act, asked for by whoever controls the root key, after which the subject is valid in the certificate's organisation, with the certificate's kind | `replaced_organisation_can_readmit` |
 
-As built, a key leaves its holder only when the domain's owner replaces the root (29), which cuts off every identity of the organisation (27). The planned design adds a way that changes nothing else (30). In the real protocol the first already has a gentler form that the model does not have: a rotation signed by both the old root key and the new one, which keeps every registration.
+As built, a key stops being with its holder only at the domain's owner's request (29), and the only such act that does it is a root replacement, which leaves no identity of the organisation valid (27). The planned design adds a way that leaves the certificates, revocations and team certificates as they were (30). In the real protocol a root can also be rotated with the signatures of both the old root key and the new one, which keeps every registration; the model does not have it.
 
 ### Each operation belongs to a team
 
 | # | In plain words | Lean name |
 |---|---|---|
-| 32 | The admin rule is this rule with every operation assigned to the admin team | `adminRule_is_teamRule` |
-| 33 | Whatever the assignment: when a key is with a key holder, a valid member holding a certificate of the team that giving it back is assigned to can have it given back, with the approvals the policy names. No identity certificate, revocation or team certificate changes | `assigned_team_can_take_key_back` |
-| 34 | Whatever the assignment, in one act: a key leaves its holder only by the domain's owner, or at the request of a valid member holding a certificate of the assigned team | `only_assigned_team_takes_key_back` |
-| 35 | **A warning.** There is a record in which taking the root key back is assigned to a named team, an agent in no team uses an invitation to that team, and then has the root key given back. The admin team is protected against this; a named team is not | `invitation_reaches_an_assigned_team` |
+| 32 | The admin rule is the team rule with every operation of every organisation assigned to the admin team | `adminRule_is_teamRule` |
+| 33 | Any assignment: if a key is with a key holder, an identity holds a certificate of the team that giving a key back is assigned to and is valid in the key's organisation, and some approvals satisfy its policy for giving a key back, there is an accepted act under the team rule, asked for by that identity, after which the key is not with a key holder and the identity certificates, revocations and team certificates are as before | `assigned_team_can_take_key_back` |
+| 34 | Any assignment, in one act: if a key is with a key holder before an accepted act under the team rule and not after, the asker is the domain's owner of the key's organisation, or an identity that holds a certificate of the assigned team and is valid in that organisation | `only_assigned_team_takes_key_back` |
+| 35 | **A warning.** There is an assignment and three records such that: in the first, an identity holds no team certificate of an organisation and the organisation's root key is with a key holder; an act asked for by the holder of an invitation's secret takes the first record to the second; an act the identity asks for takes the second to the third; and in the third the root key is not with a key holder. (In the construction, giving the root key back is assigned to a named team and the invitation is to that team) | `invitation_reaches_an_assigned_team` |
 
 Result 35 is a warning the model gives about the planned general form, shown for one operation (having a key given back). The protections of the admin team (explicit admission only, members of the organisation only, no invitations) have to apply to every team that an operation is assigned to, not to the admin team by name.
 
@@ -124,11 +124,12 @@ Result 35 is a warning the model gives about the planned general form, shown for
 
 | # | In plain words | Lean name |
 |---|---|---|
-| 22 | An organisation runs with no key holder and no hosted service. A person makes an agent, that agent makes an agent, nobody is asked, and the person answers for both. An agent of another organisation joins a team, stays a member of its own organisation, and is not a member of this one | `runs_without_key_holder` |
-| 23 | Where a policy rule asks for a person's approval of a kind of act, approvals none of which is a valid person's do not satisfy the policy. Where every rule for that kind of act asks for a person, one valid person's approval satisfies it | `policy_requires_person`, `person_approval_satisfies` |
-| 24 | Design: an organisation with no person can run. An agent is its admin and, alone and with no approval, admits a member to a team | `agent_only_org_runs` |
-| 25 | Design, in one act: where the admin team's key is with a key holder and the organisation has no admin, no act adds an admin-team certificate. Nothing is proved about several acts | `locked_without_admin` |
-| 26 | Design: where a named team's key is with a key holder and every rule for admitting asks for a person, an admin with one valid person's approval admits a member who is registered or in no other team | `approved_act_goes_through` |
+| 22 | Any rule: there is a record the system can reach in which no key is with a key holder; one identity is a valid person of an organisation and two are valid agents of it; the person answers for both agents; and a valid agent of another organisation can act in a named team of the first and is not valid in it. (In the construction the person issues one agent and that agent issues the other, each with its own key; the statement does not say who issued whom) | `runs_without_key_holder` |
+| 23 | If an organisation's policy has a rule asking for any person's approval of a kind of act, and no approver is a valid person of it, the approvals are not approved for that act. If an identity is a valid person of an organisation and every rule of it for a kind of act asks for any person, that one identity's approval is approved | `policy_requires_person`, `person_approval_satisfies` |
+| 24 | Design: there is a record the system can reach under the admin rule in which nobody is a person of an organisation, and an agent is an admin and a valid agent of it; an act the agent asks for is accepted, after which an identity holds a certificate of a named team of the organisation | `agent_only_org_runs` |
+| 25 | Design, in one act: if the admin team's key is with a key holder, the organisation has no admin, and an accepted act under the admin rule adds a team certificate of an admin team, that certificate is not of this organisation. Over several acts it can get an admin back (36) | `locked_without_admin` |
+| 26 | Design: if a named team's key is with a key holder, an identity is an admin, another is a valid person, a third is registered or holds no team certificate, and every rule for admitting asks for any person, there is an accepted act under the admin rule, asked for by the admin, after which the third holds a certificate of that team | `approved_act_goes_through` |
+| 36 | Design: there is a record the system can reach under the admin rule in which the admin team's key is with a key holder and the organisation has no admin; from it two acts asked for by whoever controls the root key and then one act asked for by an identity are accepted, and afterwards another identity holds an admin-team certificate it did not hold in that record. (In the construction a root replacement cut off two agents, the new root admits both again, and the one that still holds its admin-team certificate is an admin again and has the other admitted) | `locked_organisation_unlocks_by_readmission` |
 
 Not shown, because the model cannot say it: an agent whose key a hosting service holds; a person who belongs to several organisations and acts as one identity at a time; moving an agent to another parent; an organisation changing its domain.
 
@@ -136,20 +137,20 @@ Not shown, because the model cannot say it: an agent whose key a hosting service
 
 | What must never happen | Where it stands |
 |---|---|
-| An agent passes as a person | Proved: 1 to 4 |
-| Someone has authority with no chain back to a root | **Not true of what is built.** Proved for valid members and admins (5). A key with no identity certificate acts in a team, and can give a grant, on its team certificate alone. Its authority is that certificate, signed with the team's key; that the root authorises a team's key is not in the model. The planned design gives every agent its creator's certificate and has a team ask for it at admission; that is not yet in the model |
-| A revoked member keeps authority | Proved in records the system can reach: 7, 8, 20, in the sense that it is not valid, not an admin, cannot act in a team and cannot send. Whether it can ask a key holder depends on the rule: the three rules here require a valid member; a rule that let anyone ask would not. A revoked identity can still revoke its own grants and, where the planned leave exists, leave a team |
-| A revocation is undone | Proved for one act: `revocation_is_permanent`. An identity cut off by a root replacement is different: it can be admitted again |
-| An identity changes organisation or kind | Proved: no act removes an identity certificate (`certificate_is_permanent`, for one act), and in records the system can reach an identity has one certificate (14) |
+| An agent passes as a person | Proved: 1 for records with one certificate each, 2 for one act, 3 for added certificates, 4 for every approval |
+| Someone has authority with no chain back to a root | **Not true of what is built.** Proved for valid members and admins (5). A key with no identity certificate acts in a team, and can give a grant, on its team certificate alone. Its authority is that certificate, signed with the team's key; that the root authorises a team's key is not in the model. Who may ask a key holder depends on the rule: the three rules here require a valid member, a rule that let anyone ask would not. The planned design gives every agent its creator's certificate and has a team ask for it at admission; that is not yet in the model |
+| A revoked member keeps authority | Proved in records the system can reach (7, 8, 20): it is not valid, not an admin, cannot act in a team, cannot send with its own key, and no grant on it is live. Whether it can ask a key holder depends on the rule: the three rules here require a valid member; a rule that let anyone ask would not. A revoked identity can still revoke its own grants and, where the planned leave exists, leave a team |
+| A revocation is undone | Proved for one act: `revocation_is_permanent`. Not proved for several acts. An identity cut off by a root replacement is different: it can be admitted again (31) |
+| An identity changes organisation or kind | Proved for one act that no certificate is removed (`certificate_is_permanent`), and in records the system can reach an identity has one certificate (14). Not proved for several acts |
 | Controlling one organisation's key changes something in another organisation | Proved for one act, for new identity certificates, new and removed team certificates, and new revocations: `controller_stays_in_its_organisation`. Not stated for invitations, grants, held keys or re-admissions. Revoking an identity does end what it could do in another organisation's teams |
 | A message is attributed to someone who did not send it and gave no grant | Proved for one act: 18 |
 | A grant holder does more than send | Proved for one act: 17, 19 |
-| An invitation's holder becomes a person or an admin | Proved for one act: 21. Not proved for several acts. Under a rule that assigns admitting admins to a named team, an invitation to that team can lead to an admin in two acts; 35 shows the same route for another operation |
-| An agent approves where a person is required | Proved: 4, 23 |
+| An invitation's holder becomes a person or an admin | Proved for one act: 21, 6. Not proved for several acts. Under a rule that assigns admitting admins to a named team, an invitation to that team could lead to an admin over several acts; 35 shows that route for another operation, and it is not proved for this one |
+| An agent approves where a person is required | Proved for every approval: 4, 23 |
 | Being issued an identity gives team membership | Proved for one act: `registering_gives_no_team` |
 | A key with no identity certificate is in two teams | Proved in records the system can reach: 14. True on the supported journey; the registry's own route does not enforce it |
 | A key leaves its holder except by the domain's owner or an allowed request | Proved for one act: 28 |
-| A key holder removes the last admin's team certificate | Design, proved for one act: 11a. Whoever controls the team's key directly can still remove anyone, and the last admin can still revoke its own identity |
+| A key holder removes the last admin's team certificate | A planned check, proved for one act: 11a. Whoever controls the team's key directly can still remove anyone, and any revocation (of the last admin, of a member above it, or by a root replacement) can still leave no admin |
 | An outsider is an admin | True by the definition of an admin |
 | A certificate for one team is accepted for another | True by the definition of a team certificate |
 | An approval is used for another act, or twice | Assumed (6) |
@@ -162,7 +163,7 @@ Not shown, because the model cannot say it: an agent whose key a hosting service
 1. **Signatures.** A signature cannot be forged.
 2. **Enrolment.** The root issues a person certificate only to a human being who took part themselves.
 3. **The subject's key.** Whoever is registered, or joins a team, proved they hold the key.
-4. **One current record.** Everyone sees the same record at once. The real system lets a verifier go on accepting for a bounded time after a revocation.
+4. **One current record.** Everyone sees the same record at once. The real system does not: a server caches a team's revocations for 60 seconds, and serves the cached list for 60 seconds more while it refreshes (`docs/aweb-sot.md`, "Caching from awid"). In that window a removed member can still give a grant, and a grant it gave still works.
 5. **One act at a time.** No crashes, retries or overlapping changes.
 6. **Approvals.** An approval comes from the identity it names, for the exact act, and cannot be reused.
 7. **Keys.** An identity keeps one key and only its owner uses it.
@@ -194,10 +195,10 @@ Change a definition, build, and Lean lists the results that no longer hold.
 - **Change what a definition says, not its shape.** Making a rule always true leaves every proof's wording valid, so each failure is a proof that used the fact. Removing a premise from an act breaks every proof that lists that act's premises, and most of those errors mean nothing.
 - **Read the error.** "Too many variable names", "alternative is not needed" or a wrong number of arguments is a proof naming something that moved. An error that shows a goal Lean could not close is a proof that needed the fact.
 - **A result is shown false only by an example.** Write the record in which it fails, as `design_agent_admin_can_ask_for_person` does. Until then it is unproved, not false.
-- **Write each plain sentence from the theorem's statement, conditions first.** In the first independent reading every one of 21 findings was a sentence that claimed more than its theorem. No proof was wrong.
+- **Write each plain sentence from the theorem's statement, conditions first, and only then make it readable.** In the first two independent readings every finding (21, then 23) was a sentence that claimed more than its theorem. No proof was wrong.
 
 ## Not done
 
 - **It does not run yet.** Comparing it with the code needs checker functions proved equal to these definitions, and test cases produced from them.
-- **A second independent reading** of the sentences against the statements is under way.
+- **A third independent reading** of the sentences against the statements is to follow.
 - **Several definitions were corrected after the last check against the source** and need checking again: the as-built rule for adding a person, root replacement, grants ending with their certificate, the condition for sending, invitations, and the last-admin rule.
