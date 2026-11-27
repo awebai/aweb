@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-cleanup-oss (tasks aweb-adzx and aweb-aeai).
+* **Update**: [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md) gains that a test of a bound asserts the configured bound and is break-proved with the mutation that loosens it.
+* **Creation**: lesson [a fake never mints a time-bounded credential after the message time is fixed](/aweb-expert/lessons/a-fake-never-mints-time-bounded-credentials-after-the-message.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
