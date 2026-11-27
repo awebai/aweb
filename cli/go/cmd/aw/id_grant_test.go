@@ -642,7 +642,8 @@ func TestGrantCommandsUseExternalIdentityHomeWithRealBinary(t *testing.T) {
 				"issued_at": "2026-08-12T00:00:00Z", "expires_at": "2026-08-12T01:00:00Z",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/identity-grants/grant-9/revoke":
-			w.WriteHeader(http.StatusNoContent)
+			// The revoke route's reply (server/src/aweb/routes/identity_grants.py).
+			_ = json.NewEncoder(w).Encode(map[string]string{"grant_id": "grant-9", "status": "revoked", "revoked_at": "2026-08-12T00:30:00+00:00"})
 		default:
 			t.Fatalf("unexpected grant request %s %s", r.Method, r.URL.Path)
 		}
