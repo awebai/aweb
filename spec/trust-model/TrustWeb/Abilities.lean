@@ -918,4 +918,16 @@ theorem rekey_ends_team_grants {ask : AskRule} {s : State} {o : Org} {t : Team}
     have := (List.mem_filter.mp hg).2
     simp [h1, h2] at this
 
+/-- If `o`'s root key is not with a key holder, there is an accepted act asked
+for by whoever controls it, after which `o` has no admin. In the construction
+the act is a re-key of the admin team that keeps no member. -/
+theorem rekey_can_leave_no_admin {ask : AskRule} {s : State} {o : Org}
+    (hroot : OrgKey.root o ∉ s.held) :
+    ∃ s', Step ask s (.controller (.root o)) s' ∧ ∀ k, ¬ Admin s' o k := by
+  refine ⟨_, Step.rekeyTeam (t := .admin) (keep := []) (approvals := []) (.inl ⟨hroot, rfl⟩)
+    (fun h => absurd h hroot), ?_⟩
+  intro k ⟨hm, _⟩
+  have := (List.mem_filter.mp hm).2
+  simp at this
+
 end TrustWeb

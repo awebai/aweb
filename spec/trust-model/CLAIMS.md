@@ -47,7 +47,7 @@ One line for every sentence that says something about the model, apart from a th
 | Five parts of `Step` are planned, not built | source | The source readings: the built key holder has no command to take a key in or give one back; the registry has no last-admin check and does not know the admin team; the built leave command leaves the certificate standing; the registry's certificate route registers a certificate for any team with the same checks, so nothing in it excludes the admin team (`awid/src/awid_service/routes/teams.py`, the function register_certificate, lines 1219 to 1246, at 5c2ee7bad3); the same route checks the member's address ownership (the function _require_member_address_owned_by_did_aw, line 1235), not its validity in the organisation |
 | They are present under every rule, `builtRule` included; under `builtRule` `release` is never accepted | definition | `entrust`, `release`, `leave` are constructors of `Step`; `KeepsAnAdmin`, `rekeyTeam`'s premise on `keep`, `m.team ≠ .admin`, `i.team ≠ .admin` and `admitAdmin`'s `Valid` are premises of its constructors; `Step` takes any `ask`; `release` needs `key ∈ s.held`, so `Authorised`'s held branch, and `builtRule` never allows `.release` |
 | The Design rule, the planned root replacement and the evidence are planned too, named in their rows | source, definition | `adminRule`; `plannedReplaceRoot` is a definition, not a `Step` constructor; `Evidence.lean`'s module doc |
-| Every record with a held key is reached through `entrust`, so every row whose record or act has a held key rests on it | result | `held_key_was_entrusted`, `only_entrust_puts_a_key_with_a_holder` |
+| Every reachable record with a held key is reached through `entrust`, so every row whose reachable record or act has a held key rests on it, and a row about any record with a held key applies among reachable records only to ones reached through `entrust` | result | `held_key_was_entrusted`, `only_entrust_puts_a_key_with_a_holder` |
 | Every row whose act is `release` rests on the planned `release` | act | `release` is a planned part |
 | A row that rests on another planned premise says so | process | The labels on rows 6, 11a, 14, 21, 25 and 42, and the cells that cite them |
 
@@ -106,6 +106,7 @@ One line for every sentence that says something about the model, apart from a th
 | 50 | A grant is added only by its subject, so a grant from the team does not come back unless its subject gives it again | result | Row 19 |
 | 51 | Construction note | construction | The proof |
 | 51 | This is how aweb behaves as built | source | `server/src/aweb/identity_grant_auth.py` lines 196 to 217, `server/src/aweb/member_team_key.py` lines 745 to 757, at 5c2ee7bad3; the protocol seat's check (mail f8b91c44) |
+| 51 | The statement does not say the grant is from that organisation | result | The statement has no `g.org` conjunct |
 | 52 | Design, aweb-adzf.9, a planned effect that is not an act of the model | source, definition | The seat's ruling (mail e1749dfc); `plannedReplaceRoot` is a definition, not a `Step` constructor |
 | 52 | A re-admission changes no grant, so it brings none back; a fresh grant is given under the usual premises | act | `readmitByRoot`, `readmitByParent` change no `grants`; `mintGrant` |
 | 6 | Resting on the planned premises that `admit`'s and `redeem`'s team is not the admin team | definition, source | `admit`'s premise `m.team ≠ .admin` and `redeem`'s premise `i.team ≠ .admin`, planned parts |
@@ -163,7 +164,7 @@ One block per cell, in the table's order.
 | The last admin's team certificate | A planned check, proved for one act | result | Row 11a |
 | | The team key's controller can still remove anyone | result | Row 10 |
 | | A revocation can still leave no admin: of the last admin, of an agent admin's issuer, or by a root replacement | result | Rows 44, 47; `root_replacement_can_leave_no_admin` |
-| | So can a re-key of the admin team by the root's controller while the root key is not held; through a held root key it must keep an admin | result, act | Row 45; `rekeyTeam`'s premise |
+| | So can a re-key of the admin team by the root's controller while the root key is not held; through a held root key it must keep an admin | result, act | `rekey_can_leave_no_admin`; `rekeyTeam`'s premise |
 | An outsider is an admin | True by the definition | definition | `Admin` needs `Valid s o k kind` |
 | A certificate for one team accepted for another | True by the definition | definition | `HasTeamCert` matches organisation and team |
 | An approval reused | Assumed | assumption | A6 |
@@ -309,7 +310,8 @@ Each item pairs a sentence about the model with one about the real system.
 | Where | Sentence | Kind | What makes it true |
 |---|---|---|---|
 | module doc | Planned evidence, kept as a list of assertions outside the record | source, definition | `docs/id-certificates.md`; `State` has no field for it |
-| `Enrolment`, its constructors, `Assertion` and the three definitions | Near-literal readings of their bodies | definition | Bodies |
+| `Enrolment`, `Assertion` and the three definitions | Near-literal readings of their bodies | definition | Bodies |
+| `Enrolment.controller`, `Enrolment.hostedEmail` | What each tag names: an assertion by the organisation's domain controller; one by a hosted service, for an email enrolment | source | `docs/id-certificates.md`; the protocol seat's wording |
 
 ## TrustWeb/DocNames.lean
 
