@@ -285,6 +285,19 @@ gate sizes itself from the machine it runs on.
   real main in its history, and the guest runs `make gate GATE_STAGES=all`.
   Either way green needs every stage PASSED in Cloud's own `summary.tsv`; a
   missing row is red. `ac` also runs on a native host.
+- `aweb-cloud`: the pilot repository, on `ac`'s path with its own facts, kept
+  with ac's in one table (`release.CLOUD_PROJECTS`). `--image` must name
+  `ghcr.io/awebai/awebai-org` (and ac's `ghcr.io/awebai/ac`). The guest runs
+  the pilot's own gate script, as its Makefile does, so its exit survives:
+  `python3 scripts/gate.py --require-release` with `RELEASE_IMAGE`,
+  `RELEASE_IMAGE_ARCHIVE` and `RELEASE_IMAGE_MEMBER` for a release, bare
+  `python3 scripts/gate.py` for a train gate. Its exit 2 makes the receipt
+  refused and 70 infrastructure, never red. Green needs the one
+  `/tmp/aweb-cloud-gate-<sha>/summary.tsv` it writes, read raw: every row
+  PASSED, tool-image, checks, storage and image present, and no malformed or
+  repeated row. No Hermes key is required or shipped. Its gate builds no aweb,
+  so `--aweb-source` is refused before boot; for any Cloud project
+  `--aweb-source` pins a release only. It runs only in a guest.
 - `servers`: the steps of one reviewed spec, `--steps SPEC`, in one guest.
   The spec names each source as an author's git bundle with its `sha256`, the
   ref that holds it and the commit; `--repo` and `--sha` are its servers bundle

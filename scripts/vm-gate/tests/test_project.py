@@ -19,6 +19,18 @@ INDEX = "ghcr.io/awebai/ac@sha256:" + "a" * 64
 MEMBER_DIGEST = "sha256:" + "b" * 64
 
 
+# The pilot's release image index, in its own repository.
+PILOT_INDEX = "ghcr.io/awebai/awebai-org@sha256:" + "c" * 64
+# The package an earlier product published; the pilot never ships there.
+OLD_PILOT_INDEX = "ghcr.io/awebai/aweb-cloud@sha256:" + "c" * 64
+PILOT_STAGES = ("tool-image", "checks", "storage", "image")
+
+# One real aweb-cloud receipt, written by project_job with only the machine
+# faked; the pilot's release tests load it as their launcher stand-in.
+AWEB_CLOUD_RECEIPT_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures/aweb-cloud-release-receipt.json"
+)
+
 # One real ac receipt, written by project_job with only the machine faked. Cloud's
 # release tests load it as their launcher stand-in, so a format change here fails
 # there too; the test below keeps it equal in form to what project_job writes.
@@ -971,6 +983,290 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         self.assertIn('test "$(id -u)" = 1000', plain.launch_program())
         self.assertIn("host_contract", plain.launch_program())
         self.assertIn("runuser -u gateuser --", plain.runner_prefix())
+
+    # aweb-cloud: the pilot, Cloud-shaped with its own targets, names and stages
+
+    def pilot_evidence(self, *, stages=None, suite="0", sha=None):
+        sha = sha or self.cloud_sha
+        rows = {stage: "PASSED" for stage in PILOT_STAGES} if stages is None else stages
+        self.evidence = {
+            "var/log/vm-gate/release/cloud/exit": suite + "\n",
+            "var/log/vm-gate/release/host-architecture": "x86_64\nx86_64\n",
+        }
+        if rows:
+            self.evidence[f"tmp/aweb-cloud-gate-{sha}/summary.tsv"] = "".join(
+                f"{stage}\t{verdict}\t{stage}.log\t1\n"
+                for stage, verdict in rows.items()
+            )
+        self.evidence[f"tmp/aweb-cloud-gate-{sha}/inputs.tsv"] = (
+            f"source_sha\t{sha}\nscope\trelease\n"
+        )
+
+    def pilot_resolved(self, image, run_id, out):
+        self.assertEqual(image, PILOT_INDEX)
+        out.write_bytes(b"image")
+        return {
+            "image": image,
+            "member": MEMBER_DIGEST,
+            "config": "sha256:" + "d" * 64,
+            "member_architecture": "amd64",
+            "archive_sha256": "0" * 64,
+        }
+
+    def without_hermes_key(self):
+        config = json.loads(self.config.read_text())
+        del config["hermes_key_file"]
+        self.config.write_text(json.dumps(config))
+
+    def invoke_pilot_release(self, *extra):
+        with patch.object(project.release, "image_archive", self.pilot_resolved):
+            return self.invoke("aweb-cloud", "--image", PILOT_INDEX, *extra)
+
+    def test_aweb_cloud_release_gate_runs_the_pilots_target_with_its_own_image_names(
+        self,
+    ):
+        self.without_hermes_key()
+        self.pilot_evidence()
+        code, receipt = self.invoke_pilot_release()
+        self.assertEqual(code, 0, receipt)
+        self.assertEqual(receipt["project"], "aweb-cloud")
+        self.assertEqual(
+            receipt["command"], "python3 scripts/gate.py --require-release"
+        )
+        self.assertIsNone(receipt["aweb_source"])
+        self.assertNotIn("aweb_source_built", receipt)
+        self.assertEqual(receipt["stages"], {stage: "PASSED" for stage in PILOT_STAGES})
+        self.assertEqual(
+            receipt["real_main"], {"aweb-cloud": receipt["real_main"]["aweb-cloud"]}
+        )
+        [call] = self.calls
+        self.assertIn("python3 scripts/gate.py --require-release >", call["command"])
+        self.assertIn(f"RELEASE_IMAGE={PILOT_INDEX}", call["command"])
+        self.assertIn(
+            "RELEASE_IMAGE_ARCHIVE=/opt/vm-gate/cloud-image.tar", call["command"]
+        )
+        self.assertIn(f"RELEASE_IMAGE_MEMBER={MEMBER_DIGEST}", call["command"])
+        for absent in ("AC_CANDIDATE_", "HERMES", "GATE_STAGES"):
+            self.assertNotIn(absent, call["command"])
+        self.assertIsNone(call["executor_factory"].keywords["release"]["hermes_key"])
+
+    def test_aweb_cloud_train_gate_runs_every_stage(self):
+        self.without_hermes_key()
+        self.pilot_evidence()
+        code, receipt = self.invoke("aweb-cloud")
+        self.assertEqual(code, 0, receipt)
+        self.assertEqual(receipt["command"], "python3 scripts/gate.py")
+        [call] = self.calls
+        self.assertRegex(call["command"], r"\npython3 scripts/gate.py >")
+        self.assertNotIn("GATE_STAGES", call["command"])
+
+    def test_aweb_cloud_is_green_only_when_every_row_passed_and_the_four_are_present(
+        self,
+    ):
+        self.without_hermes_key()
+        every = {stage: "PASSED" for stage in PILOT_STAGES}
+        for name, stages, expected, recorded in (
+            ("the four passed", every, 0, every),
+            (
+                "a new stage passed too",
+                {**every, "decisions": "PASSED"},
+                0,
+                {**every, "decisions": "PASSED"},
+            ),
+            (
+                "a new stage failed",
+                {**every, "decisions": "FAILED"},
+                1,
+                {**every, "decisions": "FAILED"},
+            ),
+            (
+                "one of the four failed",
+                {**every, "storage": "FAILED"},
+                1,
+                {**every, "storage": "FAILED"},
+            ),
+            (
+                "one of the four missing",
+                {k: v for k, v in every.items() if k != "checks"},
+                1,
+                {
+                    **{k: v for k, v in every.items() if k != "checks"},
+                    "checks": "MISSING",
+                },
+            ),
+            ("no summary", {}, 1, {stage: "MISSING" for stage in PILOT_STAGES}),
+        ):
+            with self.subTest(name=name):
+                self.calls.clear()
+                self.pilot_evidence(stages=stages)
+                code, receipt = self.invoke_pilot_release()
+                self.assertEqual(code, expected, receipt)
+                self.assertEqual(receipt["stages"], recorded)
+
+    def test_each_cloud_project_refuses_the_others_image(self):
+        self.without_hermes_key()
+        code, receipt = self.invoke("aweb-cloud", "--image", INDEX)
+        self.assertEqual(code, 2, receipt)
+        self.assertIn("ghcr.io/awebai/awebai-org", receipt["vm_gate"]["error"])
+        code, receipt = self.invoke("aweb-cloud", "--image", OLD_PILOT_INDEX)
+        self.assertEqual(code, 2, receipt)
+        self.assertIn("ghcr.io/awebai/awebai-org", receipt["vm_gate"]["error"])
+        code, receipt = self.invoke(
+            "ac", "--image", PILOT_INDEX, "--aweb-source", self.sha
+        )
+        self.assertEqual(code, 2, receipt)
+        self.assertIn("ghcr.io/awebai/ac", receipt["vm_gate"]["error"])
+        self.assertEqual(self.calls, [])
+
+    def test_ac_still_needs_the_hermes_key_and_aweb_cloud_does_not(self):
+        self.without_hermes_key()
+        code, receipt = self.invoke("ac")
+        self.assertEqual(code, 2, receipt)
+        self.assertIn("hermes_key_file", receipt["vm_gate"]["error"])
+        self.pilot_evidence()
+        code, receipt = self.invoke("aweb-cloud")
+        self.assertEqual(code, 0, receipt)
+
+    def test_aweb_cloud_files_are_refused_and_a_release_needs_no_aweb_source(self):
+        self.without_hermes_key()
+        code, receipt = self.invoke("aweb-cloud", "--files", str(self.files))
+        self.assertEqual(code, 2, receipt)
+        self.assertIn("--files", receipt["vm_gate"]["error"])
+        self.pilot_evidence()
+        code, receipt = self.invoke_pilot_release()
+        self.assertEqual(code, 0, receipt)
+        self.assertIsNone(receipt["aweb_source"])
+
+    def test_aweb_cloud_on_a_native_machine_is_refused(self):
+        self.without_hermes_key()
+        code = main(
+            [
+                "--config",
+                str(self.config),
+                "run",
+                "--project",
+                "aweb-cloud",
+                "--repo",
+                str(self.cloud),
+                "--sha",
+                self.cloud_sha,
+                "--intent",
+                "train",
+                "--machine",
+                "antares",
+                "--receipt",
+                str(self.receipt),
+            ],
+            factory=self.runtime,
+            out=io.StringIO(),
+        )
+        self.assertEqual(code, 2)
+        self.assertIn(
+            "runs in a guest", json.loads(self.receipt.read_text())["vm_gate"]["error"]
+        )
+
+    def test_the_aweb_cloud_receipt_fixture_has_the_form_project_job_writes(self):
+        self.without_hermes_key()
+        self.pilot_evidence()
+        code, receipt = self.invoke_pilot_release()
+        self.assertEqual(code, 0, receipt)
+        fixture = json.loads(AWEB_CLOUD_RECEIPT_FIXTURE.read_text())
+        self.assertEqual(form(receipt), form(fixture))
+        self.assertEqual(fixture["project"], "aweb-cloud")
+
+    def pilot_summary(self, text, *, directory=None):
+        """The pilot's summary.tsv exactly as its gate writes it, raw."""
+        self.pilot_evidence(stages={})
+        self.evidence[
+            f"tmp/{directory or 'aweb-cloud-gate-' + self.cloud_sha}/summary.tsv"
+        ] = text
+
+    def test_aweb_cloud_judges_its_one_raw_summary(self):
+        self.without_hermes_key()
+        three = "".join(
+            f"{stage}\tPASSED\t{stage}.log\t1\n" for stage in PILOT_STAGES[:3]
+        )
+        four = "".join(f"{stage}\tPASSED\t{stage}.log\t1\n" for stage in PILOT_STAGES)
+        for name, text, expected in (
+            ("the four", four, 0),
+            (
+                "a further stage passed",
+                four + "decisions\tPASSED\tdecisions.log\t3\n",
+                0,
+            ),
+            (
+                "a further stage not run",
+                four + "decisions\tNOT RUN\tdecisions.log\t0\n",
+                1,
+            ),
+            (
+                "a stage failed, then passed",
+                "checks\tFAILED\tchecks.log\t1\n" + four,
+                1,
+            ),
+            ("a stage twice, both passed", four + "image\tPASSED\timage.log\t1\n", 1),
+            ("a malformed row", four + "garbage\n", 1),
+            ("an empty stage name", four + "\tPASSED\tx.log\t1\n", 1),
+            ("the last row truncated to two fields", three + "image\tPASSED", 1),
+            ("a row without its log", three + "image\tPASSED\t\t1\n", 1),
+            ("a row without its seconds", three + "image\tPASSED\timage.log\n", 1),
+            ("negative seconds", three + "image\tPASSED\timage.log\t-1\n", 1),
+            (
+                "seconds that are no number",
+                three + "image\tPASSED\timage.log\tsoon\n",
+                1,
+            ),
+            ("a fifth field", three + "image\tPASSED\timage.log\t1\textra\n", 1),
+            ("zero seconds", three + "image\tPASSED\timage.log\t0\n", 0),
+        ):
+            with self.subTest(name=name):
+                self.calls.clear()
+                self.pilot_summary(text)
+                code, receipt = self.invoke_pilot_release()
+                self.assertEqual(code, expected, (name, receipt["stages"]))
+
+    def test_aweb_cloud_reads_only_its_exact_directory(self):
+        self.without_hermes_key()
+        half = lambda stages: "".join(
+            f"{stage}\tPASSED\t{stage}.log\t1\n" for stage in stages
+        )
+        self.pilot_summary(half(PILOT_STAGES[:2]))
+        # A second directory whose rows would complete the four must not count.
+        self.evidence[f"tmp/aweb-cloud-gate-{self.cloud_sha}-other/summary.tsv"] = half(
+            PILOT_STAGES[2:]
+        )
+        code, receipt = self.invoke_pilot_release()
+        self.assertEqual(code, 1, receipt)
+        self.assertEqual(receipt["stages"]["storage"], "MISSING")
+
+    def test_aweb_cloud_keeps_the_pilots_own_exit(self):
+        self.without_hermes_key()
+        for suite, expected, classification in (
+            ("0", 0, None),
+            ("1", 1, None),
+            ("2", 2, "refused"),
+            ("70", 70, "infrastructure"),
+        ):
+            with self.subTest(suite=suite):
+                self.calls.clear()
+                self.pilot_evidence(suite=suite)
+                code, receipt = self.invoke_pilot_release()
+                self.assertEqual(code, expected, receipt)
+                self.assertEqual(receipt["suite_exit"], int(suite))
+                self.assertEqual(receipt["suite_classification"], classification)
+        # The guest runs the pilot's gate itself, so make cannot fold its exit into 2.
+        [call] = self.calls
+        self.assertIn("python3 scripts/gate.py --require-release", call["command"])
+        self.assertNotIn("make release-gate", call["command"])
+
+    def test_an_aweb_source_pin_nothing_can_attest_is_refused_before_boot(self):
+        self.without_hermes_key()
+        code, receipt = self.invoke_pilot_release("--aweb-source", self.sha)
+        self.assertEqual(code, 2, receipt)
+        self.assertIn("builds no aweb", receipt["vm_gate"]["error"])
+        code, receipt = self.invoke("aweb-cloud", "--aweb-source", self.sha)
+        self.assertEqual(code, 2, receipt)
+        self.assertEqual(self.calls, [])
 
 
 if __name__ == "__main__":

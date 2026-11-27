@@ -1,6 +1,6 @@
 """One project's full gate for its release command, with one flat receipt.
 
-`vm-gate run --project aweb|ac|servers --repo PATH --sha S --intent train
+`vm-gate run --project aweb|ac|aweb-cloud|servers --repo PATH --sha S --intent train
 --machine M --receipt R` runs one suite on one machine:
 
 - aweb: aweb's candidate gate at S, a fast-forward of aweb's main, from the
@@ -17,6 +17,10 @@
   aweb-built-head line of its own inputs.tsv (git rev-parse HEAD of the tree
   its journeys built), never the input copied. Either way green needs every
   stage PASSED in Cloud's own summary.tsv; a missing row is red.
+- aweb-cloud: the pilot, on ac's path with its own facts (release.CLOUD_PROJECTS):
+  `make release-gate RELEASE_IMAGE=<index>` with its RELEASE_IMAGE_* names, or
+  bare `make gate`; no Hermes key; --aweb-source optional. Green needs every
+  row of its summary.tsv PASSED and its four stages present.
 - servers: the steps of one reviewed spec (--steps) in one guest, each with its
   own checkout of an author's bundle, its user, its expected exit and the
   evidence it must show (servers.py, servers_run.py). --repo and --sha are the
@@ -43,7 +47,7 @@ from .release import GUEST_FILES, Q
 from .signals import handling
 from .source import git, prepare
 
-PROJECTS = ("aweb", "ac", "servers")
+PROJECTS = ("aweb", "ac", "aweb-cloud", "servers")
 SHA = re.compile(r"[0-9a-f]{40}")
 GREEN, RED, REFUSED, INFRASTRUCTURE = 0, 1, 2, 70
 
@@ -78,13 +82,27 @@ def admit(args):
         if args.image or args.aweb_source:
             raise Refused("--image and --aweb-source are Cloud's inputs, not aweb's")
     else:
+        cloud = release.CLOUD_PROJECTS[args.project]
         if args.files:
             raise Refused(
                 "--files is aweb's input: Cloud installs aweb from PyPI per its lock"
             )
         if args.image and not release.IMAGE.fullmatch(args.image):
             raise Refused("--image must be <repository>@sha256:<index>")
-        if args.image and not args.aweb_source:
+        if (
+            args.image
+            and release.IMAGE.fullmatch(args.image)["repository"] != cloud.repository
+        ):
+            raise Refused(f"--image for {args.project} must name {cloud.repository}")
+        if args.aweb_source and not cloud.attests_aweb_source:
+            raise Refused(
+                f"{args.project}'s gate builds no aweb, so it cannot attest --aweb-source"
+            )
+        if args.aweb_source and not args.image:
+            raise Refused(
+                "--aweb-source pins a release's aweb; a train gate builds none to attest"
+            )
+        if args.image and cloud.aweb_source_required and not args.aweb_source:
             raise Refused(
                 "--image needs --aweb-source, the aweb commit the journeys build"
             )
@@ -158,12 +176,14 @@ def installed_wheels(evidence, sha):
     return json.loads(path.read_text()) if path else None
 
 
-def cloud_inputs(evidence, sha):
+def cloud_inputs(evidence, sha, cloud=release.CLOUD_PROJECTS["ac"]):
     """Cloud's gate's own record: the HEAD of the aweb tree its journeys built, and the locked tag.
 
     Only the aweb-built-head line counts as built; the lock-source line is the input."""
     path = at_most_one(
-        sorted((Path(evidence) / "tmp").glob(f"ac-candidate-gate-{sha}*/inputs.tsv")),
+        sorted(
+            (Path(evidence) / "tmp").glob(f"{cloud.evidence_prefix}{sha}*/inputs.tsv")
+        ),
         "Cloud gate input records",
     )
     if path is None:
@@ -184,6 +204,11 @@ def exit_code(record):
     # A servers runner exits 1 when it or its collector fails; that is not a failed rehearsal.
     if record["project"] == "servers" and servers.infrastructure(record):
         return INFRASTRUCTURE
+    # A gate that reports its own refusal or infrastructure fault keeps it.
+    if record.get("suite_classification") == "refused":
+        return REFUSED
+    if record.get("suite_classification") == "infrastructure":
+        return INFRASTRUCTURE
     if record["suite_exit"] != 0:
         return RED
     if record["project"] == "aweb" and record.get("files"):
@@ -199,7 +224,7 @@ def exit_code(record):
                 return RED
     if record["project"] == "servers" and not servers.green(record):
         return RED
-    if record["project"] == "ac":
+    if record["project"] in release.CLOUD_PROJECTS:
         if (
             record.get("aweb_source")
             and record.get("aweb_source_built") != record["aweb_source"]
@@ -245,7 +270,7 @@ def project_job(args, *, factory=None, out=None):
                 f"operator config needs {args.machine}.release_timeout_seconds"
             )
         if backend == "native":
-            if args.project in ("aweb", "servers"):
+            if args.project in ("aweb", "aweb-cloud", "servers"):
                 raise Refused(
                     f"{args.project}'s gate runs in a guest; {args.machine} is native"
                 )
@@ -268,10 +293,17 @@ def project_job(args, *, factory=None, out=None):
                 sources=spec["sources"],
             )
         else:
-            key = release.hermes_key(config.get("hermes_key_file"))
-            record.update(release.cloud_main(repo, args.sha, gate=not args.image))
+            cloud = release.CLOUD_PROJECTS[args.project]
+            key = (
+                release.hermes_key(config.get("hermes_key_file"))
+                if cloud.hermes
+                else None
+            )
+            record.update(
+                release.cloud_main(repo, args.sha, gate=not args.image, name=cloud.name)
+            )
             record["command"] = (
-                "make release-gate" if args.image else "make gate GATE_STAGES=all"
+                cloud.release_command(args.image) if args.image else cloud.gate_command
             )
             record["aweb_source"] = args.aweb_source
         run_id = "vm-" + uuid.uuid4().hex
@@ -391,14 +423,20 @@ def project_job(args, *, factory=None, out=None):
             record["ledger_rows_imported"] = result.get("ledger_rows_imported")
             if files and record["suite_exit"] == 0:
                 record["installed_wheels"] = installed_wheels(evidence, args.sha)
-        elif args.project == "ac":
-            if args.image and record["suite_exit"] == 0:
+        elif args.project in release.CLOUD_PROJECTS:
+            cloud = release.CLOUD_PROJECTS[args.project]
+            if cloud.native_exits:
+                record["suite_classification"] = {
+                    2: "refused",
+                    70: "infrastructure",
+                }.get(record["suite_exit"])
+            if args.image and args.aweb_source and record["suite_exit"] == 0:
                 record["aweb_source_built"], record["aweb_source_tag"] = cloud_inputs(
-                    evidence, args.sha
+                    evidence, args.sha, cloud
                 )
             # Both Cloud gates are green only when their own summary shows every
             # stage PASSED; a missing row reads MISSING and is red.
-            record["stages"] = release.cloud_stage_verdicts(evidence, args.sha)
+            record["stages"] = release.cloud_stage_verdicts(evidence, args.sha, cloud)
     except (Refused, Infrastructure) as exc:
         record["vm_gate"].update(
             infrastructure=exc.classification, error=str(exc), exit=int(exc.exit_code)
@@ -496,6 +534,7 @@ def cloud_runtime(
         member=image and image["member"],
         lock_source_sha=args.aweb_source,
         cloud_target="gate" if gate_only else "release-gate",
+        cloud=release.CLOUD_PROJECTS[args.project],
     )
     inputs = {"bundle": bundle, "archive": archive, "hermes_key": key}
     if backend == "native":
