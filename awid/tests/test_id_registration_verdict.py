@@ -1,6 +1,7 @@
-"""The registration rule, apart from the reads that gather its facts.
+"""The registration rule, apart from the reads that answer it.
 
-Every branch of ``registration_verdict`` is a row here. Where a frozen
+Every branch of ``registration_rule`` is a row here, and the boundary rows
+show that a deciding check asks for no later fact. Where a frozen
 operation case states the rule, the row is built from that case by name, so
 the case is consumed here (see the partition test in
 test_id_certificate_registration). The database tests of registration keep
@@ -11,22 +12,30 @@ witness times and the races.
 from __future__ import annotations
 
 import copy
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from datetime import datetime
 
 import pytest
 
 from awid_service.id_registration import (
+    HEAD,
+    INVITATION_USED,
+    PARENT,
+    PARENT_CHAIN,
+    PARENT_EPOCH,
+    RECEIPT,
+    ROOT,
     Admitted,
+    Ancestor,
     ParentIdentity,
     Receipt,
-    RegistrationFacts,
     Refused,
+    RegistrationRequest,
     Repeated,
     RootEpoch,
     Subject,
-    registration_verdict,
+    registration_rule,
 )
-from awid_service.id_tree_gate import IdentityTreeRefusal
 from id_tree_support import (
     CONSUMED,
     DOMAIN,
@@ -39,11 +48,64 @@ from id_tree_support import (
 )
 
 T0 = at("2026-10-26T00:01:00Z")
+ALICE_KEY_EPOCH = (1, at("2026-10-26T00:00:30Z"))
 REGISTERED_AT = at("2026-10-26T00:03:00Z")
 VALID = {"outcome": "nearest_human", "identity_valid": True, "reason": "verified"}
 INVITATION = operation_case("first-exact-invitation-registration")["input"][
     "invitation_id"
 ]
+
+
+@dataclass(frozen=True)
+class Facts:
+    """A row: the request and locks, and the answer to each fact the rule may ask."""
+
+    chain: list[dict]
+    signer: str
+    expected_head: str | None
+    invitation_id: str | None
+    keys: dict[str, str]
+    subject: Subject | None
+    receipt: Receipt | None
+    invitation_used: bool
+    head: str | None
+    root: RootEpoch | None
+    parent: ParentIdentity | None
+    parent_epoch: tuple[int, datetime] | None
+    registered: list[dict | None]
+    parent_chain: dict | None
+
+
+def decide(facts: Facts):
+    """Run the rule on ``facts``; return its verdict and the facts it asked for."""
+    answers = {
+        RECEIPT: facts.receipt,
+        INVITATION_USED: facts.invitation_used,
+        HEAD: facts.head,
+        ROOT: facts.root,
+        PARENT: facts.parent,
+        PARENT_EPOCH: facts.parent_epoch,
+        PARENT_CHAIN: facts.parent_chain,
+        **{Ancestor(i): value for i, value in enumerate(facts.registered)},
+    }
+    rule = registration_rule(
+        RegistrationRequest(
+            chain=facts.chain,
+            signer=facts.signer,
+            expected_head=facts.expected_head,
+            invitation_id=facts.invitation_id,
+            keys=facts.keys,
+            subject=facts.subject,
+        )
+    )
+    asked = []
+    try:
+        ask = next(rule)
+        while True:
+            asked.append(ask)
+            ask = rule.send(answers[ask])
+    except StopIteration as done:
+        return done.value, asked
 
 
 def case(name: str) -> dict:
@@ -52,9 +114,9 @@ def case(name: str) -> dict:
     return operation_case(name)
 
 
-def bob_under_alice(**changes) -> RegistrationFacts:
+def bob_under_alice(**changes) -> Facts:
     """A first registration of bob, issued by alice, that the rule admits."""
-    facts = RegistrationFacts(
+    facts = Facts(
         chain=[certificate("alice"), certificate("bob")],
         signer=did_key("bob"),
         expected_head=None,
@@ -66,15 +128,16 @@ def bob_under_alice(**changes) -> RegistrationFacts:
         head=None,
         root=RootEpoch(did_key("root"), 1, T0),
         parent=ParentIdentity(DOMAIN, "human", None),
+        parent_epoch=ALICE_KEY_EPOCH,
         registered=[certificate("alice")],
         parent_chain=VALID,
     )
     return replace(facts, **changes)
 
 
-def alice_under_root(**changes) -> RegistrationFacts:
+def alice_under_root(**changes) -> Facts:
     """A first registration of alice, issued by the namespace root, that the rule admits."""
-    facts = RegistrationFacts(
+    facts = Facts(
         chain=[certificate("alice")],
         signer=did_key("alice"),
         expected_head=None,
@@ -86,13 +149,14 @@ def alice_under_root(**changes) -> RegistrationFacts:
         head=None,
         root=RootEpoch(did_key("root"), 1, T0),
         parent=None,
+        parent_epoch=None,
         registered=[],
         parent_chain=None,
     )
     return replace(facts, **changes)
 
 
-def global_agent_reparented(**changes) -> RegistrationFacts:
+def global_agent_reparented(**changes) -> Facts:
     """global-agent's registered head replaced by one issued by bob."""
     facts = bob_under_alice(
         chain=[
@@ -113,14 +177,14 @@ def global_agent_reparented(**changes) -> RegistrationFacts:
     return replace(facts, **changes)
 
 
-def leaf(facts: RegistrationFacts, **fields) -> RegistrationFacts:
+def leaf(facts: Facts, **fields) -> Facts:
     """``facts`` with its presented leaf certificate's fields changed."""
     chain = copy.deepcopy(facts.chain)
     chain[-1]["certificate"].update(fields)
     return replace(facts, chain=chain)
 
 
-def kind_change() -> RegistrationFacts:
+def kind_change() -> Facts:
     given = case("registered-kind-change-refuses")["input"]
     assert given["id"] == did_aw("alice")
     return leaf(
@@ -133,7 +197,7 @@ def kind_change() -> RegistrationFacts:
     )
 
 
-def domain_change() -> RegistrationFacts:
+def domain_change() -> Facts:
     given = case("registered-domain-change-refuses")["input"]
     assert (given["id"], given["old_domain"]) == (did_aw("alice"), DOMAIN)
     return leaf(
@@ -147,7 +211,7 @@ def domain_change() -> RegistrationFacts:
     )
 
 
-def invitation_conflict(name: str) -> RegistrationFacts:
+def invitation_conflict(name: str) -> Facts:
     """Another certificate already registered under the presented invitation."""
     changed = case(name)["input"]["changed"]
     facts = bob_under_alice(invitation_id=INVITATION, invitation_used=True)
@@ -175,7 +239,7 @@ def invitation_conflict(name: str) -> RegistrationFacts:
     return leaf(facts, issued_at="2026-10-26T00:09:00Z")
 
 
-def local_parent() -> RegistrationFacts:
+def local_parent() -> Facts:
     given = case("registered-child-under-local-parent-refuses")["input"]
     child = certificate("global-from-local")
     assert (child["certificate"]["id"], child["certificate"]["parent"]["id"]) == (
@@ -193,7 +257,7 @@ def local_parent() -> RegistrationFacts:
     )
 
 
-def parent_rotated() -> RegistrationFacts:
+def parent_rotated() -> Facts:
     given = case("registration-after-parent-rotate-refuses-old-key")["input"]
     assert given["certificate"] == "bob"
     facts = bob_under_alice()
@@ -202,7 +266,7 @@ def parent_rotated() -> RegistrationFacts:
     )
 
 
-def parent_revoked(name: str) -> RegistrationFacts:
+def parent_revoked(name: str) -> Facts:
     """alice was revoked before bob's registration; bob's signing time does not matter."""
     given = case(name)["input"]
     assert given["certificate"] == "bob"
@@ -214,7 +278,7 @@ def parent_revoked(name: str) -> RegistrationFacts:
     return facts
 
 
-def subject_revoked() -> RegistrationFacts:
+def subject_revoked() -> Facts:
     given = case("directly-revoked-subject-cannot-reopen-head")["input"]
     assert given["certificate"] == "global-agent-reparented"
     return global_agent_reparented(
@@ -222,7 +286,7 @@ def subject_revoked() -> RegistrationFacts:
     )
 
 
-def retry_after_inviter_revoked() -> RegistrationFacts:
+def retry_after_inviter_revoked() -> Facts:
     """A receipt answers before any later check, even with the inviter now revoked."""
     given = case("accepted-human-invite-retry-after-inviter-revoke")["input"]
     assert given["certificate"] == "bob" and given["same_invitation"] is True
@@ -239,14 +303,14 @@ def retry_after_inviter_revoked() -> RegistrationFacts:
     )
 
 
-ROWS: list[tuple[str, RegistrationFacts, object]] = [
+ROWS: list[tuple[str, Facts, object]] = [
     # Admitted.
-    ("an identity child is admitted", bob_under_alice(), Admitted("identity")),
-    ("a root child is admitted", alice_under_root(), Admitted("namespace")),
+    ("an identity child is admitted", bob_under_alice(), Admitted(*ALICE_KEY_EPOCH)),
+    ("a root child is admitted", alice_under_root(), Admitted(1, T0)),
     (
         "a re-parent onto the current head is admitted",
         global_agent_reparented(),
-        Admitted("identity"),
+        Admitted(*ALICE_KEY_EPOCH),
     ),
     (
         "an agent may issue an agent",
@@ -254,7 +318,7 @@ ROWS: list[tuple[str, RegistrationFacts, object]] = [
             global_agent_reparented(),
             parent=ParentIdentity(DOMAIN, "agent", None),
         ),
-        Admitted("identity"),
+        Admitted(*ALICE_KEY_EPOCH),
     ),
     # The covering envelope must be signed by the subject's current key.
     (
@@ -437,16 +501,15 @@ ROWS: list[tuple[str, RegistrationFacts, object]] = [
         "the ancestry comes before the parent's chain",
         bob_under_alice(
             registered=[certificate("bob")],
-            parent_chain=IdentityTreeRefusal("evidence_unavailable", 503),
+            parent_chain={
+                "outcome": "unknown",
+                "identity_valid": False,
+                "reason": "revoked",
+            },
         ),
         Refused("superseded_certificate"),
     ),
     # S1's verdict on the parent's whole current chain.
-    (
-        "a parent chain too large to snapshot",
-        bob_under_alice(parent_chain=IdentityTreeRefusal("evidence_unavailable", 503)),
-        Refused("evidence_unavailable", 503),
-    ),
     (
         "a parent chain whose evidence is unavailable",
         bob_under_alice(
@@ -500,7 +563,7 @@ ROWS: list[tuple[str, RegistrationFacts, object]] = [
                 "reason": "revoked",
             }
         ),
-        Admitted("namespace"),
+        Admitted(1, T0),
     ),
 ]
 
@@ -515,8 +578,9 @@ def test_each_row_names_one_branch():
     [(facts, expected) for _, facts, expected in ROWS],
     ids=[name for name, _, _ in ROWS],
 )
-def test_registration_verdict(facts: RegistrationFacts, expected: object):
-    assert registration_verdict(facts) == expected
+def test_registration_rule(facts: Facts, expected: object):
+    verdict, _ = decide(facts)
+    assert verdict == expected
 
 
 def test_the_fixtures_name_the_vector_issuers():
@@ -531,3 +595,66 @@ def test_the_fixtures_name_the_vector_issuers():
         did_key("root"),
         {"kind": "namespace", "id": DOMAIN},
     )
+
+
+BOUNDARY = [
+    (
+        "a request signed by another key asks for nothing",
+        bob_under_alice(signer=did_key("alice")),
+        [],
+    ),
+    (
+        "an exact repeat asks only for its receipt",
+        bob_under_alice(receipt=Receipt(REGISTERED_AT, None)),
+        [RECEIPT],
+    ),
+    (
+        "a used invitation stops before the subject's head",
+        bob_under_alice(invitation_id=INVITATION, invitation_used=True),
+        [RECEIPT, INVITATION_USED],
+    ),
+    (
+        "a registered subject's changed kind stops before its head",
+        kind_change(),
+        [RECEIPT],
+    ),
+    (
+        "a head conflict stops before root authority",
+        global_agent_reparented(expected_head=None),
+        [RECEIPT, HEAD],
+    ),
+    (
+        "missing root authority stops before the issuer",
+        bob_under_alice(root=None),
+        [RECEIPT, ROOT],
+    ),
+    (
+        "a revoked issuer stops before its key version",
+        parent_revoked("registration-after-sign-then-parent-revoke"),
+        [RECEIPT, ROOT, PARENT],
+    ),
+    (
+        "the first invalid ancestor stops the ancestry and the parent's chain",
+        global_agent_reparented(registered=[None, certificate("bob")]),
+        [RECEIPT, HEAD, ROOT, PARENT, PARENT_EPOCH, Ancestor(0)],
+    ),
+    (
+        "an admitted identity child asks for every fact once, in order",
+        bob_under_alice(),
+        [RECEIPT, ROOT, PARENT, PARENT_EPOCH, Ancestor(0), PARENT_CHAIN],
+    ),
+    (
+        "an admitted root child asks for no issuer identity",
+        alice_under_root(),
+        [RECEIPT, ROOT],
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("facts", "asked"),
+    [row[1:] for row in BOUNDARY],
+    ids=[row[0] for row in BOUNDARY],
+)
+def test_a_deciding_check_asks_for_no_later_fact(facts: Facts, asked: list):
+    assert decide(facts)[1] == asked

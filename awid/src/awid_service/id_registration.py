@@ -7,16 +7,18 @@ registration with the exact issuer key version. Shape, signature and R1-R3
 checks on the presented chain run before the transaction
 (awid_service.id_chains).
 
-The rule itself is ``registration_verdict``: the transaction reads its facts
-under the locks, the verdict decides, and the transaction writes what it
-admits.
+The rule itself is ``registration_rule``: it asks for each fact as it needs
+it, the transaction reads that fact under the locks, and the transaction
+writes what the rule admits.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from awid.dns_verify import DomainAuthority
 from awid.id_certificates import id_certificate_id
@@ -70,15 +72,32 @@ class ParentIdentity:
     revoked_at: datetime | None
 
 
-@dataclass(frozen=True)
-class RegistrationFacts:
-    """Everything the registration rule decides on, read under the gate's locks.
+# The facts the rule asks for, each read when the rule reaches it.
+RECEIPT = "receipt"  # Receipt | None: the stored registration of the exact digest
+INVITATION_USED = "invitation_used"  # bool: another certificate holds the invitation
+HEAD = "head"  # str | None: the registered subject's current head
+ROOT = "root"  # RootEpoch | None: the open epoch, with current root authority
+PARENT = "parent"  # ParentIdentity | None: the issuing identity's registered row
+PARENT_EPOCH = "parent_epoch"  # (seq, created_at): the issuer's current key version
+PARENT_CHAIN = "parent_chain"  # dict: S1's verdict on the issuer's whole chain
 
-    ``keys`` maps each locked did:aw to its current did:key. ``registered``
-    holds, for each presented ancestor in order, its registered current head
-    (None when it has none). ``parent_chain`` is S1's verdict on an identity
-    parent's whole chain, or the refusal its snapshot raised; it is None for a
-    namespace parent or a parent without a current key.
+
+@dataclass(frozen=True)
+class Ancestor:
+    """Asks for the registered current head (dict | None) of ``chain[index]``."""
+
+    index: int
+
+
+Ask = str | Ancestor
+
+
+@dataclass(frozen=True)
+class RegistrationRequest:
+    """What the request and the gate's locks give the rule before it asks.
+
+    ``keys`` maps each locked did:aw to its current did:key; ``subject`` is the
+    registered identity the certificate names, held by the locks.
     """
 
     chain: list[dict]
@@ -86,14 +105,7 @@ class RegistrationFacts:
     expected_head: str | None
     invitation_id: str | None
     keys: dict[str, str]
-    receipt: Receipt | None
-    invitation_used: bool
     subject: Subject | None
-    head: str | None
-    root: RootEpoch | None
-    parent: ParentIdentity | None
-    registered: list[dict | None]
-    parent_chain: dict | IdentityTreeRefusal | None
 
 
 @dataclass(frozen=True)
@@ -111,82 +123,86 @@ class Repeated:
 
 @dataclass(frozen=True)
 class Admitted:
-    """The certificate becomes its subject's head, issued under ``issuer``."""
+    """The certificate becomes its subject's head under this issuer key version."""
 
-    issuer: str  # "namespace" or "identity"
+    issuer_key_seq: int
+    issuer_epoch_at: datetime
 
 
 Verdict = Refused | Repeated | Admitted
 
 
-def registration_verdict(facts: RegistrationFacts) -> Verdict:
-    """The registration rule: the facts the gate's locks hold, and its verdict."""
-    cert = facts.chain[-1]["certificate"]
+def registration_rule(
+    request: RegistrationRequest,
+) -> Generator[Ask, Any, Verdict]:
+    """The registration rule. It yields each fact it needs, in the order it needs
+    them, receives that fact's value, and returns the verdict. It asks for
+    nothing after the check that decides, so an earlier refusal or an exact
+    repeat never reads the later facts.
+    """
+    cert = request.chain[-1]["certificate"]
     parent = cert["parent"]
 
-    if facts.keys.get(cert["id"]) != facts.signer:
+    if request.keys.get(cert["id"]) != request.signer:
         return Refused("subject_mismatch", 403)
 
-    if facts.receipt is not None:
-        if facts.receipt.invitation_id != facts.invitation_id:
+    receipt: Receipt | None = yield RECEIPT
+    if receipt is not None:
+        if receipt.invitation_id != request.invitation_id:
             return Refused("invitation_conflict", 409)
-        return Repeated(facts.receipt.registered_at)
+        return Repeated(receipt.registered_at)
 
-    if facts.invitation_used:
+    if request.invitation_id is not None and (yield INVITATION_USED):
         return Refused("invitation_conflict", 409)
 
-    if facts.subject is not None:
-        if facts.subject.kind != cert["kind"]:
+    head = None
+    subject = request.subject
+    if subject is not None:
+        if subject.kind != cert["kind"]:
             return Refused("identity_kind_immutable")
-        if facts.subject.domain != cert["domain"]:
+        if subject.domain != cert["domain"]:
             return Refused("domain_mismatch")
-        if facts.subject.revoked_at is not None:
+        if subject.revoked_at is not None:
             return Refused("subject_revoked")
-    if facts.expected_head != facts.head:
+        head = yield HEAD
+    if request.expected_head != head:
         return Refused("head_conflict", 409)
 
-    if facts.root is None:
+    root: RootEpoch | None = yield ROOT
+    if root is None:
         return Refused("evidence_unavailable", 503)
     if parent["kind"] == "namespace":
-        if facts.root.did_key != cert["issuer_key"]:
+        if root.did_key != cert["issuer_key"]:
             return Refused("issuer_key_not_current")
+        issuer_key_seq, issuer_epoch_at = root.seq, root.registered_at
     else:
-        refused = _identity_issuer_refusal(facts, cert)
-        if refused is not None:
-            return refused
+        issuer: ParentIdentity | None = yield PARENT
+        if issuer is None or parent["id"] not in request.keys:
+            return Refused("unregistered_parent")
+        if issuer.domain != cert["domain"]:
+            return Refused("domain_mismatch")
+        if cert["kind"] == "human" and issuer.kind != "human":
+            return Refused("human_issuer_is_agent")
+        if issuer.revoked_at is not None:
+            return Refused("parent_revoked")
+        if request.keys[parent["id"]] != cert["issuer_key"]:
+            return Refused("issuer_key_not_current")
+        issuer_key_seq, issuer_epoch_at = yield PARENT_EPOCH
 
-    for link, current in zip(facts.chain[:-1], facts.registered, strict=True):
+    for index, link in enumerate(request.chain[:-1]):
+        current = yield Ancestor(index)
         if current is None:
             return Refused("unregistered_parent")
         if current != link:
             return Refused("superseded_certificate")
 
     if parent["kind"] != "namespace":
-        verdict = facts.parent_chain
-        if isinstance(verdict, IdentityTreeRefusal):
-            return Refused(verdict.code, verdict.status)
+        verdict = yield PARENT_CHAIN
         if verdict["identity_valid"] is not True:
             return Refused(
                 verdict["reason"], 503 if verdict["outcome"] == "unavailable" else 422
             )
-    return Admitted(parent["kind"])
-
-
-def _identity_issuer_refusal(facts: RegistrationFacts, cert: dict) -> Refused | None:
-    """The registered, unrevoked parent must hold the issuer key now."""
-    parent_id = cert["parent"]["id"]
-    parent = facts.parent
-    if parent is None or parent_id not in facts.keys:
-        return Refused("unregistered_parent")
-    if parent.domain != cert["domain"]:
-        return Refused("domain_mismatch")
-    if cert["kind"] == "human" and parent.kind != "human":
-        return Refused("human_issuer_is_agent")
-    if parent.revoked_at is not None:
-        return Refused("parent_revoked")
-    if facts.keys[parent_id] != cert["issuer_key"]:
-        return Refused("issuer_key_not_current")
-    return None
+    return Admitted(issuer_key_seq, issuer_epoch_at)
 
 
 async def register_certificate(
@@ -215,38 +231,53 @@ async def register_certificate(
             subject_id=cert["id"],
             parent_id=parent_did,
         )
+
         # The last lock wait is behind us: everything below reads the state
         # those locks hold still, and the witness time is sampled from here.
-        root = await current_root(tx, domain, namespace, dns_authority)
-        facts = RegistrationFacts(
-            chain=chain,
-            signer=signer,
-            expected_head=expected_head,
-            invitation_id=invitation_id,
-            keys=keys,
-            receipt=await _receipt(tx, digest),
-            invitation_used=invitation_id is not None
-            and await _invitation_used(tx, invitation_id),
-            subject=None
-            if subject is None
-            else Subject(subject["kind"], subject["domain"], subject["revoked_at"]),
-            head=None if subject is None else await _head(tx, cert["id"]),
-            root=None
-            if root is None
-            else RootEpoch(root["did_key"], root["seq"], root["registered_at"]),
-            parent=None
-            if parent_did is None
-            else await _parent_identity(tx, parent_did),
-            registered=[
-                await _registered_head(tx, link["certificate"]["id"])
-                for link in chain[:-1]
-            ],
-            parent_chain=await _parent_chain(
-                tx, domain, parent_did, keys, dns_authority, clock
-            ),
-        )
+        async def read(ask: Ask):
+            if ask == RECEIPT:
+                return await _receipt(tx, digest)
+            if ask == INVITATION_USED:
+                return await _invitation_used(tx, invitation_id)
+            if ask == HEAD:
+                return await _head(tx, cert["id"])
+            if ask == ROOT:
+                root = await current_root(tx, domain, namespace, dns_authority)
+                if root is None:
+                    return None
+                return RootEpoch(root["did_key"], root["seq"], root["registered_at"])
+            if ask == PARENT:
+                return await _parent_identity(tx, parent_did)
+            if ask == PARENT_EPOCH:
+                return await _key_epoch(tx, parent_did)
+            if ask == PARENT_CHAIN:
+                return await verify_parent_chain(
+                    tx,
+                    domain=domain,
+                    parent=parent_did,
+                    parent_key=keys[parent_did],
+                    dns_authority=dns_authority,
+                    clock=clock,
+                )
+            return await _registered_head(tx, chain[ask.index]["certificate"]["id"])
 
-        verdict = registration_verdict(facts)
+        verdict = await _decide(
+            registration_rule(
+                RegistrationRequest(
+                    chain=chain,
+                    signer=signer,
+                    expected_head=expected_head,
+                    invitation_id=invitation_id,
+                    keys=keys,
+                    subject=None
+                    if subject is None
+                    else Subject(
+                        subject["kind"], subject["domain"], subject["revoked_at"]
+                    ),
+                )
+            ),
+            read,
+        )
         if isinstance(verdict, Refused):
             raise IdentityTreeRefusal(verdict.code, verdict.status)
         if isinstance(verdict, Repeated):
@@ -255,10 +286,10 @@ async def register_certificate(
                 "registered_at": wire_time(verdict.registered_at),
             }
 
-        if verdict.issuer == "namespace":
-            issuer_key_seq, issuer_epoch_at = root["seq"], root["registered_at"]
-        else:
-            issuer_key_seq, issuer_epoch_at = await _key_epoch(tx, parent_did)
+        issuer_key_seq, issuer_epoch_at = (
+            verdict.issuer_key_seq,
+            verdict.issuer_epoch_at,
+        )
         subject_epoch_at = await tx.fetch_value(
             "SELECT MAX(created_at) FROM {{tables.did_aw_log}} WHERE did_aw = $1",
             cert["id"],
@@ -317,6 +348,18 @@ async def register_certificate(
             registered_at,
         )
     return {"certificate_id": digest, "registered_at": wire_time(registered_at)}
+
+
+async def _decide(
+    rule: Generator[Ask, Any, Verdict], read: Callable[[Ask], Awaitable[Any]]
+) -> Verdict:
+    """Run ``rule``, answering each fact it asks for with ``read``."""
+    try:
+        ask = next(rule)
+        while True:
+            ask = rule.send(await read(ask))
+    except StopIteration as done:
+        return done.value
 
 
 async def _receipt(tx, digest: str) -> Receipt | None:
@@ -380,30 +423,6 @@ async def _registered_head(tx, id_: str) -> dict | None:
         id_,
     )
     return None if current is None else json.loads(current)
-
-
-async def _parent_chain(
-    tx,
-    domain: str,
-    parent_did: str | None,
-    keys: dict[str, str],
-    dns_authority: DomainAuthority | None,
-    clock: Clock,
-) -> dict | IdentityTreeRefusal | None:
-    """S1's verdict on an identity parent's chain, or the refusal its snapshot raised."""
-    if parent_did is None or parent_did not in keys:
-        return None
-    try:
-        return await verify_parent_chain(
-            tx,
-            domain=domain,
-            parent=parent_did,
-            parent_key=keys[parent_did],
-            dns_authority=dns_authority,
-            clock=clock,
-        )
-    except IdentityTreeRefusal as refused:
-        return refused
 
 
 async def _key_epoch(tx, did_aw: str) -> tuple[int, datetime]:

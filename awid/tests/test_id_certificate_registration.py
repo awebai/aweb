@@ -316,6 +316,16 @@ async def test_the_invitation_lookup_finds_an_invitation_another_certificate_use
     )
 
 
+@consumes("invitation-conflict-domain")
+async def test_invitation_conflict_domain(case, tree, awid_db_infra):
+    elsewhere = _bob_variant(
+        domain="other.example",
+        parent={"kind": "namespace", "id": "other.example"},
+        issuer_key=did_key("root"),
+    )
+    await _invitation_conflict(case, tree, awid_db_infra, [sign(elsewhere, "root")])
+
+
 @consumes("same-certificate-retry-does-not-reactivate-old-head")
 async def test_same_certificate_retry_does_not_reactivate_old_head(
     case, tree, awid_db_infra
@@ -424,6 +434,36 @@ async def _revoked(tree, key_name, *, when, by=None):
         when=when,
     )
     assert resp.status_code == 200, resp.text
+
+
+@consumes("accepted-human-invite-retry-after-inviter-revoke")
+async def test_accepted_human_invite_retry_after_inviter_revoke(
+    case, tree, awid_db_infra
+):
+    invitation = operation_case("first-exact-invitation-registration")["input"][
+        "invitation_id"
+    ]
+    chain = [certificate("alice"), certificate(case["input"]["certificate"])]
+    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+    first = await tree.register(
+        chain,
+        invitation_id=invitation,
+        when=at(case["input"]["original_registered_at"]),
+    )
+    assert first.status_code == 200, first.text
+    await _revoked(tree, "alice", when=at("2026-10-26T00:20:00Z"))
+    before = await _revisions(awid_db_infra)
+
+    retry = await tree.register(
+        chain, invitation_id=invitation, when=at(case["input"]["retry_at"])
+    )
+
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == {
+        "certificate_id": certificate_id("bob"),
+        "registered_at": case["expected"]["registered_at"],
+    }
+    assert await _revisions(awid_db_infra) == before
 
 
 async def _enroll_normal_tree(tree):
