@@ -32,7 +32,7 @@
   "unit_suites": {
     "test-server": 4872,
     "test-awid": 386,
-    "test-key-holder": 12,
+    "test-key-holder": 44,
     "test-naapp-lib": 1194,
     "test-naapp-folio": 54,
     "test-naapp-library": 52,
@@ -44,8 +44,8 @@
     "_candidate-unit-channel-core": 177,
     "_candidate-unit-pi": 25
   },
-  "provisional": {
-    "test-key-holder": "provisional, not from a receipt: one run of make TEST_EGRESS_RUNNER= test-key-holder in the suites' prepared image through scripts/test-egress/docker.py --command (its own runner, PostgreSQL and Redis), bash time user 9.766 + sys 1.729 = 11.5 CPU-s of the runner's process tree, rounded to 12; the suite's PostgreSQL and Redis containers are not counted, unlike a receipt. Docker Desktop on Apple silicon (arm64), 2026-11-26, aweb 2759f2942d. The next measured receipt replaces it."
+  "measured_in": {
+    "test-key-holder": "vm-fc264aa378364cb082f1e2d72366c868 (aweb f7a5b9ccbe, 12-CPU merak guest, every lane at once), measured as the rest of this file: the cumulative usage_usec of its isolated runner and the PostgreSQL and Redis in that runner's network namespace, 44.1 CPU-s. Every other figure comes from the receipt above."
   },
   "unit_runs": {
     "test-server": {
