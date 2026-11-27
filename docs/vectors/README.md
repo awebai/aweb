@@ -972,10 +972,14 @@ judged by the real chain verifier at age zero; team certificates from their
 exact status route; and grants from a read signed with the grant's own session
 key.
 
-**Disagreements.** A case the code decides differently stays in the run as a
-failing comparison, pinned to its filed task (`DISAGREEMENTS`). It is reported
-as an expected failure naming the task, and it fails if its comparison changes
-in any way. It is never skipped.
+**Disagreements.** A case the code decides differently is filed as a task and
+listed with it in `DISAGREEMENTS`. The gate claims agreement only for the
+cases it runs: it holds each listed case out by name, in a test per case id
+that requires the task and the case's place in the disagreement run.
+`make test-trust-web-disagreements` runs the listed cases with the same routes,
+readings and comparator, reports expected and observed results per case, and
+fails while any of them disagrees. A case returns to the gate when its task is
+decided and that run agrees. No case is skipped.
 
 ## Consumer-local extension fixtures
 

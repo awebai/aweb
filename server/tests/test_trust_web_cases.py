@@ -26,6 +26,7 @@ from trust_web_cases import (
     run_case,
 )
 from trust_web_cases import stack_factory as stack_factory
+from trust_web_disagreements import CASE_IDS as DISAGREEMENT_RUN
 
 __all__ = ["stack_factory"]
 
@@ -136,35 +137,33 @@ def test_the_format_refuses_each_single_fault(name):
     assert named in str(refused.value), str(refused.value)
 
 
-def test_every_disagreement_names_a_runnable_case_and_a_task():
-    runnable = {case.id for case in load_corpus(_valid()) if case.runnable}
-    for case_id, disagreement in DISAGREEMENTS.items():
-        assert case_id in runnable
-        assert disagreement.task.startswith("aweb-")
-
-
 # ---------------------------------------------------------------------------
 # The cases, against the real registry and server
 # ---------------------------------------------------------------------------
 
 CASES = {case.id: case for case in load_corpus(CORPUS)}
 RUNNABLE = sorted(case_id for case_id, case in CASES.items() if case.runnable)
+GATED = sorted(set(RUNNABLE) - set(DISAGREEMENTS))
 DESIGN = sorted(case_id for case_id, case in CASES.items() if not case.runnable)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case_id", RUNNABLE)
+@pytest.mark.parametrize("case_id", GATED)
 async def test_the_code_decides_the_case_as_the_model_does(stack_factory, case_id):
     case = CASES[case_id]
     async with stack_factory() as stack:
         run = await run_case(stack, case)
     mismatches = compare(case, run)
-    disagreement = DISAGREEMENTS.get(case_id)
-    if disagreement is None:
-        assert mismatches == [], "\n".join(mismatches)
-        return
-    assert tuple(mismatches) == disagreement.mismatches, "\n".join(mismatches)
-    pytest.xfail(f"disagreement {disagreement.task}: " + "; ".join(mismatches))
+    assert mismatches == [], "\n".join(mismatches)
+
+
+@pytest.mark.parametrize("case_id", sorted(DISAGREEMENTS))
+def test_held_out_of_the_gate_as_a_filed_disagreement(case_id):
+    """The gate names each implemented case it does not run, and why: a filed
+    disagreement that the disagreement run executes."""
+    assert CASES[case_id].runnable, f"{case_id} is not an implemented case"
+    assert DISAGREEMENTS[case_id].startswith("aweb-"), DISAGREEMENTS[case_id]
+    assert case_id in DISAGREEMENT_RUN, f"{case_id} is not in the disagreement run"
 
 
 @pytest.mark.asyncio

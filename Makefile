@@ -345,6 +345,12 @@ test-server-local:
 test-user-paths-local:
 	python3 scripts/test_user_paths_local.py
 
+# The trust-web cases the code decides differently from the model (filed
+# disagreements, held out of the gate). Fails while any of them disagrees.
+.PHONY: test-trust-web-disagreements
+test-trust-web-disagreements:
+	cd server && uv run --frozen pytest -q -rA tests/trust_web_disagreements.py
+
 test-server: production-awid-sync
 	cd server && uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \

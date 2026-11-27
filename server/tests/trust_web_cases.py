@@ -311,37 +311,18 @@ def load_corpus(corpus: Any) -> list[Case]:
 # Disagreements between the model and the code
 # ---------------------------------------------------------------------------
 
-
-@dataclass(frozen=True)
-class Disagreement:
-    """A case the code decides differently, filed as ``task``.
-
-    ``mismatches`` is the exact comparison the run produces. The case keeps
-    running: it fails if its comparison changes in any way, and is reported
-    as an expected failure naming the task while it does not.
-    """
-
-    task: str
-    mismatches: tuple[str, ...]
-
-
-# The server sees a team-certificate revocation only after its cached
-# revocation list refreshes (60 s fresh, 60 s stale: docs/aweb-sot.md:448-466);
-# the model assumes one current record (A4). Shown by experiment in the task.
-_REVOCATION_WINDOW = "aweb-adyz.2"
-
-DISAGREEMENTS: dict[str, Disagreement] = {
-    "mint-grant-after-removal-refused": Disagreement(
-        _REVOCATION_WINDOW,
-        (
-            "decision: expected refused (mintGrant.InTeam), code allowed",
-            'observe grantLive({"session": "s1"}): expected after false, read true',
-        ),
-    ),
-    "remove-member-ends-its-grant": Disagreement(
-        _REVOCATION_WINDOW,
-        ('observe grantLive({"session": "s1"}): expected after false, read true',),
-    ),
+# Cases the code decides differently, each with the task that files it. They
+# are held out of the gate, which claims agreement only for the cases it runs,
+# and run as ordinary failing comparisons by trust_web_disagreements.py
+# (make test-trust-web-disagreements). A case returns to the gate when its task
+# is decided and that run agrees.
+#
+# aweb-adyz.2: the server sees a team-certificate revocation only after its
+# cached revocation list refreshes (60 s fresh, 60 s stale:
+# docs/aweb-sot.md:448-466); the model assumes one current record (A4).
+DISAGREEMENTS: dict[str, str] = {
+    "mint-grant-after-removal-refused": "aweb-adyz.2",
+    "remove-member-ends-its-grant": "aweb-adyz.2",
 }
 
 
