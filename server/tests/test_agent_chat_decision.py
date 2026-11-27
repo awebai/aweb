@@ -32,17 +32,17 @@ def drive(recipients, answers, locked=None):
     Returns the verdict and the reads asked for, in order. A read not in
     ``answers`` fails the test: the rule asked for something it should not.
     """
-    kinds, asked = {}, []
-    while isinstance(
-        step := decide_agent_chat(
-            recipients, locked_policy_rows=locked, human_kinds=kinds
-        ),
-        NeedHumanKind,
-    ):
-        asked.append((step.index, step.did))
-        assert step.index in answers, f"unexpected read {step}"
-        kinds[step.index] = answers[step.index]
-    return step, asked
+    decision = decide_agent_chat(recipients, locked_policy_rows=locked)
+    asked = []
+    try:
+        step = next(decision)
+        while True:
+            assert isinstance(step, NeedHumanKind), step
+            asked.append((step.index, step.did))
+            assert step.index in answers, f"unexpected read {step}"
+            step = decision.send(answers[step.index])
+    except StopIteration as finished:
+        return finished.value, asked
 
 
 @pytest.mark.parametrize(
@@ -218,3 +218,29 @@ def test_the_refusal_names_each_person_once_in_stable_order(labels, recipients, 
         == AgentChatRefused(()).code
         == "recipient_human_mail_only"
     )
+
+
+class CountingRow(dict):
+    """A recipient row that counts how often the rule reads its DID."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.did_reads = 0
+
+    def get(self, key, default=None):
+        if key == "did_aw":
+            self.did_reads += 1
+        return super().get(key, default)
+
+
+@pytest.mark.parametrize(
+    "locked", [None, {"did:aw:locked": [{**HUMAN_ROW, "did_aw": "did:aw:locked"}]}]
+)
+def test_each_recipient_is_decided_once(locked):
+    recipients = [CountingRow(did_aw=f"did:aw:agent-{i}") for i in range(64)]
+    recipients.insert(10, CountingRow(did_aw="did:aw:locked", alias="locked"))
+    answers = {i: False for i in range(len(recipients))}
+    verdict, asked = drive(recipients, answers, locked=locked)
+    assert [row.did_reads for row in recipients] == [1] * len(recipients)
+    assert len(asked) == len(recipients) - (1 if locked else 0)
+    assert verdict == (refused("locked") if locked else ALLOWED)

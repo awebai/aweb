@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -73,20 +73,19 @@ class AgentChatRefused:
     code: str = HumanChatRefused.reason
 
 
-AgentChatStep = NeedHumanKind | AgentChatAllowed | AgentChatRefused
+AgentChatVerdict = AgentChatAllowed | AgentChatRefused
 
 
 def decide_agent_chat(
     recipients: Sequence[Mapping[str, Any]],
     *,
     locked_policy_rows: Mapping[str, Sequence[Mapping[str, Any]]] | None,
-    human_kinds: Mapping[int, bool],
-) -> AgentChatStep:
+) -> Generator[NeedHumanKind, bool, AgentChatVerdict]:
     """Refuse verified-human projections; unknown kind remains allowed.
 
-    ``human_kinds`` holds what the caller has read so far, by recipient index.
-    Returns the next recipient whose kind must be read, in order, or the
-    verdict naming every verified human.
+    One pass over the recipients, in order: yields ``NeedHumanKind`` for each
+    recipient whose kind must be read and is sent whether it is a verified
+    human, then returns the verdict naming every verified human.
     """
     humans = []
     for index, row in enumerate(recipients):
@@ -103,10 +102,8 @@ def decide_agent_chat(
                 and did in (policy.get("did_aw"), policy.get("did_key"))
                 for policy in locked_policy_rows[did]
             )
-        elif index in human_kinds:
-            human = human_kinds[index]
         else:
-            return NeedHumanKind(index, did)
+            human = yield NeedHumanKind(index, did)
         if human:
             humans.append(recipient_label(row))
     if humans:
@@ -129,17 +126,11 @@ async def require_agent_chat(
     and the required cutover revalidation, never a fresh per-send ancestry claim.
     """
     manager = db.get_manager("aweb")
-    human_kinds: dict[int, bool] = {}
-    while isinstance(
-        step := decide_agent_chat(
-            recipients,
-            locked_policy_rows=locked_policy_rows,
-            human_kinds=human_kinds,
-        ),
-        NeedHumanKind,
-    ):
-        human_kinds[step.index] = bool(
-            await manager.fetch_one(
+    decision = decide_agent_chat(recipients, locked_policy_rows=locked_policy_rows)
+    try:
+        step = next(decision)
+        while True:
+            human = await manager.fetch_one(
                 f"""SELECT 1 FROM {{{{tables.agents}}}} WHERE deleted_at IS NULL
                      AND {human_predicate_sql()}
                      AND ((did_aw=$1 AND {verified_key_sql()})
@@ -147,6 +138,8 @@ async def require_agent_chat(
                    LIMIT 1""",
                 step.did,
             )
-        )
-    if isinstance(step, AgentChatRefused):
-        raise HumanChatRefused(list(step.recipients))
+            step = decision.send(bool(human))
+    except StopIteration as finished:
+        verdict = finished.value
+    if isinstance(verdict, AgentChatRefused):
+        raise HumanChatRefused(list(verdict.recipients))
