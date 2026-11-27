@@ -163,13 +163,17 @@ async def test_contact_add_unregistered_cross_namespace_target(privacy_app, miss
     # Shared failed reads publish the same stable failure for five seconds
     # (docs/identity-messaging-contract.md), measured on the stored row.
     failed = await db.fetch_all(
-        "SELECT scope_key, created_at, expires_at "
+        "SELECT scope_key, evidence, created_at, expires_at "
         "FROM {{tables.federation_authority_results}} WHERE status = 'failed'"
     )
-    assert "discovery:" + target in {row["scope_key"] for row in failed}
+    by_scope = {row["scope_key"]: row for row in failed}
+    # Waiting readers get the stored reason, not this response's.
+    discovery = by_scope["discovery:" + target]
+    evidence = discovery["evidence"]
+    evidence = json.loads(evidence) if isinstance(evidence, str) else evidence
+    assert evidence["reason"] == expected_reason
     for row in failed:
-        lifetime = row["expires_at"] - row["created_at"]
-        assert timedelta(seconds=5) <= lifetime < timedelta(seconds=5, milliseconds=1)
+        assert row["expires_at"] - row["created_at"] == timedelta(seconds=5)
 
 
 @pytest.mark.asyncio
