@@ -3,7 +3,8 @@ import TrustWeb.Model
 /-!
 # The trust web: what is proved
 
-Each theorem has a one-sentence reading above it. `lake build` checks them all.
+Each result has a doc comment above it that restates it; the lemmas with
+none are helpers. `lake build` checks them all.
 -/
 
 namespace TrustWeb
@@ -66,7 +67,7 @@ theorem Valid.mono {s t : State} (hc : ∀ c, c ∈ s.certs → c ∈ t.certs)
   | agentOf hm ho hk hi hs hn _ ih =>
       exact .agentOf (hc _ hm) ho hk hi hs (fun h => hn (hr _ h)) ih
 
-/-! ## An agent can never pass as a person -/
+/-! ## Persons and agents -/
 
 /-- **A member has one kind.** If every identity has one certificate, no
 identity is valid as an agent in one organisation and as a person in any. -/
@@ -149,7 +150,7 @@ theorem agents_cannot_approve_as_person {s : State} {o : Org} {approvals : List 
   intro ⟨k, hk, hv⟩
   exact h k hk hv
 
-/-! ## Authority comes from the root -/
+/-! ## Chains to the root -/
 
 theorem Person.chainToRoot {s : State} {o : Org} {k : Key} (hp : Person s o k) :
     ChainToRoot s o k := by
@@ -460,7 +461,7 @@ theorem no_policy_no_approval {s : State} {o : Org}
   intro r hr ho _
   exact absurd ho (h r hr)
 
-/-! ## Built and design: who may ask for a person -/
+/-! ## Who may ask for a person, as built and as designed -/
 
 /-- If someone is a person once one certificate is added, and was not before,
 the added certificate is a person certificate of that organisation. -/
@@ -735,7 +736,7 @@ theorem grant_ends_with_subject {s : State} (hrr : RevokedAreRegistered s) {g : 
   · exact (revoked_has_no_authority hrr hr).2 _ _ hin
   · exact hc hin.1
 
-/-! ## More that never happens -/
+/-! ## Further results about one act -/
 
 /-- **In one act, a revocation is not undone.** If `k` is revoked and not
 cut off by a root replacement before an accepted act, it is the same after. -/
@@ -922,7 +923,7 @@ theorem controller_stays_in_its_organisation {ask : AskRule} {s s' : State} {key
         subst this
         rfl
 
-/-! ## DNS is the root of trust, and a key can leave its holder -/
+/-! ## DNS, and leaving a key holder -/
 
 /-- **Whoever controls the domain can always take the organisation back.** If
 `o` exists, there is an accepted act that `o`'s domain owner asks for, after

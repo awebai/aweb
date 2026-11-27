@@ -3,14 +3,11 @@ import TrustWeb.Properties
 /-!
 # Each operation belongs to a team
 
-The general form of "an admin asks": leaving a key holder, like every other
-operation on an organisation, belongs to a team that the organisation decides.
-
-So there is one mechanism. An organisation assigns each kind of operation to
-one of its teams. The admin team is the default. `adminRule` is the case where
-every operation is assigned to the admin team.
-
-How an organisation changes the assignment is not modelled: it is given.
+An `Assignment` names, for each organisation and kind of act, one of its
+teams. Under `teamRule` a valid member of the organisation that holds a
+certificate of the assigned team may ask. `adminRule` is the team rule with
+every act assigned to the admin team (`adminRule_is_teamRule`). How an
+assignment is chosen or changed is not modelled: it is a parameter.
 -/
 
 namespace TrustWeb

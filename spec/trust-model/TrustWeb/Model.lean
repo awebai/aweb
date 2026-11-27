@@ -9,36 +9,27 @@ and 6), `docs/teams.md`, `docs/human-approval-architecture.md`,
 `docs/trust-model.md`, `docs/identity.md` ("Session grants"), the server's
 grant code and the key holder. The protocol's word for a person is "human".
 
-Experimental. Not yet checked against the code. See the README for what has
-been checked.
+Experimental. Read against the source, not yet run against the code. See
+the README for what has been checked.
 
 ## What is built and what is design
 
-Everything here describes aweb as built, except the rule for who may ask a
-key holder and the four things listed below. That rule is a parameter, `AskRule`. Two values are
-here; `Operations.lean` adds a third, `teamRule`, the general form of the
-second.
+Who may ask a key holder is a parameter, `AskRule`. Two values are here,
+`builtRule` (as built) and `adminRule` (planned);
+`Operations.lean` adds a third, `teamRule` (planned). A result stated for
+any `AskRule` holds for each of them.
 
-* `builtRule`: what the self-hosted key holder does today. Under it a held
-  key only adds or re-admits a person; nothing else can be signed with it.
-* `adminRule`: the planned design, in which an organisation's members are
-  people and agents alike: an admin asks.
-
-Four more things are planned design, kept in the model because the design
-needs them. They are acts and checks under every rule, `builtRule` included:
+Four more parts are planned, not built. They are acts and checks under every
+rule, `builtRule` included:
 
 * `entrust` and `release`. The built key holder makes its keys inside itself
   and has no command to take a key in or give one back.
-* `KeepsAnAdmin`: a key holder not removing the last admin. The registry has
-  no such check.
-* `leave`: a member leaving by asking a key holder. The built command drops
-  the member's own copy and does not end the certificate.
-* An invitation never leading into the admin team. The registry does not
-  know which team is the admin team.
-
-A result stated for any rule holds for each of them, and for any rule chosen
-later. Results under `builtRule` are proved over acts that include the four
-planned things.
+* `KeepsAnAdmin`, a premise of `leave`, and of `remove` when the team's key
+  is with a key holder. The registry has no such check.
+* `leave`. The built command drops the member's own copy and does not end
+  the certificate.
+* The premise `i.team ≠ .admin` of `invite` and `redeem`. The registry does
+  not know which team is the admin team.
 
 ## Assumptions (taken as given, not proved)
 
@@ -53,55 +44,15 @@ planned things.
   real system a verifier may go on accepting for a bounded time after a
   revocation.
 * **A5. One act at a time.** Each act happens whole, and acts do not overlap.
-  Crashes, retries and two changes at once are not modelled.
 * **A6. Approvals.** An approval is given by the identity it names, for the
   exact act, and cannot be reused.
-* **A7. Keys.** An identity keeps one key, and only its owner uses it. Key
-  rotation, and anyone holding an identity's key for it, are not modelled.
+* **A7. Keys.** An identity keeps one key, and only its owner uses it.
 * **A8. The key holder.** A key holder that holds an organisation's key uses
-  it only as `Authorised` says. Nobody outside can check this.
+  it only as `Step` says. Nobody outside can check this.
 * **A9. The server.** The server that keeps the grants attributes a message to
   an identity only as `Step` says. Only that server can check a grant.
 
-## Restrictions (the real system does more)
-
-* **Replacing a root key cuts off every identity at once.** Really the
-  cut-off is by time of registration, and a root can also set a backdated
-  cut-off. Admitting an identity again is, really, a new signed certificate
-  for the same identity and key; here the same certificate stands again, and
-  only its original issuer can admit it, where really the new root can admit
-  anyone it keeps. A delegated child organisation can also be recovered by
-  its parent; that path is not modelled.
-* **A key leaves a key holder whole.** Really the organisation makes a new key
-  and the old and new keys both sign the change. The effect is the same:
-  everything issued before stays valid.
-* **One certificate per identity.** In the real system an identity's
-  organisation and kind are fixed, but it can be moved to another parent.
-* **Every team has a key.** Creating, deleting and rotating teams and their
-  keys are not modelled. Nor is the root replacing a team's key.
-* **Policy is given.** Who may change an organisation's policy is not modelled.
-* **A team certificate is one record.** The registry revokes a certificate by
-  its id and tells a missing one from a revoked one.
-* **`AnswersFor` with no answer** covers both "no person answers" and "cannot
-  be established". The protocol tells them apart.
-* **A grant here can send or not.** Really it has ten scopes (reading,
-  subscribing, contacts, presence, coordination) and may expire. What the
-  model claims is only that a grant never gives control of identities, keys,
-  teams or grants.
-* **Sending with your own key** stands for a send the server accepted. Really
-  it checks the key is current, the identity valid, and the recipient's rules.
-* **The key holder's operator** is not modelled. Whoever controls a key uses
-  it directly only while it is not with a key holder; while it is held, only
-  those the rule lets ask use it. Really the operator acts through the
-  holder's named commands, which are narrower.
-* **Registered** stands for three real things: a local key with no public
-  identity, a public identity with a registered key, and enrolment in the
-  identity tree. The one-team rule is about the first. It holds on the
-  supported journey; the registry's own route does not enforce it.
-* **An invitation here is used once, for one team.** Really it may allow
-  several uses, expire, and name the person its joiner must answer to.
-* **Messages go nowhere.** The record keeps who each message is attributed to.
-  Delivery, reading and encryption are not modelled.
+Where the model does less than the real system is listed in the README.
 -/
 
 namespace TrustWeb
@@ -226,7 +177,9 @@ structure State where
   certs : List Cert
   /-- The identities that are not current: revoked, or cut off by a root replacement. -/
   revoked : List Key
-  /-- Those among them that a root replacement cut off. They can be admitted again. -/
+  /-- Identities cut off by a root replacement: `replaceRoot` adds them, and a
+  re-admission or a revocation of one takes it out. One in it can be admitted
+  again (`readmitByRoot`, `readmitByParent`). -/
   cutOff : List Key
   /-- The team certificates that stand. -/
   members : List Membership
@@ -280,10 +233,12 @@ inductive ChainToRoot (s : State) (o : Org) : Key → Prop where
       c ∈ s.certs → c.org = o → c.issuer = .member p → c.subject = k →
       ChainToRoot s o p → ChainToRoot s o k
 
-/-- `AnswersFor s o a h`: person `h` answers for `a`. A person answers for
-themselves. For an agent it is the nearest person up its chain; with one
-certificate each, the only one (`answerer_unique`). An agent whose
-chain reaches the root through agents only has nobody. -/
+/-- `AnswersFor s o a h`: person `h` answers for `a`. A valid person answers
+for itself (`self`). A person answers for `a` if `a` holds an agent
+certificate of `o` issued by a member the person answers for, and `a` is not
+revoked (`up`). So every agent on the way is unrevoked, and the person is a
+valid person of `o` (`answerer_is_valid_person`). With one certificate each,
+at most one person answers (`answerer_unique`). -/
 inductive AnswersFor (s : State) (o : Org) : Key → Key → Prop where
   | self {h : Key} : Valid s o h .person → AnswersFor s o h h
   | up {c : Cert} {a p h : Key} :
@@ -336,13 +291,14 @@ def OrgKey.org : OrgKey → Org
 organisation and this kind of act, may identity `k` ask? -/
 abbrev AskRule := State → Org → ActKind → Key → Prop
 
-/-- As built. The self-hosted key holder adds a person in two cases. With no
-approval configured, a valid person of the organisation asks. With a person's
-approval configured for adding a person, any valid member of the organisation
-asks, agent included, and `Approved` then requires a person's approval. The
-same request re-admits a cut-off person directly under the root
-(`readmitByRoot`, which asks for `registerOf .person`). It signs nothing else
-on a member's request, and never gives a key back. -/
+/-- As built. Only adding a person may be asked for (`act = .registerPerson`).
+A valid person of the organisation may ask, whatever the policy. Any valid
+member of it, agent included, may ask when the policy has a rule for adding a
+person in it that asks any person's approval; `Approved` then requires a
+valid person among the approvals. A named approver (`.exactly`) does not let
+an agent ask. Through `Authorised`, a held key then signs only
+`registerByRoot` and `readmitByRoot` of a person; `leave` and `redeem` do not
+go through `Authorised`. -/
 def builtRule : AskRule :=
   fun s o act k => act = .registerPerson ∧
     (Valid s o k .person ∨
@@ -483,7 +439,8 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
         { s with members := s.members.filter (fun x => decide (x ≠ m)),
                  grants := s.grants.filter (fun g => decide (¬ (g.org = m.org ∧ g.team = m.team ∧ g.subject = m.member))) }
   /-- A member leaves a team whose key a key holder holds, by asking it. The
-  last admin cannot leave. -/
+  last admin cannot leave. No ask rule and no policy is consulted, and the
+  member need not be registered or valid. -/
   | leave {s : State} {m : Membership} :
       m ∈ s.members → .team m.org m.team ∈ s.held → KeepsAnAdmin s m →
       Step ask s (.id m.member)

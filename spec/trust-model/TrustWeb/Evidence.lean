@@ -3,23 +3,22 @@ import TrustWeb.Abilities
 /-!
 # Evidence of how a person was enrolled (planned)
 
-A planned outcome, `controller_asserted_person`, says that a verified person
-has enrolment evidence from its own domain's controller: it records who
-vouched for the person. It carries no email verification, no fresh human
-gesture and no permission. It is reported beside the shared verdict, which
-does not change, and it does not change the outcome for agents below the
-person.
+A planned outcome of the protocol (`docs/id-certificates.md`),
+`controller_asserted_person`, says that a verified person has enrolment
+evidence from its own domain's controller: it records who vouched for the
+person. It carries no email verification, no fresh human gesture and no
+permission. It is reported beside the shared verdict, which does not change,
+and it does not change the outcome for agents below the person.
 
-Here the evidence is a list of assertions, kept outside the record. No act
-reads it, so no act's premise and no verdict of the model (`Valid`,
-`Person`, `AnswersFor`) depends on it. The results below hold the record, and
-so the person's chain, fixed and vary the assertions.
+Here the evidence is a list of assertions, kept outside the record (`State`
+has no field for it). So no act's premise and no verdict of the model
+(`Valid`, `Person`, `AnswersFor`) depends on it. The results below hold the
+record, and so the person's chain, fixed and vary the assertions.
 
 Both routes that register a person directly under the root (the domain's
-controller using the root key, or a hosted service holding it) add the same
-kind of certificate: a person certificate issued by the root. The certificate
-has no field for how the person was enrolled, so the chain alone cannot tell
-the routes apart.
+controller using the root key, or a hosted service holding it) are the same
+act here, `registerByRoot` of a person, and `Cert` has no field for how the
+person was enrolled.
 
 * **A10. Assertions.** An assertion in the list was signed by the party it
   names (the domain's authorised controller, or the hosted service after an

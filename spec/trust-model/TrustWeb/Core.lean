@@ -1,28 +1,13 @@
 import TrustWeb.Properties
 
 /-!
-# The core: the fewest acts that carry the five
+# The core: six acts and five properties
 
-Five properties, chosen to test how far the model can be reduced. Each is
-stated in the core as its theorem says (`core_one` to `core_five`); in short,
-with its limits:
-
-1. An agent does not pass as a person.
-2. Removing an admin needs nobody's cooperation where the admin team's key or
-   the root key is not with a key holder (`core_two`). Through a key holder,
-   under the admin rule, an admin can remove another admin
-   (`core_two_design`). Nothing is proved about removing the only admin
-   when both keys are with a key holder.
-3. Every admin has a chain of signed statements back to a root.
-4. A revoked member is not valid, not an admin, and cannot act in a team.
-5. An organisation with no policy requires no approval.
-
-`CoreStep` keeps six of the model's 21 acts. This file proves that the
-core is a part of the full model, and states the five in it (`core_one` to
-`core_five`). Items 3 and 4 are about validity, admins and team membership;
-they say nothing about whom a rule lets ask a key holder.
-
-It is an experiment in reducing the model, not a proposal.
+`CoreStep` keeps six of the model's 21 acts, each exactly as in `Step`, and
+`CoreStep.toStep` proves that each is an act of the model. Five properties
+are stated for the core as `core_one`, `core_two` with `core_two_design`,
+`core_three`, `core_four` and `core_five`; each theorem's doc comment says
+what it states. It is an experiment in reducing the model, not a proposal.
 -/
 
 namespace TrustWeb

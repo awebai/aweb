@@ -3,12 +3,9 @@ import TrustWeb.Properties
 /-!
 # What must be possible
 
-The other results say what never happens. These say what can happen, and
-where it stops: records the system reaches in which something works, acts
-that go through when their conditions hold, and two limits beside the
-abilities they bound (a policy that asks for a person refuses approvals with
-none, and under the admin rule an organisation with no admin, whose admin
-team's key is with a key holder, cannot add one in one act).
+Records the system reaches in which something works, acts that go through
+when their conditions hold, and two limits: `policy_requires_person` and
+`locked_without_admin`. Each theorem's doc comment says what it states.
 -/
 
 namespace TrustWeb
@@ -130,8 +127,9 @@ theorem approved_act_goes_through {s : State} {o : Org} {n : Nat} {a p k : Key}
 
 /-- **Design, in one act. Where the admin team's key is with a key holder and
 the organisation has no admin, no accepted act adds an admin-team
-certificate of it.** Over several acts it can get one back
-(`locked_organisation_unlocks_by_readmission`). -/
+certificate of it.** It says nothing about re-admission, which leaves the
+team certificates as they are (`readmitByRoot`, `readmitByParent`). Over three acts an admin-team certificate
+of it can be added (`locked_organisation_unlocks_by_readmission`). -/
 theorem locked_without_admin {s s' : State} {who : Party} {o : Org}
     (hheld : OrgKey.team o .admin ∈ s.held) (hnone : ∀ k, ¬ Admin s o k)
     (hstep : Step adminRule s who s') {m : Membership}
