@@ -18,7 +18,7 @@ to refresh it.
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `verify`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
-| Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
+| Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `validate`, `version` |
 | Additional Commands | `blueprint`, `session`, `who` |
 
@@ -3754,70 +3754,6 @@ Flags:
 - `--min-daemon-version string Required daemon release version for the readiness verdict`
 - `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
 
-## `activity`
-
-### `activity`
-
-Turn this agent's live activity publishing on or off
-
-Subcommands:
-- `disable` Stop publishing this agent's live activity
-- `enable` Publish this agent's live activity to the chats it serves
-- `hook` Publish live activity from a Codex hook event on stdin
-- `show` Show whether this agent publishes live activity
-
-Flags:
-- `-h, --help help for activity`
-
-## `activity disable`
-
-### `activity disable`
-
-Stop publishing this agent's live activity
-
-Flags:
-- `-h, --help help for disable`
-
-## `activity enable`
-
-### `activity enable`
-
-Publish this agent's live activity to the chats it serves
-
-Flags:
-- `-h, --help help for enable`
-
-## `activity hook`
-
-### `activity hook`
-
-Publish live activity from a Codex hook event on stdin
-
-Subcommands:
-- `install` Install the activity hook into a runtime's hook configuration
-
-Flags:
-- `-h, --help help for hook`
-
-## `activity hook install`
-
-### `activity hook install`
-
-Install the activity hook into a runtime's hook configuration
-
-Flags:
-- `--codex Install into Codex's user hooks ($CODEX_HOME/hooks.json)`
-- `-h, --help help for install`
-
-## `activity show`
-
-### `activity show`
-
-Show whether this agent publishes live activity
-
-Flags:
-- `-h, --help help for show`
-
 ## `agent`
 
 ### `agent`
@@ -4193,72 +4129,6 @@ Flags:
 - `--trust-config Trust this directory's .aw/run.json as it is now, so its prompts and services are used; a file that changes afterwards is ignored until trusted again`
 - `--wait int Idle seconds per wake-stream wait cycle (default 20)`
 - `--work-prompt-suffix string Override the configured work cycle prompt suffix for this run`
-
-## `status`
-
-### `status`
-
-Publish signed agent health
-
-Subcommands:
-- `publish` Sign and publish an agent-status-v1 JSON document
-
-Flags:
-- `-h, --help help for status`
-
-## `status publish`
-
-### `status publish`
-
-Sign and publish an agent-status-v1 JSON document
-
-Flags:
-- `--alias string Subject agent's team alias`
-- `--document string Read JSON from this file, or - for stdin`
-- `-h, --help help for publish`
-- `--print-signed Print only signed_payload and signature without network access`
-
-## `status-host`
-
-### `status-host`
-
-Designate the current agent's status publisher
-
-Subcommands:
-- `clear` Clear your status host designation
-- `set` Designate a certified team member as your status host
-- `show` Show your status host designation
-
-Flags:
-- `-h, --help help for status-host`
-
-## `status-host clear`
-
-### `status-host clear`
-
-Clear your status host designation
-
-Flags:
-- `-h, --help help for clear`
-
-## `status-host set`
-
-### `status-host set`
-
-Designate a certified team member as your status host
-
-Flags:
-- `-h, --help help for set`
-- `--host-did string Status host's did:key`
-
-## `status-host show`
-
-### `status-host show`
-
-Show your status host designation
-
-Flags:
-- `-h, --help help for show`
 
 ## `task`
 

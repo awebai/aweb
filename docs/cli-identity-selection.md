@@ -62,7 +62,7 @@ identity uses that identity's key; it does not mint another identity.
 
 | Group or path | Acting authority and remaining direct paths |
 | --- | --- |
-| Mail, chat, attachments, events, activity/status, heartbeat | Shared client/identity selection; signing and decryption use selected key material. Heartbeat repo repair reads/writes checkout repo metadata. |
+| Mail, chat, attachments, events, heartbeat | Shared client/identity selection; signing and decryption use selected key material. Heartbeat repo repair reads/writes checkout repo metadata. |
 | Tasks, work, locks, instructions, roles | Shared client, including grant clients; server authorization decides each operation. Work/role defaults read the selected credential binding. |
 | Contacts, inbound-mode, registry reads, ID request/sign | Shared selection; optional signing-key lookup cannot fall back to checkout when an external actor is selected. Explicit controller/anonymous registry modes keep their documented authority. |
 | Team invite | Selected team/service and caller credential; local controller issuance uses that selected team. Grants reach the hosted server under the grant credential and preserve its refusal. |

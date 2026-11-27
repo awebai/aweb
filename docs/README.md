@@ -94,10 +94,6 @@ authority.
   and assignments, and HPKE credential sealing, between secrets and its runners.
 - [AWID A2A publication contract](a2a-awid-publication-contract.md) — publication
   and bridge-delegation assertions.
-- [Agent health](agent-health.md) — status-host designation and the signed
-  agent status document a host publishes.
-- [Agent health clients](agent-health-clients.md) — the `aw` commands and
-  client versions that designate, publish and receive agent health.
 
 </details>
 

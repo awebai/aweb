@@ -217,7 +217,6 @@ func Execute() {
 	restorePluginIdentityHome, err := activateIdentityHomeForPluginDispatch(os.Args[1:])
 	if err != nil {
 		finishHTTPDiagnostics(err)
-		err = normalizeStatusCommandError(os.Args[1:], err)
 		os.Exit(exitCode(reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))))
 	}
 	defer restorePluginIdentityHome()
@@ -237,7 +236,6 @@ func Execute() {
 	checkVersionFromHeader()
 	finishHTTPDiagnostics(err)
 	if err != nil {
-		err = normalizeStatusCommandError(os.Args[1:], err)
 		msg := err.Error()
 		if hint := checkVerificationRequired(err); hint != "" {
 			msg = hint

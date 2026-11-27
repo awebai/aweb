@@ -13,7 +13,7 @@ import pytest
 
 import aweb.routes.events
 from awid.signing import canonical_json_bytes, sign_message
-from test_agent_status_host_http import _team_request
+from team_request_support import _team_request
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_certificate
 
@@ -81,9 +81,7 @@ async def test_cli_subscription_survives_the_real_server_stream_cap(
     )
     (home / "signing.key").chmod(0o600)
     child_env = {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith(("AWEB_", "AWID_", "AW_AGENT_STATUS_"))
+        k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))
     }
     child_env.update(HOME=str(tmp_path), AW_NO_UPDATE_CHECK="1")
     # Deliberately omit --timeout: the default promises an indefinite subscription.

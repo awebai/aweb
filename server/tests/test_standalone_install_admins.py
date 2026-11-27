@@ -18,7 +18,7 @@ from aweb.install_admins import (
     standalone_install_admin_policy,
 )
 from aweb.install_authority import CertificateInstallAdminSubject
-from test_agent_status_host_http import _team_request
+from team_request_support import _team_request
 
 TEAM = services.TEAM
 privacy_app = services.privacy_app

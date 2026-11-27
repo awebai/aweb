@@ -209,6 +209,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "055_chat_conversation_coverage.sql",
         "056_inbound_mode_default.sql",
         "057_legacy_mail_index.sql",
+        "058_drop_agent_status.sql",
     ]
 
 

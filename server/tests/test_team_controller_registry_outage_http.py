@@ -12,11 +12,8 @@ __all__ = ["rotation_app"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["replace_key", "status_host"])
 @pytest.mark.parametrize("age", [899, 901])
-async def test_controller_authority_outage_is_bounded(
-    rotation_app, monkeypatch, operation, age
-):
+async def test_controller_authority_outage_is_bounded(rotation_app, monkeypatch, age):
     env = rotation_app
     now = 1_000_000
     monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
@@ -39,7 +36,7 @@ async def test_controller_authority_outage_is_bounded(
     monkeypatch.setattr(env.app.state, "awid_registry_client", unavailable)
     try:
         response, stored, expected = await _controller_action(
-            env, operation, env.team_sk, env.team_did
+            env, env.team_sk, env.team_did
         )
         assert response.status_code == (200 if age <= 900 else 503), response.text
         if age <= 900:

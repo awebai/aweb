@@ -59,7 +59,6 @@ Every `A path:line` below refers to that commit, not a moving branch.
 | Existing present links pin read-only versions; editable links select latest and require unrevoked/unexpired capability. | `naapp/folio/src/folio/repository.py:327`–`:445`, `:481`–`:503` |
 | Folio enforces document/version caps today. | `naapp/folio/src/folio/repository.py:23`–`:43`, `:105`–`:157` |
 | Task creation is member-authenticated, strict, assigned by alias, and fires mutation hooks. Structured action metadata/idempotent creation are new work. | `server/src/aweb/coordination/routes/tasks.py:33`–`:43`, `:98`–`:133`; `server/src/aweb/coordination/tasks_service.py:181`–`:291` |
-| Health is host-published evidence, with explicit fallback, not inferred runtime presence. | `docs/agent-health.md:19`–`:57` |
 | Shared naapp-lib currently exports documentation/chrome helpers, while Folio and Library have separate member-auth implementations. | `naapp-lib/README.md:3`–`:17`; `naapp-lib/src/aweb_naapp/__init__.py:34`–`:56`; `naapp/folio/src/folio/auth.py:304`–`:367`; `naapp/library/src/library/auth.py:368`–`:431` |
 | Only one experimental in-process mutation callback ships; a named hook registry/catalog does not. | `docs/aw-hooks-sot.md:17`–`:19`, `:42`–`:63`; `server/src/aweb/hooks.py:12`–`:27` |
 | Current Folio present tokens are stored directly, without a single-use/request-hash contract. | `naapp/folio/src/folio/repository.py:362`–`:380`; `naapp/folio/src/folio/migrations/001_initial.sql:70`–`:82` |
@@ -494,8 +493,7 @@ booking or guest message send.
 Offline copy comes from the signed/fresh acah honest-health status and its age:
 “agent offline since 10:02; request queued” only if those facts are known.
 Expired/absent health says “status unavailable; request queued”. Mail read,
-stream presentation, presence and accepted task are distinct from execution
-(`A docs/agent-health.md:19`–`:57`).
+stream presentation, presence and accepted task are distinct from execution.
 
 ### Exact approval and enforcement boundary
 
@@ -886,7 +884,7 @@ installation; the admin can approve it. Generic OSS host policy determines
 admin authority; BYOT follows its controller/delegation model, not Cloud's
 account roles. How a hosted operator projects owner/admin roles is its own
 concern. Do not equate key
-custody, status-host power or a role string in page data with install authority.
+custody or a role string in page data with install authority.
 
 A durable installation has opaque `installation_id`, monotone generation,
 origin, pinned digest, granted scopes and active/revoked state. Naapps verify

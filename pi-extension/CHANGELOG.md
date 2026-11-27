@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Live agent activity publishing is removed. The identity home's
+  `activity.yaml` is no longer read.
+
 ## 0.4.0
 
 - Publish live agent activity for the session when the host owner opts in

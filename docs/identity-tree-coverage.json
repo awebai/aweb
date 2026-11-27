@@ -221,12 +221,6 @@
         "reason": "Reconstructs the private key after parsing the stored signing seed."
       },
       {
-        "file": "cli/go/cmd/aw/agent_status.go",
-        "symbol": "runStatusPublish",
-        "callee": "crypto/ed25519.NewKeyFromSeed",
-        "reason": "Reconstructs the explicit deterministic seed for the offline status test path."
-      },
-      {
         "file": "cli/go/cmd/aw/id_create_hosted.go",
         "symbol": "prepareHostedIdentity",
         "callee": "crypto/ed25519.NewKeyFromSeed",

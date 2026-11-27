@@ -34,7 +34,6 @@ from aweb.app_events import (
     upsert_app_event_subscription,
     verify_app_event_auth,
 )
-from aweb.agent_health import LISTENING_REFRESH_SECONDS, record_stream_listening
 from aweb.agent_wake import (
     agent_wake_key,
     agent_wake_publisher,
@@ -693,8 +692,6 @@ async def _sse_agent_events(
         last_heartbeat_at = datetime.now(timezone.utc)
 
         yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
-        await record_stream_listening(redis, agent_id, now=datetime.now(timezone.utc))
-        listening_recorded_at = monotonic()
 
         guard = NeverGrantStreamGuard(request, db, identity, grant_expiry_reason)
         reason = await guard.reason()
@@ -739,7 +736,6 @@ async def _sse_agent_events(
             now = monotonic()
             due = [
                 next_reconcile_at,
-                listening_recorded_at + LISTENING_REFRESH_SECONDS,
                 now + (deadline - datetime.now(timezone.utc)).total_seconds(),
                 now
                 + max(
@@ -758,12 +754,6 @@ async def _sse_agent_events(
 
             if datetime.now(timezone.utc) >= deadline:
                 break
-
-            if monotonic() - listening_recorded_at >= LISTENING_REFRESH_SECONDS:
-                await record_stream_listening(
-                    redis, agent_id, now=datetime.now(timezone.utc)
-                )
-                listening_recorded_at = monotonic()
 
             reason = await guard.reason()
             if reason:

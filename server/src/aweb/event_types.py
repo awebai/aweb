@@ -12,7 +12,6 @@ class MutationEventType(StrEnum):
     """Produced or explicitly handled mutations from the embedding contract."""
 
     AGENT_DELETED = "agent.deleted"
-    AGENT_STATUS = "agent.status"
     MAIL_SENT = "message.sent"
     MAIL_ACKNOWLEDGED = "message.acknowledged"
     CHAT_MESSAGE_SENT = "chat.message_sent"
@@ -35,7 +34,6 @@ class MutationEventType(StrEnum):
 class TransportEventType(StrEnum):
     """Stream names; hook translation decides which mutations publish them."""
 
-    AGENT_STATUS = "agent.status"
     AGENT_ONLINE = "agent.online"
     AGENT_OFFLINE = "agent.offline"
     MAIL_DELIVERED = "message.delivered"
