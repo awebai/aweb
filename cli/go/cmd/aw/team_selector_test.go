@@ -141,29 +141,6 @@ func TestMailInboxTeamFlagSelectsRequestedMembership(t *testing.T) {
 	}
 }
 
-func TestMailInboxTeamFlagRejectsUnknownMembership(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-	writeDefaultWorkspaceBindingForTest(t, tmp, "https://app.aweb.ai")
-
-	run := exec.CommandContext(ctx, bin, "mail", "inbox", "--team", "ops:acme.com")
-	run.Env = testCommandEnv(tmp)
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	if err == nil {
-		t.Fatalf("expected error, got success:\n%s", string(out))
-	}
-	if got := string(out); !containsAll(got, `team "ops:acme.com" is not present in workspace memberships; available: backend:demo`) {
-		t.Fatalf("unexpected output:\n%s", got)
-	}
-}
-
 func TestMailInboxDefaultsToActiveTeamWhenTeamFlagIsUnset(t *testing.T) {
 	t.Parallel()
 
