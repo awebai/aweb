@@ -3,6 +3,7 @@ import TrustWeb.Evidence
 import TrustWeb.Operations
 import TrustWeb.Core
 import TrustWeb.Spheres
+import TrustWeb.SphereApprovals
 
 /-!
 # Every name the prose cites exists in the model
@@ -24,7 +25,7 @@ def skipped : List String :=
   ["a", "b", "c", "g", "g'", "h", "h'", "i", "k", "m", "n", "o", "o'", "p", "pk",
    "r", "s", "s'", "s1", "s2", "s3", "t", "x", "L", "ask", "who", "approvals", "assign",
    "key", "keep", "as", "w", "w'", "z", "z'", "z0", "init", "Talk",
-   "Persuadable", "occ", "P", "y", "v", "Prop", "sorry", "axiom", "native_decide", "opaque",
+   "Persuadable", "occ", "P", "y", "v", "Adv", "joiner", "approvals", "Prop", "sorry", "axiom", "native_decide", "opaque",
    "implemented_by", "controller_asserted_person", "nearest_human",
    "rotate_team_key", "DocCheck"]
 
@@ -39,14 +40,14 @@ def modelTypes : List Name :=
    `Rule, `Grant, `Invite, `Message, `State, `Person, `Valid, `ChainToRoot,
    `AnswersFor, `Step, `Reachable, `CoreStep, `CoreReachable, `Enrolment,
    `Assertion, `AdminTeamLocked, `Steps, `Secret, `World, `WStep, `WReachable,
-   `Flows, `Occupant, `DocNames]
+   `Flows, `Occupant, `StepVia, `AStep, `AReachable, `NamedStep, `DocNames]
 
 /-- The model's inductive types: a leading-dot name must be a constructor of
 one of them. -/
 def inductives : List Name :=
   [`Kind, `Issuer, `Team, `OrgKey, `Party, `ActKind, `Approver, `Person, `Valid,
    `ChainToRoot, `AnswersFor, `Step, `Reachable, `CoreStep, `CoreReachable,
-   `Steps, `Enrolment, `Secret, `WStep, `WReachable, `Flows, `Occupant]
+   `Steps, `Enrolment, `Secret, `WStep, `WReachable, `Flows, `Occupant, `StepVia, `AStep, `AReachable, `NamedStep]
 
 def resolvesInModel (env : Environment) (n : Name) : Bool :=
   n == `TrustWeb || env.contains (`TrustWeb ++ n) || modelTypes.any fun t => env.contains (`TrustWeb ++ t ++ n)
@@ -110,5 +111,6 @@ elab "#doc_names_resolve " files:str* : command => do
 #doc_names_resolve "README.md" "CLAIMS.md" "TrustWeb/Model.lean"
   "TrustWeb/Properties.lean" "TrustWeb/Abilities.lean" "TrustWeb/Operations.lean"
   "TrustWeb/Core.lean" "TrustWeb/Evidence.lean" "TrustWeb/Spheres.lean"
+  "TrustWeb/SphereApprovals.lean"
 
 end TrustWeb.DocNames

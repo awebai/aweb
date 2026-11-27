@@ -333,10 +333,26 @@ Each item pairs a sentence about the model with one about the real system.
 | README, three defs | The three worlds | definition | `noneSwayed`, `agentsSwayed`, `agentsAndPersonsSwayed` |
 | `WReachable`, `Flows`, `Occupant` | Their meaning | definition | Their bodies |
 | 60 | Construction note | construction | The proof |
-| README | An approval is not tied to a sphere; approvals rest on assumption 6; a persuaded person's approval is not modelled | definition, assumption | `Step`'s constructors take `approvals` as an implicit argument that `WStep` does not see; A6 |
+| README | In `WStep` an approval is not tied to a sphere, so approvals there rest on assumption 6 | definition, assumption | `Step`'s constructors take `approvals` as an implicit argument that `WStep` does not see; A6 |
 | README | Every secret is placed from the start | definition | `WReachable.start` takes `init`; no step adds a secret except `leak` |
 | README | Holding a secret before its record exists gives nothing, since every act that uses it checks the record | act | `redeem` needs the invitation unused; `sendGrant` needs the grant live; acts as an identity or with an organisation key check the record through their premises |
 | README | A re-key or a root replacement moves no secret; any copy of an organisation key still counts, which can only overstate what a sphere can do | definition | `WStep.act` keeps `holds`; `Party.secret` maps a key's controller to the key's name, not to a version of it |
+
+## TrustWeb/SphereApprovals.lean and the README's approvals section
+
+| Where | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| README | `SphereApprovals.lean` changes nothing in the model | process | The file imports the model and declares only new names |
+| README | `StepVia` is the model's acts with their approvals; an act with no `Authorised` premise carries none | definition | `StepVia`'s constructors; each passes `approvals` only where `Authorised` takes them, else `[]` |
+| README | Generated from `Step` and proved to agree with it | process, result | Its text was generated from `Step`'s; row 61 |
+| README, `Available`, `AStep` | An adversarial sphere's act counts an approval only when available to it: it holds the identity key, or a persuadable holder talks to it | definition | `Available`; `AStep.act`'s third premise |
+| README | Which spheres are adversarial is a parameter; an honest sphere that is not persuadable never approves an adversarial request | definition | `AStep`'s `Adv`; `Available` has no case for such a sphere |
+| README, `NamedStep` | Redeeming adds a certificate for the key the invitation names | definition | `NamedStep.redeem` |
+| README, `NamedStep` | Planned | source | A proposed design; aweb's invitations do not name an identity |
+| 65 | "Whoever asks" | result | The theorem quantifies over `who` |
+| 68 | Resting on the planned premises of `admit` and `redeem` | result | It uses `new_admin_needs_controller_or_asker`, row 6 |
+| README | These results do not say a persuaded person's approval can be refused, nor where a newly made key is first held | definition | No result above has such a conclusion; `AReachable.start` takes `init` |
+| README | Row 68 does not bound a chain of acts | result | Both theorems take one `Step` |
 
 ## TrustWeb/DocNames.lean
 
