@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-e1-removals (E1 (b) and E1 (c) removals).
+* **Creation**: lessons [prove a removal removed everything](/aweb-expert/lessons/prove-a-removal-removed-everything.md), [Go's test cache ignores repository files outside the module](/aweb-expert/lessons/go-test-cache-ignores-files-outside-the-module.md) and [a released installer outlives the command it installs](/aweb-expert/lessons/a-released-installer-outlives-its-command.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
