@@ -8,7 +8,6 @@ from uuid import uuid4
 
 import pytest
 
-from aweb.federation.activation import FederationAuthorityActivation
 from aweb.federation.authority import AuthorityClaim, FederationAuthorityCore
 from aweb.federation.authority_state import (
     AddressAuthorityCandidate,
@@ -672,7 +671,8 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
     if name == "authoritative_not_found_scope_is_complete":
         payload = authority_result_scope_payload(scope)
         assert list(payload) == expected["key_fields"]
-        # Its reuse bound is test_a_published_authority_failure_expires_within_its_vector_bound.
+        # The published failure's lifetime is checked on the stored row by
+        # test_contact_add_unregistered_cross_namespace_target (test_contacts_http.py).
         return
 
     if name == "malformed_evidence_scope_includes_response_digest":
@@ -687,8 +687,8 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
         return
 
     if name == "dns_transport_failure_is_retryable_and_short_lived":
-        # Checked on the published result by
-        # test_a_published_authority_failure_expires_within_its_vector_bound.
+        # The published failure's lifetime is checked on the stored row by
+        # test_contact_add_unregistered_cross_namespace_target (test_contacts_http.py).
         return
 
     if name == "controlled_bypass_is_one_per_message_and_shared":
@@ -864,38 +864,3 @@ def test_stable_error_vector_is_the_runtime_error_vocabulary() -> None:
             "did_aw": "did:aw:fixture",
             "observed_sequence": 2,
         }
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("case_name", "reason"),
-    [
-        ("authoritative_not_found_scope_is_complete", "sender_identity_not_found"),
-        (
-            "dns_transport_failure_is_retryable_and_short_lived",
-            "sender_registry_unavailable",
-        ),
-    ],
-)
-async def test_a_published_authority_failure_expires_within_its_vector_bound(
-    aweb_cloud_db, case_name, reason
-):
-    case = next(
-        c for c in _STATE_VECTOR["evidence_reuse_cases"] if c["name"] == case_name
-    )
-    bound = case["expected"].get("max_seconds", case["input"]["reuse_seconds"])
-    work = AuthorityWorkRepository(aweb_cloud_db.aweb_db)
-    activation = FederationAuthorityActivation(
-        core=None, work=work, resolver=None, txt_resolver=None
-    )
-    scope = f"discovery:{case_name}"
-    lease = await work.acquire_lease(scope, owner_id=uuid4(), ttl_seconds=10)
-
-    await activation._publish_failure(FederationAuthorityError(reason), leases=(lease,))
-
-    result = await work.get_result(scope)
-    assert result is not None and result.status == "failed"
-    assert result.evidence["reason"] == reason
-    now = await aweb_cloud_db.aweb_db.fetch_value("SELECT clock_timestamp()")
-    assert 0 < (result.expires_at - now).total_seconds() <= bound
-    assert federation_error_spec(reason).retryable is ("retryable" in case["expected"])
