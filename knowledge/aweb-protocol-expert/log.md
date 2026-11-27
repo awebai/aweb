@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-pilot-custody with two backing notes, from review of a hosted custody design that is accepted but not built; the design is described generically, as the OSS and Cloud boundary requires.
+* **Creation**: lessons [a freeze rule names both sides of its comparison](/aweb-protocol-expert/lessons/a-freeze-rule-names-both-sides-of-its-comparison.md) and [network evidence carries the basis it is compared with](/aweb-protocol-expert/lessons/evidence-carries-the-basis-it-is-compared-with.md).
+* **Update**: [evidence freshness must survive lock waits](/aweb-protocol-expert/lessons/evidence-freshness-survives-lock-waits.md) points to the basis lesson, which refines it: freshness is not the only property a lock wait can break.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
