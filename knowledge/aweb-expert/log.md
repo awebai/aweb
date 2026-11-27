@@ -1,5 +1,11 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-cleanup-oss (tasks aweb-adzb.9 and aweb-adzx).
+* **Update**: [review a change against its existing consumers](/aweb-expert/lessons/review-a-change-against-its-existing-consumers.md) gains how to search a removal's callers before reporting them.
+* **Creation**: decision [per-item facts make a pure rule a generator](/aweb-expert/decisions/per-item-facts-make-a-pure-rule-a-generator.md).
+* **Creation**: lesson [test pools at pgdbm's defaults exhaust a shared PostgreSQL](/aweb-expert/lessons/test-pools-at-pgdbm-defaults-exhaust-a-shared-postgres.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
