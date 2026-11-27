@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-tasks-move.
+* **Creation**: lessons [a privilege guard tests the privilege in effect, not membership](/aweb-expert/lessons/a-privilege-guard-tests-the-privilege-in-effect.md), [connecting pgdbm with a schema creates the schema](/aweb-expert/lessons/connecting-pgdbm-with-a-schema-creates-it.md) and [reducing a naapp installation's scopes bites within the grant answer age](/aweb-expert/lessons/scope-revocation-bites-within-the-grant-answer-age.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
