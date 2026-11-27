@@ -345,7 +345,7 @@ def GrantLive (s : State) (g : Grant) : Prop :=
 
 /-! ## The acts -/
 
-/-- An identity that is not registered can be in one team only. -/
+/-- `k` is registered, or holds no team certificate. -/
 def OneTeamIfLocal (s : State) (k : Key) : Prop :=
   Registered s k ∨ ∀ m, m ∈ s.members → m.member ≠ k
 
@@ -354,7 +354,7 @@ is not an admin team certificate, or another admin remains. -/
 def KeepsAnAdmin (s : State) (m : Membership) : Prop :=
   m.team = .admin → ∃ k, k ≠ m.member ∧ Admin s m.org k
 
-/-- `k` has never been registered. -/
+/-- `k` has no identity certificate in this record. -/
 def Fresh (s : State) (k : Key) : Prop :=
   ∀ c, c ∈ s.certs → c.subject ≠ k
 
@@ -504,8 +504,8 @@ inductive Reachable (ask : AskRule) : State → Prop where
   | step {s s' : State} {who : Party} :
       Reachable ask s → Step ask s who s' → Reachable ask s'
 
-/-- An identity has one certificate, so its organisation, kind and issuer are
-fixed. The protocol's rule R2 fixes organisation and kind; the fixed issuer is
+/-- Every identity has at most one certificate, so its organisation, kind and
+issuer are fixed. The protocol's rule R2 fixes organisation and kind; the fixed issuer is
 this model's restriction. -/
 def OneCertEach (s : State) : Prop :=
   ∀ c, c ∈ s.certs → ∀ d, d ∈ s.certs → c.subject = d.subject → c = d

@@ -1,8 +1,9 @@
 # Claims ledger
 
-One line for every sentence that says something about the model, outside the result rows and the theorems' own statements. Each line gives where the sentence is, the sentence in short, and what makes it true.
+One line for every sentence that says something about the model, apart from a theorem's own restatement. That covers the README's prose, every cell of "What must never happen", every reading inside a result row, every module, definition, field and constructor doc comment, and every reading inside a theorem's doc comment. Each line gives where the sentence is, the sentence in short, and what makes it true.
 
-- **Rows** in the README's result tables, and each theorem's doc comment, restate that theorem's statement. They are checked against the statement and are not listed here. A theorem's doc comment may add a reading or a construction note after the restatement. Readings are listed here; construction notes ("In the construction ...") describe the proof's witnesses and are listed as such.
+- **Restatements.** A row of the README's result tables, and a theorem's doc comment, first restate the theorem's statement. A restatement is checked against the statement and is not listed here. What follows it in the row or the doc comment is listed: a reading, with what makes it true, or a construction note ("In the construction ..."), which describes the proof's witnesses.
+- **Names.** Every Lean name cited between backquotes here, in the README and in the doc comments is checked by the build (`TrustWeb/DocNames.lean`).
 - **Kinds of line.**
   - A *definition* or *act* line names the definition or `Step` constructor that the sentence reads off.
   - A *result* line names the theorem or row.
@@ -20,7 +21,7 @@ A sentence about the model that is not on this list should not be in the README 
 |---|---|---|
 | Experimental formal model ... comparison against running implementations is pending | process | No checker or emitter exists (see "Not done") |
 | Eight independent readings ... are worked in | process | PR 263's history |
-| Every sentence ... has a line in `CLAIMS.md` | process | This file |
+| Every sentence ..., apart from a theorem's own restatement, has a line in `CLAIMS.md` | process | This file |
 | This is a formal model of who may do what in aweb ... | process | The files listed under "What is here" |
 | Every result in it is proved and checked by Lean | result | `lake build` with no warning; no `sorry`, `axiom`, `native_decide`, `opaque` or `implemented_by` in the sources |
 | A row is proved only for what its statement says | process | Reading convention |
@@ -32,10 +33,11 @@ A sentence about the model that is not on this list should not be in the README 
 
 | Sentence | Kind | What makes it true |
 |---|---|---|
-| If it builds with no warning, every proof is correct; `sorry` builds with a warning | process | Lean's behaviour |
-| Pinned to Lean 4.36.0; no libraries | process | `lean-toolchain`; `lake-manifest.json` lists no packages |
-| No proof step is left open | process | No `sorry` in the sources; the build has no warning |
-| The proofs use only `propext`, `Classical.choice`, `Quot.sound` | process | `#print axioms` on every theorem (each reading ran it) |
+| With no warning, no proof is left open; `sorry` builds with a warning | process | Lean's behaviour |
+| An `axiom` or `native_decide` builds with no warning; the sources contain none of `axiom`, `native_decide`, `opaque`, `implemented_by` | process | A grep of the sources (each reading ran it) |
+| `#print axioms` shows only `propext`, `Classical.choice`, `Quot.sound` | process | `#print axioms` on every theorem (each reading ran it) |
+| Pinned to Lean 4.36.0; no package beyond Lean | process | `lean-toolchain`; `lake-manifest.json` lists no packages |
+| The build fails if a cited Lean name does not exist | process | `TrustWeb/DocNames.lean`, built as the `DocCheck` library in `lakefile.toml`, with `README.md` and `CLAIMS.md` as its inputs, so it reruns when either changes |
 
 ### What is here
 
@@ -43,7 +45,8 @@ A sentence about the model that is not on this list should not be in the README 
 |---|---|---|
 | `Model.lean`: what exists, `State`, the 22 acts, assumptions 1 to 9 | definition | `State`; `Step` has 22 constructors; the module doc lists A1 to A9 |
 | `Properties.lean`: the results not listed under another file | process | File contents |
-| `Abilities.lean`: results 22 to 26, 36 and 41 to 45 | process | File contents |
+| `Abilities.lean`: results 22 to 26, 36 and 41 to 47 | process | File contents |
+| `DocNames.lean`: the build's name check | process | File contents |
 | `Operations.lean`: the team rule, results 32 to 35 | process | File contents |
 | `Core.lean`: six acts (`CoreStep`), `core_one` to `core_five`, `core_two_design` | definition | `CoreStep` has 6 constructors; file contents |
 | `Evidence.lean`: results 38 to 40, assumption 10 | process | File contents |
@@ -129,7 +132,7 @@ A sentence about the model that is not on this list should not be in the README 
 
 | Sentence | Kind | What makes it true |
 |---|---|---|
-| Rows 25, 42, 43 and 44 state limits, and so does the first half of 23 | process | Their statements are negative or show a gap |
+| Rows 25, 42, 43, 44, 46 and 47 state limits, and so does the first half of 23 | process | Their statements are negative or show a gap |
 | An agent whose key a hosting service holds is not in the model | assumption | A7 |
 | Moving an agent to another parent is not in the model | result | `certificate_is_permanent`; row 14 |
 | An organisation changing its domain is not in the model | definition | `Org` is the domain |
@@ -139,42 +142,101 @@ A sentence about the model that is not on this list should not be in the README 
 
 ### What must never happen
 
-| Sentence | Kind | What makes it true |
-|---|---|---|
-| An agent passing as a person: rows 1 to 4 | result | Rows 1 to 4 |
-| Authority with no chain: not true of what is built | result | The next three lines |
-| A key with no identity certificate can act in a team on its team certificate alone | definition | `InTeam`, `CanAct`'s first disjunct |
-| And so give a grant | act | `mintGrant` needs only `InTeam` |
-| In a team or not, it can send attributed to itself | act | `sendOwn` needs only `CanAct` |
-| It can leave a held team | act | `leave` |
-| That the root authorises a team's key is not in the model | definition | No act or definition links them |
-| The three rules require a valid member to ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule` (`Admin` needs `Valid`), `teamRule` |
-| A revoked member: rows 7, 8 and 20 in reachable records | result | Rows 7, 8, 20 |
-| A revoked identity can still revoke its grants, revoke itself, leave a held team, be named by `redeem` | act | `revokeGrant`, `revokeSelf`, `leave` and `redeem` have no validity premise |
-| A revocation is undone: one act, `revocation_is_permanent` | result | `revocation_is_permanent` |
-| A root-issued cut-off identity can be admitted again while the root key is not held | result | Row 31 |
-| With one certificate each, a member-issued one is admitted again only by that member, while valid | act | `readmitByRoot` needs `c.issuer = .root`; `readmitByParent` is asked by `.id p` with `c.issuer = .member p` and `Valid s c.org p pk`; with row 14, `c` is the identity's only certificate |
-| An identity changing organisation or kind | result | `certificate_is_permanent`; row 14 |
-| Controlling one organisation's key | result | `controller_stays_in_its_organisation` |
-| A new revocation is of an identity with a certificate of the key's organisation; with one each, of no other | result | Same theorem's last conjunct; row 14 |
-| A revoked identity cannot act in any team, in reachable records | result | Row 7 |
-| Messages: row 18; grants given by their subject: row 19 | result | Rows 18, 19 |
-| A grant holder only sends | result | Rows 17, 19 |
-| An invitation's holder: rows 21 and 6; nothing proved for a team rule assigning admitting admins; 35 shows another operation | result | Rows 21, 6, 35 |
-| An agent approving: rows 4 and 23 | result | Rows 4, 23 |
-| Being issued an identity gives no team | result | `registering_gives_no_team` |
-| An unregistered key in two teams: row 14 | result | Row 14 |
-| It holds on the supported journey; the registry's own route does not enforce it | source | the source readings (sources listed in `Model.lean`) |
-| A key leaving its holder: row 28 | result | Row 28 |
-| The last admin: row 11a | result | Row 11a |
-| The team key's controller can still remove anyone | result | Row 10 |
-| A revocation can still leave no admin: of the last admin, of an agent admin's issuer, or by a root replacement | result | Rows 44, 8, 27 |
-| An outsider is never an admin | definition | `Admin` needs `Valid s o k kind` |
-| A certificate for one team is not accepted for another | definition | `HasTeamCert` matches organisation and team |
-| An approval used twice or for another act | assumption | A6 |
-| A key holder using a key other than the acts allow | assumption | A8 |
-| Whoever holds a member's key | assumption | A7 |
-| No act re-signs or re-issues a registered identity | act | `Fresh` premises of `registerByRoot` and `registerByParent`; `certificate_is_permanent`; A7 |
+One block per cell, in the table's order.
+
+| Cell | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| An agent passes as a person | Proved by 1 for records with one certificate each, 2 for one act, 3 for added certificates, 4 for every approval | result | Rows 1 to 4 and their conditions |
+| No chain back to a root | Not true of what is built | result | The lines below |
+| | Proved for valid members and admins (5) | result | Row 5 |
+| | A key with no identity certificate can act in a team on its team certificate alone | definition | `InTeam`; `CanAct`'s first disjunct |
+| | And so give a grant | act | `mintGrant` needs only `InTeam` |
+| | In a team or not, it can send attributed to itself | act | `sendOwn` needs only `CanAct` |
+| | It can leave a team whose key is held | act | `leave` has no validity or registration premise |
+| | A team certificate counts without the root having set the team's key | definition | `InTeam`, `GrantLive` and `admit` have no premise about the root or `rekeyTeam` |
+| | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule` (`Admin` needs `Valid`), `teamRule` |
+| A revoked member keeps authority | Proved in reachable records: not valid, not an admin, cannot act in a team, cannot send with its own key, no live grant | result | Rows 7, 8, 20; `sendOwn` needs `CanAct` |
+| | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | As above |
+| | Under every rule it can still revoke a grant on itself, revoke itself, leave a held team, be the key `redeem` names | act | `revokeGrant`, `revokeSelf`, `leave`, `redeem` have no validity premise |
+| A revocation is undone | Proved for one act | result | `revocation_is_permanent` |
+| | Not proved for several acts | process | No theorem states it |
+| | A root-issued cut-off identity can be admitted again while the root key is not held | result | Row 31 |
+| | With one certificate each, a member-issued one is admitted again only by that member, while valid | act | `readmitByRoot` needs `c.issuer = .root`; `readmitByParent` is asked by `.id p` with `c.issuer = .member p` and `Valid s c.org p pk`; with row 14, `c` is the identity's only certificate; only these two acts take an identity out of `revoked` |
+| An identity changes organisation or kind | Proved for one act that no certificate is removed; in reachable records one certificate | result | `certificate_is_permanent`; row 14 |
+| | Not proved for several acts | process | No theorem states it |
+| Controlling one organisation's key changes something in another | Not true of what is built: one organisation's root controller can stop an identity acting in another's team and make its grant there not live | result | Row 46 |
+| | It can revoke its own identity | act | `revokeByOrg` |
+| | A revoked identity cannot act in any team, in reachable records | result | Row 7 |
+| | Proved for one act: new identity and new or removed team certificates are of the key's organisation; a newly revoked identity has a certificate of it | result | `controller_stays_in_its_organisation` |
+| | With one certificate each, of no other | result | Same theorem's last conjunct; row 14 |
+| | Not stated for invitations, grants, held keys or re-admissions | result | The theorem's statement |
+| A message attributed to someone who did not send it | Proved for one act, for every message the act adds | result | Row 18 |
+| | That the subject gave the grant is proved for the act that adds it, not for every grant | result | Row 19; no theorem about every grant |
+| A grant holder does more than send | Proved for one act | result | Rows 17, 19 |
+| An invitation's holder becomes a person or an admin | Proved for one act | result | Rows 21, 6 |
+| | Not proved for several acts; nothing for a team rule assigning admitting admins | process | No theorem states them |
+| | 35 shows an invitation leading to another operation | result | Row 35 |
+| An agent approves where a person is required | Proved for every approval | result | Rows 4, 23 |
+| Being issued an identity gives team membership | Proved for one act | result | `registering_gives_no_team` |
+| An unregistered key in two teams | Proved in reachable records | result | Row 14 |
+| | It holds on the supported journey; the registry's own route does not enforce it | source | the source readings (sources listed in `Model.lean`) |
+| A key leaves its holder except ... | Proved for one act | result | Row 28 |
+| The last admin's team certificate | A planned check, proved for one act | result | Row 11a |
+| | The team key's controller can still remove anyone | result | Row 10 |
+| | A revocation can still leave no admin: of the last admin, of an agent admin's issuer, or by a root replacement | result | Rows 44, 47; row 27 applied to 44's record |
+| An outsider is an admin | True by the definition | definition | `Admin` needs `Valid s o k kind` |
+| A certificate for one team accepted for another | True by the definition | definition | `HasTeamCert` matches organisation and team |
+| An approval reused | Assumed | assumption | A6 |
+| A key holder uses a key other than the acts allow | Assumed; cannot be proved while the holder is assumed honest | assumption | A8 |
+| Whoever holds a member's key speaks as it | Not in the model | assumption | A7 |
+| Re-signed or re-issued as a side effect | Not in the model | act | `Fresh` premises of `registerByRoot` and `registerByParent`; `certificate_is_permanent`; A7 |
+
+### Readings inside result rows
+
+| Row | Reading | Kind | What makes it true |
+|---|---|---|---|
+| 1 | (with 14) | result | Row 14 gives the condition in reachable records |
+| 2 | The statement does not say whose certificate it is, or that it is of that organisation | result | The statement's conclusion |
+| 2 | 15 adds, as built, that it is of that organisation | result | Row 15 |
+| 2 | It looks at certificates only, so admitting again is not covered | definition | `Person` reads only `certs`; re-admissions change no `certs` |
+| 2 | It is about who signs, not who asked | result | The conclusion says nothing about the asker |
+| 3 | A person certificate of an organisation issued by a person of it makes its subject a person | definition | `Person.byPerson` |
+| 3 | What is checked is the rule about issuers, not the registry's admission | result | The hypothesis is about issuers only |
+| 5 | What leading means, and what it says nothing about | definition | `ChainToRoot` |
+| 5 | Nothing about a key with no identity certificate acting in a team | result | The statements are about valid members and admins |
+| 6 | So it is not an invitation's holder, in that act | result | `.bearer` is neither disjunct |
+| 6 | Nothing is proved about several acts | process | No theorem states it |
+| 7 | (true in every reachable record, 14) | result | Row 14 |
+| 7 | Sending with its own key requires being able to act | act | `sendOwn` |
+| 8 | Its team certificates are not looked at | result | The statement |
+| 9 | Whoever issued it; about the record, not an act | result | The statement quantifies over the issuer and has no `Step` |
+| 10 | The asker is the key's controller alone | definition | `Authorised`'s first branch: no policy |
+| 11 | A rule naming the other as approver means the approvals include its own | definition | `Satisfies` for `.exactly` |
+| 11a | This is about a team certificate going | result | The hypothesis |
+| 11a | A revocation can still leave no admin: three cases | result | Rows 44, 47; row 27 applied to 44's record |
+| 15 | The model does not record which approvals an act carried; the act is accepted only with such approvals | definition | `approvals` is an implicit argument of the constructor, not part of `State` |
+| 16 | Construction note; so 2 holds | construction, result | The proof; row 2 holds for any act |
+| 16 | As built, an agent may ask where the policy has an anyPerson rule for adding a person; not stated as a theorem | definition | `builtRule`'s second disjunct |
+| 18 | This covers every message an act adds | result | The hypothesis is that the act changes `sent` |
+| 20 | (true in every reachable record, 14) | result | Row 14 |
+| 21 | The joiner is whatever key the holder names | act | `redeem`'s `k` is any key meeting `OneTeamIfLocal` |
+| 21 | That the joiner holds that key is assumed | assumption | A3 |
+| 22, 35, 36, 41, 43, 44, 45, 46, 47 | Construction notes | construction | The proofs |
+| 22 | The statement does not say who issued whom | result | The statement |
+| 25 | Re-admissions change no team certificate | act | `readmitByRoot`, `readmitByParent` |
+| 26 | The three need not differ | result | The statement has no inequality |
+| 27 | The act is the root replacement, whose only premise is that the organisation exists | construction, act | The proof; `replaceRoot` |
+| 28 | When it is the domain's owner, the key is the root key and no identity is valid after (37) | result | Row 37 |
+| 28 | The holder no longer holds the current root key | act | `replaceRoot` takes the root key out of `held` |
+| 28 | The model does not show the holder no longer has the former private key | definition | `held` records only which keys are held, not copies |
+| 28 | Nor does the protocol | source | the source readings (sources listed in `Model.lean`) |
+| 35 | A warning | process | A label |
+| 38 | A valid person answering for itself (`nearest_human`) says nothing about an email check | result, source | `AnswersFor.self` needs only `Valid`; row 38; the verdict's name is the protocol's (`docs/id-certificates.md`) |
+| 40 | The rest of 38's three cases follows from 38 | result | Row 38 applies to any valid person |
+| 41 | In every record such a key exists | result | `exists_fresh_key` |
+| 42 | Locked means ...; then the organisation has no admin | definition, result | `AdminTeamLocked`; `AdminTeamLocked.no_admin` |
+| 43 | A re-key leaves the team certificates and grants as they are | act | `rekeyTeam` changes only `held` |
+| 43 | 45 ends a membership and its grants | result | Row 45 |
 
 ### What is assumed
 
@@ -289,7 +351,8 @@ These are method and process. They make no claim about the model beyond what is 
 | `AnswersFor` | `self` and `up` | definition | Constructors |
 | `AnswersFor` | Every agent on the way is unrevoked; the person is valid | definition, result | `up`'s `a ∉ s.revoked`; `answerer_is_valid_person` |
 | `AnswersFor` | With one certificate each, at most one answers | result | `answerer_unique` |
-| `Registered`, `HasTeamCert`, `Fresh` | Their meaning | definition | Their bodies |
+| `Registered`, `HasTeamCert` | Their meaning | definition | Their bodies |
+| `Fresh` | `k` has no identity certificate in this record | definition | Body |
 | `CanAct` | Unregistered, or valid somewhere | definition | Body |
 | `CanAct` | With one certificate each, its own organisation | result | `Valid.cert` with `OneCertEach` |
 | `CanAct` | In reachable records revoked and cut-off identities cannot act | result | `revoked_cannot_act`, `Reachable.revokedAreRegistered`, `Reachable.cutOffAreRevoked` |
@@ -302,7 +365,8 @@ These are method and process. They make no claim about the model beyond what is 
 | `Authorised` | Not held: the controller, no policy; held: the rule's identity, with approvals | definition | Body |
 | `GrantLive` | Stands and its subject can act in the team | definition | Body |
 | `GrantLive` | Removing the certificate removes the grant, so a later certificate does not bring it back | act | `remove` and `leave` filter `grants` |
-| `OneTeamIfLocal`, `KeepsAnAdmin` | Their meaning | definition | Bodies |
+| `OneTeamIfLocal` | `k` is registered, or holds no team certificate | definition | Body |
+| `KeepsAnAdmin` | Its meaning | definition | Body |
 | `Step` | Each constructor's premises are what is checked | definition | Naming |
 | `createOrg` | Asked by the domain's controller | act | `.dns o` |
 | `replaceRoot` | Cuts off every current identity of the organisation | act | Its `revoked` and `cutOff` update |
@@ -332,7 +396,7 @@ These are method and process. They make no claim about the model beyond what is 
 | `redeem` | Team not admin; unregistered key holds no team certificate; who holds the secret not checked | act, assumption | Premises; A3 |
 | `mintGrant`, `revokeGrant`, `sendOwn`, `sendGrant` | Their askers and effects | act | Constructors |
 | `Reachable` | From nothing but a policy | definition | `Reachable.start` |
-| `OneCertEach` | Organisation, kind and issuer fixed | definition | One certificate per subject |
+| `OneCertEach` | Every identity has at most one certificate, so organisation, kind and issuer are fixed | definition | Body: two certificates with one subject are equal |
 | `OneCertEach` | R2 fixes organisation and kind; the fixed issuer is this model's restriction | source | the source readings (sources listed in `Model.lean`) |
 | `LocalInOneTeam`, `RevokedAreRegistered` | Their meaning | definition | Bodies |
 
@@ -359,7 +423,7 @@ These are method and process. They make no claim about the model beyond what is 
 
 | Where | Sentence | Kind | What makes it true |
 |---|---|---|---|
-| module doc | Records reached, acts that go through, and the limits named | process | File contents |
+| module doc | Records reached, acts that go through, and the limits it names | process | File contents; the names are checked by `DocNames.lean` |
 | `approved_act_goes_through` | `a`, `p`, `k` need not differ | result | The statement |
 | `no_admin_no_new_admin_certificate` | Re-admissions change no team certificate | act | `readmitByRoot`, `readmitByParent` |
 | `AdminTeamLocked` | Its meaning | definition | Body |

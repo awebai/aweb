@@ -5,9 +5,11 @@ import TrustWeb.Properties
 
 Records the system reaches in which something works, acts that go through
 when their conditions hold, and limits: `policy_requires_person`,
-`no_admin_no_new_admin_certificate`, `takeover_can_leave_admin_team_locked`,
-`takeover_leaves_outsiders_acting` and `revocation_can_leave_no_admin`. Each
-theorem's doc comment says what it states.
+`no_admin_no_new_admin_certificate`, `locked_admin_team_opens_only_by_root`,
+`takeover_leaves_outsiders_acting`, `revocation_can_leave_no_admin`,
+`root_controller_ends_access_in_another_organisation` and
+`issuer_revocation_can_leave_no_admin`. Each theorem's doc comment says what
+it states.
 -/
 
 namespace TrustWeb
@@ -546,5 +548,97 @@ theorem root_can_end_team_membership {ask : AskRule} {s : State} {o : Org} {t : 
     have := (List.mem_filter.mp hg).2
     simp only [decide_eq_true_eq] at this
     exact this hc
+
+/-- Under any rule there is a record the system reaches, an act asked for by
+whoever controls organisation 1's root key, and a grant `g` of organisation 0,
+such that before the act 9 can act in team 7 of 0 and `g` is live, and after
+it 9 cannot act in that team and `g` is not live. In the construction 9 is an
+agent of 1, and the act is 1's root revoking it. -/
+theorem root_controller_ends_access_in_another_organisation (ask : AskRule) :
+    ∃ (s s' : State) (g : Grant), Reachable ask s ∧
+      Step ask s (.controller (.root 1)) s' ∧
+      InTeam s 0 (.named 7) 9 ∧ ¬ InTeam s' 0 (.named 7) 9 ∧
+      g.org = 0 ∧ GrantLive s g ∧ ¬ GrantLive s' g := by
+  let c9 : Cert := ⟨1, 9, .agent, .root⟩
+  let m : Membership := ⟨0, .named 7, 9⟩
+  let g : Grant := ⟨5, 9, 0, .named 7, true⟩
+  let s1 : State := ⟨[0], [], [], [], [], [], [], [], [], []⟩
+  let s2 : State := ⟨[1, 0], [], [], [], [], [], [], [], [], []⟩
+  let s3 : State := ⟨[1, 0], [c9], [], [], [], [], [], [], [], []⟩
+  let s4 : State := ⟨[1, 0], [c9], [], [], [m], [], [], [], [], []⟩
+  let s5 : State := ⟨[1, 0], [c9], [], [], [m], [], [], [g], [], []⟩
+  let s6 : State := ⟨[1, 0], [c9], [9], [], [m], [], [], [g], [], []⟩
+  have r1 : Reachable ask s1 := .step (.start []) (Step.createOrg (o := 0) (by simp))
+  have r2 : Reachable ask s2 := .step r1 (Step.createOrg (o := 1) (by simp [s1]))
+  have r3 : Reachable ask s3 :=
+    .step r2 (Step.registerByRoot (c := c9) (who := .controller (.root 1)) (approvals := [])
+      rfl (by simp [s2, c9]) (by intro d hd; simp [s2] at hd) (.inl ⟨by simp [s2], rfl⟩))
+  have r4 : Reachable ask s4 :=
+    .step r3 (Step.admit (m := m) (who := .controller (.team 0 (.named 7))) (approvals := [])
+      (by simp [m]) (.inl ⟨by simp [s3], rfl⟩) (.inl ⟨c9, by simp [s3], rfl⟩))
+  have v4 : Valid s4 1 9 .agent :=
+    .agentOfRoot (c := c9) (by simp [s4]) rfl rfl rfl rfl (by simp [s4])
+  have r5 : Reachable ask s5 :=
+    .step r4 (Step.mintGrant (g := g) ⟨by simp [HasTeamCert, s4, m, g], .inr ⟨1, .agent, v4⟩⟩
+      (by intro g' hg'; simp [s4] at hg'))
+  have v5 : Valid s5 1 9 .agent :=
+    .agentOfRoot (c := c9) (by simp [s5]) rfl rfl rfl rfl (by simp [s5])
+  have hin : InTeam s5 0 (.named 7) 9 := ⟨by simp [HasTeamCert, s5, m], .inr ⟨1, .agent, v5⟩⟩
+  have hstep : Step ask s5 (.controller (.root 1)) s6 :=
+    Step.revokeByOrg (c := c9) (approvals := []) (by simp [s5]) (.inl ⟨by simp [s5], rfl⟩)
+  have hrr : RevokedAreRegistered s6 := (Reachable.step r5 hstep).revokedAreRegistered
+  have hout : ¬ InTeam s6 0 (.named 7) 9 :=
+    (revoked_has_no_authority hrr (k := 9) (by simp [s6])).2 0 (.named 7)
+  refine ⟨s5, s6, g, r5, hstep, hin, hout, rfl, ⟨by simp [s5], hin⟩, ?_⟩
+  exact grant_ends_with_subject hrr (.inl (by simp [s6, g]))
+
+/-- Under any rule there is a record the system reaches in which the admin
+team's key of 0 is with a key holder and 2 is the only admin of 0, and an act
+1 asks for, after which 2 is not revoked and 0 has no admin. In the
+construction 2 is an agent issued by person 1, and the act is 1 revoking
+itself. -/
+theorem issuer_revocation_can_leave_no_admin (ask : AskRule) :
+    ∃ s s', Reachable ask s ∧ OrgKey.team 0 .admin ∈ s.held ∧ Admin s 0 2 ∧
+      (∀ k, Admin s 0 k → k = 2) ∧ Step ask s (.id 1) s' ∧ 2 ∉ s'.revoked ∧
+      ∀ k, ¬ Admin s' 0 k := by
+  let c1 : Cert := ⟨0, 1, .person, .root⟩
+  let c2 : Cert := ⟨0, 2, .agent, .member 1⟩
+  let ma : Membership := ⟨0, .admin, 2⟩
+  let s1 : State := ⟨[0], [], [], [], [], [], [], [], [], []⟩
+  let s2 : State := ⟨[0], [c1], [], [], [], [], [], [], [], []⟩
+  let s3 : State := ⟨[0], [c2, c1], [], [], [], [], [], [], [], []⟩
+  let s4 : State := ⟨[0], [c2, c1], [], [], [ma], [], [], [], [], []⟩
+  let s5 : State := ⟨[0], [c2, c1], [], [], [ma], [], [.team 0 .admin], [], [], []⟩
+  let s6 : State := ⟨[0], [c2, c1], [1], [], [ma], [], [.team 0 .admin], [], [], []⟩
+  have r1 : Reachable ask s1 := .step (.start []) (Step.createOrg (o := 0) (by simp))
+  have r2 : Reachable ask s2 :=
+    .step r1 (Step.registerByRoot (c := c1) (who := .controller (.root 0)) (approvals := [])
+      rfl (by simp [s1, c1]) (by intro d hd; simp [s1] at hd) (.inl ⟨by simp [s1], rfl⟩))
+  have v1 : Valid s2 0 1 .person :=
+    .person (.byRoot (c := c1) (by simp [s2]) rfl rfl rfl rfl) (by simp [s2])
+  have r3 : Reachable ask s3 :=
+    .step r2 (Step.registerByParent (c := c2) (p := 1) (pk := .person) rfl
+      (by intro d hd; simp [s2] at hd; subst hd; simp [c1, c2]) v1 (.inl rfl))
+  have valid2 : ∀ t : State, t.certs = [c2, c1] → t.revoked = [] → Valid t 0 2 .agent := by
+    intro t hc hr
+    exact .agentOf (c := c2) (by simp [hc]) rfl rfl rfl rfl (by simp [hr])
+      (.person (.byRoot (c := c1) (by simp [hc]) rfl rfl rfl rfl) (by simp [hr]))
+  have r4 : Reachable ask s4 :=
+    .step r3 (Step.admitAdmin (m := ma) (kind := .agent) (who := .controller (.team 0 .admin))
+      (approvals := []) rfl (valid2 s3 rfl rfl) (.inl ⟨by simp [s3], rfl⟩))
+  have r5 : Reachable ask s5 :=
+    .step r4 (Step.entrust (key := .team 0 .admin) (by simp [s4]))
+  have hstep : Step ask s5 (.id 1) s6 := Step.revokeSelf (c := c1) (by simp [s5])
+  have h1 : OneCertEach s6 := (Reachable.step r5 hstep).oneCertEach
+  refine ⟨s5, s6, r5, by simp [s5], ⟨by simp [s5, ma], .agent, valid2 s5 rfl rfl⟩, ?_, hstep,
+    by simp [s6], ?_⟩
+  · intro k ⟨hm, _⟩
+    simp [s5, ma] at hm
+    exact hm
+  · intro k ⟨hm, kind, hv⟩
+    simp [s6, ma] at hm
+    subst hm
+    exact revoking_parent_ends_agent h1 (c := c2) (p := 1) (by simp [s6]) rfl rfl
+      (by simp [s6]) 0 kind hv
 
 end TrustWeb

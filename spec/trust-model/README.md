@@ -2,7 +2,7 @@
 
 **Experimental formal model of selected aweb trust rules. Proofs are checked by Lean. Comparison against running implementations is pending.**
 
-Eight independent readings of the plain sentences against the Lean statements are worked in. Every sentence here and in the Lean doc comments that says something about the model has a line in `CLAIMS.md` naming what makes it true.
+Eight independent readings of the plain sentences against the Lean statements are worked in. Every sentence here and in the Lean doc comments that says something about the model, apart from a theorem's own restatement in a row or its doc comment, has a line in `CLAIMS.md` naming what makes it true.
 
 This is a formal model of who may do what in aweb: organisations, their members, teams, admins, keys, grants and invitations. It is written in Lean 4, and every result in it is proved and checked by Lean. It is licensed under this repository's licence (MIT).
 
@@ -20,17 +20,18 @@ Install Lean with [elan](https://github.com/leanprover/elan). In this directory 
 lake build
 ```
 
-If it builds with no warning, every proof is correct: a proof left open with `sorry` still builds, with a warning. The toolchain is pinned to Lean 4.36.0 and no libraries are used. No proof step is left open. The proofs use only Lean's three standard axioms: `propext`, `Classical.choice` and `Quot.sound`.
+If it builds with no warning, no proof is left open: a proof left open with `sorry` builds with a warning. An added `axiom` or `native_decide` would build with no warning, so two more checks complete it: the sources contain no `axiom`, `native_decide`, `opaque` or `implemented_by`, and `#print axioms` on each theorem shows only Lean's three standard axioms, `propext`, `Classical.choice` and `Quot.sound`. The toolchain is pinned to Lean 4.36.0, and no package beyond Lean itself is used. The build also fails if a Lean name cited between backquotes in this file, in `CLAIMS.md` or in a doc comment does not exist (`TrustWeb/DocNames.lean`).
 
 ## What is here
 
 - `TrustWeb/Model.lean`: what exists, the record (`State`), the 22 acts (`Step`), and assumptions 1 to 9.
 - `TrustWeb/Properties.lean`: the results below not listed under another file.
-- `TrustWeb/Abilities.lean`: results 22 to 26, 36 and 41 to 45.
+- `TrustWeb/Abilities.lean`: results 22 to 26, 36 and 41 to 47.
 - `TrustWeb/Operations.lean`: the team rule, and results 32 to 35.
 - `TrustWeb/Core.lean`: an experiment: six of the acts (`CoreStep`), and the theorems `core_one` to `core_five` and `core_two_design`.
 - `TrustWeb/Evidence.lean`: planned evidence of how a person was enrolled, results 38 to 40, and assumption 10.
 - `CLAIMS.md`: each sentence about the model, with the definition or result behind it.
+- `TrustWeb/DocNames.lean`: the build's check that every cited Lean name exists. `lakefile.toml` builds it as its own library, with `README.md` and `CLAIMS.md` as inputs.
 
 ## Who may ask a key holder
 
@@ -88,7 +89,7 @@ How to read these rows. Each row first gives its theorem's conditions and conclu
 | 9 | If an identity is a valid person of an organisation, adding any other identity to the revoked leaves it a valid person of that organisation, whoever issued it. This is about the record, not about an act | `person_survives_others` |
 | 10 | If the admin team's key is not with a key holder, then for any identity there is an accepted act, asked for by whoever controls that key, after which it is not an admin. If the root key is not with a key holder and an identity is an admin, there is an accepted act, asked for by whoever controls the root key, after which it is not an admin. The asker is the key's controller alone | `controller_can_remove_admin`, `root_can_end_admin` |
 | 11 | Design: if the admin team's key is with a key holder, an identity is an admin, some approvals satisfy the policy for a removal, and another identity is given, there is an accepted act under the admin rule, asked for by the admin, after which the other is not an admin. If the policy has a rule for a removal in that organisation naming the other as its approver, those approvals include its own | `admin_can_remove_admin` |
-| 11a | A planned check, present under every rule, in one act: if the admin team's key is with a key holder, and an identity holds an admin-team certificate before an accepted act and not after, then some other identity is an admin after it. This is about a team certificate going. A revocation can still leave an organisation with no admin: of the admin itself (44), of the member that issued an agent admin (8), or by a root replacement (27) | `key_holder_keeps_an_admin` |
+| 11a | A planned check, present under every rule, in one act: if the admin team's key is with a key holder, and an identity holds an admin-team certificate before an accepted act and not after, then some other identity is an admin after it. This is about a team certificate going. A revocation can still leave an organisation with no admin: of the admin itself (44), of the member that issued an agent admin (47), or by a root replacement (27, in 44's record) | `key_holder_keeps_an_admin` |
 | 12 | If no rule of the policy is for an organisation, every kind of act is approved for it with no approvals | `no_policy_no_approval` |
 | 13 | If a person answers for a member, that person is a valid person of the member's organisation. If every identity has one certificate each and two persons answer for the same member, they are the same | `answerer_is_valid_person`, `answerer_unique` |
 | 14 | In every record the system can reach, under any rule: two certificates for the same identity are the same certificate; every revoked identity has a certificate; two team certificates of the same identity with no certificate are the same; and every cut-off identity is revoked | `Reachable.oneCertEach`, `Reachable.revokedAreRegistered`, `Reachable.localInOneTeam`, `Reachable.cutOffAreRevoked` |
@@ -127,7 +128,7 @@ How to read these rows. Each row first gives its theorem's conditions and conclu
 
 ## What must be possible
 
-Rows 25, 42, 43 and 44 state limits, and so does the first half of 23.
+Rows 25, 42, 43, 44, 46 and 47 state limits, and so does the first half of 23.
 
 | # | In plain words | Lean name |
 |---|---|---|
@@ -142,6 +143,8 @@ Rows 25, 42, 43 and 44 state limits, and so does the first half of 23.
 | 43 | Any rule: there is a record the system can reach, an act asked for by an organisation's domain owner, and a grant, such that after the act the organisation's root key is not with a key holder, no identity is valid in it, an identity can act in a named team of it, and the grant, whose subject is that identity, is live. (In the construction the identity is an agent of another organisation). A re-key leaves the team certificates and grants as they are (`rekeyTeam`); 45 ends a membership and its grants | `takeover_leaves_outsiders_acting` |
 | 44 | Any rule: there is a record the system can reach in which an organisation's admin team's key is with a key holder and an identity is an admin of it, and an accepted act that identity asks for after which the organisation has no admin. (In the construction the act is the admin revoking itself) | `revocation_can_leave_no_admin` |
 | 45 | Any rule: if an organisation's root key is not with a key holder, then for any team of it and any key there are two accepted acts, asked for by whoever controls the root key and then by whoever controls the team's key, after which the key holds no certificate of that team and no grant on it from that team stands. (In the construction the acts are a re-key of the team and a removal of the key's certificate) | `root_can_end_team_membership` |
+| 46 | Any rule: there is a record the system can reach, an act asked for by whoever controls one organisation's root key, and a grant of another organisation, such that before the act an identity can act in a named team of the other organisation and the grant is live, and after it the identity cannot act in that team and the grant is not live. (In the construction the identity is an agent of the first organisation, and the act revokes it) | `root_controller_ends_access_in_another_organisation` |
+| 47 | Any rule: there is a record the system can reach in which an organisation's admin team's key is with a key holder and an identity is its only admin, and an act asked for by another identity, after which the admin is not revoked and the organisation has no admin. (In the construction the admin is an agent issued by the person that asks, and the act is that person revoking itself) | `issuer_revocation_can_leave_no_admin` |
 
 Not in the model: an agent whose key a hosting service holds (assumption 7); moving an agent to another parent (no act removes a certificate, `certificate_is_permanent`, and an identity has at most one, 14); an organisation changing its domain (an organisation is its domain, `Org`). A person of several organisations can be stated, and in records the system can reach there is none: it would need two certificates (14).
 
@@ -153,18 +156,18 @@ The planned outcome `controller_asserted_person` is described in `Evidence.lean`
 |---|---|---|
 | 38 | If an identity is a valid person of an organisation, then in that same record: with only the controller's assertion, bound to that enrolment, it is a controller-asserted person and not email-enrolled; with only the hosted service's email assertion it is email-enrolled and not a controller-asserted person; with no assertion its enrolment is unspecified and it is neither. A valid person answering for itself (the shared verdict's `nearest_human`) thus says nothing about an email check | `enrolment_evidence_is_beside_the_chain` |
 | 39 | If an identity is a controller-asserted person, it answers for itself | `controller_asserted_person_answers_for_itself` |
-| 40 | Under any rule there is a record the system can reach with a valid person for which the three cases of 38 hold | `enrolment_case_is_reachable` |
+| 40 | Under any rule there is a record the system can reach with a valid person for which the controller's assertion alone makes it a controller-asserted person, the hosted service's email assertion alone makes it email-enrolled, and no assertion leaves its enrolment unspecified. The rest of 38's three cases follows from 38 | `enrolment_case_is_reachable` |
 
 ## What must never happen
 
 | What must never happen | Where it stands |
 |---|---|
 | An agent passes as a person | Proved: 1 for records with one certificate each, 2 for one act, 3 for added certificates, 4 for every approval |
-| Someone has authority with no chain back to a root | **Not true of what is built.** Proved for valid members and admins (5). A key with no identity certificate can act in a team on its team certificate alone (`InTeam`, `CanAct`), and so give a grant (`mintGrant`); in a team or not, it can send a message attributed to itself (`sendOwn`); and it can leave a team whose key is held (`leave`). That the root authorises a team's key is not in the model. The three rules require a valid member to ask a key holder (`builtRule`, `adminRule`, `teamRule`); a rule that let anyone ask would not |
+| Someone has authority with no chain back to a root | **Not true of what is built.** Proved for valid members and admins (5). A key with no identity certificate can act in a team on its team certificate alone (`InTeam`, `CanAct`), and so give a grant (`mintGrant`); in a team or not, it can send a message attributed to itself (`sendOwn`); and it can leave a team whose key is held (`leave`). A team certificate counts without the root having set the team's key: `InTeam`, `GrantLive` and `admit` never ask for it. The three rules require a valid member to ask a key holder (`builtRule`, `adminRule`, `teamRule`); a rule that let anyone ask would not |
 | A revoked member keeps authority | Proved in records the system can reach (7, 8, 20): it is not valid, not an admin, cannot act in a team, cannot send with its own key, and no grant on it is live. The three rules require a valid member to ask a key holder; a rule that let anyone ask would not. Under every rule a revoked identity can still revoke a grant on itself (`revokeGrant`), revoke itself again (`revokeSelf`), leave a team whose key is held (`leave`), and be the key an invitation's holder names (`redeem`) |
 | A revocation is undone | Proved for one act: `revocation_is_permanent`. Not proved for several acts. An identity cut off by a root replacement is different: one whose certificate the root issued can be admitted again while the root key is not with a key holder (31). With one certificate each (14), one whose certificate a member issued is admitted again only by that member, and only while the member is valid: `readmitByRoot` needs a certificate the root issued, and `readmitByParent` is asked for by the certificate's issuer, valid |
 | An identity changes organisation or kind | Proved for one act that no certificate is removed (`certificate_is_permanent`), and in records the system can reach an identity has one certificate (14). Not proved for several acts |
-| Controlling one organisation's key changes something in another organisation | Proved for one act, for new identity certificates, new and removed team certificates, and new revocations: `controller_stays_in_its_organisation`. A new revocation is of an identity with a certificate of the key's organisation; with one certificate each (14), of no other. Not stated for invitations, grants, held keys or re-admissions. A revoked identity cannot act in any organisation's teams, in records the system can reach (7) |
+| Controlling one organisation's key changes something in another organisation | **Not true of what is built.** Whoever controls an organisation's root key can, in one act, stop an identity from acting in another organisation's team and make its grant there not live (46): it can revoke its own identity (`revokeByOrg`), and a revoked identity cannot act in any organisation's teams, in records the system can reach (7). Proved for one act: every new identity certificate and every new or removed team certificate is of the key's organisation, and a newly revoked identity has a certificate of it (`controller_stays_in_its_organisation`); with one certificate each (14), of no other. Not stated for invitations, grants, held keys or re-admissions |
 | A message is attributed to someone who did not send it and gave no grant | Proved for one act, for every message the act adds: 18. That its subject gave the grant used is proved for the act that adds a grant (19), not for every grant in a record |
 | A grant holder does more than send | Proved for one act: 17, its act adds one message and changes nothing else; 19, only the subject gives a grant |
 | An invitation's holder becomes a person or an admin | Proved for one act: 21, 6. Not proved for several acts. For a team rule that assigns admitting admins to a named team, nothing is proved; 35 shows an invitation leading to another operation |
@@ -172,7 +175,7 @@ The planned outcome `controller_asserted_person` is described in `Evidence.lean`
 | Being issued an identity gives team membership | Proved for one act: `registering_gives_no_team` |
 | A key with no identity certificate is in two teams | Proved in records the system can reach: 14. In the real system it holds on the supported journey; the registry's own route does not enforce it |
 | A key leaves its holder except by the domain's owner, an allowed request, or a re-key from the root | Proved for one act: 28 |
-| A key holder removes the last admin's team certificate | A planned check, proved for one act: 11a. Whoever controls the team's key directly can still remove anyone (10), and a revocation can still leave no admin: of the last admin (44), of the member that issued an agent admin (8), or by a root replacement (27) |
+| A key holder removes the last admin's team certificate | A planned check, proved for one act: 11a. Whoever controls the team's key directly can still remove anyone (10), and a revocation can still leave no admin: of the last admin (44), of the member that issued an agent admin (47), or by a root replacement (27, in 44's record) |
 | An outsider is an admin | True by the definition of an admin (`Admin`) |
 | A certificate for one team is accepted for another | True by the definition of a team certificate (`HasTeamCert`) |
 | An approval is used for another act, or twice | Assumed (6) |
