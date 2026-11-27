@@ -2,6 +2,7 @@ import Lean
 import TrustWeb.Evidence
 import TrustWeb.Operations
 import TrustWeb.Core
+import TrustWeb.SphereActs
 import TrustWeb.Spheres
 import TrustWeb.SphereApprovals
 import TrustWeb.SphereAdmins
@@ -26,7 +27,7 @@ def skipped : List String :=
   ["a", "b", "c", "g", "g'", "h", "h'", "i", "k", "m", "n", "o", "o'", "p", "pk",
    "r", "s", "s'", "s1", "s2", "s3", "t", "x", "L", "ask", "who", "approvals", "assign",
    "key", "keep", "as", "w", "w'", "z", "z'", "z0", "init", "Talk",
-   "Persuadable", "occ", "P", "y", "v", "Adv", "joiner", "approvals", "w0", "a", "Prop", "sorry", "axiom", "native_decide", "opaque",
+   "Persuadable", "occ", "P", "y", "v", "Adv", "joiner", "approvals", "w0", "a", "made", "Prop", "sorry", "axiom", "native_decide", "opaque",
    "implemented_by", "controller_asserted_person", "nearest_human",
    "rotate_team_key", "DocCheck"]
 
@@ -111,7 +112,7 @@ elab "#doc_names_resolve " files:str* : command => do
 
 #doc_names_resolve "README.md" "CLAIMS.md" "TrustWeb/Model.lean"
   "TrustWeb/Properties.lean" "TrustWeb/Abilities.lean" "TrustWeb/Operations.lean"
-  "TrustWeb/Core.lean" "TrustWeb/Evidence.lean" "TrustWeb/Spheres.lean"
+  "TrustWeb/Core.lean" "TrustWeb/Evidence.lean" "TrustWeb/SphereActs.lean" "TrustWeb/Spheres.lean"
   "TrustWeb/SphereApprovals.lean" "TrustWeb/SphereAdmins.lean"
 
 end TrustWeb.DocNames

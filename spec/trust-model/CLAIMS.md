@@ -327,23 +327,27 @@ Each item pairs a sentence about the model with one about the real system.
 | README, module doc | `Spheres.lean` adds where secrets sit and changes nothing in the model | process | The file imports the model and declares only new names; no other model file changes |
 | README | A sphere is any place whose secrets are reachable together; the layer does not say what a sphere is | definition | `Sphere` is a number; nothing else is said of it |
 | README, `Party.secret` | Each party asks with one secret, of five kinds | definition | `Secret`, `Party.secret` |
-| README, `World` | A world is a record and the secrets each sphere holds | definition | `World` |
-| README, `WStep` | A step is an act asked from a sphere holding the asker's secret, or a leak from a persuadable sphere to one it talks to | definition | `WStep.act`, `WStep.leak` |
+| README, `World` | A world is a record, the secrets each sphere holds, and the secrets each sphere has made | definition | `World` |
+| README, `WStep` | A step is an act asked from a sphere holding the asker's secret, after which that sphere holds and has made the act's made secrets, or a leak from a persuadable sphere to one it talks to | definition | `WStep.act`, `WStep.leak` |
+| README, `SphereActs.lean` | `SphereActs.lean` gives the secrets and the acts that make them | definition | `Secret`, `Party.secret`, `StepVia` |
+| README, `StepVia` | Creating an organisation and replacing its root make its root key, a re-key makes the team's new key, an invitation its secret, a grant its session key; no other act makes a secret | definition, source | `StepVia`'s `made` lists; awid's namespace registration and controller rotation require the caller's signature with the new controller key (awid routes, dns namespaces); `rotate_team_key` installs the caller's new team key, which the CLI makes; the CLI makes a grant's session key; an invitation's token is returned to whoever asks for it |
 | README | Who talks to whom and who is persuadable are parameters | definition | `WStep`'s and `WReachable`'s arguments |
 | README, three defs | The three worlds | definition | `noneSwayed`, `agentsSwayed`, `agentsAndPersonsSwayed` |
 | `WReachable`, `Flows`, `Occupant` | Their meaning | definition | Their bodies |
 | 60 | Construction note | construction | The proof |
 | README | In `WStep` an approval is not tied to a sphere, so approvals there rest on assumption 6 | definition, assumption | `Step`'s constructors take `approvals` as an implicit argument that `WStep` does not see; A6 |
-| README | Every secret is placed from the start | definition | `WReachable.start` takes `init`; no step adds a secret except `leak` |
-| README | Holding a secret before its record exists gives nothing, since every act that uses it checks the record | act | `redeem` needs the invitation unused; `sendGrant` needs the grant live; acts as an identity or with an organisation key check the record through their premises |
-| README | A re-key or a root replacement moves no secret; any copy of an organisation key still counts, which can only overstate what a sphere can do | definition | `WStep.act` keeps `holds`; `Party.secret` maps a key's controller to the key's name, not to a version of it |
+| README | An identity key and a DNS credential are never made by an act; the initial placement may give a sphere identity keys no record names yet | definition | `Secret.Makeable`; `WReachable.start` takes any `init` |
+| README | Such a key already lets its holder send | act | `sendOwn` needs only `CanAct`, which an unregistered key meets |
+| README | An invitation secret or a session key held before its record exists gives nothing | act | `redeem` needs the invitation unused; `sendGrant` needs the grant live |
+| README | A team's first key is placed too, since the model does not create teams | definition | No `Step` constructor creates a team |
+| README | After a re-key or a root replacement the asking sphere holds the new key; copies of the old one still count, which can only overstate their holders | definition | `WStep.act` adds the made secrets to the asking sphere and keeps `holds`; `Party.secret` maps a key's controller to the key's name, not to a version of it |
 
 ## TrustWeb/SphereApprovals.lean and the README's approvals section
 
 | Where | Sentence | Kind | What makes it true |
 |---|---|---|---|
 | README | `SphereApprovals.lean` changes nothing in the model | process | The file imports the model and declares only new names |
-| README | `StepVia` is the model's acts with their approvals; an act with no `Authorised` premise carries none | definition | `StepVia`'s constructors; each passes `approvals` only where `Authorised` takes them, else `[]` |
+| README | `StepVia` is the model's acts with their approvals and made secrets; an act with no `Authorised` premise carries no approvals | definition | `StepVia`'s constructors; each passes `approvals` only where `Authorised` takes them, else `[]` |
 | README | Generated from `Step` and proved to agree with it | process, result | Its text was generated from `Step`'s; row 61 |
 | README, `Available`, `AStep` | An adversarial sphere's act counts an approval only when available to it: it holds the identity key, or a persuadable holder talks to it | definition | `Available`; `AStep.act`'s third premise |
 | README | Which spheres are adversarial is a parameter; an honest sphere that is not persuadable never approves an adversarial request | definition | `AStep`'s `Adv`; `Available` has no case for such a sphere |
@@ -351,24 +355,25 @@ Each item pairs a sentence about the model with one about the real system.
 | README, `NamedStep` | Planned | source | A proposed design; aweb's invitations do not name an identity |
 | 65 | "Whoever asks" | result | The theorem quantifies over `who` |
 | 68 | Resting on the planned premises of `admit` and `redeem` | result | It uses `new_admin_needs_controller_or_asker`, row 6 |
-| README | These results do not say a persuaded person's approval can be refused, nor where a newly made key is first held | definition | No result above has such a conclusion; `AReachable.start` takes `init` |
-| README | Row 68 joins the layer to one act; rows 69 to 73 bound a chain | result | Row 68's theorems take one `Step`; rows 70 and 71 take an `Attack` |
+| README | These results do not say a persuaded person's approval can be refused | definition | No result above has such a conclusion |
+| README | Row 68 joins the layer to one act; rows 69 to 74 bound a chain | result | Row 68's theorems take one `Step`; rows 69 to 71 take an `Attack`; row 74 builds one |
 
 ## TrustWeb/SphereAdmins.lean and the README's chain section
 
 | Where | Sentence | Kind | What makes it true |
 |---|---|---|---|
-| README, `Attack` | Only the attacker acts, with any secret it holds and no approval beyond the model's premises | definition | `Attack.act` takes the attacker's held secret and a `Step`; `Step`'s approvals are existential |
-| README | Which can only overstate it | definition | An `Attack` act has no premise beyond `Step`'s and the held secret |
+| README, `Attack` | Only the attacker acts, with any secret it holds and no approval beyond the model's premises; it holds every secret its acts make | definition | `Attack.act` takes the attacker's held secret and a `StepVia`, whose approvals are not checked, and adds its made secrets to the attacker |
+| README | Which can only overstate it | definition | An `Attack` act has no premise beyond `StepVia`'s and the held secret |
 | README, `Attack` | Persuadable spheres give secrets to the spheres they talk to | definition | `Attack.leak` |
 | README | What a persuaded agent could do with its keys, the attacker can do once they reach it | definition | Every act needs only `who.secret` held by the attacker; leaks move secrets one at a time along `Flows` |
 | README, `CanReach` | Its meaning | definition | Its body |
 | 70 | Resting on the planned premises of `admit` and `redeem` | result | It uses `new_admin_needs_controller_or_asker`, row 6 |
 | 72 | The Design rule is planned | source | `adminRule`, row 72 names it |
-| 73 | Construction note | construction | The proof |
+| 73, 74 | Construction notes | construction | The proofs |
 | README | Row 70 says the attacker never gains an admin's key; an attack that begins with one within its reach is outside it | result | Its premises are about the world when the attack begins |
 | README | It does not bound what honest spheres do | definition | Only the attacker acts in `Attack` |
-| README | Row 73's starting world is any record; row 48 reaches one of that kind | result, construction | `named_team_admission_lets_attacker_become_admin` builds its record without `Reachable`; `invitation_then_own_request_makes_an_admin` |
+| README | Rows 73's and 74's starting worlds are any record; row 48 reaches one of row 73's kind | result, construction | Both theorems build their record without `Reachable`; `invitation_then_own_request_makes_an_admin` |
+| README | The DNS credential is in row 70's premises for the same reason as the root key | act, result | `replaceRoot` makes the root key (`StepVia.made_root`); a root key then re-keys the admin team as in row 74 |
 
 ## TrustWeb/DocNames.lean
 
