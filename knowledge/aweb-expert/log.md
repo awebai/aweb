@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-tasks-move (data move into naapp).
+* **Creation**: lessons [schema checks must not depend on collation](/aweb-expert/lessons/schema-checks-must-not-depend-on-collation.md) and [a round-trip listing proves only that the mapping was followed](/aweb-expert/lessons/a-round-trip-listing-proves-only-the-mapping-was-followed.md), both refining [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
