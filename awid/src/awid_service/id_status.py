@@ -17,13 +17,29 @@ from awid.dns_verify import DomainAuthority
 from awid.id_certificates import IDChainEvidence, verify_id_chain
 
 from awid_service.id_tree_clock import Clock, serialization_time
-from awid_service.id_tree_gate import IdentityTreeRefusal, canonical_json, current_root, wire_time
-from awid_service.namespace_epochs import latest_domain_event, delegation_of, authority_evidence
+from awid_service.id_tree_gate import (
+    IdentityTreeRefusal,
+    canonical_json,
+    current_root,
+    wire_time,
+)
+from awid_service.namespace_epochs import (
+    latest_domain_event,
+    delegation_of,
+    authority_evidence,
+)
 
 MAX_RESPONSE_BYTES = 131072
 
 
-async def status_snapshot(db, *, domain: str, ids: list[str], dns_authority: DomainAuthority | None, clock: Clock) -> dict:
+async def status_snapshot(
+    db,
+    *,
+    domain: str,
+    ids: list[str],
+    dns_authority: DomainAuthority | None,
+    clock: Clock,
+) -> dict:
     """The POST /status answer, read in its own read-only REPEATABLE READ transaction."""
     async with db.transaction() as tx:
         await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -58,12 +74,15 @@ async def read_snapshot(tx, *, domain: str, ids: list[str], clock: Clock) -> dic
         domain,
     )
     namespace = await tx.fetch_one(
-        "SELECT controller_did, parent_domain, parent_controller_key FROM {{tables.dns_namespaces}} WHERE domain = $1 AND deleted_at IS NULL", domain,
+        "SELECT controller_did, parent_domain, parent_controller_key FROM {{tables.dns_namespaces}} WHERE domain = $1 AND deleted_at IS NULL",
+        domain,
     )
     registered = {
         row["id"]
         for row in await tx.fetch_all(
-            "SELECT id FROM {{tables.id_identities}} WHERE domain = $1 AND id = ANY($2::text[])", domain, ids,
+            "SELECT id FROM {{tables.id_identities}} WHERE domain = $1 AND id = ANY($2::text[])",
+            domain,
+            ids,
         )
     }
     included = [id_ for id_ in ids if id_ in registered]
@@ -77,15 +96,19 @@ async def read_snapshot(tx, *, domain: str, ids: list[str], clock: Clock) -> dic
             WHERE c.id = ANY($2::text[]) AND c.parent_kind = 'identity'
             ORDER BY c.parent_id
             """,
-            domain, frontier,
+            domain,
+            frontier,
         )
-        frontier = [row["parent_id"] for row in parents if row["parent_id"] not in included]
+        frontier = [
+            row["parent_id"] for row in parents if row["parent_id"] not in included
+        ]
         included.extend(frontier)
 
     identities = {
         row["id"]: row
         for row in await tx.fetch_all(
-            "SELECT id, revoked_at, effective_from FROM {{tables.id_identities}} WHERE id = ANY($1::text[])", included,
+            "SELECT id, revoked_at, effective_from FROM {{tables.id_identities}} WHERE id = ANY($1::text[])",
+            included,
         )
     }
     revisions = await tx.fetch_all(
@@ -114,7 +137,9 @@ async def read_snapshot(tx, *, domain: str, ids: list[str], clock: Clock) -> dic
     snapshot = {
         "v": 1,
         "domain": domain,
-        "observed_at": wire_time(serialization_time(clock, await latest_domain_event(tx, domain))),
+        "observed_at": wire_time(
+            serialization_time(clock, await latest_domain_event(tx, domain))
+        ),
         "namespace": {"epochs": [_epoch(row) for row in epochs]},
         "identities": [],
         "missing": [id_ for id_ in ids if id_ not in registered],
@@ -127,7 +152,8 @@ async def read_snapshot(tx, *, domain: str, ids: list[str], clock: Clock) -> dic
     size = _size(snapshot)
     for id_ in included:
         identity = _identity(
-            id_, identities[id_],
+            id_,
+            identities[id_],
             [row for row in revisions if row["id"] == id_],
             [row for row in logs if row["did_aw"] == id_],
         )
@@ -138,7 +164,15 @@ async def read_snapshot(tx, *, domain: str, ids: list[str], clock: Clock) -> dic
     return snapshot
 
 
-async def verify_parent_chain(tx, *, domain: str, parent: str, parent_key: str, dns_authority: DomainAuthority | None, clock: Clock) -> dict:
+async def verify_parent_chain(
+    tx,
+    *,
+    domain: str,
+    parent: str,
+    parent_key: str,
+    dns_authority: DomainAuthority | None,
+    clock: Clock,
+) -> dict:
     """S1's verdict on ``parent``'s whole current chain, from the state ``tx`` holds.
 
     The evidence is this transaction's own snapshot, fresh by construction,
@@ -151,7 +185,12 @@ async def verify_parent_chain(tx, *, domain: str, parent: str, parent_key: str, 
         namespace_authority=authority_evidence(domain, dns_authority),
         age_seconds=0,
     )
-    return verify_id_chain(None, subject={"id": parent, "did_key": parent_key}, evidence=evidence, domain=domain)
+    return verify_id_chain(
+        None,
+        subject={"id": parent, "did_key": parent_key},
+        evidence=evidence,
+        domain=domain,
+    )
 
 
 def _size(value) -> int:
@@ -163,7 +202,9 @@ def _epoch(row) -> dict:
         "seq": row["seq"],
         "did_key": row["did_key"],
         "registered_at": wire_time(row["registered_at"]),
-        "retired_at": None if row["retired_at"] is None else wire_time(row["retired_at"]),
+        "retired_at": None
+        if row["retired_at"] is None
+        else wire_time(row["retired_at"]),
         "continuity": row["continuity"],
     }
 
@@ -171,14 +212,27 @@ def _epoch(row) -> dict:
 def _identity(id_: str, identity, revisions, log) -> dict:
     return {
         "id": id_,
-        "current_certificate_id": next(row["certificate_id"] for row in revisions if row["superseded_at"] is None),
+        "current_certificate_id": next(
+            row["certificate_id"] for row in revisions if row["superseded_at"] is None
+        ),
         "current_key_seq": log[-1]["seq"],
         "key_history": [
             {
-                "entry": {field: row[field] for field in (
-                    "seq", "operation", "previous_did_key", "new_did_key", "prev_entry_hash", "entry_hash",
-                    "state_hash", "authorized_by", "signature", "timestamp",
-                )},
+                "entry": {
+                    field: row[field]
+                    for field in (
+                        "seq",
+                        "operation",
+                        "previous_did_key",
+                        "new_did_key",
+                        "prev_entry_hash",
+                        "entry_hash",
+                        "state_hash",
+                        "authorized_by",
+                        "signature",
+                        "timestamp",
+                    )
+                },
                 "registered_at": wire_time(row["created_at"]),
             }
             for row in log
@@ -187,12 +241,16 @@ def _identity(id_: str, identity, revisions, log) -> dict:
             {
                 "signed": json.loads(row["signed_json"]),
                 "registered_at": wire_time(row["registered_at"]),
-                "superseded_at": None if row["superseded_at"] is None else wire_time(row["superseded_at"]),
+                "superseded_at": None
+                if row["superseded_at"] is None
+                else wire_time(row["superseded_at"]),
                 "issuer_key_seq": row["issuer_key_seq"],
             }
             for row in revisions
         ],
-        "revocation": None if identity["revoked_at"] is None else {
+        "revocation": None
+        if identity["revoked_at"] is None
+        else {
             "revoked_at": wire_time(identity["revoked_at"]),
             "effective_from": wire_time(identity["effective_from"]),
         },

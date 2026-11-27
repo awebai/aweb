@@ -18,9 +18,9 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/manualclock"
+	"github.com/awebai/aw/internal/wake"
+	"github.com/awebai/aw/internal/wake/session"
 	awrun "github.com/awebai/aw/run"
-	"github.com/awebai/aw/wake"
-	"github.com/awebai/aw/wake/session"
 )
 
 // A server whose API is mounted under /api while the workspace stores the

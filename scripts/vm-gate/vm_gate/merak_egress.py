@@ -1,5 +1,6 @@
 #!/usr/bin/python3 -I
 """Root-owned Merak bridge policy. Install once using sudo ./merak_egress.py install."""
+
 import hashlib
 import json
 import os
@@ -25,8 +26,15 @@ RESOLVERS = ("1.1.1.1", "9.9.9.9")
 
 
 def invoke(*args, data=None):
-    return subprocess.run(args, input=data, text=True, capture_output=True, check=True,
-                          env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"}, timeout=15).stdout
+    return subprocess.run(
+        args,
+        input=data,
+        text=True,
+        capture_output=True,
+        check=True,
+        env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+        timeout=15,
+    ).stdout
 
 
 def install():
@@ -38,19 +46,32 @@ def install():
             raise ValueError("missing executable: " + tool)
     # Exercise the installed kernel and nft syntax in a temporary network
     # namespace before granting access. Its rules disappear with the process.
-    invoke("/usr/bin/unshare", "--net", "--", NFT, "-f", "-",
-           data=policy("aweb_install_check", "aginstallcheck", "eth0"))
+    invoke(
+        "/usr/bin/unshare",
+        "--net",
+        "--",
+        NFT,
+        "-f",
+        "-",
+        data=policy("aweb_install_check", "aginstallcheck", "eth0"),
+    )
     # Validate the grant before replacing either root-owned file. Root selects the
     # reviewed source at install time; runtime callers can supply only a run ID.
-    rules = ", ".join(str(HELPER) + " " + action + " vm-*" for action in ["add", "remove", "show"])
+    rules = ", ".join(
+        str(HELPER) + " " + action + " vm-*" for action in ["add", "remove", "show"]
+    )
     grant = f"{user} ALL=(root) NOPASSWD: {rules}\n"
     with tempfile.NamedTemporaryFile(dir=SUDOERS.parent, prefix=".aweb-") as test:
         test.write(grant.encode())
         test.flush()
         invoke("/usr/bin/visudo", "-cf", test.name)
-    for path, data, mode in [(HELPER, Path(__file__).read_bytes(), 0o755),
-                              (SUDOERS, grant.encode(), 0o440)]:
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".aweb-", delete=False) as fp:
+    for path, data, mode in [
+        (HELPER, Path(__file__).read_bytes(), 0o755),
+        (SUDOERS, grant.encode(), 0o440),
+    ]:
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent, prefix=".aweb-", delete=False
+        ) as fp:
             temp = Path(fp.name)
             try:
                 fp.write(data)
@@ -70,7 +91,7 @@ def policy(table, bridge, uplink):
   meta nfproto != ipv4 counter drop
   fib daddr type != unicast counter drop
   ip daddr {{ {NON_PUBLIC} }} counter drop
-  ip daddr != {{ {', '.join(RESOLVERS)} }} meta l4proto {{ tcp, udp }} th dport 53 counter drop
+  ip daddr != {{ {", ".join(RESOLVERS)} }} meta l4proto {{ tcp, udp }} th dport 53 counter drop
  }}
  chain before_dnat {{
   type filter hook prerouting priority -110; policy accept;
@@ -90,23 +111,32 @@ def policy(table, bridge, uplink):
 
 
 def manage(action, run):
-    if not re.fullmatch(r"vm-[0-9a-f]{32}", run) or action not in {"add", "show", "remove"}:
+    if not re.fullmatch(r"vm-[0-9a-f]{32}", run) or action not in {
+        "add",
+        "show",
+        "remove",
+    }:
         raise ValueError("expected add|show|remove and a Merak run ID")
     table = "aweb_" + run[3:]
     bridge = "ag" + run[3:16]
 
     def exists():
         tables = json.loads(invoke(NFT, "-j", "list", "tables"))["nftables"]
-        return any(t.get("table", {}).get("name") == table and
-                   t["table"]["family"] == "inet" for t in tables)
+        return any(
+            t.get("table", {}).get("name") == table and t["table"]["family"] == "inet"
+            for t in tables
+        )
 
     if action == "add":
         if exists() or Path("/sys/class/net", bridge).exists():
             raise ValueError("run table or bridge already present")
         # Fail closed when the public route no longer uses a physical interface.
-        route, = json.loads(invoke(IP, "-j", "-4", "route", "get", RESOLVERS[0]))
+        (route,) = json.loads(invoke(IP, "-j", "-4", "route", "get", RESOLVERS[0]))
         uplink = route["dev"]
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,15}", uplink) or not Path("/sys/class/net", uplink, "device").exists():
+        if (
+            not re.fullmatch(r"[A-Za-z0-9_-]{1,15}", uplink)
+            or not Path("/sys/class/net", uplink, "device").exists()
+        ):
             raise ValueError("public route has no physical uplink")
         invoke(NFT, "-f", "-", data=policy(table, bridge, uplink))
     if action == "remove":
@@ -119,9 +149,23 @@ def manage(action, run):
     present = exists()
     if action == "add" and not present:
         raise RuntimeError("egress policy missing")
-    print(json.dumps({"run": run, "bridge": bridge, "table": table, "present": present,
-                      "dns": RESOLVERS, "helper_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                      "rules": json.loads(invoke(NFT, "-j", "list", "table", "inet", table)) if present else None}))
+    print(
+        json.dumps(
+            {
+                "run": run,
+                "bridge": bridge,
+                "table": table,
+                "present": present,
+                "dns": RESOLVERS,
+                "helper_sha256": hashlib.sha256(
+                    Path(__file__).read_bytes()
+                ).hexdigest(),
+                "rules": json.loads(invoke(NFT, "-j", "list", "table", "inet", table))
+                if present
+                else None,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

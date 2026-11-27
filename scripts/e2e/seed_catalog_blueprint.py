@@ -42,7 +42,19 @@ BLUEPRINT_SRC = Path(
 BLUEPRINT_PAYLOAD_SCHEMA = "aweb.blueprint.import-payload.v1"
 # Mirror library.digest.EXCLUDED_DIRS: VCS/build/cache dirs never enter the payload.
 EXCLUDED_DIRS = frozenset(
-    {".git", ".hg", ".svn", "node_modules", ".cache", "dist", "build", "target", "tmp", "vendor", "__pycache__"}
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        ".cache",
+        "dist",
+        "build",
+        "target",
+        "tmp",
+        "vendor",
+        "__pycache__",
+    }
 )
 
 
@@ -110,16 +122,61 @@ def _provision_team(workspace: Path, env: dict[str, str]) -> None:
     alias = "alice"
     address = f"{namespace}/{alias}"
 
-    _run_aw(workspace, env, "id", "create", "--domain", namespace, "--name", alias,
-            "--registry", AWID_URL, "--skip-dns-verify")
-    _run_aw(workspace, env, "id", "team", "create", "--namespace", namespace,
-            "--name", team, "--registry", AWID_URL)
-    add_member = _run_aw(workspace, env, "id", "team", "add-member", "--namespace",
-                         namespace, "--team", team, "--member", address)
+    _run_aw(
+        workspace,
+        env,
+        "id",
+        "create",
+        "--domain",
+        namespace,
+        "--name",
+        alias,
+        "--registry",
+        AWID_URL,
+        "--skip-dns-verify",
+    )
+    _run_aw(
+        workspace,
+        env,
+        "id",
+        "team",
+        "create",
+        "--namespace",
+        namespace,
+        "--name",
+        team,
+        "--registry",
+        AWID_URL,
+    )
+    add_member = _run_aw(
+        workspace,
+        env,
+        "id",
+        "team",
+        "add-member",
+        "--namespace",
+        namespace,
+        "--team",
+        team,
+        "--member",
+        address,
+    )
     certificate_id = str(add_member["certificate_id"])
-    fetch_cert = _run_aw(workspace, env, "id", "team", "fetch-cert", "--namespace",
-                         namespace, "--team", team, "--cert-id", certificate_id,
-                         "--registry", AWID_URL)
+    fetch_cert = _run_aw(
+        workspace,
+        env,
+        "id",
+        "team",
+        "fetch-cert",
+        "--namespace",
+        namespace,
+        "--team",
+        team,
+        "--cert-id",
+        certificate_id,
+        "--registry",
+        AWID_URL,
+    )
     team_id = f"{team}:{namespace}"
     _run_aw(workspace, env, "id", "team", "switch", team_id)
 
@@ -144,8 +201,17 @@ updated_at: "{now}"
 
 def _publish(workspace: Path, env: dict[str, str], payload_file: Path) -> int:
     result = subprocess.run(
-        [AW_BIN, "id", "request", "POST", f"{LIBRARY_URL}/v1/blueprints/import",
-         "--team-auth", "--raw", "--body-file", str(payload_file)],
+        [
+            AW_BIN,
+            "id",
+            "request",
+            "POST",
+            f"{LIBRARY_URL}/v1/blueprints/import",
+            "--team-auth",
+            "--raw",
+            "--body-file",
+            str(payload_file),
+        ],
         cwd=workspace,
         env=env,
         text=True,
@@ -220,11 +286,17 @@ def main() -> int:
             # present (or none) is a real failure - the new pack did not land - and
             # must not be swallowed as an idempotent no-op.
             existing = next(
-                (bp for bp in _get_blueprints() if bp.get("blueprint_ref") == blueprint_id),
+                (
+                    bp
+                    for bp in _get_blueprints()
+                    if bp.get("blueprint_ref") == blueprint_id
+                ),
                 None,
             )
             if existing is not None and existing.get("version") == source_version:
-                print(f"  {blueprint_id} v{source_version} already present in catalog; treating as seeded")
+                print(
+                    f"  {blueprint_id} v{source_version} already present in catalog; treating as seeded"
+                )
             else:
                 raise SystemExit(
                     f"publish failed and the catalog does not hold {blueprint_id} "
@@ -232,7 +304,9 @@ def main() -> int:
                 )
 
     catalog = _get_blueprints()
-    match = next((bp for bp in catalog if bp.get("blueprint_ref") == blueprint_id), None)
+    match = next(
+        (bp for bp in catalog if bp.get("blueprint_ref") == blueprint_id), None
+    )
     if match is None:
         raise SystemExit(
             f"{blueprint_id} not found in public catalog after seeding; "

@@ -1,7 +1,7 @@
 """The ``AWEB-Hook DIDKey`` delivery credential that carries one event to one binding.
 
 This is the Python reading of the contract in ``docs/hook-events.md``; the Go
-authority in ``cli/go/hookevent`` pins the bytes, and both pass the same
+authority in ``cli/go/internal/hookevent`` pins the bytes, and both pass the same
 public vector. A client delivery is authorized here by its team certificate:
 it names the event's producer and passes awid's one check of a team
 certificate under the team's current key, revoked certificates and registered

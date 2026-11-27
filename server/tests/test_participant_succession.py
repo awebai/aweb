@@ -42,7 +42,8 @@ async def _send(sender, target, kind, *, encrypted=False, continuation=None):
 
 async def _human(actor):
     await actor.node.db.execute(
-        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1", actor.id
+        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1",
+        actor.id,
     )
 
 
@@ -126,7 +127,9 @@ async def test_plaintext_mail_continues_after_human_succession(
     queued = _submission(agent, old, "mail", continuation=str(first.cid))
     await _retire(old)
     # Legacy predecessor provenance is intentionally not current human evidence.
-    await node.db.execute("UPDATE {{tables.agents}} SET human_verified_key=NULL WHERE agent_id=$1", old.id)
+    await node.db.execute(
+        "UPDATE {{tables.agents}} SET human_verified_key=NULL WHERE agent_id=$1", old.id
+    )
     async with node.db.transaction() as tx:
         result = await succeed_local_human_participant_on(
             tx, predecessor_did=old.stable or old.did, successor_did=successor.stable
@@ -204,7 +207,9 @@ async def test_plaintext_mail_continues_after_human_succession(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("different_team", [False, True])
-async def test_retired_human_chat_continuation_has_mail_refusal(route_pair, different_team):
+async def test_retired_human_chat_continuation_has_mail_refusal(
+    route_pair, different_team
+):
     node = route_pair.source
     old, agent = node.local, node.global_actor
     # Historical chat was created before authoritative human kind became known.
@@ -219,10 +224,13 @@ async def test_retired_human_chat_continuation_has_mail_refusal(route_pair, diff
         await node.db.execute(
             "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) "
             "SELECT $1,namespace,'retired-human',team_did_key FROM {{tables.teams}} WHERE team_id=$2",
-            retired_team, node.team_id,
+            retired_team,
+            node.team_id,
         )
         await node.db.execute(
-            "UPDATE {{tables.agents}} SET team_id=$2 WHERE agent_id=$1", old.id, retired_team
+            "UPDATE {{tables.agents}} SET team_id=$2 WHERE agent_id=$1",
+            old.id,
+            retired_team,
         )
     await _human(old)
     await _retire(old)

@@ -16,9 +16,7 @@ def team_controller_error_response(error: TeamControllerUnavailable) -> JSONResp
     return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
 
 
-async def _controller_handler(
-    request: Request, error: Exception
-) -> JSONResponse:
+async def _controller_handler(request: Request, error: Exception) -> JSONResponse:
     assert isinstance(error, TeamControllerUnavailable)
     return team_controller_error_response(error)
 

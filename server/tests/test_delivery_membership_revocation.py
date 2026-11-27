@@ -75,7 +75,9 @@ async def test_same_team_delivery_requires_unrevoked_membership(
     assert row["status"] == "active"
     assert row["accepted_team_did_key"] == row["team_did_key"]
     before_mail = await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}")
-    before_chat = await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
+    before_chat = await env.db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.chat_messages}}"
+    )
     path, payload = (
         ("/v1/messages", {"to_address": recipient.address, "body": "revocation policy"})
         if kind == "mail"
@@ -89,9 +91,13 @@ async def test_same_team_delivery_requires_unrevoked_membership(
     assert response.status_code == expected, response.text
     if expected == 403:
         assert "verified team members" in response.text
-        assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == before_mail
         assert (
-            await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == before_chat
+            await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}")
+            == before_mail
+        )
+        assert (
+            await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
+            == before_chat
         )
     elif kind == "mail":
         stored = await env.db.fetch_one(
@@ -108,4 +114,7 @@ async def test_same_team_delivery_requires_unrevoked_membership(
             "SELECT from_did, body FROM {{tables.chat_messages}} WHERE session_id=$1",
             UUID(response.json()["session_id"]),
         )
-        assert (stored["from_did"], stored["body"]) == (sender.stable, "revocation policy")
+        assert (stored["from_did"], stored["body"]) == (
+            sender.stable,
+            "revocation policy",
+        )

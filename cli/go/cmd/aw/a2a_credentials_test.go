@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/awebai/aw/a2a"
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/internal/a2a"
 )
 
 func TestA2ACredentialReadRefusesMalformedFileWithoutExposingItsContents(t *testing.T) {

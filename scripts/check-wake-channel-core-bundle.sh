@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The aw wake broker embeds cli/go/wake/channel_core_runner_bundle.mjs
+# The aw wake broker embeds cli/go/internal/wake/channel_core_runner_bundle.mjs
 # (go:embed), a build of channel-core. Fail when it differs from a fresh build
 # of the current entry and channel-core source.
 #   (no args)    check the committed bundle
@@ -29,7 +29,7 @@ STALE_MESSAGE="channel-core wake runner bundle is stale; rebuild with scripts/ch
 
 build_bundle() {
   local out="$1"
-  "$ESBUILD" cli/go/wake/channel_core_runner_entry.ts \
+  "$ESBUILD" cli/go/internal/wake/channel_core_runner_entry.ts \
     --bundle --platform=node --format=esm --log-level=warning \
     --banner:js="import { createRequire as __awebCreateRequire } from 'node:module'; const require = __awebCreateRequire(import.meta.url);" \
     --outfile="$out" >/dev/null
@@ -51,13 +51,13 @@ self_test() {
   local tmp out status
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/aweb-wake-bundle.XXXXXX")"
   trap 'rm -rf "$tmp"' RETURN
-  mkdir -p "$tmp/cli/go/wake" "$tmp/channel-core" "$tmp/channel/node_modules"
-  cp "$ROOT/cli/go/wake/channel_core_runner_entry.ts" "$ROOT/cli/go/wake/oats_command.ts" "$tmp/cli/go/wake/"
+  mkdir -p "$tmp/cli/go/internal/wake" "$tmp/channel-core" "$tmp/channel/node_modules"
+  cp "$ROOT/cli/go/internal/wake/channel_core_runner_entry.ts" "$ROOT/cli/go/internal/wake/oats_command.ts" "$tmp/cli/go/internal/wake/"
   cp -R "$ROOT/channel-core/src" "$tmp/channel-core/src"
   ln -s "$ROOT/channel-core/node_modules" "$tmp/channel-core/node_modules"
   ln -s "$ROOT/channel/node_modules/.bin" "$tmp/channel/node_modules/.bin"
-  (cd "$tmp" && ESBUILD="$ESBUILD" bash -c "$(declare -f build_bundle); build_bundle cli/go/wake/channel_core_runner_bundle.mjs")
-  if ! out="$(cd "$tmp" && ESBUILD="$ESBUILD" STALE_MESSAGE="$STALE_MESSAGE" bash -c "$(declare -f build_bundle check_bundle); check_bundle cli/go/wake/channel_core_runner_bundle.mjs" 2>&1)"; then
+  (cd "$tmp" && ESBUILD="$ESBUILD" bash -c "$(declare -f build_bundle); build_bundle cli/go/internal/wake/channel_core_runner_bundle.mjs")
+  if ! out="$(cd "$tmp" && ESBUILD="$ESBUILD" STALE_MESSAGE="$STALE_MESSAGE" bash -c "$(declare -f build_bundle check_bundle); check_bundle cli/go/internal/wake/channel_core_runner_bundle.mjs" 2>&1)"; then
     printf 'SELF-TEST FAIL: a freshly built bundle was refused:\n%s\n' "$out" >&2
     return 1
   fi
@@ -69,7 +69,7 @@ self_test() {
     return 1
   fi
   set +e
-  out="$(cd "$tmp" && ESBUILD="$ESBUILD" STALE_MESSAGE="$STALE_MESSAGE" bash -c "$(declare -f build_bundle check_bundle); check_bundle cli/go/wake/channel_core_runner_bundle.mjs" 2>&1)"
+  out="$(cd "$tmp" && ESBUILD="$ESBUILD" STALE_MESSAGE="$STALE_MESSAGE" bash -c "$(declare -f build_bundle check_bundle); check_bundle cli/go/internal/wake/channel_core_runner_bundle.mjs" 2>&1)"
   status=$?
   set -e
   if [[ "$status" -eq 0 ]]; then
@@ -88,12 +88,12 @@ case "${1:-}" in
     self_test
     ;;
   --write)
-    "$TSC" --noEmit --strict --skipLibCheck --moduleResolution bundler --module ESNext --target ESNext --lib ESNext --types node --typeRoots "$ROOT/channel-core/node_modules/@types" cli/go/wake/channel_core_runner_entry.ts
-    build_bundle cli/go/wake/channel_core_runner_bundle.mjs
+    "$TSC" --noEmit --strict --skipLibCheck --moduleResolution bundler --module ESNext --target ESNext --lib ESNext --types node --typeRoots "$ROOT/channel-core/node_modules/@types" cli/go/internal/wake/channel_core_runner_entry.ts
+    build_bundle cli/go/internal/wake/channel_core_runner_bundle.mjs
     ;;
   "")
-    "$TSC" --noEmit --strict --skipLibCheck --moduleResolution bundler --module ESNext --target ESNext --lib ESNext --types node --typeRoots "$ROOT/channel-core/node_modules/@types" cli/go/wake/channel_core_runner_entry.ts
-    check_bundle cli/go/wake/channel_core_runner_bundle.mjs
+    "$TSC" --noEmit --strict --skipLibCheck --moduleResolution bundler --module ESNext --target ESNext --lib ESNext --types node --typeRoots "$ROOT/channel-core/node_modules/@types" cli/go/internal/wake/channel_core_runner_entry.ts
+    check_bundle cli/go/internal/wake/channel_core_runner_bundle.mjs
     ;;
   *)
     echo "usage: $0 [--write|--self-test]" >&2

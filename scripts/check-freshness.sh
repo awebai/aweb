@@ -105,7 +105,7 @@ section "aw wake channel-core bundle freshness"
 if scripts/check-wake-channel-core-bundle.sh; then
   echo "wake channel-core bundle is up to date"
 else
-  echo "FAIL: cli/go/wake/channel_core_runner_bundle.mjs is stale; run scripts/check-wake-channel-core-bundle.sh --write and commit it"
+  echo "FAIL: cli/go/internal/wake/channel_core_runner_bundle.mjs is stale; run scripts/check-wake-channel-core-bundle.sh --write and commit it"
   status=1
 fi
 

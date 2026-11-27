@@ -10,11 +10,18 @@ from pathlib import Path
 
 import pytest
 
-from awid.signing import VerifyResult, canonical_json_bytes, sign_message, verify_signature
+from awid.signing import (
+    VerifyResult,
+    canonical_json_bytes,
+    sign_message,
+    verify_signature,
+)
 from aweb.agent_status import StatusDocumentError, verify_status_document
 
 VECTOR = json.loads(
-    (Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json").read_text()
+    (
+        Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json"
+    ).read_text()
 )
 # stale_seq depends on the stored row; the publish route tests cover it.
 DOCUMENT_ONLY_INVALID = [case for case in VECTOR["invalid"] if "stored_seq" not in case]
@@ -111,7 +118,9 @@ FULLWIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
 @pytest.mark.parametrize("field", ["observed_at", "valid_until"])
 def test_times_with_non_ascii_digits_are_refused_as_invalid_values(field):
     year, rest = VECTOR["valid"][0]["document"][field].split("-", 1)
-    signed_payload, signature = _signed_variant(**{field: year.translate(FULLWIDTH_DIGITS) + "-" + rest})
+    signed_payload, signature = _signed_variant(
+        **{field: year.translate(FULLWIDTH_DIGITS) + "-" + rest}
+    )
     with pytest.raises(StatusDocumentError) as refused:
         verify_status_document(
             signed_payload,
@@ -148,11 +157,16 @@ def _signed_raw(raw: bytes):
 def test_text_without_a_utf8_form_is_refused_as_non_canonical(text):
     document = copy.deepcopy(VECTOR["valid"][0]["document"])
     document["reason"]["text"] = text
-    raw = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    raw = json.dumps(
+        document, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
     signed_payload, signature = _signed_raw(raw)
     with pytest.raises(StatusDocumentError) as refused:
         verify_status_document(
-            signed_payload, signature, signer_did=VECTOR["publisher_did_key"], now=_now(VECTOR["valid"][0]),
+            signed_payload,
+            signature,
+            signer_did=VECTOR["publisher_did_key"],
+            now=_now(VECTOR["valid"][0]),
         )
     assert refused.value.code == "non_canonical"
 
@@ -160,10 +174,14 @@ def test_text_without_a_utf8_form_is_refused_as_non_canonical(text):
 def test_paired_surrogate_escape_is_refused_as_non_canonical_and_raw_utf8_verifies():
     document = copy.deepcopy(VECTOR["valid"][0]["document"])
     document["reason"]["text"] = "Its server \U0001f525"
-    escaped = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    escaped = json.dumps(
+        document, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
     with pytest.raises(StatusDocumentError) as refused:
         verify_status_document(
-            *_signed_raw(escaped), signer_did=VECTOR["publisher_did_key"], now=_now(VECTOR["valid"][0]),
+            *_signed_raw(escaped),
+            signer_did=VECTOR["publisher_did_key"],
+            now=_now(VECTOR["valid"][0]),
         )
     assert refused.value.code == "non_canonical"
     verified = verify_status_document(

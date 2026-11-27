@@ -51,7 +51,15 @@ def checkpoint2() -> CheckpointCandidate:
     )
 
 
-def cohort(*, address: str = ADDRESS, key: str = KEY1, checkpoint_seq: int = 1, checkpoint_hash: str = HASH1, checkpoint_revision: int = 1, fence: int = 1) -> AddressAuthorityCandidate:
+def cohort(
+    *,
+    address: str = ADDRESS,
+    key: str = KEY1,
+    checkpoint_seq: int = 1,
+    checkpoint_hash: str = HASH1,
+    checkpoint_revision: int = 1,
+    fence: int = 1,
+) -> AddressAuthorityCandidate:
     return AddressAuthorityCandidate(
         canonical_address=address,
         authority_selection="dns",
@@ -95,7 +103,9 @@ async def test_phase_a_first_insert_idempotence_and_fast_path(aweb_cloud_db) -> 
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_advance_invalidates_peer_address_and_replaces_whole_tuple(aweb_cloud_db) -> None:
+async def test_checkpoint_advance_invalidates_peer_address_and_replaces_whole_tuple(
+    aweb_cloud_db,
+) -> None:
     repository = AuthorityRepository(aweb_cloud_db.aweb_db)
     await repository.commit_phase_a(checkpoint1(), cohort())
     await repository.commit_phase_a(
@@ -127,7 +137,9 @@ async def test_checkpoint_advance_invalidates_peer_address_and_replaces_whole_tu
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_rejects_rollback_split_view_and_missing_containment(aweb_cloud_db) -> None:
+async def test_checkpoint_rejects_rollback_split_view_and_missing_containment(
+    aweb_cloud_db,
+) -> None:
     repository = AuthorityRepository(aweb_cloud_db.aweb_db)
     await repository.commit_phase_a(checkpoint1(), cohort())
 
@@ -199,12 +211,26 @@ async def test_two_n_plus_one_forks_have_one_winner(aweb_cloud_db) -> None:
         commit(
             repository_a,
             fork_a,
-            replace(cohort(), bound_current_did_key=KEY2, checkpoint_seq=2, checkpoint_entry_hash=fork_a.entry_hash, checkpoint_revision=2, publishing_fence=2),
+            replace(
+                cohort(),
+                bound_current_did_key=KEY2,
+                checkpoint_seq=2,
+                checkpoint_entry_hash=fork_a.entry_hash,
+                checkpoint_revision=2,
+                publishing_fence=2,
+            ),
         ),
         commit(
             repository_b,
             fork_b,
-            replace(cohort(), bound_current_did_key=KEY2, checkpoint_seq=2, checkpoint_entry_hash=fork_b.entry_hash, checkpoint_revision=2, publishing_fence=3),
+            replace(
+                cohort(),
+                bound_current_did_key=KEY2,
+                checkpoint_seq=2,
+                checkpoint_entry_hash=fork_b.entry_hash,
+                checkpoint_revision=2,
+                publishing_fence=3,
+            ),
         ),
     )
     assert sum(not isinstance(result, str) for result in results) == 1
@@ -223,7 +249,9 @@ async def test_phase_a_rejects_expired_or_taken_over_fence(aweb_cloud_db) -> Non
     )
     await work.acquire_lease(scope, owner_id=uuid4(), ttl_seconds=5)
     with pytest.raises(FederationAuthorityError) as stale:
-        await repository.commit_phase_a(checkpoint1(), cohort(fence=old.fence), fences=(old,))
+        await repository.commit_phase_a(
+            checkpoint1(), cohort(fence=old.fence), fences=(old,)
+        )
     assert stale.value.reason == "federation_authority_cas_conflict"
 
 

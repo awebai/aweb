@@ -23,7 +23,11 @@ async def test_status_reports_reservation_held_by_workspace_agent(privacy_app):
              acquired_at, expires_at, metadata_json)
         VALUES ($1,$2,$3,'alice',$4,$5,'{}'::jsonb)
         """,
-        TEAM, resource, holder.id, now, now + timedelta(hours=1),
+        TEAM,
+        resource,
+        holder.id,
+        now,
+        now + timedelta(hours=1),
     )
 
     # Both holder and teammate read the real team-scoped status. Reservations
@@ -36,5 +40,8 @@ async def test_status_reports_reservation_held_by_workspace_agent(privacy_app):
         body = response.json()
         assert [lock["resource_key"] for lock in body["locks"]] == [resource]
         agents = {a["workspace_id"]: a for a in body["agents"]}
-        assert [lock["resource_key"] for lock in agents[str(holder.workspace)]["reservations"]] == [resource]
+        assert [
+            lock["resource_key"]
+            for lock in agents[str(holder.workspace)]["reservations"]
+        ] == [resource]
         assert agents[str(env.actors["bob"].workspace)]["reservations"] == []

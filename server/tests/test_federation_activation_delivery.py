@@ -949,7 +949,9 @@ async def test_phase_b_forced_failure_rolls_back_every_effect(aweb_cloud_db) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["exception", "typed_outcome"])
-async def test_committed_outbox_retries_after_hook_failure(aweb_cloud_db, failure) -> None:
+async def test_committed_outbox_retries_after_hook_failure(
+    aweb_cloud_db, failure
+) -> None:
     manager = aweb_cloud_db.aweb_db
     envelope = _envelope()
     recipient, token = await _seed_recipient_and_authority(manager, envelope)
@@ -965,7 +967,12 @@ async def test_committed_outbox_retries_after_hook_failure(aweb_cloud_db, failur
     async def fail(_event_type, _payload):
         if failure == "exception":
             raise RuntimeError("offline")
-        from aweb.hooks import MutationDeliveryOutcome, MutationDeliveryStage, MutationDeliveryStatus
+        from aweb.hooks import (
+            MutationDeliveryOutcome,
+            MutationDeliveryStage,
+            MutationDeliveryStatus,
+        )
+
         return MutationDeliveryOutcome(
             status=MutationDeliveryStatus.FAILED,
             failed_stages=(MutationDeliveryStage.PUBLICATION,),
@@ -1315,13 +1322,19 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(
         current = locked.recipient
         if mode == "open":
             await _authorize_policy(
-                tx, envelope=keyed, recipient=current, stored_route_continuation=False,
+                tx,
+                envelope=keyed,
+                recipient=current,
+                stored_route_continuation=False,
                 registry_client=None,
             )
             return
         with pytest.raises(FederationAuthorityError) as refused:
             await _authorize_policy(
-                tx, envelope=keyed, recipient=current, stored_route_continuation=False,
+                tx,
+                envelope=keyed,
+                recipient=current,
+                stored_route_continuation=False,
                 registry_client=None,
             )
         assert refused.value.reason == "recipient_policy_rejected"
@@ -1341,7 +1354,10 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(
         locked = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
         current = locked.recipient
         await _authorize_policy(
-            tx, envelope=keyed, recipient=current, stored_route_continuation=False,
+            tx,
+            envelope=keyed,
+            recipient=current,
+            stored_route_continuation=False,
             registry_client=None,
         )
 

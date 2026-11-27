@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import re
 from enum import Enum, auto
+from functools import lru_cache
 
 from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.exceptions import BadSignatureError
@@ -102,6 +103,18 @@ def decode_legacy_signature(value: str) -> bytes:
 
 def prime_point(encoded: bytes) -> bool:
     """Canonical, nonidentity Ed25519 point in the prime subgroup."""
+    if type(encoded) is bytes and len(encoded) == 32:
+        return _prime_point_verdicts(encoded)
+    return _prime_point(encoded)
+
+
+@lru_cache(maxsize=4096)
+def _prime_point_verdicts(encoded: bytes) -> bool:
+    """The subgroup check depends only on the bytes, and requests repeat the same keys."""
+    return _prime_point(encoded)
+
+
+def _prime_point(encoded: bytes) -> bool:
     return canonical_point_encoding(encoded) and bool(
         crypto_core_ed25519_is_valid_point(encoded)
     )

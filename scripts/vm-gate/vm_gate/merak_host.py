@@ -15,6 +15,34 @@ import time
 
 ROOT = Path.home() / ".local/share/aweb-gates"
 LABEL = "aweb.merak.run"
+# QEMU's own memory beyond the guest's.
+QEMU_OVERHEAD_MIB = 4096
+
+
+def host_capacity():
+    """This host's CPU count and memory in MiB, measured now."""
+    total = next(
+        int(line.split()[1]) // 1024
+        for line in Path("/proc/meminfo").read_text().splitlines()
+        if line.startswith("MemTotal:")
+    )
+    return os.cpu_count(), total
+
+
+def guest_size(host_cpus, host_memory_mib):
+    """The guest gets every CPU and the memory the host can spare.
+
+    The host keeps an eighth of its memory, at least 2 GiB, plus QEMU's own
+    overhead; the guest's memory is the rest. Nothing else runs here during
+    a gate, so no CPU is held back.
+    """
+    if type(host_cpus) is not int or type(host_memory_mib) is not int:
+        raise ValueError("host capacity is whole CPUs and MiB")
+    reserve = max(host_memory_mib // 8, 2048)
+    memory_mib = host_memory_mib - reserve - QEMU_OVERHEAD_MIB
+    if host_cpus < 1 or memory_mib < 1024:
+        raise ValueError("this host is too small for a gate guest")
+    return host_cpus, memory_mib
 RUN = re.compile(r"vm-[a-f0-9]{32}")
 
 
@@ -31,7 +59,10 @@ def notify(**fields):
 def firewall(action, run):
     result = subprocess.run(
         ["sudo", "-n", "/usr/local/sbin/aweb-merak-egress", action, run],
-        check=True, capture_output=True, text=True, timeout=30,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     receipt = json.loads(result.stdout)
     if receipt["run"] != run or receipt["present"] is not (action == "add"):
@@ -90,7 +121,9 @@ def remove_guest(job):
     if remaining or existing.intersection(ids):
         raise RuntimeError("guest container still present")
     volumes = docker("volume", "ls", "-q", "--filter", selector)
-    networks = docker("network", "ls", "--no-trunc", "-q", "--filter", selector).splitlines()
+    networks = docker(
+        "network", "ls", "--no-trunc", "-q", "--filter", selector
+    ).splitlines()
     for network in networks:
         docker("network", "rm", network)
     if volumes or docker("network", "ls", "-q", "--filter", selector):
@@ -123,6 +156,7 @@ def serve(spec):
     duration = spec["duration"]
     if type(duration) is not int or not 0 < duration <= 86400:
         raise ValueError("invalid guest lifetime")
+    cpus, memory_mib = guest_size(*host_capacity())
     runs = ROOT / "runs"
     runs.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (ROOT / "slot.lock").open("a") as lock:
@@ -154,18 +188,30 @@ def serve(spec):
         try:
             egress = firewall("add", run)
             if egress["helper_sha256"] != spec["firewall_sha256"]:
-                raise ValueError("installed Merak egress helper differs from controller")
+                raise ValueError(
+                    "installed Merak egress helper differs from controller"
+                )
             network = "aweb-" + run
             network_id = docker(
-                "network", "create", "--driver", "bridge", "--ipv6=false",
-                "--label", f"{LABEL}={run}",
-                "--opt", "com.docker.network.bridge.name=" + egress["bridge"],
-                "--opt", "com.docker.network.bridge.enable_icc=false", network,
+                "network",
+                "create",
+                "--driver",
+                "bridge",
+                "--ipv6=false",
+                "--label",
+                f"{LABEL}={run}",
+                "--opt",
+                "com.docker.network.bridge.name=" + egress["bridge"],
+                "--opt",
+                "com.docker.network.bridge.enable_icc=false",
+                network,
             )
             # Docker's embedded resolver otherwise hides the actual DNS target.
             # QEMU reads these numeric nameservers directly inside the launcher.
             dns = egress["dns"]
-            (job / "resolv.conf").write_text("".join("nameserver " + ip + "\n" for ip in dns))
+            (job / "resolv.conf").write_text(
+                "".join("nameserver " + ip + "\n" for ip in dns)
+            )
             (job / "user-data").write_text("#cloud-config\n" + json.dumps(spec["seed"]))
             (job / "meta-data").write_text(
                 json.dumps({"instance-id": run, "local-hostname": run})
@@ -192,10 +238,16 @@ def serve(spec):
                 "--label",
                 f"{LABEL}={run}",
                 "--device=/dev/kvm",
-                "--network", network_id,
-                "--sysctl", "net.ipv6.conf.all.disable_ipv6=1",
-                "--dns", dns[0], "--dns", dns[1],
-                "--mount", f"type=bind,src={job}/resolv.conf,dst=/etc/resolv.conf,readonly",
+                "--network",
+                network_id,
+                "--sysctl",
+                "net.ipv6.conf.all.disable_ipv6=1",
+                "--dns",
+                dns[0],
+                "--dns",
+                dns[1],
+                "--mount",
+                f"type=bind,src={job}/resolv.conf,dst=/etc/resolv.conf,readonly",
                 "--user",
                 f"{os.getuid()}:{os.getgid()}",
                 "--cap-drop=ALL",
@@ -204,9 +256,13 @@ def serve(spec):
                 "--tmpfs",
                 "/tmp",
                 "--memory",
-                "50g",
+                f"{memory_mib + QEMU_OVERHEAD_MIB}m",
                 "--memory-swap",
-                "50g",
+                f"{memory_mib + QEMU_OVERHEAD_MIB}m",
+                "--env",
+                f"VM_CPUS={cpus}",
+                "--env",
+                f"VM_MEMORY_MIB={memory_mib}",
                 "--mount",
                 f"type=bind,src={base},dst=/base/disk.raw,readonly",
                 "--mount",
@@ -216,6 +272,7 @@ def serve(spec):
             notify(
                 ready=True,
                 run=run,
+                guest={"cpus": cpus, "memory_mib": memory_mib},
                 container=identifier,
                 network_id=network_id,
                 egress=egress,

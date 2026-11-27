@@ -36,7 +36,9 @@ def _nodes(plan):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("has_succession", [False, True], ids=["ordinary", "succession"])
+@pytest.mark.parametrize(
+    "has_succession", [False, True], ids=["ordinary", "succession"]
+)
 async def test_mail_tick_uses_recipient_index_on_large_unread_history(
     aweb_cloud_db, has_succession
 ):
@@ -131,9 +133,13 @@ async def test_mail_tick_uses_recipient_index_on_large_unread_history(
         plan = json.loads(plan)
     if directory := os.environ.get("MAIL_PLAN_REPORT_DIR"):
         Path(directory).mkdir(parents=True, exist_ok=True)
-        Path(directory, f"tick-plan-{has_succession}.json").write_text(json.dumps(plan, indent=2))
+        Path(directory, f"tick-plan-{has_succession}.json").write_text(
+            json.dumps(plan, indent=2)
+        )
     scans = [n for n in _nodes(plan[0]["Plan"]) if n.get("Relation Name") == "messages"]
-    print(json.dumps({"messages_scans": scans, "execution_ms": plan[0]["Execution Time"]}))
+    print(
+        json.dumps({"messages_scans": scans, "execution_ms": plan[0]["Execution Time"]})
+    )
     assert scans and all(n["Node Type"] != "Seq Scan" for n in scans)
     assert any("to_did" in n.get("Index Cond", "") for n in _nodes(plan[0]["Plan"]))
     assert "EXISTS" not in query.upper()
@@ -192,7 +198,9 @@ async def test_stream_scope_does_not_return_ordinary_conversation_history(
         Path(directory).mkdir(parents=True, exist_ok=True)
         Path(directory, "scope-plan.json").write_text(json.dumps(plan, indent=2))
     scans = [
-        n for n in _nodes(plan[0]["Plan"]) if n.get("Relation Name") == "conversation_participants"
+        n
+        for n in _nodes(plan[0]["Plan"])
+        if n.get("Relation Name") == "conversation_participants"
     ]
     assert scans and all(n["Node Type"] != "Seq Scan" for n in scans)
     assert any("did" in n.get("Index Cond", "") for n in _nodes(plan[0]["Plan"]))
@@ -201,7 +209,8 @@ async def test_stream_scope_does_not_return_ordinary_conversation_history(
 
     if baseline_file := os.environ.get("MAIL_SCOPE_BASELINE_SQL"):
         rows = await db.fetch_all(
-            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + Path(baseline_file).read_text(),
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
+            + Path(baseline_file).read_text(),
             *args,
         )
         old_plan = rows[0]["QUERY PLAN"]
@@ -209,4 +218,6 @@ async def test_stream_scope_does_not_return_ordinary_conversation_history(
             old_plan = json.loads(old_plan)
         assert old_plan[0]["Plan"]["Actual Rows"] == 50000
         if directory := os.environ.get("MAIL_PLAN_REPORT_DIR"):
-            Path(directory, "scope-baseline-plan.json").write_text(json.dumps(old_plan, indent=2))
+            Path(directory, "scope-baseline-plan.json").write_text(
+                json.dumps(old_plan, indent=2)
+            )

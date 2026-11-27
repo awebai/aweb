@@ -47,7 +47,9 @@ def test_omitted_authority_column_is_not_a_null_fact(native_json_snapshot, colum
         MemberProjection.from_row(native_json_snapshot)
 
 
-def test_snapshot_keeps_raw_policy_claims_without_attributing_them(native_json_snapshot):
+def test_snapshot_keeps_raw_policy_claims_without_attributing_them(
+    native_json_snapshot,
+):
     # Deliberate legacy/tampering state, not a supported authenticated identity.
     projection = MemberProjection.from_row(native_json_snapshot)
     assert projection["did_aw"] == "did:aw:unverified-claim"
@@ -62,7 +64,9 @@ def test_host_cannot_mutate_a_captured_native_snapshot(native_json_snapshot):
     assert projection.verified_identity()["did_aw"] is None
 
 
-def test_native_snapshot_exposes_the_canonical_scope_and_status_types(native_json_snapshot):
+def test_native_snapshot_exposes_the_canonical_scope_and_status_types(
+    native_json_snapshot,
+):
     from aweb.identity_scope import IdentityScope
     from aweb.member_status import MemberStatus
 

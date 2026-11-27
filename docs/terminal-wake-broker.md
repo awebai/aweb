@@ -619,10 +619,10 @@ has been deleted. Current terminal delivery qualification is the Go
 shared-core/channel-core test coverage that runs the real bundled child in
 candidate gates:
 
-- `cli/go/wake/channel_core_runner_test.go` `TestBundled*` cases prove bundled
+- `cli/go/internal/wake/channel_core_runner_test.go` `TestBundled*` cases prove bundled
   channel-core readiness/status behavior, exact fetch, terminal input,
   delivered-ID handling, grant-home auth, and the read-only mail grant exception.
-- `cli/go/wake/broker_channel_core_lifecycle_test.go` `TestBroker*` cases prove
+- `cli/go/internal/wake/broker_channel_core_lifecycle_test.go` `TestBroker*` cases prove
   broker lifecycle around channel-core: pause restoration, binding replacement,
   generation fencing for stale inactive callbacks, deregister stop-before-delete,
   same-home reactivation, and daemon-down fallback.

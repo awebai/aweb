@@ -28,27 +28,37 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture(autouse=True)
 def _allow_static_atomic_claim_timestamp(monkeypatch):
-    monkeypatch.setattr(dns_addresses_routes, "enforce_timestamp_skew", lambda _timestamp: None)
+    monkeypatch.setattr(
+        dns_addresses_routes, "enforce_timestamp_skew", lambda _timestamp: None
+    )
     monkeypatch.setattr(did_routes, "enforce_timestamp_skew", lambda _timestamp: None)
 
 
 def test_atomic_claim_conflict_codes_match_shared_vector():
     vector = json.loads(
-        (_ROOT / "docs" / "vectors" / "atomic-address-claim-conflict-codes-v1.json").read_text(
+        (
+            _ROOT / "docs" / "vectors" / "atomic-address-claim-conflict-codes-v1.json"
+        ).read_text(
             encoding="utf-8",
         )
     )
     assert vector["codes"] == list(dns_addresses_routes._ATOMIC_CLAIM_CONFLICT_CODES)
 
 
-async def _register_namespace(client, signing_key, controller_did, domain="example.com"):
-    headers = build_signed_headers(signing_key, controller_did, domain=domain, operation="register")
+async def _register_namespace(
+    client, signing_key, controller_did, domain="example.com"
+):
+    headers = build_signed_headers(
+        signing_key, controller_did, domain=domain, operation="register"
+    )
     resp = await client.post("/v1/namespaces", json={"domain": domain}, headers=headers)
     assert resp.status_code == 200, resp.text
     return resp.json()
 
 
-def _register_did_log_proof(signing_key, did_aw: str, did_key: str, *, timestamp: str = _TS) -> dict:
+def _register_did_log_proof(
+    signing_key, did_aw: str, did_key: str, *, timestamp: str = _TS
+) -> dict:
     state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
     payload = log_entry_payload(
         did_aw=did_aw,
@@ -182,7 +192,9 @@ async def _register_and_rotate_identity(client, *, rotations=2):
     return signing_key, did_key, did_aw, log_head
 
 
-async def _counts(awid_db_infra, did_aw: str, name: str, domain="example.com") -> tuple[int, int, int]:
+async def _counts(
+    awid_db_infra, did_aw: str, name: str, domain="example.com"
+) -> tuple[int, int, int]:
     db = awid_db_infra.get_manager("aweb")
     did_count = await db.fetch_one(
         "SELECT COUNT(*) AS count FROM {{tables.did_aw_mappings}} WHERE did_aw = $1",
@@ -206,7 +218,9 @@ async def _counts(awid_db_infra, did_aw: str, name: str, domain="example.com") -
 
 
 @pytest.mark.asyncio
-async def test_atomic_claim_dry_run_validates_without_writing(client, awid_db_infra, controller_identity):
+async def test_atomic_claim_dry_run_validates_without_writing(
+    client, awid_db_infra, controller_identity
+):
     controller_signing_key, controller_did = controller_identity
     await _register_namespace(client, controller_signing_key, controller_did)
     identity_signing_key, identity_public_key = generate_keypair()
@@ -223,7 +237,11 @@ async def test_atomic_claim_dry_run_validates_without_writing(client, awid_db_in
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "available"
     assert resp.json()["dry_run"] is True
-    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (0, 0, 0)
+    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
+        0,
+        0,
+        0,
+    )
 
 
 @pytest.mark.asyncio
@@ -250,7 +268,11 @@ async def test_atomic_claim_apply_creates_compatible_did_log_and_address(
     assert payload["did_status"] == "created"
     assert payload["address_status"] == "created"
     assert payload["address"]["name"] == body["address_name"]
-    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (1, 1, 1)
+    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
+        1,
+        1,
+        1,
+    )
 
     key_response = await client.get(f"/v1/did/{body['did_aw']}/key")
     assert key_response.status_code == 200, key_response.text
@@ -272,7 +294,12 @@ async def test_atomic_claim_existing_multi_rotated_identity_accepts_rotation_log
 ):
     controller_signing_key, controller_did = controller_identity
     await _register_namespace(client, controller_signing_key, controller_did)
-    identity_signing_key, identity_did_key, did_aw, log_head = await _register_and_rotate_identity(
+    (
+        identity_signing_key,
+        identity_did_key,
+        did_aw,
+        log_head,
+    ) = await _register_and_rotate_identity(
         client,
         rotations=2,
     )
@@ -304,7 +331,12 @@ async def test_atomic_claim_rotation_log_head_requires_previous_key_signature(
 ):
     controller_signing_key, controller_did = controller_identity
     await _register_namespace(client, controller_signing_key, controller_did)
-    identity_signing_key, identity_did_key, did_aw, log_head = await _register_and_rotate_identity(
+    (
+        identity_signing_key,
+        identity_did_key,
+        did_aw,
+        log_head,
+    ) = await _register_and_rotate_identity(
         client,
         rotations=2,
     )
@@ -337,7 +369,12 @@ async def test_atomic_claim_rotation_proof_must_match_registered_log_head(
 ):
     controller_signing_key, controller_did = controller_identity
     await _register_namespace(client, controller_signing_key, controller_did)
-    identity_signing_key, identity_did_key, did_aw, log_head = await _register_and_rotate_identity(
+    (
+        identity_signing_key,
+        identity_did_key,
+        did_aw,
+        log_head,
+    ) = await _register_and_rotate_identity(
         client,
         rotations=2,
     )
@@ -436,7 +473,11 @@ async def test_atomic_claim_rotated_spoof_still_rejects_registry_key_mismatch(
 
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"]["code"] == "did_taken_different_key"
-    assert await _counts(awid_db_infra, victim_did_aw, body["address_name"]) == (1, 3, 0)
+    assert await _counts(awid_db_infra, victim_did_aw, body["address_name"]) == (
+        1,
+        3,
+        0,
+    )
 
 
 @pytest.mark.asyncio
@@ -517,7 +558,11 @@ async def test_atomic_claim_self_did_hosted_namespace_custody_is_supported(
     assert payload["status"] == "claimed"
     assert payload["identity_custody"] == "self"
     assert payload["namespace_custody"] == "hosted_custodial"
-    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (1, 1, 1)
+    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
+        1,
+        1,
+        1,
+    )
 
 
 @pytest.mark.asyncio
@@ -542,7 +587,11 @@ async def test_atomic_claim_apply_is_idempotent_for_same_payload(
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
     assert second.json()["status"] == "already_applied"
-    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (1, 1, 1)
+    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
+        1,
+        1,
+        1,
+    )
 
 
 @pytest.mark.asyncio
@@ -566,7 +615,11 @@ async def test_atomic_claim_missing_did_log_proof_fails_before_writes(
 
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"]["code"] == "did_log_proof_required"
-    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (0, 0, 0)
+    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
+        0,
+        0,
+        0,
+    )
 
 
 @pytest.mark.asyncio
@@ -585,11 +638,15 @@ async def test_atomic_claim_missing_namespace_fails_before_writes(
         domain="missing.example.com",
     )
 
-    resp = await client.post("/v1/namespaces/missing.example.com/addresses/claims", json=body)
+    resp = await client.post(
+        "/v1/namespaces/missing.example.com/addresses/claims", json=body
+    )
 
     assert resp.status_code == 404, resp.text
     assert resp.json()["detail"]["code"] == "namespace_not_registered"
-    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"], "missing.example.com") == (
+    assert await _counts(
+        awid_db_infra, body["did_aw"], body["address_name"], "missing.example.com"
+    ) == (
         0,
         0,
         0,
@@ -622,7 +679,11 @@ async def test_atomic_claim_stale_timestamp_fails_before_writes(
 
     assert resp.status_code == 401, resp.text
     assert resp.json()["detail"]["code"] == "timestamp_stale"
-    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (0, 0, 0)
+    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
+        0,
+        0,
+        0,
+    )
 
 
 @pytest.mark.asyncio
@@ -646,7 +707,11 @@ async def test_atomic_claim_bad_namespace_signature_fails_before_writes(
 
     assert resp.status_code == 403, resp.text
     assert resp.json()["detail"]["code"] == "namespace_authority_invalid"
-    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (0, 0, 0)
+    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
+        0,
+        0,
+        0,
+    )
 
 
 @pytest.mark.asyncio
@@ -695,11 +760,17 @@ async def test_atomic_claim_invalid_did_log_proof_uses_structured_code(
 
     assert resp.status_code == 422, resp.text
     assert resp.json()["detail"]["code"] == "did_log_proof_invalid"
-    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (0, 0, 0)
+    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
+        0,
+        0,
+        0,
+    )
 
 
 @pytest.mark.asyncio
-async def test_atomic_claim_same_did_can_claim_multiple_addresses(client, controller_identity):
+async def test_atomic_claim_same_did_can_claim_multiple_addresses(
+    client, controller_identity
+):
     controller_signing_key, controller_did = controller_identity
     await _register_namespace(client, controller_signing_key, controller_did)
     identity_signing_key, identity_public_key = generate_keypair()
@@ -717,8 +788,12 @@ async def test_atomic_claim_same_did_can_claim_multiple_addresses(client, contro
         address_name="bob",
     )
 
-    first_resp = await client.post("/v1/namespaces/example.com/addresses/claims", json=first)
-    second_resp = await client.post("/v1/namespaces/example.com/addresses/claims", json=second)
+    first_resp = await client.post(
+        "/v1/namespaces/example.com/addresses/claims", json=first
+    )
+    second_resp = await client.post(
+        "/v1/namespaces/example.com/addresses/claims", json=second
+    )
 
     assert first_resp.status_code == 200, first_resp.text
     assert second_resp.status_code == 200, second_resp.text
@@ -726,7 +801,9 @@ async def test_atomic_claim_same_did_can_claim_multiple_addresses(client, contro
 
 
 @pytest.mark.asyncio
-async def test_atomic_claim_feature_flag_disabled(client, controller_identity, monkeypatch):
+async def test_atomic_claim_feature_flag_disabled(
+    client, controller_identity, monkeypatch
+):
     controller_signing_key, controller_did = controller_identity
     await _register_namespace(client, controller_signing_key, controller_did)
     identity_signing_key, identity_public_key = generate_keypair()

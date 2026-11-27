@@ -3,6 +3,7 @@
 A structurally valid DTO is not authorization. Implementing tasks must perform
 identity, consent, current-policy and custody checks under the commit fence.
 """
+
 from __future__ import annotations
 
 import base64
@@ -29,6 +30,7 @@ class ContractError(ValueError):
 @dataclass(frozen=True)
 class ContractRecord:
     """Named closed-schema DTO. `value` is untrusted until service verification."""
+
     schema: str
     value: dict[str, Any]
 
@@ -90,7 +92,9 @@ def _match(rule: Any, value: Any, field: str) -> None:
                 raise ContractError("invalid", field)
         return
     if rule in ("uint", "positive_uint", "limit"):
-        low, high = (1, 200) if rule == "limit" else (int(rule == "positive_uint"), MAX_SAFE)
+        low, high = (
+            (1, 200) if rule == "limit" else (int(rule == "positive_uint"), MAX_SAFE)
+        )
         if type(value) is not int or not low <= value <= high:
             raise ContractError("invalid", field)
         return
@@ -140,7 +144,10 @@ def _match(rule: Any, value: Any, field: str) -> None:
     if rule == "signature":
         try:
             decoded = base64.b64decode(value + "==", validate=True)
-            if len(decoded) != 64 or base64.b64encode(decoded).decode().rstrip("=") != value:
+            if (
+                len(decoded) != 64
+                or base64.b64encode(decoded).decode().rstrip("=") != value
+            ):
                 raise ValueError()
         except ValueError as error:
             raise ContractError("invalid", field) from error
@@ -153,9 +160,14 @@ def _validate(schema: str, value: Any) -> None:
     if type(value) is not dict:
         raise ContractError("invalid", schema)
     required, optional = spec["required"], spec["optional"]
-    if required.keys() - value.keys() or value.keys() - (required.keys() | optional.keys()):
+    if required.keys() - value.keys() or value.keys() - (
+        required.keys() | optional.keys()
+    ):
         raise ContractError("invalid", schema)
-    if "version" in required and value.get("version") not in required["version"]["enum"]:
+    if (
+        "version" in required
+        and value.get("version") not in required["version"]["enum"]
+    ):
         raise ContractError("unsupported", "version")
     for key, item in value.items():
         _match((required | optional)[key], item, key)
@@ -170,48 +182,102 @@ def _relations(schema: str, v: dict[str, Any]) -> None:
         raise ContractError("invalid", "guest subject")
     if schema == "ResolveRequest":
         selector_fields = v.keys() - {"version"}
-        if selector_fields not in ({"team_id", "selector"}, {"session_id", "participant"}):
+        if selector_fields not in (
+            {"team_id", "selector"},
+            {"session_id", "participant"},
+        ):
             raise ContractError("invalid", "alternative selector")
     if schema == "CheckpointIntent":
-        owner = {"expected_membership_epoch", "expected_membership_hash", "expected_export_generation", "generation", "policy_digest"}
+        owner = {
+            "expected_membership_epoch",
+            "expected_membership_hash",
+            "expected_export_generation",
+            "generation",
+            "policy_digest",
+        }
         if v["authorization"] == "owner":
-            if not owner <= v.keys() or v["generation"] != v["expected_export_generation"] + 1:
+            if (
+                not owner <= v.keys()
+                or v["generation"] != v["expected_export_generation"] + 1
+            ):
                 raise ContractError("invalid", "checkpoint CAS")
         elif owner & v.keys() or v["operation"] == "activate":
             raise ContractError("invalid", "narrow-only checkpoint")
-    if schema == "CheckpointReceipt" and v["acceptance_seq"] != v["effective_after_seq"]:
+    if (
+        schema == "CheckpointReceipt"
+        and v["acceptance_seq"] != v["effective_after_seq"]
+    ):
         raise ContractError("invalid", "checkpoint boundary")
     if schema == "MessageAcceptance":
-        fields = {"message_envelope_hash", "acceptance_seq", "membership_epoch", "membership_hash", "exports", "signer", "signing_key_id"}
+        fields = {
+            "message_envelope_hash",
+            "acceptance_seq",
+            "membership_epoch",
+            "membership_hash",
+            "exports",
+            "signer",
+            "signing_key_id",
+        }
         if v["capture_status"] == "recorded":
-            if not fields <= v.keys() or any(x["checkpoint_seq"] >= v["acceptance_seq"] for x in v["exports"]):
+            if not fields <= v.keys() or any(
+                x["checkpoint_seq"] >= v["acceptance_seq"] for x in v["exports"]
+            ):
                 raise ContractError("invalid", "capture boundary")
         elif fields & v.keys():
             raise ContractError("invalid", "legacy capture")
     if schema == "PresenceScope" and ((v["kind"] == "session") != ("session_id" in v)):
         raise ContractError("invalid", "presence scope")
-    if schema in ("PresenceIntent", "PresenceBindingIntent") and ((v["authorization"] == "owner") != ("ownership_proof" in v)):
+    if schema in ("PresenceIntent", "PresenceBindingIntent") and (
+        (v["authorization"] == "owner") != ("ownership_proof" in v)
+    ):
         raise ContractError("invalid", "presence authority proof")
     if schema == "PageResult" and (v["has_more"] != ("next_cursor" in v)):
         raise ContractError("invalid", "cursor")
     if schema == "Interval" and v["after_seq"] > v["through_seq"]:
         raise ContractError("invalid", "interval")
     if schema == "Capabilities":
-        if set(v["enabled"]) - set(v["implemented"]) or set(v["enabled"]) & set(v["refused"]):
+        if set(v["enabled"]) - set(v["implemented"]) or set(v["enabled"]) & set(
+            v["refused"]
+        ):
             raise ContractError("unsupported", "capability activation")
-    if schema == "PreparedSend" and "sha256:" + hashlib.sha256(v["envelope"].encode()).hexdigest() != v["envelope_hash"]:
+    if (
+        schema == "PreparedSend"
+        and "sha256:" + hashlib.sha256(v["envelope"].encode()).hexdigest()
+        != v["envelope_hash"]
+    ):
         raise ContractError("invalid", "envelope hash")
     if schema == "Refusal":
-        retries = {"invalid": {"never"}, "unsupported": {"never"}, "forbidden": {"never"}, "consent_required": {"never"}, "stale": {"refresh"}, "replay_conflict": {"never"}, "not_found": {"never"}, "authority_unavailable": {"backoff"}, "native_unavailable": {"backoff", "reconcile"}, "outcome_unknown": {"reconcile"}, "limit_exceeded": {"backoff"}}
+        retries = {
+            "invalid": {"never"},
+            "unsupported": {"never"},
+            "forbidden": {"never"},
+            "consent_required": {"never"},
+            "stale": {"refresh"},
+            "replay_conflict": {"never"},
+            "not_found": {"never"},
+            "authority_unavailable": {"backoff"},
+            "native_unavailable": {"backoff", "reconcile"},
+            "outcome_unknown": {"reconcile"},
+            "limit_exceeded": {"backoff"},
+        }
         if v["retry"] not in retries[v["code"]]:
             raise ContractError("invalid", "retry policy")
     if schema == "NativeV2Content" and v["kind"] == "mail" and "subject" not in v:
         raise ContractError("invalid", "mail subject")
     if schema == "PrepareRequest":
         managed = v["format"] == "managed_chat_plaintext"
-        if ((not managed) != ("target" in v)) or managed != ("group_context" in v) or (managed and v["kind"] != "chat") or (v["kind"] == "mail" and v["author"]["kind"] != "native"):
+        if (
+            ((not managed) != ("target" in v))
+            or managed != ("group_context" in v)
+            or (managed and v["kind"] != "chat")
+            or (v["kind"] == "mail" and v["author"]["kind"] != "native")
+        ):
             raise ContractError("invalid", "message profile")
-        if managed and (v["group_context"]["author_ref"] != v["author"] or v["group_context"]["message_id"] != v["message_id"] or v.get("conversation_id") != v["group_context"]["session_id"]):
+        if managed and (
+            v["group_context"]["author_ref"] != v["author"]
+            or v["group_context"]["message_id"] != v["message_id"]
+            or v.get("conversation_id") != v["group_context"]["session_id"]
+        ):
             raise ContractError("invalid", "message context")
     if schema == "NativeOperationRequest":
         decision = {"decision", "owner_authorization", "evidence_hash"}
@@ -220,21 +286,39 @@ def _relations(schema: str, v: dict[str, Any]) -> None:
                 raise ContractError("invalid", "native resolution")
         elif {"decision", "owner_authorization"} & v.keys():
             raise ContractError("invalid", "native decision")
-    if schema == "PolicyState" and v["authority_mode"] == "server_readable" and v["confidentiality"] == "end_to_end":
+    if (
+        schema == "PolicyState"
+        and v["authority_mode"] == "server_readable"
+        and v["confidentiality"] == "end_to_end"
+    ):
         raise ContractError("invalid", "server-readable authority")
-    if schema == "PolicyState" and v["bridges"] and v["confidentiality"] != "bridge_readable":
+    if (
+        schema == "PolicyState"
+        and v["bridges"]
+        and v["confidentiality"] != "bridge_readable"
+    ):
         raise ContractError("invalid", "bridge-readable label")
     if schema == "ManagedPlaintext":
-        if v["message_id"] != v["group_context"]["message_id"] or v["conversation_id"] != v["group_context"]["session_id"]:
+        if (
+            v["message_id"] != v["group_context"]["message_id"]
+            or v["conversation_id"] != v["group_context"]["session_id"]
+        ):
             raise ContractError("invalid", "group context")
         author = v["group_context"]["author_ref"]
         if v["signer"] != author["did" if author["kind"] == "native" else "bridge"]:
             raise ContractError("invalid", "author signer")
     if schema == "AuthorProjection":
         guest = v["author"]["kind"] == "bridged"
-        if guest and (v["author_assurance"] != "platform_attested" or v["trust_status"] != "external_untrusted" or v["verified"]):
+        if guest and (
+            v["author_assurance"] != "platform_attested"
+            or v["trust_status"] != "external_untrusted"
+            or v["verified"]
+        ):
             raise ContractError("invalid", "guest assurance")
-        if not guest and (v["author_assurance"] != "native" or v["trust_status"] == "external_untrusted"):
+        if not guest and (
+            v["author_assurance"] != "native"
+            or v["trust_status"] == "external_untrusted"
+        ):
             raise ContractError("invalid", "native assurance")
 
 
@@ -256,7 +340,9 @@ def canonical_record(record: ContractRecord) -> bytes:
     # Revalidate so mutation of a retained caller dictionary cannot bypass grammar.
     _safe_json(record.value)
     _validate(record.schema, record.value)
-    raw = json.dumps(record.value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    raw = json.dumps(
+        record.value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     if len(raw) > MAX_BYTES:
         raise ContractError("invalid", "size")
     return raw
@@ -265,7 +351,10 @@ def canonical_record(record: ContractRecord) -> bytes:
 def require_capability(record: ContractRecord, capability: str) -> None:
     """Ignore unknown advertised tokens, but never select an unknown/deferred feature."""
     _validate("Capabilities", record.value)
-    if capability not in PROFILE["capabilities"] or capability not in record.value["enabled"]:
+    if (
+        capability not in PROFILE["capabilities"]
+        or capability not in record.value["enabled"]
+    ):
         raise ContractError("unsupported", "capability")
 
 
@@ -280,7 +369,13 @@ def require_canonical_signed_payload(raw: bytes) -> None:
     try:
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs)
         _safe_json(value)
-        if type(value) is not dict or raw != json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode():
+        if (
+            type(value) is not dict
+            or raw
+            != json.dumps(
+                value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ):
             raise ContractError("invalid", "noncanonical signed payload")
     except (ValueError, UnicodeError, RecursionError) as error:
         if isinstance(error, ContractError):

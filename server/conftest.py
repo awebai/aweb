@@ -15,7 +15,9 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-_guard_path = Path(__file__).resolve().parent.parent / "scripts" / "pytest_tracked_collection.py"
+_guard_path = (
+    Path(__file__).resolve().parent.parent / "scripts" / "pytest_tracked_collection.py"
+)
 _spec = importlib.util.spec_from_file_location("pytest_tracked_collection", _guard_path)
 _guard = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_guard)

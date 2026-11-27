@@ -457,13 +457,32 @@ worker_b aweb-b-1 lock-timeout --scope harness-blocked-lock > "$RUNTIME/beta-loc
 [[ "$(json_field http_status < "$RUNTIME/beta-lock-timeout.json")" == "503" ]]
 [[ "$(json_field authorized < "$RUNTIME/beta-lock-timeout.json")" == "False" ]]
 
-# Real coordination outage: the worker opens its pool, waits at a process
-# barrier, then reads only after PostgreSQL stops. No process-local or Redis
-# fallback authorizes.
-worker_b aweb-b-2 outage --delay 3 > "$RUNTIME/beta-outage.json" &
+# Real coordination outage: the worker opens its pool and says so on stderr;
+# only then does PostgreSQL stop, and the worker reads only once released on
+# stdin. No process-local or Redis fallback authorizes.
+mkfifo "$RUNTIME/outage-release" "$RUNTIME/outage-status"
+worker_b aweb-b-2 outage < "$RUNTIME/outage-release" > "$RUNTIME/beta-outage.json" 2> "$RUNTIME/outage-status" &
 outage_pid=$!
-sleep 1
+exec 7> "$RUNTIME/outage-release" 8< "$RUNTIME/outage-status"
+outage_deadline=$((SECONDS + 120))
+outage_ready=0
+while ((SECONDS < outage_deadline)) && IFS= read -r -t "$((outage_deadline - SECONDS))" -u 8 line; do
+  if [[ "$line" == outage-ready ]]; then
+    printf '%s\n' "$line" >&2
+    outage_ready=1
+    break
+  fi
+  printf '%s\n' "$line" >&2
+done
+if [[ "$outage_ready" != 1 ]]; then
+  echo "outage worker ended or did not report an open pool within 120 s" >&2
+  exit 1
+fi
 compose stop postgres-b >/dev/null
+printf 'outage-release\n' >&7
+exec 7>&-
+cat <&8 >&2
+exec 8<&-
 wait "$outage_pid"
 [[ "$(json_field reason < "$RUNTIME/beta-outage.json")" == "federation_authority_coordination_unavailable" ]]
 [[ "$(json_field http_status < "$RUNTIME/beta-outage.json")" == "503" ]]

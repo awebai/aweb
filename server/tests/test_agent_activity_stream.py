@@ -45,10 +45,16 @@ def _event(*, turn_id, seq, phase="tool", session_id=SESSION, **changes):
 
 def _relayed(agent_id, rev, event):
     # The shape the relay script stores and publishes.
-    return json.dumps({
-        "rev": rev, "agent_id": agent_id, "alias": "bob",
-        "signed_payload": f"payload-{rev}", "signature": f"signature-{rev}", "event": event,
-    })
+    return json.dumps(
+        {
+            "rev": rev,
+            "agent_id": agent_id,
+            "alias": "bob",
+            "signed_payload": f"payload-{rev}",
+            "signature": f"signature-{rev}",
+            "event": event,
+        }
+    )
 
 
 def _frame(frame):
@@ -56,7 +62,7 @@ def _frame(frame):
     event_line, data_line, blank, end = frame.split("\n")
     assert (event_line, blank, end) == ("event: agent_activity", "", "")
     assert data_line.startswith("data: ")
-    return json.loads(data_line[len("data: "):])
+    return json.loads(data_line[len("data: ") :])
 
 
 AGENT = str(uuid4())
@@ -85,16 +91,36 @@ def test_same_session_event_is_the_full_signed_frame():
 
 @pytest.mark.parametrize("session_id", [OTHER_SESSION, None])
 def test_work_elsewhere_reveals_only_that_the_agent_is_busy(session_id):
-    frame = _frame(_projection().accept(_relayed(AGENT, 1, _event(turn_id="A", seq=1, session_id=session_id))))
+    frame = _frame(
+        _projection().accept(
+            _relayed(AGENT, 1, _event(turn_id="A", seq=1, session_id=session_id))
+        )
+    )
 
-    assert frame == {"agent": "bob", "phase": "busy_elsewhere", "expires_at": "2026-10-16T16:21:00Z"}
+    assert frame == {
+        "agent": "bob",
+        "phase": "busy_elsewhere",
+        "expires_at": "2026-10-16T16:21:00Z",
+    }
 
 
 def test_end_of_a_turn_elsewhere_clears_without_details():
     projection = _projection()
-    projection.accept(_relayed(AGENT, 1, _event(turn_id="A", seq=1, session_id=OTHER_SESSION)))
+    projection.accept(
+        _relayed(AGENT, 1, _event(turn_id="A", seq=1, session_id=OTHER_SESSION))
+    )
 
-    frame = _frame(projection.accept(_relayed(AGENT, 2, _event(turn_id="A", seq=2, phase="turn_ended", session_id=OTHER_SESSION))))
+    frame = _frame(
+        projection.accept(
+            _relayed(
+                AGENT,
+                2,
+                _event(
+                    turn_id="A", seq=2, phase="turn_ended", session_id=OTHER_SESSION
+                ),
+            )
+        )
+    )
 
     assert frame == {"agent": "bob", "phase": "cleared"}
 
@@ -115,27 +141,45 @@ def test_equal_second_events_from_before_the_snapshot_are_not_projected():
 
 def test_a_stale_end_elsewhere_does_not_clear_a_newer_turn():
     projection = _projection()
-    projection.accept(_relayed(AGENT, 5, _event(turn_id="B", seq=1, session_id=OTHER_SESSION)))
+    projection.accept(
+        _relayed(AGENT, 5, _event(turn_id="B", seq=1, session_id=OTHER_SESSION))
+    )
 
-    stale_end = projection.accept(_relayed(AGENT, 4, _event(turn_id="A", seq=9, phase="turn_ended", session_id=OTHER_SESSION)))
+    stale_end = projection.accept(
+        _relayed(
+            AGENT,
+            4,
+            _event(turn_id="A", seq=9, phase="turn_ended", session_id=OTHER_SESSION),
+        )
+    )
 
     assert stale_end is None
 
 
 def test_events_of_agents_outside_the_session_are_ignored():
-    assert _projection().accept(_relayed(str(uuid4()), 1, _event(turn_id="A", seq=1))) is None
+    assert (
+        _projection().accept(_relayed(str(uuid4()), 1, _event(turn_id="A", seq=1)))
+        is None
+    )
 
 
 @pytest_asyncio.fixture
 async def redis():
-    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as client:
+    async with Redis.from_url(
+        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+    ) as client:
         yield client
 
 
 async def _relay(redis, agent_id, event):
     return await relay_activity(
-        redis, agent_id=agent_id, alias="bob", signed_payload="p", signature="s",
-        event=event, now=datetime.now(timezone.utc),
+        redis,
+        agent_id=agent_id,
+        alias="bob",
+        signed_payload="p",
+        signature="s",
+        event=event,
+        now=datetime.now(timezone.utc),
     )
 
 
@@ -180,7 +224,9 @@ async def test_subscribe_confirms_every_agent_channel_before_returning(redis):
 async def test_snapshot_of_an_ended_turn_elsewhere_is_a_clear(redis):
     agent_id = str(uuid4())
     await _relay(redis, agent_id, _live(turn_id="A", seq=1, session_id=None))
-    await _relay(redis, agent_id, _live(turn_id="A", seq=2, phase="turn_ended", session_id=None))
+    await _relay(
+        redis, agent_id, _live(turn_id="A", seq=2, phase="turn_ended", session_id=None)
+    )
 
     frames = await SessionActivity(SESSION, {agent_id: "bob"}).snapshot(redis)
 
@@ -198,4 +244,6 @@ async def test_messages_seen_while_confirming_are_returned_not_dropped(redis):
 
         pending = await projection.subscribe(pubsub)
 
-    assert [(message["channel"], message["data"]) for message in pending] == [(session_channel, "wake")]
+    assert [(message["channel"], message["data"]) for message in pending] == [
+        (session_channel, "wake")
+    ]

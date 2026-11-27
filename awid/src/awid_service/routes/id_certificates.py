@@ -12,8 +12,17 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from awid.controller_request import verify_controller_json_request
-from awid.dns_verify import DnsLookupError, DnsVerificationError, DomainVerifier, DomainAuthority
-from awid.id_certificates import IDCertificateError, decode_id_chain_header, verify_id_certificate
+from awid.dns_verify import (
+    DnsLookupError,
+    DnsVerificationError,
+    DomainVerifier,
+    DomainAuthority,
+)
+from awid.id_certificates import (
+    IDCertificateError,
+    decode_id_chain_header,
+    verify_id_certificate,
+)
 from awid.did import validate_stable_id
 from awid.ratelimit import rate_limit_dep
 from awid_service.deps import get_db, get_domain_verifier
@@ -40,11 +49,15 @@ _WIRE_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
 
 
 def _refusal(code: str, status: int) -> HTTPException:
-    return HTTPException(status_code=status, detail={"code": code, "message": code.replace("_", " ")})
+    return HTTPException(
+        status_code=status, detail={"code": code, "message": code.replace("_", " ")}
+    )
 
 
 def _expected_head(value: Any) -> str | None:
-    if value is not None and (type(value) is not str or not _CERTIFICATE_ID.fullmatch(value)):
+    if value is not None and (
+        type(value) is not str or not _CERTIFICATE_ID.fullmatch(value)
+    ):
         raise IDCertificateError("invalid_shape")
     return value
 
@@ -57,7 +70,10 @@ def _register_body(raw: bytes) -> tuple[dict, str | None, str | None]:
     invitation_id = body["invitation_id"]
     if invitation_id is not None:
         try:
-            canonical = type(invitation_id) is str and str(uuid.UUID(invitation_id)) == invitation_id
+            canonical = (
+                type(invitation_id) is str
+                and str(uuid.UUID(invitation_id)) == invitation_id
+            )
         except ValueError:
             canonical = False
         if not canonical:
@@ -78,14 +94,21 @@ def _revoke_body(raw: bytes) -> tuple[str, str, str | None, datetime | None]:
     if set(body) != _REVOKE_FIELDS:
         raise IDCertificateError("invalid_shape")
     domain, id_ = body["domain"], body["id"]
-    if type(domain) is not str or not domain or type(id_) is not str or not id_.startswith("did:aw:"):
+    if (
+        type(domain) is not str
+        or not domain
+        or type(id_) is not str
+        or not id_.startswith("did:aw:")
+    ):
         raise IDCertificateError("invalid_shape")
     effective_from = body["effective_from"]
     if effective_from is not None:
         if type(effective_from) is not str or not _WIRE_TIME.fullmatch(effective_from):
             raise IDCertificateError("invalid_shape")
         try:
-            effective_from = datetime.strptime(effective_from, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+            effective_from = datetime.strptime(
+                effective_from, "%Y-%m-%dT%H:%M:%S.%fZ"
+            ).replace(tzinfo=timezone.utc)
         except ValueError as exc:
             raise IDCertificateError("invalid_shape") from exc
     return domain, id_, _expected_head(body["expected_head"]), effective_from
@@ -98,7 +121,9 @@ def _status_body(raw: bytes) -> tuple[str, list[str]]:
     domain, ids = _canonical_domain(body["domain"]), body["ids"]
     if type(ids) is not list or len(ids) > _MAX_STATUS_IDS:
         raise IDCertificateError("invalid_shape")
-    if len(set(map(str, ids))) != len(ids) or not all(_is_stable_id(id_) for id_ in ids):
+    if len(set(map(str, ids))) != len(ids) or not all(
+        _is_stable_id(id_) for id_ in ids
+    ):
         raise IDCertificateError("invalid_shape")
     return domain, ids
 
@@ -108,7 +133,9 @@ def _canonical_domain(value) -> str:
     if type(value) is not str:
         raise IDCertificateError("invalid_shape")
     domain = value.lower().rstrip(".")
-    if not 0 < len(domain) <= 253 or not all(_DOMAIN_LABEL.fullmatch(label) for label in domain.split(".")):
+    if not 0 < len(domain) <= 253 or not all(
+        _DOMAIN_LABEL.fullmatch(label) for label in domain.split(".")
+    ):
         raise IDCertificateError("invalid_shape")
     return domain
 
@@ -122,7 +149,9 @@ def _is_stable_id(value) -> bool:
         return False
 
 
-async def _dns_authority(verify_domain: DomainVerifier, domain: str) -> DomainAuthority | None:
+async def _dns_authority(
+    verify_domain: DomainVerifier, domain: str
+) -> DomainAuthority | None:
     """The existing exact-first ancestor discovery result, or no DNS anchor.
 
     Looked up before the transaction so no network call happens under its
@@ -133,10 +162,17 @@ async def _dns_authority(verify_domain: DomainVerifier, domain: str) -> DomainAu
     try:
         authority = await verify_domain(domain)
     except DnsLookupError as exc:
-        logger.warning("ID-tree DNS authority lookup unavailable for %s: %s", domain, type(exc).__name__)
+        logger.warning(
+            "ID-tree DNS authority lookup unavailable for %s: %s",
+            domain,
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=503,
-            detail={"code": "dns_unavailable", "message": "DNS lookup unavailable; retry later"},
+            detail={
+                "code": "dns_unavailable",
+                "message": "DNS lookup unavailable; retry later",
+            },
             headers={"Retry-After": "1"},
         ) from exc
     except DnsVerificationError:
@@ -146,16 +182,24 @@ async def _dns_authority(verify_domain: DomainVerifier, domain: str) -> DomainAu
 
 async def _covering_signer(request: Request, *, domain: str, operation: str) -> str:
     if request.headers.get(SIGNED_PAYLOAD_HEADER) is None:
-        raise HTTPException(status_code=401, detail="Covering AWID request envelope required")
-    return await verify_controller_json_request(request, payload_dict={"domain": domain, "operation": operation})
+        raise HTTPException(
+            status_code=401, detail="Covering AWID request envelope required"
+        )
+    return await verify_controller_json_request(
+        request, payload_dict={"domain": domain, "operation": operation}
+    )
 
 
 @router.post(
     "/register",
-    dependencies=[Depends(rate_limit_dep("id_certificate_register", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("id_certificate_register", allow_trusted_service=True))
+    ],
 )
 async def register_id_certificate(
-    request: Request, db_infra=Depends(get_db), verify_domain: DomainVerifier = Depends(get_domain_verifier),
+    request: Request,
+    db_infra=Depends(get_db),
+    verify_domain: DomainVerifier = Depends(get_domain_verifier),
 ) -> dict:
     """Register a parent-signed ID certificate as its subject's new head.
 
@@ -169,7 +213,9 @@ async def register_id_certificate(
         raise _refusal(exc.code, 400) from exc
     cert = signed["certificate"]
 
-    signer = await _covering_signer(request, domain=cert["domain"], operation="register_id_certificate")
+    signer = await _covering_signer(
+        request, domain=cert["domain"], operation="register_id_certificate"
+    )
 
     header = request.headers.get(ID_CHAIN_HEADER)
     if header is None:
@@ -186,8 +232,13 @@ async def register_id_certificate(
         check_chain_structure(chain)
         dns_authority = await _dns_authority(verify_domain, cert["domain"])
         return await register_certificate(
-            db, chain=chain, expected_head=expected_head, invitation_id=invitation_id,
-            signer=signer, dns_authority=dns_authority, clock=app_clock(request.app),
+            db,
+            chain=chain,
+            expected_head=expected_head,
+            invitation_id=invitation_id,
+            signer=signer,
+            dns_authority=dns_authority,
+            clock=app_clock(request.app),
         )
     except IdentityTreeRefusal as refused:
         raise _refusal(refused.code, refused.status) from refused
@@ -195,24 +246,36 @@ async def register_id_certificate(
 
 @router.post(
     "/revoke",
-    dependencies=[Depends(rate_limit_dep("id_certificate_revoke", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("id_certificate_revoke", allow_trusted_service=True))
+    ],
 )
 async def revoke_id_certificate(
-    request: Request, db_infra=Depends(get_db), verify_domain: DomainVerifier = Depends(get_domain_verifier),
+    request: Request,
+    db_infra=Depends(get_db),
+    verify_domain: DomainVerifier = Depends(get_domain_verifier),
 ) -> dict:
     """Revoke a registered ID, proved by the ID itself, its valid parent or the namespace root."""
     try:
         domain, id_, expected_head, effective_from = _revoke_body(await request.body())
     except IDCertificateError as exc:
         raise _refusal(exc.code, 400) from exc
-    signer = await _covering_signer(request, domain=domain, operation="revoke_id_certificate")
+    signer = await _covering_signer(
+        request, domain=domain, operation="revoke_id_certificate"
+    )
 
     db = db_infra.get_manager("aweb")
     dns_authority = await _dns_authority(verify_domain, domain)
     try:
         return await revoke_identity(
-            db, domain=domain, subject_id=id_, expected_head=expected_head, effective_from=effective_from,
-            signer=signer, dns_authority=dns_authority, clock=app_clock(request.app),
+            db,
+            domain=domain,
+            subject_id=id_,
+            expected_head=expected_head,
+            effective_from=effective_from,
+            signer=signer,
+            dns_authority=dns_authority,
+            clock=app_clock(request.app),
         )
     except IdentityTreeRefusal as refused:
         raise _refusal(refused.code, refused.status) from refused
@@ -220,7 +283,9 @@ async def revoke_id_certificate(
 
 @router.post(
     "/status",
-    dependencies=[Depends(rate_limit_dep("id_certificate_status", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("id_certificate_status", allow_trusted_service=True))
+    ],
 )
 async def id_certificate_status(
     request: Request,
@@ -239,6 +304,12 @@ async def id_certificate_status(
     dns_authority = await _dns_authority(verify_domain, domain)
     db = db_infra.get_manager("aweb")
     try:
-        return await status_snapshot(db, domain=domain, ids=ids, dns_authority=dns_authority, clock=app_clock(request.app))
+        return await status_snapshot(
+            db,
+            domain=domain,
+            ids=ids,
+            dns_authority=dns_authority,
+            clock=app_clock(request.app),
+        )
     except IdentityTreeRefusal as refused:
         raise _refusal(refused.code, refused.status) from refused

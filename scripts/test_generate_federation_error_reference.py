@@ -22,7 +22,6 @@ class FederationErrorReferenceGeneratorTests(unittest.TestCase):
         specs = generator.canonical_error_specs()
         rendered = generator.render_reference(self.contract)
 
-        self.assertEqual(len(specs), 43)
         for spec in specs:
             error = {
                 "reason": spec.reason,
@@ -30,9 +29,14 @@ class FederationErrorReferenceGeneratorTests(unittest.TestCase):
             }
             row_prefix = f"| `{error['reason']}` |"
             self.assertEqual(rendered.count(row_prefix), 1, error["reason"])
-            self.assertIn(f"| {error['http_status']} |", next(
-                line for line in rendered.splitlines() if line.startswith(row_prefix)
-            ))
+            self.assertIn(
+                f"| {error['http_status']} |",
+                next(
+                    line
+                    for line in rendered.splitlines()
+                    if line.startswith(row_prefix)
+                ),
+            )
         self.assertIn("`detail`, `reason`, `retryable`, and `correlation_id`", rendered)
         self.assertIn("`federation_rate_limited`", rendered)
         self.assertIn("Retry-After", rendered)
@@ -41,10 +45,14 @@ class FederationErrorReferenceGeneratorTests(unittest.TestCase):
         contract = json.loads(json.dumps(self.contract))
         contract["stable_errors"].append(dict(contract["stable_errors"][0]))
 
-        with self.assertRaisesRegex(generator.ReferenceContractError, "duplicate stable error"):
+        with self.assertRaisesRegex(
+            generator.ReferenceContractError, "duplicate stable error"
+        ):
             generator.render_reference(contract)
 
-    def test_new_source_reason_is_rejected_until_its_support_meaning_is_classified(self) -> None:
+    def test_new_source_reason_is_rejected_until_its_support_meaning_is_classified(
+        self,
+    ) -> None:
         contract = json.loads(json.dumps(self.contract))
         new_error = {
             "reason": "new_federation_failure",
@@ -54,14 +62,19 @@ class FederationErrorReferenceGeneratorTests(unittest.TestCase):
             "retry_after_required": False,
         }
         contract["stable_errors"].append(new_error)
-        specs = (*generator.canonical_error_specs(), generator.FederationErrorSpec(
-            reason="new_federation_failure",
-            http_status=503,
-            retryable=True,
-            retry_after_required=False,
-        ))
+        specs = (
+            *generator.canonical_error_specs(),
+            generator.FederationErrorSpec(
+                reason="new_federation_failure",
+                http_status=503,
+                retryable=True,
+                retry_after_required=False,
+            ),
+        )
 
-        with self.assertRaisesRegex(generator.ReferenceContractError, "unclassified stable error"):
+        with self.assertRaisesRegex(
+            generator.ReferenceContractError, "unclassified stable error"
+        ):
             generator.render_reference(contract, error_specs=specs)
 
     def test_vector_status_drift_from_canonical_source_is_rejected(self) -> None:

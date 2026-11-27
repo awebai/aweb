@@ -295,10 +295,7 @@ def _checked(proof: RetainedPasskeyProof) -> tuple[dict[str, Any], dict[str, Any
     _require(METADATA_FIELDS <= set(metadata) <= METADATA_FIELDS | APPROVAL_FIELDS)
     _require(all(value is not None for value in metadata.values()))
     _require(
-        all(
-            _text(context[k])
-            for k in CONTEXT_FIELDS - {"generation", "require_up", "require_uv"}
-        )
+        all(_text(context[k]) for k in CONTEXT_FIELDS - {"generation", "require_up", "require_uv"})
     )
     _require(_integer(context["generation"], 1))
     _require(context["require_up"] is True and context["require_uv"] is True)

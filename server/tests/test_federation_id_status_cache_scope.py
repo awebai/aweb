@@ -25,12 +25,20 @@ async def test_scoped_id_status_key_retains_answering_registry_and_cohort():
         )
     ) as client:
         object.__setattr__(client, "_authority_scope", "federation:statement:cohort:")
-        request = {"domain": "example.test", "subject": {"kind": "namespace", "id": "example.test"}}
+        request = {
+            "domain": "example.test",
+            "subject": {"kind": "namespace", "id": "example.test"},
+        }
         key = client._id_status_cache_key(request, registry_url="https://answered.test")
         assert key.startswith("federation:statement:cohort:")
         assert "https://answered.test" in key
         assert "https://configured.test" not in key
         assert client._id_status_cache_key(request) != key
-        object.__setattr__(client, "_authority_scope", "federation:statement:next-cohort:")
-        assert client._id_status_cache_key(request, registry_url="https://answered.test") != key
+        object.__setattr__(
+            client, "_authority_scope", "federation:statement:next-cohort:"
+        )
+        assert (
+            client._id_status_cache_key(request, registry_url="https://answered.test")
+            != key
+        )
     assert calls == []

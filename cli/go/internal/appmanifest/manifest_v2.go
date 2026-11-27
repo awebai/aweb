@@ -1417,20 +1417,6 @@ func (r *Resolved) Tool(name string) (*Tool, bool) {
 	return tool, ok
 }
 
-// AppKeysFor returns the declared keys usable for one purpose, in manifest
-// order. A version 1 event emitter serves only "app-event".
-func (r *Resolved) AppKeysFor(purpose string) []ResolvedAppKey {
-	out := []ResolvedAppKey{}
-	for _, key := range r.AppKeys {
-		for _, declared := range key.Purposes {
-			if declared == purpose {
-				out = append(out, key)
-			}
-		}
-	}
-	return out
-}
-
 // Attestation is a request's aweb.principal-attestation/1 as a consumer saw
 // it: whether its verifier accepted it, and its payload. The verifier is not
 // part of this package.

@@ -34,7 +34,12 @@ REGISTRY_URL = "http://registry.test"
 async def _connect(env, team_sk, team_did, team_id, alias):
     agent_sk, _, agent_did = _make_keypair()
     cert = _make_certificate(
-        team_sk, team_did, agent_did, team_id=team_id, alias=alias, identity_scope="local"
+        team_sk,
+        team_did,
+        agent_did,
+        team_id=team_id,
+        alias=alias,
+        identity_scope="local",
     )
     body = json.dumps(
         {
@@ -139,7 +144,9 @@ async def test_served_private_team_refusing_this_servers_member_key_names_the_me
 
 
 @pytest.mark.asyncio
-async def test_server_holding_the_service_token_is_told_to_fix_it(connect_app, monkeypatch):
+async def test_server_holding_the_service_token_is_told_to_fix_it(
+    connect_app, monkeypatch
+):
     # privacy_app configures aweb with AWID_SERVICE_TOKEN; this client presents
     # a different one, so the registry's trusted lane refuses it.
     client = RegistryClient(

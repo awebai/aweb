@@ -51,7 +51,11 @@ class AppInternalOrigins:
 
     @property
     def destinations(self) -> InternalDestinations:
-        return InternalDestinations.ALLOWED if self.origins else InternalDestinations.DISABLED
+        return (
+            InternalDestinations.ALLOWED
+            if self.origins
+            else InternalDestinations.DISABLED
+        )
 
 
 def get_app_internal_origins() -> AppInternalOrigins:
@@ -80,7 +84,9 @@ def get_app_internal_origins() -> AppInternalOrigins:
         or not listed
         or not all(isinstance(entry, str) for entry in listed)
     ):
-        raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins")
+        raise ValueError(
+            "AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins"
+        )
     origins = set()
     for entry in listed:
         try:
@@ -165,7 +171,8 @@ def get_federation_outbound() -> FederationOutbound:
         return parse_federation_outbound(os.getenv(FEDERATION_OUTBOUND_SETTING))
     except ValueError:
         return FederationOutbound(
-            origins=frozenset(), refusal=f"{FEDERATION_OUTBOUND_SETTING} is not a valid setting"
+            origins=frozenset(),
+            refusal=f"{FEDERATION_OUTBOUND_SETTING} is not a valid setting",
         )
 
 
@@ -207,7 +214,9 @@ def get_awid_service_token() -> str | None:
     return normalize_service_token(os.getenv("AWID_SERVICE_TOKEN"))
 
 
-def load_member_signing_keys(manifest: Path, *, allow_empty: bool = False) -> dict[str, bytes]:
+def load_member_signing_keys(
+    manifest: Path, *, allow_empty: bool = False
+) -> dict[str, bytes]:
     """The member keys a team-to-key-file manifest names, by canonical team ID.
 
     The manifest is strict JSON and holds paths, never key material; a
@@ -304,7 +313,8 @@ def enforce_team_key_pins() -> bool:
 def get_public_origin() -> str:
     """Resolve only the public endpoint, without loading infrastructure settings."""
     return canonical_server_origin(
-        os.getenv("AWEB_PUBLIC_ORIGIN") or f"http://localhost:{int(os.getenv('AWEB_PORT', '8000'))}"
+        os.getenv("AWEB_PUBLIC_ORIGIN")
+        or f"http://localhost:{int(os.getenv('AWEB_PORT', '8000'))}"
     )
 
 
@@ -319,8 +329,13 @@ def get_app_grant_max_age_seconds() -> int:
     hook activation pads with, so a value outside 1..60 is refused rather
     than clamped.
     """
-    value = os.getenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", str(APP_GRANT_MAX_AGE_CEILING_SECONDS))
-    if not _POSITIVE_DECIMAL.fullmatch(value) or int(value) > APP_GRANT_MAX_AGE_CEILING_SECONDS:
+    value = os.getenv(
+        "AWEB_APP_GRANT_MAX_AGE_SECONDS", str(APP_GRANT_MAX_AGE_CEILING_SECONDS)
+    )
+    if (
+        not _POSITIVE_DECIMAL.fullmatch(value)
+        or int(value) > APP_GRANT_MAX_AGE_CEILING_SECONDS
+    ):
         raise ValueError(
             f"AWEB_APP_GRANT_MAX_AGE_SECONDS must be a whole number of seconds from 1 to "
             f"{APP_GRANT_MAX_AGE_CEILING_SECONDS}, got {value!r}"
@@ -388,7 +403,9 @@ def _hook_producer_key(entry: object) -> HookProducerKey:
     starts = _key_time(kid, "valid_from", valid_from)
     if valid_until is not None and _key_time(kid, "valid_until", valid_until) <= starts:
         raise ValueError(f"AWEB_HOOK_PRODUCER_KEYS: kid {kid} ends before it starts")
-    return HookProducerKey(kid=kid, did_key=did_key, valid_from=valid_from, valid_until=valid_until)
+    return HookProducerKey(
+        kid=kid, did_key=did_key, valid_from=valid_from, valid_until=valid_until
+    )
 
 
 def _is_ed25519_did_key(value: str) -> bool:
@@ -418,13 +435,17 @@ def _url_from_environment_or_file(
     if not path:
         return url
     if url:
-        raise ValueError(f"{file_variable} is set together with {variable} or {fallback}; set one")
+        raise ValueError(
+            f"{file_variable} is set together with {variable} or {fallback}; set one"
+        )
     try:
         url = read_key_file(Path(path)).decode("utf-8").strip()
     except (OSError, ValueError):
         url = ""
     if not url:
-        raise ValueError(f"{file_variable} must name a readable file that holds the {what}")
+        raise ValueError(
+            f"{file_variable} must name a readable file that holds the {what}"
+        )
     return url
 
 
@@ -472,7 +493,9 @@ def get_settings() -> Settings:
     try:
         port = int(port_str)
     except ValueError as exc:
-        raise ValueError(f"AWEB_PORT must be a valid integer, got '{port_str}'") from exc
+        raise ValueError(
+            f"AWEB_PORT must be a valid integer, got '{port_str}'"
+        ) from exc
     if not 1 <= port <= 65535:
         raise ValueError(f"AWEB_PORT must be between 1 and 65535, got {port}")
 
@@ -512,5 +535,7 @@ def get_settings() -> Settings:
         app_grant_max_age_seconds=get_app_grant_max_age_seconds(),
         hook_producer_keys=get_hook_producer_keys(),
         app_internal_origins=get_app_internal_origins(),
-        federation_outbound=parse_federation_outbound(os.getenv(FEDERATION_OUTBOUND_SETTING)),
+        federation_outbound=parse_federation_outbound(
+            os.getenv(FEDERATION_OUTBOUND_SETTING)
+        ),
     )

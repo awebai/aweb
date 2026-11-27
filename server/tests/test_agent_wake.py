@@ -153,9 +153,13 @@ async def test_scope_without_publisher_drops_wakes_quietly(redis, caplog):
 
 
 @pytest.mark.asyncio
-async def test_failed_publication_is_retried_until_redis_returns(redis, hub, proxy, caplog):
+async def test_failed_publication_is_retried_until_redis_returns(
+    redis, hub, proxy, caplog
+):
     key = _did_key()
-    faulty = Redis.from_url(proxy.url, decode_responses=True, socket_timeout=1, socket_connect_timeout=1)
+    faulty = Redis.from_url(
+        proxy.url, decode_responses=True, socket_timeout=1, socket_connect_timeout=1
+    )
     publisher = AgentWakePublisher(faulty)
     try:
         async with hub.subscribe([key]) as subscription:
@@ -180,7 +184,9 @@ async def test_failed_publication_is_retried_until_redis_returns(redis, hub, pro
 
 
 @pytest.mark.asyncio
-async def test_hub_resubscribes_after_losing_redis_and_asks_for_resync(redis, proxy, publisher):
+async def test_hub_resubscribes_after_losing_redis_and_asks_for_resync(
+    redis, proxy, publisher
+):
     key = _did_key()
     link = Redis.from_url(proxy.url, decode_responses=True, socket_connect_timeout=1)
     hub = AgentWakeHub(link)
@@ -232,7 +238,9 @@ async def test_streams_share_channels_and_release_them_on_exit(redis, hub, publi
 
 
 @pytest.mark.asyncio
-async def test_marks_expire_so_redis_keeps_no_key_per_identity_forever(redis, publisher):
+async def test_marks_expire_so_redis_keeps_no_key_per_identity_forever(
+    redis, publisher
+):
     key = _did_key()
     with agent_wake_scope(publisher):
         record_agent_wake(key, "mail")
@@ -247,7 +255,9 @@ async def test_marks_expire_so_redis_keeps_no_key_per_identity_forever(redis, pu
 @pytest.mark.asyncio
 async def test_close_flushes_wakes_still_pending_at_shutdown(redis, hub, proxy):
     key = _did_key()
-    link = Redis.from_url(proxy.url, decode_responses=True, socket_timeout=1, socket_connect_timeout=1)
+    link = Redis.from_url(
+        proxy.url, decode_responses=True, socket_timeout=1, socket_connect_timeout=1
+    )
     publisher = AgentWakePublisher(link)
     try:
         # The subscriber stands for a surviving process.
@@ -271,7 +281,9 @@ async def test_close_flushes_wakes_still_pending_at_shutdown(redis, hub, proxy):
 @pytest.mark.asyncio
 async def test_close_gives_up_on_unreachable_redis_within_its_bound(proxy, caplog):
     key = _did_key()
-    link = Redis.from_url(proxy.url, decode_responses=True, socket_timeout=1, socket_connect_timeout=1)
+    link = Redis.from_url(
+        proxy.url, decode_responses=True, socket_timeout=1, socket_connect_timeout=1
+    )
     publisher = AgentWakePublisher(link)
     try:
         proxy.cut()
@@ -282,9 +294,7 @@ async def test_close_gives_up_on_unreachable_redis_within_its_bound(proxy, caplo
         with caplog.at_level(logging.WARNING, logger="aweb.agent_wake"):
             await publisher.close()
         assert asyncio.get_running_loop().time() - started < 3.0
-        assert any(
-            "unpublished at shutdown" in r.getMessage() for r in caplog.records
-        )
+        assert any("unpublished at shutdown" in r.getMessage() for r in caplog.records)
     finally:
         await link.aclose()
 

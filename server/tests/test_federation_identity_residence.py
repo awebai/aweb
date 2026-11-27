@@ -310,7 +310,9 @@ async def test_encrypted_federation_uses_identity_assertion_after_member_superse
         )
     assert stored["content_mode"] == "encrypted_v2"
     assert stored["from_did"] == first.signed["from_stable_id"]
-    assert envelope["recipients"][0]["encryption_key_id"] == assertion["encryption_key_id"]
+    assert (
+        envelope["recipients"][0]["encryption_key_id"] == assertion["encryption_key_id"]
+    )
     from aweb.e2ee_messages import generate_x25519_keypair
     from aweb.federation import delivery
     from awid.e2ee_keys import build_encryption_key_assertion

@@ -37,7 +37,9 @@ def write_key_file(path: Path) -> Path:
 
 def write_key_files(directory: Path) -> dict[str, Path]:
     """A freshly generated key file for each kid of the template."""
-    return {kid: write_key_file(directory / f"key-{index}") for index, kid in enumerate(template_kids())}
+    return {
+        kid: write_key_file(directory / f"key-{index}") for index, kid in enumerate(template_kids())
+    }
 
 
 def did_key_of(key_file: Path) -> str:

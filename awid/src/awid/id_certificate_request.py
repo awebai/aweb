@@ -5,6 +5,7 @@ invitation and resolve an existing global subject's current key before
 authorizing parent issuance, and verify a response's chain on current status
 before relying on it.
 """
+
 from __future__ import annotations
 
 import base64
@@ -29,8 +30,17 @@ _PREFIX = b"aweb.id-certificate-request/1\n"
 _MAX_BYTES = 8192
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _FIELDS = {
-    "v", "type", "request_id", "operation", "id", "domain", "parent", "kind",
-    "subject_key", "invitation_id", "old_certificate",
+    "v",
+    "type",
+    "request_id",
+    "operation",
+    "id",
+    "domain",
+    "parent",
+    "kind",
+    "subject_key",
+    "invitation_id",
+    "old_certificate",
 }
 
 
@@ -78,14 +88,35 @@ async def build_id_certificate_request(
     ``subject_key``; a malformed answer raises IDCertificateError('invalid_signature').
     """
     # A snapshot, so the bytes signed are exactly the request returned.
-    request = json.loads(_canonical({
-        "v": 1, "type": "aweb.id-certificate-request", "request_id": request_id, "operation": "issue",
-        "id": id, "domain": domain, "parent": parent, "kind": kind, "subject_key": subject_key,
-        "invitation_id": invitation_id, "old_certificate": None,
-    }))
+    request = json.loads(
+        _canonical(
+            {
+                "v": 1,
+                "type": "aweb.id-certificate-request",
+                "request_id": request_id,
+                "operation": "issue",
+                "id": id,
+                "domain": domain,
+                "parent": parent,
+                "kind": kind,
+                "subject_key": subject_key,
+                "invitation_id": invitation_id,
+                "old_certificate": None,
+            }
+        )
+    )
     _request_shape(request)
-    signature = await _signature_by(signer, id_certificate_request_signing_bytes(request), subject_key)
-    return _canonical({"request": request, "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")})
+    signature = await _signature_by(
+        signer, id_certificate_request_signing_bytes(request), subject_key
+    )
+    return _canonical(
+        {
+            "request": request,
+            "signature": base64.urlsafe_b64encode(signature)
+            .rstrip(b"=")
+            .decode("ascii"),
+        }
+    )
 
 
 def _decode(raw: bytes) -> Any:
@@ -96,8 +127,10 @@ def _decode(raw: bytes) -> Any:
         raise IDCertificateError("bundle_too_large")
     try:
         value = json.loads(
-            raw.decode("utf-8"), object_pairs_hook=_pairs,
-            parse_float=_reject_number, parse_constant=_reject_number,
+            raw.decode("utf-8"),
+            object_pairs_hook=_pairs,
+            parse_float=_reject_number,
+            parse_constant=_reject_number,
         )
     except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise IDCertificateError("invalid_json") from exc
@@ -125,16 +158,21 @@ def parse_id_certificate_request(raw: bytes) -> dict[str, Any]:
     signature = _decode_b64(signed["signature"])
     if len(signature) != 64:
         raise IDCertificateError("invalid_encoding")
-    verify_ed25519(request["subject_key"], id_certificate_request_signing_bytes(request), signature)
+    verify_ed25519(
+        request["subject_key"], id_certificate_request_signing_bytes(request), signature
+    )
     return signed
 
 
 def _request_shape(request: Any) -> None:
     if type(request) is not dict or set(request) != _FIELDS:
         raise IDCertificateError("invalid_shape")
-    if (type(request["v"]) is not int or request["v"] != 1
-            or request["type"] != "aweb.id-certificate-request"
-            or not _is_uuid(request["request_id"])):
+    if (
+        type(request["v"]) is not int
+        or request["v"] != 1
+        or request["type"] != "aweb.id-certificate-request"
+        or not _is_uuid(request["request_id"])
+    ):
         raise IDCertificateError("invalid_shape")
     if request["kind"] not in ("human", "agent"):
         raise IDCertificateError("invalid_kind")
@@ -158,11 +196,17 @@ def _request_shape(request: Any) -> None:
     if request["id"].startswith("did:key:") and request["id"] != subject:
         raise IDCertificateError("invalid_shape")
     if request["operation"] == "issue":
-        if not _is_uuid(request["invitation_id"]) or request["old_certificate"] is not None:
+        if (
+            not _is_uuid(request["invitation_id"])
+            or request["old_certificate"] is not None
+        ):
             raise IDCertificateError("invalid_shape")
     elif request["operation"] == "resign":
-        if (request["invitation_id"] is not None or request["kind"] != "agent"
-                or not request["id"].startswith("did:key:")):
+        if (
+            request["invitation_id"] is not None
+            or request["kind"] != "agent"
+            or not request["id"].startswith("did:key:")
+        ):
             raise IDCertificateError("invalid_shape")
         _shape(request["old_certificate"])
     else:
@@ -181,9 +225,14 @@ def parse_id_certificate_response(raw: bytes, *, request: bytes) -> dict[str, An
     its own registration, before it carries any authority.
     """
     response = _decode(raw)
-    if (type(response) is not dict or set(response) != {"v", "request_id", "chain"}
-            or type(response["v"]) is not int or response["v"] != 1
-            or not _is_uuid(response["request_id"]) or type(response["chain"]) is not dict):
+    if (
+        type(response) is not dict
+        or set(response) != {"v", "request_id", "chain"}
+        or type(response["v"]) is not int
+        or response["v"] != 1
+        or not _is_uuid(response["request_id"])
+        or type(response["chain"]) is not dict
+    ):
         raise IDCertificateError("invalid_shape")
     if len(_canonical(response["chain"])) > ID_CHAIN_MAX_BYTES:
         raise IDCertificateError("bundle_too_large")

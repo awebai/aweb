@@ -29,8 +29,11 @@ APP = "fixture"
 
 def grant(installation_id="installation-1", generation=1, *, ttl=60.0, team_id=TEAM):
     return Grant(
-        team_id=team_id, installation_id=installation_id, generation=generation,
-        scopes=frozenset({"fixture:write"}), fresh_until=time.monotonic_ns() + int(ttl * NANOSECONDS_PER_SECOND),
+        team_id=team_id,
+        installation_id=installation_id,
+        generation=generation,
+        scopes=frozenset({"fixture:write"}),
+        fresh_until=time.monotonic_ns() + int(ttl * NANOSECONDS_PER_SECOND),
     )
 
 
@@ -52,9 +55,13 @@ class Source:
         if current is None:
             return None
         return SimpleNamespace(
-            team_id=current.team_id, app_id=self.app_id, state=self.state,
-            installation_id=current.installation_id, generation=current.generation,
-            granted_scopes=current.scopes, fresh_until=current.fresh_until,
+            team_id=current.team_id,
+            app_id=self.app_id,
+            state=self.state,
+            installation_id=current.installation_id,
+            generation=current.generation,
+            granted_scopes=current.scopes,
+            fresh_until=current.fresh_until,
         )
 
 
@@ -85,7 +92,10 @@ async def test_admission_records_identity_and_check_only_uses_sql(db, setup):
     fence, source = setup
     admitted = await admit(db, fence, source.current)
     assert (admitted.team_id, admitted.app_id, admitted.installation_id, admitted.generation) == (
-        TEAM, APP, "installation-1", 1,
+        TEAM,
+        APP,
+        "installation-1",
+        1,
     )
     source.current = AssertionError("check must never call the source under the dispatch lock")
     await check(db, fence, admitted)
@@ -131,7 +141,9 @@ async def test_expired_grant_refuses_admission_and_dispatch(db, setup):
         await admit(db, fence, grant(ttl=-1))
     assert exc.value.code == "authority_unavailable"
     admitted = await admit(db, fence, source.current)
-    await db.execute("UPDATE {{tables.installation_fences}} SET fresh_until = clock_timestamp() - interval '1 second'")
+    await db.execute(
+        "UPDATE {{tables.installation_fences}} SET fresh_until = clock_timestamp() - interval '1 second'"
+    )
     with pytest.raises(InstallationRefused) as exc:
         await check(db, fence, admitted)
     assert exc.value.code == "authority_unavailable"
@@ -226,7 +238,9 @@ async def test_a_new_generation_can_recover_after_an_old_digest_key_was_denied(d
     assert exc.value.code == "generation_superseded"
 
 
-async def test_an_old_replica_key_denial_cannot_permanently_disable_the_current_generation(db, setup):
+async def test_an_old_replica_key_denial_cannot_permanently_disable_the_current_generation(
+    db, setup
+):
     old_fence, old_source = setup
     await admit(db, old_fence, old_source.current)
     current_source = Source(grant(generation=2))
@@ -373,7 +387,9 @@ async def hooked(db):
 
     async def on_retire(tx, team_id):
         old_id = await tx.fetch_value(
-            "SELECT active_installation_id FROM {{tables.installation_fences}} WHERE team_id = $1 AND app_id = $2", team_id, APP,
+            "SELECT active_installation_id FROM {{tables.installation_fences}} WHERE team_id = $1 AND app_id = $2",
+            team_id,
+            APP,
         )
         await tx.execute("INSERT INTO fixture_retirements VALUES ($1)", old_id)
         await tx.execute("DELETE FROM fixture_authority WHERE team_id = $1", team_id)
@@ -437,14 +453,19 @@ async def test_retirement_hook_failure_rolls_back_both_authority_and_new_identit
     failing = InstallationFence(db, app_id=APP, grants=source, on_retire=failing_hook)
     with pytest.raises(RuntimeError, match="cleanup failed"):
         await admit(db, failing, grant("installation-2", generation=2))
-    assert await db.fetch_value("SELECT installation_id FROM {{tables.installation_fences}}") == "installation-1"
+    assert (
+        await db.fetch_value("SELECT installation_id FROM {{tables.installation_fences}}")
+        == "installation-1"
+    )
     assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 1
     assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 0
     assert await db.fetch_value("SELECT count(*) FROM {{tables.retired_installation_fences}}") == 0
 
 
 @pytest.mark.parametrize("state", ["pending_origin_verification", "unknown_future_state"])
-async def test_nonterminal_inactive_state_keeps_authority_and_recovers_same_generation(db, hooked, state):
+async def test_nonterminal_inactive_state_keeps_authority_and_recovers_same_generation(
+    db, hooked, state
+):
     fence, source, _ = hooked
     admitted = await admit(db, fence, source.current)
     await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
@@ -460,7 +481,9 @@ async def test_nonterminal_inactive_state_keeps_authority_and_recovers_same_gene
     await check(db, fence, admitted)
 
 
-async def test_denied_replica_key_never_runs_the_retirement_hook_or_accepts_lower_generation(db, hooked):
+async def test_denied_replica_key_never_runs_the_retirement_hook_or_accepts_lower_generation(
+    db, hooked
+):
     fence, source, _ = hooked
     await admit(db, fence, grant(generation=2))
     await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
@@ -476,7 +499,9 @@ async def test_denied_replica_key_never_runs_the_retirement_hook_or_accepts_lowe
     assert exc.value.code == "generation_superseded"
 
 
-async def test_delayed_uninstall_of_a_retired_id_cannot_purge_the_new_installations_authority(db, hooked):
+async def test_delayed_uninstall_of_a_retired_id_cannot_purge_the_new_installations_authority(
+    db, hooked
+):
     fence, source, _ = hooked
     await admit(db, fence, source.current)
     new = await admit(db, fence, grant("installation-2", generation=2))
@@ -491,7 +516,9 @@ async def test_delayed_uninstall_of_a_retired_id_cannot_purge_the_new_installati
 
 
 @pytest.mark.parametrize("state", ["pending_origin_verification", "unknown_future_state"])
-async def test_higher_generation_pending_replacement_keeps_old_authority_until_active(db, hooked, state):
+async def test_higher_generation_pending_replacement_keeps_old_authority_until_active(
+    db, hooked, state
+):
     fence, source, _ = hooked
     await admit(db, fence, source.current)
     await db.execute("INSERT INTO fixture_authority VALUES ($1)", TEAM)
@@ -510,7 +537,9 @@ async def test_higher_generation_pending_replacement_keeps_old_authority_until_a
     await check(db, fence, await admit(db, fence, source.current))
 
 
-async def test_equal_generation_with_a_different_id_is_an_authority_error_without_writes(db, hooked):
+async def test_equal_generation_with_a_different_id_is_an_authority_error_without_writes(
+    db, hooked
+):
     fence, source, _ = hooked
     admitted = await admit(db, fence, source.current)
     before = dict(await db.fetch_one("SELECT * FROM {{tables.installation_fences}}"))
@@ -525,7 +554,9 @@ async def test_equal_generation_with_a_different_id_is_an_authority_error_withou
         await check(db, fence, admitted)
 
 
-@pytest.mark.parametrize("state", ["active", "pending_origin_verification", "unknown_future_state", "uninstalled"])
+@pytest.mark.parametrize(
+    "state", ["active", "pending_origin_verification", "unknown_future_state", "uninstalled"]
+)
 async def test_lower_generation_observation_has_no_shared_effects(db, hooked, state):
     fence, source, _ = hooked
     admitted = await admit(db, fence, grant("current-installation", generation=2))
@@ -573,8 +604,10 @@ async def test_real_s3_admission_and_dispatch_take_the_installation_fence_first(
 
     dispatches = Dispatches(
         on_transition=on_transition,
-        max_dispatch=timedelta(seconds=30), sweep_margin=timedelta(seconds=30),
+        max_dispatch=timedelta(seconds=30),
+        sweep_margin=timedelta(seconds=30),
     )
+
     async def run_round(round_number):
         action = f"fixture:write:{round_number}"
         running, newcomer = uuid4(), uuid4()
@@ -608,7 +641,9 @@ async def test_real_s3_admission_and_dispatch_take_the_installation_fence_first(
             await admission_prepared.wait()
             async with db.transaction() as tx:
                 await dispatches.begin_dispatch(
-                    tx, running, fence=fence.for_installation(admitted_fence.admitted),
+                    tx,
+                    running,
+                    fence=fence.for_installation(admitted_fence.admitted),
                 )
 
         # Unexpected exceptions, including PostgreSQL deadlock_detected, fail
@@ -631,8 +666,11 @@ async def test_member_sql_facade_rolls_back_when_a_resource_wait_exhausts_freshn
     permit = await fence.permit(TEAM)
     async with db.transaction() as holder:
         await holder.fetch_one("SELECT id FROM {{schema}}.member_content WHERE id=1 FOR UPDATE")
-        changing = asyncio.create_task(permit.database().execute(
-            "UPDATE {{schema}}.member_content SET value='after' WHERE id=1"))
+        changing = asyncio.create_task(
+            permit.database().execute(
+                "UPDATE {{schema}}.member_content SET value='after' WHERE id=1"
+            )
+        )
         await asyncio.sleep(0.05)
         assert not changing.done(), "the real resource lock must block the write"
         # The app row remains locked until the advertised authority has expired.
@@ -640,4 +678,6 @@ async def test_member_sql_facade_rolls_back_when_a_resource_wait_exhausts_freshn
     with pytest.raises(InstallationRefused) as refused:
         await changing
     assert refused.value.code == "authority_unavailable"
-    assert await db.fetch_value("SELECT value FROM {{schema}}.member_content WHERE id=1") == "before"
+    assert (
+        await db.fetch_value("SELECT value FROM {{schema}}.member_content WHERE id=1") == "before"
+    )

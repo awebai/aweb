@@ -10,7 +10,9 @@ import yaml
 
 TEAM = Path(__file__).resolve().parents[2] / "deploy" / "team"
 EXAMPLE = yaml.safe_load((TEAM / "deployment.example.yaml").read_text(encoding="utf-8"))
-FRONT = yaml.safe_load((TEAM / "compose.front.yaml").read_text(encoding="utf-8"))["services"]["front"]
+FRONT = yaml.safe_load((TEAM / "compose.front.yaml").read_text(encoding="utf-8"))[
+    "services"
+]["front"]
 IMAGE = "docker.io/library/caddy@sha256:" + "4" * 64
 
 spec = importlib.util.spec_from_file_location("render_env", TEAM / "render_env.py")
@@ -31,12 +33,19 @@ def app(name: str) -> dict:
 
 
 def with_front(**front) -> dict:
-    return {**copy.deepcopy(EXAMPLE), "secrets": app("secrets"), "logs": app("logs"), "front": {"image": IMAGE, **front}}
+    return {
+        **copy.deepcopy(EXAMPLE),
+        "secrets": app("secrets"),
+        "logs": app("logs"),
+        "front": {"image": IMAGE, **front},
+    }
 
 
 def test_the_front_renders_its_image_secrets_and_public_address():
     rendered = render_env.render(with_front())
-    assert {name: value for name, value in rendered.items() if name.startswith("FRONT_")} == {
+    assert {
+        name: value for name, value in rendered.items() if name.startswith("FRONT_")
+    } == {
         "FRONT_IMAGE": IMAGE,
         "FRONT_SECRETS": "front",
         "FRONT_BIND_ADDRESS": "0.0.0.0",
@@ -57,7 +66,9 @@ def test_the_front_serves_each_public_origin_with_the_operators_certificate_and_
     caddyfile = render_env.render_front(with_front())
     # Caddy compares hostnames alone; a request whose Host its TLS SNI does
     # not name is refused, and each site refuses any authority but its own.
-    assert caddyfile.startswith("{\n  auto_https off\n  servers {\n    strict_sni_host on\n  }\n}\n")
+    assert caddyfile.startswith(
+        "{\n  auto_https off\n  servers {\n    strict_sni_host on\n  }\n}\n"
+    )
     sites = {
         "aweb.example.com": "aweb:8000",
         "secrets.example.com": "secrets:8770",

@@ -8,7 +8,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/internal/releaseversion"
-	"github.com/awebai/aw/wake"
+	"github.com/awebai/aw/internal/wake"
 	"github.com/spf13/cobra"
 )
 

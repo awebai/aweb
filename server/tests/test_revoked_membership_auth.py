@@ -198,5 +198,7 @@ async def test_certificate_authenticated_request_refreshes_recorded_certificate(
     # updates the projection, so identity-only enforcement checks the current
     # certificate rather than the one from the original connect.
     await resolve_team_identity(db, {**cert_info, "certificate_id": "cert-new"})
-    row = await read_member_projection(db, team_id=TEAM_ID, did_key="did:key:z6MkRefresher")
+    row = await read_member_projection(
+        db, team_id=TEAM_ID, did_key="did:key:z6MkRefresher"
+    )
     assert row["certificate_id"] == "cert-new"

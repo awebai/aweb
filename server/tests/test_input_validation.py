@@ -13,7 +13,9 @@ VALIDATORS = [
     pytest.param(is_valid_alias, "bob", id="alias"),
     pytest.param(is_valid_human_name, "Bob", id="human_name"),
     pytest.param(is_valid_branch_name, "main", id="branch_name"),
-    pytest.param(is_valid_canonical_origin, "github.com/acme/repo", id="canonical_origin"),
+    pytest.param(
+        is_valid_canonical_origin, "github.com/acme/repo", id="canonical_origin"
+    ),
 ]
 
 

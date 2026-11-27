@@ -188,13 +188,17 @@ async def test_sigv4_with_a_wrong_secret_key_is_refused_by_the_upstream(upstream
 
 async def test_sigv4_signs_only_with_the_secrets_region(upstream: Upstream) -> None:
     call = await _sigv4_call(
-        upstream, _aws(upstream), params={"region": "us-east-1", "service": upstream.creds.sigv4_service}
+        upstream,
+        _aws(upstream),
+        params={"region": "us-east-1", "service": upstream.creds.sigv4_service},
     )
     assert call.result.status == 401
 
 
 async def test_an_undeclared_amz_header_sends_nothing(upstream: Upstream) -> None:
     with pytest.raises(EgressRefused) as refused:
-        await _sigv4_call(upstream, _aws(upstream), headers=[("X-Amz-Region-Override", "us-east-1")])
+        await _sigv4_call(
+            upstream, _aws(upstream), headers=[("X-Amz-Region-Override", "us-east-1")]
+        )
     assert refused.value.code == "header_not_allowed"
     assert upstream.requests == []

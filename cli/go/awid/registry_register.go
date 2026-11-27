@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/awebai/aw/canonicaljson"
+	"github.com/awebai/aw/internal/canonicaljson"
 )
 
 type didRegisterRequest struct {

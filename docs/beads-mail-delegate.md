@@ -359,7 +359,7 @@ Priority map (original beads value always preserved in the envelope):
 Anything gt-shaped that aweb cannot express rides a fenced envelope
 appended to the body — the established aweb pattern for structure in
 mail (the A2A gateway's fenced JSON,
-`cli/go/a2agw/mail_bridge.go:443,446`):
+`cli/go/internal/a2agw/mail_bridge.go:443,446`):
 
 ````
 ```beads-mail

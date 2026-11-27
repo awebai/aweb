@@ -186,7 +186,9 @@ def build_blueprint_roster(blueprint: dict[str, Any]) -> list[dict[str, Any]]:
                 "default_count": recommendation.get("default_count"),
                 "count_min": _first_present(recommendation, "min", "count_min"),
                 "count_max": _first_present(recommendation, "max", "count_max"),
-                "runtime_hints": [str(item) for item in _as_list(recommendation.get("runtime_hints"))],
+                "runtime_hints": [
+                    str(item) for item in _as_list(recommendation.get("runtime_hints"))
+                ],
             }
         )
 
@@ -202,7 +204,9 @@ def build_blueprint_roster(blueprint: dict[str, Any]) -> list[dict[str, Any]]:
                 "default_count": recommendation.get("default_count"),
                 "count_min": _first_present(recommendation, "min", "count_min"),
                 "count_max": _first_present(recommendation, "max", "count_max"),
-                "runtime_hints": [str(item) for item in _as_list(recommendation.get("runtime_hints"))],
+                "runtime_hints": [
+                    str(item) for item in _as_list(recommendation.get("runtime_hints"))
+                ],
             }
         )
     return roster

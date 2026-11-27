@@ -721,6 +721,37 @@ Claimless local connects need no observation.
 Identity-only and grant authentication apply the same check to their identity
 or grant subject; a grant session key does not become the subject's root key.
 
+For ordinary certificate routes, an embedding host may select
+`IdentityEvidencePolicy.PREFER_LIVE`. The native verifier attempts live
+identity binding and ID ancestry with a shared two-second evidence deadline, after
+the request signature, team certificate and its standing have passed.
+An address-not-found response or unavailable identity evidence can use the
+admitted member's previously verified stable DID only when its marker matches
+the signing key and its DID matches the binding under examination. During
+binding unavailability it retains the stored, verified address. A definite
+address absence withholds the address. Neither fallback updates the member
+projection or supplies a kind or ID chain. With a successful live binding
+and unavailable ID ancestry, the request retains that binding without kind
+or a chain. This also drops the carried chain for a `did:key` sender during
+ancestry unavailability, where `ENFORCE` can retain it without verified kind.
+A stale issuer follows the shared chain disposition: a `did:key` subject can
+continue without verified kind, and a `did:aw` subject is refused. Superseded,
+revoked or malformed chains remain refusals, as do a missing stable DID record,
+conflicting key or address, and malformed binding claims. Connect, identity-only
+and grant authorization retain strict verification. After a superseded-chain
+Connect refusal, run `aw id parent refresh` in the identity home and reconnect.
+An admitted fallback produces one INFO entry with the team and its reason.
+`aweb_identity_evidence_fallbacks_total` counts by reason only:
+`address_missing`, `unavailable`, `timed_out`, or `chain_unavailable`.
+`PREFER_LIVE` can reuse an address-missing result for 60 seconds or an
+unavailable or timed-out binding for five seconds in the process's bounded
+binding cache. Enforcing or fresh reads bypass these fallback observations.
+Newly observed key authority supersedes a conflicting fallback.
+After a timed-out or unavailable chain-status read, `PREFER_LIVE` suppresses
+status refreshes for that registry and domain for five seconds in the current
+process. It still uses fresh cached status when available. Enforcing reads
+retain their normal refresh behavior.
+
 `agents.did_aw_verified_key` records the key against which a projection was
 verified. Historical rows start with a null marker. Stable-DID and global-address
 routing, identity expansion and membership checks use a row's global claims only

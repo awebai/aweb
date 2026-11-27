@@ -25,18 +25,24 @@ __all__ = ["present_world"]
 
 @pytest.mark.parametrize(
     ("fonts", "body_family", "heading_family"),
-    [(None, "Archivo", "Archivo"), ({"body": "serif", "heading": "mono"}, "Georgia", "ui-monospace")],
+    [
+        (None, "Archivo", "Archivo"),
+        ({"body": "serif", "heading": "mono"}, "Georgia", "ui-monospace"),
+    ],
     ids=["default", "custom"],
 )
 async def test_editor_uses_default_and_custom_computed_fonts(
     present_world, fonts, body_family, heading_family
 ):
     app, db, _ = present_world
-    await db.execute("UPDATE {{tables.document_versions}} SET body=$1", "# Shared heading\n\nDraft text.")
+    await db.execute(
+        "UPDATE {{tables.document_versions}} SET body=$1", "# Shared heading\n\nDraft text."
+    )
     if fonts:
         await db.execute(
             "INSERT INTO {{tables.themes}} (team_id,tokens) VALUES ($1,$2::jsonb)",
-            OWNER.team_id, json.dumps({"fonts": fonts}),
+            OWNER.team_id,
+            json.dumps({"fonts": fonts}),
         )
     link = await mint(present_world)
     with socket.socket() as listener:
@@ -53,8 +59,12 @@ async def test_editor_uses_default_and_custom_computed_fonts(
                 browser = await playwright.chromium.launch()
                 try:
                     page = await browser.new_page(color_scheme="dark")
-                    await page.goto(origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment)
-                    await expect(page.get_by_role("textbox", name="Write", exact=True)).to_be_editable()
+                    await page.goto(
+                        origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment
+                    )
+                    await expect(
+                        page.get_by_role("textbox", name="Write", exact=True)
+                    ).to_be_editable()
                     await expect(page.locator("#preview h1")).to_have_text("Shared heading")
                     await page.evaluate("document.fonts.ready")
                     for width in (390, 1440):
@@ -82,7 +92,8 @@ async def test_editor_controls_reflow_and_honour_validated_theme(present_world, 
     assert theme_contrast_error(tokens) is None
     await db.execute(
         "INSERT INTO {{tables.themes}} (team_id,tokens) VALUES ($1,$2::jsonb)",
-        OWNER.team_id, json.dumps(tokens),
+        OWNER.team_id,
+        json.dumps(tokens),
     )
     link = await mint(present_world)
     with socket.socket() as listener:
@@ -98,7 +109,9 @@ async def test_editor_controls_reflow_and_honour_validated_theme(present_world, 
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch()
                 page = await browser.new_page(color_scheme="dark")
-                await page.goto(origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment)
+                await page.goto(
+                    origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment
+                )
                 for width in (320, 768):
                     await page.set_viewport_size({"width": width, "height": 900})
                     assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -151,19 +164,28 @@ async def test_unavailable_save_preserves_copyable_draft_and_reopen_path(present
                 )
                 page = await context.new_page()
                 try:
-                    response = await page.goto(origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment)
+                    response = await page.goto(
+                        origin + urlsplit(link["url"]).path + "#" + urlsplit(link["url"]).fragment
+                    )
                     assert response.status == 200
                     await expect(page.locator("#body")).to_have_value("Original")
                     draft = "Unsaved text — keep this exactly.\nSecond line."
                     await page.locator("#body").fill(draft)
+
                     async def revoke_before_save(route):
                         # Revoke after the real save is issued, before it reaches SQL.
                         # Otherwise the background state poll can disable Save first.
                         assert route.request.method == "POST"
                         if failure == "membership":
-                            await db.execute("UPDATE {{tables.edit_sessions}} SET revoked_at=NOW() WHERE link_id=$1", link["token"])
+                            await db.execute(
+                                "UPDATE {{tables.edit_sessions}} SET revoked_at=NOW() WHERE link_id=$1",
+                                link["token"],
+                            )
                         else:
-                            await db.execute("UPDATE {{tables.presentation_links}} SET revoked_at=NOW() WHERE token=$1", link["token"])
+                            await db.execute(
+                                "UPDATE {{tables.presentation_links}} SET revoked_at=NOW() WHERE token=$1",
+                                link["token"],
+                            )
                         await route.continue_()
 
                     await page.route("**/edit", revoke_before_save)

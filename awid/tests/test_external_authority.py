@@ -57,10 +57,16 @@ class ChangingHostAnswers:
         return self._answers[1]
 
 
-@pytest.mark.parametrize("case", _load("federation-discovery-v1.json")["canonical_address_cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case",
+    _load("federation-discovery-v1.json")["canonical_address_cases"],
+    ids=lambda case: case["name"],
+)
 def test_canonical_protocol_address_vectors(case: dict) -> None:
     if case["expected"]["valid"]:
-        assert canonical_protocol_address(case["input"]) == case["expected"]["canonical"]
+        assert (
+            canonical_protocol_address(case["input"]) == case["expected"]["canonical"]
+        )
     else:
         with pytest.raises(FederationAuthorityError) as raised:
             canonical_protocol_address(case["input"])
@@ -75,7 +81,11 @@ def test_canonical_protocol_address_rejects_unicode_space(space: str) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", _load("federation-discovery-v1.json")["dns_cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case",
+    _load("federation-discovery-v1.json")["dns_cases"],
+    ids=lambda case: case["name"],
+)
 async def test_strict_dns_discovery_vectors(case: dict) -> None:
     resolver = VectorDNS(case["queries"])
     expected = case["expected"]
@@ -101,7 +111,11 @@ async def test_strict_dns_discovery_vectors(case: dict) -> None:
     assert authority.registry_origin == expected["registry_origin"]
 
 
-@pytest.mark.parametrize("case", _load("federation-discovery-v1.json")["authority_statement_cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case",
+    _load("federation-discovery-v1.json")["authority_statement_cases"],
+    ids=lambda case: case["name"],
+)
 def test_authority_statement_vectors(case: dict) -> None:
     statement = authority_statement(**case["payload"])
     assert statement.canonical_payload.decode("utf-8") == case["canonical_payload"]
@@ -109,19 +123,30 @@ def test_authority_statement_vectors(case: dict) -> None:
     assert statement.digest == case["authority_statement_digest"]
 
 
-@pytest.mark.parametrize("case", _load("federation-origin-ip-v1.json")["origin_cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case",
+    _load("federation-origin-ip-v1.json")["origin_cases"],
+    ids=lambda case: case["name"],
+)
 def test_registry_origin_vectors(case: dict) -> None:
     context = OriginContext(**case["context"])
     expected = case["expected"]
     if expected["ok"]:
-        assert canonical_registry_origin(case["input"], context=context) == expected["canonical_origin"]
+        assert (
+            canonical_registry_origin(case["input"], context=context)
+            == expected["canonical_origin"]
+        )
     else:
         with pytest.raises(FederationAuthorityError) as raised:
             canonical_registry_origin(case["input"], context=context)
         assert raised.value.reason == expected["reason"]
 
 
-@pytest.mark.parametrize("case", _load("federation-origin-ip-v1.json")["ip_cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case",
+    _load("federation-origin-ip-v1.json")["ip_cases"],
+    ids=lambda case: case["name"],
+)
 def test_individual_registry_ip_vectors(case: dict) -> None:
     expected = case["expected"]
     if expected["allowed"]:
@@ -132,18 +157,29 @@ def test_individual_registry_ip_vectors(case: dict) -> None:
         assert raised.value.reason == expected["reason"]
 
 
-@pytest.mark.parametrize("case", _load("federation-origin-ip-v1.json")["answer_set_cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case",
+    _load("federation-origin-ip-v1.json")["answer_set_cases"],
+    ids=lambda case: case["name"],
+)
 def test_all_resolved_addresses_are_validated(case: dict) -> None:
     expected = case["expected"]
     if expected["allowed"]:
-        assert list(validate_resolved_addresses(case["answers"])) == expected["approved_ips"]
+        assert (
+            list(validate_resolved_addresses(case["answers"]))
+            == expected["approved_ips"]
+        )
     else:
         with pytest.raises(FederationAuthorityError) as raised:
             validate_resolved_addresses(case["answers"])
         assert raised.value.reason == expected["reason"]
 
 
-@pytest.mark.parametrize("case", _load("federation-origin-ip-v1.json")["source_ip_cases"], ids=lambda case: case["name"])
+@pytest.mark.parametrize(
+    "case",
+    _load("federation-origin-ip-v1.json")["source_ip_cases"],
+    ids=lambda case: case["name"],
+)
 def test_source_ip_vectors(case: dict) -> None:
     result = normalize_source_ip(
         direct_peer=case["direct_peer"],
@@ -159,12 +195,12 @@ def test_source_ip_vectors(case: dict) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "case", _load("federation-origin-ip-v1.json")["transport_cases"], ids=lambda case: case["name"]
+    "case",
+    _load("federation-origin-ip-v1.json")["transport_cases"],
+    ids=lambda case: case["name"],
 )
 async def test_pinned_transport_vectors(case: dict) -> None:
-    resolver = ChangingHostAnswers(
-        case["resolved_answers"], case["subsequent_answers"]
-    )
+    resolver = ChangingHostAnswers(case["resolved_answers"], case["subsequent_answers"])
     approved_ips = validate_resolved_addresses(await resolver.resolve())
     client = PinnedRegistryHTTP(
         origin=case["origin"],
@@ -212,7 +248,9 @@ async def test_pinned_transport_vectors(case: dict) -> None:
         def __init__(self) -> None:
             self.requests: list[httpcore.Request] = []
 
-        async def handle_async_request(self, request: httpcore.Request) -> httpcore.Response:
+        async def handle_async_request(
+            self, request: httpcore.Request
+        ) -> httpcore.Response:
             self.requests.append(request)
             return httpcore.Response(
                 status=302,
@@ -267,7 +305,10 @@ class LookupHTTP:
         self.paths: list[str] = []
 
     async def get_json(
-        self, path: str, *, bypass_cache: bool = False,
+        self,
+        path: str,
+        *,
+        bypass_cache: bool = False,
         not_found_reason: str = "sender_identity_not_found",
     ):
         self.paths.append(path)
@@ -280,7 +321,9 @@ class LookupHTTP:
         return None
 
 
-def lookup_case_responses(case: dict) -> tuple[dict[str, object], IdentityCheckpoint | None]:
+def lookup_case_responses(
+    case: dict,
+) -> tuple[dict[str, object], IdentityCheckpoint | None]:
     identity, entries = lookup_identity()
     mapping = identity["mapping"]
     escaped_did = mapping["did_aw"].replace(":", "%3A")
@@ -335,7 +378,9 @@ def lookup_case_responses(case: dict) -> tuple[dict[str, object], IdentityCheckp
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "case", _load("federation-discovery-v1.json")["authority_lookup_cases"], ids=lambda case: case["name"]
+    "case",
+    _load("federation-discovery-v1.json")["authority_lookup_cases"],
+    ids=lambda case: case["name"],
 )
 async def test_authority_lookup_vectors(case: dict) -> None:
     identity, _entries = lookup_identity()
@@ -430,7 +475,9 @@ def test_ipv4_embedding_transition_prefixes_are_refused(address: str) -> None:
     assert raised.value.reason == "sender_registry_origin_forbidden"
 
 
-@pytest.mark.parametrize("stdlib_global", [True, False], ids=["permissive", "restrictive"])
+@pytest.mark.parametrize(
+    "stdlib_global", [True, False], ids=["permissive", "restrictive"]
+)
 @pytest.mark.parametrize(
     "case",
     _load("federation-origin-ip-v1.json")["ip_cases"],

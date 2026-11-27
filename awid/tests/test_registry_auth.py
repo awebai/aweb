@@ -41,9 +41,13 @@ async def private_team(client, controller_identity, domain):
 
 
 @pytest.mark.asyncio
-async def test_a_member_key_signs_each_gated_read_of_its_team(client, controller_identity):
+async def test_a_member_key_signs_each_gated_read_of_its_team(
+    client, controller_identity
+):
     domain = "auth-member.com"
-    member_key, member_did, _, _ = await private_team(client, controller_identity, domain)
+    member_key, member_did, _, _ = await private_team(
+        client, controller_identity, domain
+    )
     auth = RegistryRequestAuth(member_signing_keys={f"ops:{domain}": member_key})
     for template in GATED_READS:
         path = template.format(domain=domain)
@@ -55,7 +59,9 @@ async def test_a_member_key_signs_each_gated_read_of_its_team(client, controller
 
 
 @pytest.mark.asyncio
-async def test_the_signature_covers_the_path_without_its_query(client, controller_identity):
+async def test_the_signature_covers_the_path_without_its_query(
+    client, controller_identity
+):
     domain = "auth-query.com"
     member_key, _, _, _ = await private_team(client, controller_identity, domain)
     auth = RegistryRequestAuth(member_signing_keys={f"ops:{domain}": member_key})
@@ -87,7 +93,9 @@ async def test_a_revoked_members_signature_is_refused(client, controller_identit
 
 
 @pytest.mark.asyncio
-async def test_a_member_key_is_never_sent_with_another_teams_reads(client, controller_identity):
+async def test_a_member_key_is_never_sent_with_another_teams_reads(
+    client, controller_identity
+):
     domain = "auth-own-team.com"
     member_key, _, _, _ = await private_team(client, controller_identity, domain)
     ns_key, ns_did = controller_identity
@@ -118,15 +126,23 @@ def test_a_member_key_signs_only_gated_team_reads(method, path):
 def test_a_request_the_caller_signs_keeps_its_own_signature():
     member_key, _ = generate_keypair()
     auth = RegistryRequestAuth(member_signing_keys={"ops:example.com": member_key})
-    assert auth.headers("GET", "/v1/namespaces/example.com/teams/ops", signed_by_caller=True) == {}
+    assert (
+        auth.headers(
+            "GET", "/v1/namespaces/example.com/teams/ops", signed_by_caller=True
+        )
+        == {}
+    )
 
 
 @pytest.mark.asyncio
 async def test_the_service_token_takes_precedence_over_a_member_key(
-    service_client, controller_identity  # noqa: F811 - fixture
+    service_client,
+    controller_identity,  # noqa: F811 - fixture
 ):
     domain = "auth-token.com"
-    member_key, _, _, _ = await private_team(service_client, controller_identity, domain)
+    member_key, _, _, _ = await private_team(
+        service_client, controller_identity, domain
+    )
     auth = RegistryRequestAuth(
         service_token=SERVICE_TOKEN, member_signing_keys={f"ops:{domain}": member_key}
     )
@@ -158,7 +174,9 @@ def test_a_blank_service_token_is_no_token():
 
 
 @pytest.mark.asyncio
-async def test_a_cached_registry_client_signs_and_files_its_reads_under_one_key(fake_redis):
+async def test_a_cached_registry_client_signs_and_files_its_reads_under_one_key(
+    fake_redis,
+):
     """The key that signs a team's reads is the key its cached reads are
     filed under: neither the supplied mapping nor the client's own can be
     changed afterwards to make them differ."""
@@ -183,6 +201,9 @@ async def test_a_cached_registry_client_signs_and_files_its_reads_under_one_key(
             registry.member_signing_keys["ops:example.com"] = second
         await registry._request_json("GET", "/v1/namespaces/example.com/teams/ops")
         signer = requests[-1].headers["Authorization"].split()[1]
-        assert registry._team_reader_cache_suffix("example.com", "ops") == f":member-reader:{signer}"
+        assert (
+            registry._team_reader_cache_suffix("example.com", "ops")
+            == f":member-reader:{signer}"
+        )
     finally:
         await registry.aclose()

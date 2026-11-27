@@ -59,6 +59,7 @@ from aweb.messaging.chat_send import (
     send_chat,
 )
 from aweb.messaging.runtime import messaging_runtime
+from aweb.messaging.sender_address import stored_sender_address
 from aweb.identity_auth_deps import participant_dids
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.messaging.chat import (
@@ -225,7 +226,9 @@ async def _create_session_response(
         [(row.get("did") or "").strip() for row in participants_rows],
     )
 
-    targets_left = await _targets_left(db, session_id=session_id, target_dids=target_dids)
+    targets_left = await _targets_left(
+        db, session_id=session_id, target_dids=target_dids
+    )
     waiting_dids = await get_waiting_agents(redis, str(session_id), target_dids)
     waiting_set = set(waiting_dids)
     targets_connected = [
@@ -274,7 +277,9 @@ async def create_or_send(
         with attachment_context:
             return await create_or_send(request, payload, db=db, redis=redis, auth=auth)
     runtime = messaging_runtime(request.app.state)
-    sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
+    sender = replace(
+        auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None)
+    )
     target = await resolve_chat_targets(
         db,
         sender,
@@ -282,7 +287,9 @@ async def create_or_send(
         runtime,
         source=request_client_address(request),
     )
-    target_dids = sorted({_target_did(row) for row in target.recipients if _target_did(row)})
+    target_dids = sorted(
+        {_target_did(row) for row in target.recipients if _target_did(row)}
+    )
     sent = await send_chat(db, sender, target, payload, runtime)
     if sent.federated:
         return CreateSessionResponse(
@@ -332,7 +339,9 @@ async def pending(
             status_code=401, detail="Authenticated identity is missing a routing DID"
         )
     actor_agent = await resolve_actor_agent(db, actor_dids, team_id=auth.team_id)
-    actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
+    actor_agent_id = auth.agent_id or (
+        str(actor_agent["agent_id"]) if actor_agent else None
+    )
 
     conversations_by_session: dict[str, dict[str, Any]] = {}
     for participant_did in actor_dids:
@@ -385,7 +394,9 @@ async def pending(
         redis,
         {
             item["session_id"]: [
-                did for did in item.get("participant_dids", []) if did not in set(actor_dids)
+                did
+                for did in item.get("participant_dids", [])
+                if did not in set(actor_dids)
             ]
             for item in conversations
         },
@@ -415,7 +426,11 @@ async def pending(
                 0,
                 int(item["wait_seconds"] or 0)
                 + int(item["extended_wait_seconds"] or 0)
-                - int((datetime.now(timezone.utc) - item["wait_started_at"]).total_seconds()),
+                - int(
+                    (
+                        datetime.now(timezone.utc) - item["wait_started_at"]
+                    ).total_seconds()
+                ),
             )
             if item.get("wait_seconds") is not None
             and item.get("wait_started_at") is not None
@@ -446,20 +461,26 @@ async def pending(
                     (item.get("last_from_did") or "").strip(), {}
                 ).get("stable_id", ""),
                 "last_from_did": (item.get("last_from_did") or "").strip(),
-                "last_from_address": item.get("last_from_address")
-                or routable_chat_address(
-                    identity_map.get((item.get("last_from_did") or "").strip(), {}),
-                    auth.team_id,
-                    item["last_from"],
+                "last_from_address": stored_sender_address(
+                    item.get("last_from_address"),
+                    routable_chat_address(
+                        identity_map.get((item.get("last_from_did") or "").strip(), {}),
+                        auth.team_id,
+                        item["last_from"],
+                    ),
                 ),
                 "unread_count": item["unread_count"],
-                "last_activity": _utc_iso(item["last_activity"]) if item["last_activity"] else "",
+                "last_activity": _utc_iso(item["last_activity"])
+                if item["last_activity"]
+                else "",
                 "sender_waiting": len(waiting) > 0,
                 "time_remaining_seconds": time_remaining_seconds,
             }
         )
 
-    return PendingResponse(pending=pending_items, messages_waiting=int(mail_unread or 0))
+    return PendingResponse(
+        pending=pending_items, messages_waiting=int(mail_unread or 0)
+    )
 
 
 class HistoryResponse(BaseModel):
@@ -496,7 +517,9 @@ async def history(
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
-    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
+    actor_did = await resolve_session_actor_did(
+        db, session_id=session_uuid, actor_dids=actor_dids
+    )
     if not actor_did:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
@@ -533,10 +556,14 @@ async def history(
     history_items: list[dict[str, Any]] = []
     for msg in messages:
         from_did = (msg.get("from_did") or "").strip()
-        from_address = msg.get("from_address") or routable_chat_address(
-            identity_map.get(from_did, {}),
-            auth.team_id,
-            msg["from_alias"],
+        from_address = (
+            stored_sender_address(
+                msg.get("from_address"),
+                routable_chat_address(
+                    identity_map.get(from_did, {}), auth.team_id, msg["from_alias"]
+                ),
+            )
+            or ""
         )
         history_items.append(
             {
@@ -558,11 +585,14 @@ async def history(
                 "reply_to": msg.get("reply_to"),
                 "to_address": _chat_to_address(participant_rows, from_did=from_did),
                 "from_did": from_did or None,
-                "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
+                "from_stable_id": identity_map.get(from_did, {}).get("stable_id")
+                or None,
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
                 "id_chain": stored_id_chain(msg.get("id_chain")),
-                **verified_signed_recipient_fields({**msg, "conversation_id": str(session_uuid)}),
+                **verified_signed_recipient_fields(
+                    {**msg, "conversation_id": str(session_uuid)}
+                ),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
             }
         )
@@ -581,7 +611,9 @@ class MarkReadRequest(BaseModel):
     @field_validator("up_to_message_id")
     @classmethod
     def _validate_watermark_message_id(cls, value: str | None) -> str | None:
-        return _parse_uuid(value, field="up_to_message_id") if value is not None else None
+        return (
+            _parse_uuid(value, field="up_to_message_id") if value is not None else None
+        )
 
     @field_validator("message_ids")
     @classmethod
@@ -680,7 +712,10 @@ async def _sse_events(
             return None
         try:
             reason = await grant_terminal_reason(
-                request, db, auth, continue_on_registry_outage=True,
+                request,
+                db,
+                auth,
+                continue_on_registry_outage=True,
             )
         except Exception:
             logger.exception(
@@ -969,10 +1004,16 @@ async def _sse_events(
                     for row in new_msgs:
                         is_hang_on = bool(row["hang_on"])
                         from_did = (row.get("from_did") or "").strip()
-                        from_address = row.get("from_address") or routable_chat_address(
-                            identity_map.get(from_did, {}),
-                            viewer_team_id,
-                            row["from_alias"],
+                        from_address = (
+                            stored_sender_address(
+                                row.get("from_address"),
+                                routable_chat_address(
+                                    identity_map.get(from_did, {}),
+                                    viewer_team_id,
+                                    row["from_alias"],
+                                ),
+                            )
+                            or ""
                         )
                         payload = {
                             "sender_membership": memberships[
@@ -1118,18 +1159,24 @@ async def stream(
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
-    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
+    actor_did = await resolve_session_actor_did(
+        db, session_id=session_uuid, actor_dids=actor_dids
+    )
     if not actor_did:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     deadline_dt = _parse_deadline(deadline)
-    max_deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_CHAT_STREAM_DURATION)
+    max_deadline = datetime.now(timezone.utc) + timedelta(
+        seconds=MAX_CHAT_STREAM_DURATION
+    )
     if deadline_dt > max_deadline:
         deadline_dt = max_deadline
     deadline_dt = clamp_deadline_to_grant(deadline_dt, auth)
 
     if after is not None and after_seq is not None:
-        raise HTTPException(status_code=422, detail="Provide after or after_seq, not both")
+        raise HTTPException(
+            status_code=422, detail="Provide after or after_seq, not both"
+        )
     after_dt = _parse_timestamp(after, "after") if after is not None else None
     await require_valid_stream_grant(request, db, auth)
     replay_cursor = after_seq
@@ -1203,7 +1250,9 @@ async def send_message(
         with attachment_context:
             return await send_message(request, session_id, payload, db=db, auth=auth)
     runtime = messaging_runtime(request.app.state)
-    sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
+    sender = replace(
+        auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None)
+    )
     target = await resolve_chat_targets(
         db,
         sender,
@@ -1315,7 +1364,9 @@ async def list_sessions(
         redis,
         {
             str(row["session_id"]): [
-                did for did in (row["participant_dids"] or []) if did not in set(actor_dids)
+                did
+                for did in (row["participant_dids"] or [])
+                if did not in set(actor_dids)
             ]
             for row in rows
         },

@@ -33,7 +33,7 @@ fi
 trap cleanup EXIT
 if [[ -z "${BUILDX_BUILDER:-}" ]]; then
   docker buildx create --name "$BUILDER" --driver docker-container \
-    --driver-opt memory=2g,cpu-period=100000,cpu-quota=200000 >/dev/null
+    --driver-opt memory=2g >/dev/null
   OWN_BUILDER=1
 fi
 "${COMPOSE[@]}" build --builder "$BUILDER" >"$EVIDENCE/build.log" 2>&1

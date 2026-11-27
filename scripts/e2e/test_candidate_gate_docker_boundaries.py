@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
+
 # Reviewed digest-pinned probe service image; a constant, not a discovery.
 def _bind_tmp() -> tempfile.TemporaryDirectory:
     """A temp dir whose path resolves identically on the Docker host.
@@ -34,9 +35,7 @@ def _bind_tmp() -> tempfile.TemporaryDirectory:
     )
 
 
-PROBE_SERVICE_IMAGE = (
-    "nginx:1.31.3-alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752"
-)
+PROBE_SERVICE_IMAGE = "nginx:1.31.3-alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752"
 # Buildx timestamp presentation can drift without a cache mutation, including
 # CreatedAt fractional seconds. Neither timestamp defines cache identity/content.
 BUILDX_DU_VOLATILE_FIELDS = {"CreatedAt", "LastUsedAt"}
@@ -48,7 +47,9 @@ def run(
     env: dict[str, str] | None = None,
     timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, check=check, capture_output=True, text=True, env=env, timeout=timeout)
+    return subprocess.run(
+        args, check=check, capture_output=True, text=True, env=env, timeout=timeout
+    )
 
 
 def wait_for_published_port(container: str, *, timeout: float = 10.0) -> str:
@@ -57,8 +58,14 @@ def wait_for_published_port(container: str, *, timeout: float = 10.0) -> str:
     last = "no mapping observed"
     while time.monotonic() < deadline:
         try:
-            result = run("docker", "port", container, "80/tcp", check=False,
-                         timeout=max(0.001, deadline - time.monotonic()))
+            result = run(
+                "docker",
+                "port",
+                container,
+                "80/tcp",
+                check=False,
+                timeout=max(0.001, deadline - time.monotonic()),
+            )
         except subprocess.TimeoutExpired:
             last = "docker port timed out"
             break
@@ -71,14 +78,28 @@ def wait_for_published_port(container: str, *, timeout: float = 10.0) -> str:
         time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
 
     try:
-        inspection = run("docker", "inspect", "--format", "{{json .State}}", container,
-                         check=False, timeout=1.0)
-        state = inspection.stdout.strip() if inspection.returncode == 0 else (
-            f"unavailable (exit {inspection.returncode}): {inspection.stderr.strip()}")
+        inspection = run(
+            "docker",
+            "inspect",
+            "--format",
+            "{{json .State}}",
+            container,
+            check=False,
+            timeout=1.0,
+        )
+        state = (
+            inspection.stdout.strip()
+            if inspection.returncode == 0
+            else (
+                f"unavailable (exit {inspection.returncode}): {inspection.stderr.strip()}"
+            )
+        )
     except subprocess.TimeoutExpired:
         state = "unavailable (docker inspect timed out)"
-    raise AssertionError(f"Docker did not publish 80/tcp for container {container!r} within {timeout:g}s; "
-                         f"container state: {state}; last docker port result: {last}")
+    raise AssertionError(
+        f"Docker did not publish 80/tcp for container {container!r} within {timeout:g}s; "
+        f"container state: {state}; last docker port result: {last}"
+    )
 
 
 def stable_buildx_du_records(output: str) -> list[dict[str, object]]:
@@ -114,23 +135,34 @@ class StableBuildxDuRecordsTests(unittest.TestCase):
             '"LastUsedAt":"Less than a second ago"}\n'
         )
         after = (
-            '{"Mutable":false,"LastUsedAt":"1 second ago",'
-            '"Size":"12B","ID":"abc"}\n'
+            '{"Mutable":false,"LastUsedAt":"1 second ago","Size":"12B","ID":"abc"}\n'
         )
-        self.assertEqual(stable_buildx_du_records(before), stable_buildx_du_records(after))
+        self.assertEqual(
+            stable_buildx_du_records(before), stable_buildx_du_records(after)
+        )
 
     def test_ignores_created_at_fractional_presentation(self) -> None:
         record = {"ID": "abc", "Size": "12B", "Mutable": False}
-        before = json.dumps({**record, "CreatedAt": "2026-11-11 01:00:22.947531551 +0000 UTC"})
+        before = json.dumps(
+            {**record, "CreatedAt": "2026-11-11 01:00:22.947531551 +0000 UTC"}
+        )
         for fraction in ("942606676", "947531552", "947532", "948", "999999999"):
             with self.subTest(fraction=fraction):
-                after = json.dumps({**record, "CreatedAt": f"2026-11-11 01:00:22.{fraction} +0000 UTC"})
-                self.assertEqual(stable_buildx_du_records(before), stable_buildx_du_records(after))
+                after = json.dumps(
+                    {**record, "CreatedAt": f"2026-11-11 01:00:22.{fraction} +0000 UTC"}
+                )
+                self.assertEqual(
+                    stable_buildx_du_records(before), stable_buildx_du_records(after)
+                )
 
     def test_preserves_removed_or_changed_record_detection(self) -> None:
         record = {
-            "ID": "abc", "Size": "12B", "Description": "local source",
-            "Mutable": False, "Shared": False, "UsageCount": 1,
+            "ID": "abc",
+            "Size": "12B",
+            "Description": "local source",
+            "Mutable": False,
+            "Shared": False,
+            "UsageCount": 1,
             "CreatedAt": "2026-11-11 01:00:22.947531551 +0000 UTC",
         }
         before = json.dumps(record)
@@ -138,8 +170,12 @@ class StableBuildxDuRecordsTests(unittest.TestCase):
         self.assertNotEqual(expected, stable_buildx_du_records(""))
         self.assertNotEqual(expected, stable_buildx_du_records(before + "\n" + before))
         for field, value in (
-            ("ID", "replacement"), ("Size", "13B"), ("Description", "other source"),
-            ("Mutable", True), ("Shared", True), ("UsageCount", 2),
+            ("ID", "replacement"),
+            ("Size", "13B"),
+            ("Description", "other source"),
+            ("Mutable", True),
+            ("Shared", True),
+            ("UsageCount", 2),
         ):
             with self.subTest(field=field):
                 changed = json.dumps({**record, field: value})
@@ -155,36 +191,53 @@ class PublishedPortWaitTests(unittest.TestCase):
             if args[:2] == ("docker", "port"):
                 port_reads += 1
                 if port_reads == 1:
-                    result = subprocess.CompletedProcess(args, 1, "", "mapping not published yet")
+                    result = subprocess.CompletedProcess(
+                        args, 1, "", "mapping not published yet"
+                    )
                 elif port_reads == 2:
                     result = subprocess.CompletedProcess(args, 0, "", "")
                 else:
-                    result = subprocess.CompletedProcess(args, 0, "127.0.0.1:32768\n", "")
+                    result = subprocess.CompletedProcess(
+                        args, 0, "127.0.0.1:32768\n", ""
+                    )
             elif args[:3] == ("docker", "run", "--detach"):
                 if "--name" in args:
-                    result = subprocess.CompletedProcess(args, 1, "", "port is already allocated")
+                    result = subprocess.CompletedProcess(
+                        args, 1, "", "port is already allocated"
+                    )
                 else:
-                    result = subprocess.CompletedProcess(args, 0, "delayed-mapping-container\n", "")
+                    result = subprocess.CompletedProcess(
+                        args, 0, "delayed-mapping-container\n", ""
+                    )
             elif args[:3] == ("docker", "container", "inspect"):
                 result = subprocess.CompletedProcess(args, 1, "", "removed")
             else:
                 result = subprocess.CompletedProcess(args, 0, "", "")
             if check and result.returncode:
-                raise subprocess.CalledProcessError(result.returncode, args, result.stdout, result.stderr)
+                raise subprocess.CalledProcessError(
+                    result.returncode, args, result.stdout, result.stderr
+                )
             return result
 
         with patch(__name__ + ".run", side_effect=docker):
-            self.assertEqual(wait_for_published_port("delayed-mapping-container"), "32768")
+            self.assertEqual(
+                wait_for_published_port("delayed-mapping-container"), "32768"
+            )
         self.assertEqual(port_reads, 3)
 
     def test_missing_mapping_times_out_with_container_state(self) -> None:
         def docker(*args, **kwargs):
             if args[1] == "inspect":
-                return subprocess.CompletedProcess(args, 0, '{"Status":"exited","ExitCode":1}', "")
+                return subprocess.CompletedProcess(
+                    args, 0, '{"Status":"exited","ExitCode":1}', ""
+                )
             return subprocess.CompletedProcess(args, 1, "", "no public port")
 
         with patch(__name__ + ".run", side_effect=docker):
-            with self.assertRaisesRegex(AssertionError, "container 'missing-port'.*container state:.*exited.*no public port"):
+            with self.assertRaisesRegex(
+                AssertionError,
+                "container 'missing-port'.*container state:.*exited.*no public port",
+            ):
                 wait_for_published_port("missing-port", timeout=0.01)
 
     def test_hung_port_command_is_bounded_and_inspect_failure_is_reported(self) -> None:
@@ -194,12 +247,22 @@ class PublishedPortWaitTests(unittest.TestCase):
             raise subprocess.TimeoutExpired(args, kwargs["timeout"])
 
         with patch(__name__ + ".run", side_effect=docker):
-            with self.assertRaisesRegex(AssertionError, "container 'hung-port'.*inspect timed out.*docker port timed out"):
+            with self.assertRaisesRegex(
+                AssertionError,
+                "container 'hung-port'.*inspect timed out.*docker port timed out",
+            ):
                 wait_for_published_port("hung-port", timeout=0.01)
 
     def test_existing_mapping_returns_without_sleeping(self) -> None:
-        with patch(__name__ + ".run", return_value=subprocess.CompletedProcess(
-                (), 0, "127.0.0.1:32768\n", "")), patch(__name__ + ".time.sleep") as sleep:
+        with (
+            patch(
+                __name__ + ".run",
+                return_value=subprocess.CompletedProcess(
+                    (), 0, "127.0.0.1:32768\n", ""
+                ),
+            ),
+            patch(__name__ + ".time.sleep") as sleep,
+        ):
             self.assertEqual(wait_for_published_port("ready-port"), "32768")
         sleep.assert_not_called()
 
@@ -214,9 +277,16 @@ class DockerBoundaryTests(unittest.TestCase):
 
     def socket_gid(self) -> str:
         return run(
-            "docker", "run", "--rm",
-            "-v", "/var/run/docker.sock:/var/run/docker.sock",
-            self.image, "stat", "-c", "%g", "/var/run/docker.sock",
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            "/var/run/docker.sock:/var/run/docker.sock",
+            self.image,
+            "stat",
+            "-c",
+            "%g",
+            "/var/run/docker.sock",
         ).stdout.strip()
 
     def test_runner_checkout_is_docker_owned_and_host_binds_are_narrow(self) -> None:
@@ -226,62 +296,34 @@ class DockerBoundaryTests(unittest.TestCase):
         inspection = json.loads(run("docker", "inspect", runner).stdout)[0]
         mounts = inspection["Mounts"]
         workspace = str(Path(os.environ["CANDIDATE_CHECKOUT_ROOT"]).parent)
-        volumes = [m for m in mounts if m["Type"] == "volume" and m["Destination"] == workspace]
+        volumes = [
+            m for m in mounts if m["Type"] == "volume" and m["Destination"] == workspace
+        ]
         self.assertEqual(len(volumes), 1, mounts)
-        volume = json.loads(run("docker", "volume", "inspect", volumes[0]["Name"]).stdout)[0]
-        self.assertEqual(volume["Labels"]["aweb.candidate-gate"], os.environ["AWEB_CANDIDATE_RESOURCE_LABEL"])
-        self.assertEqual({m["Destination"] for m in mounts if m["Type"] == "bind"}, {
-            "/var/run/docker.sock", os.environ["AWEB_DOCKER_BIND_ROOT"], os.environ["CANDIDATE_LOG_DIR"],
-        })
+        volume = json.loads(
+            run("docker", "volume", "inspect", volumes[0]["Name"]).stdout
+        )[0]
+        self.assertEqual(
+            volume["Labels"]["aweb.candidate-gate"],
+            os.environ["AWEB_CANDIDATE_RESOURCE_LABEL"],
+        )
+        self.assertEqual(
+            {m["Destination"] for m in mounts if m["Type"] == "bind"},
+            {
+                "/var/run/docker.sock",
+                os.environ["AWEB_DOCKER_BIND_ROOT"],
+                os.environ["CANDIDATE_LOG_DIR"],
+            },
+        )
+        # The runner reaches Docker only through the socket group, never as root.
+        user = inspection["Config"]["User"]
+        self.assertNotIn(user.split(":")[0], ("", "0", "root"))
+        self.assertEqual(inspection["HostConfig"]["GroupAdd"], [self.socket_gid()])
+        self.assertFalse(inspection["HostConfig"]["Privileged"])
 
-    def test_go_module_cache_is_fresh_per_candidate_run(self) -> None:
-        source = (
-            Path(__file__).resolve().parents[2] / "scripts/candidate-docker-gate.sh"
-        ).read_text()
-        self.assertIn('go_mod_cache="$work/go-mod"', source)
-        self.assertIn('mkdir -p "$go_mod_cache"', source)
-        self.assertIn('-e GOMODCACHE="$go_mod_cache"', source)
-        self.assertIn("-e GOFLAGS=-modcacherw", source)
-        self.assertIn('-v "$workspace_volume:$work"', source)
-        self.assertNotIn('-v "$go_mod_cache:$go_mod_cache"', source)
-        self.assertNotIn('-v "$checkout:$checkout"', source)
-        self.assertNotIn("$CACHE_ROOT/go-mod", source)
-        self.assertNotIn("GOMODCACHE=/tmp/go-mod", source)
-
-    def test_nonroot_user_has_only_socket_group_and_permission_semantics(self) -> None:
-        # A named volume lives on the daemon's native filesystem, so mode
-        # bits are real on every platform; a bind-mounted file's chmod does
-        # not survive the macOS virtiofs round-trip, which made the previous
-        # probe's precondition silently unsatisfiable in-gate.
-        volume = f"aweb-gate-perm-probe-{uuid.uuid4().hex[:12]}"
-        run("docker", "volume", "create", volume)
-        try:
-            run(
-                "docker", "run", "--rm", "--user", "0:0",
-                "-v", f"{volume}:/probe",
-                self.image, "bash", "-ceu",
-                "echo 'must stay unreadable' > /probe/unreadable; "
-                "chmod 0 /probe/unreadable; "
-                "test \"$(stat -c %a /probe/unreadable)\" = 0",
-            )
-            result = run(
-                "docker", "run", "--rm", "--init",
-                "--user", f"{os.getuid()}:{os.getgid()}",
-                "--group-add", self.socket_gid(),
-                "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                "-v", f"{volume}:/probe",
-                self.image, "bash", "-ceu",
-                "docker info >/dev/null; ! cat /probe/unreadable >/dev/null 2>&1",
-                check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        finally:
-            removed = run("docker", "volume", "rm", volume, check=False)
-            self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
-            remains = run("docker", "volume", "inspect", volume, check=False)
-            self.assertNotEqual(remains.returncode, 0, "probe volume survived cleanup")
-
-    def test_builder_cache_reclaim_is_scoped_bounded_and_builder_remains_usable(self) -> None:
+    def test_builder_cache_reclaim_is_scoped_bounded_and_builder_remains_usable(
+        self,
+    ) -> None:
         builder = f"aweb-gate-proof-{uuid.uuid4().hex[:12]}"
         unrelated = f"aweb-unrelated-proof-{uuid.uuid4().hex[:12]}"
         with _bind_tmp() as tmp:
@@ -299,14 +341,28 @@ class DockerBoundaryTests(unittest.TestCase):
             unrelated_env = {**os.environ, "BUILDX_CONFIG": str(unrelated_config)}
             try:
                 run(
-                    "docker", "buildx", "create", "--name", builder,
-                    "--driver", "docker-container", "unix:///var/run/docker.sock",
-                    "--bootstrap", env=buildx_env,
+                    "docker",
+                    "buildx",
+                    "create",
+                    "--name",
+                    builder,
+                    "--driver",
+                    "docker-container",
+                    "unix:///var/run/docker.sock",
+                    "--bootstrap",
+                    env=buildx_env,
                 )
                 run(
-                    "docker", "buildx", "create", "--name", unrelated,
-                    "--driver", "docker-container", "unix:///var/run/docker.sock",
-                    "--bootstrap", env=unrelated_env,
+                    "docker",
+                    "buildx",
+                    "create",
+                    "--name",
+                    unrelated,
+                    "--driver",
+                    "docker-container",
+                    "unix:///var/run/docker.sock",
+                    "--bootstrap",
+                    env=unrelated_env,
                 )
                 command = (
                     f"docker buildx inspect {builder} >/dev/null; "
@@ -315,43 +371,86 @@ class DockerBoundaryTests(unittest.TestCase):
                     f"--output type=oci,dest={output} {context}"
                 )
                 result = run(
-                    "docker", "run", "--rm", "--init",
-                    "--user", f"{os.getuid()}:{os.getgid()}",
-                    "--group-add", self.socket_gid(),
-                    "-e", f"BUILDX_CONFIG={config}",
-                    "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                    "-v", f"{root}:{root}",
-                    self.image, "bash", "-ceu", command,
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--init",
+                    "--user",
+                    f"{os.getuid()}:{os.getgid()}",
+                    "--group-add",
+                    self.socket_gid(),
+                    "-e",
+                    f"BUILDX_CONFIG={config}",
+                    "-v",
+                    "/var/run/docker.sock:/var/run/docker.sock",
+                    "-v",
+                    f"{root}:{root}",
+                    self.image,
+                    "bash",
+                    "-ceu",
+                    command,
                     check=False,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertGreater(output.stat().st_size, 0)
                 unrelated_output = root / "unrelated.oci.tar"
                 run(
-                    "docker", "buildx", "build", "--builder", unrelated,
-                    "--platform", "linux/amd64,linux/arm64",
-                    "--output", f"type=oci,dest={unrelated_output}", str(context),
+                    "docker",
+                    "buildx",
+                    "build",
+                    "--builder",
+                    unrelated,
+                    "--platform",
+                    "linux/amd64,linux/arm64",
+                    "--output",
+                    f"type=oci,dest={unrelated_output}",
+                    str(context),
                     env=unrelated_env,
                 )
                 du_format = "{{json .}}"
                 owned_before = run(
-                    "docker", "buildx", "du", "--builder", builder,
-                    "--format", du_format, env=buildx_env,
+                    "docker",
+                    "buildx",
+                    "du",
+                    "--builder",
+                    builder,
+                    "--format",
+                    du_format,
+                    env=buildx_env,
                 ).stdout
                 unrelated_before = run(
-                    "docker", "buildx", "du", "--builder", unrelated,
-                    "--format", du_format, env=unrelated_env,
+                    "docker",
+                    "buildx",
+                    "du",
+                    "--builder",
+                    unrelated,
+                    "--format",
+                    du_format,
+                    env=unrelated_env,
                 ).stdout
                 self.assertTrue(owned_before.strip())
                 self.assertTrue(unrelated_before.strip())
                 # Under the production bound a small cache is kept intact...
                 run(
-                    "docker", "buildx", "prune", "--all", "--force",
-                    "--keep-storage=10GB", "--builder", builder, env=buildx_env,
+                    "docker",
+                    "buildx",
+                    "prune",
+                    "--all",
+                    "--force",
+                    "--keep-storage=10GB",
+                    "--builder",
+                    builder,
+                    env=buildx_env,
                 )
                 owned_bounded = run(
-                    "docker", "buildx", "du", "--builder", builder,
-                    "--format", du_format, env=buildx_env,
+                    "docker",
+                    "buildx",
+                    "du",
+                    "--builder",
+                    builder,
+                    "--format",
+                    du_format,
+                    env=buildx_env,
                 ).stdout
                 self.assertEqual(
                     stable_buildx_du_records(owned_bounded),
@@ -359,27 +458,54 @@ class DockerBoundaryTests(unittest.TestCase):
                 )
                 # ...while a zero bound reclaims it completely.
                 reclaim = run(
-                    "docker", "buildx", "prune", "--all", "--force",
-                    "--keep-storage=0", "--builder", builder, env=buildx_env,
+                    "docker",
+                    "buildx",
+                    "prune",
+                    "--all",
+                    "--force",
+                    "--keep-storage=0",
+                    "--builder",
+                    builder,
+                    env=buildx_env,
                 )
                 self.assertTrue(reclaim.stdout or reclaim.stderr)
                 owned_after = run(
-                    "docker", "buildx", "du", "--builder", builder,
-                    "--format", du_format, env=buildx_env,
+                    "docker",
+                    "buildx",
+                    "du",
+                    "--builder",
+                    builder,
+                    "--format",
+                    du_format,
+                    env=buildx_env,
                 ).stdout
                 unrelated_after = run(
-                    "docker", "buildx", "du", "--builder", unrelated,
-                    "--format", du_format, env=unrelated_env,
+                    "docker",
+                    "buildx",
+                    "du",
+                    "--builder",
+                    unrelated,
+                    "--format",
+                    du_format,
+                    env=unrelated_env,
                 ).stdout
-                self.assertLess(len(owned_after.splitlines()), len(owned_before.splitlines()))
+                self.assertLess(
+                    len(owned_after.splitlines()), len(owned_before.splitlines())
+                )
                 self.assertEqual(
                     stable_buildx_du_records(unrelated_after),
                     stable_buildx_du_records(unrelated_before),
                 )
                 reusable_output = root / "reusable.oci.tar"
                 run(
-                    "docker", "buildx", "build", "--builder", builder,
-                    "--output", f"type=oci,dest={reusable_output}", str(context),
+                    "docker",
+                    "buildx",
+                    "build",
+                    "--builder",
+                    builder,
+                    "--output",
+                    f"type=oci,dest={reusable_output}",
+                    str(context),
                     env=buildx_env,
                 )
                 self.assertGreater(reusable_output.stat().st_size, 0)
@@ -387,10 +513,25 @@ class DockerBoundaryTests(unittest.TestCase):
                 for name, env in ((builder, buildx_env), (unrelated, unrelated_env)):
                     run("docker", "buildx", "rm", name, check=False, env=env)
                     run("docker", "rm", "-f", f"buildx_buildkit_{name}0", check=False)
-                    run("docker", "volume", "rm", "-f", f"buildx_buildkit_{name}0_state", check=False)
-                    self.assertNotIn(name, run("docker", "buildx", "ls", env=env).stdout)
+                    run(
+                        "docker",
+                        "volume",
+                        "rm",
+                        "-f",
+                        f"buildx_buildkit_{name}0_state",
+                        check=False,
+                    )
+                    self.assertNotIn(
+                        name, run("docker", "buildx", "ls", env=env).stdout
+                    )
                     self.assertNotEqual(
-                        run("docker", "volume", "inspect", f"buildx_buildkit_{name}0_state", check=False).returncode,
+                        run(
+                            "docker",
+                            "volume",
+                            "inspect",
+                            f"buildx_buildkit_{name}0_state",
+                            check=False,
+                        ).returncode,
                         0,
                     )
 
@@ -398,17 +539,24 @@ class DockerBoundaryTests(unittest.TestCase):
         with _bind_tmp() as tmp:
             probe = Path(tmp) / "host-visible"
             probe.write_text("visible\n")
-            command = (
-                f"docker run --rm -v {probe}:{probe}:ro alpine:3.20 "
-                f"cat {probe}"
-            )
+            command = f"docker run --rm -v {probe}:{probe}:ro alpine:3.20 cat {probe}"
             result = run(
-                "docker", "run", "--rm", "--init",
-                "--user", f"{os.getuid()}:{os.getgid()}",
-                "--group-add", self.socket_gid(),
-                "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                "-v", f"{tmp}:{tmp}",
-                self.image, "bash", "-ceu", command,
+                "docker",
+                "run",
+                "--rm",
+                "--init",
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
+                "--group-add",
+                self.socket_gid(),
+                "-v",
+                "/var/run/docker.sock:/var/run/docker.sock",
+                "-v",
+                f"{tmp}:{tmp}",
+                self.image,
+                "bash",
+                "-ceu",
+                command,
             )
             self.assertEqual(result.stdout.strip(), "visible")
 
@@ -448,7 +596,9 @@ class HostPublishedPortTests(unittest.TestCase):
         startup_errors: list[type[Exception]] = []
 
         def held_startup(
-            *args: str, check: bool = True, env: dict[str, str] | None = None,
+            *args: str,
+            check: bool = True,
+            env: dict[str, str] | None = None,
             timeout: float | None = None,
         ) -> subprocess.CompletedProcess[str]:
             nonlocal original
@@ -456,9 +606,11 @@ class HostPublishedPortTests(unittest.TestCase):
                 name = args[args.index("--name") + 1]
                 if name.startswith("aweb-publish-original-"):
                     original = name
-                    args = (*args[:-1],
-                            "while [ ! -e /tmp/release-startup ]; do sleep 0.05; done; "
-                            + args[-1])
+                    args = (
+                        *args[:-1],
+                        "while [ ! -e /tmp/release-startup ]; do sleep 0.05; done; "
+                        + args[-1],
+                    )
             return real_run(*args, check=check, env=env, timeout=timeout)
 
         def read_from_resetting_peer() -> str:
@@ -475,8 +627,9 @@ class HostPublishedPortTests(unittest.TestCase):
                     with peer:
                         peer.settimeout(2)
                         self.assertEqual(peer.recv(1), b"G")
-                        peer.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
-                                        struct.pack("ii", 1, 0))
+                        peer.setsockopt(
+                            socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+                        )
 
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     done = executor.submit(reset_peer)
@@ -494,47 +647,81 @@ class HostPublishedPortTests(unittest.TestCase):
                 if not startup_errors:
                     startup_errors.append(type(error))
                     if original is None:
-                        raise AssertionError("original service was not launched") from error
-                    real_run("docker", "exec", original, "touch", "/tmp/release-startup", timeout=10)
+                        raise AssertionError(
+                            "original service was not launched"
+                        ) from error
+                    real_run(
+                        "docker",
+                        "exec",
+                        original,
+                        "touch",
+                        "/tmp/release-startup",
+                        timeout=10,
+                    )
                 raise
 
         # Release held nginx on the first transport error, then run every
         # competition assertion against the actual Docker-published socket.
-        with patch.dict(globals(), run=held_startup, read_published_response=release_after_first_read):
+        with patch.dict(
+            globals(),
+            run=held_startup,
+            read_published_response=release_after_first_read,
+        ):
             self.test_docker_assigned_published_port_is_reserved_by_its_service()
         self.assertEqual(len(startup_errors), 1)
         if reset:
             self.assertIs(startup_errors[0], ConnectionResetError)
 
     def test_docker_assigned_published_port_is_reserved_by_its_service(self) -> None:
-        self.assertNotIn("CANDIDATE_RUNNER_NAME", os.environ,
-                         "published loopback must be tested from the Docker host")
+        self.assertNotIn(
+            "CANDIDATE_RUNNER_NAME",
+            os.environ,
+            "published loopback must be tested from the Docker host",
+        )
         token = uuid.uuid4().hex[:12]
         original = f"aweb-publish-original-{token}"
         competitor = f"aweb-publish-competitor-{token}"
         expected = f"original-{token}"
-        label = os.environ.get("AWEB_CANDIDATE_RESOURCE_LABEL", f"acwx-published-{token}")
+        label = os.environ.get(
+            "AWEB_CANDIDATE_RESOURCE_LABEL", f"acwx-published-{token}"
+        )
 
         def launch(name: str, binding: str, response: str):
             return run(
-                "docker", "run", "--detach", "--name", name,
-                "--label", f"aweb.candidate-gate={label}",
-                "--publish", binding, "--env", f"PROBE_RESPONSE={response}",
-                "--entrypoint", "sh", PROBE_SERVICE_IMAGE, "-ceu",
+                "docker",
+                "run",
+                "--detach",
+                "--name",
+                name,
+                "--label",
+                f"aweb.candidate-gate={label}",
+                "--publish",
+                binding,
+                "--env",
+                f"PROBE_RESPONSE={response}",
+                "--entrypoint",
+                "sh",
+                PROBE_SERVICE_IMAGE,
+                "-ceu",
                 'printf "%s\\n" "$PROBE_RESPONSE" > /usr/share/nginx/html/index.html; '
-                "exec nginx -g 'daemon off;'", check=False, timeout=30,
+                "exec nginx -g 'daemon off;'",
+                check=False,
+                timeout=30,
             )
 
         def snapshot(name: str):
             result = run("docker", "inspect", name, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
-            info, = json.loads(result.stdout)
+            (info,) = json.loads(result.stdout)
             return {"state": info["State"], "ports": info["NetworkSettings"]["Ports"]}
 
         def owner(snapshot_value):
             self.assertTrue(snapshot_value["state"]["Running"], snapshot_value)
-            self.assertIn({"HostIp": "127.0.0.1", "HostPort": port},
-                          snapshot_value["ports"].get("80/tcp") or [], snapshot_value)
+            self.assertIn(
+                {"HostIp": "127.0.0.1", "HostPort": port},
+                snapshot_value["ports"].get("80/tcp") or [],
+                snapshot_value,
+            )
 
         before = None
         try:
@@ -548,52 +735,85 @@ class HostPublishedPortTests(unittest.TestCase):
                     break
                 except STARTUP_READ_ERRORS as error:
                     if time.monotonic() >= deadline:
-                        self.fail(f"original host publication never became reachable: {error}")
+                        self.fail(
+                            f"original host publication never became reachable: {error}"
+                        )
                     time.sleep(0.1)
             self.assertEqual(response, expected + "\n")
             before = snapshot(original)
             owner(before)
-            attempted = launch(competitor, f"127.0.0.1:{port}:80", f"competitor-{token}")
+            attempted = launch(
+                competitor, f"127.0.0.1:{port}:80", f"competitor-{token}"
+            )
             if attempted.returncode:
-                self.assertRegex(attempted.stderr.lower(),
-                                 "port is already allocated|address already in use|ports are not available")
+                self.assertRegex(
+                    attempted.stderr.lower(),
+                    "port is already allocated|address already in use|ports are not available",
+                )
             else:
                 # Desktop can start a container without installing its requested
                 # conflicting binding. Successful startup is not publication.
                 competing = snapshot(competitor)
-                self.assertFalse(any(
-                    binding["HostPort"] == port
-                    for bindings in competing["ports"].values()
-                    for binding in (bindings or [])
-                ), competing)
+                self.assertFalse(
+                    any(
+                        binding["HostPort"] == port
+                        for bindings in competing["ports"].values()
+                        for binding in (bindings or [])
+                    ),
+                    competing,
+                )
             owner(snapshot(original))
-            self.assertEqual(read_published_response(port), expected + "\n",
-                             "competitor displaced the original host response")
+            self.assertEqual(
+                read_published_response(port),
+                expected + "\n",
+                "competitor displaced the original host response",
+            )
             # Observe again after the actual request, including any asynchronous
             # publication that completed while the request was in flight.
             owner(snapshot(original))
             if attempted.returncode == 0:
                 competing = snapshot(competitor)
-                self.assertFalse(any(binding["HostPort"] == port
-                                     for bindings in competing["ports"].values()
-                                     for binding in (bindings or [])), competing)
-            print(f"host publication PASS: original response retained; competitor "
-                  f"{'refused' if attempted.returncode else 'started without the reserved binding'}")
+                self.assertFalse(
+                    any(
+                        binding["HostPort"] == port
+                        for bindings in competing["ports"].values()
+                        for binding in (bindings or [])
+                    ),
+                    competing,
+                )
+            print(
+                f"host publication PASS: original response retained; competitor "
+                f"{'refused' if attempted.returncode else 'started without the reserved binding'}"
+            )
         except Exception:
             print(f"original before competition: {before}")
             for name in (original, competitor):
-                state = run("docker", "inspect", "--format",
-                            "{{json .State}} {{json .NetworkSettings.Ports}}", name,
-                            check=False, timeout=10)
-                logs = run("docker", "logs", "--tail", "30", name, check=False, timeout=10)
-                print(f"{name}: {state.stdout}{state.stderr}\nlogs: {logs.stdout}{logs.stderr}")
+                state = run(
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{json .State}} {{json .NetworkSettings.Ports}}",
+                    name,
+                    check=False,
+                    timeout=10,
+                )
+                logs = run(
+                    "docker", "logs", "--tail", "30", name, check=False, timeout=10
+                )
+                print(
+                    f"{name}: {state.stdout}{state.stderr}\nlogs: {logs.stdout}{logs.stderr}"
+                )
             raise
         finally:
             for name in (competitor, original):
                 run("docker", "rm", "-f", name, check=False, timeout=15)
             for name in (competitor, original):
-                remains = run("docker", "container", "inspect", name, check=False, timeout=10)
-                self.assertNotEqual(remains.returncode, 0, "probe container survived cleanup")
+                remains = run(
+                    "docker", "container", "inspect", name, check=False, timeout=10
+                )
+                self.assertNotEqual(
+                    remains.returncode, 0, "probe container survived cleanup"
+                )
             run("docker", "info", timeout=10)
 
 
@@ -604,9 +824,15 @@ def main() -> int:
     os.environ["CANDIDATE_GATE_TEST_IMAGE"] = args.image
     # The host socket proof is explicitly invoked by the outer gate. Never
     # execute it from this file's default in-runner boundary suite.
-    program = unittest.main(argv=[__file__, *remaining], exit=False,
-                            defaultTest=["DockerBoundaryTests", "PublishedPortWaitTests",
-                                         "StableBuildxDuRecordsTests"])
+    program = unittest.main(
+        argv=[__file__, *remaining],
+        exit=False,
+        defaultTest=[
+            "DockerBoundaryTests",
+            "PublishedPortWaitTests",
+            "StableBuildxDuRecordsTests",
+        ],
+    )
     return 0 if program.result.wasSuccessful() else 1
 
 

@@ -203,7 +203,9 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                 assert evidence.age_seconds <= 60
                 assert transport.status_calls == 1
                 cache_key = await cached._generation_cache_key(
-                    cached._id_status_cache_key(status_request(None, subject, domain=domain)),
+                    cached._id_status_cache_key(
+                        status_request(None, subject, domain=domain)
+                    ),
                     cached._id_status_generation_key(domain),
                 )
                 raw = await env.redis.get(cache_key)
@@ -214,9 +216,13 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                 await env.redis.set(cache_key, json.dumps(entry), ex=60)
 
         monkeypatch.setattr(events_routes, "datetime", StreamClock)
-        monkeypatch.setattr(events_routes, "asyncio", SimpleNamespace(sleep=advance_poll))
+        monkeypatch.setattr(
+            events_routes, "asyncio", SimpleNamespace(sleep=advance_poll)
+        )
         # The stream schedules its reconcile on the monotonic clock.
-        monkeypatch.setattr(events_routes, "monotonic", lambda: (clock.now - start).total_seconds())
+        monkeypatch.setattr(
+            events_routes, "monotonic", lambda: (clock.now - start).total_seconds()
+        )
         monkeypatch.setattr(identity_binding, "monotonic", lambda: clock.evidence)
         try:
             response = await env.client.send(request)
@@ -228,7 +234,9 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                 if line.startswith("data: ")
                 and json.loads(line[6:]).get("type") == "actionable_room_post"
             ]
-            assert len(notices) == (1 if tree in ("valid", "legacy") else 0), response.text
+            assert len(notices) == (1 if tree in ("valid", "legacy") else 0), (
+                response.text
+            )
             assert transport.status_calls == (0 if tree == "legacy" else 2)
             row = await env.db.fetch_one(
                 "SELECT status,team_id,did_key,deleted_at FROM {{tables.agents}} WHERE agent_id=$1",

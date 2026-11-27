@@ -281,7 +281,9 @@ async def test_logs_starts_from_its_environment_and_serves_its_committed_templat
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", CONSOLE)
     _mail_environment(tmp_path, monkeypatch)
     monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
-    monkeypatch.setenv("LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()}))
+    monkeypatch.setenv(
+        "LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()})
+    )
     async with running(serve()) as client:
         catalog = (await client.get("/.well-known/aweb-app-versions.json")).json()
         served = await client.get(catalog["variants"][0]["url"])
@@ -297,7 +299,9 @@ def test_logs_does_not_start_without_its_mail_settings(
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", CONSOLE)
     monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
     key_files = write_key_files(tmp_path)
-    monkeypatch.setenv("LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()}))
+    monkeypatch.setenv(
+        "LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()})
+    )
     _mail_environment(tmp_path, monkeypatch)
     monkeypatch.delenv("LOGS_EMAIL_SMTP_HOST")
     with pytest.raises(ValueError, match="LOGS_EMAIL_SMTP_HOST"):
@@ -312,7 +316,9 @@ def test_logs_reads_its_configuration_from_the_environment_only(
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", ORIGIN)
     monkeypatch.setenv("LOGS_APP_ID", TEST_APP_ID)
     key_files = write_key_files(tmp_path)
-    monkeypatch.setenv("LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()}))
+    monkeypatch.setenv(
+        "LOGS_APP_KEY_FILES", json.dumps({kid: str(path) for kid, path in key_files.items()})
+    )
     _mail_environment(tmp_path, monkeypatch)
     monkeypatch.delenv("LOGS_CONSOLE_ORIGIN", raising=False)
     # A .env in the working directory is not configuration.

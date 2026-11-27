@@ -40,7 +40,9 @@ def test_parse_import_payload_yields_blueprint_metadata() -> None:
 
 
 def test_import_return_matches_fixture_exactly() -> None:
-    expected = json.loads((_FIXTURE / "expected" / "import-return.json").read_text(encoding="utf-8"))
+    expected = json.loads(
+        (_FIXTURE / "expected" / "import-return.json").read_text(encoding="utf-8")
+    )
     assert import_return(parse_import_payload(_import_payload())) == expected
 
 
@@ -96,7 +98,9 @@ def test_materialize_home_created_provenance_matches_fixture_byte_exact() -> Non
     _assert_home_matches(entries, _MATERIALIZED_CREATED / "developer")
     # The created form drops all source-blueprint provenance, but still records
     # runtime and the complete managed path set.
-    ref = json.loads(next(e for e in entries if e["path"] == ".aw/profile/ref.json")["content_utf8"])
+    ref = json.loads(
+        next(e for e in entries if e["path"] == ".aw/profile/ref.json")["content_utf8"]
+    )
     assert not any(key.startswith("source_blueprint_") for key in ref)
     assert ref["runtime_kind"] == "claude-code"
     assert ref["managed_set"][-1] == ".aw/profile/ref.json"
@@ -106,7 +110,9 @@ def test_parse_profile_payload_reproduces_a_profile() -> None:
     profile = parse_profile_payload(collect_files(_SOURCE / "profiles" / "coordinator"))
     assert profile.profile_ref == "coordinator"
     assert profile.version == "0.1.0"
-    assert profile.digest == "sha256:b84396c46b66559e0a881f9cd1e85acb8e531296e45dcc6398c695841ecfcbe0"
+    assert (
+        profile.digest == "sha256:b84396c46b66559e0a881f9cd1e85acb8e531296e45dcc6398c695841ecfcbe0"
+    )
     assert profile.mission.startswith("Coordinate")
     assert "planning" in profile.accepted_work
 
@@ -207,8 +213,14 @@ def test_materialize_home_omits_empty_sections() -> None:
     )
     agents = next(e for e in entries if e["path"] == "AGENTS.md")["content_utf8"]
     assert "## Mission" in agents
-    for absent in ("## Work you take on", "## Instructions", "## Apps you use",
-                   "## Actions requiring human approval", "## Memory and learning", "## Skills"):
+    for absent in (
+        "## Work you take on",
+        "## Instructions",
+        "## Apps you use",
+        "## Actions requiring human approval",
+        "## Memory and learning",
+        "## Skills",
+    ):
         assert absent not in agents, absent
     # No skills/artifacts means no canonical resources and no .claude symlinks.
     assert not any(e["path"].startswith(".claude/") for e in entries)
@@ -305,7 +317,9 @@ artifacts:
         source_blueprint_digest=None,
         runtime_kind="claude-code",
     )
-    ref = json.loads(next(e for e in entries if e["path"] == ".aw/profile/ref.json")["content_utf8"])
+    ref = json.loads(
+        next(e for e in entries if e["path"] == ".aw/profile/ref.json")["content_utf8"]
+    )
 
     assert ref["managed_set"] == [
         "AGENTS.md",
@@ -347,9 +361,7 @@ def test_materialize_home_rejects_missing_and_extra_output_paths() -> None:
 
 
 def test_materialize_home_rejects_duplicate_output_paths() -> None:
-    profile = _profile_file(
-        "profile.yaml", "id: developer\nname: Developer\nversion: 0.1.0\n"
-    )
+    profile = _profile_file("profile.yaml", "id: developer\nname: Developer\nversion: 0.1.0\n")
 
     with pytest.raises(ValueError, match="duplicate materialized path"):
         materialize_home(

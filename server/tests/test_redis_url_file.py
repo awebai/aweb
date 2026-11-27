@@ -24,7 +24,9 @@ def test_the_redis_url_is_read_from_the_named_file(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("variable", ["AWEB_REDIS_URL", "REDIS_URL"])
-def test_a_file_and_an_environment_url_together_are_refused(monkeypatch, tmp_path, variable):
+def test_a_file_and_an_environment_url_together_are_refused(
+    monkeypatch, tmp_path, variable
+):
     source = tmp_path / "redis-url"
     source.write_text(URL)
     monkeypatch.setenv("AWEB_REDIS_URL_FILE", str(source))
@@ -35,12 +37,16 @@ def test_a_file_and_an_environment_url_together_are_refused(monkeypatch, tmp_pat
 
 
 @pytest.mark.parametrize("content", [None, "", "  \n"])
-def test_a_file_that_is_missing_or_empty_is_refused_without_its_content(monkeypatch, tmp_path, content):
+def test_a_file_that_is_missing_or_empty_is_refused_without_its_content(
+    monkeypatch, tmp_path, content
+):
     source = tmp_path / "redis-url"
     if content is not None:
         source.write_text(content)
     monkeypatch.setenv("AWEB_REDIS_URL_FILE", str(source))
-    with pytest.raises(ValueError, match="AWEB_REDIS_URL_FILE must name a readable file"):
+    with pytest.raises(
+        ValueError, match="AWEB_REDIS_URL_FILE must name a readable file"
+    ):
         get_settings()
 
 

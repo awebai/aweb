@@ -28,7 +28,9 @@ CLOCK_SKEW = timedelta(minutes=5)
 MAX_LATEST_MS = 60_000
 REVISION_TTL_SECONDS = 3600
 
-PHASES = frozenset({"turn_started", "thinking", "tool", "waiting_permission", "writing", "turn_ended"})
+PHASES = frozenset(
+    {"turn_started", "thinking", "tool", "waiting_permission", "writing", "turn_ended"}
+)
 
 _FIELDS = frozenset(
     {
@@ -60,7 +62,9 @@ _REQUIRED = (
     "expires_at",
 )
 _IDENTIFIER = re.compile(r"[A-Za-z0-9_.:-]+")
-_SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_SESSION_ID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
 _CONTROL = re.compile("[\u0000-\u001f\u007f-\u009f]")
 
 
@@ -89,37 +93,65 @@ def _check_fields(event: dict[str, Any]) -> None:
 
 def _check_values(event: dict[str, Any]) -> tuple[datetime, datetime]:
     version = event["v"]
-    if not isinstance(version, int) or isinstance(version, bool) or version != ACTIVITY_VERSION:
+    if (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version != ACTIVITY_VERSION
+    ):
         raise ActivityEventError("invalid_value", f"v must be {ACTIVITY_VERSION}")
-    if not isinstance(event["from_did"], str) or not event["from_did"].startswith("did:key:z"):
+    if not isinstance(event["from_did"], str) or not event["from_did"].startswith(
+        "did:key:z"
+    ):
         raise ActivityEventError("invalid_value", "from_did must be a did:key")
     if "from_stable_id" in event and (
-        not isinstance(event["from_stable_id"], str) or not event["from_stable_id"].startswith("did:aw:")
+        not isinstance(event["from_stable_id"], str)
+        or not event["from_stable_id"].startswith("did:aw:")
     ):
         raise ActivityEventError("invalid_value", "from_stable_id must be a did:aw")
     if not isinstance(event["team_id"], str) or not event["team_id"]:
         raise ActivityEventError("invalid_value", "team_id must be a non-empty string")
     session_id = event["session_id"]
-    if session_id is not None and (not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id)):
-        raise ActivityEventError("invalid_value", "session_id must be null or a lowercase UUID")
+    if session_id is not None and (
+        not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id)
+    ):
+        raise ActivityEventError(
+            "invalid_value", "session_id must be null or a lowercase UUID"
+        )
     if not _is_identifier(event["turn_id"]):
-        raise ActivityEventError("invalid_value", "turn_id must be 1 to 64 bytes of [A-Za-z0-9_.:-]")
+        raise ActivityEventError(
+            "invalid_value", "turn_id must be 1 to 64 bytes of [A-Za-z0-9_.:-]"
+        )
     if not is_safe_positive_integer(event["seq"]):
-        raise ActivityEventError("invalid_value", "seq must be an integer from 1 to 2^53-1")
+        raise ActivityEventError(
+            "invalid_value", "seq must be an integer from 1 to 2^53-1"
+        )
     if not isinstance(event["phase"], str) or event["phase"] not in PHASES:
         raise ActivityEventError("invalid_value", "phase is not a known activity phase")
     if "tool" in event and not _is_identifier(event["tool"]):
-        raise ActivityEventError("invalid_value", "tool must be 1 to 64 bytes of [A-Za-z0-9_.:-]")
+        raise ActivityEventError(
+            "invalid_value", "tool must be 1 to 64 bytes of [A-Za-z0-9_.:-]"
+        )
     if "summary" in event:
         summary = event["summary"]
         if not isinstance(summary, str) or not summary:
-            raise ActivityEventError("invalid_value", "summary must be a non-empty string")
+            raise ActivityEventError(
+                "invalid_value", "summary must be a non-empty string"
+            )
         if len(summary.encode("utf-8")) > SUMMARY_MAX_BYTES:
-            raise ActivityEventError("text_too_long", f"summary exceeds {SUMMARY_MAX_BYTES} bytes")
+            raise ActivityEventError(
+                "text_too_long", f"summary exceeds {SUMMARY_MAX_BYTES} bytes"
+            )
         if _CONTROL.search(summary):
-            raise ActivityEventError("control_character", "summary must be one line without control characters")
-    timestamp = parse_timestamp("timestamp", event["timestamp"], error=ActivityEventError)
-    expires_at = parse_timestamp("expires_at", event["expires_at"], error=ActivityEventError)
+            raise ActivityEventError(
+                "control_character",
+                "summary must be one line without control characters",
+            )
+    timestamp = parse_timestamp(
+        "timestamp", event["timestamp"], error=ActivityEventError
+    )
+    expires_at = parse_timestamp(
+        "expires_at", event["expires_at"], error=ActivityEventError
+    )
     return timestamp, expires_at
 
 
@@ -139,25 +171,40 @@ def verify_activity_event(
     authenticated team and the identity the caller is attributed to. Session
     participation and rate limiting belong to the route.
     """
-    raw = decode_payload(signed_payload, max_bytes=MAX_EVENT_BYTES, error=ActivityEventError)
+    raw = decode_payload(
+        signed_payload, max_bytes=MAX_EVENT_BYTES, error=ActivityEventError
+    )
     event = parse_json_object(raw, error=ActivityEventError)
     require_canonical(event, raw, error=ActivityEventError)
     if verify_signature(signer_did, raw, signature) is not VerifyResult.VERIFIED:
-        raise ActivityEventError("bad_signature", "the signature does not verify for the caller's key")
+        raise ActivityEventError(
+            "bad_signature", "the signature does not verify for the caller's key"
+        )
     if event.get("type") != ACTIVITY_TYPE:
         raise ActivityEventError("wrong_type", f"type must be {ACTIVITY_TYPE}")
     _check_fields(event)
     timestamp, expires_at = _check_values(event)
     if event["from_did"] != signer_did:
-        raise ActivityEventError("signer_mismatch", "from_did is not the key that signed the request")
+        raise ActivityEventError(
+            "signer_mismatch", "from_did is not the key that signed the request"
+        )
     if event["team_id"] != team_id:
-        raise ActivityEventError("team_mismatch", "team_id is not the authenticated team")
+        raise ActivityEventError(
+            "team_mismatch", "team_id is not the authenticated team"
+        )
     if "from_stable_id" in event and event["from_stable_id"] != stable_id:
-        raise ActivityEventError("stable_id_mismatch", "from_stable_id is not the caller's stable id")
+        raise ActivityEventError(
+            "stable_id_mismatch", "from_stable_id is not the caller's stable id"
+        )
     if not timestamp < expires_at <= timestamp + MAX_VALIDITY:
-        raise ActivityEventError("validity_window", "expires_at must be after timestamp and at most 60 seconds later")
+        raise ActivityEventError(
+            "validity_window",
+            "expires_at must be after timestamp and at most 60 seconds later",
+        )
     if abs(now - timestamp) > CLOCK_SKEW:
-        raise ActivityEventError("clock_skew", "timestamp is more than 5 minutes from the server clock")
+        raise ActivityEventError(
+            "clock_skew", "timestamp is more than 5 minutes from the server clock"
+        )
     if now >= expires_at:
         raise ActivityEventError("expired", "expires_at has passed")
     return event
@@ -200,8 +247,12 @@ async def relay_activity(
 
     The latest state lives until the event expires, and at most 60 seconds.
     """
-    expires_at = datetime.strptime(event["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    latest_ms = max(1, min(MAX_LATEST_MS, int((expires_at - now).total_seconds() * 1000)))
+    expires_at = datetime.strptime(event["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )
+    latest_ms = max(
+        1, min(MAX_LATEST_MS, int((expires_at - now).total_seconds() * 1000))
+    )
     relayed = json.dumps(
         {
             "agent_id": agent_id,

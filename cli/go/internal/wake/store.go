@@ -1,0 +1,809 @@
+package wake
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/awebai/aw/internal/atomicfile"
+	"github.com/awebai/aw/internal/custodypath"
+	"gopkg.in/yaml.v3"
+)
+
+// DeliverySession is the legacy value the spawn hook records alongside the
+// home when the broker owns the instance's delivery surface.
+const DeliverySession = "session"
+
+const (
+	// RuntimeDeliveryExternalSession means the native adapter is silent and the
+	// broker may own every explicit receive identity for this instance.
+	RuntimeDeliveryExternalSession = "external-session"
+	// RuntimeDeliveryNativeChannel means Claude's native channel owns the primary
+	// identity; broker receive identities must be disjoint attachments.
+	RuntimeDeliveryNativeChannel = "native-channel"
+	// RuntimeDeliveryNativePi means Pi's native extension owns the primary
+	// identity; broker receive identities must be disjoint attachments.
+	RuntimeDeliveryNativePi = "native-pi"
+)
+
+const (
+	ReceiveOwnerSessionHints = "session-hints"
+	EventClassMail           = "mail"
+	EventClassChat           = "chat"
+)
+
+// Store is the on-disk state directory:
+//
+//	<dir>/registry.d/<key>.json    one registration per instance home
+//	<dir>/instances.d/<key>.json   lifecycle, pause, readiness and delivery status
+//	<dir>/status.json              what `aw wake status` reads when the daemon is down
+//	<dir>/daemon.lock              the one-daemon-per-host lock
+//	<dir>/daemon.lock.pid          the pid of the daemon holding it
+//	<dir>/control.sock             the daemon's local control socket
+//
+// <key> is the SHA-256 of the canonical instance home path. Go stores no
+// message content here. Channel-core's per-binding DeliveryStore is separate
+// delivery state: it dedupes accepted terminal presentations and is not a proof
+// of completed agent work.
+var wakeReadFile = os.ReadFile
+
+// wakeBeforeCommit, when set, observes a state file write after its content is
+// complete and before it replaces the file at path.
+var wakeBeforeCommit func(path string)
+
+type Store struct {
+	dir string
+
+	// A status writer reuses its own private scratch name. Unique names on every
+	// periodic refresh otherwise accumulate reclaimable VFS metadata while idle.
+	statusMu   sync.Mutex
+	statusTemp string
+}
+
+// NewStore returns a Store rooted at dir, creating the directory tree.
+func NewStore(dir string) (*Store, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return nil, errors.New("wake: empty state directory")
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		return nil, err
+	}
+	// Check the state root even when the socket is in the shortened-path runtime.
+	if err := checkWakeControlDirectory(abs, false); err != nil {
+		return nil, err
+	}
+	warnWakeDirectory(abs)
+	for _, sub := range []string{"registry.d", "instances.d"} {
+		if err := os.MkdirAll(filepath.Join(abs, sub), 0o700); err != nil {
+			return nil, err
+		}
+		warnWakeDirectory(filepath.Join(abs, sub))
+	}
+	return &Store{dir: abs}, nil
+}
+
+func (s *Store) Dir() string      { return s.dir }
+func (s *Store) LockPath() string { return filepath.Join(s.dir, "daemon.lock") }
+func (s *Store) SocketPath() string {
+	return custodypath.Shorten(filepath.Join(s.dir, "control.sock"), maxSocketPath)
+}
+func (s *Store) StatusPath() string           { return filepath.Join(s.dir, "status.json") }
+func (s *Store) registryPath(k string) string { return filepath.Join(s.dir, "registry.d", k+".json") }
+func (s *Store) instancePath(k string) string { return filepath.Join(s.dir, "instances.d", k+".json") }
+
+// CanonicalHome normalises an instance home to the absolute, symlink-resolved
+// path the key is derived from. Two spellings of one home must not become two
+// registrations.
+func CanonicalHome(home string) (string, error) {
+	home = strings.TrimSpace(home)
+	if home == "" {
+		return "", errors.New("home is required")
+	}
+	if !filepath.IsAbs(home) {
+		return "", fmt.Errorf("home must be an absolute path, got %q", home)
+	}
+	clean := filepath.Clean(home)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return resolved, nil
+	}
+	// A home that does not exist yet is normal: the hook registers after the
+	// home is created, but the broker must not refuse a path it cannot stat.
+	return clean, nil
+}
+
+// HomeKey is the state-file name for a canonical home.
+func HomeKey(canonicalHome string) string {
+	sum := sha256.Sum256([]byte(canonicalHome))
+	return hex.EncodeToString(sum[:])
+}
+
+// ReceiveIdentity is one broker-owned receive binding attached to a registered
+// instance. Go uses it for stream routing and child configuration; the
+// channel-core child uses it for exact fetch, decrypt/trust, delivered IDs, and
+// mail/chat read acknowledgement.
+type ReceiveIdentity struct {
+	IdentityHome  string   `json:"identity_home"`
+	TeamID        string   `json:"team_id,omitempty"`
+	Label         string   `json:"label,omitempty"`
+	DeliveryOwner string   `json:"delivery_owner,omitempty"`
+	EventClasses  []string `json:"event_classes,omitempty"`
+	Controls      bool     `json:"controls,omitempty"`
+}
+
+// PresenceIdentity is an explicit heartbeat target, with no receive or delivery
+// authority. Poll-only joined identities use it to keep their workspace present.
+type PresenceIdentity struct {
+	IdentityHome string `json:"identity_home"`
+	TeamID       string `json:"team_id"`
+}
+
+// Registration is what the OATS spawn hook records. The legacy shape is one
+// IdentityHome with Delivery=session. The multi-identity shape keeps the same
+// instance Home and supplies explicit broker-owned receive identities.
+type Registration struct {
+	// True only for an accepted normalized in-memory snapshot. Reconciliation
+	// validates fresh disk state; dispatch must retain this last-good snapshot.
+	bindingsNormalized  bool
+	Home                string             `json:"home"`
+	IdentityHome        string             `json:"identity_home"`
+	Delivery            string             `json:"delivery"`
+	RuntimeDelivery     string             `json:"runtime_delivery,omitempty"`
+	PrimaryIdentityHome string             `json:"primary_identity_home,omitempty"`
+	ReceiveIdentities   []ReceiveIdentity  `json:"receive_identities,omitempty"`
+	PresenceIdentities  []PresenceIdentity `json:"presence_identities,omitempty"`
+	Backend             string             `json:"backend,omitempty"`
+	RegisteredAt        time.Time          `json:"registered_at"`
+}
+
+// Validate enforces explicit receive ownership, no double-consumed identity
+// homes, and the legacy delivery=session compatibility rule.
+func (r Registration) Validate() error {
+	_, err := r.normalized()
+	return err
+}
+
+// Normalized returns the canonical form the broker stores and runs. It preserves
+// the old one-identity registration by deriving one receive identity from
+// IdentityHome when ReceiveIdentities is empty.
+func (r Registration) Normalized() (Registration, error) { return r.normalized() }
+
+func (r Registration) normalized() (Registration, error) {
+	r = r.clone()
+	if strings.TrimSpace(r.Home) == "" || !filepath.IsAbs(strings.TrimSpace(r.Home)) {
+		return Registration{}, fmt.Errorf("--home must be an absolute instance home path")
+	}
+	canonicalHome, err := CanonicalHome(r.Home)
+	if err != nil {
+		return Registration{}, err
+	}
+	r.Home = canonicalHome
+
+	switch strings.ToLower(strings.TrimSpace(r.Backend)) {
+	case "", "tmux", "herdr":
+	default:
+		return Registration{}, fmt.Errorf("--backend must be tmux or herdr, got %q", r.Backend)
+	}
+
+	runtime := strings.ToLower(strings.TrimSpace(r.RuntimeDelivery))
+	if runtime == "" {
+		switch strings.ToLower(strings.TrimSpace(r.Delivery)) {
+		case DeliverySession:
+			runtime = RuntimeDeliveryExternalSession
+		case RuntimeDeliveryExternalSession, RuntimeDeliveryNativeChannel, RuntimeDeliveryNativePi:
+			runtime = strings.ToLower(strings.TrimSpace(r.Delivery))
+		}
+	}
+	if runtime == "" && len(r.ReceiveIdentities) == 0 {
+		// Preserve the old refusal wording for legacy bad registrations.
+		return Registration{}, fmt.Errorf(
+			"refusing to register %s: --delivery must be %q (AWEB_DELIVERY=session). The broker and a live native channel are two presentation surfaces on one identity, and running both doubles every wake",
+			strings.TrimSpace(r.Home), DeliverySession)
+	}
+	r.RuntimeDelivery = runtime
+	if strings.TrimSpace(r.Delivery) == "" {
+		if runtime == RuntimeDeliveryExternalSession {
+			r.Delivery = DeliverySession
+		} else {
+			r.Delivery = runtime
+		}
+	}
+
+	legacy := len(r.ReceiveIdentities) == 0 && (runtime == RuntimeDeliveryExternalSession || len(r.PresenceIdentities) == 0)
+	if legacy {
+		if !strings.EqualFold(strings.TrimSpace(r.Delivery), DeliverySession) {
+			return Registration{}, fmt.Errorf(
+				"refusing to register %s: --delivery must be %q (AWEB_DELIVERY=session). The broker and a live native channel are two presentation surfaces on one identity, and running both doubles every wake",
+				strings.TrimSpace(r.Home), DeliverySession)
+		}
+		identityHome, err := canonicalReadableIdentityHome(r.IdentityHome, "--identity-home")
+		if err != nil {
+			return Registration{}, err
+		}
+		r.IdentityHome = identityHome
+		teamID, err := effectiveTeamID(identityHome, "")
+		if err != nil {
+			return Registration{}, err
+		}
+		r.RuntimeDelivery = RuntimeDeliveryExternalSession
+		r.ReceiveIdentities = []ReceiveIdentity{{
+			IdentityHome:  identityHome,
+			TeamID:        teamID,
+			DeliveryOwner: ReceiveOwnerSessionHints,
+			Controls:      true,
+		}}
+		if err := r.normalizePresenceIdentities(); err != nil {
+			return Registration{}, err
+		}
+		r.bindingsNormalized = true
+		return r, nil
+	}
+
+	switch runtime {
+	case RuntimeDeliveryExternalSession, RuntimeDeliveryNativeChannel, RuntimeDeliveryNativePi:
+	default:
+		return Registration{}, fmt.Errorf("runtime_delivery must be %q, %q, or %q", RuntimeDeliveryExternalSession, RuntimeDeliveryNativeChannel, RuntimeDeliveryNativePi)
+	}
+	if runtime == RuntimeDeliveryExternalSession && strings.TrimSpace(r.Delivery) != "" && !strings.EqualFold(strings.TrimSpace(r.Delivery), DeliverySession) && !strings.EqualFold(strings.TrimSpace(r.Delivery), RuntimeDeliveryExternalSession) {
+		return Registration{}, fmt.Errorf("external-session registrations must keep delivery=%q for compatibility", DeliverySession)
+	}
+	if runtime != RuntimeDeliveryExternalSession {
+		if delivery := strings.ToLower(strings.TrimSpace(r.Delivery)); delivery != "" && delivery != runtime {
+			return Registration{}, fmt.Errorf("native mixed registration delivery must be %q, got %q", runtime, r.Delivery)
+		}
+		if strings.TrimSpace(r.PrimaryIdentityHome) == "" {
+			return Registration{}, fmt.Errorf("primary_identity_home is required when runtime_delivery is %q", runtime)
+		}
+	}
+
+	primary := ""
+	if strings.TrimSpace(r.PrimaryIdentityHome) != "" {
+		primary, err = canonicalReadableIdentityHome(r.PrimaryIdentityHome, "primary_identity_home")
+		if err != nil {
+			return Registration{}, err
+		}
+		r.PrimaryIdentityHome = primary
+	}
+
+	seen := map[string]struct{}{}
+	controlCount := 0
+	for i := range r.ReceiveIdentities {
+		binding := &r.ReceiveIdentities[i]
+		identityHome, err := canonicalReadableIdentityHome(binding.IdentityHome, fmt.Sprintf("receive_identities[%d].identity_home", i))
+		if err != nil {
+			return Registration{}, err
+		}
+		binding.IdentityHome = identityHome
+		binding.TeamID, err = effectiveTeamID(identityHome, binding.TeamID)
+		if err != nil {
+			return Registration{}, err
+		}
+		key, err := bindingKey(identityHome, binding.TeamID)
+		if err != nil {
+			return Registration{}, err
+		}
+		if _, ok := seen[key]; ok {
+			return Registration{}, fmt.Errorf("duplicate receive binding identity_home=%s team=%s", identityHome, binding.TeamID)
+		}
+		seen[key] = struct{}{}
+		if runtime != RuntimeDeliveryExternalSession && primary != "" && identityHome == primary {
+			return Registration{}, fmt.Errorf("receive identity_home %s overlaps native primary identity_home", identityHome)
+		}
+		binding.Label = strings.TrimSpace(binding.Label)
+		owner := strings.ToLower(strings.TrimSpace(binding.DeliveryOwner))
+		if owner == "" {
+			owner = ReceiveOwnerSessionHints
+		}
+		if owner != ReceiveOwnerSessionHints {
+			return Registration{}, fmt.Errorf("receive_identities[%d].delivery_owner must be %q", i, ReceiveOwnerSessionHints)
+		}
+		binding.DeliveryOwner = owner
+		classes, err := normalizeEventClasses(binding.EventClasses)
+		if err != nil {
+			return Registration{}, fmt.Errorf("receive_identities[%d].event_classes: %w", i, err)
+		}
+		binding.EventClasses = classes
+		if runtime != RuntimeDeliveryExternalSession {
+			if binding.Controls {
+				return Registration{}, fmt.Errorf("receive identity_home %s cannot have runtime controls when native primary owns delivery", identityHome)
+			}
+			if len(classes) == 0 {
+				binding.EventClasses = []string{EventClassMail, EventClassChat}
+			} else if !onlyMailChat(classes) {
+				return Registration{}, fmt.Errorf("receive identity_home %s may only request mail/chat event classes when native primary owns delivery", identityHome)
+			}
+		}
+		if binding.Controls {
+			controlCount++
+		}
+	}
+	if runtime == RuntimeDeliveryExternalSession && controlCount > 1 {
+		return Registration{}, fmt.Errorf("at most one receive identity may have controls=true")
+	}
+	if strings.TrimSpace(r.IdentityHome) == "" && len(r.ReceiveIdentities) > 0 {
+		r.IdentityHome = r.ReceiveIdentities[0].IdentityHome
+	}
+	if err := r.normalizePresenceIdentities(); err != nil {
+		return Registration{}, err
+	}
+	r.bindingsNormalized = true
+	return r, nil
+}
+
+func (r *Registration) normalizePresenceIdentities() error {
+	if len(r.PresenceIdentities) == 0 {
+		return nil
+	}
+	primary := ""
+	if strings.TrimSpace(r.PrimaryIdentityHome) != "" {
+		var err error
+		primary, err = CanonicalHome(r.PrimaryIdentityHome)
+		if err != nil {
+			return err
+		}
+	}
+	receiveHomes := map[string]bool{}
+	for _, binding := range r.ReceiveIdentities {
+		receiveHomes[binding.IdentityHome] = true
+	}
+	seen := map[string]bool{}
+	for i := range r.PresenceIdentities {
+		binding := &r.PresenceIdentities[i]
+		label := fmt.Sprintf("presence_identities[%d]", i)
+		home, err := canonicalReadableIdentityHome(binding.IdentityHome, label+".identity_home")
+		if err != nil {
+			return err
+		}
+		if binding.IdentityHome != home {
+			return fmt.Errorf("%s.identity_home must be canonical: %s", label, home)
+		}
+		if _, err := os.ReadDir(home); err != nil {
+			return fmt.Errorf("%s.identity_home is not readable: %w", label, err)
+		}
+		if home == primary {
+			return fmt.Errorf("%s overlaps primary_identity_home", label)
+		}
+		if receiveHomes[home] {
+			return fmt.Errorf("%s overlaps receive identity_home %s", label, home)
+		}
+		binding.TeamID, err = effectiveTeamID(home, binding.TeamID)
+		if err != nil {
+			return fmt.Errorf("%s.team_id: %w", label, err)
+		}
+		if binding.TeamID == "" {
+			return fmt.Errorf("%s requires an effective team", label)
+		}
+		key, _ := bindingKey(home, binding.TeamID)
+		if seen[key] {
+			return fmt.Errorf("duplicate presence identity_home=%s team=%s", home, binding.TeamID)
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+type teamStateYAML struct {
+	ActiveTeam string `yaml:"active_team"`
+}
+
+type grantStateYAML struct {
+	TeamID string `yaml:"team_id"`
+}
+
+func effectiveTeamID(identityHome, teamID string) (string, error) {
+	teamID = strings.TrimSpace(teamID)
+	if teamID != "" {
+		return teamID, nil
+	}
+	if data, err := wakeReadFile(filepath.Join(identityHome, "grant.yaml")); err == nil {
+		var grant grantStateYAML
+		if err := yaml.Unmarshal(data, &grant); err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(grant.TeamID), nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	data, err := wakeReadFile(filepath.Join(identityHome, "teams.yaml"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	var state teamStateYAML
+	if err := yaml.Unmarshal(data, &state); err != nil {
+		return "", err
+	}
+	teamID = strings.TrimSpace(state.ActiveTeam)
+	if teamID == "" {
+		return "", nil
+	}
+	return teamID, nil
+}
+
+// bindingKey uses the team pinned by registration normalization, including an
+// explicitly empty team. It must never consult mutable identity-home state.
+func bindingKey(identityHome, teamID string) (string, error) {
+	return identityHome + "\x00" + strings.TrimSpace(teamID), nil
+}
+
+func splitBindingKey(key string) (string, string) {
+	parts := strings.SplitN(key, "\x00", 2)
+	if len(parts) != 2 {
+		return key, ""
+	}
+	return parts[0], parts[1]
+}
+
+func canonicalReadableIdentityHome(raw, label string) (string, error) {
+	path := strings.TrimSpace(raw)
+	if path == "" || !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%s must be an absolute identity home path", label)
+	}
+	canonical, err := CanonicalHome(path)
+	if err != nil {
+		return "", err
+	}
+	if info, err := os.Stat(canonical); err != nil {
+		return "", fmt.Errorf("%s %s is not readable: %w", label, canonical, err)
+	} else if !info.IsDir() {
+		return "", fmt.Errorf("%s %s is not a directory", label, canonical)
+	}
+	return canonical, nil
+}
+
+func normalizeEventClasses(classes []string) ([]string, error) {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, raw := range classes {
+		cls := strings.ToLower(strings.TrimSpace(raw))
+		if cls == "" {
+			continue
+		}
+		switch cls {
+		case EventClassMail, EventClassChat:
+		default:
+			return nil, fmt.Errorf("unsupported event class %q", raw)
+		}
+		if _, ok := seen[cls]; ok {
+			continue
+		}
+		seen[cls] = struct{}{}
+		out = append(out, cls)
+	}
+	return out, nil
+}
+
+func onlyMailChat(classes []string) bool {
+	for _, cls := range classes {
+		switch cls {
+		case EventClassMail, EventClassChat:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (r Registration) clone() Registration {
+	out := r
+	out.PresenceIdentities = append([]PresenceIdentity(nil), r.PresenceIdentities...)
+	if r.ReceiveIdentities != nil {
+		out.ReceiveIdentities = make([]ReceiveIdentity, len(r.ReceiveIdentities))
+		for i, binding := range r.ReceiveIdentities {
+			out.ReceiveIdentities[i] = binding
+			out.ReceiveIdentities[i].EventClasses = append([]string(nil), binding.EventClasses...)
+		}
+	}
+	return out
+}
+
+func (r Registration) ReceiveBindings() []ReceiveIdentity {
+	normalized := r
+	if !r.bindingsNormalized {
+		var err error
+		normalized, err = r.normalized()
+		if err != nil {
+			return nil
+		}
+	}
+	out := make([]ReceiveIdentity, len(normalized.ReceiveIdentities))
+	for i, binding := range normalized.ReceiveIdentities {
+		out[i] = binding
+		out[i].EventClasses = append([]string(nil), binding.EventClasses...)
+	}
+	return out
+}
+
+func (r Registration) BindingForIdentityHome(identityHome string) (ReceiveIdentity, bool) {
+	canonical, err := CanonicalHome(identityHome)
+	if err != nil {
+		canonical = filepath.Clean(strings.TrimSpace(identityHome))
+	}
+	for _, binding := range r.ReceiveBindings() {
+		if binding.IdentityHome == canonical {
+			return binding, true
+		}
+	}
+	return ReceiveIdentity{}, false
+}
+
+func (r Registration) hasBinding(want ReceiveIdentity) bool {
+	wantKey, err := bindingKey(want.IdentityHome, want.TeamID)
+	if err != nil {
+		return false
+	}
+	for _, binding := range r.ReceiveBindings() {
+		gotKey, err := bindingKey(binding.IdentityHome, binding.TeamID)
+		if err == nil && gotKey == wantKey {
+			return true
+		}
+	}
+	return false
+}
+
+func (b ReceiveIdentity) allowsEventClass(class string) bool {
+	if class == "" {
+		return false
+	}
+	if b.Controls {
+		return true
+	}
+	classes := b.EventClasses
+	if len(classes) == 0 {
+		classes = []string{EventClassMail, EventClassChat}
+	}
+	return containsString(classes, class)
+}
+
+func containsString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+// InstanceState is the durable per-instance state Go owns: registration
+// lifecycle, pause/inactive state, readiness/error/status metadata, and child
+// admission evictions. Legacy `pending` hint arrays from older stores are
+// accepted on load and dropped; they are never replayed or composed by Go.
+type InstanceState struct {
+	Home           string            `json:"home"`
+	LegacyPending  []json.RawMessage `json:"pending,omitempty"`
+	Evicted        int               `json:"evicted"`
+	Paused         bool              `json:"paused"`
+	FirstPresentAt time.Time         `json:"first_present_at,omitempty"`
+	Inactive       bool              `json:"inactive,omitempty"`
+	LastInspectAt  time.Time         `json:"last_inspect_at,omitempty"`
+	LastState      string            `json:"last_state,omitempty"`
+	LastError      string            `json:"last_error,omitempty"`
+	UnreadCount    int               `json:"unread_count,omitempty"`
+}
+
+// ConfirmedLive reports whether the child has reported one live terminal observation.
+func (s InstanceState) ConfirmedLive() bool { return !s.FirstPresentAt.IsZero() }
+
+// SaveRegistration writes one registration atomically. It canonicalizes the
+// instance home but deliberately does not trust or validate the rest of the
+// registration: the daemon applies Registration.Validate while reconciling files
+// that may have been written by an older socket fallback.
+func (s *Store) SaveRegistration(r Registration) error {
+	canonical, err := CanonicalHome(r.Home)
+	if err != nil {
+		return err
+	}
+	r.Home = canonical
+	if r.RegisteredAt.IsZero() {
+		r.RegisteredAt = time.Now().UTC()
+	}
+	return writeJSONAtomic(s.registryPath(HomeKey(canonical)), r)
+}
+
+// LoadRegistration reads one registration; ok is false when none exists.
+func (s *Store) LoadRegistration(home string) (Registration, bool, error) {
+	canonical, err := CanonicalHome(home)
+	if err != nil {
+		return Registration{}, false, err
+	}
+	var r Registration
+	ok, err := readJSON(s.registryPath(HomeKey(canonical)), &r)
+	if err != nil || !ok {
+		return r, ok, err
+	}
+	if normalized, normalizeErr := r.normalized(); normalizeErr == nil {
+		r = normalized
+	}
+	return r, ok, nil
+}
+
+// DeleteRegistration removes a registration and its instance state. It reports
+// whether a registration was present.
+func (s *Store) DeleteRegistration(home string) (bool, error) {
+	canonical, err := CanonicalHome(home)
+	if err != nil {
+		return false, err
+	}
+	key := HomeKey(canonical)
+	existed := true
+	if err := os.Remove(s.registryPath(key)); err != nil {
+		if !os.IsNotExist(err) {
+			return false, err
+		}
+		existed = false
+	}
+	if err := os.Remove(s.instancePath(key)); err != nil && !os.IsNotExist(err) {
+		return existed, err
+	}
+	return existed, nil
+}
+
+// ListRegistrationsWithFaults reads every registration, ordered as
+// ListRegistrations. A file that cannot be read, does not parse or names no
+// usable home is skipped and returned as a fault, so one bad file never hides
+// the others. The error is reserved for the registry directory itself.
+func (s *Store) ListRegistrationsWithFaults() ([]Registration, []RegistrationFault, error) {
+	entries, err := os.ReadDir(filepath.Join(s.dir, "registry.d"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	out := []Registration{}
+	var faults []RegistrationFault
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(s.dir, "registry.d", entry.Name())
+		r, ok, err := readRegistrationFile(path)
+		if err != nil {
+			faults = append(faults, RegistrationFault{Path: path, Error: err.Error()})
+			continue
+		}
+		if !ok {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].RegisteredAt.Equal(out[j].RegisteredAt) {
+			return out[i].RegisteredAt.Before(out[j].RegisteredAt)
+		}
+		return out[i].Home < out[j].Home
+	})
+	return out, faults, nil
+}
+
+// registrationFileKey is the home key a registry file is stored under.
+func registrationFileKey(path string) string {
+	return strings.TrimSuffix(filepath.Base(path), ".json")
+}
+
+func readRegistrationFile(path string) (Registration, bool, error) {
+	var r Registration
+	ok, err := readJSON(path, &r)
+	if err != nil || !ok {
+		return Registration{}, false, err
+	}
+	if strings.TrimSpace(r.Home) == "" {
+		return Registration{}, false, errors.New("registration home is empty")
+	}
+	if _, err := CanonicalHome(r.Home); err != nil {
+		return Registration{}, false, err
+	}
+	if normalized, normalizeErr := r.normalized(); normalizeErr == nil {
+		r = normalized
+	}
+	return r, true, nil
+}
+
+// SaveInstance writes per-instance lifecycle/status state atomically, dropping
+// legacy hint queues from pre-channel-core stores.
+func (s *Store) SaveInstance(state InstanceState) error {
+	canonical, err := CanonicalHome(state.Home)
+	if err != nil {
+		return err
+	}
+	persisted := state
+	persisted.Home = canonical
+	persisted.LegacyPending = nil
+	return writeJSONAtomic(s.instancePath(HomeKey(canonical)), persisted)
+}
+
+// LoadInstance reads per-instance state; a missing file is an empty state.
+func (s *Store) LoadInstance(home string) (InstanceState, error) {
+	canonical, err := CanonicalHome(home)
+	if err != nil {
+		return InstanceState{}, err
+	}
+	var state InstanceState
+	ok, err := readJSON(s.instancePath(HomeKey(canonical)), &state)
+	if err != nil {
+		return InstanceState{}, err
+	}
+	if !ok {
+		return InstanceState{Home: canonical}, nil
+	}
+	state.Home = canonical
+	if len(state.LegacyPending) > 0 {
+		state.Evicted += len(state.LegacyPending)
+		state.LegacyPending = nil
+	}
+	return state, nil
+}
+
+// ResetInstanceLifecycle clears terminal lifecycle/error status for an explicit
+// registration while preserving durable operator pause intent.
+func (s *Store) ResetInstanceLifecycle(home string) error {
+	state, err := s.LoadInstance(home)
+	if err != nil {
+		return err
+	}
+	state.FirstPresentAt = time.Time{}
+	state.Inactive = false
+	state.LastInspectAt = time.Time{}
+	state.LastState = ""
+	state.LastError = ""
+	state.UnreadCount = 0
+	return s.SaveInstance(state)
+}
+
+// SaveStatus writes the status snapshot the CLI reads when the daemon is down.
+func (s *Store) SaveStatus(status Status) error {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	return writeJSONAtomicWithTempName(s.StatusPath(), status, &s.statusTemp)
+}
+
+func writeJSONAtomic(path string, value any) error {
+	return writeJSONAtomicWithTempName(path, value, nil)
+}
+
+// reusable is owned by a serialized writer, never shared between Store objects.
+// Recreate exclusively: an unexpected file or symlink is a failure, not a path
+// to truncate or remove. Only files created by this call enter cleanup.
+func writeJSONAtomicWithTempName(path string, value any, reusable *string) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	options := atomicfile.Options{Mode: 0o600, ParentMode: 0o700, TempName: reusable}
+	if wakeBeforeCommit != nil {
+		options.BeforeCommit = func() { wakeBeforeCommit(path) }
+	}
+	return options.Write(path, data)
+}
+
+func readJSON(path string, into any) (bool, error) {
+	data, err := wakeReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return false, nil
+	}
+	if err := json.Unmarshal(data, into); err != nil {
+		return false, fmt.Errorf("%s: %w", path, err)
+	}
+	return true, nil
+}

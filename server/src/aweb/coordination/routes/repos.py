@@ -17,7 +17,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from redis.asyncio import Redis
 
-from aweb.application_state import RegistryClientUnavailable, application_registry_client
+from aweb.application_state import (
+    RegistryClientUnavailable,
+    application_registry_client,
+)
 
 from aweb.audit import OperatorAuditRoute, audit_success
 
@@ -32,7 +35,11 @@ from ...lifecycle import (
     replay_lifecycle_side_effects,
 )
 from ...redis_client import get_redis
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +75,9 @@ def canonicalize_git_url(origin_url: str) -> str:
     # key), so it is not required to look like a DNS name.
     ssh_match = None
     if "://" not in url:
-        ssh_match = re.match(r"^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9._-]+):([^/\\].*)$", url)
+        ssh_match = re.match(
+            r"^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9._-]+):([^/\\].*)$", url
+        )
     if ssh_match:
         host = ssh_match.group(1)
         path = ssh_match.group(2)
@@ -323,14 +332,18 @@ async def delete_repo(
         )
         removed = await load_removed_claim_workspaces(
             aweb_db,
-            agent_ids=[row["agent_id"] for row in workspace_rows if row["agent_id"] is not None],
+            agent_ids=[
+                row["agent_id"] for row in workspace_rows if row["agent_id"] is not None
+            ],
             team_id=identity.team_id,
         )
         # One outer transaction locks the full repo set before any claim release.
         await lock_workspace_cleanup_targets_on(
             aweb_db,
             targets=tuple(
-                LocalWorkspaceTarget(workspace_id=row["workspace_id"], agent_id=row["agent_id"])
+                LocalWorkspaceTarget(
+                    workspace_id=row["workspace_id"], agent_id=row["agent_id"]
+                )
                 for row in workspace_rows + removed
             ),
             team_id=identity.team_id,
@@ -359,7 +372,8 @@ async def delete_repo(
             if result.errors:
                 skipped.append(
                     SkippedWorkspace(
-                        workspace_id=str(row["workspace_id"]), code=result.errors[0].code
+                        workspace_id=str(row["workspace_id"]),
+                        code=result.errors[0].code,
                     )
                 )
                 continue
@@ -381,7 +395,9 @@ async def delete_repo(
     presence_cleared = 0
     cleanup_pending = False
     for operation_id in operation_ids:
-        replay = await replay_lifecycle_side_effects(manager, redis, operation_id=operation_id)
+        replay = await replay_lifecycle_side_effects(
+            manager, redis, operation_id=operation_id
+        )
         presence_cleared += replay.presence_cleared_count
         cleanup_pending = cleanup_pending or replay.pending_count > 0
     if cleanup_pending:

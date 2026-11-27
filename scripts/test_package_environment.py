@@ -1,6 +1,5 @@
 """Lock-driven package preparation controls; no Docker or dependency downloads."""
 
-import hashlib
 import importlib.util
 import json
 import os
@@ -26,7 +25,6 @@ def load(name):
 
 preparation = load("prepare_projects")
 images = load("package_image")
-runner = load("package_environment")
 
 
 class ProjectPreparation(unittest.TestCase):
@@ -75,34 +73,20 @@ class ProjectPreparation(unittest.TestCase):
                 self.root, "a" * 40, ["server", "naapp/folio"], mode, self.receipt
             )
 
-    def test_preparation_uses_each_project_lock_and_one_pinned_browser_install(self):
+    def test_preparation_syncs_each_project_lock_and_installs_no_browser(self):
+        # The image installs the locked browser and its system libraries once,
+        # as root; preparation runs as UID 1000 and only syncs.
         self.invoke("prepare")
         syncs = [args for args, _ in self.commands if args[:2] == ["uv", "sync"]]
         self.assertEqual(
             [args[-1] for args in syncs],
             [str(self.root / name) for name in ("server", "naapp/folio")],
         )
-        installs = [args for args, _ in self.commands if "install" in args]
-        self.assertEqual(len(installs), 1)
-        self.assertIn("--no-sync", installs[0])
-        self.assertEqual(
-            installs[0][-4:], ["install", "--with-deps", "--only-shell", "chromium"]
-        )
+        self.assertEqual([args for args, _ in self.commands if "install" in args], [])
         self.assertTrue(
             all(kwargs["env"]["UV_OFFLINE"] == "0" for _, kwargs in self.commands)
         )
         self.assertEqual(json.loads(self.receipt.read_text())["status"], "PASS")
-
-    def test_distinct_locked_browser_versions_each_use_their_own_project_installer(
-        self,
-    ):
-        self.invoke("prepare", versions={"server": "1.63.0", "naapp/folio": "1.64.0"})
-        installers = [args for args, _ in self.commands if "install" in args]
-        self.assertEqual(len(installers), 2)
-        self.assertEqual(
-            [args[args.index("--project") + 1] for args in installers],
-            [str(self.root / name) for name in ("server", "naapp/folio")],
-        )
 
     def test_offline_verification_uses_fresh_environments_and_launches_the_browser(
         self,
@@ -452,14 +436,18 @@ class SourceImagePreparation(unittest.TestCase):
                 patch.object(images.subprocess, "run", side_effect=invoke),
                 patch.object(images, "__file__", str(tools / "package_image.py")),
             ):
-                images.prepare_image(root, evidence, "owned-image", ["naapp/folio"])
+                images.prepare_image(root, evidence, "owned-image")
             self.assertEqual(len(builds), 1)
             self.assertIn("--project naapp/folio --mode prepare", builds[0])
             self.assertIn(
                 "COPY --chmod=0644 package-environment.py /opt/package-environment.py",
                 builds[0],
             )
-            self.assertIn("USER 1000:1000\nRUN python3 -c", builds[0])
+            self.assertIn("USER 1000:1000\nRUN python3 /opt/package-environment.py", builds[0])
+            self.assertIn("RUN python3 -c", builds[0])
+            # Preparation runs as UID 1000, so nothing changes owner afterwards.
+            self.assertNotIn("chown", builds[0])
+            self.assertNotIn("chmod -R", builds[0])
             self.assertIn("package-helper-readable.json", builds[0])
             # The Dockerfile instruction stays one physical line despite Python's multiline code.
             verify_line = next(
@@ -479,217 +467,30 @@ class SourceImagePreparation(unittest.TestCase):
             self.assertNotIn("1243", builds[0])
             self.assertNotIn("2.41.5", builds[0])
             self.assertTrue((evidence / "package-preparation-tool.sha256").is_file())
+            # In a gate run the image starts from the gate's image, which is
+            # already in the engine, and the engine's own builder builds it.
+            builds.clear()
+            calls = []
 
-    def test_image_binding_retains_uid_read_receipt_and_refuses_inherited_private_mode(
-        self,
-    ):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = (Path(temporary) / "source").resolve()
-            root.mkdir()
-            for name, text in {
-                "candidate-gate/Dockerfile": "FROM python:3.12\n",
-                "scripts/test-egress/Dockerfile": "WORKDIR /src\nCOPY . .\n",
-                "server/pyproject.toml": "[project]\nname='fixture'\nversion='0'\n",
-                "server/uv.lock": "version=1\n",
-            }.items():
-                path = root / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(text)
-            for args in (
-                ["init", "-q"],
-                ["add", "."],
-                [
-                    "-c",
-                    "user.name=fixture",
-                    "-c",
-                    "user.email=fixture@example.test",
-                    "commit",
-                    "-qm",
-                    "source",
-                ],
-            ):
-                subprocess.run(["git", *args], cwd=root, check=True)
-            sha = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=root, text=True
-            ).strip()
-            lock_hash = hashlib.sha256(
-                (root / "server/uv.lock").read_bytes()
-            ).hexdigest()
-            helper_hash = hashlib.sha256(
-                (HERE / "test-egress/prepare_projects.py").read_bytes()
-            ).hexdigest()
-            verified = dict(
-                status="PASS", uid=1000, source=sha, locks={"server/uv.lock": lock_hash}
+            def recorded(args, **kwargs):
+                calls.append((args, kwargs))
+                return invoke(args, **kwargs)
+
+            gate_env = dict(
+                os.environ, BUILDX_BUILDER="run-builder", AWEB_CANDIDATE_RESOURCE_LABEL="run-label"
             )
-            read_receipt = dict(
-                status="PASS",
-                uid=1000,
-                gid=1000,
-                mode="0644",
-                sha256=helper_hash,
-                parents={
-                    "/opt": {"traversable": True, "mode": "0755"},
-                    "/": {"traversable": True, "mode": "0755"},
-                },
-            )
-            real_output, real_run = subprocess.check_output, subprocess.run
-            removed = []
-
-            def output(args, **kwargs):
-                if args[0] != "docker":
-                    return real_output(args, **kwargs)
-                if args[:3] == ["docker", "image", "inspect"]:
-                    return "sha256:" + "a" * 64
-                self.assertIn("--user", args)
-                self.assertIn("1000:1000", args)
-                return json.dumps(
-                    read_receipt
-                    if args[-1].endswith("package-helper-readable.json")
-                    else verified
-                )
-
-            def invoke(args, **kwargs):
-                if args[:2] == ["docker", "build"]:
-                    return subprocess.CompletedProcess(args, 0)
-                if args[:3] == ["docker", "image", "rm"]:
-                    removed.append(args[-1])
-                    return subprocess.CompletedProcess(args, 0)
-                return real_run(args, **kwargs)
-
             with (
-                patch.object(runner.subprocess, "check_output", side_effect=output),
-                patch.object(runner.subprocess, "run", side_effect=invoke),
-                patch.dict(sys.modules, {"prepare_projects": preparation}),
+                patch.object(images.subprocess, "run", side_effect=recorded),
+                patch.object(images, "__file__", str(tools / "package_image.py")),
+                patch.dict(os.environ, gate_env, clear=True),
             ):
-                binding = Path(temporary) / "binding.json"
-                runner.prepare(
-                    root, sha, ["server"], Path(temporary) / "evidence", binding
-                )
-                retained = json.loads(binding.read_text())
-                self.assertEqual(retained["helper_readability"], read_receipt)
-                self.assertEqual(retained["image"], "sha256:" + "a" * 64)
-                read_receipt["mode"] = "0400"
-                refused = Path(temporary) / "refused-binding.json"
-                with self.assertRaisesRegex(
-                    RuntimeError, "PACKAGE_HELPER_READABILITY_INVALID"
-                ):
-                    runner.prepare(
-                        root,
-                        sha,
-                        ["server"],
-                        Path(temporary) / "refused-evidence",
-                        refused,
-                    )
-                self.assertFalse(refused.exists())
-                self.assertEqual(len(removed), 1)
-                self.assertRegex(removed[0], "^aw-package-[0-9a-f]{32}$")
-
-    def test_package_runtime_keeps_private_home_and_forwards_only_fixture_environment(
-        self,
-    ):
-        receipt = {
-            "status": "PASS",
-            "image": "sha256:" + "a" * 64,
-            "source": "b" * 40,
-            "locks": {},
-        }
-        with (
-            patch.object(runner.Path, "stat") as stat,
-            patch.dict(
-                os.environ,
-                {
-                    "TEST_DB_PORT": "1234",
-                    "AWEB_TEST_SERVICES": "1",
-                    "HCLOUD_TOKEN": "private-fixture",
-                },
-                clear=True,
-            ),
-        ):
-            stat.return_value.st_gid = 998
-            args = runner.runner_args(
-                receipt,
-                Path("/owned/results"),
-                "owned-run",
-                ["bash", "-c", "make e2e"],
-                True,
-            )
-        self.assertIn("TEST_DB_PORT", args)
-        self.assertIn("AWEB_TEST_SERVICES", args)
-        self.assertNotIn("HCLOUD_TOKEN", args)
-        self.assertNotIn("private-fixture", args)
-        self.assertIn("1000:1000", args)
-        self.assertEqual(args[args.index("--network") + 1], "host")
-        self.assertEqual(args[-3:], ["bash", "-c", "make e2e"])
-        self.assertIn(receipt["image"], args)
-
-    def test_real_child_exit_and_source_mutation_are_retained_before_container_removal(
-        self,
-    ):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            lock = root / "uv.lock"
-            lock.write_text("version=1\n")
-            for args in (
-                ["init", "-q"],
-                ["add", "."],
-                [
-                    "-c",
-                    "user.name=fixture",
-                    "-c",
-                    "user.email=fixture@example.test",
-                    "commit",
-                    "-qm",
-                    "source",
-                ],
-            ):
-                subprocess.run(["git", *args], cwd=root, check=True)
-            expected = {
-                "source": subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=root, text=True
-                ).strip(),
-                "locks": {"uv.lock": hashlib.sha256(lock.read_bytes()).hexdigest()},
-            }
-            for command, raw, returned in [
-                ([sys.executable, "-c", "raise SystemExit(17)"], 17, 17),
-                (
-                    [
-                        sys.executable,
-                        "-c",
-                        "from pathlib import Path; Path('uv.lock').write_text('changed')",
-                    ],
-                    0,
-                    78,
-                ),
-            ]:
-                result = subprocess.run(
-                    [
-                        sys.executable,
-                        "-c",
-                        runner.COMMAND_RECEIPT,
-                        json.dumps(expected),
-                        str(root),
-                        *command,
-                    ],
-                    cwd=root,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                self.assertEqual(result.returncode, returned, result.stderr)
-                receipt = json.loads((root / "source-after.json").read_text())
-                self.assertEqual(receipt["test_exit"], raw)
-                self.assertEqual(receipt["source_unchanged"], returned != 78)
-
-    def test_wrong_source_binding_refuses_before_any_container_or_output_creation(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            binding = Path(temporary) / "binding.json"
-            binding.write_text(json.dumps({"source": "a" * 40}))
-            evidence = Path(temporary) / "not-created"
-            with self.assertRaisesRegex(
-                RuntimeError, "PACKAGE_BINDING_SOURCE_MISMATCH"
-            ):
-                runner.run(binding, evidence, ["false"], False, "b" * 40)
-            self.assertFalse(evidence.exists())
+                (evidence / "gate").mkdir()
+                images.prepare_image(root, evidence / "gate", "owned-image", base="gate-image:run")
+            self.assertTrue(builds[0].startswith("FROM gate-image:run\n"), builds[0][:80])
+            self.assertNotIn("FROM python:3.12", builds[0])
+            args, kwargs = next(c for c in calls if c[0][:2] == ["docker", "build"])
+            self.assertNotIn("BUILDX_BUILDER", kwargs["env"])
+            self.assertEqual(args[args.index("--label") + 1], "aweb.candidate-gate=run-label")
 
 
 if __name__ == "__main__":

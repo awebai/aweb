@@ -40,7 +40,7 @@ class MemoryTests(unittest.TestCase):
                     "Name": "/buildkit" if cid == self.ids[0] else "/runner",
                     "State": {"Pid": 100 + self.ids.index(cid)},
                     "Config": {"Image": "fixture", "Labels": {}},
-                    "HostConfig": {},
+                    "HostConfig": {"NanoCpus": 0},
                 }
             ]
         )
@@ -57,6 +57,12 @@ class MemoryTests(unittest.TestCase):
             (peak["bytes"], peak["memory_current_read"], peak["expected"]), (20, 2, 2)
         )
         self.assertEqual(peak["label"], "lower bound, 2 of 2 containers read")
+
+    def test_each_containers_cpu_settings_are_recorded(self):
+        # The CPU cap docker was given and the weight the kernel holds.
+        for row in self.capture()["containers"]:
+            self.assertEqual(row["host_config"]["NanoCpus"], 0)
+            self.assertEqual(row["cpu.weight"], "10")
 
     def test_persistent_missing_file_retains_pid_cgroup_filename_and_other_reads(self):
         filename = self.cgroups / f"docker-{self.ids[0]}.scope/init/memory.peak"

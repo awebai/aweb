@@ -10,11 +10,18 @@ from pathlib import Path
 
 import pytest
 
-from awid.signing import VerifyResult, canonical_json_bytes, sign_message, verify_signature
+from awid.signing import (
+    VerifyResult,
+    canonical_json_bytes,
+    sign_message,
+    verify_signature,
+)
 from aweb.agent_activity import ActivityEventError, verify_activity_event
 
 VECTOR = json.loads(
-    (Path(__file__).parents[2] / "docs" / "vectors" / "agent-activity-v1.json").read_text()
+    (
+        Path(__file__).parents[2] / "docs" / "vectors" / "agent-activity-v1.json"
+    ).read_text()
 )
 SEEDS = {
     VECTOR["agent_did_key"]: VECTOR["agent_seed_hex"],
@@ -118,14 +125,18 @@ FULLWIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
 @pytest.mark.parametrize("field", ["timestamp", "expires_at"])
 def test_times_with_non_ascii_digits_are_refused_as_invalid_values(field):
     year, rest = BASE_CASE["document"][field].split("-", 1)
-    signed_payload, signature = _signed_variant(**{field: year.translate(FULLWIDTH_DIGITS) + "-" + rest})
+    signed_payload, signature = _signed_variant(
+        **{field: year.translate(FULLWIDTH_DIGITS) + "-" + rest}
+    )
     with pytest.raises(ActivityEventError) as refused:
         _verify(BASE_CASE, signed_payload, signature)
     assert refused.value.code == "invalid_value"
 
 
 def test_well_formed_neighbour_of_the_malformed_shapes_verifies():
-    signed_payload, signature = _signed_variant(session_id=None, phase="writing", tool="Edit")
+    signed_payload, signature = _signed_variant(
+        session_id=None, phase="writing", tool="Edit"
+    )
     document = _verify(BASE_CASE, signed_payload, signature)
     assert document["session_id"] is None
 
@@ -134,7 +145,9 @@ def test_well_formed_neighbour_of_the_malformed_shapes_verifies():
 def test_text_without_a_utf8_form_is_refused_as_non_canonical(text):
     document = copy.deepcopy(BASE_CASE["document"])
     document["summary"] = text
-    raw = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    raw = json.dumps(
+        document, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
     signed_payload, signature = _signed_raw(raw)
     with pytest.raises(ActivityEventError) as refused:
         _verify(BASE_CASE, signed_payload, signature)
@@ -143,7 +156,11 @@ def test_text_without_a_utf8_form_is_refused_as_non_canonical(text):
 
 @pytest.mark.parametrize(
     "signed_payload",
-    ["not base64url!", "eyJ2Ijox", base64.urlsafe_b64encode(b"[1,2]").rstrip(b"=").decode("ascii")],
+    [
+        "not base64url!",
+        "eyJ2Ijox",
+        base64.urlsafe_b64encode(b"[1,2]").rstrip(b"=").decode("ascii"),
+    ],
     ids=["bad_alphabet", "truncated_json", "json_array"],
 )
 def test_undecodable_payloads_are_malformed(signed_payload):
@@ -171,6 +188,8 @@ def test_a_trailing_newline_is_not_part_of_an_identifier(changes):
 def test_identifiers_without_the_newline_verify():
     document = BASE_CASE["document"]
     signed_payload, signature = _signed_variant(
-        turn_id=document["turn_id"], tool="Bash", session_id=document["session_id"],
+        turn_id=document["turn_id"],
+        tool="Bash",
+        session_id=document["session_id"],
     )
     assert _verify(BASE_CASE, signed_payload, signature)["tool"] == "Bash"

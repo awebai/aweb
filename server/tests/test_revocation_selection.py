@@ -20,13 +20,16 @@ async def test_selected_membership_still_fetches_only_the_complete_crl(evidence)
             200,
             json={
                 "revocations": [
-                    {"certificate_id": cid} for cid in ["revoked-a", "revoked-b", "unasked"]
+                    {"certificate_id": cid}
+                    for cid in ["revoked-a", "revoked-b", "unasked"]
                 ],
                 "has_more": False,
             },
         )
 
-    client = RegistryClient("http://registry.test", transport=httpx.MockTransport(registry))
+    client = RegistryClient(
+        "http://registry.test", transport=httpx.MockTransport(registry)
+    )
     try:
         assert await revoked_certificates(
             client,

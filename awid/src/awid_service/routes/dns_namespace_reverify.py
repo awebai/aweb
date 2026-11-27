@@ -45,7 +45,9 @@ async def reverify_namespace_row(
                 new_controller_did=old_controller_did,
                 rotated=False,
             )
-        raise HTTPException(status_code=400, detail="local namespaces have no DNS to reverify")
+        raise HTTPException(
+            status_code=400, detail="local namespaces have no DNS to reverify"
+        )
 
     try:
         dns_authority = await verify_domain(domain)

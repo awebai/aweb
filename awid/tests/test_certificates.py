@@ -15,7 +15,12 @@ from conftest import build_signed_headers as _sign
 
 
 def _path_signed_headers(signing_key, did_key, *, method: str, path: str):
-    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    ts = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     payload = f"{ts}\n{method}\n{path}".encode("utf-8")
     sig = sign_message(signing_key, payload)
     return {
@@ -44,7 +49,10 @@ def _signed_certificate_blob(
         "member_did_key": member_did_key,
         "alias": alias,
         "lifetime": lifetime,
-        "issued_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "issued_at": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
     }
     if member_did_aw:
         cert["member_did_aw"] = member_did_aw
@@ -58,7 +66,9 @@ def _signed_certificate_blob(
 async def _setup_team(client, ns_signing_key, ns_controller_did, domain, team_name):
     """Register a namespace and create a team. Returns (team_signing_key, team_did_key, team_json)."""
     # Register namespace
-    headers = _sign(ns_signing_key, ns_controller_did, domain=domain, operation="register")
+    headers = _sign(
+        ns_signing_key, ns_controller_did, domain=domain, operation="register"
+    )
     resp = await client.post("/v1/namespaces", json={"domain": domain}, headers=headers)
     assert resp.status_code == 200, resp.text
 
@@ -66,8 +76,11 @@ async def _setup_team(client, ns_signing_key, ns_controller_did, domain, team_na
     team_signing_key, team_pub = generate_keypair()
     team_did_key = did_from_public_key(team_pub)
     headers = _sign(
-        ns_signing_key, ns_controller_did,
-        domain=domain, operation="create_team", name=team_name,
+        ns_signing_key,
+        ns_controller_did,
+        domain=domain,
+        operation="create_team",
+        name=team_name,
     )
     resp = await client.post(
         f"/v1/namespaces/{domain}/teams",
@@ -82,7 +95,12 @@ async def _setup_team(client, ns_signing_key, ns_controller_did, domain, team_na
 
 async def _register_identity(client, signing_key, did_key):
     did_aw = stable_id_from_did_key(did_key)
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
     proof = sign_message(
         signing_key,
@@ -117,9 +135,13 @@ async def _register_identity(client, signing_key, did_key):
     return did_aw
 
 
-async def _register_member_address(client, ns_key, ns_did, domain, name, member_key, member_did_key):
+async def _register_member_address(
+    client, ns_key, ns_did, domain, name, member_key, member_did_key
+):
     did_aw = await _register_identity(client, member_key, member_did_key)
-    headers = _sign(ns_key, ns_did, domain=domain, operation="register_address", name=name)
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="register_address", name=name
+    )
     resp = await client.post(
         f"/v1/namespaces/{domain}/addresses",
         json={
@@ -142,24 +164,45 @@ async def _register_member_address(client, ns_key, ns_did, domain, name, member_
 @pytest.mark.asyncio
 async def test_register_certificate(client, controller_identity):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "cert.com", "backend")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "cert.com", "backend"
+    )
 
     member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
     member_did_aw = await _register_member_address(
-        client, ns_key, ns_did, "cert.com", "alice", member_key, member_did_key,
+        client,
+        ns_key,
+        ns_did,
+        "cert.com",
+        "alice",
+        member_key,
+        member_did_key,
     )
     cert_id = str(uuid4())
 
     headers = _sign(
-        team_key, team_did,
-        domain="cert.com", operation="register_certificate",
-        team_name="backend", certificate_id=cert_id,
+        team_key,
+        team_did,
+        domain="cert.com",
+        operation="register_certificate",
+        team_name="backend",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/cert.com/teams/backend/certificates",
         json={
-            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='backend:cert.com', team_did_key=team_did, member_did_key=member_did_key, alias="alice", lifetime="global", member_did_aw=member_did_aw, member_address="cert.com/alice"),
+            "certificate": _signed_certificate_blob(
+                team_key,
+                certificate_id=cert_id,
+                team_id="backend:cert.com",
+                team_did_key=team_did,
+                member_did_key=member_did_key,
+                alias="alice",
+                lifetime="global",
+                member_did_aw=member_did_aw,
+                member_address="cert.com/alice",
+            ),
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "member_did_aw": member_did_aw,
@@ -176,22 +219,37 @@ async def test_register_certificate(client, controller_identity):
 
 
 @pytest.mark.asyncio
-async def test_register_certificate_accepts_legacy_lifetime_input_but_outputs_identity_scope(client, controller_identity):
+async def test_register_certificate_accepts_legacy_lifetime_input_but_outputs_identity_scope(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "legacy-lifetime.cert.com", "backend")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "legacy-lifetime.cert.com", "backend"
+    )
 
     _, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
     cert_id = str(uuid4())
     headers = _sign(
-        team_key, team_did,
-        domain="legacy-lifetime.cert.com", operation="register_certificate",
-        team_name="backend", certificate_id=cert_id,
+        team_key,
+        team_did,
+        domain="legacy-lifetime.cert.com",
+        operation="register_certificate",
+        team_name="backend",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/legacy-lifetime.cert.com/teams/backend/certificates",
         json={
-            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='backend:legacy-lifetime.cert.com', team_did_key=team_did, member_did_key=member_did_key, alias="alice", lifetime="persistent"),
+            "certificate": _signed_certificate_blob(
+                team_key,
+                certificate_id=cert_id,
+                team_id="backend:legacy-lifetime.cert.com",
+                team_did_key=team_did,
+                member_did_key=member_did_key,
+                alias="alice",
+                lifetime="persistent",
+            ),
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "alice",
@@ -201,7 +259,9 @@ async def test_register_certificate_accepts_legacy_lifetime_input_but_outputs_id
     )
     assert resp.status_code == 200, resp.text
 
-    resp = await client.get("/v1/namespaces/legacy-lifetime.cert.com/teams/backend/certificates")
+    resp = await client.get(
+        "/v1/namespaces/legacy-lifetime.cert.com/teams/backend/certificates"
+    )
     assert resp.status_code == 200, resp.text
     cert = resp.json()["certificates"][0]
     assert cert["identity_scope"] == "global"
@@ -209,14 +269,24 @@ async def test_register_certificate_accepts_legacy_lifetime_input_but_outputs_id
 
 
 @pytest.mark.asyncio
-async def test_register_certificate_with_blob_can_be_fetched_by_subject(client, controller_identity):
+async def test_register_certificate_with_blob_can_be_fetched_by_subject(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "blob.cert.com", "backend")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "blob.cert.com", "backend"
+    )
 
     member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
     member_did_aw = await _register_member_address(
-        client, ns_key, ns_did, "blob.cert.com", "alice", member_key, member_did_key,
+        client,
+        ns_key,
+        ns_did,
+        "blob.cert.com",
+        "alice",
+        member_key,
+        member_did_key,
     )
     cert_id = str(uuid4())
     certificate = _signed_certificate_blob(
@@ -231,9 +301,12 @@ async def test_register_certificate_with_blob_can_be_fetched_by_subject(client, 
     )
 
     headers = _sign(
-        team_key, team_did,
-        domain="blob.cert.com", operation="register_certificate",
-        team_name="backend", certificate_id=cert_id,
+        team_key,
+        team_did,
+        domain="blob.cert.com",
+        operation="register_certificate",
+        team_name="backend",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/blob.cert.com/teams/backend/certificates",
@@ -253,7 +326,9 @@ async def test_register_certificate_with_blob_can_be_fetched_by_subject(client, 
     path = f"/v1/namespaces/blob.cert.com/teams/backend/certificates/{cert_id}"
     resp = await client.get(
         path,
-        headers=_path_signed_headers(member_key, member_did_key, method="GET", path=path),
+        headers=_path_signed_headers(
+            member_key, member_did_key, method="GET", path=path
+        ),
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -268,7 +343,9 @@ async def test_register_certificate_with_blob_can_be_fetched_by_subject(client, 
 @pytest.mark.asyncio
 async def test_fetch_certificate_rejects_other_did(client, controller_identity):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "otherfetch.cert.com", "backend")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "otherfetch.cert.com", "backend"
+    )
 
     member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
@@ -284,9 +361,12 @@ async def test_fetch_certificate_rejects_other_did(client, controller_identity):
     )
 
     headers = _sign(
-        team_key, team_did,
-        domain="otherfetch.cert.com", operation="register_certificate",
-        team_name="backend", certificate_id=cert_id,
+        team_key,
+        team_did,
+        domain="otherfetch.cert.com",
+        operation="register_certificate",
+        team_name="backend",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/otherfetch.cert.com/teams/backend/certificates",
@@ -312,9 +392,13 @@ async def test_fetch_certificate_rejects_other_did(client, controller_identity):
 
 
 @pytest.mark.asyncio
-async def test_fetch_certificate_rejects_revoked_certificate(client, controller_identity):
+async def test_fetch_certificate_rejects_revoked_certificate(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "revokedfetch.cert.com", "backend")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "revokedfetch.cert.com", "backend"
+    )
 
     member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
@@ -368,16 +452,22 @@ async def test_fetch_certificate_rejects_revoked_certificate(client, controller_
     path = f"/v1/namespaces/revokedfetch.cert.com/teams/backend/certificates/{cert_id}"
     resp = await client.get(
         path,
-        headers=_path_signed_headers(member_key, member_did_key, method="GET", path=path),
+        headers=_path_signed_headers(
+            member_key, member_did_key, method="GET", path=path
+        ),
     )
     assert resp.status_code == 409, resp.text
     assert "revoked" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_fetch_certificate_metadata_only_record_has_explicit_error(client, controller_identity, awid_db_infra):
+async def test_fetch_certificate_metadata_only_record_has_explicit_error(
+    client, controller_identity, awid_db_infra
+):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "legacyfetch.cert.com", "backend")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "legacyfetch.cert.com", "backend"
+    )
 
     member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
@@ -387,35 +477,51 @@ async def test_fetch_certificate_metadata_only_record_has_explicit_error(client,
     await awid_db_infra.get_manager().execute(
         "INSERT INTO {{tables.team_certificates}} (team_uuid,certificate_id,member_did_key,alias,identity_scope) "
         "SELECT team_uuid,$1,$2,'alice','local' FROM {{tables.teams}} WHERE domain='legacyfetch.cert.com' AND name='backend'",
-        cert_id, member_did_key,
+        cert_id,
+        member_did_key,
     )
 
     path = f"/v1/namespaces/legacyfetch.cert.com/teams/backend/certificates/{cert_id}"
     resp = await client.get(
         path,
-        headers=_path_signed_headers(member_key, member_did_key, method="GET", path=path),
+        headers=_path_signed_headers(
+            member_key, member_did_key, method="GET", path=path
+        ),
     )
     assert resp.status_code == 409, resp.text
     assert "reissue" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_register_certificate_rejects_member_address_for_different_did_aw(client, controller_identity):
+async def test_register_certificate_rejects_member_address_for_different_did_aw(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "mismatch.cert.com", "backend")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "mismatch.cert.com", "backend"
+    )
 
     member_key, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
     await _register_member_address(
-        client, ns_key, ns_did, "mismatch.cert.com", "alice", member_key, member_did_key,
+        client,
+        ns_key,
+        ns_did,
+        "mismatch.cert.com",
+        "alice",
+        member_key,
+        member_did_key,
     )
     other_did_aw = "did:aw:other"
     cert_id = str(uuid4())
 
     headers = _sign(
-        team_key, team_did,
-        domain="mismatch.cert.com", operation="register_certificate",
-        team_name="backend", certificate_id=cert_id,
+        team_key,
+        team_did,
+        domain="mismatch.cert.com",
+        operation="register_certificate",
+        team_name="backend",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/mismatch.cert.com/teams/backend/certificates",
@@ -435,18 +541,25 @@ async def test_register_certificate_rejects_member_address_for_different_did_aw(
 
 
 @pytest.mark.asyncio
-async def test_register_certificate_rejects_member_address_without_did_aw(client, controller_identity):
+async def test_register_certificate_rejects_member_address_without_did_aw(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "missingdid.cert.com", "backend")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "missingdid.cert.com", "backend"
+    )
 
     _, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
     cert_id = str(uuid4())
 
     headers = _sign(
-        team_key, team_did,
-        domain="missingdid.cert.com", operation="register_certificate",
-        team_name="backend", certificate_id=cert_id,
+        team_key,
+        team_did,
+        domain="missingdid.cert.com",
+        operation="register_certificate",
+        team_name="backend",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/missingdid.cert.com/teams/backend/certificates",
@@ -460,7 +573,9 @@ async def test_register_certificate_rejects_member_address_without_did_aw(client
         headers=headers,
     )
     assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"] == "member_did_aw is required when member_address is set"
+    assert (
+        resp.json()["detail"] == "member_did_aw is required when member_address is set"
+    )
 
 
 @pytest.mark.asyncio
@@ -473,14 +588,25 @@ async def test_register_certificate_ephemeral(client, controller_identity):
     cert_id = str(uuid4())
 
     headers = _sign(
-        team_key, team_did,
-        domain="eph.com", operation="register_certificate",
-        team_name="ops", certificate_id=cert_id,
+        team_key,
+        team_did,
+        domain="eph.com",
+        operation="register_certificate",
+        team_name="ops",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/eph.com/teams/ops/certificates",
         json={
-            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='ops:eph.com', team_did_key=team_did, member_did_key=member_did_key, alias="bot1", lifetime="local"),
+            "certificate": _signed_certificate_blob(
+                team_key,
+                certificate_id=cert_id,
+                team_id="ops:eph.com",
+                team_did_key=team_did,
+                member_did_key=member_did_key,
+                alias="bot1",
+                lifetime="local",
+            ),
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "bot1",
@@ -496,21 +622,34 @@ async def test_register_certificate_ephemeral(client, controller_identity):
 @pytest.mark.asyncio
 async def test_register_certificate_duplicate_returns_409(client, controller_identity):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "dup.cert.com", "infra")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "dup.cert.com", "infra"
+    )
 
     _, member_pub = generate_keypair()
     member_did_key = did_from_public_key(member_pub)
     cert_id = str(uuid4())
 
     headers = _sign(
-        team_key, team_did,
-        domain="dup.cert.com", operation="register_certificate",
-        team_name="infra", certificate_id=cert_id,
+        team_key,
+        team_did,
+        domain="dup.cert.com",
+        operation="register_certificate",
+        team_name="infra",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/dup.cert.com/teams/infra/certificates",
         json={
-            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='infra:dup.cert.com', team_did_key=team_did, member_did_key=member_did_key, alias="alice", lifetime='persistent'),
+            "certificate": _signed_certificate_blob(
+                team_key,
+                certificate_id=cert_id,
+                team_id="infra:dup.cert.com",
+                team_did_key=team_did,
+                member_did_key=member_did_key,
+                alias="alice",
+                lifetime="persistent",
+            ),
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "alice",
@@ -521,14 +660,25 @@ async def test_register_certificate_duplicate_returns_409(client, controller_ide
 
     # Second registration with same certificate_id must be rejected
     headers = _sign(
-        team_key, team_did,
-        domain="dup.cert.com", operation="register_certificate",
-        team_name="infra", certificate_id=cert_id,
+        team_key,
+        team_did,
+        domain="dup.cert.com",
+        operation="register_certificate",
+        team_name="infra",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/dup.cert.com/teams/infra/certificates",
         json={
-            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='infra:dup.cert.com', team_did_key=team_did, member_did_key=member_did_key, alias="alice", lifetime='persistent'),
+            "certificate": _signed_certificate_blob(
+                team_key,
+                certificate_id=cert_id,
+                team_id="infra:dup.cert.com",
+                team_did_key=team_did,
+                member_did_key=member_did_key,
+                alias="alice",
+                lifetime="persistent",
+            ),
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "alice",
@@ -541,22 +691,33 @@ async def test_register_certificate_duplicate_returns_409(client, controller_ide
 
 
 @pytest.mark.asyncio
-async def test_register_certificate_deleted_team_returns_404(client, controller_identity):
+async def test_register_certificate_deleted_team_returns_404(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "del.cert.com", "gone")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "del.cert.com", "gone"
+    )
 
     # Delete the team
-    headers = _sign(ns_key, ns_did, domain="del.cert.com", operation="delete_team", team_name="gone")
-    resp = await client.delete("/v1/namespaces/del.cert.com/teams/gone", headers=headers)
+    headers = _sign(
+        ns_key, ns_did, domain="del.cert.com", operation="delete_team", team_name="gone"
+    )
+    resp = await client.delete(
+        "/v1/namespaces/del.cert.com/teams/gone", headers=headers
+    )
     assert resp.status_code == 200
 
     # Try to register a cert on the deleted team
     _, member_pub = generate_keypair()
     cert_id = str(uuid4())
     headers = _sign(
-        team_key, team_did,
-        domain="del.cert.com", operation="register_certificate",
-        team_name="gone", certificate_id=cert_id,
+        team_key,
+        team_did,
+        domain="del.cert.com",
+        operation="register_certificate",
+        team_name="gone",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/del.cert.com/teams/gone/certificates",
@@ -573,7 +734,9 @@ async def test_register_certificate_deleted_team_returns_404(client, controller_
 @pytest.mark.asyncio
 async def test_register_certificate_wrong_key_returns_403(client, controller_identity):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "auth.cert.com", "sec")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "auth.cert.com", "sec"
+    )
 
     wrong_key, wrong_pub = generate_keypair()
     wrong_did = did_from_public_key(wrong_pub)
@@ -581,9 +744,12 @@ async def test_register_certificate_wrong_key_returns_403(client, controller_ide
     _, member_pub = generate_keypair()
     cert_id = str(uuid4())
     headers = _sign(
-        wrong_key, wrong_did,
-        domain="auth.cert.com", operation="register_certificate",
-        team_name="sec", certificate_id=cert_id,
+        wrong_key,
+        wrong_did,
+        domain="auth.cert.com",
+        operation="register_certificate",
+        team_name="sec",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/auth.cert.com/teams/sec/certificates",
@@ -600,7 +766,9 @@ async def test_register_certificate_wrong_key_returns_403(client, controller_ide
 @pytest.mark.asyncio
 async def test_register_certificate_no_auth_returns_401(client, controller_identity):
     ns_key, ns_did = controller_identity
-    team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "noauth.cert.com", "web")
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "noauth.cert.com", "web"
+    )
 
     _, member_pub = generate_keypair()
     resp = await client.post(
@@ -615,20 +783,27 @@ async def test_register_certificate_no_auth_returns_401(client, controller_ident
 
 
 @pytest.mark.asyncio
-async def test_register_certificate_nonexistent_team_returns_404(client, controller_identity):
+async def test_register_certificate_nonexistent_team_returns_404(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     # Register namespace but no team
     headers = _sign(ns_key, ns_did, domain="noteam.cert.com", operation="register")
-    resp = await client.post("/v1/namespaces", json={"domain": "noteam.cert.com"}, headers=headers)
+    resp = await client.post(
+        "/v1/namespaces", json={"domain": "noteam.cert.com"}, headers=headers
+    )
     assert resp.status_code == 200
 
     _, member_pub = generate_keypair()
     # Use the namespace controller key (will fail on team lookup, not auth)
     cert_id = str(uuid4())
     headers = _sign(
-        ns_key, ns_did,
-        domain="noteam.cert.com", operation="register_certificate",
-        team_name="nope", certificate_id=cert_id,
+        ns_key,
+        ns_did,
+        domain="noteam.cert.com",
+        operation="register_certificate",
+        team_name="nope",
+        certificate_id=cert_id,
     )
     resp = await client.post(
         "/v1/namespaces/noteam.cert.com/teams/nope/certificates",
@@ -649,7 +824,9 @@ async def test_register_certificate_nonexistent_team_returns_404(client, control
 
 @pytest.mark.asyncio
 async def test_certificate_listing_pages_past_the_default_limit(
-    client, controller_identity, awid_db_infra,
+    client,
+    controller_identity,
+    awid_db_infra,
 ):
     """A team larger than one page reports that it is larger, and the cursor
     reaches the rest.
@@ -673,7 +850,8 @@ async def test_certificate_listing_pages_past_the_default_limit(
     db = awid_db_infra.get_manager("aweb")
     team_row = await db.fetch_one(
         "SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2",
-        "paging.cert.com", "backend",
+        "paging.cert.com",
+        "backend",
     )
     total = 60  # > DEFAULT_LIMIT of 50
     registered: list[str] = []
@@ -686,8 +864,11 @@ async def test_certificate_listing_pages_past_the_default_limit(
                 (team_uuid, certificate_id, member_did_key, alias, identity_scope, issued_at)
             VALUES ($1, $2, $3, $4, $5, '2026-07-29T00:00:00+00:00'::timestamptz)
             """,
-            team_row["team_uuid"], cert_id, did_from_public_key(member_pub),
-            f"member-{index:03d}", "local",
+            team_row["team_uuid"],
+            cert_id,
+            did_from_public_key(member_pub),
+            f"member-{index:03d}",
+            "local",
         )
         registered.append(cert_id)
 
@@ -725,26 +906,43 @@ async def test_certificate_listing_pages_past_the_default_limit(
 
 
 @pytest.mark.asyncio
-async def test_certificate_listing_serves_a_whole_small_team_in_one_page(client, controller_identity):
+async def test_certificate_listing_serves_a_whole_small_team_in_one_page(
+    client, controller_identity
+):
     """Under the limit, has_more is false and there is no cursor - so has_more
     tracks the team and is not simply always true."""
     ns_key, ns_did = controller_identity
     team_key, team_did, _ = await _setup_team(
-        client, ns_key, ns_did, "small.cert.com", "backend",
+        client,
+        ns_key,
+        ns_did,
+        "small.cert.com",
+        "backend",
     )
 
     for index in range(3):
         _, member_pub = generate_keypair()
         cert_id = str(uuid4())
         headers = _sign(
-            team_key, team_did,
-            domain="small.cert.com", operation="register_certificate",
-            team_name="backend", certificate_id=cert_id,
+            team_key,
+            team_did,
+            domain="small.cert.com",
+            operation="register_certificate",
+            team_name="backend",
+            certificate_id=cert_id,
         )
         resp = await client.post(
             "/v1/namespaces/small.cert.com/teams/backend/certificates",
             json={
-            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='backend:small.cert.com', team_did_key=team_did, member_did_key=did_from_public_key(member_pub), alias=f"member-{index:03d}", lifetime="local"),
+                "certificate": _signed_certificate_blob(
+                    team_key,
+                    certificate_id=cert_id,
+                    team_id="backend:small.cert.com",
+                    team_did_key=team_did,
+                    member_did_key=did_from_public_key(member_pub),
+                    alias=f"member-{index:03d}",
+                    lifetime="local",
+                ),
                 "certificate_id": cert_id,
                 "member_did_key": did_from_public_key(member_pub),
                 "alias": f"member-{index:03d}",

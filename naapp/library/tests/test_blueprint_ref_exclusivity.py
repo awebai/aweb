@@ -59,7 +59,9 @@ def _profile_files() -> list[dict[str, str]]:
     return collect_files(_PROFILE_SOURCE)
 
 
-async def _publish(db, team_id: str, blueprint_ref: str, *, version: str = "0.1.0") -> dict[str, Any]:
+async def _publish(
+    db, team_id: str, blueprint_ref: str, *, version: str = "0.1.0"
+) -> dict[str, Any]:
     return await publish_blueprint(
         db,
         principal=SimpleNamespace(team_id=team_id),

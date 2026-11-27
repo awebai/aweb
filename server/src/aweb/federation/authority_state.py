@@ -169,7 +169,9 @@ class AuthorityRepository:
                 advanced = False
                 if current is None:
                     if checkpoint.expected_revision is not None:
-                        raise FederationAuthorityError("federation_authority_cas_conflict")
+                        raise FederationAuthorityError(
+                            "federation_authority_cas_conflict"
+                        )
                     revision = 1
                     await tx.execute(
                         """
@@ -213,7 +215,9 @@ class AuthorityRepository:
                         checkpoint.expected_revision != current["revision"]
                         or checkpoint.expected_entry_hash != current["entry_hash"]
                     ):
-                        raise FederationAuthorityError("federation_authority_cas_conflict")
+                        raise FederationAuthorityError(
+                            "federation_authority_cas_conflict"
+                        )
                     row = await tx.fetch_one(
                         """
                         UPDATE {{tables.federation_did_checkpoints}}
@@ -232,7 +236,9 @@ class AuthorityRepository:
                         checkpoint.expected_entry_hash,
                     )
                     if row is None:
-                        raise FederationAuthorityError("federation_authority_cas_conflict")
+                        raise FederationAuthorityError(
+                            "federation_authority_cas_conflict"
+                        )
                     revision = row["revision"]
                     advanced = True
 
@@ -276,8 +282,12 @@ class AuthorityRepository:
                         cohort.canonical_address,
                     )
 
-                generation = 1 if existing_cohort is None else existing_cohort["generation"] + 1
-                cohort_revision = 1 if existing_cohort is None else existing_cohort["revision"] + 1
+                generation = (
+                    1 if existing_cohort is None else existing_cohort["generation"] + 1
+                )
+                cohort_revision = (
+                    1 if existing_cohort is None else existing_cohort["revision"] + 1
+                )
                 row = await tx.fetch_one(
                     """
                     WITH authority_clock AS MATERIALIZED (
@@ -360,7 +370,9 @@ class AuthorityRepository:
             ) from exc
 
     def _cohort_matches(self, row, candidate: AddressAuthorityCandidate) -> bool:
-        return all(row[field] == getattr(candidate, field) for field in _COHORT_COMPARE_FIELDS)
+        return all(
+            row[field] == getattr(candidate, field) for field in _COHORT_COMPARE_FIELDS
+        )
 
     async def get_checkpoint(self, did_aw: str) -> IdentityCheckpoint | None:
         try:

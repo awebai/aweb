@@ -274,8 +274,10 @@ def main() -> None:
         original_python_registry = python_registry.read_text(encoding="utf-8")
         replace_exact(
             python_registry,
-            'if authority.selection == "dns" and namespace_controller != authority.controller_did:',
-            'if False and authority.selection == "dns" and namespace_controller != authority.controller_did:',
+            '            authority.selection == "dns"\n'
+            "            and namespace_controller != authority.controller_did\n",
+            '            False\n            and authority.selection == "dns"\n'
+            "            and namespace_controller != authority.controller_did\n",
         )
         require_killed(
             run_python_test(

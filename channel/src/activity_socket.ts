@@ -19,7 +19,7 @@ export interface HookEvent {
 }
 
 /** The emitter calls a hook event can make. */
-export interface HookEventTarget {
+interface HookEventTarget {
   turnStarted(): void;
   thinking(): void;
   tool(name: string, input: unknown): void;

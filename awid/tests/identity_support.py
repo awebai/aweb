@@ -11,7 +11,12 @@ from awid.signing import sign_message
 
 async def register_identity(client, signing_key, did_key):
     did_aw = stable_id_from_did_key(did_key)
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     state_hash = identity_state_hash(did_aw=did_aw, current_did_key=did_key)
     proof = sign_message(
         signing_key,
@@ -47,7 +52,9 @@ async def register_identity(client, signing_key, did_key):
 
 
 async def rotate_identity(client, old_signing_key, did_aw, old_did_key, new_did_key):
-    resp = await request_rotation(client, old_signing_key, did_aw, old_did_key, new_did_key)
+    resp = await request_rotation(
+        client, old_signing_key, did_aw, old_did_key, new_did_key
+    )
     assert resp.status_code == 200, resp.text
     return resp.json()
 
@@ -58,7 +65,12 @@ async def request_rotation(client, old_signing_key, did_aw, old_did_key, new_did
     assert key_resp.status_code == 200, key_resp.text
     head = key_resp.json()["log_head"]
 
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     state_hash = identity_state_hash(did_aw=did_aw, current_did_key=new_did_key)
     seq = head["seq"] + 1
     signature = sign_message(

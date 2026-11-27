@@ -15,7 +15,6 @@ GETTERS = {
     f"awid_service.deps.{name}"
     for name in (
         "get_db",
-        "get_redis",
         "get_domain_verifier",
     )
 }

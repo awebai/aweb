@@ -71,7 +71,9 @@ def _refuse(code: str, message: str) -> StatusDocumentError:
 
 
 def _decode_payload(signed_payload: str) -> bytes:
-    return decode_payload(signed_payload, max_bytes=MAX_DOCUMENT_BYTES, error=StatusDocumentError)
+    return decode_payload(
+        signed_payload, max_bytes=MAX_DOCUMENT_BYTES, error=StatusDocumentError
+    )
 
 
 def _parse_canonical(raw: bytes) -> dict[str, Any]:
@@ -104,7 +106,11 @@ def _check_required(document: dict[str, Any]) -> None:
 
 def _check_values(document: dict[str, Any]) -> tuple[datetime, datetime]:
     version = document["v"]
-    if not isinstance(version, int) or isinstance(version, bool) or version != STATUS_VERSION:
+    if (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version != STATUS_VERSION
+    ):
         raise _refuse("invalid_value", f"v must be {STATUS_VERSION}")
     for name in ("team_id", "agent", "publisher_did"):
         if not isinstance(document[name], str) or not document[name]:
@@ -115,7 +121,10 @@ def _check_values(document: dict[str, Any]) -> tuple[datetime, datetime]:
         raise _refuse("invalid_value", "publisher_did must be a did:key")
     if not is_safe_positive_integer(document["seq"]):
         raise _refuse("invalid_value", "seq must be an integer from 1 to 2^53-1")
-    if not isinstance(document["reachable"], str) or document["reachable"] not in REACHABLE_VALUES:
+    if (
+        not isinstance(document["reachable"], str)
+        or document["reachable"] not in REACHABLE_VALUES
+    ):
         raise _refuse("invalid_value", "reachable must be yes, degraded, no or unknown")
     if "reason" in document:
         reason = document["reason"]
@@ -127,7 +136,10 @@ def _check_values(document: dict[str, Any]) -> tuple[datetime, datetime]:
             or len(code.encode("utf-8")) > REASON_CODE_MAX_BYTES
             or not _REASON_CODE.fullmatch(code)
         ):
-            raise _refuse("invalid_value", "reason.code must be a namespaced code of at most 64 bytes")
+            raise _refuse(
+                "invalid_value",
+                "reason.code must be a namespaced code of at most 64 bytes",
+            )
         if not isinstance(reason["text"], str):
             raise _refuse("invalid_value", "reason.text must be a string")
     if "fixing" in document:
@@ -135,11 +147,18 @@ def _check_values(document: dict[str, Any]) -> tuple[datetime, datetime]:
         if not isinstance(fixing, dict):
             raise _refuse("invalid_value", "fixing must be an object")
         if not isinstance(fixing["by"], str) or fixing["by"] not in FIXING_BY_VALUES:
-            raise _refuse("invalid_value", "fixing.by must be automatic, operator, nobody or unknown")
+            raise _refuse(
+                "invalid_value",
+                "fixing.by must be automatic, operator, nobody or unknown",
+            )
         if "text" in fixing and not isinstance(fixing["text"], str):
             raise _refuse("invalid_value", "fixing.text must be a string")
-    observed_at = parse_timestamp("observed_at", document["observed_at"], error=StatusDocumentError)
-    valid_until = parse_timestamp("valid_until", document["valid_until"], error=StatusDocumentError)
+    observed_at = parse_timestamp(
+        "observed_at", document["observed_at"], error=StatusDocumentError
+    )
+    valid_until = parse_timestamp(
+        "valid_until", document["valid_until"], error=StatusDocumentError
+    )
     return observed_at, valid_until
 
 
@@ -160,7 +179,10 @@ def _check_texts(document: dict[str, Any]) -> None:
             raise _refuse("text_too_long", f"{name} exceeds {limit} bytes")
     for name, text, _ in _texts(document):
         if any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in text):
-            raise _refuse("control_character", f"{name} must be one line without control characters")
+            raise _refuse(
+                "control_character",
+                f"{name} must be one line without control characters",
+            )
 
 
 def stored_status_document(signed_payload: str) -> dict[str, Any]:
@@ -189,13 +211,22 @@ def verify_status_document(
     observed_at, valid_until = _check_values(document)
     _check_texts(document)
     if document["publisher_did"] != signer_did:
-        raise _refuse("publisher_mismatch", "publisher_did is not the authenticated signer")
+        raise _refuse(
+            "publisher_mismatch", "publisher_did is not the authenticated signer"
+        )
     if verify_signature(signer_did, raw, signature) is not VerifyResult.VERIFIED:
-        raise _refuse("bad_signature", "the signature does not verify for the publisher")
+        raise _refuse(
+            "bad_signature", "the signature does not verify for the publisher"
+        )
     if not observed_at < valid_until <= observed_at + MAX_VALIDITY:
-        raise _refuse("validity_window", "valid_until must be after observed_at and at most 15 minutes later")
+        raise _refuse(
+            "validity_window",
+            "valid_until must be after observed_at and at most 15 minutes later",
+        )
     if abs(now - observed_at) > CLOCK_SKEW:
-        raise _refuse("clock_skew", "observed_at is more than 5 minutes from the server clock")
+        raise _refuse(
+            "clock_skew", "observed_at is more than 5 minutes from the server clock"
+        )
     if now > valid_until:
         raise _refuse("expired", "valid_until has passed")
     return document

@@ -8,7 +8,9 @@ STALL_SECONDS = 10.0
 POLL_SECONDS = 0.01
 
 
-async def wait_until_blocked_on_lock(db, task: asyncio.Task, *, waiters: int = 1) -> None:
+async def wait_until_blocked_on_lock(
+    db, task: asyncio.Task, *, waiters: int = 1
+) -> None:
     """Return once ``waiters`` backends in this database wait on a lock.
 
     Fails if ``task`` finishes first, which means it never waited, or if no

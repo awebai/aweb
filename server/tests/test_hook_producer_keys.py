@@ -70,7 +70,9 @@ def test_configured_keys_keep_retired_ones(monkeypatch: pytest.MonkeyPatch) -> N
         [{**RETIRED, "valid_until": "2026-08-01T00:00:00Z"}],
     ],
 )
-def test_a_malformed_key_list_is_refused(monkeypatch: pytest.MonkeyPatch, keys: object) -> None:
+def test_a_malformed_key_list_is_refused(
+    monkeypatch: pytest.MonkeyPatch, keys: object
+) -> None:
     _configure(monkeypatch, keys)
     with pytest.raises(ValueError):
         get_hook_producer_keys()
@@ -88,7 +90,9 @@ def test_the_server_does_not_start_with_a_malformed_key_list(
         get_settings()
 
 
-def test_a_key_list_that_is_not_json_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_key_list_that_is_not_json_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("AWEB_HOOK_PRODUCER_KEYS", "[{")
     with pytest.raises(ValueError):
         get_hook_producer_keys()
@@ -97,12 +101,16 @@ def test_a_key_list_that_is_not_json_is_refused(monkeypatch: pytest.MonkeyPatch)
 async def _get(path: str, headers: dict[str, str] | None = None):
     app = FastAPI()
     app.include_router(app_hooks_router)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         return await client.get(path, headers=headers or {})
 
 
 @pytest.mark.asyncio
-async def test_anyone_can_read_the_producer_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_anyone_can_read_the_producer_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _configure(monkeypatch, [RETIRED, CURRENT])
     monkeypatch.setenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", "30")
     response = await _get(PRODUCER_KEYS_PATH)
@@ -114,8 +122,12 @@ async def test_anyone_can_read_the_producer_keys(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
-async def test_the_producer_keys_read_takes_no_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_the_producer_keys_read_takes_no_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _configure(monkeypatch, [CURRENT])
-    response = await _get(PRODUCER_KEYS_PATH, {"Authorization": "AWEB-App-Hook-Resolve DIDKey x y"})
+    response = await _get(
+        PRODUCER_KEYS_PATH, {"Authorization": "AWEB-App-Hook-Resolve DIDKey x y"}
+    )
     assert response.status_code == 200, response.text
     assert response.json()["keys"] == [CURRENT]

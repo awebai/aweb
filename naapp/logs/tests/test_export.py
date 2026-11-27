@@ -74,9 +74,7 @@ def test_a_truncated_tail_verifies_alone_and_is_caught_by_a_later_witness() -> N
 
 def test_a_dropped_final_epoch_is_caught_by_a_witness_of_it() -> None:
     log = two_epochs()
-    report = verified(
-        bundle(log, second_epoch=False), witness_checkpoints=[log.second_head]
-    )
+    report = verified(bundle(log, second_epoch=False), witness_checkpoints=[log.second_head])
     assert report["intact"] is False
     assert report["witnesses"]["contradicted"] == [
         {"artefact": "checkpoint", "index": 0, "reason": "epoch_absent"}

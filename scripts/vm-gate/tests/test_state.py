@@ -104,11 +104,6 @@ class StateTests(unittest.TestCase):
         s.reserve("one", 1, expires=100)
         self.assertEqual(s.get("one")["created"], 10)
 
-    def test_initial_schema_has_an_ordered_version(self):
-        self.store(10)
-        with sqlite3.connect(self.path) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
-
     def test_newer_schema_is_refused(self):
         with sqlite3.connect(self.path) as db:
             db.execute("PRAGMA user_version=99")

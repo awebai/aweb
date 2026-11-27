@@ -154,5 +154,7 @@ def test_a_client_delivery_without_the_registered_certificates_is_refused() -> N
     case = next(c for c in VECTOR["positive_cases"] if "certificate" in c)
     receive = {k: v for k, v in case["receive"].items() if k != "registered_certificate_ids"}
     with pytest.raises(Refused) as refused:
-        verify_delivery("POST", "/hooks/ingest", case["headers"], case["body"].encode(), _options(receive))
+        verify_delivery(
+            "POST", "/hooks/ingest", case["headers"], case["body"].encode(), _options(receive)
+        )
     assert refused.value.code == "verifier_misconfigured"

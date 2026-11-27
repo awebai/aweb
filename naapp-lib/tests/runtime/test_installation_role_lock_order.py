@@ -31,8 +31,11 @@ class AuthorityOutsideTransaction:
 
 def grant(installation_id, generation):
     return Grant(
-        team_id=TEAM, installation_id=installation_id, generation=generation,
-        scopes=frozenset({"fixture:write"}), fresh_until=time.monotonic_ns() + seconds_to_ns(60),
+        team_id=TEAM,
+        installation_id=installation_id,
+        generation=generation,
+        scopes=frozenset({"fixture:write"}),
+        fresh_until=time.monotonic_ns() + seconds_to_ns(60),
     )
 
 
@@ -57,7 +60,10 @@ async def test_role_hold_and_installation_retirement_do_not_deadlock(test_db_fac
         await roles.purge_team(tx, team_id)
 
     fence = InstallationFence(
-        db, app_id="fixture", grants=AuthorityOutsideTransaction(), on_retire=on_retire,
+        db,
+        app_id="fixture",
+        grants=AuthorityOutsideTransaction(),
+        on_retire=on_retire,
     )
     async with db.transaction() as tx:
         admitted = await fence.admit(tx, grant("old-installation", 1))
@@ -80,7 +86,9 @@ async def test_role_hold_and_installation_retirement_do_not_deadlock(test_db_fac
                 await retirement_attempting.wait()
                 await asyncio.sleep(0.05)
                 assert not retired.is_set()
-            await tx.execute("INSERT INTO fixture_stage_evidence VALUES ($1)", admitted.installation_id)
+            await tx.execute(
+                "INSERT INTO fixture_stage_evidence VALUES ($1)", admitted.installation_id
+            )
         return "committed"
 
     async def retire():
@@ -98,4 +106,6 @@ async def test_role_hold_and_installation_retirement_do_not_deadlock(test_db_fac
     assert current.installation_id == "new-installation"
     assert not await roles.has_role(db, PRINCIPAL, ROLE)
     assert stage_result == ("committed" if first == "staging" else "refused")
-    assert await db.fetch_value("SELECT count(*) FROM fixture_stage_evidence") == (first == "staging")
+    assert await db.fetch_value("SELECT count(*) FROM fixture_stage_evidence") == (
+        first == "staging"
+    )

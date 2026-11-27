@@ -6,6 +6,7 @@ creating the team again under the same name must not empty that list: a
 certificate revoked before the deletion stays revoked, whatever key the team is
 created with again. Revocation is one-way.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,14 +34,18 @@ async def _create_team_with_key(client, ns_key, ns_did, domain, name, team_did):
 
 
 async def _delete_team(client, ns_key, ns_did, domain, name):
-    headers = _sign(ns_key, ns_did, domain=domain, operation="delete_team", team_name=name)
+    headers = _sign(
+        ns_key, ns_did, domain=domain, operation="delete_team", team_name=name
+    )
     resp = await client.delete(f"/v1/namespaces/{domain}/teams/{name}", headers=headers)
     assert resp.status_code == 200, resp.text
 
 
 async def _delete_namespace(client, ns_key, ns_did, domain):
     headers = _sign(ns_key, ns_did, domain=domain, operation="delete_namespace")
-    resp = await client.request("DELETE", f"/v1/namespaces/{domain}", headers=headers, json={})
+    resp = await client.request(
+        "DELETE", f"/v1/namespaces/{domain}", headers=headers, json={}
+    )
     assert resp.status_code == 200, resp.text
 
 
@@ -63,11 +68,15 @@ async def _team_with_revoked_certificate(client, ns_key, ns_did, domain, name):
 
 
 @pytest.mark.asyncio
-async def test_revocation_survives_team_recreation_with_the_same_key(client, controller_identity):
+async def test_revocation_survives_team_recreation_with_the_same_key(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     domain = "recreate-same.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    _, team_did, cert_id = await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "ops")
+    _, team_did, cert_id = await _team_with_revoked_certificate(
+        client, ns_key, ns_did, domain, "ops"
+    )
 
     await _delete_team(client, ns_key, ns_did, domain, "ops")
     for path in ("ops", "ops/revocations"):
@@ -80,25 +89,35 @@ async def test_revocation_survives_team_recreation_with_the_same_key(client, con
 
 
 @pytest.mark.asyncio
-async def test_revocation_survives_team_recreation_with_a_new_key(client, controller_identity):
+async def test_revocation_survives_team_recreation_with_a_new_key(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     domain = "recreate-new.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    _, _, cert_id = await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "ops")
+    _, _, cert_id = await _team_with_revoked_certificate(
+        client, ns_key, ns_did, domain, "ops"
+    )
 
     await _delete_team(client, ns_key, ns_did, domain, "ops")
     _, new_pub = generate_keypair()
-    await _create_team_with_key(client, ns_key, ns_did, domain, "ops", did_from_public_key(new_pub))
+    await _create_team_with_key(
+        client, ns_key, ns_did, domain, "ops", did_from_public_key(new_pub)
+    )
 
     assert cert_id in await _revoked_ids(client, domain, "ops")
 
 
 @pytest.mark.asyncio
-async def test_revocation_survives_namespace_deletion_and_team_recreation(client, controller_identity):
+async def test_revocation_survives_namespace_deletion_and_team_recreation(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     domain = "recreate-ns.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    _, team_did, cert_id = await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "ops")
+    _, team_did, cert_id = await _team_with_revoked_certificate(
+        client, ns_key, ns_did, domain, "ops"
+    )
 
     await _delete_namespace(client, ns_key, ns_did, domain)
     await _register_namespace(client, ns_key, ns_did, domain)
@@ -108,12 +127,18 @@ async def test_revocation_survives_namespace_deletion_and_team_recreation(client
 
 
 @pytest.mark.asyncio
-async def test_recreated_team_lists_its_own_revocations_and_no_other_teams(client, controller_identity):
+async def test_recreated_team_lists_its_own_revocations_and_no_other_teams(
+    client, controller_identity
+):
     ns_key, ns_did = controller_identity
     domain = "recreate-scope.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    team_key, team_did, earlier = await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "ops")
-    _, _, other_team = await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "web")
+    team_key, team_did, earlier = await _team_with_revoked_certificate(
+        client, ns_key, ns_did, domain, "ops"
+    )
+    _, _, other_team = await _team_with_revoked_certificate(
+        client, ns_key, ns_did, domain, "web"
+    )
 
     await _delete_team(client, ns_key, ns_did, domain, "ops")
     await _create_team_with_key(client, ns_key, ns_did, domain, "ops", team_did)
@@ -121,7 +146,9 @@ async def test_recreated_team_lists_its_own_revocations_and_no_other_teams(clien
     await _register_certificate(client, team_key, team_did, domain, "ops", current)
     await _revoke_certificate(client, team_key, team_did, domain, "ops", current)
     active = str(uuid4())
-    await _register_certificate(client, team_key, team_did, domain, "ops", active, alias="bob")
+    await _register_certificate(
+        client, team_key, team_did, domain, "ops", active, alias="bob"
+    )
 
     assert await _revoked_ids(client, domain, "ops") == {earlier, current}
     assert await _revoked_ids(client, domain, "web") == {other_team}
@@ -161,7 +188,9 @@ SELECT
 
 
 def _census_file_statement() -> str:
-    script = (Path(__file__).resolve().parents[1] / "ops" / "team-recreation-census.sql").read_text()
+    script = (
+        Path(__file__).resolve().parents[1] / "ops" / "team-recreation-census.sql"
+    ).read_text()
     _before, begin, tail = script.partition("BEGIN READ ONLY;")
     statement, rollback, after = tail.rpartition("ROLLBACK;")
     assert begin and rollback and not after.strip()
@@ -183,24 +212,32 @@ async def _read_only_census(pool) -> dict:
 
 @pytest.mark.asyncio
 async def test_recreation_census_counts_teams_recreated_with_the_same_key(
-    client, controller_identity, shared_test_pool,
+    client,
+    controller_identity,
+    shared_test_pool,
 ):
     ns_key, ns_did = controller_identity
     domain = "census.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    _, same_did, _ = await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "same")
+    _, same_did, _ = await _team_with_revoked_certificate(
+        client, ns_key, ns_did, domain, "same"
+    )
     await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "fresh")
     await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "gone")
     await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "live")
     # A deleted team that never held a certificate has no certificate rows,
     # the shape every team deleted before acxc.101 left.
     _, empty_pub = generate_keypair()
-    await _create_team_with_key(client, ns_key, ns_did, domain, "empty", did_from_public_key(empty_pub))
+    await _create_team_with_key(
+        client, ns_key, ns_did, domain, "empty", did_from_public_key(empty_pub)
+    )
     for name in ("same", "fresh", "gone", "empty"):
         await _delete_team(client, ns_key, ns_did, domain, name)
     await _create_team_with_key(client, ns_key, ns_did, domain, "same", same_did)
     _, new_pub = generate_keypair()
-    await _create_team_with_key(client, ns_key, ns_did, domain, "fresh", did_from_public_key(new_pub))
+    await _create_team_with_key(
+        client, ns_key, ns_did, domain, "fresh", did_from_public_key(new_pub)
+    )
 
     assert await _read_only_census(shared_test_pool) == {
         "deleted_teams": 4,
@@ -212,13 +249,17 @@ async def test_recreation_census_counts_teams_recreated_with_the_same_key(
 
 
 async def _certificate_status(client, domain, name, cert_id) -> dict:
-    resp = await client.get(f"/v1/namespaces/{domain}/teams/{name}/certificates/{cert_id}/status")
+    resp = await client.get(
+        f"/v1/namespaces/{domain}/teams/{name}/certificates/{cert_id}/status"
+    )
     assert resp.status_code == 200, resp.text
     return resp.json()
 
 
 @pytest.mark.asyncio
-async def test_a_revoked_certificate_id_registered_again_after_recreation_reads_revoked(client, controller_identity):
+async def test_a_revoked_certificate_id_registered_again_after_recreation_reads_revoked(
+    client, controller_identity
+):
     # One certificate has one answer: the status read and the revocation list
     # both read the revocation history of every team ever created under the
     # name, so registering a revoked id again in the recreated team does not
@@ -226,13 +267,17 @@ async def test_a_revoked_certificate_id_registered_again_after_recreation_reads_
     ns_key, ns_did = controller_identity
     domain = "recreate-status.example"
     await _register_namespace(client, ns_key, ns_did, domain)
-    team_key, team_did, cert_id = await _team_with_revoked_certificate(client, ns_key, ns_did, domain, "ops")
+    team_key, team_did, cert_id = await _team_with_revoked_certificate(
+        client, ns_key, ns_did, domain, "ops"
+    )
 
     await _delete_team(client, ns_key, ns_did, domain, "ops")
     await _create_team_with_key(client, ns_key, ns_did, domain, "ops", team_did)
     await _register_certificate(client, team_key, team_did, domain, "ops", cert_id)
     fresh = str(uuid4())
-    await _register_certificate(client, team_key, team_did, domain, "ops", fresh, alias="bob")
+    await _register_certificate(
+        client, team_key, team_did, domain, "ops", fresh, alias="bob"
+    )
 
     status = await _certificate_status(client, domain, "ops", cert_id)
     assert status["status"] == "revoked"
@@ -240,4 +285,6 @@ async def test_a_revoked_certificate_id_registered_again_after_recreation_reads_
     assert status["team_did_key"] == team_did
     assert cert_id in await _revoked_ids(client, domain, "ops")
     # The recreated team's own certificate is active.
-    assert (await _certificate_status(client, domain, "ops", fresh))["status"] == "active"
+    assert (await _certificate_status(client, domain, "ops", fresh))[
+        "status"
+    ] == "active"

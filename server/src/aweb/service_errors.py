@@ -76,8 +76,15 @@ class IdentityBindingCode(StrEnum):
 class IdentityBindingError(ServiceError):
     """Native binding refusal; HTTP and MCP adapters retain its reason and retry hint."""
 
-    def __init__(self, code: IdentityBindingCode, *, headers: dict[str, str] | None = None):
+    def __init__(
+        self,
+        code: IdentityBindingCode,
+        *,
+        headers: dict[str, str] | None = None,
+        address_missing: bool = False,
+    ):
         self.code = IdentityBindingCode(code)
+        self.address_missing = address_missing
         self.status_code = 403 if self.code is IdentityBindingCode.MISMATCH else 503
         self.headers = headers
         self.message = (

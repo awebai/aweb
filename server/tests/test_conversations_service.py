@@ -8,10 +8,8 @@ import pytest
 
 from aweb.messaging.chat import find_session_between
 from aweb.messaging.conversations import (
-    add_conversation_participant,
     close_conversation,
     create_conversation,
-    expire_conversation,
     find_active_one_to_one_conversation_between,
     get_conversation,
     list_conversation_participants,
@@ -211,12 +209,6 @@ async def test_closed_conversation_rejects_continuation_and_new_participants(
             authenticated_did="did:aw:alice",
         )
     with pytest.raises(ForbiddenError, match="closed"):
-        await add_conversation_participant(
-            db,
-            conversation_id=conversation["conversation_id"],
-            participant={"did": "did:aw:carol", "alias": "carol"},
-        )
-    with pytest.raises(ForbiddenError, match="closed"):
         await touch_conversation_activity(
             db,
             conversation_id=conversation["conversation_id"],
@@ -381,12 +373,17 @@ async def test_touch_conversation_activity_preserves_expiry_when_ttl_is_none(
 
 
 @pytest.mark.asyncio
-async def test_explicitly_expired_conversation_rejects_continuation_idempotently(
+async def test_expired_conversation_rejects_continuation_idempotently(
     aweb_cloud_db,
 ):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
-    await expire_conversation(db, conversation_id=conversation["conversation_id"])
+    lazily_expired = await get_conversation(
+        db,
+        conversation_id=conversation["conversation_id"],
+        now=conversation["expires_at"] + timedelta(seconds=1),
+    )
+    assert lazily_expired["status"] == "expired"
 
     results = await asyncio.gather(
         require_active_conversation_participant(
@@ -778,7 +775,9 @@ async def test_find_session_between_picks_newest_migrated_pair(
 
 
 @pytest.mark.asyncio
-async def test_migration_is_idempotent_before_chat_session_reuse(pre_chat_coverage_db, chat_coverage_upgrade):
+async def test_migration_is_idempotent_before_chat_session_reuse(
+    pre_chat_coverage_db, chat_coverage_upgrade
+):
 
     from aweb.messaging.chat import ensure_session
 

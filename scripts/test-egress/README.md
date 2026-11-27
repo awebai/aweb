@@ -59,62 +59,54 @@ handles the DNS refusal successfully. Each control retains resolver configuratio
 DNS logs, runner inspection and the child exit in its evidence directory. Neither
 control needs an external DNS service or a route out of the internal network.
 
-## CCX33 measurement
+## Sizing from the gate budget
 
-The portable runner retains its finite 2-CPU/8-GiB budget. It was introduced
-with the isolated CI runner (79c78411d1); the isolation contract is the internal
+Runners are sized from the gate's budget, `GATE_CPUS` and `GATE_MEMORY_MIB`
+(`scripts/gate_budget.py`). A value that is not given comes from the Docker
+engine the suites run on. No profile or machine-type table exists. Each
+runner's CPU cap is the budget's CPU count; caps are quotas, not reserved
+cores, so concurrent runners share the machine. A runner's memory is 8 GiB
+plus 1 GiB per parallel server worker. The isolation contract is the internal
 network, independent DNS refusal, UID1000, no Docker socket/host credentials,
-and bounded resources, rather than the particular two-CPU value.
+and bounded resources, rather than any particular size.
 
-`--profile ccx33` explicitly selects a 7-CPU/16-GiB runner for a disposable
-8-vCPU/32-GB CCX33 server-suite measurement. PID2048, service limits, non-root
-execution, network isolation and cleanup are unchanged. Seven is a CPU quota,
-not an exclusive core reservation; PostgreSQL/Redis and the host still share
-the VM. The 16-GiB cap allows more runner concurrency while leaving space for
-services and build preparation in this server-only experiment. Full candidate
-VMs keep their existing profile until the measurement is reviewed.
+The budget sets the server's worker count: one fewer than the CPU budget,
+while the worker plan's PostgreSQL and Redis memory limits fit half the memory
+budget. A plan of one worker is serial. `scripts/test_gate_budget.py` checks
+these bounds over a range of machines.
 
-After operator review, use ONE pinned-main server measurement, not a unit-stage
-ledger entry for a partial suite:
+## Concurrent unit suites
+
+The unit stage runs `_candidate-unit-suites`, which runs `docker.py --suites`
+with every suite `candidate-suite.sh --list-unit-suites` names. Each Naapp
+package is its own suite. All suites run at once, each in its own runner from
+one prepared image, on one internal network with one DNS sink. Each runner has
+its own PostgreSQL and Redis in its own network namespace, so the services a
+suite reaches on 127.0.0.1 are its own. Each suite keeps its own log
+(`test-egress/<suite>/suite.log`) and summary row. A failed suite fails the
+stage, and nothing is retried.
+
+`test-server` gets one PostgreSQL and Redis pair per worker. When the budget
+allows parallel workers, the Secrets package (`test-naapp-secrets`) runs its
+measured two-shard partition on two owned pairs in its runner.
+
+A direct `make test-server` stays serial unless its worker plan is provided.
+A server-only measurement at a chosen size:
 
 ```sh
-python3 scripts/test-egress/docker.py --profile ccx33 \
-  --evidence /var/log/vm-gate/server-measurement \
+GATE_CPUS=12 python3 scripts/test-egress/docker.py --server-workers 11 \
+  --evidence /var/log/vm-gate/server-parallel \
   --command make TEST_EGRESS_RUNNER= test-server
 ```
 
-Retain the actual `runner.json` resource readback, source identity, complete
-pytest count/time, DNS report, primary exit and cleanup separately. Compare the
-server's pytest interval with 3064.42s and 3980.80s, while reporting source and
-host differences; the enclosing image-build/command time is a separate cost.
-No automatic repetition or default quota change follows from one result.
-
-## Parallel server unit stage
-
-The normal unit path is `_candidate-unit-suites` ->
-`candidate-suite.sh --isolated-suites` -> `make test-server`. The VM recipe
-passes its selected type as `AWEB_GATE_UNIT_PROFILE`. On CCX33 this stage now
-selects the measured seven-worker/profile-ccx33 path. Other callers retain the
-portable serial unit path; `CANDIDATE_UNIT_PROFILE=portable` explicitly selects
-it on a smaller host. Direct `make test-server` is still serial unless its
-worker plan is explicitly provided.
-
-The equivalent server-only measurement command is:
-
-```sh
-python3 scripts/test-egress/docker.py --profile ccx33 --server-workers 7 \
-  --evidence /var/log/vm-gate/acgc-server-parallel \
-  --command make TEST_EGRESS_RUNNER= test-server
-```
-
-This selects the same Make target with `-n 7 --dist loadscope
+This selects the same Make target with `-n <workers> --dist loadscope
 --max-worker-restart=0`, without filters, skips, retries or changed assertions.
-The portable/default profile and serial command remain unchanged. Worker
-restarts are disabled so a crashed worker cannot silently replace its test
-execution.
+Worker restarts are disabled so a crashed worker cannot silently replace its
+test execution.
 
 Each worker gets its own PostgreSQL and Redis server in the runner's internal
-network namespace. PG listens on 5432..5438; Redis on 6379..6385. There are no
+network namespace. PG listens on 5432 upward, one port per worker; Redis on
+6379 upward. There are no
 host publications or Docker socket mounts. `server/tests/conftest.py` selects
 these endpoints before importing pgdbm, plugins or test modules, using xdist's
 worker identity and count; a missing/wrong plan refuses rather than sharing a
@@ -133,19 +125,12 @@ selected database](https://redis.io/docs/latest/develop/pubsub/#database--scopin
 The suite has fixed named pub/sub channels as well as key caches. Separate
 Redis servers isolate both; the real TCP fault proxy follows each worker URL.
 
-Worker 0 keeps the original serial services' 2-GiB/1-CPU PostgreSQL and
-1-GiB/1-CPU/PID512 Redis limits for AWID/naapp/CLI after the server workers
-exit. The other six pairs use PostgreSQL 1280 MiB/1 CPU/PID512 and Redis
-128 MiB/0.25 CPU/PID128. The runner is 16 GiB/7 CPU/PID2048 and DNS 128 MiB.
-Their memory caps total 27.375 GiB, leaving 4.625 GiB of a nominal 32-GiB host
-before kernel reservation, for the host and preparation. Quotas are caps, not
-reserved cores. The reviewed seven-worker measurement at `0d556192b9` had
-4763 passes and one expected failure in 640.96s versus 2798.88s serial.
-The primary-service caps are retained for the later serial targets; the next
-complete unit run qualifies this default wiring. Each PG keeps its existing
-1-GiB tmpfs and bounded WAL. IDs are recorded as created and removed through
-the existing reverse-order finalizer; worker/storage mappings are retained in
-`worker-services.json`.
+Worker 0 keeps the primary pair's limits: PostgreSQL 2 GiB/1 CPU/PID512 and
+Redis 1 GiB/1 CPU/PID512. Every further pair uses PostgreSQL 1280 MiB/1 CPU/
+PID512 and Redis 128 MiB/0.25 CPU/PID128 (`server/tests/worker_services.py`).
+Each PG keeps its existing 1-GiB tmpfs and bounded WAL. IDs are recorded as
+created and removed through the existing reverse-order finalizer;
+worker/storage mappings are retained in the suite's `worker-services.json`.
 
 Four parametrizations with random UUID/time values now supply stable case IDs;
 inputs and assertions stay unchanged. Fresh-process collection controls cover
@@ -193,12 +178,11 @@ long paths/narrow columns, plus exited-child, wrong-start and wrong-container
 negatives. Fixed Docker/interpreter transports make it a process-identity
 control, not a whole deployment or parallel-suite qualification.
 
-## Prepared package callers on an ephemeral VM
+## Prepared package image
 
-`package_image.py` owns the source/dependency image build for both the isolated
-runner and `package_environment.py`. Package preparation uses the selected
-checkout's tool Dockerfile and test-egress recipe, then synchronizes each selected
-project with `uv sync --frozen`. Each installed Playwright version installs its
+`package_image.py` owns the isolated runner's source/dependency image build.
+Package preparation uses the selected checkout's tool Dockerfile and test-egress
+recipe, then synchronizes each locked project with `uv sync --frozen`. Each installed Playwright version installs its
 own Chromium headless shell and system dependencies. Browser revision numbers
 and wheel versions are never copied from a prior run.
 
@@ -206,19 +190,7 @@ The image's UID1000 admission check creates a fresh temporary environment for
 each selected project and runs a frozen offline sync. It also launches Chromium
 through each project's own Playwright. Missing wheels/build backends or a missing
 browser refuse preparation with a project-qualified setup error. The generated
-recipe, preparation-tool hash, immutable image ID, exact source and lock hashes
-remain in the binding. Tests begin only after this admission succeeds.
+recipe, preparation-tool hash, source SHA and source file hashes remain in the
+evidence directory. Tests begin only after this admission succeeds.
 
-The package entry is for callers that own Compose services: it uses the
-single-tenant VM's loopback and Docker socket, UID1000, bounded resources and a
-private image HOME, with no host identity or credential-directory mount. The
-ordinary isolated runner retains its internal network and has no Docker socket.
-The socket-bearing package command may run only on a dedicated ephemeral VM
-holding no credential, no ledger that survives the run, and no other run's
-evidence. Image preparation alone may also prepare development leases; those
-leases must not use this socket-bearing package command. Source/lock read-back
-does not attest that code with the VM's Docker socket left evidence untouched.
-Package commands retain their actual exit, JUnit when selected, and source/lock
-read-back before container removal. A batch owns its preparation binding and
-removes that binding's unique image tag at the end, including failed phases.
 This preparation is a runner precondition and does not modify the gated tree.

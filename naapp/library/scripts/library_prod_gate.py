@@ -347,9 +347,7 @@ def aatk_semantic_descriptors() -> list[dict[str, str]]:
             ),
         }
         rows.extend(
-            _semantic_descriptor(
-                "current-incumbent", predicate_id, runtime, surface, assertion
-            )
+            _semantic_descriptor("current-incumbent", predicate_id, runtime, surface, assertion)
             for predicate_id, (surface, assertion) in current_descriptors.items()
         )
     return sorted(rows, key=lambda row: (row["domain"], row["id"]))
@@ -373,9 +371,7 @@ def aatk_predicate_coverage() -> list[dict[str, Any]]:
             "id": predicate_id,
             "owner": _current_incumbent_owner(predicate_id),
             "candidate_mapping": _current_incumbent_mapping(predicate_id),
-            "obligations": {
-                obligation: "deferred" for obligation in AATK_CAPABILITY_OBLIGATIONS
-            },
+            "obligations": {obligation: "deferred" for obligation in AATK_CAPABILITY_OBLIGATIONS},
         }
         for predicate_id in current_incumbent_predicate_inventory()
     ]
@@ -414,9 +410,7 @@ def _resolve_stream_addresses(
         results = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except OSError as exc:
         raise GateError(f"failed to resolve {label}") from exc
-    addresses: dict[
-        tuple[int, tuple[Any, ...]], tuple[int, int, int, tuple[Any, ...], str]
-    ] = {}
+    addresses: dict[tuple[int, tuple[Any, ...]], tuple[int, int, int, tuple[Any, ...], str]] = {}
     for family, socktype, protocol, _, sockaddr in results:
         normalized_ip = str(ipaddress.ip_address(sockaddr[0]))
         key = (family, tuple(sockaddr))
@@ -1109,8 +1103,13 @@ def source_profile_digest(payload: dict[str, Any]) -> str:
         path = entry["path"]
         if path.startswith(prefix) and path != prefix + "ref.json":
             content = entry["content_utf8"]
-            files.append({"path": path.removeprefix(prefix), "content_utf8": content,
-                          "sha256": "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()})
+            files.append(
+                {
+                    "path": path.removeprefix(prefix),
+                    "content_utf8": content,
+                    "sha256": "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                }
+            )
     if not files:
         raise GateError("materialize response contains no source profile files")
     return payload_digest(files, PROFILE_PAYLOAD_SCHEMA)
@@ -1119,12 +1118,25 @@ def source_profile_digest(payload: dict[str, Any]) -> str:
 def run_shelf_pin(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     summaries = []
     for runtime in RUNTIMES:
-        payload = raw_materialize(REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root,
-                                  profile_ref=args.expected_profile_ref)
-        summary = validate_candidate_payload(payload, runtime, expected_ref=args.expected_profile_ref,
-            expected_version=args.expected_profile_version, expected_digest=args.expected_profile_digest)
+        payload = raw_materialize(
+            REQUIRED_AW_PATH,
+            args.source_home,
+            args.public_url,
+            runtime,
+            root,
+            profile_ref=args.expected_profile_ref,
+        )
+        summary = validate_candidate_payload(
+            payload,
+            runtime,
+            expected_ref=args.expected_profile_ref,
+            expected_version=args.expected_profile_version,
+            expected_digest=args.expected_profile_digest,
+        )
         if source_profile_digest(payload) != args.expected_profile_digest:
-            raise GateError(f"{runtime} source content digest does not match the approved shelf pin")
+            raise GateError(
+                f"{runtime} source content digest does not match the approved shelf pin"
+            )
         summary["gate"] = "shelf-pin-source-digest"
         summaries.append(summary)
     return summaries
@@ -1229,7 +1241,8 @@ def _current_incumbent_origin_predicates(runtime: str) -> list[str]:
         predicate
         for predicate in CURRENT_INCUMBENT_PREDICATES
         if predicate.startswith(f"origin-route.{runtime}.")
-        or predicate in {
+        or predicate
+        in {
             f"materialize.origin.{runtime}.http-200",
             f"materialize.origin.response-contract.{runtime}",
         }
@@ -1327,7 +1340,11 @@ def run_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
         home = root / f"home-{runtime}"
         home.mkdir()
         clone_auth_home(args.source_home, home)
-        summaries.append(require_recovery_rejection(REQUIRED_AW_PATH, home, runtime, root, expected_ref=args.expected_profile_ref))
+        summaries.append(
+            require_recovery_rejection(
+                REQUIRED_AW_PATH, home, runtime, root, expected_ref=args.expected_profile_ref
+            )
+        )
     return summaries
 
 
@@ -1352,7 +1369,13 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "mode",
-        choices=("candidate", "shelf-pin", "legacy-aasb", "current-incumbent", "runtime-managed-0c490a362"),
+        choices=(
+            "candidate",
+            "shelf-pin",
+            "legacy-aasb",
+            "current-incumbent",
+            "runtime-managed-0c490a362",
+        ),
     )
     p.add_argument(
         "--expected-profile-ref",

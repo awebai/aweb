@@ -3,7 +3,7 @@ package awid
 import (
 	"crypto/ed25519"
 	"fmt"
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 	"strings"
 	"unicode/utf8"
 )

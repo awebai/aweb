@@ -61,7 +61,9 @@ class TeamIdentity:
     certificate_verified: bool = False
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "identity_scope", normalize_identity_scope(self.identity_scope))
+        object.__setattr__(
+            self, "identity_scope", normalize_identity_scope(self.identity_scope)
+        )
 
 
 @dataclass(frozen=True)

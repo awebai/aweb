@@ -21,27 +21,47 @@ from .service_errors import ServiceError
 from .workspace_config import get_workspace_id
 
 app = typer.Typer(help="aweb coordination core CLI")
-install_admin_cli = typer.Typer(help="Manage standalone installation authority locally as the server operator")
+install_admin_cli = typer.Typer(
+    help="Manage standalone installation authority locally as the server operator"
+)
 app.add_typer(install_admin_cli, name="install-admin")
 
 
-def _install_admin_operation(action, *, team_id, principal_did=None, role="admin", force=False):
+def _install_admin_operation(
+    action, *, team_id, principal_did=None, role="admin", force=False
+):
     async def run():
         infra = DatabaseInfra()
         await infra.initialize(run_migrations=False)
         try:
             async with infra.get_manager().transaction() as tx:
                 if action == "grant":
-                    return await grant_install_admin_on(tx, team_id=team_id, principal_did=principal_did, role=role, force=force)
+                    return await grant_install_admin_on(
+                        tx,
+                        team_id=team_id,
+                        principal_did=principal_did,
+                        role=role,
+                        force=force,
+                    )
                 if action == "revoke":
-                    return {"revoked": await revoke_install_admin_on(tx, team_id=team_id, principal_did=principal_did, force=force)}
+                    return {
+                        "revoked": await revoke_install_admin_on(
+                            tx,
+                            team_id=team_id,
+                            principal_did=principal_did,
+                            force=force,
+                        )
+                    }
                 return await list_install_admins_on(tx, team_id=team_id)
         finally:
             await infra.close()
+
     try:
         result = asyncio.run(run())
     except ServiceError as exc:
-        typer.echo(f"Error: {getattr(exc, 'code', 'admin_grant_failed')}: {exc}", err=True)
+        typer.echo(
+            f"Error: {getattr(exc, 'code', 'admin_grant_failed')}: {exc}", err=True
+        )
         raise typer.Exit(1)
     typer.echo(json.dumps(result, default=str, indent=2))
 
@@ -49,11 +69,15 @@ def _install_admin_operation(action, *, team_id, principal_did=None, role="admin
 @install_admin_cli.command("grant")
 def grant_install_admin_command(
     team_id: str = typer.Option(..., "--team-id"),
-    principal_did: str = typer.Option(..., "--principal-did", help="Member's verified Ed25519 did:key"),
+    principal_did: str = typer.Option(
+        ..., "--principal-did", help="Member's verified Ed25519 did:key"
+    ),
     role: str = typer.Option("admin", "--role", help="owner or admin"),
     force: bool = typer.Option(False, "--force", help="Allow demoting the last owner"),
 ):
-    _install_admin_operation("grant", team_id=team_id, principal_did=principal_did, role=role, force=force)
+    _install_admin_operation(
+        "grant", team_id=team_id, principal_did=principal_did, role=role, force=force
+    )
 
 
 @install_admin_cli.command("revoke")
@@ -62,7 +86,9 @@ def revoke_install_admin_command(
     principal_did: str = typer.Option(..., "--principal-did"),
     force: bool = typer.Option(False, "--force", help="Allow revoking the last owner"),
 ):
-    _install_admin_operation("revoke", team_id=team_id, principal_did=principal_did, force=force)
+    _install_admin_operation(
+        "revoke", team_id=team_id, principal_did=principal_did, force=force
+    )
 
 
 @install_admin_cli.command("list")
@@ -93,6 +119,7 @@ def _resolve_workspace_id(override: str | None) -> str:
         )
         raise typer.Exit(1)
     return workspace_id
+
 
 def _handle_api_call(
     method: str,
@@ -141,7 +168,9 @@ def _handle_api_call(
 
     except httpx.ConnectError:
         api_base = _get_api_base()
-        typer.echo(f"Error: Cannot connect to aweb coordination API at {api_base}", err=True)
+        typer.echo(
+            f"Error: Cannot connect to aweb coordination API at {api_base}", err=True
+        )
         typer.echo("Is the server running?", err=True)
         raise typer.Exit(1)
     except httpx.TimeoutException:
@@ -156,7 +185,9 @@ def _handle_api_call(
 def serve(
     host: str | None = typer.Option(None, help="Host interface to bind"),
     port: int | None = typer.Option(None, help="Port to bind"),
-    reload: bool | None = typer.Option(None, help="Enable auto-reload (development only)"),
+    reload: bool | None = typer.Option(
+        None, help="Enable auto-reload (development only)"
+    ),
     log_level: str | None = typer.Option(None, help="Log level for the server"),
 ) -> None:
     """
@@ -177,7 +208,9 @@ def serve(
 @app.command()
 def status(
     workspace_id: str | None = typer.Option(
-        None, "--workspace-id", help="Workspace ID (reads from .aw/workspace.yaml if not provided)"
+        None,
+        "--workspace-id",
+        help="Workspace ID (reads from .aw/workspace.yaml if not provided)",
     ),
     json_output: bool = typer.Option(False, "--json", help="Output JSON"),
 ) -> None:
@@ -209,9 +242,12 @@ def status(
     else:
         typer.echo("Agents: (none)")
 
+
 @app.command("reseed-app-registrations")
 def reseed_app_registrations_command(
-    origin: str = typer.Option(..., "--origin", help="App origin whose installs are reseeded"),
+    origin: str = typer.Option(
+        ..., "--origin", help="App origin whose installs are reseeded"
+    ),
     manifest_file: str | None = typer.Option(
         None,
         "--manifest-file",
@@ -224,11 +260,14 @@ def reseed_app_registrations_command(
     Applies to each team whose install pins the digest of those bytes. Never
     changes subscriptions. Exits 1 when any team was left unchanged.
     """
+
     async def _reseed(manifest: bytes):
         infra = DatabaseInfra()
         await infra.initialize(run_migrations=False)
         try:
-            return await reseed_app_registrations(infra.get_manager(), origin=origin, manifest=manifest)
+            return await reseed_app_registrations(
+                infra.get_manager(), origin=origin, manifest=manifest
+            )
         finally:
             await infra.close()
 
@@ -250,7 +289,9 @@ def reseed_app_registrations_command(
 
 @app.command("verify-identity-bindings")
 def verify_identity_bindings_command(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Verify without writing markers"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Verify without writing markers"
+    ),
 ) -> None:
     """Verify pending identity projections after migration; report counts only."""
     from awid.registry import RegistryClient
@@ -268,7 +309,9 @@ def verify_identity_bindings_command(
             )
             try:
                 return await verify_pending_identity_bindings(
-                    infra.get_manager(), registry, dry_run=dry_run,
+                    infra.get_manager(),
+                    registry,
+                    dry_run=dry_run,
                 )
             finally:
                 await registry.aclose()
@@ -283,8 +326,16 @@ def verify_identity_bindings_command(
 
 @app.command("revalidate-human-kind")
 def revalidate_human_kind_command(
-    apply: bool = typer.Option(False, "--apply", help="Stamp live verified humans; default reports without database writes"),
-    schema: str = typer.Option("aweb", "--schema", help="Existing canonical agents schema; migration 047 must be applied"),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Stamp live verified humans; default reports without database writes",
+    ),
+    schema: str = typer.Option(
+        "aweb",
+        "--schema",
+        help="Existing canonical agents schema; migration 047 must be applied",
+    ),
 ) -> None:
     """Report historical human kinds. Exit 1 if active rows remain unresolved."""
     from awid.db_config import build_database_config
@@ -295,23 +346,32 @@ def revalidate_human_kind_command(
     from .human_kind_revalidation import revalidate_human_kind
 
     if not schema.isascii() or not schema.isidentifier():
-        raise typer.BadParameter("Schema must be an SQL identifier", param_hint="--schema")
+        raise typer.BadParameter(
+            "Schema must be an SQL identifier", param_hint="--schema"
+        )
 
     async def run():
         settings = get_settings()
         # Do not initialize DatabaseInfra: that path creates schema/extensions.
         # This command never migrates, including in its read-only default mode.
-        pool = await AsyncDatabaseManager.create_shared_pool(build_database_config(
-            connection_string=settings.database_url,
-            uses_transaction_pooler=settings.database_uses_transaction_pooler,
-            statement_cache_size=settings.database_statement_cache_size,
-        ))
+        pool = await AsyncDatabaseManager.create_shared_pool(
+            build_database_config(
+                connection_string=settings.database_url,
+                uses_transaction_pooler=settings.database_uses_transaction_pooler,
+                statement_cache_size=settings.database_statement_cache_size,
+            )
+        )
         redis = Redis.from_url(settings.redis_url)
-        registry = CachedRegistryClient(registry_url=settings.awid_registry_url,
-            redis_client=redis, service_token=settings.awid_service_token,
-            member_signing_keys=settings.awid_member_signing_keys)
+        registry = CachedRegistryClient(
+            registry_url=settings.awid_registry_url,
+            redis_client=redis,
+            service_token=settings.awid_service_token,
+            member_signing_keys=settings.awid_member_signing_keys,
+        )
         try:
-            return await revalidate_human_kind(DatabaseManager(pool=pool, schema=schema), registry, apply=apply)
+            return await revalidate_human_kind(
+                DatabaseManager(pool=pool, schema=schema), registry, apply=apply
+            )
         finally:
             await registry.aclose()
             await redis.aclose()
@@ -319,25 +379,30 @@ def revalidate_human_kind_command(
 
     report = asyncio.run(run())
     typer.echo(json.dumps(report, sort_keys=True))
-    if report['unresolved_active']:
+    if report["unresolved_active"]:
         raise typer.Exit(1)
 
 
 @app.command("verify-pending-app-installations")
 def verify_pending_app_installations_command(
-    team_id: str | None = typer.Option(None, "--team-id", help="Verify only this team's pending installations"),
+    team_id: str | None = typer.Option(
+        None, "--team-id", help="Verify only this team's pending installations"
+    ),
 ) -> None:
     """Verify all pending origin pins after the installation migration.
 
     Deploy operators run this immediately after migration. Failures remain
     pending, keep their scopes and pins, and carry a reason for admin retry.
     """
+
     async def run():
         infra = DatabaseInfra()
         await infra.initialize(run_migrations=False)
         try:
             return await verify_pending_installations(
-                infra.get_manager(), fetcher=ManifestFetcher(), team_id=team_id,
+                infra.get_manager(),
+                fetcher=ManifestFetcher(),
+                team_id=team_id,
             )
         finally:
             await infra.close()
@@ -354,16 +419,22 @@ def verify_pending_app_installations_command(
 
 @app.command("run-installation-verifications")
 def run_installation_verifications_command(
-    limit: int = typer.Option(25, min=1, max=1000, help="Maximum queued jobs to process"),
+    limit: int = typer.Option(
+        25, min=1, max=1000, help="Maximum queued jobs to process"
+    ),
 ) -> None:
     """Process queued admin re-verifications; run periodically on a worker."""
+
     async def run():
         infra = DatabaseInfra()
         await infra.initialize(run_migrations=False)
         try:
-            return await run_installation_verifications(infra.get_manager(), limit=limit)
+            return await run_installation_verifications(
+                infra.get_manager(), limit=limit
+            )
         finally:
             await infra.close()
+
     reports = asyncio.run(run())
     typer.echo(json.dumps({"jobs": reports}, indent=2))
     if any(report["outcome"] == "pending" for report in reports):
@@ -372,7 +443,11 @@ def run_installation_verifications_command(
 
 @app.command("release-closed-task-claims")
 def release_closed_task_claims_command(
-    apply: bool = typer.Option(False, "--apply", help="Release the claims; default reports counts without database writes"),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Release the claims; default reports counts without database writes",
+    ),
 ) -> None:
     """Report claims on closed tasks; release them with --apply. Counts and team ids only."""
     from .closed_task_claims import release_closed_task_claims
@@ -390,7 +465,11 @@ def release_closed_task_claims_command(
 
 @app.command("delete-dead-rows")
 def delete_dead_rows_command(
-    apply: bool = typer.Option(False, "--apply", help="Delete the rows; default reports counts without database writes"),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Delete the rows; default reports counts without database writes",
+    ),
 ) -> None:
     """Report rows no reader needs again, per table; delete them with --apply."""
     from .gc import delete_dead_rows

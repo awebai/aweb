@@ -110,7 +110,9 @@ def declared_did_keys(settings: NaappSettings, template: Mapping[str, Any]) -> d
     kids = template_kids(template)
     undeclared = sorted(set(settings.app_key_files) - set(kids))
     if undeclared:
-        raise AppKeyError(f"key files are configured for kids the manifest does not declare: {', '.join(undeclared)}")
+        raise AppKeyError(
+            f"key files are configured for kids the manifest does not declare: {', '.join(undeclared)}"
+        )
     emit_kid = settings.app_emit_kid
     if settings.app_emit_key_seed_hex is not None:
         if emit_kid is None:

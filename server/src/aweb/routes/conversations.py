@@ -1,8 +1,11 @@
 from __future__ import annotations
-from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
+from aweb.messaging.conversation_index import CONVERSATION_PAGE_SQL
+from aweb.messaging.mail_attribution import incoming_mail_sql
 
 import json
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -62,7 +65,9 @@ def _dedupe_labels(values: list[str]) -> list[str]:
     return labels
 
 
-def _grant_conversation_scope_allowed(auth: MessagingAuth, requested_type: str | None) -> None:
+def _grant_conversation_scope_allowed(
+    auth: MessagingAuth, requested_type: str | None
+) -> None:
     if auth.grant is None:
         return
     scopes = {scope.strip() for scope in auth.grant.scopes if scope.strip()}
@@ -77,7 +82,11 @@ def _grant_conversation_scope_allowed(auth: MessagingAuth, requested_type: str |
 
 
 async def require_mail_thread_peer_for_auth(
-    db, auth: MessagingAuth, *, conversation_id: str | UUID, peer_did: str,
+    db,
+    auth: MessagingAuth,
+    *,
+    conversation_id: str | UUID,
+    peer_did: str,
 ) -> None:
     """Require canonical caller and exact native peer in this mail thread.
 
@@ -105,39 +114,55 @@ async def require_mail_thread_peer_for_auth(
             WHERE c.conversation_id = $1 AND c.conversation_type = 'mail'
               AND own.did = ANY($2::text[]) AND peer.did = $3
         )
-        """, conversation_uuid, actor_dids, peer_did,
+        """,
+        conversation_uuid,
+        actor_dids,
+        peer_did,
     )
     if not exists:
         raise HTTPException(404, "Mail thread not found")
 
 
-def _participant_detail(did: str | None, alias: str | None, address: str | None = None) -> dict:
-    return {
-        "participant_ref": native_participant_reference(str(did or "")),
-        "alias": str(alias or ""), "address": str(address or "").strip() or None,
-    }
+def _participant_detail(
+    did: str | None, alias: str | None, address: str | None = None
+) -> ParticipantDetail:
+    return ParticipantDetail(
+        participant_ref=native_participant_reference(str(did or "")),
+        alias=str(alias or ""),
+        address=str(address or "").strip() or None,
+    )
 
 
-def _index_boundary(cursor: str | None, scope: dict) -> tuple[datetime | None, str | None]:
+def _index_boundary(
+    cursor: str | None, scope: dict
+) -> tuple[datetime | None, str | None]:
     if not cursor:
         return None, None
     try:
         data = decode_cursor(cursor)
-        if not data or data.get("kind") != "conversation_index" or data.get("scope") != scope:
+        if (
+            not data
+            or data.get("kind") != "conversation_index"
+            or data.get("scope") != scope
+        ):
             raise ValueError("Cursor scope mismatch")
         at = datetime.fromisoformat(data["last_message_at"])
         if at.tzinfo is None:
             raise ValueError("Cursor timestamp must have a timezone")
         key = data["key"]
         parts = key.split(":")
-        if not ((len(parts) == 2 and parts[0] in {"mail", "chat"})
-                or (len(parts) == 3 and parts[:2] == ["mail", "legacy"])):
+        if not (
+            (len(parts) == 2 and parts[0] in {"mail", "chat"})
+            or (len(parts) == 3 and parts[:2] == ["mail", "legacy"])
+        ):
             raise ValueError("Invalid row key")
         if str(UUID(parts[-1])) != parts[-1]:
             raise ValueError("Invalid row ID")
         return at.astimezone(timezone.utc), key
     except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as exc:
-        raise HTTPException(400, "Invalid conversation cursor; start from the first page") from exc
+        raise HTTPException(
+            400, "Invalid conversation cursor; start from the first page"
+        ) from exc
 
 
 class PeerUnreadCount(BaseModel):
@@ -153,7 +178,8 @@ class UnreadCountsResponse(BaseModel):
 async def unread_counts(
     participant_did: list[str] = Query(..., min_length=1, max_length=100),
     conversation_type: str = Query("mail"),
-    db=Depends(get_db), auth: MessagingAuth = Depends(get_messaging_auth),
+    db=Depends(get_db),
+    auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> UnreadCountsResponse:
     if conversation_type != "mail":
         raise HTTPException(422, "conversation_type must be mail")
@@ -169,7 +195,7 @@ async def unread_counts(
         WITH incoming AS MATERIALIZED (
             SELECT conversation_id, from_did, COUNT(*) AS n
             FROM {{{{tables.messages}}}} m
-            WHERE {incoming_mail_sql('$1')} AND read_at IS NULL
+            WHERE {incoming_mail_sql("$1")} AND read_at IS NULL
             GROUP BY conversation_id, from_did
         )
         SELECT peer.did AS participant_did, COALESCE(SUM(i.n), 0)::bigint AS unread_count
@@ -182,12 +208,17 @@ async def unread_counts(
             )
         )
         GROUP BY peer.did
-        """, actor_dids, peers,
+        """,
+        actor_dids,
+        peers,
     )
     counts = {row["participant_did"]: row["unread_count"] for row in rows}
-    return UnreadCountsResponse(counts=[
-        PeerUnreadCount(participant_did=did, unread_count=counts[did]) for did in peers
-    ])
+    return UnreadCountsResponse(
+        counts=[
+            PeerUnreadCount(participant_did=did, unread_count=counts[did])
+            for did in peers
+        ]
+    )
 
 
 @router.get("", response_model=ConversationsResponse)
@@ -202,14 +233,24 @@ async def list_conversations(
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> ConversationsResponse:
     return await list_conversations_for_auth(
-        db, auth, cursor=cursor, limit=limit, conversation_type=conversation_type,
-        participant_did=participant_did, participant_address=participant_address,
+        db,
+        auth,
+        cursor=cursor,
+        limit=limit,
+        conversation_type=conversation_type,
+        participant_did=participant_did,
+        participant_address=participant_address,
     )
 
 
 async def list_conversations_for_auth(
-    db, auth: MessagingAuth, *, cursor: str | None = None, limit: int = 50,
-    conversation_type: str | None = None, participant_did: str | None = None,
+    db,
+    auth: MessagingAuth,
+    *,
+    cursor: str | None = None,
+    limit: int = 50,
+    conversation_type: str | None = None,
+    participant_did: str | None = None,
     participant_address: str | None = None,
 ) -> ConversationsResponse:
     """The participant-scoped index shared by HTTP and MCP; never marks mail read."""
@@ -218,357 +259,122 @@ async def list_conversations_for_auth(
     aweb_db = db.get_manager("aweb")
     actor_dids = participant_dids(auth)
     if not actor_dids:
-        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+        raise HTTPException(
+            status_code=401, detail="Authenticated identity is missing a routing DID"
+        )
 
     requested_type = (conversation_type or "").strip().lower() or None
     if requested_type is not None and requested_type not in {"mail", "chat"}:
-        raise HTTPException(status_code=422, detail="conversation_type must be mail or chat")
+        raise HTTPException(
+            status_code=422, detail="conversation_type must be mail or chat"
+        )
     _grant_conversation_scope_allowed(auth, requested_type)
     target_did = (participant_did or "").strip() or None
     target_address = (participant_address or "").strip() or None
-    cursor_scope = {"actor_dids": sorted(actor_dids), "conversation_type": requested_type,
-                    "participant_did": target_did, "participant_address": target_address}
+    cursor_scope = {
+        "actor_dids": sorted(actor_dids),
+        "conversation_type": requested_type,
+        "participant_did": target_did,
+        "participant_address": target_address,
+    }
     cursor_dt, cursor_key = _index_boundary(cursor, cursor_scope)
 
-    # --- Mail conversations ---
-    # New mail rows share conversation_id across a thread. Legacy rows without
-    # conversation_id are listed by legacy_message_id so clients do not mistake
-    # a historical message id for a continuation-capable conversation id.
-    mail_rows = []
-    if requested_type in (None, "mail"):
-        mail_rows = await aweb_db.fetch_all(
-            f"""
-            WITH visible AS (
-                SELECT
-                    m.message_id,
-                    m.conversation_id,
-                    m.created_at,
-                    m.body,
-                    m.from_alias,
-                    m.from_address,
-                    m.from_did,
-                    m.subject,
-                    m.content_mode,
-                    m.to_alias AS to_alias,
-                    m.to_did AS to_did,
-                    m.read_at,
-                    {incoming_mail_sql('$1')} AS incoming,
-                    COALESCE(m.conversation_id::text, 'legacy:' || m.message_id::text) AS group_key
-                FROM {{{{tables.messages}}}} m
-                WHERE {readable_mail_sql('$1')}
-                  AND (
-                        ($2::text IS NULL AND $3::text IS NULL)
-                     OR (
-                            m.conversation_id IS NOT NULL
-                            AND EXISTS (
-                                SELECT 1
-                                FROM {{{{tables.conversation_participants}}}} target_cp
-                                WHERE target_cp.conversation_id = m.conversation_id
-                                  AND (
-                                       ($2::text IS NOT NULL AND target_cp.did = $2::text)
-                                    OR ($3::text IS NOT NULL AND target_cp.address = $3::text)
-                                  )
-                            )
-                        )
-                  )
-            ),
-            grouped AS (
-                SELECT
-                    group_key,
-                    MAX(created_at) AS last_message_at,
-                    COUNT(*) FILTER (
-                        WHERE incoming AND read_at IS NULL
-                    )::int AS unread_count
-                FROM visible
-                GROUP BY group_key
-            ),
-            page AS (
-                -- group_key breaks ties so the page has the same members on
-                -- every call: which conversations fall inside the limit is
-                -- decided here, not by the caller-visible sort further down.
-                SELECT group_key, last_message_at, unread_count
-                FROM grouped
-                WHERE ($4::timestamptz IS NULL OR last_message_at < $4::timestamptz
-                    OR (last_message_at = $4::timestamptz AND $6::text IS NOT NULL
-                        AND 'mail:' || group_key < $6::text))
-                ORDER BY last_message_at DESC, group_key DESC
-                LIMIT $5::int
-            )
-            SELECT
-                newest.message_id,
-                newest.conversation_id,
-                p.last_message_at AS created_at,
-                LEFT(COALESCE(newest.body, ''), 100) AS body,
-                newest.from_alias,
-                newest.from_did,
-                newest.from_address, newest.to_did, newest.to_alias,
-                newest.subject,
-                first.message_id AS first_message_id,
-                CASE WHEN first.content_mode = 'encrypted_v2' THEN '' ELSE first.subject END AS title,
-                p.unread_count,
-                CASE WHEN c.status = 'active' AND c.expires_at <= CURRENT_TIMESTAMP
-                     THEN 'expired' ELSE c.status END AS status,
-                labels.participants
-            FROM page p
-            JOIN LATERAL (
-                SELECT v.message_id, v.conversation_id, v.body, v.subject,
-                       v.from_alias, v.from_did, v.from_address, v.to_did, v.to_alias
-                FROM visible v
-                WHERE v.group_key = p.group_key
-                ORDER BY v.created_at DESC, v.message_id DESC
-                LIMIT 1
-            ) newest ON TRUE
-            JOIN LATERAL (
-                SELECT v.message_id, v.subject, v.content_mode
-                FROM visible v
-                WHERE v.group_key = p.group_key
-                ORDER BY v.created_at ASC, v.message_id ASC
-                LIMIT 1
-            ) first ON TRUE
-            LEFT JOIN {{{{tables.conversations}}}} c
-              ON c.conversation_id = newest.conversation_id
-            LEFT JOIN LATERAL (
-                SELECT array_agg(ranked.label ORDER BY ranked.first_ord) AS participants
-                FROM (
-                    SELECT labelled.label, MIN(labelled.ord) AS first_ord
-                    FROM (
-                        SELECT
-                            COALESCE(
-                                NULLIF(BTRIM(COALESCE(pair.alias, '')), ''),
-                                BTRIM(COALESCE(pair.did, ''))
-                            ) AS label,
-                            ROW_NUMBER() OVER (
-                                ORDER BY v2.created_at DESC, v2.message_id DESC
-                            ) * 2 + pair.pos AS ord
-                        FROM visible v2
-                        CROSS JOIN LATERAL (
-                            VALUES
-                                (v2.from_alias, v2.from_did, 0),
-                                (v2.to_alias, v2.to_did, 1)
-                        ) AS pair(alias, did, pos)
-                        WHERE v2.group_key = p.group_key
-                    ) labelled
-                    WHERE labelled.label <> ''
-                    GROUP BY labelled.label
-                ) ranked
-            ) labels ON TRUE
-            ORDER BY p.last_message_at DESC, p.group_key DESC
-            """,
-            actor_dids,
-            target_did,
-            target_address,
-            cursor_dt,
-            limit + 1,
-            cursor_key,
-        )
-
-    mail_items: list[dict] = []
-    for row in mail_rows:
-        real_conversation_id = str(row["conversation_id"]) if row["conversation_id"] else None
-        legacy_message_id = None if real_conversation_id else str(row["message_id"])
-        mail_items.append(
-            {
-                "conversation_type": "mail",
-                "cursor_key": "mail:" + (real_conversation_id or "legacy:" + legacy_message_id),
-                "participant_details": [_participant_detail(row["from_did"], row["from_alias"], row["from_address"]),
-                                        _participant_detail(row["to_did"], row["to_alias"])],
-                "conversation_id": real_conversation_id,
-                "legacy_message_id": legacy_message_id,
-                "status": row["status"] or "legacy",
-                "participants": _dedupe_labels(list(row["participants"] or [])),
-                "subject": row["subject"] or "",
-                "title": row["title"] or "",
-                "first_message_id": str(row["first_message_id"]),
-                "last_message_at": row["created_at"],
-                "last_message_from": _conversation_label(row["from_alias"], row["from_did"]),
-                "last_message_preview": row["body"] or "",
-                "unread_count": row["unread_count"],
-            }
-        )
-    mail_conversation_ids = [
-        UUID(str(item["conversation_id"]))
-        for item in mail_items
-        if item.get("conversation_id")
-    ]
-    mail_participant_rows = []
-    if mail_conversation_ids:
-        mail_participant_rows = await aweb_db.fetch_all(
+    rows = await aweb_db.fetch_all(
+        CONVERSATION_PAGE_SQL,
+        actor_dids,
+        target_did,
+        target_address,
+        cursor_dt,
+        cursor_key,
+        limit,
+        requested_type,
+    )
+    mail_ids = [row["row_id"] for row in rows if row["kind"] == "mail"]
+    mail_participants: dict[UUID, list[Mapping[str, Any]]] = {}
+    if mail_ids:
+        participants = await aweb_db.fetch_all(
             """
             SELECT conversation_id, did, alias, address
             FROM {{tables.conversation_participants}}
             WHERE conversation_id = ANY($1::uuid[])
             ORDER BY conversation_id, alias, did
             """,
-            mail_conversation_ids,
+            mail_ids,
         )
-    mail_participants_by_conversation: dict[str, list[dict]] = {}
-    for row in mail_participant_rows:
-        mail_participants_by_conversation.setdefault(str(row["conversation_id"]), []).append(dict(row))
-    for item in mail_items:
-        conversation_id = item.get("conversation_id")
-        if not conversation_id:
-            item["participant_dids"] = []
-            item["participant_addresses"] = []
-            continue
-        participant_rows = mail_participants_by_conversation.get(str(conversation_id), [])
-        item["participant_details"] = [_participant_detail(row["did"], row["alias"], row["address"]) for row in participant_rows]
-        item["participant_dids"] = _dedupe_labels(
-            [(row.get("did") or "").strip() for row in participant_rows]
-        )
-        item["participant_addresses"] = _dedupe_labels(
-            [(row.get("address") or "").strip() for row in participant_rows]
-        )
-
-    # --- Chat conversations ---
-    rows_by_session: dict[str, dict] = {}
-    if requested_type in (None, "chat"):
-        for actor_did in actor_dids:
-            # Live membership admits the caller. Canonical participants describe
-            # the history, with a fallback for legacy chats left uncovered by 055.
-            rows = await aweb_db.fetch_all(
-                """
-                SELECT
-                    s.session_id::text AS conversation_id,
-                    jsonb_agg(jsonb_build_object('did', p2.did, 'alias', p2.alias, 'address', p2.address)
-                              ORDER BY p2.alias, p2.did) AS participant_details,
-                    array_agg(p2.alias ORDER BY p2.alias, p2.did) AS participants,
-                    array_agg(p2.did ORDER BY p2.alias, p2.did) AS participant_dids,
-                    array_agg(p2.address ORDER BY p2.alias, p2.did) AS participant_addresses,
-                    LEFT(COALESCE(lm.body, ''), 100) AS last_body,
-                    lm.from_alias AS last_from,
-                    lm.from_did AS last_from_did,
-                    lm.created_at AS last_message_at,
-                    COALESCE(unread.cnt, 0)::int AS unread_count
-                FROM {{tables.chat_sessions}} s
-                JOIN {{tables.chat_participants}} p
-                  ON p.session_id = s.session_id AND p.did = $1
-                JOIN LATERAL (
-                    WITH canonical_participants AS (
-                        SELECT cp.did, cp.alias, cp.address
-                        FROM {{tables.conversations}} c
-                        JOIN {{tables.conversation_participants}} cp
-                          ON cp.conversation_id = c.conversation_id
-                        WHERE c.conversation_id = s.session_id AND c.conversation_type = 'chat'
-                    )
-                    SELECT did, alias, address FROM canonical_participants
-                    UNION ALL
-                    SELECT did, alias, address FROM {{tables.chat_participants}}
-                    WHERE session_id = s.session_id
-                      AND NOT EXISTS (SELECT 1 FROM canonical_participants)
-                ) p2 ON TRUE
-                LEFT JOIN LATERAL (
-                    SELECT body, from_alias, from_did, created_at
-                    FROM {{tables.chat_messages}}
-                    WHERE session_id = s.session_id
-                    ORDER BY created_at DESC, message_id DESC
-                    LIMIT 1
-                ) lm ON TRUE
-                LEFT JOIN LATERAL (
-                    SELECT COUNT(*)::int AS cnt
-                    FROM {{tables.chat_messages}} cm
-                    WHERE cm.session_id = s.session_id
-                      AND cm.from_did <> p.did
-                      AND cm.from_did IS DISTINCT FROM p.current_did_key
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM {{tables.chat_message_reads}} mr
-                          WHERE mr.session_id = cm.session_id
-                            AND mr.did = $1
-                            AND mr.message_id = cm.message_id
-                      )
-                ) unread ON TRUE
-                WHERE lm.created_at IS NOT NULL
-                  AND ($4::timestamptz IS NULL OR lm.created_at < $4::timestamptz
-                    OR (lm.created_at = $4::timestamptz AND $5::text IS NOT NULL
-                        AND 'chat:' || s.session_id::text < $5::text))
-                GROUP BY s.session_id, lm.body, lm.from_alias, lm.from_did, lm.created_at, unread.cnt
-                HAVING ($2::text IS NULL AND $3::text IS NULL)
-                    OR bool_or(p2.did = $2::text OR p2.address = $3::text)
-                ORDER BY lm.created_at DESC, s.session_id DESC
-                LIMIT $6::int
-                """,
-                actor_did,
-                target_did,
-                target_address,
-                cursor_dt,
-                cursor_key,
-                limit + 1,
+        for participant in participants:
+            mail_participants.setdefault(participant["conversation_id"], []).append(
+                participant
             )
-            for row in rows:
-                rows_by_session.setdefault(row["conversation_id"], dict(row))
-    chat_rows = list(rows_by_session.values())
-    chat_rows.sort(key=lambda row: row["last_message_at"], reverse=True)
 
-    chat_items: list[dict] = []
-    for row in chat_rows:
-        details = row["participant_details"]
-        if isinstance(details, str):
-            details = json.loads(details)
-        preview = (row["last_body"] or "")[:100]
-        participants = _dedupe_labels(
-            [
-                _conversation_label(alias, did)
-                for alias, did in zip(list(row["participants"] or []), list(row["participant_dids"] or []))
-            ]
-        )
-        chat_items.append(
-            {
-                "conversation_type": "chat",
-                "cursor_key": "chat:" + row["conversation_id"],
-                "participant_details": [_participant_detail(p["did"], p["alias"], p["address"])
-                                        for p in details],
-                "conversation_id": row["conversation_id"],
-                "status": "active",
-                "participants": participants,
-                "participant_dids": _dedupe_labels(
-                    [(did or "").strip() for did in list(row["participant_dids"] or [])]
-                ),
-                "participant_addresses": _dedupe_labels(
-                    [(address or "").strip() for address in list(row.get("participant_addresses") or [])]
-                ),
-                "subject": "",
-                "last_message_at": row["last_message_at"],
-                "last_message_from": _conversation_label(row["last_from"], row["last_from_did"]),
-                "last_message_preview": preview,
-                "unread_count": row["unread_count"],
-            }
-        )
-
-    # --- Merge and sort ---
-    combined = mail_items + chat_items
-    combined.sort(key=lambda x: (x["last_message_at"], x["cursor_key"]), reverse=True)
-
-    # Apply limit
-    page = combined[:limit]
-    next_cursor: str | None = None
-    if len(page) == limit and len(combined) > limit:
-        last = page[-1]
-        next_cursor = encode_cursor({"kind": "conversation_index", "scope": cursor_scope,
-                                     "last_message_at": last["last_message_at"].isoformat(),
-                                     "key": last["cursor_key"]})
-
-    # Serialize datetimes
     result = []
-    for item in page:
-        ts = item["last_message_at"]
+    for row in rows:
+        kind = row["kind"]
+        if kind == "chat":
+            details = row["participant_details"]
+            if isinstance(details, str):
+                details = json.loads(details)
+            participants = [
+                _conversation_label(alias, did)
+                for alias, did in zip(
+                    row["participants"], row["participant_dids"], strict=True
+                )
+            ]
+            participant_dids_list = row["participant_dids"]
+            participant_addresses = row["participant_addresses"]
+        elif kind == "mail":
+            details = mail_participants.get(row["row_id"], [])
+            participants = row["participants"]
+            participant_dids_list = [p["did"] for p in details]
+            participant_addresses = [p["address"] for p in details]
+        else:
+            details = [
+                {
+                    "did": row["from_did"],
+                    "alias": row["from_alias"],
+                    "address": row["from_address"],
+                },
+                {"did": row["to_did"], "alias": row["to_alias"], "address": None},
+            ]
+            participants = row["participants"]
+            participant_dids_list = []
+            participant_addresses = []
+
         result.append(
             ConversationItem(
-                conversation_type=item["conversation_type"],
-                conversation_id=item["conversation_id"],
-                legacy_message_id=item.get("legacy_message_id"),
-                status=item.get("status", "active"),
-                participants=item["participants"],
-                participant_dids=item.get("participant_dids", []),
-                participant_addresses=item.get("participant_addresses", []),
-                participant_details=item.get("participant_details", []),
-                subject=item["subject"],
-                title=item.get("title", ""),
-                first_message_id=item.get("first_message_id"),
-                last_message_at=ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
-                last_message_from=item["last_message_from"],
-                last_message_preview=item["last_message_preview"],
-                unread_count=item["unread_count"],
+                conversation_type="chat" if kind == "chat" else "mail",
+                conversation_id=None if kind == "legacy" else str(row["row_id"]),
+                legacy_message_id=str(row["row_id"]) if kind == "legacy" else None,
+                status="active" if kind == "chat" else (row["status"] or "legacy"),
+                participants=_dedupe_labels(participants or []),
+                participant_dids=_dedupe_labels(participant_dids_list or []),
+                participant_addresses=_dedupe_labels(participant_addresses or []),
+                participant_details=[
+                    _participant_detail(p["did"], p["alias"], p["address"])
+                    for p in details
+                ],
+                subject=row["subject"] or "",
+                title=row["title"] or "",
+                first_message_id=str(row["first_message_id"])
+                if kind != "chat"
+                else None,
+                last_message_at=row["created_at"].isoformat(),
+                last_message_from=_conversation_label(
+                    row["from_alias"], row["from_did"]
+                ),
+                last_message_preview=row["preview"] or "",
+                unread_count=row["unread_count"],
             )
         )
 
+    next_cursor = None
+    if rows and rows[-1]["has_more"]:
+        last = rows[-1]
+        next_cursor = encode_cursor(
+            {
+                "kind": "conversation_index",
+                "scope": cursor_scope,
+                "last_message_at": last["created_at"].isoformat(),
+                "key": last["cursor_key"],
+            }
+        )
     return ConversationsResponse(conversations=result, next_cursor=next_cursor)

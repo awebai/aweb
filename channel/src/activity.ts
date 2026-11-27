@@ -18,7 +18,7 @@ import {
   removeDeadSockets,
 } from "./activity_socket.js";
 
-export interface ClaudeActivity {
+interface ClaudeActivity {
   emitter: ActivityEmitter;
   /** Close the hook socket, then end and flush the open turn (bounded). */
   stop(): Promise<void>;

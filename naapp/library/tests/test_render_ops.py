@@ -58,9 +58,9 @@ def tmp_path() -> Iterator[Path]:
 
 
 def test_production_operations_doc_is_for_shipping_and_recovery() -> None:
-    operations_doc = (
-        Path(__file__).parents[1] / "docs" / "production-operations.md"
-    ).read_text(encoding="utf-8")
+    operations_doc = (Path(__file__).parents[1] / "docs" / "production-operations.md").read_text(
+        encoding="utf-8"
+    )
     normalized = " ".join(operations_doc.split())
 
     shipping_criterion = (
@@ -68,7 +68,9 @@ def test_production_operations_doc_is_for_shipping_and_recovery() -> None:
         "to add beyond that goes to Juan, one item at a time, in plain words."
     )
     assert shipping_criterion in normalized
-    assert operations_doc.index("We ship when") < operations_doc.index("## Ownership and profile assets")
+    assert operations_doc.index("We ship when") < operations_doc.index(
+        "## Ownership and profile assets"
+    )
 
     for removed_heading in (
         "## AATK verification contract",
@@ -101,9 +103,7 @@ def test_production_operations_doc_is_for_shipping_and_recovery() -> None:
 def test_repo_identifies_production_without_treating_render_blueprint_as_authority() -> None:
     repo_root = Path(__file__).parents[1]
     render_blueprint = (repo_root / "render.yaml").read_text(encoding="utf-8")
-    operations_doc = (repo_root / "docs" / "production-operations.md").read_text(
-        encoding="utf-8"
-    )
+    operations_doc = (repo_root / "docs" / "production-operations.md").read_text(encoding="utf-8")
     production = render_ops.ProductionConfig.load(repo_root / "ops" / "render-production.json")
 
     assert "NOT the production topology authority" in render_blueprint
@@ -391,13 +391,9 @@ def test_health_rejects_redirected_surface(monkeypatch: pytest.MonkeyPatch) -> N
         def read(self, *args) -> bytes:
             return health_bytes()
 
-    monkeypatch.setattr(
-        render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
-    )
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout, user_agent: Response())
     with pytest.raises(render_ops.OpsError, match="redirected away"):
-        render_ops.verify_health(
-            "https://library-origin.example/health", expected_commit=_SHA_A
-        )
+        render_ops.verify_health("https://library-origin.example/health", expected_commit=_SHA_A)
 
 
 def test_health_requires_exact_approved_build_commit(
@@ -424,9 +420,7 @@ def test_health_requires_exact_approved_build_commit(
                 }
             ).encode()
 
-    monkeypatch.setattr(
-        render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
-    )
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout, user_agent: Response())
 
     with pytest.raises(render_ops.TransientHealthError, match="observed.*expected"):
         render_ops.verify_health(
@@ -455,13 +449,12 @@ def test_health_accepts_public_deployment_identity(
         def read(self, *args) -> bytes:
             return json.dumps(payload).encode()
 
-    monkeypatch.setattr(
-        render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
-    )
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout, user_agent: Response())
 
-    assert render_ops.verify_health(
-        "https://library.example/health", expected_commit=_SHA_A
-    ) == payload
+    assert (
+        render_ops.verify_health("https://library.example/health", expected_commit=_SHA_A)
+        == payload
+    )
 
 
 def test_health_readiness_retries_a_valid_stale_commit_then_matches(
@@ -536,9 +529,7 @@ def test_health_null_build_identity_is_never_accepted_by_missing_build_action(
         def read(self, *args) -> bytes:
             return b'{"status":"ok","service":"library","build":{"git_sha":null}}'
 
-    monkeypatch.setattr(
-        render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
-    )
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout, user_agent: Response())
 
     with pytest.raises(render_ops.OpsError, match="null build identity"):
         render_ops.verify_health(
@@ -572,13 +563,9 @@ def test_health_missing_build_requires_separate_explicit_legacy_action(
         def read(self, *args) -> bytes:
             return b'{"status":"ok","service":"library"}'
 
-    monkeypatch.setattr(
-        render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
-    )
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout, user_agent: Response())
     with pytest.raises(render_ops.OpsError, match="missing build identity"):
-        render_ops.verify_health(
-            "https://library.example/health", expected_commit=_SHA_A
-        )
+        render_ops.verify_health("https://library.example/health", expected_commit=_SHA_A)
     assert render_ops.verify_health(
         "https://library.example/health",
         expected_commit=_SHA_A,
@@ -622,14 +609,10 @@ def test_health_rejects_malformed_or_unapproved_build_payload(
         def read(self, *args) -> bytes:
             return json.dumps(payload).encode()
 
-    monkeypatch.setattr(
-        render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
-    )
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout, user_agent: Response())
 
     with pytest.raises(render_ops.OpsError):
-        render_ops.verify_health(
-            "https://library.example/health", expected_commit=_SHA_A
-        )
+        render_ops.verify_health("https://library.example/health", expected_commit=_SHA_A)
 
 
 def test_health_readiness_retries_transient_http_then_succeeds(
@@ -740,9 +723,7 @@ def test_health_readiness_does_not_retry_permanent_http_error(
     sleeps: list[float] = []
     monkeypatch.setattr(render_ops, "open_health_url", forbidden)
     with pytest.raises(render_ops.OpsError, match="HTTP 403"):
-        render_ops.verify_health_surfaces(
-            config, expected_commit=_SHA_A, sleep=sleeps.append
-        )
+        render_ops.verify_health_surfaces(config, expected_commit=_SHA_A, sleep=sleeps.append)
     assert calls == 1
     assert sleeps == []
 
@@ -775,9 +756,7 @@ def test_health_readiness_does_not_retry_wrong_payload(
     sleeps: list[float] = []
     monkeypatch.setattr(render_ops, "open_health_url", wrong)
     with pytest.raises(render_ops.OpsError, match="unexpected Library health payload"):
-        render_ops.verify_health_surfaces(
-            config, expected_commit=_SHA_A, sleep=sleeps.append
-        )
+        render_ops.verify_health_surfaces(config, expected_commit=_SHA_A, sleep=sleeps.append)
     assert calls == 1
     assert sleeps == []
 
@@ -1076,7 +1055,9 @@ def test_header_evidence_exact_boundary() -> None:
 
 
 def _git_without_inherited_repository(*args: str) -> None:
-    env = {key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV}
+    env = {
+        key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV
+    }
     subprocess.run(["git", *args], check=True, env=env)
 
 
@@ -1102,9 +1083,15 @@ def _committed_script_repo(tmp_path: Path, content: str = "print('clean')\n") ->
 
 
 def _head(repo: Path) -> str:
-    env = {key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV}
+    env = {
+        key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV
+    }
     return subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True, env=env
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
     ).stdout.strip()
 
 
@@ -1163,9 +1150,9 @@ def test_config_digest_uses_same_snapshot_as_parsed_config(
         config=loaded,
     )
     manifest = json.loads((evidence.path / "001.json").read_text())
-    assert manifest["run_metadata"]["config_sha256"] == hashlib.sha256(
-        expected_snapshot
-    ).hexdigest()
+    assert (
+        manifest["run_metadata"]["config_sha256"] == hashlib.sha256(expected_snapshot).hexdigest()
+    )
     evidence.close()
 
 
@@ -1191,15 +1178,11 @@ def test_health_proof_records_terminal_outcome_for_each_failure_stage(
     )
     baseline_dir = tmp_path / "baseline-failure"
     with pytest.raises(render_ops.TransientHealthError):
-        render_ops.command_health_client_proof(
-            health_proof_args(config_path, baseline_dir)
-        )
+        render_ops.command_health_client_proof(health_proof_args(config_path, baseline_dir))
     baseline_artifacts = [
         json.loads(path.read_text()) for path in sorted(baseline_dir.glob("*.json"))
     ]
-    baseline_outcomes = [
-        item for item in baseline_artifacts if item["probe_kind"] == "run-outcome"
-    ]
+    baseline_outcomes = [item for item in baseline_artifacts if item["probe_kind"] == "run-outcome"]
     assert len(baseline_outcomes) == 1
     assert baseline_outcomes[0] is baseline_artifacts[-1]
     assert baseline_outcomes[0]["outcome"] == "failed"
@@ -1217,9 +1200,7 @@ def test_health_proof_records_terminal_outcome_for_each_failure_stage(
     monkeypatch.setattr(render_ops, "verify_health", gate_failure)
     gate_dir = tmp_path / "gate-failure"
     with pytest.raises(render_ops.TransientHealthError):
-        render_ops.command_health_client_proof(
-            health_proof_args(config_path, gate_dir)
-        )
+        render_ops.command_health_client_proof(health_proof_args(config_path, gate_dir))
     gate_outcome = json.loads((gate_dir / "002.json").read_text())
     assert gate_outcome["outcome"] == "failed"
     assert gate_outcome["stage"] == "honest-gate"
@@ -1265,9 +1246,7 @@ def test_health_proof_has_one_last_terminal_outcome_for_contract_and_http_failur
     monkeypatch.setattr(render_ops, "verify_health", fail_at_stage)
     evidence_path = tmp_path / "evidence"
     with pytest.raises(type(failure)):
-        render_ops.command_health_client_proof(
-            health_proof_args(config_path, evidence_path)
-        )
+        render_ops.command_health_client_proof(health_proof_args(config_path, evidence_path))
     artifacts = [json.loads(path.read_text()) for path in sorted(evidence_path.glob("*.json"))]
     outcomes = [item for item in artifacts if item["probe_kind"] == "run-outcome"]
     assert len(outcomes) == 1
@@ -1278,7 +1257,11 @@ def test_health_proof_has_one_last_terminal_outcome_for_contract_and_http_failur
 
 @pytest.mark.parametrize(
     ("body_kind", "expected_complete", "expected_outcome"),
-    [("exact", True, "red-green-pass"), ("oversized", False, "failed"), ("interrupted", False, "failed")],
+    [
+        ("exact", True, "red-green-pass"),
+        ("oversized", False, "failed"),
+        ("interrupted", False, "failed"),
+    ],
 )
 def test_health_proof_body_bounds_and_terminal_outcome(
     monkeypatch: pytest.MonkeyPatch,
@@ -1391,9 +1374,7 @@ def test_health_proof_cross_minute_has_one_failed_terminal_outcome(
     monkeypatch.setattr(render_ops, "verify_health", red_then_green)
     evidence_path = tmp_path / "evidence"
     with pytest.raises(render_ops.OpsError, match="crossed a UTC minute"):
-        render_ops.command_health_client_proof(
-            health_proof_args(config_path, evidence_path)
-        )
+        render_ops.command_health_client_proof(health_proof_args(config_path, evidence_path))
     artifacts = [json.loads(path.read_text()) for path in sorted(evidence_path.glob("*.json"))]
     outcomes = [item for item in artifacts if item["probe_kind"] == "run-outcome"]
     assert len(outcomes) == 1
@@ -1544,13 +1525,9 @@ def test_health_interrupted_body_read_is_transient(monkeypatch: pytest.MonkeyPat
         def read(self, *args) -> bytes:
             raise IncompleteRead(b"partial", 20)
 
-    monkeypatch.setattr(
-        render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
-    )
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout, user_agent: Response())
     with pytest.raises(render_ops.OpsError, match="exceeded evidence bound"):
-        render_ops.verify_health(
-            "https://library.example/health", expected_commit=_SHA_A
-        )
+        render_ops.verify_health("https://library.example/health", expected_commit=_SHA_A)
 
 
 def test_health_late_public_success_fails_closed(
@@ -1625,9 +1602,7 @@ def test_health_final_transient_attempt_is_logged_as_exhausted(
 
     monkeypatch.setattr(render_ops, "verify_health", consumes_deadline)
     with pytest.raises(render_ops.OpsError, match="after 90 seconds and 1 attempts"):
-        render_ops.verify_health_surfaces(
-            config, expected_commit=_SHA_A, monotonic=lambda: now[0]
-        )
+        render_ops.verify_health_surfaces(config, expected_commit=_SHA_A, monotonic=lambda: now[0])
     events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
     assert events == [
         {
@@ -1653,8 +1628,16 @@ def test_validate_service_fails_on_topology_drift(config: render_ops.ProductionC
     [
         (("rootDir",), "naapp/library", "rootDir"),
         (("rootDir",), None, "rootDir"),
-        (("serviceDetails", "envSpecificDetails", "dockerfilePath"), "./Dockerfile", "dockerfilePath"),
-        (("serviceDetails", "envSpecificDetails", "dockerContext"), "./naapp/library", "dockerContext"),
+        (
+            ("serviceDetails", "envSpecificDetails", "dockerfilePath"),
+            "./Dockerfile",
+            "dockerfilePath",
+        ),
+        (
+            ("serviceDetails", "envSpecificDetails", "dockerContext"),
+            "./naapp/library",
+            "dockerContext",
+        ),
     ],
 )
 def test_validate_service_fails_on_build_drift(
@@ -1697,15 +1680,21 @@ def test_production_config_rejects_build_paths_outside_the_repository(
 
 
 def test_production_config_builds_library_from_the_aweb_repository_root() -> None:
-    config = render_ops.ProductionConfig.load(render_ops.APP_ROOT / "ops" / "render-production.json")
+    config = render_ops.ProductionConfig.load(
+        render_ops.APP_ROOT / "ops" / "render-production.json"
+    )
     assert render_ops.canonical_git_repo(config.repo) == "github.com/awebai/aweb"
     assert config.root_dir == ""
     assert config.docker_context == "."
-    assert (render_ops.REPOSITORY_ROOT / config.dockerfile_path).resolve() == render_ops.APP_ROOT / "Dockerfile"
+    assert (
+        render_ops.REPOSITORY_ROOT / config.dockerfile_path
+    ).resolve() == render_ops.APP_ROOT / "Dockerfile"
 
 
 def test_repository_root_is_the_git_top_level() -> None:
-    env = {key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV}
+    env = {
+        key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV
+    }
     top_level = subprocess.run(
         ["git", "-C", str(render_ops.APP_ROOT), "rev-parse", "--show-toplevel"],
         check=True,
@@ -1792,9 +1781,7 @@ def stub_command_evidence(monkeypatch: pytest.MonkeyPatch) -> RecordingEvidence:
     return evidence
 
 
-def stub_exact_health_payload(
-    monkeypatch: pytest.MonkeyPatch, payload: dict
-) -> list[str]:
+def stub_exact_health_payload(monkeypatch: pytest.MonkeyPatch, payload: dict) -> list[str]:
     body = json.dumps(payload, separators=(",", ":")).encode()
     calls: list[str] = []
 
@@ -1884,9 +1871,9 @@ def test_invalid_evidence_path_prevents_every_mutation_call(
     with pytest.raises(render_ops.OpsError):
         command(args)
     assert client.posts == []
-    assert not (
-        invalid_kind == "inside-repo" and evidence_path.exists()
-    ), "inside-repository evidence path was created"
+    assert not (invalid_kind == "inside-repo" and evidence_path.exists()), (
+        "inside-repository evidence path was created"
+    )
 
 
 def test_deploy_persists_initial_manifest_before_mutation(
@@ -1916,9 +1903,7 @@ def test_deploy_persists_initial_manifest_before_mutation(
         "wait_for_deploy",
         lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
     )
-    monkeypatch.setattr(
-        render_ops, "verify_health_surfaces", lambda cfg, **kwargs: {"ok": True}
-    )
+    monkeypatch.setattr(render_ops, "verify_health_surfaces", lambda cfg, **kwargs: {"ok": True})
     args = common_args(config)
     args.evidence_dir = str(evidence_path)
     render_ops.command_deploy(args)
@@ -2029,17 +2014,11 @@ def test_candidate_commands_real_surfaces_refuse_exact_legacy_fixture(
     command_name: str,
 ) -> None:
     evidence = stub_command_evidence(monkeypatch)
-    health_calls = stub_exact_health_payload(
-        monkeypatch, {"status": "ok", "service": "library"}
-    )
+    health_calls = stub_exact_health_payload(monkeypatch, {"status": "ok", "service": "library"})
     rollback_artifact = deploy(
         "dep-rollback", _SHA_A, "live" if command_name == "deploy" else "deactivated"
     )
-    current = (
-        rollback_artifact
-        if command_name == "deploy"
-        else deploy("dep-candidate", _SHA_B)
-    )
+    current = rollback_artifact if command_name == "deploy" else deploy("dep-candidate", _SHA_B)
     client = FakeClient(config, rollback_artifact, current=current)
     monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
     monkeypatch.setattr(render_ops, "verify_git_target", lambda *args, **kwargs: None)
@@ -2057,8 +2036,12 @@ def test_candidate_commands_real_surfaces_refuse_exact_legacy_fixture(
 
     assert health_calls == [f"{config.origin_url}{config.health_path}"]
     assert terminal_outcomes(evidence) == [
-        {"probe_kind": "run-outcome", "outcome": "failed", "stage": command_name,
-         "error_class": "OpsError"}
+        {
+            "probe_kind": "run-outcome",
+            "outcome": "failed",
+            "stage": command_name,
+            "error_class": "OpsError",
+        }
     ]
 
 
@@ -2066,9 +2049,7 @@ def test_command_rollback_real_surfaces_refuse_legacy_fixture_without_pin(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
     evidence = stub_command_evidence(monkeypatch)
-    health_calls = stub_exact_health_payload(
-        monkeypatch, {"status": "ok", "service": "library"}
-    )
+    health_calls = stub_exact_health_payload(monkeypatch, {"status": "ok", "service": "library"})
     artifact = deploy("dep-rollback", _SHA_A, "deactivated")
     current = deploy("dep-candidate", _SHA_B)
     client = FakeClient(config, artifact, current=current)
@@ -2085,8 +2066,12 @@ def test_command_rollback_real_surfaces_refuse_legacy_fixture_without_pin(
     assert client.posts == [("rollback", "dep-rollback")]
     assert health_calls == [f"{config.origin_url}{config.health_path}"]
     assert terminal_outcomes(evidence) == [
-        {"probe_kind": "run-outcome", "outcome": "failed", "stage": "rollback",
-         "error_class": "OpsError"}
+        {
+            "probe_kind": "run-outcome",
+            "outcome": "failed",
+            "stage": "rollback",
+            "error_class": "OpsError",
+        }
     ]
 
 
@@ -2116,8 +2101,12 @@ def test_command_rollback_real_surfaces_refuse_null_fixture_even_when_pinned(
     assert client.posts == [("rollback", "dep-rollback")]
     assert health_calls == [f"{config.origin_url}{config.health_path}"]
     assert terminal_outcomes(evidence) == [
-        {"probe_kind": "run-outcome", "outcome": "failed", "stage": "rollback",
-         "error_class": "OpsError"}
+        {
+            "probe_kind": "run-outcome",
+            "outcome": "failed",
+            "stage": "rollback",
+            "error_class": "OpsError",
+        }
     ]
 
 
@@ -2311,9 +2300,7 @@ def test_command_verify_emits_four_child_capability_transcripts_from_real_health
     _stub_capability_identity(monkeypatch)
     calls = _stub_capability_http(monkeypatch, config)
     artifact = deploy("dep-candidate", "b" * 40)
-    monkeypatch.setattr(
-        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
-    )
+    monkeypatch.setattr(render_ops, "_client", lambda args: (FakeClient(config, artifact), config))
     output = tmp_path / "capability"
     result = render_ops.command_verify(_capability_verify_args(output))
     assert result["health"]["origin"] == health_payload("b" * 40)
@@ -2330,9 +2317,9 @@ def test_command_verify_emits_four_child_capability_transcripts_from_real_health
     assert all(child["terminal"]["outcome"] == "passed" for child in transcript["children"])
     assert set(transcript["normalized_arguments"]) == {"commit", "deploy_id", "service_id"}
     expected_body_sha = hashlib.sha256(health_bytes("b" * 40)).hexdigest()
-    assert {
-        child["subject_artifact_sha256"] for child in transcript["children"]
-    } == {expected_body_sha}
+    assert {child["subject_artifact_sha256"] for child in transcript["children"]} == {
+        expected_body_sha
+    }
 
 
 @pytest.mark.parametrize(
@@ -2382,9 +2369,7 @@ def test_capability_schema_rejects_unentered_ordered_or_forged_semantics(
     _stub_capability_identity(monkeypatch)
     _stub_capability_http(monkeypatch, config)
     artifact = deploy("dep-candidate", "b" * 40)
-    monkeypatch.setattr(
-        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
-    )
+    monkeypatch.setattr(render_ops, "_client", lambda args: (FakeClient(config, artifact), config))
     output = tmp_path / code
     render_ops.command_verify(_capability_verify_args(output))
     transcript = _capability_transcript(output)
@@ -2423,9 +2408,7 @@ def test_capability_negatives_fail_at_exact_sibling_after_restoration(
         failure_kind=failure_kind,
     )
     artifact = deploy("dep-candidate", "b" * 40)
-    monkeypatch.setattr(
-        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
-    )
+    monkeypatch.setattr(render_ops, "_client", lambda args: (FakeClient(config, artifact), config))
     output = tmp_path / f"{surface}-{failure_kind}"
     with pytest.raises(render_ops.OpsError):
         render_ops.command_verify(
@@ -2482,9 +2465,7 @@ def test_candidate_capability_symmetric_permissive_shapes_remain_rejected(
         failure_kind=failure_kind,
     )
     artifact = deploy("dep-candidate", "b" * 40)
-    monkeypatch.setattr(
-        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
-    )
+    monkeypatch.setattr(render_ops, "_client", lambda args: (FakeClient(config, artifact), config))
     output = tmp_path / failure_kind
     mutation_id = (
         "health.origin.payload-contract.dedicated-negative"
@@ -2492,9 +2473,7 @@ def test_candidate_capability_symmetric_permissive_shapes_remain_rejected(
         else "health.origin.build-sha.forbidden-null"
     )
     with pytest.raises(render_ops.OpsError, match=error):
-        render_ops.command_verify(
-            _capability_verify_args(output, mutation_id=mutation_id)
-        )
+        render_ops.command_verify(_capability_verify_args(output, mutation_id=mutation_id))
     transcript = _capability_transcript(output)
     assert transcript["terminal"]["outcome"] == "failed"
 
@@ -2507,13 +2486,14 @@ def test_capability_bypassed_health_orchestration_fails_closed_with_missing_cell
     stub_command_evidence(monkeypatch)
     _stub_capability_identity(monkeypatch)
     artifact = deploy("dep-candidate", "b" * 40)
-    monkeypatch.setattr(
-        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
-    )
+    monkeypatch.setattr(render_ops, "_client", lambda args: (FakeClient(config, artifact), config))
     monkeypatch.setattr(
         render_ops,
         "verify_health_surfaces",
-        lambda *args, **kwargs: {"origin": health_payload("b" * 40), "public": health_payload("b" * 40)},
+        lambda *args, **kwargs: {
+            "origin": health_payload("b" * 40),
+            "public": health_payload("b" * 40),
+        },
     )
     output = tmp_path / "bypassed-orchestration"
     with pytest.raises(render_ops.OpsError, match="capability-incomplete"):
@@ -2566,9 +2546,7 @@ def test_preexisting_capability_output_terminalizes_real_primary_evidence(
 ) -> None:
     _stub_capability_identity(monkeypatch)
     artifact = deploy("dep-candidate", "b" * 40)
-    monkeypatch.setattr(
-        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
-    )
+    monkeypatch.setattr(render_ops, "_client", lambda args: (FakeClient(config, artifact), config))
     capability = tmp_path / "preexisting-capability"
     capability.mkdir(mode=0o700)
     marker = capability / "retained"
@@ -2595,9 +2573,7 @@ def test_invalid_capability_metadata_terminalizes_real_primary_evidence(
 ) -> None:
     _stub_capability_identity(monkeypatch)
     artifact = deploy("dep-candidate", "b" * 40)
-    monkeypatch.setattr(
-        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
-    )
+    monkeypatch.setattr(render_ops, "_client", lambda args: (FakeClient(config, artifact), config))
     capability = tmp_path / "invalid-capability"
     primary = tmp_path / "invalid-primary"
     args = _capability_verify_args(capability)
@@ -2620,9 +2596,7 @@ def test_capability_finish_failure_still_terminalizes_real_primary_evidence(
     _stub_capability_identity(monkeypatch)
     _stub_capability_http(monkeypatch, config)
     artifact = deploy("dep-candidate", "b" * 40)
-    monkeypatch.setattr(
-        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
-    )
+    monkeypatch.setattr(render_ops, "_client", lambda args: (FakeClient(config, artifact), config))
 
     def fail_finish(self, *, outcome: str, error_code: str = "") -> None:
         raise render_ops.OpsError("forced capability finish failure")
@@ -2650,9 +2624,7 @@ def test_capability_output_is_atomic_no_replace(
     _stub_capability_identity(monkeypatch)
     _stub_capability_http(monkeypatch, config)
     artifact = deploy("dep-candidate", "b" * 40)
-    monkeypatch.setattr(
-        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
-    )
+    monkeypatch.setattr(render_ops, "_client", lambda args: (FakeClient(config, artifact), config))
     output = tmp_path / "no-replace"
     render_ops.command_verify(_capability_verify_args(output))
     before = {path.name: path.read_bytes() for path in output.glob("*.json")}
@@ -2668,14 +2640,14 @@ def test_capability_source_cleanliness_fails_before_output_or_http(
 ) -> None:
     stub_command_evidence(monkeypatch)
     artifact = deploy("dep-candidate", "b" * 40)
-    monkeypatch.setattr(
-        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
-    )
+    monkeypatch.setattr(render_ops, "_client", lambda args: (FakeClient(config, artifact), config))
     calls = _stub_capability_http(monkeypatch, config)
     monkeypatch.setattr(
         render_ops,
         "_verifier_identity",
-        lambda: (_ for _ in ()).throw(render_ops.OpsError("verifier repository has tracked changes")),
+        lambda: (_ for _ in ()).throw(
+            render_ops.OpsError("verifier repository has tracked changes")
+        ),
     )
     output = tmp_path / "dirty-source"
     with pytest.raises(render_ops.OpsError, match="tracked changes"):
@@ -2718,9 +2690,7 @@ def test_make_mutation_recipe_does_not_shell_interpolate_values() -> None:
         capture_output=True,
     )
     assert "INJECTED" not in completed.stdout
-    recipe_lines = [
-        line for line in completed.stdout.splitlines() if not line.startswith("make[")
-    ]
+    recipe_lines = [line for line in completed.stdout.splitlines() if not line.startswith("make[")]
     assert recipe_lines == [
         "git fetch --quiet origin",
         "uv run python scripts/render_ops.py deploy",

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Check Docker VM recovery; retain host-wide counts only as diagnostics."""
+
 from __future__ import annotations
 
 import argparse
@@ -21,13 +22,18 @@ def lsof_counts(raw: str) -> tuple[int, int]:
     if not lines or not lines[0].startswith("COMMAND"):
         raise ValueError("lsof output has no header; refusing an unknown count")
     rows = [line for line in lines[1:] if line.strip()]
-    numeric = sum(len(parts := line.split()) > 3 and bool(re.fullmatch(r"\d+[rwu]?", parts[3])) for line in rows)
+    numeric = sum(
+        len(parts := line.split()) > 3 and bool(re.fullmatch(r"\d+[rwu]?", parts[3]))
+        for line in rows
+    )
     return len(rows), numeric
 
 
 def docker_data_paths(raw: str) -> list[str]:
     # lsof's NAME column may contain spaces (notably "Group Containers").
-    docker_root = re.compile(r"/Library/(?:Containers/com\.docker\.docker|Group Containers/(?:group\.com\.docker(?:\.docker)?|com\.docker\.docker))/")
+    docker_root = re.compile(
+        r"/Library/(?:Containers/com\.docker\.docker|Group Containers/(?:group\.com\.docker(?:\.docker)?|com\.docker\.docker))/"
+    )
     paths = []
     for line in raw.splitlines()[1:]:
         fields = line.split(None, 8)
@@ -49,32 +55,52 @@ def _capture(destination: Path, result: dict) -> dict:
         for line in processes.splitlines():
             fields = line.strip().split(None, 2)
             if len(fields) != 3 or Path(fields[2]).name not in {
-                "com.apple.Virtualization.VirtualMachine", "com.docker.hyperkit",
+                "com.apple.Virtualization.VirtualMachine",
+                "com.docker.hyperkit",
             }:
                 continue
-            candidate = {"pid": int(fields[0]), "ppid": int(fields[1]),
-                         "command": fields[2], "matched_docker_paths": []}
+            candidate = {
+                "pid": int(fields[0]),
+                "ppid": int(fields[1]),
+                "command": fields[2],
+                "matched_docker_paths": [],
+            }
             candidates.append(candidate)
             try:
                 raw = command("lsof", "-nP", "-p", str(candidate["pid"]))
-                destination.with_suffix(f".vm-{candidate['pid']}.lsof.txt").write_text(raw)
+                destination.with_suffix(f".vm-{candidate['pid']}.lsof.txt").write_text(
+                    raw
+                )
                 rows, numeric = lsof_counts(raw)
-                candidate.update(matched_docker_paths=docker_data_paths(raw),
-                                 vm_lsof_rows=rows, vm_numeric_fd_rows=numeric)
+                candidate.update(
+                    matched_docker_paths=docker_data_paths(raw),
+                    vm_lsof_rows=rows,
+                    vm_numeric_fd_rows=numeric,
+                )
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 candidate["error"] = str(exc)
         matches = [item for item in candidates if item["matched_docker_paths"]]
         if len(matches) != 1 or any("error" in item for item in candidates):
-            raise RuntimeError(f"Docker VM identity unavailable: {len(matches)} Docker-data matches among {len(candidates)} candidates; exactly one fully observed match required")
+            raise RuntimeError(
+                f"Docker VM identity unavailable: {len(matches)} Docker-data matches among {len(candidates)} candidates; exactly one fully observed match required"
+            )
         vm = matches[0]
-        result.update(status="measured", vm_pids=[vm["pid"]], vm_identity=vm,
-                      vm_lsof_rows=vm["vm_lsof_rows"], vm_numeric_fd_rows=vm["vm_numeric_fd_rows"])
+        result.update(
+            status="measured",
+            vm_pids=[vm["pid"]],
+            vm_identity=vm,
+            vm_lsof_rows=vm["vm_lsof_rows"],
+            vm_numeric_fd_rows=vm["vm_numeric_fd_rows"],
+        )
     destination.write_text(json.dumps(result, indent=2) + "\n")
     return result
 
 
 def capture(destination: Path) -> dict:
-    result = {"timestamp": datetime.now(timezone.utc).isoformat(), "platform": platform.system()}
+    result = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "platform": platform.system(),
+    }
     try:
         return _capture(destination, result)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -93,11 +119,18 @@ def compare(before: dict, after: dict) -> dict:
     # A VM restart changes the measuring subject. Recovery requires an explicit
     # operator receipt, not an automatic passing comparison to a new process.
     same_vm = before["vm_pids"] == after["vm_pids"]
-    deltas = {key: after[key] - before[key] for key in ("kern.num_files", "vm_lsof_rows", "vm_numeric_fd_rows")}
+    deltas = {
+        key: after[key] - before[key]
+        for key in ("kern.num_files", "vm_lsof_rows", "vm_numeric_fd_rows")
+    }
     # kern.num_files includes every session on a shared host. It cannot
     # attribute a leak to this run; retain its delta without gating on it.
-    return {"status": "passed" if same_vm and deltas["vm_lsof_rows"] <= 5000 else "failed",
-            "same_vm": same_vm, "deltas": deltas, "bounds": {"vm_lsof_rows": 5000}}
+    return {
+        "status": "passed" if same_vm and deltas["vm_lsof_rows"] <= 5000 else "failed",
+        "same_vm": same_vm,
+        "deltas": deltas,
+        "bounds": {"vm_lsof_rows": 5000},
+    }
 
 
 def settle(before_path: Path, directory: Path) -> dict:
@@ -111,7 +144,14 @@ def settle(before_path: Path, directory: Path) -> dict:
         try:
             after = capture(sample_path)
             result = compare(before, after)
-        except (OSError, ValueError, RuntimeError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            KeyError,
+            TypeError,
+            subprocess.SubprocessError,
+        ) as exc:
             result = {"status": "failed", "error": str(exc)}
         samples.append({"sample": attempt, "path": sample_path.name, **result})
         # Stable alias for evidence consumers; the numbered raw samples remain.
@@ -119,8 +159,11 @@ def settle(before_path: Path, directory: Path) -> dict:
             (directory / "host-after.json").write_bytes(sample_path.read_bytes())
         if result["status"] in {"passed", "not_applicable"}:
             break
-    receipt = {**result, "samples": samples,
-               "passed_sample": attempt if result["status"] == "passed" else None}
+    receipt = {
+        **result,
+        "samples": samples,
+        "passed_sample": attempt if result["status"] == "passed" else None,
+    }
     (directory / "host-recovery.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
 

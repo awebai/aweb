@@ -55,7 +55,11 @@ async def test_federation_target_identity_awid_dependency_logs_exc_info(caplog):
     assert raised.value.reason == "federation_authority_coordination_unavailable"
     assert raised.value.http_status == 503
     assert raised.value.retryable is True
-    records = [record for record in caplog.records if "federation target identity resolution" in record.getMessage()]
+    records = [
+        record
+        for record in caplog.records
+        if "federation target identity resolution" in record.getMessage()
+    ]
     assert records
     assert records[0].levelno == logging.WARNING
     assert records[0].exc_info is not None
@@ -75,7 +79,11 @@ async def test_federation_target_identity_unexpected_awid_error_logs_exception(c
     assert raised.value.reason == "federation_authority_coordination_unavailable"
     assert raised.value.http_status == 503
     assert raised.value.retryable is True
-    records = [record for record in caplog.records if "federation target identity resolution" in record.getMessage()]
+    records = [
+        record
+        for record in caplog.records
+        if "federation target identity resolution" in record.getMessage()
+    ]
     assert records
     assert records[0].levelno == logging.ERROR
     assert records[0].exc_info is not None

@@ -25,7 +25,9 @@ def _b64url(value: bytes) -> str:
 
 def _load_vector() -> dict:
     root = Path(__file__).resolve().parents[2]
-    return json.loads((root / "docs" / "vectors" / "team-auth-envelope-v2.json").read_text())
+    return json.loads(
+        (root / "docs" / "vectors" / "team-auth-envelope-v2.json").read_text()
+    )
 
 
 def _request(
@@ -165,7 +167,12 @@ def test_team_auth_envelope_v2_rejects_cross_origin_replay() -> None:
 
     with pytest.raises(ValueError, match="audience is not allowed"):
         team_auth_signature_payload(
-            _request(method="GET", path="/api/v1/tasks", query_string=b"", signed_payload=canonical),
+            _request(
+                method="GET",
+                path="/api/v1/tasks",
+                query_string=b"",
+                signed_payload=canonical,
+            ),
             team_id="default:aweb.ai",
             timestamp=timestamp,
             body_sha256=body_sha256,
@@ -239,7 +246,10 @@ def test_identity_auth_envelope_v2_conformance_vector() -> None:
         assert "team_id" not in payload
         assert canonical_json_bytes(payload) == canonical
         assert _b64url(canonical) == case["signed_payload_b64url"]
-        assert sign_message(bytes.fromhex(case["seed_hex"]), canonical) == case["signature_b64"]
+        assert (
+            sign_message(bytes.fromhex(case["seed_hex"]), canonical)
+            == case["signature_b64"]
+        )
         envelope = identity_auth_signature_payload(
             _identity_request(payload, canonical),
             did_aw=payload["did_aw"],
@@ -265,7 +275,9 @@ def test_identity_auth_envelope_v2_refuses_missing_did_aw() -> None:
         without_claim = dict(payload)
         without_claim.pop("did_aw")
 
-        with pytest.raises(ValueError, match="signed request payload does not match request"):
+        with pytest.raises(
+            ValueError, match="signed request payload does not match request"
+        ):
             identity_auth_signature_payload(
                 _identity_request(payload, canonical_json_bytes(without_claim)),
                 did_aw=payload["did_aw"],
@@ -284,17 +296,34 @@ def test_team_auth_envelope_v2_conformance_negative_cases() -> None:
 
     for negative in vector["negative_cases"]:
         if negative["name"] == "cross_endpoint_replay":
-            request = _request(method=payload["method"], path=negative["presented_path"], query_string=b"", signed_payload=canonical)
+            request = _request(
+                method=payload["method"],
+                path=negative["presented_path"],
+                query_string=b"",
+                signed_payload=canonical,
+            )
             audiences = ["https://app.aweb.ai"]
             expected_hash = body_sha256
         elif negative["name"] == "cross_origin_replay":
-            request = _request(method=payload["method"], path="/api/v1/a2a/gateway/routes", query_string=b"dry_run=true", signed_payload=canonical)
+            request = _request(
+                method=payload["method"],
+                path="/api/v1/a2a/gateway/routes",
+                query_string=b"dry_run=true",
+                signed_payload=canonical,
+            )
             audiences = negative["allowed_audiences"]
             expected_hash = body_sha256
         elif negative["name"] == "tampered_body":
-            request = _request(method=payload["method"], path="/api/v1/a2a/gateway/routes", query_string=b"dry_run=true", signed_payload=canonical)
+            request = _request(
+                method=payload["method"],
+                path="/api/v1/a2a/gateway/routes",
+                query_string=b"dry_run=true",
+                signed_payload=canonical,
+            )
             audiences = ["https://app.aweb.ai"]
-            expected_hash = hashlib.sha256(negative["presented_body"].encode()).hexdigest()
+            expected_hash = hashlib.sha256(
+                negative["presented_body"].encode()
+            ).hexdigest()
         elif negative["name"] == "missing_version":
             modified = dict(payload)
             modified.pop(negative["remove_field"])

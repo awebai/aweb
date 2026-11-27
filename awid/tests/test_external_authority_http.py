@@ -29,7 +29,9 @@ async def test_pinned_tls_dials_selected_ip_and_preserves_hostname() -> None:
         lambda _socket, server_name, _context: observed.__setitem__("sni", server_name)
     )
 
-    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def handle(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         request = await reader.readuntil(b"\r\n\r\n")
         observed["requests"] = int(observed["requests"]) + 1
         observed["request"] = request
@@ -72,7 +74,9 @@ async def test_pinned_transport_never_follows_redirect() -> None:
     requests: list[bytes] = []
     server_context, client_context = _tls_contexts()
 
-    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def handle(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         requests.append(await reader.readuntil(b"\r\n\r\n"))
         writer.write(
             b"HTTP/1.1 302 Found\r\nLocation: https://internal.example/secret\r\n"
@@ -105,7 +109,9 @@ async def test_pinned_transport_never_follows_redirect() -> None:
 async def test_pinned_transport_bounds_identity_encoded_json() -> None:
     server_context, client_context = _tls_contexts()
 
-    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def handle(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         await reader.readuntil(b"\r\n\r\n")
         body = json.dumps({"value": "x" * 128}).encode()
         writer.write(

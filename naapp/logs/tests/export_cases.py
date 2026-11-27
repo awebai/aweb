@@ -223,9 +223,7 @@ def cases() -> list[ExportCase]:
             _purged(log),
             {
                 "intact": True,
-                "epochs": [
-                    _epoch(1, intact=True, purged=[{"from": 2, "to": 2, "act": ERASE_ACT}])
-                ],
+                "epochs": [_epoch(1, intact=True, purged=[{"from": 2, "to": 2, "act": ERASE_ACT}])],
             },
         ),
         ExportCase(
@@ -291,7 +289,10 @@ def cases() -> list[ExportCase]:
         ),
         ExportCase(
             "witness_of_another_team_than_the_bundle_is_wrong_chain",
-            [header_line("other:example.com"), *bundle(log, second_epoch=False, first_events=2)[1:]],
+            [
+                header_line("other:example.com"),
+                *bundle(log, second_epoch=False, first_events=2)[1:],
+            ],
             {
                 "intact": False,
                 "witnesses": {
@@ -391,7 +392,11 @@ def malformed_cases() -> list[MalformedCase]:
     lines = bundle(log)
     second_genesis = lines.index(genesis_line(log.second))
     return [
-        MalformedCase("header_of_another_type", _replace(0, b'{"team_id":"x","type":"other","v":1}\n')(lines), 1),
+        MalformedCase(
+            "header_of_another_type",
+            _replace(0, b'{"team_id":"x","type":"other","v":1}\n')(lines),
+            1,
+        ),
         MalformedCase("no_header", lines[1:], 1),
         MalformedCase("line_not_canonical", _replace(2, lines[2].rstrip(b"\n") + b" \n")(lines), 3),
         MalformedCase("line_not_an_object", _replace(2, b"[]\n")(lines), 3),

@@ -14,7 +14,11 @@ import pytest_asyncio
 from awid.registry import RegistryClient
 
 from aweb.embedding import OutboxRecoveryOwnership
-from aweb.lifecycle import LifecycleActor, LifecycleCascadeRequest, apply_lifecycle_cascade
+from aweb.lifecycle import (
+    LifecycleActor,
+    LifecycleCascadeRequest,
+    apply_lifecycle_cascade,
+)
 from dashboard_test_support import _JWT_SECRET as _JWT_SECRET, _make_jwt as _make_jwt
 from test_dashboard_privacy import TEAM, TEAM_NAME, _request, privacy_stack
 from test_dashboard_privacy import privacy_app
@@ -593,9 +597,16 @@ async def test_list_agents_and_detail_keep_workspace_and_identity_fields(privacy
     alice = env.actors["alice"]
     await _global_actor(env, "alice", address="example.test/alice")
     connected = await _send_member_request(
-        env, alias="alice", method="POST", path="/v1/connect",
-        body={"workspace_path": "/workspace/alice", "human_name": "Alice",
-              "role": "developer", "agent_type": "coder"},
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/connect",
+        body={
+            "workspace_path": "/workspace/alice",
+            "human_name": "Alice",
+            "role": "developer",
+            "agent_type": "coder",
+        },
     )
     assert connected.status_code == 200, connected.text
     seen = await env.db.fetch_value(
@@ -636,7 +647,9 @@ async def test_list_agents_prefers_live_workspace_over_newer_deleted_workspace(
         env.redis,
         LifecycleCascadeRequest(
             operation="cleanup_agent_coordination_state",
-            actor=LifecycleActor(actor_id="test-host", actor_type="system", authority="embedding"),
+            actor=LifecycleActor(
+                actor_id="test-host", actor_type="system", authority="embedding"
+            ),
             team_id=TEAM,
             target_workspace_ids=(str(bob.workspace),),
         ),
@@ -644,7 +657,9 @@ async def test_list_agents_prefers_live_workspace_over_newer_deleted_workspace(
     )
     assert removed.errors == ()
     assert not removed.identity_deleted
-    assert [change.workspace_id for change in removed.workspace_changes] == [str(bob.workspace)]
+    assert [change.workspace_id for change in removed.workspace_changes] == [
+        str(bob.workspace)
+    ]
     connected = await _send_member_request(
         env,
         alias="bob",

@@ -112,9 +112,16 @@ async def test_live_and_cached_acquisition_have_identical_evidence_and_start_age
             transport=httpx.ASGITransport(app=app),
             domain_verifier=timed_authority,
         )
-        key = await cached._generation_cache_key(cached._id_status_cache_key(
-            {"v": 1, "domain": DOMAIN, "ids": [did_aw("alice"), did_aw("global_agent")]}
-        ), cached._id_status_generation_key(DOMAIN))
+        key = await cached._generation_cache_key(
+            cached._id_status_cache_key(
+                {
+                    "v": 1,
+                    "domain": DOMAIN,
+                    "ids": [did_aw("alice"), did_aw("global_agent")],
+                }
+            ),
+            cached._id_status_generation_key(DOMAIN),
+        )
         try:
             await redis.delete(key)
             first = await live.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)
@@ -173,7 +180,9 @@ async def test_malformed_actual_status_response_is_unavailable(live_registry):
     assert len(transport.calls) == 1
 
 
-async def test_cached_status_distinguishes_malformed_answer_from_failed_read(live_registry):
+async def test_cached_status_distinguishes_malformed_answer_from_failed_read(
+    live_registry,
+):
     app, redis = live_registry
     transport = ServiceTransport(app)
 

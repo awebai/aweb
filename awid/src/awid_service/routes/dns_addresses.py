@@ -40,7 +40,11 @@ from awid_service.routes.dns_namespace_reverify import reverify_namespace_row
 
 _ADDRESS_ALREADY_BOUND_DETAIL = "address already bound to a different did_aw"
 _DID_CURRENT_KEY_MISMATCH_DETAIL = "did_aw current key does not match"
-router = APIRouter(prefix="/v1/namespaces/{domain}/addresses", tags=["addresses"], route_class=ControllerAuthRoute)
+router = APIRouter(
+    prefix="/v1/namespaces/{domain}/addresses",
+    tags=["addresses"],
+    route_class=ControllerAuthRoute,
+)
 logger = logging.getLogger(__name__)
 
 _STALE_THRESHOLD = timedelta(hours=24)
@@ -112,7 +116,9 @@ async def _require_namespace(db, domain: str):
     return row
 
 
-async def _ensure_fresh_verification(db, ns_row, domain: str, verify_domain: DomainVerifier):
+async def _ensure_fresh_verification(
+    db, ns_row, domain: str, verify_domain: DomainVerifier
+):
     """Re-verify DNS if the namespace verification is stale (>24h).
 
     Returns the current namespace row. Raises 403 on DNS failure without
@@ -201,7 +207,9 @@ async def _fetch_active_address_for_registration(tx, *, namespace_id, name: str)
     )
 
 
-def _raise_address_registration_conflict(row, *, did_aw: str, current_did_key: str) -> None:
+def _raise_address_registration_conflict(
+    row, *, did_aw: str, current_did_key: str
+) -> None:
     if row["did_aw"] != did_aw:
         raise HTTPException(status_code=409, detail=_ADDRESS_ALREADY_BOUND_DETAIL)
     if row["current_did_key"] != current_did_key:
@@ -350,7 +358,9 @@ def _address_response(row, domain: str) -> AddressResponse:
         name=row["name"],
         did_aw=row["did_aw"],
         current_did_key=row["current_did_key"],
-        delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin"), source="namespace"),
+        delivery=AddressDeliveryResponse(
+            origin=row.get("default_delivery_origin"), source="namespace"
+        ),
         created_at=row["created_at"].isoformat(),
     )
 
@@ -361,14 +371,22 @@ def _atomic_claim_enabled() -> bool:
 
 
 def _claim_error(status_code: int, code: str, message: str) -> HTTPException:
-    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+    return HTTPException(
+        status_code=status_code, detail={"code": code, "message": message}
+    )
 
 
 def _claim_request_id(request: Request) -> str:
-    return request.headers.get("X-Request-ID") or request.headers.get("X-AWEB-Request-ID") or uuid.uuid4().hex
+    return (
+        request.headers.get("X-Request-ID")
+        or request.headers.get("X-AWEB-Request-ID")
+        or uuid.uuid4().hex
+    )
 
 
-def _normalize_address_claim_fields(domain: str, body: AtomicAddressClaimRequest) -> AtomicAddressClaimFields:
+def _normalize_address_claim_fields(
+    domain: str, body: AtomicAddressClaimRequest
+) -> AtomicAddressClaimFields:
     try:
         validate_stable_id(body.did_aw)
         _validate_did_key(body.current_did_key)
@@ -387,7 +405,9 @@ def _normalize_address_claim_fields(domain: str, body: AtomicAddressClaimRequest
             )
         )
     except ValueError as exc:
-        raise _claim_error(422, _CLAIM_PAYLOAD_CANONICALIZATION_MISMATCH, str(exc)) from exc
+        raise _claim_error(
+            422, _CLAIM_PAYLOAD_CANONICALIZATION_MISMATCH, str(exc)
+        ) from exc
     return fields
 
 
@@ -401,12 +421,16 @@ def _verify_atomic_claim_signatures(
     try:
         enforce_timestamp_skew(fields.timestamp)
     except HTTPException as exc:
-        raise _claim_error(401, _CLAIM_TIMESTAMP_STALE, "timestamp outside allowed skew window") from exc
+        raise _claim_error(
+            401, _CLAIM_TIMESTAMP_STALE, "timestamp outside allowed skew window"
+        ) from exc
 
     try:
         identity_canonical = atomic_address_claim_identity_canonical(fields)
     except ValueError as exc:
-        raise _claim_error(422, _CLAIM_PAYLOAD_CANONICALIZATION_MISMATCH, str(exc)) from exc
+        raise _claim_error(
+            422, _CLAIM_PAYLOAD_CANONICALIZATION_MISMATCH, str(exc)
+        ) from exc
     try:
         verify_did_key_signature(
             did_key=fields.current_did_key,
@@ -414,7 +438,9 @@ def _verify_atomic_claim_signatures(
             signature_b64=identity_signature,
         )
     except Exception as exc:
-        raise _claim_error(401, _CLAIM_IDENTITY_SIGNATURE_INVALID, "identity signature invalid") from exc
+        raise _claim_error(
+            401, _CLAIM_IDENTITY_SIGNATURE_INVALID, "identity signature invalid"
+        ) from exc
 
     try:
         identity_proof_hash = atomic_address_claim_identity_proof_hash(
@@ -426,7 +452,9 @@ def _verify_atomic_claim_signatures(
             identity_proof_hash,
         )
     except ValueError as exc:
-        raise _claim_error(422, _CLAIM_PAYLOAD_CANONICALIZATION_MISMATCH, str(exc)) from exc
+        raise _claim_error(
+            422, _CLAIM_PAYLOAD_CANONICALIZATION_MISMATCH, str(exc)
+        ) from exc
     try:
         verify_did_key_signature(
             did_key=namespace_controller_did,
@@ -456,41 +484,75 @@ def _validated_did_log_proof(
     except ValueError as exc:
         raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, str(exc)) from exc
     if proof.did_aw != fields.did_aw:
-        raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof did_aw mismatch")
+        raise _claim_error(
+            422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof did_aw mismatch"
+        )
     if proof.new_did_key != fields.current_did_key:
-        raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof new_did_key mismatch")
+        raise _claim_error(
+            422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof new_did_key mismatch"
+        )
 
     if proof.seq == 1:
         if proof.operation != "register_did":
-            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "seq=1 proof must register_did")
+            raise _claim_error(
+                422, _CLAIM_DID_LOG_PROOF_INVALID, "seq=1 proof must register_did"
+            )
         if proof.previous_did_key is not None or proof.prev_entry_hash is not None:
-            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "register_did proof must not carry previous key state")
+            raise _claim_error(
+                422,
+                _CLAIM_DID_LOG_PROOF_INVALID,
+                "register_did proof must not carry previous key state",
+            )
         if proof.authorized_by != fields.current_did_key:
-            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "register_did proof must be authorized by current did:key")
+            raise _claim_error(
+                422,
+                _CLAIM_DID_LOG_PROOF_INVALID,
+                "register_did proof must be authorized by current did:key",
+            )
         try:
             enforce_timestamp_skew(proof.timestamp)
             derived = stable_id_from_public_key(public_key_from_did(proof.new_did_key))
         except HTTPException as exc:
-            raise _claim_error(401, _CLAIM_TIMESTAMP_STALE, "did_log_proof timestamp outside allowed skew window") from exc
+            raise _claim_error(
+                401,
+                _CLAIM_TIMESTAMP_STALE,
+                "did_log_proof timestamp outside allowed skew window",
+            ) from exc
         except Exception as exc:
             raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, str(exc)) from exc
         if derived != proof.did_aw:
-            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof did_aw does not match key derivation")
+            raise _claim_error(
+                422,
+                _CLAIM_DID_LOG_PROOF_INVALID,
+                "did_log_proof did_aw does not match key derivation",
+            )
         proof_signer = proof.new_did_key
     else:
         if proof.operation != "rotate_key":
-            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "seq>1 proof must rotate_key")
+            raise _claim_error(
+                422, _CLAIM_DID_LOG_PROOF_INVALID, "seq>1 proof must rotate_key"
+            )
         if proof.previous_did_key is None or proof.prev_entry_hash is None:
-            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "rotate_key proof requires previous key state")
+            raise _claim_error(
+                422,
+                _CLAIM_DID_LOG_PROOF_INVALID,
+                "rotate_key proof requires previous key state",
+            )
         try:
             _validate_did_key(proof.previous_did_key)
             if len(proof.prev_entry_hash) != 64:
-                raise ValueError("rotate_key proof prev_entry_hash must be 64 hex characters")
+                raise ValueError(
+                    "rotate_key proof prev_entry_hash must be 64 hex characters"
+                )
             int(proof.prev_entry_hash, 16)
         except ValueError as exc:
             raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, str(exc)) from exc
         if proof.authorized_by != proof.previous_did_key:
-            raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "rotate_key proof must be authorized by previous did:key")
+            raise _claim_error(
+                422,
+                _CLAIM_DID_LOG_PROOF_INVALID,
+                "rotate_key proof must be authorized by previous did:key",
+            )
         # A rotation log head is historical registry evidence, so its timestamp
         # need not be fresh. The outer atomic claim signatures still carry and
         # enforce a fresh request timestamp.
@@ -501,7 +563,9 @@ def _validated_did_log_proof(
         current_did_key=proof.new_did_key,
     )
     if proof.state_hash != state_hash:
-        raise _claim_error(422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof state_hash mismatch")
+        raise _claim_error(
+            422, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof state_hash mismatch"
+        )
     payload = awid_log_entry_payload(
         did_aw=proof.did_aw,
         seq=proof.seq,
@@ -520,7 +584,9 @@ def _validated_did_log_proof(
             signature_b64=proof.signature,
         )
     except Exception as exc:
-        raise _claim_error(401, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof signature invalid") from exc
+        raise _claim_error(
+            401, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof signature invalid"
+        ) from exc
     return payload, awid_sha256_hex(payload), state_hash
 
 
@@ -532,7 +598,9 @@ def _validated_did_log_proof(
 @router.post(
     "",
     response_model=AddressResponse,
-    dependencies=[Depends(rate_limit_dep("address_register", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("address_register", allow_trusted_service=True))
+    ],
 )
 async def register_address(
     request: Request,
@@ -546,7 +614,10 @@ async def register_address(
     domain = _validate_domain(domain)
 
     caller_did = await _verify_address_signature(
-        request, domain=domain, name=body.name, operation="register_address",
+        request,
+        domain=domain,
+        name=body.name,
+        operation="register_address",
     )
 
     # Verify namespace + controller outside transaction (read-only checks).
@@ -623,7 +694,9 @@ async def register_address(
         name=body.name,
         did_aw=body.did_aw,
         current_did_key=body.current_did_key,
-        delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin"), source="namespace"),
+        delivery=AddressDeliveryResponse(
+            origin=ns_row.get("default_delivery_origin"), source="namespace"
+        ),
         created_at=now.isoformat(),
     )
 
@@ -632,7 +705,9 @@ async def register_address(
     "/claims",
     response_model=AtomicAddressClaimResponse,
     response_model_exclude_none=True,
-    dependencies=[Depends(rate_limit_dep("address_atomic_claim", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("address_atomic_claim", allow_trusted_service=True))
+    ],
 )
 async def claim_identity_address(
     request: Request,
@@ -652,7 +727,10 @@ async def claim_identity_address(
 
     db = db_infra.get_manager("aweb")
     domain = _validate_domain(domain)
-    if body.identity_custody == CUSTODY_HOSTED and body.namespace_custody == CUSTODY_SELF:
+    if (
+        body.identity_custody == CUSTODY_HOSTED
+        and body.namespace_custody == CUSTODY_SELF
+    ):
         raise _claim_error(
             422,
             _CLAIM_CUSTODY_UNSUPPORTED,
@@ -682,11 +760,13 @@ async def claim_identity_address(
             "namespace has no controller did:key registered",
         )
 
-    identity_canonical, identity_proof_hash, namespace_canonical = _verify_atomic_claim_signatures(
-        fields=fields,
-        identity_signature=body.identity_signature,
-        namespace_signature=body.namespace_signature,
-        namespace_controller_did=ns_row["controller_did"],
+    identity_canonical, identity_proof_hash, namespace_canonical = (
+        _verify_atomic_claim_signatures(
+            fields=fields,
+            identity_signature=body.identity_signature,
+            namespace_signature=body.namespace_signature,
+            namespace_controller_did=ns_row["controller_did"],
+        )
     )
     did_log_proof = _validated_did_log_proof(body.did_log_proof, fields=fields)
 
@@ -742,7 +822,11 @@ async def claim_identity_address(
                 _CLAIM_DID_TAKEN_DIFFERENT_KEY,
                 "did:aw is already registered to a different current did:key",
             )
-        if did_row is not None and body.did_log_proof is not None and body.did_log_proof.seq > 1:
+        if (
+            did_row is not None
+            and body.did_log_proof is not None
+            and body.did_log_proof.seq > 1
+        ):
             registered_head = await tx.fetch_one(
                 """
                 SELECT seq, operation, previous_did_key, new_did_key,
@@ -839,7 +923,9 @@ async def claim_identity_address(
             # should be impossible after _validated_did_log_proof, but check
             # before any insert so a future refactor cannot create partial rows.
             if awid_sha256_hex(proof_payload) != proof_entry_hash:
-                raise _claim_error(500, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof hash mismatch")
+                raise _claim_error(
+                    500, _CLAIM_DID_LOG_PROOF_INVALID, "did_log_proof hash mismatch"
+                )
             await tx.execute(
                 """
                 INSERT INTO {{tables.did_aw_mappings}}
@@ -914,7 +1000,9 @@ async def claim_identity_address(
             name=fields.address_name,
             did_aw=fields.did_aw,
             current_did_key=fields.current_did_key,
-            delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin"), source="namespace"),
+            delivery=AddressDeliveryResponse(
+                origin=ns_row.get("default_delivery_origin"), source="namespace"
+            ),
             created_at=now.isoformat(),
         ),
     )
@@ -999,7 +1087,8 @@ async def list_addresses(
         " FROM {{tables.public_addresses}} pa"
         " JOIN {{tables.did_aw_mappings}} m ON m.did_aw = pa.did_aw"
         " JOIN {{tables.dns_namespaces}} ns ON ns.namespace_id = pa.namespace_id"
-        " WHERE " + " AND ".join(where_clauses)
+        " WHERE "
+        + " AND ".join(where_clauses)
         + f" ORDER BY pa.name LIMIT ${len(params)}"
     )
     rows = await db.fetch_all(query, *params)
@@ -1018,7 +1107,9 @@ async def list_addresses(
 @router.put(
     "/{name}",
     response_model=AddressResponse,
-    dependencies=[Depends(rate_limit_dep("address_update", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("address_update", allow_trusted_service=True))
+    ],
 )
 async def update_address(
     request: Request,
@@ -1037,7 +1128,10 @@ async def update_address(
     domain = _validate_domain(domain)
 
     caller_did = await _verify_address_signature(
-        request, domain=domain, name=name, operation="update_address",
+        request,
+        domain=domain,
+        name=name,
+        operation="update_address",
     )
 
     ns_row = await _require_namespace(db, domain)
@@ -1079,12 +1173,19 @@ async def update_address(
         name=row["name"],
         did_aw=row["did_aw"],
         current_did_key=row["current_did_key"],
-        delivery=AddressDeliveryResponse(origin=row.get("default_delivery_origin"), source="namespace"),
+        delivery=AddressDeliveryResponse(
+            origin=row.get("default_delivery_origin"), source="namespace"
+        ),
         created_at=row["created_at"].isoformat(),
     )
 
 
-@router.delete("/{name}", dependencies=[Depends(rate_limit_dep("address_delete", allow_trusted_service=True))])
+@router.delete(
+    "/{name}",
+    dependencies=[
+        Depends(rate_limit_dep("address_delete", allow_trusted_service=True))
+    ],
+)
 async def delete_address(
     request: Request,
     domain: str,
@@ -1102,7 +1203,11 @@ async def delete_address(
 
     signed_preconditions = {}
     if body is not None:
-        for field in ("expected_address_id", "expected_did_aw", "expected_current_did_key"):
+        for field in (
+            "expected_address_id",
+            "expected_did_aw",
+            "expected_current_did_key",
+        ):
             if value := getattr(body, field):
                 signed_preconditions[field] = value
     caller_did = await _verify_address_signature(
@@ -1134,12 +1239,15 @@ async def delete_address(
             (
                 body.expected_address_id is not None
                 and body.expected_address_id != str(row["address_id"]),
-                body.expected_did_aw is not None and body.expected_did_aw != row["did_aw"],
+                body.expected_did_aw is not None
+                and body.expected_did_aw != row["did_aw"],
                 body.expected_current_did_key is not None
                 and body.expected_current_did_key != row["current_did_key"],
             )
         ):
-            raise HTTPException(status_code=409, detail="Address changed since it was claimed")
+            raise HTTPException(
+                status_code=409, detail="Address changed since it was claimed"
+            )
 
         active_cert = await tx.fetch_one(
             """
@@ -1156,7 +1264,9 @@ async def delete_address(
             f"{domain}/{name}",
         )
         if active_cert is not None:
-            raise HTTPException(status_code=409, detail="Address has active certificates")
+            raise HTTPException(
+                status_code=409, detail="Address has active certificates"
+            )
 
         await tx.execute(
             "UPDATE {{tables.public_addresses}} SET deleted_at = NOW() WHERE address_id = $1",
@@ -1174,7 +1284,9 @@ async def delete_address(
 @router.post(
     "/{name}/reassign",
     response_model=AddressResponse,
-    dependencies=[Depends(rate_limit_dep("address_reassign", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("address_reassign", allow_trusted_service=True))
+    ],
 )
 async def reassign_address(
     request: Request,
@@ -1189,7 +1301,10 @@ async def reassign_address(
     domain = _validate_domain(domain)
 
     caller_did = await _verify_address_signature(
-        request, domain=domain, name=name, operation="reassign_address",
+        request,
+        domain=domain,
+        name=name,
+        operation="reassign_address",
     )
 
     ns_row = await _require_namespace(db, domain)
@@ -1250,6 +1365,8 @@ async def reassign_address(
         name=row["name"],
         did_aw=body.did_aw,
         current_did_key=body.current_did_key,
-        delivery=AddressDeliveryResponse(origin=ns_row.get("default_delivery_origin"), source="namespace"),
+        delivery=AddressDeliveryResponse(
+            origin=ns_row.get("default_delivery_origin"), source="namespace"
+        ),
         created_at=row["created_at"].isoformat(),
     )

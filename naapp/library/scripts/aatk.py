@@ -96,7 +96,9 @@ def fail(code: str, location: str, detail: str) -> None:
 
 
 def canonical_bytes(value: Any) -> bytes:
-    return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    return (
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
 
 
 def manifest_digest(manifest: dict[str, Any]) -> str:
@@ -155,7 +157,11 @@ def source_predicates() -> frozenset[str]:
     inventory = source_predicates_by_executor()
     flattened = [predicate for predicates in inventory.values() for predicate in predicates]
     if len(flattened) != len(set(flattened)):
-        fail("duplicate-source-predicate", "source.POSTDEPLOY_PREDICATES", "executor inventories overlap")
+        fail(
+            "duplicate-source-predicate",
+            "source.POSTDEPLOY_PREDICATES",
+            "executor inventories overlap",
+        )
     return frozenset(flattened)
 
 
@@ -193,7 +199,11 @@ def reject_static_runtime_state(value: Any, *, location: str) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
             if key in STATIC_FORBIDDEN_KEYS:
-                fail("static-dynamic-contamination", f"{location}.{key}", "runtime state is forbidden in the static manifest")
+                fail(
+                    "static-dynamic-contamination",
+                    f"{location}.{key}",
+                    "runtime state is forbidden in the static manifest",
+                )
             reject_static_runtime_state(child, location=f"{location}.{key}")
     elif isinstance(value, list):
         for index, child in enumerate(value):
@@ -216,7 +226,9 @@ def reject_sentinels(value: Any, *, location: str) -> None:
             fail("blank-value", location, "must not be blank")
 
 
-def require_exact_keys(value: Any, expected: set[str], *, location: str, code: str) -> dict[str, Any]:
+def require_exact_keys(
+    value: Any, expected: set[str], *, location: str, code: str
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         fail(code, location, "must be an object")
     missing = sorted(expected - set(value))
@@ -242,7 +254,11 @@ def validate_proof_spec(value: Any, *, location: str, targets: frozenset[str]) -
     value = require_exact_keys(value, PROOF_FIELDS, location=location, code="invalid-proof")
     target = value["make_target"]
     if not isinstance(target, str) or target not in targets:
-        fail("unchecked-command", f"{location}.make_target", f"Make target {target!r} is not checked in")
+        fail(
+            "unchecked-command",
+            f"{location}.make_target",
+            f"Make target {target!r} is not checked in",
+        )
     fingerprint = value["path_fingerprint"]
     if (
         not isinstance(fingerprint, list)
@@ -250,7 +266,11 @@ def validate_proof_spec(value: Any, *, location: str, targets: frozenset[str]) -
         or not all(isinstance(item, str) and ID_RE.fullmatch(item) for item in fingerprint)
         or len(fingerprint) != len(set(fingerprint))
     ):
-        fail("invalid-path-fingerprint", f"{location}.path_fingerprint", "must be unique stable component IDs")
+        fail(
+            "invalid-path-fingerprint",
+            f"{location}.path_fingerprint",
+            "must be unique stable component IDs",
+        )
     substitutions = value["allowed_substitutions"]
     if (
         not isinstance(substitutions, list)
@@ -258,7 +278,12 @@ def validate_proof_spec(value: Any, *, location: str, targets: frozenset[str]) -
         or len(substitutions) != len(set(substitutions))
     ):
         fail("invalid-substitutions", f"{location}.allowed_substitutions", "must be stable IDs")
-    if not isinstance(value["safety_class"], str) or value["safety_class"] not in {"read-only", "isolated", "postdeploy-read-only", "rollback-mutation"}:
+    if not isinstance(value["safety_class"], str) or value["safety_class"] not in {
+        "read-only",
+        "isolated",
+        "postdeploy-read-only",
+        "rollback-mutation",
+    }:
         fail("invalid-safety-class", f"{location}.safety_class", "unrecognized safety class")
     for field in ("layer", "surface", "assertion_code"):
         require_stable_id(value[field], location=f"{location}.{field}", code="invalid-proof-field")
@@ -316,9 +341,7 @@ def validate_source_semantic_descriptors() -> dict[tuple[str, str], dict[str, st
     candidate_ids = {
         predicate_id for (domain, predicate_id) in index if domain == "candidate-postdeploy"
     }
-    expected_candidate_ids = set(
-        library_prod_gate.candidate_semantic_predicate_inventory()
-    )
+    expected_candidate_ids = set(library_prod_gate.candidate_semantic_predicate_inventory())
     if candidate_ids != expected_candidate_ids:
         fail(
             "semantic-descriptor-universe",
@@ -379,9 +402,7 @@ def validate_capability_coverage(rows: Any) -> list[dict[str, Any]]:
         predicate_id = require_stable_id(
             row["id"], location=f"{location}.id", code="capability-coverage"
         )
-        require_stable_id(
-            row["owner"], location=f"{location}.owner", code="capability-coverage"
-        )
+        require_stable_id(row["owner"], location=f"{location}.owner", code="capability-coverage")
         key = (domain, predicate_id)
         if key in seen:
             fail("duplicate-capability-predicate", f"{location}.id", str(key))
@@ -727,10 +748,7 @@ def validate_capability_transcript(value: Any) -> dict[str, Any]:
         ("health.public.http-200", "passed"),
         ("health.public.payload-contract", "passed"),
     ]
-    child_recipe = [
-        (child["predicate_id"], child["terminal"]["outcome"])
-        for child in children
-    ]
+    child_recipe = [(child["predicate_id"], child["terminal"]["outcome"]) for child in children]
     negative_recipes = {
         "health.origin.http-200.dedicated-negative": (
             allowed_component_paths[2],
@@ -782,7 +800,11 @@ def validate_capability_transcript(value: Any) -> dict[str, Any]:
                 "passing children must equal the exact four-cell recipe",
             )
         if terminal["error_code"] != "":
-            fail("capability-terminal", "capability.terminal.error_code", "passing transcript has no error")
+            fail(
+                "capability-terminal",
+                "capability.terminal.error_code",
+                "passing transcript has no error",
+            )
     elif mutation_id in negative_recipes:
         expected_components, expected_children, expected_error = negative_recipes[mutation_id]
         if components != expected_components:
@@ -895,12 +917,24 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         code="entrypoint",
     )
     if postdeploy["make_target"] != "prod-verify":
-        fail("entrypoint", "manifest.postdeploy_entrypoint.make_target", "must identify make prod-verify")
+        fail(
+            "entrypoint",
+            "manifest.postdeploy_entrypoint.make_target",
+            "must identify make prod-verify",
+        )
     if postdeploy["make_target"] not in targets:
-        fail("unchecked-command", "manifest.postdeploy_entrypoint.make_target", "target is not checked in")
+        fail(
+            "unchecked-command",
+            "manifest.postdeploy_entrypoint.make_target",
+            "target is not checked in",
+        )
     expected_executors = sorted(source_predicates_by_executor())
     if postdeploy["executor_contracts"] != expected_executors:
-        fail("entrypoint", "manifest.postdeploy_entrypoint.executor_contracts", "must name the exact source executors")
+        fail(
+            "entrypoint",
+            "manifest.postdeploy_entrypoint.executor_contracts",
+            "must name the exact source executors",
+        )
     ci = require_exact_keys(
         manifest["protected_ci"],
         {"workflow", "events", "context", "app_id"},
@@ -912,7 +946,9 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(ci["app_id"], int) or isinstance(ci["app_id"], bool) or ci["app_id"] <= 0:
         fail("ci-contract", "manifest.protected_ci.app_id", "must be a positive integer")
     if ci["events"] != ["pull_request", "push:main"]:
-        fail("ci-contract", "manifest.protected_ci.events", "must bind pull requests and main pushes")
+        fail(
+            "ci-contract", "manifest.protected_ci.events", "must bind pull requests and main pushes"
+        )
 
     capability_coverage = validate_capability_coverage(manifest["capability_coverage"])
     candidate_coverage_owner = {
@@ -966,11 +1002,23 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
             )
         stages = obligation["blocked_lifecycle_stages"]
         if not isinstance(stages, list) or not all(isinstance(item, str) for item in stages):
-            fail("enforcement-registry", f"{location}.blocked_lifecycle_stages", "must be a string list")
+            fail(
+                "enforcement-registry",
+                f"{location}.blocked_lifecycle_stages",
+                "must be a string list",
+            )
         if status == "deferred" and stages != ["preplan", "release-close"]:
-            fail("enforcement-registry", f"{location}.blocked_lifecycle_stages", "deferred enforcement must block preplan and release-close")
+            fail(
+                "enforcement-registry",
+                f"{location}.blocked_lifecycle_stages",
+                "deferred enforcement must block preplan and release-close",
+            )
         if status == "implemented" and stages != []:
-            fail("enforcement-registry", f"{location}.blocked_lifecycle_stages", "implemented enforcement cannot block a lifecycle stage")
+            fail(
+                "enforcement-registry",
+                f"{location}.blocked_lifecycle_stages",
+                "implemented enforcement cannot block a lifecycle stage",
+            )
         if status == "implemented":
             first_increment = require_stable_id(
                 obligation["first_enforced_increment"],
@@ -993,9 +1041,17 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     implemented = frozenset(key for key, status in statuses.items() if status == "implemented")
     deferred = frozenset(key for key, status in statuses.items() if status == "deferred")
     if implemented != IMPLEMENTED_ENFORCEMENT_IDS:
-        fail("enforcement-registry", "manifest.requirement_registry", f"implemented IDs differ from source: missing={sorted(IMPLEMENTED_ENFORCEMENT_IDS - implemented)} extra={sorted(implemented - IMPLEMENTED_ENFORCEMENT_IDS)}")
+        fail(
+            "enforcement-registry",
+            "manifest.requirement_registry",
+            f"implemented IDs differ from source: missing={sorted(IMPLEMENTED_ENFORCEMENT_IDS - implemented)} extra={sorted(implemented - IMPLEMENTED_ENFORCEMENT_IDS)}",
+        )
     if deferred != DEFERRED_ENFORCEMENT_IDS:
-        fail("enforcement-registry", "manifest.requirement_registry", f"deferred IDs differ from source: missing={sorted(DEFERRED_ENFORCEMENT_IDS - deferred)} extra={sorted(deferred - DEFERRED_ENFORCEMENT_IDS)}")
+        fail(
+            "enforcement-registry",
+            "manifest.requirement_registry",
+            f"deferred IDs differ from source: missing={sorted(DEFERRED_ENFORCEMENT_IDS - deferred)} extra={sorted(deferred - DEFERRED_ENFORCEMENT_IDS)}",
+        )
 
     rows = manifest["predicates"]
     if not isinstance(rows, list) or not rows:
@@ -1003,14 +1059,21 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     row_by_id: dict[str, dict[str, Any]] = {}
     for index, row in enumerate(rows):
         location = f"manifest.predicates[{index}]"
-        required = {"id", "owner", "current_production", "exact_source", "negative_controls", "postdeploy", "rollback", "expiry"}
+        required = {
+            "id",
+            "owner",
+            "current_production",
+            "exact_source",
+            "negative_controls",
+            "postdeploy",
+            "rollback",
+            "expiry",
+        }
         row = require_exact_keys(row, required, location=location, code="invalid-row")
         predicate_id = require_stable_id(
             row["id"], location=f"{location}.id", code="invalid-predicate-id"
         )
-        owner = require_stable_id(
-            row["owner"], location=f"{location}.owner", code="invalid-owner"
-        )
+        owner = require_stable_id(row["owner"], location=f"{location}.owner", code="invalid-owner")
         if (
             predicate_id in candidate_coverage_owner
             and candidate_coverage_owner[predicate_id] != owner
@@ -1038,9 +1101,15 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 location=f"{location}.current_production",
                 code="current-state",
             )
-            validate_proof_spec(current["proof"], location=f"{location}.current_production.proof", targets=targets)
+            validate_proof_spec(
+                current["proof"], location=f"{location}.current_production.proof", targets=targets
+            )
             if predicate_id in candidate_only_predicates():
-                fail("candidate-only-permissive", f"{location}.current_production.state", "candidate-only predicate must declare the incumbent absence")
+                fail(
+                    "candidate-only-permissive",
+                    f"{location}.current_production.state",
+                    "candidate-only predicate must declare the incumbent absence",
+                )
         else:
             current = require_exact_keys(
                 current,
@@ -1049,10 +1118,19 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 code="current-state",
             )
             if predicate_id not in candidate_only_predicates():
-                fail("candidate-only-permissive", f"{location}.current_production.state", "predicate is not source-allowlisted candidate-only semantics")
+                fail(
+                    "candidate-only-permissive",
+                    f"{location}.current_production.state",
+                    "predicate is not source-allowlisted candidate-only semantics",
+                )
             absence = require_exact_keys(
                 current["absence"],
-                {"incumbent_shape", "absent_paths", "mechanical_reason_code", "shared_transport_waived"},
+                {
+                    "incumbent_shape",
+                    "absent_paths",
+                    "mechanical_reason_code",
+                    "shared_transport_waived",
+                },
                 location=f"{location}.current_production.absence",
                 code="candidate-only-absence",
             )
@@ -1063,18 +1141,25 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                     code="candidate-only-absence",
                 )
             if absence["shared_transport_waived"] is not False:
-                fail("candidate-only-transport-waiver", f"{location}.current_production.absence.shared_transport_waived", "transport/environment cannot be waived")
+                fail(
+                    "candidate-only-transport-waiver",
+                    f"{location}.current_production.absence.shared_transport_waived",
+                    "transport/environment cannot be waived",
+                )
             absent_paths = absence["absent_paths"]
             if (
                 not isinstance(absent_paths, list)
                 or not absent_paths
                 or not all(
-                    isinstance(item, str) and FIELD_PATH_RE.fullmatch(item)
-                    for item in absent_paths
+                    isinstance(item, str) and FIELD_PATH_RE.fullmatch(item) for item in absent_paths
                 )
                 or len(absent_paths) != len(set(absent_paths))
             ):
-                fail("candidate-only-absence", f"{location}.current_production.absence.absent_paths", "must be unique stable field paths")
+                fail(
+                    "candidate-only-absence",
+                    f"{location}.current_production.absence.absent_paths",
+                    "must be unique stable field paths",
+                )
 
         exact_source = row["exact_source"]
         if (
@@ -1090,7 +1175,9 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 location=f"{location}.exact_source",
                 code="exact-source-state",
             )
-            validate_proof_spec(exact_source["proof"], location=f"{location}.exact_source.proof", targets=targets)
+            validate_proof_spec(
+                exact_source["proof"], location=f"{location}.exact_source.proof", targets=targets
+            )
         else:
             exact_source = require_exact_keys(
                 exact_source,
@@ -1099,7 +1186,11 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 code="exact-source-state",
             )
             if current["state"] == "candidate-only-absent":
-                fail("candidate-only-without-source-positive", f"{location}.exact_source.state", "candidate-only semantics require an exact-source positive")
+                fail(
+                    "candidate-only-without-source-positive",
+                    f"{location}.exact_source.state",
+                    "candidate-only semantics require an exact-source positive",
+                )
             require_stable_id(
                 exact_source["reason_code"],
                 location=f"{location}.exact_source.reason_code",
@@ -1108,13 +1199,30 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
 
         negatives = row["negative_controls"]
         if not isinstance(negatives, list) or not negatives:
-            fail("missing-negative", f"{location}.negative_controls", "at least one faithful negative is required")
+            fail(
+                "missing-negative",
+                f"{location}.negative_controls",
+                "at least one faithful negative is required",
+            )
         seen_mutations: set[str] = set()
-        positive = exact_source.get("proof") if exact_source["state"] == "required" else current.get("proof")
+        positive = (
+            exact_source.get("proof")
+            if exact_source["state"] == "required"
+            else current.get("proof")
+        )
         for mutation_index, negative in enumerate(negatives):
             negative_location = f"{location}.negative_controls[{mutation_index}]"
-            if not isinstance(negative, dict) or set(negative) != {"mutation_id", "polarity", "expected_error_code", "proof"}:
-                fail("negative-contract", negative_location, "must identify one mutation, polarity, exact error, and proof")
+            if not isinstance(negative, dict) or set(negative) != {
+                "mutation_id",
+                "polarity",
+                "expected_error_code",
+                "proof",
+            }:
+                fail(
+                    "negative-contract",
+                    negative_location,
+                    "must identify one mutation, polarity, exact error, and proof",
+                )
             mutation_id = require_stable_id(
                 negative["mutation_id"],
                 location=f"{negative_location}.mutation_id",
@@ -1123,16 +1231,28 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
             if mutation_id in seen_mutations:
                 fail("negative-contract", f"{negative_location}.mutation_id", "must be unique")
             seen_mutations.add(mutation_id)
-            if not isinstance(negative["polarity"], str) or negative["polarity"] not in {"single-variable", "forbidden-permissive-path"}:
+            if not isinstance(negative["polarity"], str) or negative["polarity"] not in {
+                "single-variable",
+                "forbidden-permissive-path",
+            }:
                 fail("negative-contract", f"{negative_location}.polarity", "invalid polarity")
             require_stable_id(
                 negative["expected_error_code"],
                 location=f"{negative_location}.expected_error_code",
                 code="negative-contract",
             )
-            negative_proof = validate_proof_spec(negative["proof"], location=f"{negative_location}.proof", targets=targets)
-            if positive is not None and negative_proof["path_fingerprint"] != positive["path_fingerprint"]:
-                fail("unit-only-substitution", f"{negative_location}.proof.path_fingerprint", "negative must drive the positive path")
+            negative_proof = validate_proof_spec(
+                negative["proof"], location=f"{negative_location}.proof", targets=targets
+            )
+            if (
+                positive is not None
+                and negative_proof["path_fingerprint"] != positive["path_fingerprint"]
+            ):
+                fail(
+                    "unit-only-substitution",
+                    f"{negative_location}.proof.path_fingerprint",
+                    "negative must drive the positive path",
+                )
 
         validate_proof_spec(row["postdeploy"], location=f"{location}.postdeploy", targets=targets)
         rollback = row["rollback"]
@@ -1149,7 +1269,9 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
                 location=f"{location}.rollback",
                 code="rollback-state",
             )
-            validate_proof_spec(rollback["proof"], location=f"{location}.rollback.proof", targets=targets)
+            validate_proof_spec(
+                rollback["proof"], location=f"{location}.rollback.proof", targets=targets
+            )
             identity = require_exact_keys(
                 rollback["artifact_identity"],
                 {"deploy_id_argument", "commit_argument", "shape_code"},
@@ -1159,7 +1281,11 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
             for field in ("deploy_id_argument", "commit_argument"):
                 value = identity[field]
                 if not isinstance(value, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]+", value):
-                    fail("rollback-identity", f"{location}.rollback.artifact_identity.{field}", "must be an environment argument ID")
+                    fail(
+                        "rollback-identity",
+                        f"{location}.rollback.artifact_identity.{field}",
+                        "must be an environment argument ID",
+                    )
             require_stable_id(
                 identity["shape_code"],
                 location=f"{location}.rollback.artifact_identity.shape_code",
@@ -1183,7 +1309,11 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
             location=f"{location}.expiry",
             code="expiry",
         )
-        if not isinstance(expiry["kind"], str) or expiry["kind"] not in {"never", "incumbent-change", "rollback-artifact-change"}:
+        if not isinstance(expiry["kind"], str) or expiry["kind"] not in {
+            "never",
+            "incumbent-change",
+            "rollback-artifact-change",
+        }:
             fail("expiry", f"{location}.expiry.kind", "invalid expiry kind")
         require_stable_id(
             expiry["condition_code"],
@@ -1196,7 +1326,9 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     missing = sorted(source - present)
     extra = sorted(present - source)
     if missing:
-        fail("missing-predicate", "manifest.predicates", f"source predicates without rows: {missing}")
+        fail(
+            "missing-predicate", "manifest.predicates", f"source predicates without rows: {missing}"
+        )
     if extra:
         fail("unknown-predicate", "manifest.predicates", f"rows without source predicates: {extra}")
     return manifest
@@ -1241,13 +1373,13 @@ def validate_receipt(
     expected_keys = RECEIPT_FIELDS | (
         {"mutation_id", "expected_error_code"} if proof_kind == "negative" else set()
     )
-    receipt = require_exact_keys(
-        receipt, expected_keys, location=location, code="invalid-receipt"
-    )
+    receipt = require_exact_keys(receipt, expected_keys, location=location, code="invalid-receipt")
     if receipt["predicate_id"] != row["id"]:
         fail("receipt-predicate", f"{location}.predicate_id", "does not match indexed row")
     if receipt["manifest_sha256"] != manifest_sha:
-        fail("wrong-manifest", f"{location}.manifest_sha256", "receipt is not bound to this manifest")
+        fail(
+            "wrong-manifest", f"{location}.manifest_sha256", "receipt is not bound to this manifest"
+        )
     for field in ("candidate_sha", "source_sha"):
         if receipt[field] != index["candidate_sha"] or not COMMIT_RE.fullmatch(str(receipt[field])):
             fail("wrong-sha", f"{location}.{field}", "must equal the indexed candidate SHA")
@@ -1286,7 +1418,11 @@ def validate_receipt(
             fail("negative-mutation", f"{location}.mutation_id", "unknown or missing mutation")
         spec = matches[0]["proof"]
         if receipt.get("expected_error_code") != matches[0]["expected_error_code"]:
-            fail("unrelated-failure", f"{location}.expected_error_code", "does not match the dedicated negative")
+            fail(
+                "unrelated-failure",
+                f"{location}.expected_error_code",
+                "does not match the dedicated negative",
+            )
     if not isinstance(spec, dict):
         fail("proof-not-required", location, f"{proof_kind} is not required for this predicate")
     for field in ("make_target", "layer", "surface", "path_fingerprint", "safety_class"):
@@ -1299,7 +1435,11 @@ def validate_receipt(
         or len(substitutions) != len(set(substitutions))
         or not set(substitutions) <= set(spec["allowed_substitutions"])
     ):
-        fail("unapproved-substitution", f"{location}.substitutions", "contains a duplicate, malformed, or unapproved boundary substitution")
+        fail(
+            "unapproved-substitution",
+            f"{location}.substitutions",
+            "contains a duplicate, malformed, or unapproved boundary substitution",
+        )
     if not isinstance(receipt["normalized_arguments"], dict) or not all(
         isinstance(key, str) and isinstance(value, str)
         for key, value in receipt["normalized_arguments"].items()
@@ -1321,7 +1461,11 @@ def validate_receipt(
         location=f"{location}.terminal",
         code="nonterminal",
     )
-    if not isinstance(terminal["count"], int) or isinstance(terminal["count"], bool) or terminal["count"] != 1:
+    if (
+        not isinstance(terminal["count"], int)
+        or isinstance(terminal["count"], bool)
+        or terminal["count"] != 1
+    ):
         fail("multiple-terminal", f"{location}.terminal.count", "must equal one")
     expected_outcome = "expected-failure" if proof_kind == "negative" else "passed"
     if terminal["outcome"] != expected_outcome:
@@ -1330,7 +1474,11 @@ def validate_receipt(
         receipt.get("expected_error_code") if proof_kind == "negative" else spec["assertion_code"]
     )
     if terminal["assertion_code"] != expected_assertion:
-        fail("unrelated-failure", f"{location}.terminal.assertion_code", "does not prove the required assertion")
+        fail(
+            "unrelated-failure",
+            f"{location}.terminal.assertion_code",
+            "does not prove the required assertion",
+        )
     artifact = require_exact_keys(
         receipt["artifact"],
         {"sha256", "location", "complete", "private_no_replace"},
@@ -1339,11 +1487,13 @@ def validate_receipt(
     )
     if not isinstance(artifact["sha256"], str) or not SHA_RE.fullmatch(artifact["sha256"]):
         fail("artifact", f"{location}.artifact.sha256", "must be lowercase sha256")
-    require_string(
-        artifact["location"], location=f"{location}.artifact.location", code="artifact"
-    )
+    require_string(artifact["location"], location=f"{location}.artifact.location", code="artifact")
     if artifact["complete"] is not True or artifact["private_no_replace"] is not True:
-        fail("incomplete-artifact", f"{location}.artifact", "must be complete and privately no-replace published")
+        fail(
+            "incomplete-artifact",
+            f"{location}.artifact",
+            "must be complete and privately no-replace published",
+        )
     return receipt
 
 
@@ -1376,7 +1526,9 @@ def validate_index(
     digest = manifest_digest(manifest)
     if index["manifest_sha256"] != digest:
         fail("wrong-manifest", "index.manifest_sha256", "does not match canonical manifest digest")
-    if not isinstance(index["candidate_sha"], str) or not COMMIT_RE.fullmatch(index["candidate_sha"]):
+    if not isinstance(index["candidate_sha"], str) or not COMMIT_RE.fullmatch(
+        index["candidate_sha"]
+    ):
         fail("wrong-sha", "index.candidate_sha", "must be a full commit")
     for identity_name in ("incumbent", "rollback"):
         identity = require_exact_keys(
@@ -1400,10 +1552,14 @@ def validate_index(
         code="wrong-ci-gate",
     )
     spec_ci = manifest["protected_ci"]
-    if not isinstance(ci, dict) or any(
-        ci.get(key) != spec_ci[key] for key in ("workflow", "context", "app_id")
-    ) or ci.get("event") not in spec_ci["events"]:
-        fail("wrong-ci-gate", "index.ci", "must bind the exact protected workflow/context/app/event")
+    if (
+        not isinstance(ci, dict)
+        or any(ci.get(key) != spec_ci[key] for key in ("workflow", "context", "app_id"))
+        or ci.get("event") not in spec_ci["events"]
+    ):
+        fail(
+            "wrong-ci-gate", "index.ci", "must bind the exact protected workflow/context/app/event"
+        )
     if ci.get("head_sha") != index["candidate_sha"] or ci.get("conclusion") != "success":
         fail("wrong-ci-gate", "index.ci", "must be a successful run on the candidate SHA")
 
@@ -1444,7 +1600,11 @@ def validate_index(
             else "exact-source"
         )
         if expected_pre not in kinds:
-            fail("missing-receipt", f"predicate.{predicate_id}.{expected_pre}", "pre-mutation positive is required")
+            fail(
+                "missing-receipt",
+                f"predicate.{predicate_id}.{expected_pre}",
+                "pre-mutation positive is required",
+            )
         expected_mutations = {item["mutation_id"] for item in row["negative_controls"]}
         seen_mutations = {
             str(receipt.get("mutation_id"))
@@ -1452,12 +1612,24 @@ def validate_index(
             if receipt["proof_kind"] == "negative"
         }
         if expected_mutations != seen_mutations:
-            fail("missing-receipt", f"predicate.{predicate_id}.negative", f"expected mutations {sorted(expected_mutations)}")
+            fail(
+                "missing-receipt",
+                f"predicate.{predicate_id}.negative",
+                f"expected mutations {sorted(expected_mutations)}",
+            )
         if mode == "release":
             if "postdeploy" not in kinds:
-                fail("missing-receipt", f"predicate.{predicate_id}.postdeploy", "release close requires a terminal postdeploy receipt")
+                fail(
+                    "missing-receipt",
+                    f"predicate.{predicate_id}.postdeploy",
+                    "release close requires a terminal postdeploy receipt",
+                )
             if row["rollback"]["state"] == "required" and "rollback" not in kinds:
-                fail("missing-receipt", f"predicate.{predicate_id}.rollback", "release close requires the declared rollback proof")
+                fail(
+                    "missing-receipt",
+                    f"predicate.{predicate_id}.rollback",
+                    "release close requires the declared rollback proof",
+                )
     if DEFERRED_ENFORCEMENT_IDS:
         fail(
             "unenforced-obligation",
@@ -1487,18 +1659,41 @@ def main() -> int:
     try:
         if args.command == "inventory":
             inventory = source_predicates_by_executor()
-            print(json.dumps({"executors": inventory, "predicate_count": sum(map(len, inventory.values()))}, sort_keys=True))
+            print(
+                json.dumps(
+                    {"executors": inventory, "predicate_count": sum(map(len, inventory.values()))},
+                    sort_keys=True,
+                )
+            )
             return 0
         manifest = load_object(args.manifest, label="manifest")
         if args.command == "spec":
             validate_manifest(manifest)
-            print(json.dumps({"manifest_sha256": manifest_digest(manifest), "predicate_count": len(source_predicates()), "state": "spec-valid"}, sort_keys=True))
+            print(
+                json.dumps(
+                    {
+                        "manifest_sha256": manifest_digest(manifest),
+                        "predicate_count": len(source_predicates()),
+                        "state": "spec-valid",
+                    },
+                    sort_keys=True,
+                )
+            )
         else:
             index = load_object(args.index, label="evidence index")
             now = parse_time(args.now, location="--now") if args.now else datetime.now(UTC)
             validate_index(manifest, index, mode=args.command, now=now)
             state = "premutation-proven" if args.command == "preplan" else "closed"
-            print(json.dumps({"candidate_sha": index["candidate_sha"], "manifest_sha256": manifest_digest(manifest), "state": state}, sort_keys=True))
+            print(
+                json.dumps(
+                    {
+                        "candidate_sha": index["candidate_sha"],
+                        "manifest_sha256": manifest_digest(manifest),
+                        "state": state,
+                    },
+                    sort_keys=True,
+                )
+            )
         return 0
     except AATKError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

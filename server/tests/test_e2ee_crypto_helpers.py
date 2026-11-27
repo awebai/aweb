@@ -75,21 +75,29 @@ def _decrypt_identity(identity: dict) -> dict:
 @pytest.mark.parametrize("kind", ["mail", "chat"])
 @pytest.mark.parametrize("key_owner", ["sender", "recipient"])
 @pytest.mark.parametrize("key_offset_seconds", [0, 1])
-def test_encryption_key_window_is_bound_to_envelope_time(kind, key_owner, key_offset_seconds):
+def test_encryption_key_window_is_bound_to_envelope_time(
+    kind, key_owner, key_offset_seconds
+):
     created = datetime(2026, 5, 27, 12, 0, 0, tzinfo=timezone.utc)
     sender, recipient = _identity("alice"), _identity("bob")
     identity = sender if key_owner == "sender" else recipient
     _, public_key = generate_x25519_keypair()
     identity["encryption_key"] = build_encryption_key_assertion(
-        signing_key=identity["signing_key"], identity_did=identity["did"],
-        identity_stable_id=identity["stable_id"], encryption_public_key=public_key,
-        custody="self", now=created + timedelta(seconds=key_offset_seconds),
+        signing_key=identity["signing_key"],
+        identity_did=identity["did"],
+        identity_stable_id=identity["stable_id"],
+        encryption_public_key=public_key,
+        custody="self",
+        now=created + timedelta(seconds=key_offset_seconds),
     )
     encrypt = encrypt_e2ee_mail if kind == "mail" else encrypt_e2ee_chat
     kwargs = dict(
-        sender=sender, recipients=[_recipient(recipient)], body="strict key window",
+        sender=sender,
+        recipients=[_recipient(recipient)],
+        body="strict key window",
         message_id="00000000-0000-0000-0000-000000000001",
-        conversation_id="00000000-0000-0000-0000-000000000002", created_at=created,
+        conversation_id="00000000-0000-0000-0000-000000000002",
+        created_at=created,
     )
     if key_offset_seconds:
         with pytest.raises(ValueError, match="^created_at must not be in the future$"):
@@ -160,8 +168,16 @@ def test_python_encrypt_decrypt_e2ee_chat_group_round_trip():
     )
 
     assert env["kind"] == "chat"
-    assert len([wrap for wrap in env["key_wraps"] if wrap["wrap_purpose"] == "delivery"]) == 2
-    assert len([wrap for wrap in env["key_wraps"] if wrap["wrap_purpose"] == "sender_copy"]) == 1
+    assert (
+        len([wrap for wrap in env["key_wraps"] if wrap["wrap_purpose"] == "delivery"])
+        == 2
+    )
+    assert (
+        len(
+            [wrap for wrap in env["key_wraps"] if wrap["wrap_purpose"] == "sender_copy"]
+        )
+        == 1
+    )
     assert decrypt_e2ee_message(env, _decrypt_identity(bob))["body"] == "group secret"
     assert decrypt_e2ee_message(env, _decrypt_identity(carol))["body"] == "group secret"
 

@@ -29,7 +29,18 @@ def trust(ca: str) -> None:
         one = nssdb / f"lane-ca-{number}.pem"
         one.write_text(block.strip() + "\n" + end + "\n")
         subprocess.run(
-            ["certutil", "-d", f"sql:{nssdb}", "-A", "-t", "C,,", "-n", f"lane-ca-{number}", "-i", str(one)],
+            [
+                "certutil",
+                "-d",
+                f"sql:{nssdb}",
+                "-A",
+                "-t",
+                "C,,",
+                "-n",
+                f"lane-ca-{number}",
+                "-i",
+                str(one),
+            ],
             check=True,
         )
 
@@ -53,8 +64,6 @@ def authenticator(page, user_verified: bool):
     return cdp, found["authenticatorId"]
 
 
-
-
 def wait_state(page, states: tuple[str, ...], timeout: int = 60000) -> str:
     """The page's handoff state once it is one of states, or "navigated" once the
     page has left its https origin (the loopback hand-back to aw).
@@ -74,8 +83,6 @@ def wait_state(page, states: tuple[str, ...], timeout: int = 60000) -> str:
     raise TimeoutError(f"page never reached {states}; at {page.url}")
 
 
-
-
 def credential(args, browser) -> None:
     """A holder's credential handoff on an app's human origin: the page shows
     the scope, the passkey is created on the action, and the page hands back to
@@ -90,7 +97,9 @@ def credential(args, browser) -> None:
         report["role"] = page.text_content("#handoff-role")
         page.click("#handoff-action")
         report["states"].append(wait_state(page, TERMINAL + ("ready",)))
-    credentials = cdp.send("WebAuthn.getCredentials", {"authenticatorId": authenticator_id})["credentials"]
+    credentials = cdp.send("WebAuthn.getCredentials", {"authenticatorId": authenticator_id})[
+        "credentials"
+    ]
     device = Path(args.device)
     device.write_text(json.dumps(credentials))
     device.chmod(0o600)

@@ -12,12 +12,22 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER = REPO_ROOT / "scripts" / "e2e-team-deployment.sh"
 TEAMCTL = REPO_ROOT / "deploy" / "team" / "teamctl"
 TEAM = REPO_ROOT / "deploy" / "team"
-EXAMPLE = yaml.safe_load((REPO_ROOT / "deploy" / "team" / "deployment.example.yaml").read_text(encoding="utf-8"))
+EXAMPLE = yaml.safe_load(
+    (REPO_ROOT / "deploy" / "team" / "deployment.example.yaml").read_text(
+        encoding="utf-8"
+    )
+)
 
 
 def run(
-    tmp_path: Path, *args: str, project: str | None = "teamrun", extra_files: str | None = None, docker_ok: bool = False,
-    command: Path = RUNNER, answers: dict[str, str] | None = None, fails: dict[str, int] | None = None,
+    tmp_path: Path,
+    *args: str,
+    project: str | None = "teamrun",
+    extra_files: str | None = None,
+    docker_ok: bool = False,
+    command: Path = RUNNER,
+    answers: dict[str, str] | None = None,
+    fails: dict[str, int] | None = None,
     holds: dict[str, int] | None = None,
 ) -> subprocess.CompletedProcess:
     # A docker that records being called. By default it fails: these commands
@@ -28,27 +38,43 @@ def run(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     docker = bin_dir / "docker"
-    printed = "".join(f'case "$*" in *"{pattern}"*) printf "%s" \'{text}\';; esac\n'
-                      for pattern, text in (answers or {}).items())
-    printed += "".join(f'case "$*" in *"{pattern}"*) exit {status};; esac\n'
-                       for pattern, status in (fails or {}).items())
+    printed = "".join(
+        f'case "$*" in *"{pattern}"*) printf "%s" \'{text}\';; esac\n'
+        for pattern, text in (answers or {}).items()
+    )
+    printed += "".join(
+        f'case "$*" in *"{pattern}"*) exit {status};; esac\n'
+        for pattern, status in (fails or {}).items()
+    )
     # holds keeps a matching call running that long after it printed, as a
     # follower does.
-    printed += "".join(f'case "$*" in *"{pattern}"*) sleep {seconds};; esac\n'
-                       for pattern, seconds in (holds or {}).items())
-    succeed = printed + 'case "$*" in *" exec "*) cat >/dev/null;; esac\nexit 0' if docker_ok else "exit 1"
+    printed += "".join(
+        f'case "$*" in *"{pattern}"*) sleep {seconds};; esac\n'
+        for pattern, seconds in (holds or {}).items()
+    )
+    succeed = (
+        printed + 'case "$*" in *" exec "*) cat >/dev/null;; esac\nexit 0'
+        if docker_ok
+        else "exit 1"
+    )
     # One line per call, whatever newlines its arguments hold.
     log = f'printf "%s " "$@" | tr "\\n" " " >> {tmp_path / "docker-calls"}; echo >> {tmp_path / "docker-calls"}'
     docker.write_text(f"#!/bin/sh\n{log}\n{succeed}\n", encoding="utf-8")
     docker.chmod(0o755)
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "TEAM_DEPLOYMENT_RUN_DIR": str(tmp_path / "run")}
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "TEAM_DEPLOYMENT_RUN_DIR": str(tmp_path / "run"),
+    }
     env.pop("TEAM_DEPLOYMENT_PROJECT", None)
     env.pop("TEAM_DEPLOYMENT_COMPOSE_FILES", None)
     if extra_files is not None:
         env["TEAM_DEPLOYMENT_COMPOSE_FILES"] = extra_files
     if project is not None:
         env["TEAM_DEPLOYMENT_PROJECT"] = project
-    return subprocess.run([str(command), *args], env=env, capture_output=True, text=True, timeout=120)
+    return subprocess.run(
+        [str(command), *args], env=env, capture_output=True, text=True, timeout=120
+    )
 
 
 def deployment(tmp_path: Path, config: dict) -> str:
@@ -57,7 +83,9 @@ def deployment(tmp_path: Path, config: dict) -> str:
     return str(path)
 
 
-def test_connect_hands_the_journey_the_origins_and_how_to_reach_and_remove_the_deployment(tmp_path):
+def test_connect_hands_the_journey_the_origins_and_how_to_reach_and_remove_the_deployment(
+    tmp_path,
+):
     config = {
         **EXAMPLE,
         "secrets": {
@@ -71,7 +99,13 @@ def test_connect_hands_the_journey_the_origins_and_how_to_reach_and_remove_the_d
         },
     }
     path = deployment(tmp_path, config)
-    result = run(tmp_path, "compose", "connect", path, extra_files="/srv/journey/compose.test.yaml")
+    result = run(
+        tmp_path,
+        "compose",
+        "connect",
+        path,
+        extra_files="/srv/journey/compose.test.yaml",
+    )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
         "project": "teamrun",
@@ -80,24 +114,46 @@ def test_connect_hands_the_journey_the_origins_and_how_to_reach_and_remove_the_d
         "registry": "https://api.awid.ai",
         "origins": {
             "aweb": "https://aweb.example.com",
-            "secrets": {"api": "https://secrets.example.com", "console": "https://secrets-console.example.com"},
+            "secrets": {
+                "api": "https://secrets.example.com",
+                "console": "https://secrets-console.example.com",
+            },
         },
         "agent": None,
         "compose": [
-            "docker", "compose", "-p", "teamrun", "--env-file", str(tmp_path / "run" / ".env"),
-            "-f", str(TEAM / "compose.yaml"), "-f", str(TEAM / "compose.secrets.yaml"),
-            "-f", "/srv/journey/compose.test.yaml",
+            "docker",
+            "compose",
+            "-p",
+            "teamrun",
+            "--env-file",
+            str(tmp_path / "run" / ".env"),
+            "-f",
+            str(TEAM / "compose.yaml"),
+            "-f",
+            str(TEAM / "compose.secrets.yaml"),
+            "-f",
+            "/srv/journey/compose.test.yaml",
         ],
         "start": [str(TEAMCTL), "start", path],
     }
     assert not (tmp_path / "docker-calls").exists()
 
 
-def test_up_refuses_a_deployment_the_renderer_refuses_before_starting_anything(tmp_path):
-    path = deployment(tmp_path, {**EXAMPLE, "aweb": {**EXAMPLE["aweb"], "databaseUrl": "postgresql://a:s3cret@b/c"}})
+def test_up_refuses_a_deployment_the_renderer_refuses_before_starting_anything(
+    tmp_path,
+):
+    path = deployment(
+        tmp_path,
+        {
+            **EXAMPLE,
+            "aweb": {**EXAMPLE["aweb"], "databaseUrl": "postgresql://a:s3cret@b/c"},
+        },
+    )
     result = run(tmp_path, "compose", "up", path)
     assert result.returncode == 1
-    assert "databaseUrl" in result.stderr and "s3cret" not in result.stderr + result.stdout
+    assert (
+        "databaseUrl" in result.stderr and "s3cret" not in result.stderr + result.stdout
+    )
     assert not (tmp_path / "docker-calls").exists()
 
 
@@ -133,12 +189,26 @@ def test_up_checks_every_service_even_though_exec_reads_its_input(tmp_path):
         for app in ("secrets", "logs")
     }
     apps["secrets"]["hookInternalOrigins"] = ["https://logs.example.com"]
-    aweb = {**EXAMPLE["aweb"], "appInternalOrigins": ["https://secrets.example.com", "https://logs.example.com"]}
+    aweb = {
+        **EXAMPLE["aweb"],
+        "appInternalOrigins": [
+            "https://secrets.example.com",
+            "https://logs.example.com",
+        ],
+    }
     path = deployment(tmp_path, {**EXAMPLE, "aweb": aweb, **apps})
     result = run(tmp_path, "compose", "up", path, docker_ok=True)
     assert result.returncode == 0, result.stderr
     calls = (tmp_path / "docker-calls").read_text().splitlines()
-    readiness = [call.split(" exec -T ")[1].split()[0] for call in calls if " exec -T " in call and "/ready" in call]
-    resolving = [call.split(" exec -T ")[1].split()[0] for call in calls if " exec -T " in call and "getaddrinfo" in call]
+    readiness = [
+        call.split(" exec -T ")[1].split()[0]
+        for call in calls
+        if " exec -T " in call and "/ready" in call
+    ]
+    resolving = [
+        call.split(" exec -T ")[1].split()[0]
+        for call in calls
+        if " exec -T " in call and "getaddrinfo" in call
+    ]
     assert readiness == ["aweb", "secrets", "logs"]
     assert resolving == ["aweb", "secrets"]

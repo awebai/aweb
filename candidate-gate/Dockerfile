@@ -48,8 +48,7 @@ RUN uv sync --frozen --project naapp-lib
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN uv run --frozen --no-sync --project naapp-lib \
         playwright install --with-deps --only-shell chromium \
-    && rm -rf /var/lib/apt/lists/* \
-    && chmod -R a+rX /opt/ms-playwright
+    && rm -rf /var/lib/apt/lists/*
 
 # Prepare the standing user-path runtime here. The test stage itself performs
 # no image builds, dependency installs or registry pulls.
@@ -81,8 +80,8 @@ RUN npm ci --ignore-scripts --no-audit --no-fund --prefix /opt/user-paths/releas
     && mkdir /opt/user-paths/oats-aweb \
     && git --git-dir=/opt/user-paths/provider.git archive FETCH_HEAD oats-package | tar -x -C /opt/user-paths/oats-aweb
 COPY --from=coredns/coredns:1.11.3 /coredns /opt/user-paths/coredns
-# Public runtime code is consumed by the host UID, not the image builder UID.
-RUN chmod -R a+rX /opt/candidate-browser /opt/user-paths /journey/channel-core
+# Public runtime code is consumed by the host UID, not the image builder UID:
+# root creates it under the default umask, readable by every UID.
 ARG USER_PATHS_SOURCE_TREE
 LABEL aweb.user-paths-ready="1" aweb.user-paths-source-tree="${USER_PATHS_SOURCE_TREE}" aweb.user-paths-source-sha="${USER_PATHS_SOURCE_SHA}"
 WORKDIR /

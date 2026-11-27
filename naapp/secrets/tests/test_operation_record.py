@@ -159,7 +159,11 @@ def test_a_read_without_a_body_is_an_operation() -> None:
         _op(
             token_issuing=True,
             result_handling="withhold",
-            response={"projection": None, "max_bytes": 65536, "content_types": ["application/json"]},
+            response={
+                "projection": None,
+                "max_bytes": 65536,
+                "content_types": ["application/json"],
+            },
         ),
         _op(result_handling="return", token_issuing=True),
         _op(idempotency={"header": "Idempotency Key"}),

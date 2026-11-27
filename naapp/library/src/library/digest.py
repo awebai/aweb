@@ -28,7 +28,19 @@ PROFILE_PAYLOAD_SCHEMA = "aweb.blueprint.profile-payload.v1"
 
 # VCS, dependency, and build/cache directories never enter the hashed payload.
 EXCLUDED_DIRS = frozenset(
-    {".git", ".hg", ".svn", "node_modules", ".cache", "dist", "build", "target", "tmp", "vendor", "__pycache__"}
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        ".cache",
+        "dist",
+        "build",
+        "target",
+        "tmp",
+        "vendor",
+        "__pycache__",
+    }
 )
 
 
@@ -52,8 +64,7 @@ def _decode_utf8(root: Path, path: Path, raw: bytes) -> str:
         return raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError(
-            f"{_payload_path(root, path)}: "
-            "blueprint canonical import payload requires UTF-8 text"
+            f"{_payload_path(root, path)}: blueprint canonical import payload requires UTF-8 text"
         ) from exc
 
 

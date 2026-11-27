@@ -70,11 +70,7 @@ the selected team and subscribes the installer at the declaration defaults; see
 rejected the entire `events` field, including Folio's deployed manifest.
 
 Shared cases live in `cli/go/internal/appmanifest/testdata/events-v1.json`.
-Go enforces the strict contract. The pinned Cloud 0.8.28 gateway excerpt used
-by `scripts/check-app-event-vectors.py` agrees on well-formed/deployed cases,
-but its null/false/empty coercions, numeric type conversion, intent trimming,
-and missing count limit are recorded as known divergences, not valid v1
-exceptions. Gateway tightening is a separate change.
+Go enforces the strict contract.
 
 ## Manifest discovery
 

@@ -67,3 +67,7 @@ func TestRenderCodexAssistantTextDoesNotPreWrapParagraphs(t *testing.T) {
 		t.Fatalf("unexpected rendered paragraph %q", lines[0])
 	}
 }
+
+func renderCodexAssistantText(text string) string {
+	return prefixAssistantDisplayText(renderCodexAssistantTextWithOptions(text, false, nil), true)
+}
