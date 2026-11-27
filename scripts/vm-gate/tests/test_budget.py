@@ -39,7 +39,14 @@ def worker_memory(workers):
 
 class Workers(unittest.TestCase):
     def test_workers_are_the_rounded_share_and_at_least_one(self):
-        for share, workers in [(0.07, 1), (0.5, 1), (1.49, 1), (1.5, 2), (4.21, 4), (18.89, 19)]:
+        for share, workers in [
+            (0.07, 1),
+            (0.5, 1),
+            (1.49, 1),
+            (1.5, 2),
+            (4.21, 4),
+            (18.89, 19),
+        ]:
             with self.subTest(share=share):
                 self.assertEqual(budget.workers(share), workers)
 
@@ -58,8 +65,16 @@ class Plan(unittest.TestCase):
     def test_a_parts_workers_per_busy_cpu_comes_from_its_measured_run(self):
         # vm-cc7cf483: test-server ran 4 workers for 1636 s on 4872 CPU-s; the
         # serial pool's suites ran 3721 slot-seconds on 3234 CPU-s.
-        self.assertAlmostEqual(budget.workers_per_busy_cpu(4872, {"workers": 4, "elapsed_seconds": 1636}), 1.343, places=3)
-        self.assertAlmostEqual(budget.workers_per_busy_cpu(3234, {"workers": 3, "slot_seconds": 3721}), 1.151, places=3)
+        self.assertAlmostEqual(
+            budget.workers_per_busy_cpu(4872, {"workers": 4, "elapsed_seconds": 1636}),
+            1.343,
+            places=3,
+        )
+        self.assertAlmostEqual(
+            budget.workers_per_busy_cpu(3234, {"workers": 3, "slot_seconds": 3721}),
+            1.151,
+            places=3,
+        )
 
     def test_unit_workers_keep_their_share_busy(self):
         # (gate CPUs) -> (server, naapp-lib, serial pool): a suite's workers
@@ -69,7 +84,9 @@ class Plan(unittest.TestCase):
             4: (2, 1, 2),
             4.83: (3, 1, 2),
             12: (6, 1, 4),
-            48: (26, 5, 15),
+            # test-key-holder's measured 44 CPU-s in the serial pool moves
+            # the server's share at 48 CPUs from 26 workers to 25.
+            48: (25, 5, 15),
         }
         for cpus, (server, naapp, pool) in expected.items():
             with self.subTest(cpus=cpus):
@@ -96,12 +113,22 @@ class Plan(unittest.TestCase):
             with self.subTest(cpus=cpus):
                 unit = self.plan(cpus, memory_mib)["unit"]
                 for part, share in unit["shares"].items():
-                    workers = unit["serial_slots"] if part == "serial" else unit["workers"][part]
+                    workers = (
+                        unit["serial_slots"]
+                        if part == "serial"
+                        else unit["workers"][part]
+                    )
                     ratio = unit["workers_per_busy_cpu"][part]
                     if part == "serial":
                         # Independent suites: the pool rounds up, one slot at most.
                         # (share and ratio are rounded in the plan.)
-                        self.assertIn(workers, {max(1, math.ceil(share * ratio - d)) for d in (-0.02, 0.02)})
+                        self.assertIn(
+                            workers,
+                            {
+                                max(1, math.ceil(share * ratio - d))
+                                for d in (-0.02, 0.02)
+                            },
+                        )
                         continue
                     if workers > 1 and unit["memory_bound"].get(part):
                         continue
@@ -115,7 +142,9 @@ class Plan(unittest.TestCase):
                 unit = self.plan(cpus, memory_mib)["unit"]
                 for workers in unit["workers"].values():
                     if workers > 1:
-                        self.assertLessEqual(worker_memory(workers), unit["memory_mib"] // 2)
+                        self.assertLessEqual(
+                            worker_memory(workers), unit["memory_mib"] // 2
+                        )
 
     def test_every_lane_runs_at_once_at_any_size(self):
         for cpus, memory_mib in SHAPES:
