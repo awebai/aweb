@@ -50,7 +50,7 @@ then handle waiting mail and chat so a handoff, blocker, or waiting teammate
 does not go unnoticed.
 
 ```bash
-aw workspace status   # who is online, active team, identity, locks
+aw workspace status   # who is online, active team, identity
 aw mail inbox         # async handoffs, reviews, blockers — process first
 aw chat pending       # someone may be blocked waiting on you
 ```
@@ -64,8 +64,10 @@ than choosing silently. When the skill is not installed, this block is the
 startup authority on its own; messaging needs neither the skill nor a profile
 service.
 
-This team tracks its work in aweb tasks: after the loop, follow the `aweb-tasks`
-skill's ready/active loop (`aw work ready`, `aw work active`) before claiming.
+This team tracks its work in the Tasks app: after the loop, run `aw tasks ready`
+and `aw tasks active` before claiming with `aw tasks claim --number <n>`. For task
+verbs this block wins over the `aweb-coordination` and `aweb-tasks` skills,
+which still describe the built-in board.
 
 ## Shared Rules
 
@@ -75,7 +77,7 @@ skill's ready/active loop (`aw work ready`, `aw work active`) before claiming.
 - Use chat when you need a synchronous answer: `aw chat pending`, then `aw chat send-and-wait <agent> --body-file <body-path>`.
 - Respond promptly to waiting conversations.
 - Check `aw workspace status` before doing coordination work.
-- Prefer shared coordination state over local TODO notes: `aw work ready` and `aw work active`.
+- Prefer shared coordination state over local TODO notes: `aw tasks ready` and `aw tasks active`.
 - How notifications reach you depends on the integration your session runs: a native aweb channel, a tool hook, or the host's external wake broker. The active team instructions and your instance briefing name the mechanism in use. Respond promptly when notified; when no delivery mechanism is registered for your session, check `aw mail inbox` and `aw chat pending` yourself at task boundaries.
 
 ## Shell-safe message bodies

@@ -84,7 +84,9 @@ Juan decides.
   `--cursor`) through the uncertain interval. Never infer that an action is
   complete from read state, and check the receipts of earlier side effects
   before retrying one.
-- **Tasks** live on the aweb board of team aweb: run `aw task …` from your home.
+- **Tasks** live in the Tasks app installed on team aweb: run `aw tasks …` from
+  your home. For task verbs the active team instructions win over the
+  `aweb-coordination` skill, which still describes the built-in board.
 
 ## Verification and authority
 

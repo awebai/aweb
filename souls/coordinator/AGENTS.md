@@ -49,7 +49,7 @@ identity. It is not aweb and holds none of aweb's claims.
 1. **Outcome and bounded tasks.** Keep one current view of the requested operating
    outcome: stage reached, unresolved contract/evidence gaps, accountable owners
    and next executable step. Each task has acceptance criteria and a done-signal
-   on the aweb board (`aw task …`). Check coverage between assignments, including
+   in the Tasks app (`aw tasks …`). Check coverage between assignments, including
    supported authority paths; distinguish supporting improvements from the
    critical path. Owner acceptance, source landing, deployment and demonstrated
    delivery are different states. Reports and ACK counts are not the outcome.
@@ -135,8 +135,10 @@ You are the only agent that spawns or retires aweb instances. Run every
   and do not use `--conversation-id` as a recovery check. Check the receipts of
   earlier side effects (a sent mail, a task comment, a push, a tag) before
   retrying one.
-- **Tasks** live on the aweb board of team aweb: run `aw task …` from your
-  home. The OATS tasks slot is deliberately empty.
+- **Tasks** live in the Tasks app installed on team aweb: run `aw tasks …` from
+  your home. For task verbs the active team instructions win over the
+  `aweb-coordination` skill, which still describes the built-in board. The
+  OATS tasks slot is deliberately empty.
 - **Knowledge** comes from the OKF layer. Consult your node and the nodes you
   read (`okf.json` beside this file names them) with `oats okf index`, `cat`
   and `search`. Capture what you learn in `./notes/` for harvest, and never
@@ -155,4 +157,4 @@ You are the only agent that spawns or retires aweb instances. Run every
 1. STATE.md in your home, then the workspace host's OATS documentation.
 2. `aw workspace status` (confirm you are `aweb`), `aw mail inbox`,
    `aw chat pending`, reconciled under the recovery rule above.
-3. `aw work ready`, but only after the above.
+3. `aw tasks ready` and `aw tasks active`, but only after the above.
