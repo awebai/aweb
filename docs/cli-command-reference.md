@@ -758,6 +758,7 @@ Flags:
 Revoke a session grant
 
 Flags:
+- `--expect-subject string Refuse before sending unless the selected identity has this alias`
 - `-h, --help help for revoke`
 
 ## `id grant show`
