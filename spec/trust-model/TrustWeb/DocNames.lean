@@ -12,7 +12,7 @@ checks every text between backquotes, except file paths and shell commands
 in .lean, .md, .toml or .json, or the text lake build). It splits the text into identifiers and checks each one:
 
 * an identifier with a leading dot, such as .release, must be a constructor
-  of one of the model's inductive types;
+  of one of the model's inductive types other than its structures;
 * an identifier that starts with a variable, such as c.org, must have the
   rest resolve in the model, as a field or a declaration;
 * any other identifier must be the `TrustWeb` namespace itself, resolve in it

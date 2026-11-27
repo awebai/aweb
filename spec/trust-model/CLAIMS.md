@@ -386,6 +386,7 @@ These are method and process. They make no claim about the model beyond what is 
 | `rekeyTeam` | The root key signs; no team key, member or admin signs | act, source | `Authorised ... (.root o) .rekey`; awid `rotate_team_key` needs only the namespace controller |
 | `rekeyTeam` | The old key is no longer the team's key | act | Same filter |
 | `rekeyTeam` | Certificates, grants and invitations are not touched | act | It changes only `held` |
+| `rekeyTeam` | Admitting and removing are separate acts | definition | `admit`, `admitAdmin` and `remove` are other constructors of `Step` |
 | `entrust` | Whoever controls a key puts it in a key holder | act | `.controller key`, `key ∉ s.held` |
 | `registerByRoot` | Either kind, root key signs | act, assumption | Premises; A2 for a person |
 | `registerByParent` | Within R1, its own key signs | act | `MayIssue` premise; asked by `.id p` |
@@ -419,6 +420,7 @@ These are method and process. They make no claim about the model beyond what is 
 | `person_survives_others` | About the record, not an act | result | The statement has no `Step` |
 | `orphaned_agent_cannot_act_in_team` | Its team certificates are not looked at | result | The statement |
 | `admin_can_remove_admin` | A rule naming `b` as approver means the approvals include `b`'s | definition | `Satisfies .exactly` |
+| `key_holder_keeps_an_admin` | A planned check | source | `KeepsAnAdmin` is one of the planned parts; the registry has no such check (the source readings) |
 | `key_holder_keeps_an_admin` | A revocation can still leave no admin | result | `revocation_can_leave_no_admin` |
 | `built_person_needs_a_person` | The model does not record which approvals an act carried | definition | `approvals` is an implicit argument of the constructor, not part of `State` |
 | `controller_stays_in_its_organisation` | Nothing stated about invitations, grants, held keys, re-admissions | result | The statement |
