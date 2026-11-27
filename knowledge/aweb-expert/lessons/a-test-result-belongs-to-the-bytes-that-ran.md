@@ -1,12 +1,12 @@
 ---
 type: Lesson
 title: A test result belongs to the bytes that ran
-description: A queued run reads the working tree when it executes, not when it was queued; restoring a mutation from HEAD wipes uncommitted edits; and same-second, same-size Python mutations can reuse stale bytecode. Bind every result to the exact bytes executed before calling it exact-SHA evidence.
+description: A queued run reads the working tree when it executes, not when it was queued; restoring a mutation from HEAD wipes uncommitted edits; same-second, same-size Python mutations can reuse stale bytecode; and the pre-commit formatter can change what a pre-commit check ran on. Bind every result to the exact bytes executed before calling it exact-SHA evidence.
 tags: [lesson, testing, mutation, verification, python]
-timestamp: 2026-10-21
+timestamp: 2026-11-26
 ---
 
-Three traps that each produced a confident result about the wrong code.
+Four traps that each produced a confident result about the wrong code.
 
 - **Queued runs.** During a feature freeze, deferred runs executed against a
   committed head plus an uncommitted patch made after queueing. The results were
@@ -20,6 +20,12 @@ Three traps that each produced a confident result about the wrong code.
   second resolution) and size. Two same-length mutations within one second
   reused the previous mutation's bytecode, so the second mutation went red for
   the first mutation's guard. A red count alone hid it.
+- **The commit hook rewrites what you checked** (2026-11-26). aweb's
+  `.githooks/pre-commit` runs ruff format and gofmt on staged files and
+  stages the result. A check run on the working tree before `git commit`
+  passed; ruff then wrapped a call whose trailing inline marker comment made
+  the line too long, the marker moved to the closing `)` line, and the
+  committed head failed the same deterministic check in the gate.
 
 # How to apply
 
@@ -33,6 +39,10 @@ Three traps that each produced a confident result about the wrong code.
   after restoring the source.
 - Predict which assertions each mutation should fail and match them against
   the actual failures.
+- After committing, verify the pushed SHA on a clean checkout of the remote
+  branch, not the working tree, and name that SHA with the result. Keep
+  inline marker comments short enough that the formatter never wraps their
+  line.
 
 These refine [a harness must be shown to fail](/aweb-expert/lessons/a-harness-must-be-shown-to-fail.md):
 a valid detector is still no experiment if it ran other bytes than claimed.
@@ -44,3 +54,8 @@ Harvested 2026-10-25 from seats `aweb-expert-pages-data` (note
 `aweb-expert-naapps-verify` (note `python-mutation-bytecode-cache.md`), with
 the revert trap from `aweb-protocol-expert-pages-design` (note
 `mutate-only-committed-code.md`).
+
+The commit-hook trap: OKF proposal from aweb-expert/aweb-expert-cleanup-oss,
+2026-11-26; notes/verify-the-commit-not-the-working-tree.md. Checked by the
+harvester on aweb main 5c2ee7bad: the hook formats and restages staged Python
+and Go, and the fix f7a5b9ccbe is on main. The gate red is source-reported.

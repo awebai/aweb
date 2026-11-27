@@ -1,9 +1,9 @@
 ---
 type: Lesson
 title: Focused proof includes the contract guards
-description: When choosing focused tests, enumerate the contract surfaces a change introduces and run each surface's independent guard (reviewed route-scope inventories, the packaged migration chain, downstream byte-identical goldens), not only the behavioural tests.
+description: When choosing focused tests, enumerate the contract surfaces a change introduces and run each surface's independent guard (reviewed route-scope inventories, the packaged migration chain, downstream byte-identical goldens, the product-table write ceilings for test changes), not only the behavioural tests.
 tags: [lesson, testing, review, contracts, release]
-timestamp: 2026-10-23
+timestamp: 2026-11-26
 ---
 
 Two seats hit the same gap independently, and each miss cost a full covering
@@ -31,6 +31,16 @@ train.
   of the change, not only their runtime callers.
 - Do not invent a grant scope just to put a route into an inventory; record the
   route's actual authentication mode.
+- Test files are a contract surface too. The product-table write ceilings
+  (`make check-product-table-writes`, rules in `docs/test-product-state.md`)
+  went red in the gate on 2026-11-26 when a new refusal test's setup rows took
+  a file from 7 to 10 unmarked writes. The check takes seconds: run it on any
+  head that adds, moves or deletes test database writes, and on a combined
+  stack before a gate.
+- To test that the database refuses a value under those ceilings, one marked
+  write of the refused value is enough. PostgreSQL checks CHECK constraints
+  before foreign keys, so no parent rows are needed; assert the exact
+  constraint name so a missing parent cannot pass the test (e43fe3317a).
 
 The durable fix would be tooling that maps changed paths to their guards; until
 then this is a selection habit. It extends the site enumeration in
@@ -42,3 +52,9 @@ Harvested 2026-10-25 from seat `aweb-expert-pages-requests` (note
 `focused-proof-needs-contract-inventories.md`; coordinator b8e9d11b) and the
 retired seat `aweb-expert-secrets-site` (note
 `shared-assets-need-consumer-output-checks.md`; secrets coordinator b9d449f7).
+
+The write-ceiling bullets: OKF proposal from aweb-expert/aweb-expert-cleanup-oss,
+2026-11-26; notes/product-table-write-ceilings.md. Checked by the harvester on
+aweb main 5c2ee7bad: the rules in `docs/test-product-state.md` and
+`scripts/product_table_writes.py`, and e43fe3317a, whose message records the
+7 to 10 red and the single marked write.
