@@ -35,6 +35,34 @@ from test_messages_http import (
 
 __all__ = ["privacy_app"]
 
+ALIAS = "enrolled"
+
+
+async def _connect_global_member(env, *, sk, did_key: str, stable_did: str) -> None:
+    """Admit the enrolled key as a global member through the real connect route."""
+    certificate = _encode_certificate(
+        _make_certificate(
+            env.team_sk,
+            env.team_did,
+            did_key,
+            team_id=TEAM,
+            alias=ALIAS,
+            identity_scope="global",
+            member_did_aw=stable_did,
+            certificate_id="global-" + uuid4().hex,
+        )
+    )
+    body = b"{}"
+    response = await env.client.post(
+        "/v1/connect",
+        content=body,
+        headers={
+            **_signed_team_headers(sk, did_key, TEAM, certificate, body),
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 200, response.text
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -52,9 +80,8 @@ async def test_stored_did_aw_gets_the_tree_status_of_a_claimed_one(
     privacy_app, monkeypatch, tree_state, reason, presentation
 ):
     env = privacy_app
-    actor = env.actors["bob"]
-    actor.sk, actor.did = bytes.fromhex(ALICE["seed_hex"]), ALICE["did_key"]
-    stable = stable_id_from_did_key(actor.did)
+    sk, did_key = bytes.fromhex(ALICE["seed_hex"]), ALICE["did_key"]
+    stable = stable_id_from_did_key(did_key)
     domain = f"awtest-omit-{uuid4().hex}.test"
     async with registry_listener(env) as (writer, origin):
         env.registry_app.state.awid_public_origins = (origin,)
@@ -74,15 +101,8 @@ async def test_stored_did_aw_gets_the_tree_status_of_a_claimed_one(
             await writer.register_namespace(
                 domain, ROOT["did_key"], bytes.fromhex(ROOT["seed_hex"])
             )
-            assert (await writer.register_did(actor.did, actor.sk)).did_aw == stable
-            # The member row is the global identity, as after a global connect.
-            await env.db.execute(
-                "UPDATE {{tables.agents}} SET did_key=$1, did_aw=$2, "
-                "did_aw_verified_key=$1, identity_scope='global' WHERE agent_id=$3",
-                actor.did,
-                stable,
-                actor.id,
-            )
+            assert (await writer.register_did(did_key, sk)).did_aw == stable
+            await _connect_global_member(env, sk=sk, did_key=did_key, stable_did=stable)
             if tree_state != "never-enrolled":
                 human = _signed_fixture_certificate(
                     "alice",
@@ -123,19 +143,17 @@ async def test_stored_did_aw_gets_the_tree_status_of_a_claimed_one(
                     _make_certificate(
                         env.team_sk,
                         env.team_did,
-                        actor.did,
+                        did_key,
                         team_id=TEAM,
-                        alias="bob",
+                        alias=ALIAS,
                         identity_scope="local",
-                        certificate_id="privacy-bob",
+                        certificate_id="claimless-" + uuid4().hex,
                     )
                 )
-                auth = _signed_team_headers(
-                    actor.sk, actor.did, TEAM, certificate, body
-                )
+                auth = _signed_team_headers(sk, did_key, TEAM, certificate, body)
             else:
                 claim = stable if presentation == "claims-did-aw" else ""
-                auth = _signed_identity_headers(actor.sk, actor.did, claim, body)
+                auth = _signed_identity_headers(sk, did_key, claim, body)
             before = await env.db.fetch_val("SELECT count(*) FROM {{tables.messages}}")
             response = await env.client.post(
                 "/v1/messages",
