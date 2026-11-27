@@ -721,11 +721,19 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         code, receipt = self.invoke_servers(spec)
         self.assertEqual(code, 70, receipt)
         self.assertIsNone(receipt["result"])
+        # The runner's own exit is 1 for each of these; the controller makes them infrastructure.
         for evidence, reason in (
-            ({"spec_sha256": "sha256:" + "0" * 64}, "not the admitted"),
-            ({"error": "KeyError: 'user'"}, "the runner failed"),
             (
-                {"collector_error": "OSError: disk full", "verdict": "failed"},
+                {"spec_sha256": "sha256:" + "0" * 64, "exit_code": "1"},
+                "not the admitted",
+            ),
+            ({"error": "KeyError: 'user'", "exit_code": "1"}, "the runner failed"),
+            (
+                {
+                    "collector_error": "OSError: disk full",
+                    "verdict": "failed",
+                    "exit_code": "1",
+                },
                 "evidence collection failed for d",
             ),
         ):
@@ -734,6 +742,18 @@ class ProjectJob(CloudFixture, unittest.TestCase):
                 code, receipt = self.invoke_servers(spec)
                 self.assertEqual(code, 70, receipt)
                 self.assertIn(reason, receipt["result_error"])
+
+    def test_servers_genuine_failure_is_red_and_success_green_beside_the_faults(self):
+        spec = self.servers_spec()
+        for evidence, expected in (
+            ({"verdict": "failed", "exit_code": "1"}, 1),
+            ({}, 0),
+        ):
+            with self.subTest(evidence=evidence):
+                self.servers_evidence(**evidence)
+                code, receipt = self.invoke_servers(spec)
+                self.assertEqual(code, expected, receipt)
+                self.assertIsNone(receipt["result_error"])
 
     def test_servers_refusals_write_a_receipt_and_start_no_machine(self):
         root_step = [

@@ -284,9 +284,29 @@ def run_step(step, results, paths, record, save):
             return
         base, relative = declared(item["to"], cwd, run_dir)
         target = base / relative
+        # The destination is a regular file inside the consumer's base, or nothing yet.
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            record["verdict"] = "failed"
+            record["reason"] = f"input destination {item['to']} is not a regular file"
+            return
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(origin, target)
-        record["inputs"][item["to"]] = produced
+        try:
+            target.parent.resolve(strict=True).relative_to(base.resolve())
+        except (OSError, ValueError):
+            record["verdict"] = "failed"
+            record["reason"] = (
+                f"input destination {item['to']} is not inside its checkout or run directory"
+            )
+            return
+        shutil.copyfile(origin, target)
+        placed = contained(target, base)
+        if placed is None or sha256(placed) != produced:
+            record["verdict"] = "failed"
+            record["reason"] = (
+                f"input destination {item['to']} does not hold {item['from']}'s file"
+            )
+            return
+        record["inputs"][item["to"]] = sha256(placed)
     record["uid"] = os.getuid()
     record["cwd"] = step["cwd"]
     record["run_dir"] = str(run_dir)

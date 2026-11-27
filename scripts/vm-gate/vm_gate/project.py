@@ -181,6 +181,9 @@ def exit_code(record):
         return REFUSED
     if classification is not None or record.get("suite_exit") is None:
         return INFRASTRUCTURE
+    # A servers runner exits 1 when it or its collector fails; that is not a failed rehearsal.
+    if record["project"] == "servers" and servers.infrastructure(record):
+        return INFRASTRUCTURE
     if record["suite_exit"] != 0:
         return RED
     if record["project"] == "aweb" and record.get("files"):
@@ -194,11 +197,8 @@ def exit_code(record):
                 return RED
             if server.get("container_wheel_sha256") != record["files"][name]:
                 return RED
-    if record["project"] == "servers":
-        if servers.infrastructure(record):
-            return INFRASTRUCTURE
-        if not servers.green(record):
-            return RED
+    if record["project"] == "servers" and not servers.green(record):
+        return RED
     if record["project"] == "ac":
         if (
             record.get("aweb_source")

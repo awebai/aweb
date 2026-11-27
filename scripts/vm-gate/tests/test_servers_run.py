@@ -515,6 +515,46 @@ class ServersRun(unittest.TestCase):
             [{"images/release.json": manifest}] * 2,
         )
 
+    def test_an_input_destination_that_is_not_a_regular_file_in_the_checkout_is_red(
+        self,
+    ):
+        for prepare in (
+            "mkdir -p images/release.json",
+            f"mkdir -p images && ln -s {self.root} images/release.json",
+            f"ln -s {self.root} images",
+        ):
+            with self.subTest(prepare=prepare):
+                self.clear_run()
+                # The consumer's checkout already holds the bad destination before its turn.
+                producer = self.step(
+                    "b",
+                    f"(cd ../naapp && {prepare}) && mkdir -p images && echo '{{}}' > images/release.json",
+                    files=["images/release.json"],
+                )
+                consumer = self.step(
+                    "a",
+                    "true",
+                    cwd="naapp",
+                    needs=["b"],
+                    inputs=[
+                        {
+                            "from": "b",
+                            "path": "images/release.json",
+                            "to": "images/release.json",
+                        }
+                    ],
+                )
+                code, result = self.run_spec([producer, consumer])
+                self.assertEqual(code, 1, result)
+                a = result["steps"][1]
+                self.assertEqual(a["verdict"], "failed")
+                self.assertIn("destination", a["reason"])
+                self.assertEqual(a["inputs"], {})
+                self.assertFalse(
+                    (self.root / "release.json").exists(),
+                    "an input was written outside its checkout",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
