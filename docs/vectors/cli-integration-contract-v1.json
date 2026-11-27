@@ -3,6 +3,7 @@
   "version": 1,
   "status": "draft",
   "owner": "docs/cli-integration-contract.md",
+  "type_notation": "string | bool | int | null | object | array; {enum}; {nullable: T}; {object: {required, optional}}; {array: T}",
   "version_probe": {
     "argv": [
       "aw",
@@ -12,55 +13,115 @@
     "identity": "none",
     "network": false,
     "answer": {
-      "required": {
-        "version": "string",
-        "commit": "string",
-        "commit_repo": "string",
-        "built": "string",
-        "integration_contract": "int"
+      "object": {
+        "required": {
+          "version": "string",
+          "commit": "string",
+          "commit_repo": "string",
+          "built": "string",
+          "integration_contract": "int"
+        },
+        "optional": {}
       }
     },
     "acceptance": "exact; checked at start on the exact aw executable before any effect; refuse when missing, malformed or not the accepted number"
   },
   "rules": {
-    "invocation": "argument array, never a shell; --json on every listed command; secrets on stdin",
+    "invocation": "argument array, never a shell; --json on every listed command except output exit-only; secrets on stdin",
     "selector": "--identity-home ABSOLUTE_PATH before the subcommand; then AWEB_IDENTITY_HOME; then ./.aw; an unloadable selection fails without fallback",
-    "stdout": "exactly one JSON document on success; key order, whitespace and the name key are not promised; unlisted keys are ignored",
+    "stdout": "json commands: exactly one JSON document on success; key order, whitespace and the name key are not promised; unlisted keys are ignored",
     "stderr": "not part of the contract",
     "exits": {
       "0": "success",
       "1": "failure",
-      "2": "usage error or refusal before any effect"
+      "2": "usage error or refusal"
     },
+    "exit_and_effect": "an exit status alone never says whether something changed; commands that write state the recorded facts to read after a nonzero exit",
+    "retry": "next_step and commands in messages are operator text; the framework retries only by a command's recovery rule: same argv, executable, --identity-home and routing inputs (AWEB_URL, AWID_REGISTRY_URL, --server-name)",
     "error_envelope": {
-      "required": {
-        "error": {
-          "code": "string",
-          "message": "string"
+      "object": {
+        "required": {
+          "error": {
+            "object": {
+              "required": {
+                "code": "string",
+                "message": "string"
+              },
+              "optional": {
+                "http_status": "int",
+                "detail": "string",
+                "reason": "string",
+                "classification": "string"
+              }
+            }
+          }
+        },
+        "optional": {
+          "invite": "object",
+          "release": {
+            "object": {
+              "required": {
+                "effect": {
+                  "enum": [
+                    "revoke_grant",
+                    "retire_member"
+                  ]
+                },
+                "team_id": "string",
+                "subject": {
+                  "object": {
+                    "required": {
+                      "alias": "string",
+                      "did": "string",
+                      "stable_id": "string"
+                    },
+                    "optional": {}
+                  }
+                },
+                "target": {
+                  "object": {
+                    "required": {},
+                    "optional": {
+                      "grant_id": "string",
+                      "workspace_id": "string",
+                      "certificate_id": "string"
+                    }
+                  }
+                },
+                "outcome": {
+                  "enum": [
+                    "confirmed",
+                    "pending",
+                    "unknown",
+                    "refused"
+                  ]
+                },
+                "code": "string",
+                "next_step": "string"
+              },
+              "optional": {}
+            }
+          }
         }
-      },
-      "optional": {
-        "error.http_status": "int",
-        "error.detail": "string",
-        "error.reason": "string",
-        "error.classification": "string",
-        "invite": "object",
-        "release": "object"
-      },
-      "generic_codes": [
+      }
+    },
+    "code_sources": {
+      "generic": [
         "error",
         "http_error",
         "alias_conflict",
         "outcome_unknown"
       ],
-      "codes_list": "cli-integration-codes-v1.json, edition pinned by digest when version 1 is released"
+      "cli_codes": "cli-integration-codes-v1.json, version 1 edition pinned by digest when released",
+      "command_specific": "listed with their command and owned by its document",
+      "service": "aw id team register copies the service's open code into error.code and error.reason"
     },
     "distinguish": [
       "aw could not start",
       "the caller's timeout",
       "empty, truncated or invalid stdout",
       "the error envelope",
-      "a result printed with a nonzero exit, where listed"
+      "a retained result printed with a nonzero exit, where listed"
     ]
   },
   "commands": [
@@ -79,29 +140,55 @@
       "selector": "H",
       "authority": "none: recorded",
       "network": false,
+      "output": "json",
       "answer": {
-        "required": {
-          "team_id": "string",
-          "signing_key_present": "bool",
-          "identity_present": "bool",
-          "identity_registered": "bool",
-          "registry_status": "string",
-          "did": "string",
-          "stable_id": "string",
-          "address": "string",
-          "alias": "string",
-          "certificate_present": "bool",
-          "certificate_id": "string",
-          "workspace_bound": "bool",
-          "workspace_id": "string",
-          "service": "string",
-          "partial_init": "object",
-          "pending_hosted_accept": "bool",
-          "mint_complete": "bool"
-        },
-        "optional": {}
+        "object": {
+          "required": {
+            "team_id": "string",
+            "signing_key_present": "bool",
+            "identity_present": "bool",
+            "identity_registered": "bool",
+            "registry_status": {
+              "enum": [
+                "registered",
+                "pending",
+                "unknown",
+                "not_applicable"
+              ]
+            },
+            "did": "string",
+            "stable_id": "string",
+            "address": "string",
+            "alias": "string",
+            "certificate_present": "bool",
+            "certificate_id": "string",
+            "workspace_bound": "bool",
+            "workspace_id": "string",
+            "service": "string",
+            "partial_init": {
+              "object": {
+                "required": {
+                  "present": "bool",
+                  "stage": {
+                    "enum": [
+                      "absent",
+                      "identity_prepared",
+                      "response_received"
+                    ]
+                  }
+                },
+                "optional": {}
+              }
+            },
+            "pending_hosted_accept": "bool",
+            "mint_complete": "bool"
+          },
+          "optional": {}
+        }
       },
-      "notes": "registry_status: registered|pending|unknown|not_applicable; partial_init: {present bool, stage absent|identity_prepared|response_received}"
+      "exits": {
+        "1": "corrupt or inconsistent recorded state, with a repair instruction"
+      }
     },
     {
       "id": "id_team_list",
@@ -117,14 +204,34 @@
       "selector": "H",
       "authority": "none: recorded",
       "network": false,
+      "output": "json",
       "answer": {
-        "required": {
-          "active_team": "string",
-          "memberships": "array"
-        },
-        "optional": {}
-      },
-      "notes": "membership: team_id, alias, active bool, registry_url, aweb_url, certificate_id, workspace_id always present; identity_scope, issued_at optional"
+        "object": {
+          "required": {
+            "active_team": "string",
+            "memberships": {
+              "array": {
+                "object": {
+                  "required": {
+                    "team_id": "string",
+                    "alias": "string",
+                    "active": "bool",
+                    "registry_url": "string",
+                    "aweb_url": "string",
+                    "certificate_id": "string",
+                    "workspace_id": "string"
+                  },
+                  "optional": {
+                    "identity_scope": "string",
+                    "issued_at": "string"
+                  }
+                }
+              }
+            }
+          },
+          "optional": {}
+        }
+      }
     },
     {
       "id": "whoami",
@@ -138,22 +245,27 @@
       "selector": "H",
       "authority": "H",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {},
-        "optional": {
-          "alias": "string",
-          "address": "string",
-          "domain": "string",
-          "did": "string",
-          "stable_id": "string",
-          "custody": "string",
-          "identity_scope": "string",
-          "grant_id": "string",
-          "grant_status": "string",
-          "grant_scopes": "array",
-          "grant_expires_at": "string",
-          "inbound_mode": "string",
-          "inbound_mode_error": "string"
+        "object": {
+          "required": {},
+          "optional": {
+            "alias": "string",
+            "address": "string",
+            "domain": "string",
+            "did": "string",
+            "stable_id": "string",
+            "custody": "string",
+            "identity_scope": "string",
+            "grant_id": "string",
+            "grant_status": "string",
+            "grant_scopes": {
+              "array": "string"
+            },
+            "grant_expires_at": "string",
+            "inbound_mode": "string",
+            "inbound_mode_error": "string"
+          }
         }
       }
     },
@@ -171,20 +283,65 @@
       "selector": "H",
       "authority": "none",
       "network": false,
+      "output": "json",
       "answer": {
-        "required": {
-          "version": "string",
-          "status": "string",
-          "mode": "string",
-          "subject": "object",
-          "checks": "array"
-        },
-        "optional": {}
+        "object": {
+          "required": {
+            "version": {
+              "enum": [
+                "doctor.v1"
+              ]
+            },
+            "status": {
+              "enum": [
+                "ok",
+                "info",
+                "warn",
+                "fail",
+                "unknown",
+                "blocked"
+              ]
+            },
+            "mode": {
+              "enum": [
+                "offline",
+                "online"
+              ]
+            },
+            "subject": {
+              "object": {
+                "required": {},
+                "optional": {
+                  "team_id": "string",
+                  "workspace_id": "string",
+                  "alias": "string",
+                  "identity_scope": "string"
+                }
+              }
+            },
+            "checks": {
+              "array": {
+                "object": {
+                  "required": {
+                    "id": "string",
+                    "status": "string",
+                    "message": "string"
+                  },
+                  "optional": {
+                    "detail": "object",
+                    "next_step": "string"
+                  }
+                }
+              }
+            }
+          },
+          "optional": {}
+        }
       },
       "exits": {
         "0": "always, whatever the status"
       },
-      "notes": "check: id, status, message; optional detail, next_step; detail keys not promised"
+      "notes": "check detail keys are not promised"
     },
     {
       "id": "doctor_registry",
@@ -200,19 +357,138 @@
       "selector": "H",
       "authority": "none",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "version": "string",
-          "status": "string",
-          "mode": "string",
-          "subject": "object",
-          "checks": "array"
-        },
-        "optional": {}
+        "object": {
+          "required": {
+            "version": {
+              "enum": [
+                "doctor.v1"
+              ]
+            },
+            "status": {
+              "enum": [
+                "ok",
+                "info",
+                "warn",
+                "fail",
+                "unknown",
+                "blocked"
+              ]
+            },
+            "mode": {
+              "enum": [
+                "offline",
+                "online"
+              ]
+            },
+            "subject": {
+              "object": {
+                "required": {},
+                "optional": {
+                  "team_id": "string",
+                  "workspace_id": "string",
+                  "alias": "string",
+                  "identity_scope": "string"
+                }
+              }
+            },
+            "checks": {
+              "array": {
+                "object": {
+                  "required": {
+                    "id": "string",
+                    "status": "string",
+                    "message": "string"
+                  },
+                  "optional": {
+                    "detail": "object",
+                    "next_step": "string"
+                  }
+                }
+              }
+            }
+          },
+          "optional": {}
+        }
       },
       "exits": {
         "0": "always, whatever the status"
       }
+    },
+    {
+      "id": "check_online",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "check",
+        "--online",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "none",
+      "network": true,
+      "output": "json",
+      "answer": {
+        "object": {
+          "required": {
+            "version": {
+              "enum": [
+                "doctor.v1"
+              ]
+            },
+            "status": {
+              "enum": [
+                "ok",
+                "info",
+                "warn",
+                "fail",
+                "unknown",
+                "blocked"
+              ]
+            },
+            "mode": {
+              "enum": [
+                "offline",
+                "online"
+              ]
+            },
+            "subject": {
+              "object": {
+                "required": {},
+                "optional": {
+                  "team_id": "string",
+                  "workspace_id": "string",
+                  "alias": "string",
+                  "identity_scope": "string"
+                }
+              }
+            },
+            "checks": {
+              "array": {
+                "object": {
+                  "required": {
+                    "id": "string",
+                    "status": "string",
+                    "message": "string"
+                  },
+                  "optional": {
+                    "detail": "object",
+                    "next_step": "string"
+                  }
+                }
+              }
+            }
+          },
+          "optional": {}
+        }
+      },
+      "exits": {
+        "0": "the report's status is not fail",
+        "1": "the report's status is fail: the report is printed, then exit 1; no error envelope"
+      },
+      "notes": "released OATS runs aw check --online without --json and relies on the exit status alone"
     },
     {
       "id": "invite_mint",
@@ -228,23 +504,32 @@
         "--json"
       ],
       "selector": "ISSUER",
-      "authority": "the issuer's team controller key, or for a hosted team its hosted membership",
+      "authority": "hosted team: the issuer's hosted membership; controller team: the team controller key",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "invite_id": "string",
-          "token": "string",
-          "for_human": "null"
-        },
-        "optional": {
-          "expires_at": "string"
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "created"
+              ]
+            },
+            "invite_id": "string",
+            "token": "string",
+            "for_human": {
+              "nullable": "string"
+            }
+          },
+          "optional": {
+            "expires_at": "string"
+          }
         }
       },
       "notes": "token is a secret; no service URL in the answer"
     },
     {
-      "id": "invite_inspect",
+      "id": "invite_inspect_hosted_active",
       "argv": [
         "aw",
         "team",
@@ -252,34 +537,150 @@
         "inspect",
         "--json"
       ],
-      "selector": "none",
+      "selector": "shared selector; creates nothing",
       "authority": "none",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "kind": "string",
-          "canonical_team_id": "string",
-          "identity_scope": "string",
-          "server_url": "string",
-          "status": "string"
-        },
-        "optional": {
-          "expires_at": "string"
+        "object": {
+          "required": {
+            "kind": {
+              "enum": [
+                "hosted"
+              ]
+            },
+            "canonical_team_id": "string",
+            "identity_scope": {
+              "enum": [
+                "local",
+                "global",
+                "unknown"
+              ]
+            },
+            "server_url": "string",
+            "status": "string",
+            "expires_at": {
+              "nullable": "string"
+            }
+          },
+          "optional": {}
+        }
+      },
+      "stdin": "the token, one line",
+      "notes": "unsigned: canonical_team_id and server_url are claims to check against independently verified coordinates"
+    },
+    {
+      "id": "invite_inspect_controller",
+      "argv": [
+        "aw",
+        "team",
+        "invite",
+        "inspect",
+        "--json"
+      ],
+      "selector": "shared selector; creates nothing",
+      "authority": "none",
+      "network": false,
+      "output": "json",
+      "answer": {
+        "object": {
+          "required": {
+            "kind": {
+              "enum": [
+                "controller"
+              ]
+            },
+            "canonical_team_id": "string",
+            "server_url": "string",
+            "identity_scope": {
+              "enum": [
+                "unknown"
+              ]
+            },
+            "status": {
+              "enum": [
+                "unverified"
+              ]
+            }
+          },
+          "optional": {}
+        }
+      },
+      "stdin": "the token, one line",
+      "notes": "decoded locally; no expires_at"
+    },
+    {
+      "id": "invite_inspect_inactive",
+      "argv": [
+        "aw",
+        "team",
+        "invite",
+        "inspect",
+        "--json"
+      ],
+      "selector": "shared selector; creates nothing",
+      "authority": "none",
+      "network": true,
+      "output": "json",
+      "answer": {
+        "object": {
+          "required": {
+            "error": {
+              "object": {
+                "required": {
+                  "code": "string",
+                  "message": "string"
+                },
+                "optional": {}
+              }
+            }
+          },
+          "optional": {
+            "invite": {
+              "object": {
+                "required": {
+                  "kind": {
+                    "enum": [
+                      "hosted"
+                    ]
+                  },
+                  "canonical_team_id": "string",
+                  "identity_scope": {
+                    "enum": [
+                      "local",
+                      "global",
+                      "unknown"
+                    ]
+                  },
+                  "server_url": "string",
+                  "status": "string",
+                  "expires_at": {
+                    "nullable": "string"
+                  }
+                },
+                "optional": {}
+              }
+            }
+          }
         }
       },
       "stdin": "the token, one line",
       "exits": {
-        "1": "inactive invitation: error envelope with invite beside it"
+        "1": "inspection failed; invite present only for a known inactive hosted invitation (HTTP 200)",
+        "2": "usage: absent, multiline or oversized stdin"
       },
       "codes": [
+        "expired",
+        "exhausted",
+        "revoked",
+        "expired_or_revoked",
         "malformed_token",
         "unsupported_version",
         "unknown_or_invalid",
-        "expired_or_revoked",
-        "exhausted",
         "server_unreachable",
         "server_mismatch"
-      ]
+      ],
+      "notes": "codes owned by docs/invite-inspection.md"
     },
     {
       "id": "invite_accept",
@@ -299,27 +700,35 @@
       "selector": "FRESH",
       "authority": "the token",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "team_id": "string",
-          "alias": "string",
-          "cert_path": "string"
-        },
-        "optional": {
-          "connected": "bool",
-          "aweb_url": "string",
-          "connect_command": "string",
-          "id_registration": "string",
-          "team_key": "object",
-          "responsibility": "object"
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "accepted"
+              ]
+            },
+            "team_id": "string",
+            "alias": "string",
+            "cert_path": "string"
+          },
+          "optional": {
+            "connected": "bool",
+            "aweb_url": "string",
+            "connect_command": "string",
+            "id_registration": "string",
+            "team_key": "object",
+            "responsibility": "object"
+          }
         }
       },
       "stdin": "the token, one line",
       "codes": [
         "native_agent_signature_pending"
       ],
-      "notes": "optional --parent ROOT/.aw; a failed connect after membership exits 1 and keeps the home"
+      "recovery": "after any nonzero exit, read id status --team T for the exact recipient home: certificate_present true and workspace_bound false -> workspace connect to the verified service without reusing the token; certificate_present false -> keep the home, the service side is unresolved; inconclusive -> keep the home",
+      "notes": "optional --parent ROOT/.aw; a controller token needs this machine's invite record and controller authority"
     },
     {
       "id": "init_join_from",
@@ -337,32 +746,55 @@
         "--json"
       ],
       "selector": "FRESH",
-      "authority": "SOURCE's membership",
+      "authority": "SOURCE's hosted membership or this machine's team controller key",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "team_id": "string",
-          "alias": "string",
-          "aweb_url": "string"
-        },
-        "optional": {
-          "workspace_id": "string",
-          "stable_id": "string",
-          "address": "string",
-          "identity_scope": "string",
-          "id_registration": "string",
-          "team_key": "object",
-          "responsibility": "object",
-          "next_steps": "array",
-          "guide": "string"
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "connected"
+              ]
+            },
+            "team_id": "string",
+            "alias": "string",
+            "aweb_url": "string"
+          },
+          "optional": {
+            "workspace_id": "string",
+            "stable_id": "string",
+            "address": "string",
+            "identity_scope": {
+              "enum": [
+                "local",
+                "global"
+              ]
+            },
+            "id_registration": "string",
+            "team_key": "object",
+            "responsibility": "object",
+            "next_steps": {
+              "array": {
+                "object": {
+                  "required": {
+                    "command": "string",
+                    "why": "string"
+                  },
+                  "optional": {}
+                }
+              }
+            },
+            "guide": "string"
+          }
         }
       },
       "codes": [
         "invite_not_created",
         "alias_conflict",
         "native_agent_signature_pending"
-      ]
+      ],
+      "recovery": "after any nonzero exit, read id status --team T for the exact recipient home: certificate_present true and workspace_bound false -> workspace connect to the verified service without reusing the token; certificate_present false -> keep the home, the service side is unresolved; inconclusive -> keep the home"
     },
     {
       "id": "workspace_connect",
@@ -381,21 +813,33 @@
       "selector": "H",
       "authority": "H's certificate",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "team_id": "string",
-          "alias": "string",
-          "aweb_url": "string"
-        },
-        "optional": {
-          "workspace_id": "string",
-          "stable_id": "string",
-          "address": "string",
-          "identity_scope": "string",
-          "id_registration": "string",
-          "team_key": "object",
-          "responsibility": "object"
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "connected"
+              ]
+            },
+            "team_id": "string",
+            "alias": "string",
+            "aweb_url": "string"
+          },
+          "optional": {
+            "workspace_id": "string",
+            "stable_id": "string",
+            "address": "string",
+            "identity_scope": {
+              "enum": [
+                "local",
+                "global"
+              ]
+            },
+            "id_registration": "string",
+            "team_key": "object",
+            "responsibility": "object"
+          }
         }
       }
     },
@@ -412,23 +856,52 @@
       "selector": "the resident's directory",
       "authority": "a setup key",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "team_id": "string",
-          "alias": "string",
-          "aweb_url": "string"
-        },
-        "optional": {
-          "workspace_id": "string",
-          "stable_id": "string",
-          "address": "string",
-          "identity_scope": "string",
-          "id_registration": "string",
-          "team_key": "object",
-          "responsibility": "object",
-          "next_steps": "array",
-          "guide": "string"
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "connected"
+              ]
+            },
+            "team_id": "string",
+            "alias": "string",
+            "aweb_url": "string",
+            "identity_scope": {
+              "enum": [
+                "global"
+              ]
+            },
+            "stable_id": "string",
+            "address": "string"
+          },
+          "optional": {
+            "workspace_id": "string",
+            "stable_id": "string",
+            "address": "string",
+            "identity_scope": {
+              "enum": [
+                "local",
+                "global"
+              ]
+            },
+            "id_registration": "string",
+            "team_key": "object",
+            "responsibility": "object",
+            "next_steps": {
+              "array": {
+                "object": {
+                  "required": {
+                    "command": "string",
+                    "why": "string"
+                  },
+                  "optional": {}
+                }
+              }
+            },
+            "guide": "string"
+          }
         }
       },
       "environment": [
@@ -451,25 +924,38 @@
         "--json"
       ],
       "selector": "FRESH",
-      "authority": "the namespace's controller",
+      "authority": "namespace D's controller, already set up on this machine",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "address": "string",
-          "did_aw": "string",
-          "did_key": "string",
-          "registry_status": "string",
-          "identity_path": "string",
-          "signing_key_path": "string"
-        },
-        "optional": {
-          "controller_did": "string",
-          "registry_url": "string",
-          "registry_error": "string",
-          "encryption_key_id": "string"
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "created",
+                "chain_installed"
+              ]
+            },
+            "address": "string",
+            "did_aw": "string",
+            "did_key": "string",
+            "registry_status": {
+              "enum": [
+                "registered"
+              ]
+            },
+            "identity_path": "string",
+            "signing_key_path": "string"
+          },
+          "optional": {
+            "controller_did": "string",
+            "registry_url": "string",
+            "registry_error": "string",
+            "encryption_key_id": "string"
+          }
         }
-      }
+      },
+      "notes": "no automatic DNS setup: a new controller's DNS prompt refuses without a terminal"
     },
     {
       "id": "init_new_account",
@@ -486,28 +972,53 @@
       "selector": "the new directory",
       "authority": "the hosted service",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "team_id": "string",
-          "alias": "string",
-          "aweb_url": "string"
-        },
-        "optional": {
-          "workspace_id": "string",
-          "stable_id": "string",
-          "address": "string",
-          "identity_scope": "string",
-          "id_registration": "string",
-          "team_key": "object",
-          "responsibility": "object",
-          "next_steps": "array",
-          "guide": "string"
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "connected"
+              ]
+            },
+            "team_id": "string",
+            "alias": "string",
+            "aweb_url": "string"
+          },
+          "optional": {
+            "workspace_id": "string",
+            "stable_id": "string",
+            "address": "string",
+            "identity_scope": {
+              "enum": [
+                "local",
+                "global"
+              ]
+            },
+            "id_registration": "string",
+            "team_key": "object",
+            "responsibility": "object",
+            "next_steps": {
+              "array": {
+                "object": {
+                  "required": {
+                    "command": "string",
+                    "why": "string"
+                  },
+                  "optional": {}
+                }
+              }
+            },
+            "guide": "string"
+          }
         }
       },
       "environment": [
         "AWEB_URL"
       ],
+      "exits": {
+        "2": "username_unavailable"
+      },
       "codes": [
         "username_unavailable"
       ]
@@ -526,17 +1037,24 @@
         "--json"
       ],
       "selector": "the namespace controller's home",
-      "authority": "the namespace's controller key",
+      "authority": "the namespace's controller key on this machine",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "team_id": "string",
-          "team_did_key": "string",
-          "team_key_path": "string"
-        },
-        "optional": {
-          "registry_url": "string"
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "created"
+              ]
+            },
+            "team_id": "string",
+            "team_did_key": "string",
+            "team_key_path": "string"
+          },
+          "optional": {
+            "registry_url": "string"
+          }
         }
       },
       "codes": [
@@ -560,17 +1078,24 @@
       "selector": "none",
       "authority": "none",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "team_id": "string",
-          "server_url": "string",
-          "audience": "string",
-          "issued_at": "string",
-          "team_did_key": "string",
-          "registry_url": "string"
-        },
-        "optional": {}
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "verified"
+              ]
+            },
+            "team_id": "string",
+            "server_url": "string",
+            "audience": "string",
+            "issued_at": "string",
+            "team_did_key": "string",
+            "registry_url": "string"
+          },
+          "optional": {}
+        }
       },
       "notes": "classification team_server_record_missing"
     },
@@ -592,17 +1117,24 @@
       "selector": "the team controller's home",
       "authority": "the team controller key",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "team_id": "string",
-          "server_url": "string",
-          "audience": "string",
-          "issued_at": "string",
-          "team_did_key": "string",
-          "registry_url": "string"
-        },
-        "optional": {}
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "published"
+              ]
+            },
+            "team_id": "string",
+            "server_url": "string",
+            "audience": "string",
+            "issued_at": "string",
+            "team_did_key": "string",
+            "registry_url": "string"
+          },
+          "optional": {}
+        }
       }
     },
     {
@@ -621,19 +1153,23 @@
       "selector": "the team controller's home",
       "authority": "the team controller key",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "awid_team_id": "string",
-          "service_url": "string",
-          "dry_run": "bool",
-          "timestamp": "string",
-          "controller_did": "string"
-        },
-        "optional": {
-          "next_steps": "array"
+        "object": {
+          "required": {
+            "status": "string",
+            "awid_team_id": "string",
+            "service_url": "string",
+            "dry_run": "bool",
+            "timestamp": "string",
+            "controller_did": "string"
+          },
+          "optional": {
+            "next_steps": "array"
+          }
         }
-      }
+      },
+      "notes": "the service's own refusal code is kept in error.code and error.reason"
     },
     {
       "id": "team_invite_byot",
@@ -651,15 +1187,24 @@
       "selector": "the team controller's home",
       "authority": "the team controller key",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "invite_id": "string",
-          "token": "string",
-          "for_human": "null"
-        },
-        "optional": {
-          "expires_at": "string"
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "created"
+              ]
+            },
+            "invite_id": "string",
+            "token": "string",
+            "for_human": {
+              "nullable": "string"
+            }
+          },
+          "optional": {
+            "expires_at": "string"
+          }
         }
       }
     },
@@ -687,19 +1232,49 @@
       "selector": "the resident's directory",
       "authority": "the resident",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "grant_id": "string",
-          "team_id": "string",
-          "expires_at": "string",
-          "out": "string",
-          "apps": "array",
-          "skipped_apps": "array"
-        },
-        "optional": {
-          "alias": "string",
-          "address": "string",
-          "custody_socket_path": "string"
+        "object": {
+          "required": {
+            "grant_id": "string",
+            "team_id": "string",
+            "expires_at": "string",
+            "out": "string",
+            "apps": {
+              "array": {
+                "object": {
+                  "required": {
+                    "app_id": "string",
+                    "origin": "string",
+                    "manifest_sha256": "string",
+                    "tools": {
+                      "array": "string"
+                    }
+                  },
+                  "optional": {}
+                }
+              }
+            },
+            "skipped_apps": {
+              "array": {
+                "object": {
+                  "required": {
+                    "app_id": "string",
+                    "code": "string"
+                  },
+                  "optional": {
+                    "origin": "string",
+                    "recovery_command": "string"
+                  }
+                }
+              }
+            }
+          },
+          "optional": {
+            "alias": "string",
+            "address": "string",
+            "custody_socket_path": "string"
+          }
         }
       }
     },
@@ -718,21 +1293,32 @@
       "selector": "the resident's directory",
       "authority": "the resident",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "grant_id": "string",
-          "team_id": "string",
-          "subject_alias": "string",
-          "subject_did_aw": "string",
-          "grant_did_key": "string",
-          "scopes": "array",
-          "issued_at": "string",
-          "expires_at": "string"
-        },
-        "optional": {
-          "label": "string",
-          "status": "string",
-          "revoked_at": "string"
+        "object": {
+          "required": {
+            "grant_id": "string",
+            "team_id": "string",
+            "subject_alias": "string",
+            "subject_did_aw": "string",
+            "grant_did_key": "string",
+            "scopes": {
+              "array": "string"
+            },
+            "issued_at": "string",
+            "expires_at": "string"
+          },
+          "optional": {
+            "label": "string",
+            "status": {
+              "enum": [
+                "active",
+                "expired",
+                "revoked"
+              ]
+            },
+            "revoked_at": "string"
+          }
         }
       },
       "codes": [
@@ -753,13 +1339,43 @@
       "selector": "the resident's directory",
       "authority": "the resident",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "grants": "array"
-        },
-        "optional": {}
-      },
-      "notes": "each grant as grant_show"
+        "object": {
+          "required": {
+            "grants": {
+              "array": {
+                "object": {
+                  "required": {
+                    "grant_id": "string",
+                    "team_id": "string",
+                    "subject_alias": "string",
+                    "subject_did_aw": "string",
+                    "grant_did_key": "string",
+                    "scopes": {
+                      "array": "string"
+                    },
+                    "issued_at": "string",
+                    "expires_at": "string"
+                  },
+                  "optional": {
+                    "label": "string",
+                    "status": {
+                      "enum": [
+                        "active",
+                        "expired",
+                        "revoked"
+                      ]
+                    },
+                    "revoked_at": "string"
+                  }
+                }
+              }
+            }
+          },
+          "optional": {}
+        }
+      }
     },
     {
       "id": "grant_revoke",
@@ -776,21 +1392,72 @@
       "selector": "the resident's directory",
       "authority": "the resident",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "grant_id": "string",
-          "revoked_at": "string",
-          "release": "object"
-        },
-        "optional": {}
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "revoked"
+              ]
+            },
+            "grant_id": "string",
+            "revoked_at": "string",
+            "release": {
+              "object": {
+                "required": {
+                  "effect": {
+                    "enum": [
+                      "revoke_grant",
+                      "retire_member"
+                    ]
+                  },
+                  "team_id": "string",
+                  "subject": {
+                    "object": {
+                      "required": {
+                        "alias": "string",
+                        "did": "string",
+                        "stable_id": "string"
+                      },
+                      "optional": {}
+                    }
+                  },
+                  "target": {
+                    "object": {
+                      "required": {},
+                      "optional": {
+                        "grant_id": "string",
+                        "workspace_id": "string",
+                        "certificate_id": "string"
+                      }
+                    }
+                  },
+                  "outcome": {
+                    "enum": [
+                      "confirmed",
+                      "pending",
+                      "unknown",
+                      "refused"
+                    ]
+                  },
+                  "code": "string",
+                  "next_step": "string"
+                },
+                "optional": {}
+              }
+            }
+          },
+          "optional": {}
+        }
       },
       "codes": [
         "grant_not_found",
         "subject_mismatch",
         "outcome_unknown"
       ],
-      "notes": "optional --expect-subject ALIAS; release beside error on failure"
+      "recovery": "unknown: retry the same argv with the same executable, --identity-home, routing inputs, --team, grant id and --expect-subject",
+      "notes": "optional --expect-subject ALIAS; on failure release sits beside error"
     },
     {
       "id": "custody_status",
@@ -803,22 +1470,66 @@
       "selector": "the resident's directory",
       "authority": "none",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "status": "string",
-          "socket_path": "string",
-          "resident": "object",
-          "teams": "array|null",
-          "keys": "object|null",
-          "ops": "array|null"
-        },
-        "optional": {
-          "errors": "array"
+        "object": {
+          "required": {
+            "status": {
+              "enum": [
+                "running",
+                "not_running"
+              ]
+            },
+            "socket_path": "string",
+            "resident": "object",
+            "teams": {
+              "nullable": {
+                "array": {
+                  "object": {
+                    "required": {
+                      "team_id": "string",
+                      "ready": "bool",
+                      "certificate_present": "bool"
+                    },
+                    "optional": {
+                      "grant_status_endpoint_ready": "bool"
+                    }
+                  }
+                }
+              }
+            },
+            "keys": {
+              "nullable": {
+                "object": {
+                  "required": {
+                    "signing_ready": "bool",
+                    "encryption_ready": "bool"
+                  },
+                  "optional": {}
+                }
+              }
+            },
+            "ops": {
+              "nullable": {
+                "array": "string"
+              }
+            }
+          },
+          "optional": {
+            "errors": {
+              "array": "string"
+            }
+          }
         }
       },
       "exits": {
         "0": "also when custody is unreachable: status not_running, errors [custody_unavailable]"
-      }
+      },
+      "diagnostic": [
+        "service_id",
+        "freshness",
+        "client"
+      ]
     },
     {
       "id": "team_members",
@@ -836,17 +1547,43 @@
       "selector": "H",
       "authority": "H's membership",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "team_id": "string",
-          "members": "array"
-        },
-        "optional": {
-          "source": "string",
-          "limitations": "array"
+        "object": {
+          "required": {
+            "team_id": "string",
+            "members": {
+              "array": {
+                "object": {
+                  "required": {
+                    "certificate_id": "string",
+                    "team_id": "string",
+                    "alias": "string",
+                    "member_did_key": "string",
+                    "identity_scope": "string",
+                    "issued_at": "string"
+                  },
+                  "optional": {
+                    "member_address": "string",
+                    "member_did_aw": "string",
+                    "revoked_at": "string"
+                  }
+                }
+              }
+            }
+          },
+          "optional": {
+            "source": {
+              "enum": [
+                "service-roster"
+              ]
+            },
+            "limitations": {
+              "array": "string"
+            }
+          }
         }
-      },
-      "notes": "member: certificate_id, team_id, alias, member_did_key, identity_scope, issued_at; optional member_address, member_did_aw, revoked_at; from a grant home source is service-roster"
+      }
     },
     {
       "id": "workspace_status_roster",
@@ -861,15 +1598,41 @@
       "selector": "H",
       "authority": "H's membership",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "selected_team": "string",
-          "team": "array",
-          "team_has_more": "bool",
-          "workspace": "object"
-        },
-        "optional": {}
+        "object": {
+          "required": {
+            "selected_team": "string",
+            "team": {
+              "array": {
+                "object": {
+                  "required": {
+                    "alias": "string",
+                    "status": "string"
+                  },
+                  "optional": {
+                    "last_seen": "string",
+                    "hostname": "string",
+                    "role": "string",
+                    "workspace_path": "string"
+                  }
+                }
+              }
+            },
+            "team_has_more": "bool",
+            "workspace": "object"
+          },
+          "optional": {}
+        }
       },
+      "diagnostic": [
+        "memberships",
+        "context_kind",
+        "locks",
+        "team_locks",
+        "escalations_pending",
+        "conflict_count"
+      ],
       "notes": "operator display only; a projection of the service, not authority"
     },
     {
@@ -884,24 +1647,46 @@
       "selector": "H",
       "authority": "none",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "id": "string",
-          "domain": "string",
-          "outcome": "string",
-          "human_id": "string|null",
-          "identity_valid": "bool|null",
-          "kind": "string|null",
-          "reason": "string"
-        },
-        "optional": {
-          "chain": "array"
+        "object": {
+          "required": {
+            "id": "string",
+            "domain": "string",
+            "outcome": "string",
+            "human_id": {
+              "nullable": "string"
+            },
+            "identity_valid": {
+              "nullable": "bool"
+            },
+            "kind": {
+              "nullable": "string"
+            },
+            "reason": "string"
+          },
+          "optional": {
+            "chain": {
+              "array": {
+                "object": {
+                  "required": {
+                    "id": "string",
+                    "kind": "string"
+                  },
+                  "optional": {}
+                }
+              }
+            }
+          }
         }
       },
       "exits": {
         "0": "whatever the outcome"
       },
-      "notes": "optional --registry ORIGIN; outcome nearest_human|no_human|unavailable|other=unknown"
+      "diagnostic": [
+        "evidence"
+      ],
+      "notes": "optional --registry ORIGIN; outcome nearest_human, no_human or unavailable; any other value means unknown"
     },
     {
       "id": "mail_send",
@@ -922,20 +1707,23 @@
       "selector": "H",
       "authority": "H",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "message_id": "string",
-          "status": "string",
-          "delivered_at": "string"
-        },
-        "optional": {
-          "conversation_id": "string"
+        "object": {
+          "required": {
+            "message_id": "string",
+            "status": "string",
+            "delivered_at": "string"
+          },
+          "optional": {
+            "conversation_id": "string"
+          }
         }
       },
-      "notes": "optional --new-conversation"
+      "notes": "each send to a recipient starts a new conversation"
     },
     {
-      "id": "mail_show",
+      "id": "mail_show_message",
       "argv": [
         "aw",
         "--identity-home",
@@ -949,16 +1737,140 @@
       "selector": "H",
       "authority": "H",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "messages": "array",
-          "has_more": "bool"
-        },
-        "optional": {
-          "next_cursor": "string"
+        "object": {
+          "required": {
+            "messages": {
+              "array": {
+                "object": {
+                  "required": {
+                    "message_id": "string",
+                    "subject": "string",
+                    "body": "string",
+                    "priority": {
+                      "enum": [
+                        "low",
+                        "normal",
+                        "high",
+                        "urgent"
+                      ]
+                    },
+                    "created_at": "string",
+                    "read_at": {
+                      "nullable": "string"
+                    },
+                    "from_alias": "string"
+                  },
+                  "optional": {
+                    "conversation_id": "string",
+                    "from_address": "string",
+                    "to_address": "string",
+                    "from_did": "string",
+                    "to_did": "string",
+                    "from_stable_id": "string",
+                    "to_stable_id": "string",
+                    "content_mode": "string",
+                    "message_version": "int",
+                    "encrypted_envelope": "string",
+                    "signed_payload": "string",
+                    "verification_status": {
+                      "enum": [
+                        "verified",
+                        "verified_legacy",
+                        "verified_custodial",
+                        "unverified",
+                        "failed",
+                        "identity_mismatch"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "has_more": "bool"
+          },
+          "optional": {
+            "next_cursor": "string"
+          }
         }
-      },
-      "notes": "also --conversation-id ID --limit N; message: message_id, subject, body, priority, created_at, read_at string|null, from_alias; optional conversation_id, from_address, to_address, from_did, to_did, from_stable_id, to_stable_id, content_mode, message_version, encrypted_envelope, signed_payload, verification_status"
+      }
+    },
+    {
+      "id": "mail_show_conversation",
+      "argv": [
+        "aw",
+        "--identity-home",
+        "H",
+        "mail",
+        "show",
+        "--conversation-id",
+        "ID",
+        "--limit",
+        "N",
+        "--json"
+      ],
+      "selector": "H",
+      "authority": "H",
+      "network": true,
+      "output": "json",
+      "answer": {
+        "object": {
+          "required": {
+            "messages": {
+              "array": {
+                "object": {
+                  "required": {
+                    "message_id": "string",
+                    "subject": "string",
+                    "body": "string",
+                    "priority": {
+                      "enum": [
+                        "low",
+                        "normal",
+                        "high",
+                        "urgent"
+                      ]
+                    },
+                    "created_at": "string",
+                    "read_at": {
+                      "nullable": "string"
+                    },
+                    "from_alias": "string"
+                  },
+                  "optional": {
+                    "conversation_id": "string",
+                    "from_address": "string",
+                    "to_address": "string",
+                    "from_did": "string",
+                    "to_did": "string",
+                    "from_stable_id": "string",
+                    "to_stable_id": "string",
+                    "content_mode": "string",
+                    "message_version": "int",
+                    "encrypted_envelope": "string",
+                    "signed_payload": "string",
+                    "verification_status": {
+                      "enum": [
+                        "verified",
+                        "verified_legacy",
+                        "verified_custodial",
+                        "unverified",
+                        "failed",
+                        "identity_mismatch"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "has_more": "bool"
+          },
+          "optional": {
+            "next_cursor": "string"
+          }
+        }
+      }
     },
     {
       "id": "mail_threads",
@@ -975,15 +1887,33 @@
       "selector": "H",
       "authority": "H",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "conversations": "array"
-        },
-        "optional": {
-          "next_cursor": "string"
+        "object": {
+          "required": {
+            "conversations": {
+              "array": {
+                "object": {
+                  "required": {
+                    "conversation_type": "string"
+                  },
+                  "optional": {
+                    "conversation_id": "string",
+                    "subject": "string",
+                    "title": "string",
+                    "last_message_at": "string",
+                    "unread_count": "int"
+                  }
+                }
+              }
+            }
+          },
+          "optional": {
+            "next_cursor": "string"
+          }
         }
       },
-      "notes": "optional --cursor C; conversation: conversation_type; optional conversation_id, subject, title, last_message_at, unread_count"
+      "notes": "optional --cursor C"
     },
     {
       "id": "mail_unread_count",
@@ -999,11 +1929,14 @@
       "selector": "H",
       "authority": "H",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "unread_count": "int"
-        },
-        "optional": {}
+        "object": {
+          "required": {
+            "unread_count": "int"
+          },
+          "optional": {}
+        }
       },
       "notes": "never marks mail read"
     },
@@ -1018,24 +1951,114 @@
       "selector": "none",
       "authority": "none",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "updated_at": "string",
-          "daemon_running": "bool",
-          "readiness": "array|object"
-        },
-        "optional": {
-          "daemon_version": "string",
-          "daemon_version_state": "string",
-          "daemon_pid": "int",
-          "instances": "array",
-          "control_error": "string"
+        "object": {
+          "required": {
+            "updated_at": "string",
+            "daemon_running": "bool",
+            "readiness": {
+              "array": {
+                "object": {
+                  "required": {
+                    "home": "string",
+                    "ready": "bool",
+                    "code": "string",
+                    "reason": "string",
+                    "daemon_version": "string",
+                    "updated_at": "string",
+                    "last_inspect_at": "string",
+                    "advisories": {
+                      "array": "string"
+                    }
+                  },
+                  "optional": {
+                    "detail": "string"
+                  }
+                }
+              }
+            }
+          },
+          "optional": {
+            "daemon_version": "string",
+            "daemon_version_state": "string",
+            "daemon_pid": "int",
+            "control_error": "string"
+          }
         }
       },
       "exits": {
         "0": "also when not ready"
       },
-      "notes": "with --home H --min-daemon-version V readiness is one verdict: home, ready, code, reason, daemon_version, updated_at, last_inspect_at, advisories"
+      "diagnostic": [
+        "instances",
+        "streams",
+        "state_dir",
+        "max_streams",
+        "registration_faults",
+        "daemon_commit"
+      ]
+    },
+    {
+      "id": "wake_status_home",
+      "argv": [
+        "aw",
+        "wake",
+        "status",
+        "--home",
+        "H",
+        "--min-daemon-version",
+        "V",
+        "--json"
+      ],
+      "selector": "none",
+      "authority": "none",
+      "network": true,
+      "output": "json",
+      "answer": {
+        "object": {
+          "required": {
+            "updated_at": "string",
+            "daemon_running": "bool",
+            "readiness": {
+              "object": {
+                "required": {
+                  "home": "string",
+                  "ready": "bool",
+                  "code": "string",
+                  "reason": "string",
+                  "daemon_version": "string",
+                  "updated_at": "string",
+                  "last_inspect_at": "string",
+                  "advisories": {
+                    "array": "string"
+                  }
+                },
+                "optional": {
+                  "detail": "string"
+                }
+              }
+            }
+          },
+          "optional": {
+            "daemon_version": "string",
+            "daemon_version_state": "string",
+            "daemon_pid": "int",
+            "control_error": "string"
+          }
+        }
+      },
+      "exits": {
+        "0": "also when not ready"
+      },
+      "diagnostic": [
+        "instances",
+        "streams",
+        "state_dir",
+        "max_streams",
+        "registration_faults",
+        "daemon_commit"
+      ]
     },
     {
       "id": "wake_register",
@@ -1049,15 +2072,45 @@
       "selector": "none",
       "authority": "none",
       "network": true,
-      "answer": {
-        "required": {},
-        "optional": {}
+      "output": "exit-only",
+      "stdin": {
+        "object": {
+          "required": {
+            "home": "string",
+            "identity_home": "string",
+            "delivery": "string"
+          },
+          "optional": {
+            "runtime_delivery": "string",
+            "primary_identity_home": "string",
+            "backend": "string",
+            "receive_identities": {
+              "array": {
+                "object": {
+                  "required": {
+                    "identity_home": "string"
+                  },
+                  "optional": {
+                    "team_id": "string",
+                    "label": "string",
+                    "delivery_owner": "string",
+                    "event_classes": {
+                      "array": "string"
+                    },
+                    "controls": {
+                      "array": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       },
-      "stdin": "registration: home, identity_home, delivery; optional runtime_delivery, primary_identity_home, backend, receive_identities[] {identity_home; optional team_id, label, delivery_owner, event_classes, controls}",
       "exits": {
-        "0": "saved; output is text"
+        "0": "saved; registering the same binding again is idempotent"
       },
-      "notes": "also --home H --identity-home I --delivery session [--backend tmux]; idempotent"
+      "notes": "also --home H --identity-home I --delivery session [--backend tmux]"
     },
     {
       "id": "wake_deregister",
@@ -1071,10 +2124,7 @@
       "selector": "none",
       "authority": "none",
       "network": true,
-      "answer": {
-        "required": {},
-        "optional": {}
-      },
+      "output": "exit-only",
       "exits": {
         "0": "no longer registered, including when it never was"
       }
@@ -1094,24 +2144,77 @@
       "selector": "the member's own home",
       "authority": "the member's credential and the team controller key",
       "network": true,
+      "output": "json",
       "answer": {
-        "required": {
-          "workspace_id": "string",
-          "alias": "string",
-          "identity_deleted": "bool",
-          "alias_released": "bool",
-          "release": "object"
-        },
-        "optional": {
-          "retirement_code": "string",
-          "alias_released_reason": "string",
-          "receipt_path": "string",
-          "next_step": "string",
-          "deleted_at": "string"
+        "object": {
+          "required": {
+            "workspace_id": "string",
+            "alias": "string",
+            "identity_deleted": "bool",
+            "alias_released": "bool",
+            "release": {
+              "object": {
+                "required": {
+                  "effect": {
+                    "enum": [
+                      "revoke_grant",
+                      "retire_member"
+                    ]
+                  },
+                  "team_id": "string",
+                  "subject": {
+                    "object": {
+                      "required": {
+                        "alias": "string",
+                        "did": "string",
+                        "stable_id": "string"
+                      },
+                      "optional": {}
+                    }
+                  },
+                  "target": {
+                    "object": {
+                      "required": {},
+                      "optional": {
+                        "grant_id": "string",
+                        "workspace_id": "string",
+                        "certificate_id": "string"
+                      }
+                    }
+                  },
+                  "outcome": {
+                    "enum": [
+                      "confirmed",
+                      "pending",
+                      "unknown",
+                      "refused"
+                    ]
+                  },
+                  "code": "string",
+                  "next_step": "string"
+                },
+                "optional": {}
+              }
+            }
+          },
+          "optional": {
+            "retirement_code": {
+              "enum": [
+                "retired_and_revoked",
+                "retired_revocation_pending",
+                "retired_key_holder_required"
+              ]
+            },
+            "alias_released_reason": "string",
+            "receipt_path": "string",
+            "next_step": "string",
+            "deleted_at": "string"
+          }
         }
       },
       "exits": {
-        "1": "retired_revocation_pending or retired_key_holder_required: the result is printed, then a nonzero exit"
+        "1": "retired_revocation_pending or retired_key_holder_required: a retained result is printed, then exit 1",
+        "2": "a refusal before sending: error envelope with release beside it"
       },
       "codes": [
         "not_own_workspace",
@@ -1123,39 +2226,56 @@
         "workspace_cleanup_incomplete",
         "retired_revocation_pending",
         "retired_key_holder_required"
-      ]
+      ],
+      "recovery": "unknown: keep the home and retry the same argv in the same way; pending: keep the home and hand off to the key holder"
     }
   ],
-  "release": {
-    "answer": {
-      "effect": "string",
-      "team_id": "string",
-      "subject": "object",
-      "target": "object",
-      "outcome": "string",
-      "code": "string",
-      "next_step": "string"
-    },
-    "effects": [
-      "revoke_grant",
-      "retire_member"
+  "code_list_v1_additions": {
+    "cli_error_codes": [
+      "username_unavailable",
+      "certificate_binding_unavailable",
+      "not_own_workspace",
+      "global_identity",
+      "team_not_hosted",
+      "no_workspace_credential"
     ],
-    "outcomes": [
-      "confirmed",
-      "pending",
-      "unknown",
-      "refused"
-    ]
+    "release": {
+      "effects": [
+        "retire_member"
+      ],
+      "outcomes": [
+        "pending"
+      ]
+    }
   },
   "not_in_contract": [
-    "aw's files",
+    "aw's files (a bounded recorded read is planned outside version 1)",
     "text output, stderr and help text",
     "fallback key names",
     "aw team list and aw team invite (aw team invite inspect is listed)",
     "aw status publish, aw status-host and health commands",
     "aw heartbeat",
     "installing the wake and custody services",
-    "the workspace roster as authority"
+    "the workspace roster as authority",
+    "--preflight on invitation minting"
+  ],
+  "released_oats_not_promised": [
+    "aw heartbeat",
+    "aw team list --json",
+    "aw team invite --team-id T --json",
+    "aw team join TOKEN --name N --json (up to provider v1.41)",
+    "aw --team T init; aw init without --do-not-touch-agents-md",
+    "aw id team accept-invite TOKEN (token as argument, up to v1.35)",
+    "aw id grant show|revoke without --team (up to v1.42)",
+    "aw id team members --registry ORIGIN (v1.42)",
+    "aw status-host; aw status publish (v1.29 and later)",
+    "aw custody serve and aw wake run in provider-written units",
+    "aw wake register --backend values other than tmux (up to v1.44)",
+    "text aw version first line aw X.Y.Z",
+    "inherited environment before v1.43"
+  ],
+  "released_oats_broken": [
+    "aw mail send --new-conversation (providers v1.25 to v1.42; flag removed in aw 1.36.53)"
   ],
   "new_in_version_1": [
     "aw version --json with integration_contract",

@@ -64,7 +64,8 @@ reply was lost now exits 0 when `aw` reads back that the grant was revoked.
 ## 2. Rules for every call
 
 **Invocation.** The framework runs `aw` with an argument array, never through a
-shell, and passes `--json` to every listed command. Under `--json` no update
+shell, and passes `--json` to every listed command except the exit-only ones
+(`wake register` and `wake deregister`, section 3.8). Under `--json` no update
 check runs. Secrets (invite tokens) are passed on stdin where the command says
 so, never as arguments.
 
@@ -92,11 +93,13 @@ and clears them otherwise.
 - stderr carries sentences for operators, including notices on success. It is
   never part of the contract.
 
-**Exit status.** `0` is success. `2` is a usage error or a refusal before any
-effect. `1` is any other failure, which may also have happened before any
-effect: an exit status alone never says that something changed. A command
-below that prints a result and exits nonzero says so, and the framework reads
-that result.
+**Exit status.** `0` is success. `1` is a failure. `2` is a usage error or a
+refusal. An exit status alone never says whether something changed: most
+refusals come before any effect, but a command that writes can fail or refuse,
+with `1` or `2`, after part of its effect is stored (accepting an invitation,
+section 3.3). For such commands section 3 says which recorded facts to read
+after any nonzero exit. A command that prints a result and then exits nonzero
+says so, and the framework reads that result; it is not an error envelope.
 
 **The error envelope.** On failure under `--json`, when nothing was printed to
 stdout, `aw` prints one document:
@@ -107,21 +110,36 @@ stdout, `aw` prints one document:
 
 - `code` and `message` are always present. `message` is for operators; the
   framework branches on `code`, never on `message`.
-- `http_status`, `detail` and `reason` are present for a refusal by the aweb
-  service or the AWID registry. `reason` is that service's own refusal code
-  (an open vocabulary owned by the service, not this list); `detail` is its
-  text.
-- `classification` is present only for the classified team errors in
-  [Refusal codes](#refusal-codes).
+- `http_status`, `detail` and `reason` are optional. They appear for a
+  refusal by the aweb service or the AWID registry when that refusal supplied
+  them: a service may answer with a plain detail or with no readable body, and
+  invite inspection never copies them.
+- `classification` is optional and appears only for the classified team
+  errors in [Refusal codes](#refusal-codes).
 - `invite` (invite inspection) and `release` (release receipts) sit beside
   `error` where the command says so, in the same document.
-- `code` is one of the codes in
-  [`cli-integration-codes-v1.json`](vectors/cli-integration-codes-v1.json)
-  (the machine list pins its edition by digest when version 1 is released),
-  `error` (a failure with no
-  more specific code), `http_error` (a service refusal, read `http_status` and
-  `reason`), `alias_conflict` or `outcome_unknown` (a write that may have
-  applied: inspect before retrying).
+- Where `code` comes from, and who owns it:
+  - `aw`'s generic codes: `error` (no more specific code), `http_error` (a
+    service refusal: read `http_status` and `reason` when present),
+    `alias_conflict`, `outcome_unknown` (a write that may have applied:
+    inspect before retrying);
+  - `aw`'s CLI codes, owned by this contract, listed in section 4 and in
+    [`cli-integration-codes-v1.json`](vectors/cli-integration-codes-v1.json),
+    whose version 1 edition the machine list pins by digest;
+  - command-specific codes listed with their command in section 3, such as
+    invite inspection's, owned by that command's document;
+  - for service registration (`aw id team register`), the service's own open
+    code, copied into `code` and `reason` unchanged.
+
+  A code the framework does not know gets a generic remedy, with `message`
+  shown to the operator.
+
+**Recovery steps are the framework's.** `next_step` and any command in a
+message are text for operators; the framework never executes them. Where a
+retry is safe, section 3 states it as a rule: run the same argument array with
+the same `aw` executable, the same `--identity-home` and the same routing
+inputs (`AWEB_URL`, `AWID_REGISTRY_URL`, any `--server-name`), changing
+nothing else.
 
 **Telling failures apart.** The framework must keep these distinct: `aw`
 could not be started; it was stopped by the framework's own timeout; its
@@ -168,6 +186,13 @@ with no network; it proves what was written, not current authority.
   optional `detail` object, `next_step`}. These always exit 0, whatever the
   status. Check ids are `identity.*`, `awid.*`; a check's `detail` keys are
   not part of the contract.
+- `aw --identity-home H check --online --json`. The same report as `doctor
+  --online`, with a verdict in its exit status: when the report's `status` is
+  `fail` it prints the report and then exits 1; otherwise it exits 0. Because
+  the report was printed, no error envelope follows it (the failure is coded
+  `check_failed` internally, but that code does not reach stdout); stderr asks
+  the operator to follow each failed check's `next_step`. Released OATS runs
+  `aw check --online` without `--json` and relies on the exit status alone.
 
 The framework reads nothing else about a home. A bounded recorded read that
 answers what the framework reads from `aw`'s files today is planned for a
@@ -176,44 +201,73 @@ later version (section 5).
 ### 3.3 Creating an agent's identity and membership
 
 The issuer and the recipient are different homes, acting under different
-authorities. These are separate journeys, not one operation.
+authorities. These are separate journeys, not one operation. Which authority
+an invitation needs depends on the team:
+
+- a **hosted** team's invitation is minted under the issuer's hosted
+  membership and redeemed at the team's service;
+- a **controller** team's invitation is minted with the team controller key,
+  and accepting it needs the same machine's invite record and that controller
+  authority: it cannot be accepted on another machine.
+
+The commands:
 
 - **Mint an invitation.** `aw --identity-home ISSUER id team invite --team-id T
-  --json`. Authority: the issuer's team controller key, or for a hosted team
-  the issuer's hosted membership; the same command and answer serve both.
-  Answer: `status` (`created`), `invite_id`, `token` (secret: never log or
-  pass as an argument), `for_human` (null), optional `expires_at`. The answer
-  carries no service URL: the caller uses the service it already selected or
-  verified. `--preflight` returns the authority plan without creating
-  anything; see [Invite planning and cancellation](#invite-planning-and-cancellation).
-- **Inspect an invitation.** `aw team invite inspect --json`, token on stdin.
-  No identity. Answer: `kind` (`hosted` or `controller`), `canonical_team_id`,
-  `identity_scope` (`unknown` for controller tokens), `server_url`, `status`
-  (`active`, `unverified`, `expired`, `exhausted` or `revoked`), and for
-  hosted invitations `expires_at` (string or null). An invitation that is not
-  active exits 1 with the error envelope and `invite` beside it. Codes:
-  `malformed_token`, `unsupported_version`, `unknown_or_invalid`,
-  `expired_or_revoked`, `exhausted`, `server_unreachable`, `server_mismatch`.
-  This spelling is kept until the command tree is reorganised (E1).
+  --json`. Answer, for both kinds: `status` (`created`), `invite_id`, `token`
+  (secret: never log it or pass it as an argument), `for_human` (null for an
+  agent's invitation), optional `expires_at`. The answer carries no service
+  URL: the caller uses the service it already selected or verified.
+- **Inspect an invitation.** `aw team invite inspect --json`, the token on
+  stdin. It follows the shared identity selector (a selected home that is
+  missing or invalid fails first) but creates nothing. The answer is unsigned:
+  `canonical_team_id` and `server_url` are claims, to be checked against
+  coordinates the framework selected or verified independently before acting.
+  Its forms ([invite inspection](invite-inspection.md) owns them):
+  - hosted, active: exit 0; `kind` `hosted`, `canonical_team_id`,
+    `identity_scope` (`local`, `global` or `unknown`), `server_url`, `status`
+    `active`, `expires_at` (string or null);
+  - controller: exit 0 after local decoding only; `kind` `controller`,
+    `canonical_team_id`, `server_url` (may be empty), `identity_scope`
+    `unknown`, `status` `unverified`, no `expires_at`;
+  - hosted, known inactive with metadata: exit 1, error envelope with `code`
+    `expired`, `exhausted` or `revoked`, and `invite` beside it in the hosted
+    form;
+  - hosted, inactive without metadata: exit 1, `code` `exhausted` (HTTP 409)
+    or `expired_or_revoked` (HTTP 410), no `invite`;
+  - other failures: exit 1 with `malformed_token`, `unsupported_version`,
+    `unknown_or_invalid`, `server_unreachable` or `server_mismatch`; exit 2
+    for usage errors (absent, multiline or oversized stdin).
+
+  This spelling, under the older `aw team` tree, is kept until the command tree
+  is reorganised (E1).
 - **Accept an invitation.** `aw --identity-home FRESH id team accept-invite
-  --token-stdin --name A --local [--parent ROOT/.aw] --json`, token on stdin.
-  Authority: the token; FRESH holds no credentials yet. Answer: `status`
-  (`accepted`), `team_id`, `alias`, `cert_path`; optional `connected` bool,
-  `aweb_url`, `connect_command`, `id_registration`, `team_key` object,
-  `responsibility` object. Codes: `native_agent_signature_pending` (exit 1;
-  keep the home and retry with the same token, name and home). If membership
-  was installed but connecting the workspace failed, it exits 1 and keeps the
-  home; `id status` then reports `certificate_present` true and
-  `workspace_bound` false, and the framework runs `workspace connect` for that
-  home without reusing the token.
+  --token-stdin --name A --local [--parent ROOT/.aw] --json`, the token on
+  stdin; FRESH holds no credentials yet. Answer: `status` (`accepted`),
+  `team_id`, `alias`, `cert_path`; optional `connected` bool, `aweb_url`,
+  `connect_command`, `id_registration`, `team_key` object, `responsibility`
+  object. Code `native_agent_signature_pending` (exit 1): keep the home and
+  retry with the same token, name and home. Acceptance can store the
+  membership and then fail or refuse, with exit 1 or 2 (for example, when the
+  invitation gives no usable service URL, or connecting the workspace fails).
+  So after any nonzero exit the framework reads `id status --team T` for the
+  exact recipient home and team:
+  - `certificate_present` true and `workspace_bound` false: the membership is
+    stored; connect it with `workspace connect` to the verified service,
+    without reusing the token;
+  - `certificate_present` false: nothing is installed locally, but the
+    service's side is unresolved; keep the home and do not reuse the token
+    elsewhere;
+  - anything inconclusive: keep the home and stop.
 - **Invite and join in one process.** `aw --identity-home FRESH init
-  --join-from SOURCE --join-team T --name N --json`. Authority: SOURCE's
-  membership issues; FRESH must be explicitly selected and free of
-  credentials. No token is returned. Answer: `status` (`connected`),
-  `team_id`, `alias`, `aweb_url`; optional `workspace_id`, `stable_id`,
-  `address`, `identity_scope`, `id_registration`, `team_key`,
-  `responsibility`, `next_steps` array, `guide`. Codes: `invite_not_created`,
-  `alias_conflict`, `native_agent_signature_pending`.
+  --join-from SOURCE --join-team T --name N --json`. SOURCE mints with its own
+  authority (its hosted membership, or the team controller key on this
+  machine); FRESH must be explicitly selected and free of credentials. No
+  token is returned. Answer: `status` (`connected`), `team_id`, `alias`,
+  `aweb_url`; optional `workspace_id`, `stable_id`, `address`,
+  `identity_scope`, `id_registration`, `team_key`, `responsibility`,
+  `next_steps` array, `guide`. Codes: `invite_not_created`, `alias_conflict`,
+  `native_agent_signature_pending`. After a nonzero exit, read FRESH as for an
+  acceptance.
 - **Connect a workspace.** `aw --identity-home H workspace connect --service
   URL --team T --json`. Answer: as the join's, without `next_steps` and
   `guide`.
@@ -221,15 +275,21 @@ authorities. These are separate journeys, not one operation.
   directory, with `AWEB_URL` and `AWEB_API_KEY` set (a setup key). Answer: as
   the join's, with `identity_scope` `global`, `stable_id` and `address`.
 - **An addressed global identity.** `aw --identity-home FRESH id create --name
-  N --domain D --json`. Authority: registering the address needs the
-  authority of namespace D (the answer's `controller_did`); a parent and a
-  team's admission are separate authorities, used later. Answer: `status` (`created`, or `chain_installed` on resume), `address`,
-  `did_aw`, `did_key`, `registry_status` (`registered`), `identity_path`,
-  `signing_key_path`; optional `controller_did`, `registry_url`,
-  `registry_error`, `encryption_key_id`.
+  N --domain D --json`. Precondition: namespace D's controller is already set
+  up on this machine. A new controller may first need its DNS record set up,
+  which asks a person and refuses without a terminal; this contract promises
+  no automatic DNS setup. Registering the address uses namespace D's authority
+  (the answer's `controller_did`); a parent and a team's admission are
+  separate authorities, used later. Answer: `status` (`created`, or
+  `chain_installed` on resume), `address`, `did_aw`, `did_key`,
+  `registry_status` (`registered`), `identity_path`, `signing_key_path`;
+  optional `controller_did`, `registry_url`, `registry_error`,
+  `encryption_key_id`.
 - **A hosted account.** `aw init --new-account --username U --name N --json`
   with `AWEB_URL` set. Answer: as the join's. Code `username_unavailable`
   (exit 2) when the name is taken.
+
+`--preflight` on invitation minting is not part of version 1.
 
 ### 3.4 A team the user controls (bring your own team)
 - `aw id team create --name N --namespace D --json`. Authority: the
@@ -288,8 +348,8 @@ authorities. These are separate journeys, not one operation.
   {`id`, `kind`}, ending with `id`. It exits 0 whatever the outcome.
 
 ### 3.7 Messages
-- `aw --identity-home H mail send --to A --subject S --body-file F [--new-conversation] --json`.
-  Answer: `message_id`, `status`, `delivered_at`; optional `conversation_id`.
+- `aw --identity-home H mail send --to A --subject S --body-file F --json`.
+  Each send to a recipient starts a new conversation. Answer: `message_id`, `status`, `delivered_at`; optional `conversation_id`.
 - `aw --identity-home H mail show --message-id ID --json` and `mail show
   --conversation-id ID --limit N --json`. Answer: `messages` array, `has_more`
   bool, optional `next_cursor`. Each message: `message_id`, `subject`, `body`,
@@ -326,6 +386,9 @@ authorities. These are separate journeys, not one operation.
 - `aw wake deregister --home H`. Exit 0 means the home is no longer
   registered, including when it never was.
 
+`wake register` and `wake deregister` are exit-only: they take no `--json`,
+and their output is not part of the contract.
+
 ### 3.9 Releasing an agent
 
 Two effects, two commands, under different authorities.
@@ -345,9 +408,28 @@ Two effects, two commands, under different authorities.
 A `release` object: `effect` (`revoke_grant` or `retire_member`), `team_id`,
 `subject` {`alias`, `did`, `stable_id`}, `target` {`grant_id`, or
 `workspace_id` and `certificate_id`}, `outcome` (`confirmed`, `pending`,
-`unknown` or `refused`), `code`, `next_step` (a complete command, or empty).
-`unknown` and `pending` mean: keep the home and its state, and run
-`next_step`.
+`unknown` or `refused`), `code`, `next_step` (text for the operator, or
+empty).
+
+What the framework does with each outcome is its own rule, never running
+`next_step`:
+
+- `confirmed`: the effect happened; nothing to retry.
+- `refused`: nothing was sent, or the service refused definitively; fix the
+  cause named by `code`.
+- `unknown` after a revoke: keep the state, and retry the same argument array
+  under the same `aw` executable, `--identity-home`, routing inputs, `--team`,
+  grant ID and `--expect-subject`. A retry that reads back the recorded
+  revocation confirms it.
+- `unknown` after a retirement: keep the home and retry the same argument
+  array in the same way; the retained receipt resumes the exact operation.
+- `pending` (`retired_key_holder_required`): keep the home and its receipt and
+  hand off to the team controller's key holder; that step is outside the
+  framework's authority.
+
+A retirement that prints its result and exits nonzero is a retained result,
+read as above; it is not an error envelope. A refusal before sending is an
+error envelope with `release` beside it.
 
 ## 4. Codes that drive a recovery
 
@@ -357,7 +439,7 @@ The framework branches only on codes. Each place where OATS today reads
 | Situation | What the framework reads |
 | --- | --- |
 | The alias is taken | `error.code` `alias_conflict`, or `http_error` with `reason` `self_custody_reinit_unproven` |
-| Team creation made no invitation | `error.code` `invite_not_created` |
+| Team creation made no invitation, or join-from could not mint in an existing source team | `error.code` `invite_not_created` |
 | The controller key is missing here | `error.code` `controller_key_missing` |
 | A hosted username is taken | `error.code` `username_unavailable` (new in version 1) |
 | Deleting through an external home that cannot release the alias | `error.code` `team_not_hosted` |
@@ -365,12 +447,33 @@ The framework branches only on codes. Each place where OATS today reads
 | A read was forbidden, or a message or team is not found | `error.code` `http_error` with `http_status` |
 | No team server record, or the team name is held by another key | `error.classification` `team_server_record_missing` or `team_name_taken` |
 
+### The code list's version 1 edition
+
+[`cli-integration-codes-v1.json`](vectors/cli-integration-codes-v1.json)
+holds `aw`'s CLI codes and vocabularies. Version 1 pins the edition released
+with it, which is today's file plus:
+
+- `cli_error_codes`: `username_unavailable`, `certificate_binding_unavailable`
+  and the retirement refusals `not_own_workspace`, `global_identity`,
+  `team_not_hosted` and `no_workspace_credential` (today documented as
+  `alias_released_reason` values);
+- `release`: the effect `retire_member` and the outcome `pending`.
+
+Not in the list, by ownership: invite inspection's codes (owned by
+[invite inspection](invite-inspection.md)), wake readiness codes (in the
+list's `wake_readiness` section, owned by [Wake readiness](#wake-readiness)),
+service refusal codes (open, owned by each service), and `check_failed`, which
+never reaches stdout (section 3.2).
+
 ## 5. What is not in the contract
 
 - **`aw`'s files.** `workspace.yaml`, `identity.yaml`, `teams.yaml`,
   `signing.key`, `grant.yaml`, team certificates, recovery files, journals and
-  locks are private to `aw`. A bounded recorded read for what the framework
-  reads from them today is planned (a later version).
+  locks are private to `aw`. A bounded recorded read of what the framework
+  reads from them today is planned, outside version 1 (E6.3). The first
+  readiness path in the framework that needs those recorded facts waits for
+  it; version 1 gives the framework no dependency on it. What released OATS
+  does today is unaffected: released clients keep working.
 - **Text output, stderr and help text.** No sentence is promised, and no
   command's help is a feature test: the contract version replaces feature
   probing.
@@ -392,11 +495,41 @@ The framework branches only on codes. Each place where OATS today reads
 
 - The machine list pins this document's promises and the code list's edition
   by digest. Changing either without a new version number fails aweb's tests.
-- Every listed answer is checked against the list from a real run of the real
-  `aw` against a real aweb service and AWID registry, success and failure
-  shapes alike, so a test fails when a listed answer changes shape.
+- Every listed answer is checked against the machine list, nested fields,
+  types and enumerated values included, from a real run of the real `aw`
+  against a real aweb service and AWID registry, success and failure shapes
+  alike, so a test fails when a listed answer changes shape. Keys the list
+  marks diagnostic are not checked. Each kind of check is shown to fail: with a
+  wrong nested value, and with a promised key missing.
 - Release evidence runs a framework release against the supported `aw`, and
   against an older and a newer `aw` that it must refuse at start.
+
+## 7. Released OATS and version 1
+
+Version 1 is what the framework in aweb may rely on. Released OATS aweb
+providers, v1.17 and later, which deployments still run, also call `aw` in
+ways version 1 does not list. Those keep working under aweb's rule that a
+released client is a permanent constraint until it is measured that nothing
+sends it, but they are not promises to the new framework:
+
+- `aw heartbeat`; `aw team list --json`; `aw team invite --team-id T --json`;
+  `aw team join TOKEN --name N --json`, with the token as an argument (up to
+  v1.41); `aw --team T init` and `aw init` without `--do-not-touch-agents-md`;
+- `aw id team accept-invite TOKEN ...` with the token as an argument (up to
+  v1.35); `aw id grant show` and `revoke` without `--team` (up to v1.42);
+  `aw id team members ... --registry ORIGIN` (v1.42);
+- `aw status-host` and `aw status publish` (v1.29 and later);
+- `aw custody serve` and `aw wake run`, written into the service units the
+  providers install; `aw wake register --backend` with values other than
+  `tmux` (up to v1.44);
+- text `aw version`, whose first line they parse as `aw X.Y.Z`: that first
+  line keeps its form;
+- before v1.43, the whole environment, including `AWEB_URL`, `AWEB_API_KEY`
+  and `AWID_REGISTRY_URL`, is passed to `aw`.
+
+One released call already fails: providers v1.25 to v1.42 send `aw mail send
+--new-conversation` in their delivery probe, and `aw` 1.36.53 removed that flag
+(each send now starts a new conversation).
 
 # Part 2. Details of individual commands
 
