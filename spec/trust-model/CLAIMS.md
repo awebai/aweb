@@ -153,7 +153,7 @@ One block per cell, in the table's order.
 | An invitation's holder becomes a person or an admin | Proved for one act, under every rule | result | Rows 21, 6 quantify over every `AskRule` |
 | | Resting on the planned premises that `admit`'s and `redeem`'s team is not the admin team | definition, source | Rows 6 and 21; `admit`'s and `redeem`'s premises, planned parts |
 | | Not proved for several acts under the built or the admin rule | process | No theorem states it |
-| | Under such a team rule, the identity an invitation's holder names can become an admin in three acts | result | Row 49 |
+| | Under such a team rule, the identity an invitation's holder names can become an admin in three acts, the middle one asked for by a valid agent of the organisation, which registers the joiner | result | Row 49's statement (a valid agent of the organisation asks the second act) and its construction note |
 | | And in two if it is already a valid member | result | Row 48 with `invitation_route_starts_from_a_member` |
 | | As 35 shows for giving a key back | result | Row 35 |
 | An agent approves where a person is required | Proved for every approval | result | Rows 4, 23 |
@@ -164,7 +164,7 @@ One block per cell, in the table's order.
 | The last admin's team certificate | A planned check, proved for one act | result | Row 11a |
 | | The team key's controller can still remove anyone | result | Row 10 |
 | | A revocation can still leave no admin: of the last admin, of an agent admin's issuer, or by a root replacement | result | Rows 44, 47; `root_replacement_can_leave_no_admin` |
-| | So can a re-key of the admin team by the root's controller while the root key is not held; through a held root key it must keep an admin | result, act | `rekey_can_leave_no_admin`; `rekeyTeam`'s premise |
+| | So can a re-key of the admin team by the root's controller while the root key is not held; through a held root key it must keep an admin, a planned premise | result, act | `rekey_can_leave_no_admin`; `rekeyTeam`'s premise |
 | An outsider is an admin | True by the definition | definition | `Admin` needs `Valid s o k kind` |
 | A certificate for one team accepted for another | True by the definition | definition | `HasTeamCert` matches organisation and team |
 | An approval reused | Assumed | assumption | A6 |
@@ -187,7 +187,7 @@ Each item pairs a sentence about the model with one about the real system.
 
 | Sentence | Kind | What makes it true |
 |---|---|---|
-| Nothing here is about time, crashes, retries or concurrent changes | assumption | A5 |
+| Nothing here is about time, crashes, retries or concurrent changes | assumption | A4, A5 |
 | `replaceRoot` cuts off every unrevoked identity of the organisation at once | act | `replaceRoot` |
 | Really the cut-off is derived at verification from replacement epochs; the open epoch's own key cuts nothing off | source | `awid/src/awid_service/routes/dns_namespaces.py` lines 705 to 712, `awid/src/awid/id_certificates.py` lines 855 and 856, at 5c2ee7bad3 |
 | `createOrg` is fresh creation; the registry returns an existing namespace without creating or replacing it | act, source | `createOrg`'s premise `o ∉ s.orgs`; `awid/src/awid_service/routes/dns_namespaces.py` lines 391 to 418 |
@@ -205,6 +205,7 @@ Each item pairs a sentence about the model with one about the real system.
 | A re-key takes the team's key out of `held`, keeps standing only the given members' certificates, and ends every grant from the team | act | `rekeyTeam` filters `held`, `members` (keeping `keep`) and `grants` |
 | Asked through a held root key for the admin team, it must keep an admin | act | `rekeyTeam`'s premise on `keep` |
 | As `remove` must when the admin team's key is held, and `leave` always must | act | `remove`'s `KeepsAnAdmin` premise applies when the team's key is held; `leave`'s always |
+| These keep-an-admin checks are planned; the registry has none | source | `KeepsAnAdmin` and `rekeyTeam`'s premise on `keep` are planned parts; the source readings (the registry has no last-admin check) |
 | Really the rotation re-signs the members it is given with new certificates in the same act | source | awid `rotate_team_key` at 5c2ee7bad3; the protocol seat's E7.3 disposition |
 | A legacy grant with no stored issuing certificate stays eligible once its subject is a member again | source | `server/src/aweb/identity_grant_status.py` lines 125 to 130 at 5c2ee7bad3 |
 | The model's grants have no such case | definition, act | `Grant` stores no issuing certificate; `remove`, `leave` and `rekeyTeam` remove the grants on a team certificate that goes |
