@@ -211,6 +211,11 @@ async def lookup_identity_agent_context(
                 did_aw=row.get("did_aw") or "",
                 address=row.get("address") or "",
             )
+            if binding.did_aw and not did_aw_value:
+                # The request did not claim this stored did:aw, so its tree
+                # status has not been checked yet; an enrolled omission is
+                # not a legacy success (id-certificates.md §5).
+                await authenticate_id_chain(request, binding)
             await refresh_projection_binding(
                 aweb_db, agent_id=row["agent_id"], did_key=did_key, binding=binding
             )
