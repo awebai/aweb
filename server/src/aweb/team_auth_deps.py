@@ -531,6 +531,10 @@ async def resolve_team_membership(
                 did_aw=binding_did_aw,
                 address=row["address"] or "",
             )
+            # The certificate did not claim this stored did:aw, so its tree
+            # status has not been checked yet; an enrolled omission is not a
+            # legacy success (id-certificates.md §5).
+            await authenticate_id_chain(request, binding)
         if read_native_snapshot:
             # When a stored claim needs independent evidence, recheck the
             # member after that observation, just like the preflight path.
