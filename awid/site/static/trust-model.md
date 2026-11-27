@@ -696,6 +696,7 @@ and accepting the relationship are distinct operations.
 - [awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md) — registry API, signed envelopes, certificate format
 - [identity.md](https://github.com/awebai/aweb/blob/main/docs/identity.md) — identity concepts and TOFU model
 - [identity-key-verification.md](https://github.com/awebai/aweb/blob/main/docs/identity-key-verification.md) — DID key verification rules
+- [spec/trust-model](https://github.com/awebai/aweb/tree/main/spec/trust-model) — experimental formal model of selected trust rules, with proofs checked by Lean
 
 
 ## Identity grant streams and revocation
