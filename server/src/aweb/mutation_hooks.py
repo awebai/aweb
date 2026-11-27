@@ -27,7 +27,6 @@ from .events import (
     TaskCreatedEvent,
     TaskStatusChangedEvent,
     TaskUnclaimedEvent,
-    TeamAgentStatusEvent,
     TeamEvent,
     TeamReservationAcquiredEvent,
     TeamReservationReleasedEvent,
@@ -633,24 +632,6 @@ def _paths_from_context(ctx: dict) -> list[str]:
     return [resource_key] if resource_key else []
 
 
-def _team_agent_status(ctx: dict) -> TeamEvent | None:
-    team_id = _team_id_from_context(ctx)
-    if not team_id:
-        return None
-    return TeamAgentStatusEvent(
-        team_id=team_id,
-        agent_id=str(ctx.get("agent_id", "") or ""),
-        alias=str(ctx.get("alias", "") or ""),
-        reachable=str(ctx.get("reachable", "") or ""),
-        reason_code=ctx.get("reason_code"),
-        reason_text=ctx.get("reason_text"),
-        fixing_by=ctx.get("fixing_by"),
-        fixing_text=ctx.get("fixing_text"),
-        observed_at=str(ctx.get("observed_at", "") or ""),
-        valid_until=str(ctx.get("valid_until", "") or ""),
-    )
-
-
 def _team_task_created(ctx: dict) -> TeamEvent | None:
     team_id = _team_id_from_context(ctx)
     if not team_id:
@@ -752,7 +733,6 @@ def _team_reservation_renewed(ctx: dict) -> TeamEvent | None:
 
 
 _TEAM_BUILDERS: dict[str, Callable[[dict], TeamEvent | None]] = {
-    MutationEventType.AGENT_STATUS: _team_agent_status,
     MutationEventType.TASK_CREATED: _team_task_created,
     MutationEventType.TASK_STATUS_CHANGED: _team_task_status_changed,
     MutationEventType.TASK_ASSIGNEE_CHANGED: _team_task_assignee_changed,

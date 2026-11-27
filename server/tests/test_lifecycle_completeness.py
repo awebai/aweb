@@ -136,7 +136,6 @@ async def test_agent_cleanup_retains_history_and_releases_live_coordination(
             "/v1/session-leases",
             {"session_id": "cleanup", "session_key": "c" * 32},
         ),
-        ("PUT", "/v1/agents/me/status-host", {"host_did": bob.did}),
     )
     for method, route, body in control:
         response = await _send_member_request(
@@ -199,7 +198,7 @@ async def test_agent_cleanup_retains_history_and_releases_live_coordination(
         )
         == "retained mail"
     )
-    for table in ("reservations", "session_admission_leases", "agent_status_hosts"):
+    for table in ("reservations", "session_admission_leases"):
         assert not await env.db.fetch_value(
             f"SELECT COUNT(*) FROM {{{{tables.{table}}}}} WHERE team_id=$1", TEAM
         )

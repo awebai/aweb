@@ -21,7 +21,7 @@ from redis.asyncio import Redis
 
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.messaging.activity_stream import SessionActivity
-from test_agent_status_host_http import _team_request
+from team_request_support import _team_request
 from test_dashboard_privacy import TEAM, _request
 from test_dashboard_privacy import privacy_app as privacy_app
 from test_identity_grants import _grant_headers, _session_keypair

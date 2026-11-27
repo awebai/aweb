@@ -18,7 +18,7 @@ import subprocess
 import pytest
 
 from test_agent_activity_http import _session
-from test_agent_status_host_http import _team_request
+from team_request_support import _team_request
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_identity_grants import _session_keypair
 from tests.js_runtime_tree import runtime_repo

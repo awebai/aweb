@@ -242,8 +242,8 @@ signals (`001_initial.sql:281`), which are persisted.
 
 ### Refusal codes
 
-Every refusal this route owns has the body `{"detail": "<code>: <message>"}`,
-as in [agent health](agent-health.md#refusal-codes). The code is the text
+Every refusal this route owns has the body `{"detail": "<code>: <message>"}`.
+The code is the text
 before the first `": "`, matches `^[a-z_]+$`, and is stable; the message is
 plain words and may change. Refusals from shared authentication (401, and grant
 callers' 403 `outside grant scope`), FastAPI request validation (a 422 whose
@@ -580,7 +580,7 @@ bytes.
 
 [`docs/vectors/agent-activity-v1.json`](vectors/agent-activity-v1.json) pins
 the canonical bytes, `signed_payload` and signature for fixed test keys: the
-agent key (the same seed as agent-status-v1), another key, and a grant session
+agent key, another key, and a grant session
 key. Each case carries its evaluation time and, where it differs from the
 default, the authenticated caller (signing key, stable id, team).
 
@@ -609,8 +609,7 @@ The server's verifier and every emitter's producer consume it.
 - **Partial output.** It needs a narrower audience: the agent's owner plus
   whoever the host owner adds, per Athena. It gets its own note and review.
 - Any history or replay of activity.
-- Showing activity outside a chat, for example on the roster. Agent health
-  ([agent-health.md](agent-health.md)) covers "can it hear you".
+- Showing activity outside a chat, for example on the roster.
 - Activity of a human participant.
 
 ## Review decisions (Athena, before approval)
@@ -638,7 +637,7 @@ session mode to check without new plumbing.
 2. **Rate limit shape.** The approved draft specified a token bucket of 2
    events per second with a burst of 10, and said aweb enforced no route rate
    limit. Agent health has since added one: a fixed window per agent, with
-   Redis `SET NX` (`server/src/aweb/routes/agent_status.py:300-309`).
+   Redis `SET NX`.
    Proposed: a fixed-window counter in the same
    style, `INCR` plus `EXPIRE` on `agent-activity-rate:{agent_id}`, at most 10
    events per 5-second window, 429 `rate_limited` with `Retry-After` set to

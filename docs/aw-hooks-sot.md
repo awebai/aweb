@@ -213,7 +213,6 @@ MCP `send_chat` tool call, and an acknowledgement fires from
 | `POST /v1/reservations/acquire` | `reservation.acquired` | After lock acquisition. |
 | `POST /v1/reservations/renew` | `reservation.renewed` | After lock renewal. |
 | `POST /v1/reservations/release` | `reservation.released` | Only when a lock was released. |
-| `PUT /v1/agents/{alias}/status` | `agent.status` | When a stored status changes `reachable`, `reason.code` or `fixing.by`, including the agent's first status ([agent health](agent-health.md)). |
 
 The MCP tools below fire the events of the route that performs the same
 mutation, through the `app.state.on_mutation` of the application the MCP app is
@@ -350,16 +349,6 @@ embedder, but it is experimental and not a durable event feed.
 | `reservation.acquired` | `team_id`, `holder_agent_id`, `alias`, `resource_key`, `ttl_seconds` |
 | `reservation.renewed` | `team_id`, `holder_agent_id`, `alias`, `resource_key`, `ttl_seconds` |
 | `reservation.released` | `team_id`, `holder_agent_id`, `alias`, `resource_key` |
-
-### Agent status
-
-| Event | Route-supplied keys |
-|---|---|
-| `agent.status` | `team_id`, `agent_id`, `alias`, `publisher_did`, `reachable`, `reason_code`, `reason_text`, `fixing_by`, `fixing_text`, `observed_at`, `valid_until` |
-
-The built-in handler publishes it to the team stream as an `agent.status`
-event with the same fields except `publisher_did`. It is a status-host report,
-not a message: it carries no message metering context.
 
 ## Built-in enrichment and translation
 

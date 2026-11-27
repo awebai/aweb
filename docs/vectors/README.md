@@ -591,25 +591,6 @@ collector refusals, including purpose separation in both directions and a
 key that does not declare `app-usage`. See [app usage](../app-usage.md) §4.
 
 
-### `agent-status-v1.json`
-
-The signed agent status document a status host publishes for an agent
-(aweb-acah.3, `PUT /v1/agents/{alias}/status`). It pins the canonical bytes,
-the base64url `signed_payload`, and the Ed25519 signature (raw standard base64
-without padding) for a fixed test key. Positive cases cover each `reachable`
-value, the byte caps measured after UTF-8 encoding, the 15-minute validity
-ceiling, and a local identity named by its `did:key`. Each negative carries its
-evaluation time and one expected refusal code. They cover unknown top-level and
-nested fields, missing fields, enums, a seq that is not a safe positive integer,
-the text caps, control characters, the validity window, clock skew, expiry, a
-stale seq, a publisher that is not the signer, a wrong signature, oversize and
-non-canonical bytes, and a mail payload offered as a status. A cross-type entry
-is a producer construction check: message bytes built with `canonical_payload`
-never equal status bytes. Its description overstates this as message
-verification; ingress separation is the required `type` at every route. The server and
-the OATS publisher agreed these bytes at `1aadc0914` before either
-implemented them; changing them needs a new version.
-
 ### `agent-activity-v1.json`
 
 The signed agent activity event an agent's host publishes during a turn

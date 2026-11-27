@@ -304,21 +304,9 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',
     ),
-    PurePosixPath("cli/go/cmd/aw/agent_status_test.go"): _consumer(
-        "agent-status-v1.json",
-        '"../../../../docs/vectors/agent-status-v1.json"',
-    ),
     PurePosixPath("cli/go/cmd/aw/activity_hook_test.go"): _consumer(
         "agent-activity-v1.json",
         '"../../../../docs/vectors/agent-activity-v1.json"',
-    ),
-    PurePosixPath("server/tests/test_agent_status_vector.py"): _consumer(
-        "agent-status-v1.json",
-        'Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json"',
-    ),
-    PurePosixPath("server/tests/test_line_break_refusals.py"): _consumer(
-        "agent-status-v1.json",
-        'Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json"',
     ),
     PurePosixPath("server/tests/test_agent_activity_vector.py"): _consumer(
         "agent-activity-v1.json",

@@ -6,7 +6,6 @@ import pytest
 
 from aweb.event_types import MutationEventType
 from aweb.hook_contexts import (
-    AgentStatusContext,
     TaskCreatedContext,
     TaskStatusChangedContext,
 )
@@ -30,26 +29,6 @@ def test_optional_absence_and_explicit_null_survive_context_construction():
     with pytest.raises(FrozenInstanceError):
         context.task_id = "different"
     assert context.event_type is MutationEventType.TASK_CREATED
-
-
-def test_status_context_does_not_rewrite_accepted_metadata():
-    context = AgentStatusContext(
-        team_id="team",
-        agent_id="a",
-        reachable="custom-value",
-        reason_text="  accepted text  ",
-        fixing_by=None,
-    )
-    assert context.to_context() == dict(
-        team_id="team",
-        agent_id="a",
-        reachable="custom-value",
-        reason_text="  accepted text  ",
-        fixing_by=None,
-    )
-    event = _translate_team_event(context.event_type, context.to_context())
-    assert event.reachable == "custom-value"
-    assert event.reason_text == "  accepted text  "
 
 
 def test_status_projection_retains_claim_transition_evidence():

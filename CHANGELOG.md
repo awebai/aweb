@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Agent status publishing is removed. `aw status publish` and
+  `aw status-host set|clear|show` are gone, and so are the server routes
+  `PUT /v1/agents/{alias}/status`, `GET|PUT|DELETE /v1/agents/me/status-host`
+  and `PUT /v1/agents/{alias}/status-host`, the `agent.status` hook event and
+  team stream event, and the `health` field of the dashboard agent routes with
+  its event-stream listening record. Migration 058 drops the `agent_status`
+  and `agent_status_hosts` tables. A released `aw` that calls the removed
+  routes gets 404.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under
@@ -2444,7 +2453,7 @@ Server changes are since `server-v1.27.23`; client changes are since
   `020_agent_status_hosts.sql`). The team controller can set or clear it with
   a signed `PUT /v1/agents/{alias}/status-host`, given the current host as a
   precondition. Grant callers are refused. Retiring the agent removes the
-  designation. See [agent health](docs/agent-health.md); the signed status
+  designation. See `docs/agent-health.md`; the signed status
   document's bytes are frozen in `docs/vectors/agent-status-v1.json`.
 - **The status host publishes a signed agent status:**
   `PUT /v1/agents/{alias}/status` stores the latest signed status document for
@@ -2457,7 +2466,7 @@ Server changes are since `server-v1.27.23`; client changes are since
   the team event stream.
 - **Dashboard agent routes show health:** `GET /v1/teams/{team_id}/agents`
   and `/agents/{alias}` carry an additive `health` object
-  ([agent health](docs/agent-health.md#reading)). An agent with a stored
+  (`docs/agent-health.md`). An agent with a stored
   status shows the signed report, `source: "host"`, with `stale` computed on
   every read; a designated host that has not reported yet shows
   `reachable: "unknown"`; any other agent, including one whose host has left
@@ -2467,7 +2476,7 @@ Server changes are since `server-v1.27.23`; client changes are since
 - **Health shows aweb's own observations when no host reports:** for an agent
   without a status host or stored report, or whose host has left the team,
   `health` is `{"source": "aweb", "listening", "listening_since",
-  "last_active", "connection"}` ([agent health](docs/agent-health.md#fallback-for-agents-without-a-status-host)).
+  "last_active", "connection"}` (`docs/agent-health.md`).
   `listening` says whether the agent holds an open `GET /v1/events/stream`,
   recorded by the stream itself in Redis; `listening_since` is when the
   current state began. `last_active` is the newest of heartbeat presence,
@@ -2483,7 +2492,7 @@ Server changes are since `server-v1.27.23`; client changes are since
   preserves refusal codes, messages and retry hints; offline `--print-signed`
   supports vector testing. Claude channel **1.7.17** and Pi **0.3.15** add
   atomic, mode-0600 receive receipts refreshed only on successful stream reads.
-  See [agent health clients](docs/agent-health-clients.md).
+  See `docs/agent-health-clients.md`.
 
 ### Release preparation: server 1.27.23
 

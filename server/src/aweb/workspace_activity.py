@@ -49,7 +49,7 @@ class WorkspaceActivity:
         return timestamp is not None and timestamp > cutoff
 
     def is_online(self, *, now: datetime) -> bool:
-        """All displays use the configured activity window (docs/agent-health.md)."""
+        """All displays use the configured presence TTL (docs/aweb-sot.md)."""
         return self.is_newer_than(cutoff=workspace_stale_cutoff(now=now))
 
     def display_status(self, *, now: datetime) -> str:
@@ -117,7 +117,7 @@ async def workspace_activity_by_id(
 ) -> dict[str, WorkspaceActivity]:
     """Combine the timestamps written by root, MCP and valid grant heartbeats.
 
-    Implements docs/agent-health.md:366–368 and docs/aweb-sot.md:1199–1205.
+    Implements the activity rule of docs/aweb-sot.md (DELETE /v1/workspaces).
     Grant heartbeats retain their separate records and cannot rewrite shared
     metadata; expired/revoked grants cannot keep a stale workspace alive.
     Missing Redis is supported for SQL-only embedding callers. A failed or

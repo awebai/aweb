@@ -28,8 +28,6 @@ func init() {
 	// declares another mode. They do not alter its own admission or authority.
 	for command, mode := range map[*cobra.Command]rootPreparationMode{
 		activityCmd:          rootPreparationLocalOnly,
-		statusCmd:            rootPreparationLocalOnly,
-		statusHostCmd:        rootPreparationLocalOnly,
 		teamInstallCertCmd:   rootPreparationLocalOnly,
 		teamInviteInspectCmd: rootPreparationNoRenewal,
 	} {

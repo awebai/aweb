@@ -17,12 +17,7 @@ import awid.registry as registry_module
 from awid.registry import CachedRegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
-from test_messages_http import (
-    _encode_certificate,
-    _make_certificate,
-    _make_keypair,
-    _signed_team_headers,
-)
+from test_messages_http import _make_keypair
 from awid_service.testing import TXTAnswers
 
 __all__ = ["privacy_app"]
@@ -39,30 +34,7 @@ def _headers(sk, did, payload):
     }
 
 
-async def _controller_action(env, operation, sk, did):
-    if operation == "status_host":
-        previous = (
-            await env.db.fetch_value(
-                "SELECT host_did FROM {{tables.agent_status_hosts}} WHERE agent_id=$1",
-                env.actors["alice"].id,
-            )
-            or ""
-        )
-        # Alternate hosts so every accepted request performs a real change.
-        host = env.actors["carol" if previous == env.actors["bob"].did else "bob"].did
-        body = {"team_id": TEAM, "host_did": host, "previous_host_did": previous}
-        signed = {**body, "operation": "set_agent_status_host", "agent_alias": "alice"}
-        response = await env.client.put(
-            "/v1/agents/alice/status-host",
-            json=body,
-            headers=_headers(sk, did, signed),
-        )
-        stored = await env.db.fetch_value(
-            "SELECT host_did FROM {{tables.agent_status_hosts}} WHERE agent_id=$1",
-            env.actors["alice"].id,
-        )
-        return response, stored, host
-
+async def _controller_action(env, sk, did):
     previous = await env.db.fetch_value(
         "SELECT did_key FROM {{tables.agents}} WHERE agent_id=$1",
         env.actors["alice"].id,
@@ -106,10 +78,9 @@ async def rotation_app(privacy_app):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["replace_key", "status_host"])
 @pytest.mark.parametrize("age", [59, 61])
 async def test_awid_rotation_replaces_oss_controller_authority(
-    rotation_app, monkeypatch, operation, age
+    rotation_app, monkeypatch, age
 ):
     env = rotation_app
     clock = [1_000_000]
@@ -121,11 +92,9 @@ async def test_awid_rotation_replaces_oss_controller_authority(
 
     # The controller has working authority before rotation; a member does not.
     member = env.actors["bob"]
-    refused, _, _ = await _controller_action(env, operation, member.sk, member.did)
+    refused, _, _ = await _controller_action(env, member.sk, member.did)
     assert refused.status_code == 403, refused.text
-    before, stored, expected = await _controller_action(
-        env, operation, env.team_sk, env.team_did
-    )
+    before, stored, expected = await _controller_action(env, env.team_sk, env.team_did)
     assert before.status_code == 200, before.text
     assert stored == expected
     # Warm the real SDK cache even on the unfixed server, whose controller
@@ -177,39 +146,9 @@ async def test_awid_rotation_replaces_oss_controller_authority(
     # Read the current precondition for each, so acceptance of the old key
     # cannot cause a neighboring conflict to mask the new controller's result.
     old, old_stored, old_expected = await _controller_action(
-        env, operation, env.team_sk, env.team_did
+        env, env.team_sk, env.team_did
     )
-    if age >= 60 and operation == "status_host":
-        # Target and designated host independently require current membership.
-        # Keep controller authorization separate by re-admitting both through
-        # real SDK certificate registration and signed native connect.
-        from nacl.signing import SigningKey
-
-        for alias in ("alice", "carol"):
-            actor = env.actors[alias]
-            fields = _make_certificate(
-                next_sk,
-                next_did,
-                actor.did,
-                team_id=TEAM,
-                alias=alias,
-                identity_scope="local",
-                certificate_id="rotation-current-" + alias,
-            )
-            await env.registry.add_certificate(fields, team_key=SigningKey(next_sk))
-            certificate = _encode_certificate(fields)
-            connected = await env.client.post(
-                "/v1/connect",
-                content=b"{}",
-                headers={
-                    **_signed_team_headers(
-                        actor.sk, actor.did, TEAM, certificate, b"{}"
-                    ),
-                    "Content-Type": "application/json",
-                },
-            )
-            assert connected.status_code == 200, connected.text
-    new, stored, expected = await _controller_action(env, operation, next_sk, next_did)
+    new, stored, expected = await _controller_action(env, next_sk, next_did)
     expected_statuses = (200, 403) if age < 60 else (403, 200)
     assert (old.status_code, new.status_code) == expected_statuses, {
         "former_controller": {"status": old.status_code, "body": old.json()},

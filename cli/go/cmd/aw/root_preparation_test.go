@@ -18,7 +18,6 @@ func TestRootPreparationPolicyNamesIdentityAndMaintenanceBoundaries(t *testing.T
 		{"offline-audit", auditVerifyCmd, rootPreparationOffline},
 		{"neutral-version", versionCmd, rootPreparationNeutral},
 		{"activity-producer", activityCmd, rootPreparationLocalOnly},
-		{"status-producer", statusCmd, rootPreparationLocalOnly},
 		{"certificate-install", teamInstallCertCmd, rootPreparationLocalOnly},
 		{"invite-inspection", teamInviteInspectCmd, rootPreparationNoRenewal},
 		{"ordinary-request", mailSendCmd, rootPreparationFull},

@@ -84,9 +84,8 @@ The adapter grows with R1's widget slices. Its full shape is:
 - `asset(asset_id)` returns a host-issued URL at `adapter.assetOrigin`, a
   separately pinned app asset origin. The renderer refuses any other origin.
 - `health(subject)` returns an authorized, verified status-host projection:
-  `{subject, reachable, observed_at, valid_until, reason?, fixing?}` with the
-  [agent-health](agent-health.md) meanings. Report words are escaped and shown
-  verbatim. Age and expiry are recalculated; missing, expired or mismatched
+  `{subject, reachable, observed_at, valid_until, reason?, fixing?}`. Report
+  words are escaped and shown verbatim. Age and expiry are recalculated; missing, expired or mismatched
   evidence says Unknown. Presence never proves execution.
 - `decision(task_id)` returns a trusted current read, independent of page JSON:
   `{task_id, task_rev, question_rev, status, allowed, authenticator,

@@ -102,13 +102,3 @@ async def clear_agent_coordination_on(
         agent_ids,
         team_id,
     )
-    await tx.execute(
-        "DELETE FROM {{tables.agent_status_hosts}} WHERE agent_id=ANY($1::uuid[]) AND team_id=$2",
-        agent_ids,
-        team_id,
-    )
-    await tx.execute(
-        "DELETE FROM {{tables.agent_status}} WHERE agent_id=ANY($1::uuid[]) AND team_id=$2",
-        agent_ids,
-        team_id,
-    )

@@ -44,7 +44,6 @@ from .request_compression import RequestDecompressionFastAPI
 from .resource_startup import start_agent_wakes as start_agent_wakes
 from .resource_startup import stop_agent_wakes as stop_agent_wakes
 from .routes.agent_activity import router as agent_activity_router
-from .routes.agent_status import router as agent_status_router
 from .routes.agents import router as agents_router
 from .routes.app_hooks import router as app_hooks_router
 from .routes.apps import router as apps_router
@@ -573,7 +572,6 @@ def create_app(
         )
 
     app.include_router(agents_router)
-    app.include_router(agent_status_router)
     app.include_router(agent_activity_router)
     app.include_router(apps_router)
     app.include_router(hook_bindings_router)
