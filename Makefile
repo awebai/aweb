@@ -20,8 +20,8 @@ SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
-CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2>/dev/null)
-CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
+CHANNEL_VERSION := $(shell node -p "require('./packages/channel/package.json').version" 2>/dev/null)
+CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./packages/channel/.claude-plugin/plugin.json').version" 2>/dev/null)
 # The gateway is a Go artifact with independent patch history.
 A2A_GATEWAY_VERSION ?= $(shell python3 scripts/next_tag_version.py a2a-gw-v)
 # OATS seam tests default to an immutable reviewed upstream commit materialized
@@ -725,6 +725,10 @@ _candidate-gate-docker-boundaries:
 	python3 scripts/test-egress/test_awid_fixture.py -v
 
 _candidate-channel-version:
+	@test -n "$(CHANNEL_VERSION)" || \
+		(echo "packages/channel/package.json has no readable version"; exit 1)
+	@test -n "$(CHANNEL_PLUGIN_VERSION)" || \
+		(echo "packages/channel/.claude-plugin/plugin.json has no readable version"; exit 1)
 	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
 		(echo "channel package.json != plugin.json"; exit 1)
 
