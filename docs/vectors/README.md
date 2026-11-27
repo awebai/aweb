@@ -958,7 +958,8 @@ exactly these fields:
   before and after. An observation that cannot be read fails the case; it is
   never taken as false.
 
-Any other format, field or value is refused.
+Any other format, field or value is refused, nested fields and their types
+included, and `emitted` cases require `model.emitter`.
 
 **What the runner adds.** The model has no team creation, DID registration or
 server connection. The runner performs these wire prerequisites through
@@ -966,17 +967,24 @@ signed public routes: a team is created by its namespace controller, and an
 admitted member connects to its team server. The model has no error codes
 either. The runner maps each premise to reviewed wire refusals, each citing the
 route line that refuses for it (`REFUSALS`). A refusal for another reason is a
-mismatch. The model assumes one current record. So every reading goes to the
-authority uncached: identity status from `POST /v1/id-certificates/status`,
-judged by the real chain verifier at age zero; team certificates from their
-exact status route; and grants from a read signed with the grant's own session
-key.
+mismatch. The model assumes one current record, so registry readings are
+uncached: identity status from `POST /v1/id-certificates/status`, judged by the
+real chain verifier at age zero, and team certificates from their exact status
+route. `grant` is read by the grant's subject: the grant's exact status once
+minted, the subject's own grant list before. `grantLive` is a read signed with
+the grant's session key. It goes through the server's ordinary request path and
+so sees team revocations only as its cached revocation list does; it counts as
+not live only on the refusals that state the grant has ended. Where a
+constructor builds its party from its arguments (`createOrg`, `revokeSelf`,
+`registerByParent`, `mintGrant`, `revokeGrant`, ...), a case naming any other
+party is refused.
 
 **Disagreements.** A case the code decides differently is filed as a task and
 listed with it in `DISAGREEMENTS`. The gate claims agreement only for the
 cases it runs: it holds each listed case out by name, in a test per case id
 that requires the task and the case's place in the disagreement run.
-`make test-trust-web-disagreements` runs the listed cases with the same routes,
+`make test-trust-web-disagreements` (on a Mac only through
+`make test-server-local`, which it names) runs the listed cases with the same routes,
 readings and comparator, reports expected and observed results per case, and
 fails while any of them disagrees. A case returns to the gate when its task is
 decided and that run agrees. No case is skipped.
