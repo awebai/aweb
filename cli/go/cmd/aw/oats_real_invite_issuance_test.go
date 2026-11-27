@@ -146,7 +146,7 @@ func TestOATSRealGlobalRosterRetriesAfterLostRegistrationResponse(t *testing.T) 
 	const alias = "recipient"
 	target := filepath.Join(t.TempDir(), alias)
 	home := awconfig.WorktreeIdentityHome(target)
-	world := newRealCommandWorldWithRecipientFault(t, home, true)
+	world := newRealCommandWorldWithFaults(t, realCommandWorldFaults{RecipientHome: home, LoseCertificateResponse: true})
 	source := world.addLocalMember(t, "issuer")
 	t.Setenv("HOME", world.UserHome)
 	if err := awconfig.SaveControllerKey(world.Domain, world.NamespaceKey); err != nil {

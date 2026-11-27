@@ -102,8 +102,20 @@ func (c *Client) ProbeIdentityGrantStatus(ctx context.Context) (string, error) {
 	return time.Now().UTC().Format(time.RFC3339), nil
 }
 
-func (c *Client) RevokeIdentityGrant(ctx context.Context, grantID string) error {
-	return identityGrantCompatibilityError(c.Post(ctx, "/v1/identity-grants/"+url.PathEscape(grantID)+"/revoke", nil, nil))
+// IdentityGrantRevocation is the revoke route's reply. A repeat on an already
+// revoked grant returns the same reply with its original revoked_at.
+type IdentityGrantRevocation struct {
+	GrantID   string `json:"grant_id"`
+	Status    string `json:"status"`
+	RevokedAt string `json:"revoked_at"`
+}
+
+func (c *Client) RevokeIdentityGrant(ctx context.Context, grantID string) (*IdentityGrantRevocation, error) {
+	var out IdentityGrantRevocation
+	if err := c.Post(ctx, "/v1/identity-grants/"+url.PathEscape(grantID)+"/revoke", nil, &out); err != nil {
+		return nil, identityGrantCompatibilityError(err)
+	}
+	return &out, nil
 }
 
 func identityGrantCompatibilityError(err error) error {

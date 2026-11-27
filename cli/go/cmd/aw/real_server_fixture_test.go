@@ -29,6 +29,7 @@ type commandStackAuthority struct {
 	ControllerDID           string
 	CertificateDestination  string
 	LoseCertificateResponse bool
+	LoseGrantRevokeResponse bool
 }
 
 func realCommandStack(t *testing.T, ctx context.Context, authority commandStackAuthority) commandStack {
@@ -41,7 +42,8 @@ func realCommandStack(t *testing.T, ctx context.Context, authority commandStackA
 	command := exec.CommandContext(ctx, "uv", "run", "--offline", "--frozen", "--project", project, "python", script)
 	command.Env = append(append([]string{}, awTestBinary.env...), "AW_COMMAND_DOMAIN="+authority.Domain, "AW_COMMAND_CONTROLLER="+authority.ControllerDID)
 	command.Env = append(command.Env, "AW_COMMAND_CERTIFICATE_DESTINATION="+authority.CertificateDestination,
-		"AW_COMMAND_CERTIFICATE_RESPONSE_LOSS="+strconv.FormatBool(authority.LoseCertificateResponse))
+		"AW_COMMAND_CERTIFICATE_RESPONSE_LOSS="+strconv.FormatBool(authority.LoseCertificateResponse),
+		"AW_COMMAND_GRANT_REVOKE_RESPONSE_LOSS="+strconv.FormatBool(authority.LoseGrantRevokeResponse))
 	command.Stderr = os.Stderr
 	input, err := command.StdinPipe()
 	if err != nil {
@@ -92,17 +94,26 @@ type commandMember struct {
 	Certificate *awid.TeamCertificate
 }
 
+// realCommandWorldFaults are the network faults the real stack injects after a
+// committed write: a certificate registration obstructed or with its reply
+// lost, and the first grant revoke with its reply lost.
+type realCommandWorldFaults struct {
+	RecipientHome           string
+	LoseCertificateResponse bool
+	LoseGrantRevokeResponse bool
+}
+
 func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	t.Helper()
-	return newRealCommandWorldWithRecipientFault(t, "", false)
+	return newRealCommandWorldWithFaults(t, realCommandWorldFaults{})
 }
 
 func newRealCommandWorldWithCertificateObstruction(t *testing.T, recipientHome string) *realCommandWorld {
 	t.Helper()
-	return newRealCommandWorldWithRecipientFault(t, recipientHome, false)
+	return newRealCommandWorldWithFaults(t, realCommandWorldFaults{RecipientHome: recipientHome})
 }
 
-func newRealCommandWorldWithRecipientFault(t *testing.T, recipientHome string, loseCertificateResponse bool) *realCommandWorld {
+func newRealCommandWorldWithFaults(t *testing.T, faults realCommandWorldFaults) *realCommandWorld {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
@@ -113,10 +124,10 @@ func newRealCommandWorldWithRecipientFault(t *testing.T, recipientHome string, l
 	}
 	buildAwBinary(t, ctx, world.Binary)
 	world.TeamID = awid.BuildTeamID(world.Domain, "backend")
-	authority := commandStackAuthority{Domain: world.Domain, ControllerDID: didOf(world.NamespaceKey), LoseCertificateResponse: loseCertificateResponse}
-	if recipientHome != "" {
+	authority := commandStackAuthority{Domain: world.Domain, ControllerDID: didOf(world.NamespaceKey), LoseCertificateResponse: faults.LoseCertificateResponse, LoseGrantRevokeResponse: faults.LoseGrantRevokeResponse}
+	if faults.RecipientHome != "" {
 		var err error
-		authority.CertificateDestination, err = awconfig.TeamCertificatePathFromIdentityHome(recipientHome, world.TeamID)
+		authority.CertificateDestination, err = awconfig.TeamCertificatePathFromIdentityHome(faults.RecipientHome, world.TeamID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,9 +151,13 @@ func newRealCommandWorldWithRecipientFault(t *testing.T, recipientHome string, l
 }
 
 func (world *realCommandWorld) runInIdentityHome(home string, args ...string) (string, error) {
+	return world.runInIdentityHomeWithEnv(home, nil, args...)
+}
+
+func (world *realCommandWorld) runInIdentityHomeWithEnv(home string, env []string, args ...string) (string, error) {
 	command := exec.CommandContext(world.Context, world.Binary, append([]string{"--identity-home", home, "--json"}, args...)...)
 	command.Dir = filepath.Dir(home)
-	command.Env = append(idCreateCommandEnv(world.UserHome), "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
+	command.Env = append(append(idCreateCommandEnv(world.UserHome), "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1"), env...)
 	// JSON is a stdout contract; stderr may carry ordinary recovery prose.
 	// Keep that diagnostic on the error without mixing it into the envelope.
 	var diagnostic bytes.Buffer

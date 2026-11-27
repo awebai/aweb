@@ -31,6 +31,7 @@ var (
 	grantMintTTL           time.Duration
 	grantMintLabel         string
 	grantMintOut           string
+	grantRevokeExpect      string
 )
 
 const (
@@ -422,7 +423,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		if err := saveGrantAppToolsSnapshot(residentHome, snap); err != nil {
 			revokeCtx, revokeCancel := commandAPIContext(cmd)
 			defer revokeCancel()
-			if revokeErr := client.RevokeIdentityGrant(revokeCtx, snap.GrantID); revokeErr != nil {
+			if _, revokeErr := client.RevokeIdentityGrant(revokeCtx, snap.GrantID); revokeErr != nil {
 				return fmt.Errorf("record app tool policy for grant %s: %w (revoking the grant also failed: %v; revoke it manually)", snap.GrantID, err, revokeErr)
 			}
 			return fmt.Errorf("record app tool policy for grant %s: %w (grant revoked)", snap.GrantID, err)
@@ -521,17 +522,58 @@ func runGrantRevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := commandAPIContext(cmd)
-	defer cancel()
-	if err := client.RevokeIdentityGrant(ctx, grantID); err != nil {
-		if status, isHTTP := awid.HTTPStatusCode(err); isHTTP && status == http.StatusNotFound && awid.DescribeError(err).Detail == "grant not found" {
-			return grantNotFoundInTeam(grantLookup{grantID: grantID, teamID: selection.TeamID}, err)
-		}
+	subject := releaseSubject{Alias: strings.TrimSpace(selection.Alias), DID: strings.TrimSpace(selection.DID), StableID: strings.TrimSpace(selection.StableID)}
+	if err := grantRevocationPrecondition(subject, grantRevokeExpect); err != nil {
 		return err
 	}
-	return printOutput(map[string]string{"status": "revoked", "grant_id": grantID}, func(any) string {
-		return fmt.Sprintf("Revoked identity grant %s.\n", grantID)
-	})
+	receipt := releaseReceipt{Effect: releaseRevokeGrant, TeamID: selection.TeamID, Subject: subject, Target: releaseTarget{GrantID: grantID}}
+	ctx, cancel := commandAPIContext(cmd)
+	defer cancel()
+	reply, err := client.RevokeIdentityGrant(ctx, grantID)
+	kind, revokedAt := classifyGrantRevocation(grantID, reply, err)
+	if kind == revocationAmbiguous {
+		// An exact read-back of the same grant from the same service, team and
+		// resident is the only evidence that settles a lost or unusable reply.
+		readCtx, readCancel := commandAPIContext(cmd)
+		listed, readErr := client.ListIdentityGrants(readCtx)
+		readCancel()
+		var grants []aweb.IdentityGrantView
+		if listed != nil {
+			grants = listed.Grants
+		}
+		if at, confirmed := confirmRevocationByReadBack(grantID, selection.TeamID, grants, readErr); confirmed {
+			kind, revokedAt = revocationConfirmed, at
+		}
+	}
+	switch kind {
+	case revocationConfirmed:
+		receipt.Outcome = releaseConfirmed
+		return printOutput(grantRevokeOutput{Status: "revoked", GrantID: grantID, RevokedAt: revokedAt, Release: receipt}, func(any) string {
+			return fmt.Sprintf("Revoked identity grant %s.\n", grantID)
+		})
+	case revocationAmbiguous:
+		receipt.Outcome, receipt.Code = releaseUnknown, "outcome_unknown"
+		receipt.NextStep = grantRevokeRetry(selectionIdentityHome(selection), grantID, selection.TeamID)
+		cause := err
+		if cause == nil {
+			cause = fmt.Errorf("the revoke reply for grant %s was not the route's exact answer", termtext.Line(grantID))
+		}
+		return &releaseFailure{receipt: receipt, err: withErrorCode("outcome_unknown", fmt.Errorf("%w; grant %s may be revoked: the read-back found no recorded revocation, so retain its state and run `%s`", cause, termtext.Line(grantID), receipt.NextStep))}
+	}
+	receipt.Outcome = releaseRefused
+	if status, isHTTP := awid.HTTPStatusCode(err); isHTTP && status == http.StatusNotFound && awid.DescribeError(err).Detail == "grant not found" {
+		err = grantNotFoundInTeam(grantLookup{grantID: grantID, teamID: selection.TeamID}, err)
+	}
+	receipt.Code = errorEnvelope(err, err.Error()).Error.Code
+	return &releaseFailure{receipt: receipt, err: err}
+}
+
+// grantRevokeOutput keeps the released status and grant_id fields.
+type grantRevokeOutput struct {
+	Status    string         `json:"status"`
+	GrantID   string         `json:"grant_id"`
+	RevokedAt string         `json:"revoked_at"`
+	Release   releaseReceipt `json:"release"`
 }
 
 func runGrantShow(cmd *cobra.Command, args []string) error {
@@ -646,6 +688,7 @@ func init() {
 		Args:  cobra.ExactArgs(1),
 		RunE:  runGrantRevoke,
 	}
+	revokeCmd.Flags().StringVar(&grantRevokeExpect, "expect-subject", "", "Refuse before sending unless the selected identity has this alias")
 	showCmd := &cobra.Command{
 		Use:   "show <grant-id>",
 		Short: "Show one session grant",

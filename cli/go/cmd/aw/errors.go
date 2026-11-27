@@ -160,8 +160,9 @@ func nameTakenText(alias, teamID, flag string) string {
 // cliErrorEnvelope is what --json prints for a failed command: the error's
 // awid.ErrorDetail, with the code of a tagged refusal, and its message.
 type cliErrorEnvelope struct {
-	Error  cliErrorBody      `json:"error"`
-	Invite *inviteInspection `json:"invite,omitempty"`
+	Error   cliErrorBody      `json:"error"`
+	Invite  *inviteInspection `json:"invite,omitempty"`
+	Release *releaseReceipt   `json:"release,omitempty"`
 }
 
 type cliErrorBody struct {
@@ -196,7 +197,12 @@ func errorEnvelope(err error, message string) cliErrorEnvelope {
 	if errors.As(err, &classified) {
 		body.Classification = classified.classification
 	}
-	return cliErrorEnvelope{Error: body}
+	envelope := cliErrorEnvelope{Error: body}
+	var release *releaseFailure
+	if errors.As(err, &release) {
+		envelope.Release = &release.receipt
+	}
+	return envelope
 }
 
 type cliErrorResult struct {

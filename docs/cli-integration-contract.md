@@ -239,6 +239,28 @@ membership proof rather than recipient key custody. No extra journal is created.
 Cancellation does not revoke an issued certificate. `next_step` names
 `aw id team remove-member` for that separate controller-authorized operation.
 
+## Release receipts
+
+A release command performs one explicit effect and reports it in a `release`
+object: `effect`, `team_id`, `subject` (`alias`, `did`, `stable_id` of the
+selected principal, empty where local evidence cannot be read), `target`,
+`outcome` (`confirmed`, `unknown` or `refused`), `code` and `next_step`. On
+success the object sits beside the command's released fields; on failure it
+sits beside `error` in the same JSON document.
+
+`aw id grant revoke GRANT --team T --json [--expect-subject ALIAS]` has effect
+`revoke_grant`: that one session grant ends and the resident stays. The
+service binds the grant to the selected team and resident. `--expect-subject`
+is a sanity check refused before sending (`subject_mismatch`) when the selected
+identity's alias differs or cannot be read. Confirmed means the route returned
+that grant revoked, with `revoked_at`; a repeat on a revoked grant returns the
+original `revoked_at`. A definitive refusal, such as `grant_not_found`, or a
+connection that was never made is `refused`. After the request was sent, a
+server failure or a lost or unusable reply is settled only by reading back that
+exact grant from the same service, team and resident: a recorded revocation
+confirms, exit 0; anything else is `unknown` with code `outcome_unknown`, exit
+nonzero, and `next_step` repeats the command with the same identity home.
+
 ## Retirement and owner log access
 
 For retirement results, retained credentials and controller-only retries, see

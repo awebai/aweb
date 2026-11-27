@@ -7,11 +7,16 @@
     "certificate_persistence_incomplete", "certificate_rollback_pending", "retirement_receipt_unavailable",
     "workspace_cleanup_incomplete", "invite_issuance_pending", "invite_unknown_or_expired",
     "invalid_alias", "invalid_team_id",
-    "invalid_team_server_url", "native_agent_signature_pending"
+    "invalid_team_server_url", "native_agent_signature_pending",
+    "subject_mismatch"
   ],
   "cli_error_classifications": [
     "team_server_record_missing", "team_name_taken", "team_name_unconfirmed"
   ],
+  "release": {
+    "effects": ["revoke_grant"],
+    "outcomes": ["confirmed", "unknown", "refused"]
+  },
   "invite_cancellation": {
     "states": ["cancelled", "absent", "already_used", "attempted"],
     "codes": ["invite_cancelled", "invite_absent", "invite_already_used", "invite_issuance_pending"],

@@ -48,7 +48,8 @@ func TestMissingIdentityGrantEndpointRequiresServer1272(t *testing.T) {
 			wantMethod: http.MethodPost,
 			wantPath:   "/v1/identity-grants/grant-1/revoke",
 			invoke: func(ctx context.Context, client *Client) error {
-				return client.RevokeIdentityGrant(ctx, "grant-1")
+				_, err := client.RevokeIdentityGrant(ctx, "grant-1")
+				return err
 			},
 		},
 	}

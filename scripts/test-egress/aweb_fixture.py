@@ -29,10 +29,10 @@ from fastapi import FastAPI
 import uvicorn
 
 
-async def lose_registration_body(body):
+async def lose_committed_body(body, reason):
     async for chunk in body:
         if chunk:
-            raise ConnectionResetError("fixture dropped committed certificate response")
+            raise ConnectionResetError(reason)
         yield chunk
 
 
@@ -58,9 +58,35 @@ def fail_after_certificate_registration(
         ):
             armed = False
             if lose_response:
-                response.body_iterator = lose_registration_body(response.body_iterator)
+                response.body_iterator = lose_committed_body(
+                    response.body_iterator,
+                    "fixture dropped committed certificate response",
+                )
             else:
                 destination.mkdir(mode=0o700, parents=True)
+        return response
+
+
+def lose_first_grant_revoke_response(app: FastAPI) -> None:
+    """The first successful grant revoke commits; its reply is then dropped."""
+    armed = True
+
+    @app.middleware("http")
+    async def drop_after_revoke(request, call_next):
+        nonlocal armed
+        response = await call_next(request)
+        if (
+            armed
+            and request.method == "POST"
+            and request.url.path.startswith("/v1/identity-grants/")
+            and request.url.path.endswith("/revoke")
+            and 200 <= response.status_code < 300
+        ):
+            armed = False
+            response.body_iterator = lose_committed_body(
+                response.body_iterator,
+                "fixture dropped committed grant revoke response",
+            )
         return response
 
 
@@ -176,6 +202,8 @@ async def main() -> None:
                 public_origin=server_url,
             )
         )
+        if os.environ.get("AW_COMMAND_GRANT_REVOKE_RESPONSE_LOSS") == "true":
+            lose_first_grant_revoke_response(server.app)
         await serve_fixture_app(server.app, sock=server_sock, resources=resources)
         print(
             json.dumps({"registry_url": registry_url, "server_url": server_url}),
