@@ -164,6 +164,86 @@ theorem locked_without_admin {s s' : State} {who : Party} {o : Org}
           exact hnone a ha
       · exact absurd h hold
 
+/-- **Design. An organisation left with no admin can get one back by
+re-admission.** There is a record `L` the system reaches under the admin rule
+in which the admin team's key of organisation 0 is with a key holder and 0
+has no admin; from `L`, two acts asked by whoever controls 0's root key and
+then one act asked by identity 1 are accepted, and afterwards 2 holds an
+admin-team certificate of 0 that it did not hold in `L`. In the construction
+a root replacement cut off agents 1 and 2, the new root admits both again,
+and 1, which still holds its admin-team certificate, is an admin again and
+has 2 admitted through the key holder. -/
+theorem locked_organisation_unlocks_by_readmission :
+    ∃ L R1 R2 R3, Reachable adminRule L ∧ OrgKey.team 0 .admin ∈ L.held ∧
+      (∀ k, ¬ Admin L 0 k) ∧
+      Step adminRule L (.controller (.root 0)) R1 ∧
+      Step adminRule R1 (.controller (.root 0)) R2 ∧
+      Step adminRule R2 (.id 1) R3 ∧
+      (⟨0, .admin, 2⟩ : Membership) ∈ R3.members ∧ (⟨0, .admin, 2⟩ : Membership) ∉ L.members := by
+  let e : State := ⟨[], [], [], [], [], [], [], [], [], []⟩
+  let c1 : Cert := ⟨0, 1, .agent, .root⟩
+  let c2 : Cert := ⟨0, 2, .agent, .root⟩
+  let ma : Membership := ⟨0, .admin, 1⟩
+  let s1 : State := { e with orgs := [0] }
+  let s2 : State := { s1 with certs := [c1] }
+  let s3 : State := { s2 with certs := [c2, c1] }
+  let s4 : State := { s3 with members := [ma] }
+  let s5 : State := { s4 with held := [.team 0 .admin] }
+  let L : State :=
+    { s5 with
+      revoked := ((s5.certs.filter (fun c => decide (c.org = 0 ∧ c.subject ∉ s5.revoked))).map
+        (·.subject)) ++ s5.revoked,
+      cutOff := ((s5.certs.filter (fun c => decide (c.org = 0 ∧ c.subject ∉ s5.revoked))).map
+        (·.subject)) ++ s5.cutOff,
+      held := s5.held.filter (fun k => decide (k ≠ .root 0)) }
+  let R1 : State :=
+    { L with revoked := L.revoked.filter (fun k => decide (k ≠ c1.subject)),
+             cutOff := L.cutOff.filter (fun k => decide (k ≠ c1.subject)) }
+  let R2 : State :=
+    { R1 with revoked := R1.revoked.filter (fun k => decide (k ≠ c2.subject)),
+              cutOff := R1.cutOff.filter (fun k => decide (k ≠ c2.subject)) }
+  let m2 : Membership := ⟨0, .admin, 2⟩
+  have r1 : Reachable adminRule s1 := .step (.start []) (Step.createOrg (o := 0) (by simp))
+  have r2 : Reachable adminRule s2 :=
+    .step r1 (Step.registerByRoot (c := c1) (who := .controller (.root 0)) (approvals := [])
+      rfl (by simp [s1, c1]) (by intro d hd; simp [s1, e] at hd) (.inl ⟨by simp [s1, e], rfl⟩))
+  have r3 : Reachable adminRule s3 :=
+    .step r2 (Step.registerByRoot (c := c2) (who := .controller (.root 0)) (approvals := [])
+      rfl (by simp [s2, s1, c2]) (by intro d hd; simp [s2] at hd; subst hd; simp [c1, c2])
+      (.inl ⟨by simp [s2, s1, e], rfl⟩))
+  have v3 : Valid s3 0 1 .agent :=
+    .agentOfRoot (c := c1) (by simp [s3]) rfl rfl rfl rfl (by simp [s3, s2, s1, e])
+  have r4 : Reachable adminRule s4 :=
+    .step r3 (Step.admitAdmin (m := ma) (kind := .agent) (who := .controller (.team 0 .admin))
+      (approvals := []) rfl v3 (.inl ⟨by simp [s3, s2, s1, e], rfl⟩))
+  have r5 : Reachable adminRule s5 :=
+    .step r4 (Step.entrust (key := .team 0 .admin) (by simp [s4, s3, s2, s1, e]))
+  have rL : Reachable adminRule L := .step r5 (Step.replaceRoot (o := 0) (by simp [s5, s4, s3, s2, s1]))
+  have hR1 : Step adminRule L (.controller (.root 0)) R1 :=
+    Step.readmitByRoot (c := c1) (approvals := []) (by simp [L, s5, s4, s3])
+      rfl (by simp [L, s5, s4, s3, s2, s1, e, c1, c2])
+      (.inl ⟨by simp [L, s5], rfl⟩)
+  have hR2 : Step adminRule R1 (.controller (.root 0)) R2 :=
+    Step.readmitByRoot (c := c2) (approvals := []) (by simp [R1, L, s5, s4, s3])
+      rfl (by simp [R1, L, s5, s4, s3, s2, s1, e, c1, c2])
+      (.inl ⟨by simp [R1, L, s5], rfl⟩)
+  have norev : ∀ k, k ∉ R2.revoked := by
+    intro k hk; simp [R2, R1, L, s5, s4, s3, s2, s1, e, c1, c2] at hk
+  have w1 : Valid R2 0 1 .agent :=
+    .agentOfRoot (c := c1) (by simp [R2, R1, L, s5, s4, s3]) rfl rfl rfl rfl (norev 1)
+  have w2 : Valid R2 0 2 .agent :=
+    .agentOfRoot (c := c2) (by simp [R2, R1, L, s5, s4, s3]) rfl rfl rfl rfl (norev 2)
+  have a1 : Admin R2 0 1 := ⟨by simp [R2, R1, L, s5, s4, ma], .agent, w1⟩
+  refine ⟨L, R1, R2, { R2 with members := m2 :: R2.members }, rL, by simp [L, s5], ?_, hR1, hR2,
+    ?_, List.mem_cons_self, by simp [L, s5, s4, ma]⟩
+  · intro k ⟨hm, kind, hv⟩
+    simp [L, s5, s4, ma] at hm
+    subst hm
+    exact revoked_not_valid (by simp [L, s5, s4, s3, s2, s1, e, c1, c2]) hv
+  · refine Step.admitAdmin (m := m2) (kind := .agent) (approvals := []) rfl w2
+      (.inr ⟨by simp [R2, R1, L, s5, m2], 1, rfl, a1, ?_⟩)
+    intro r hr; simp [R2, R1, L, s5, s4, s3, s2, s1, e] at hr
+
 /-- **Design. An organisation with no person at all can run.** There is a
 record the system reaches in which organisation 0 has no person, agent 1 is
 its admin, and agent 1 alone, with no approval, admits a member to a team. -/

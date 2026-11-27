@@ -437,14 +437,42 @@ theorem no_policy_no_approval {s : State} {o : Org}
 
 /-! ## Built and design: who may ask for a person -/
 
-/-- **As built, in one act: when someone newly holds a chain of person
-certificates, whoever controls some organisation key asked directly, or a
-valid person exists in some organisation.** Under review: this statement is
-weaker than intended. The proof finds the person who asked or approved, but
-the statement does not say so. -/
+/-- If someone is a person once one certificate is added, and was not before,
+the added certificate is a person certificate of that organisation. -/
+theorem Person.added_cert_org {s : State} {o : Org} {c : Cert} {k : Key}
+    (hp : Person { s with certs := c :: s.certs } o k) (hold : ¬ Person s o k) :
+    c.org = o := by
+  induction hp with
+  | byRoot hc ho hk hi hs =>
+      rename_i d k'
+      rcases List.mem_cons.mp hc with rfl | hd
+      · exact ho
+      · exact absurd (.byRoot hd ho hk hi hs) hold
+  | byPerson hc ho hk hi hs hp' ih =>
+      rename_i d k' p
+      rcases List.mem_cons.mp hc with rfl | hd
+      · exact ho
+      · by_cases hpp : Person s o p
+        · exact absurd (.byPerson hd ho hk hi hs hpp) hold
+        · exact ih hpp
+
+/-- **As built, in one act: a new person needs a person, or the root key used
+directly.** If an accepted act under the built rule makes someone hold a chain
+of person certificates in organisation `o` who did not before, the act
+registered one person certificate of `o`, and one of three things holds:
+whoever controls `o`'s root key asked directly, the key not being with a key
+holder; or a valid person of `o` asked; or the root key is with a key holder, a
+valid member of `o` asked, and approvals exist that satisfy `o`'s policy for
+adding a person and include a valid person of `o`. The model does not record
+which approvals an act carried; the act's premise is that such approvals were
+given. -/
 theorem built_person_needs_a_person {s s' : State} {who : Party} {o : Org} {k : Key}
     (hstep : Step builtRule s who s') (hnew : Person s' o k) (hold : ¬ Person s o k) :
-    (∃ key, who = .controller key) ∨ ∃ p o', Valid s o' p .person := by
+    ∃ c, s'.certs = c :: s.certs ∧ c.kind = .person ∧ c.org = o ∧
+      ((who = .controller (.root o) ∧ OrgKey.root o ∉ s.held) ∨
+        (∃ p, who = .id p ∧ Valid s o p .person) ∨
+        (∃ a kind approvals, who = .id a ∧ Valid s o a kind ∧ OrgKey.root o ∈ s.held ∧
+          Approved s o .registerPerson approvals ∧ ∃ p, p ∈ approvals ∧ Valid s o p .person)) := by
   cases hstep with
   | createOrg _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | entrust _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
@@ -466,27 +494,40 @@ theorem built_person_needs_a_person {s s' : State} {who : Party} {o : Org} {k : 
   | sendOwn _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | sendGrant _ _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | registerByRoot hi ho hf hauth =>
-      rcases hauth with ⟨_, hw⟩ | ⟨_, p, hw, ⟨hact, hv | ⟨⟨r, hr, hro, hra, hrp⟩, _⟩⟩, happ⟩
-      · exact .inl ⟨_, hw⟩
-      · exact .inr ⟨p, _, hv⟩
-      · have h := happ r hr hro (hra.trans hact.symm)
-        rw [hrp] at h
-        obtain ⟨q, _, hq⟩ := h
-        exact .inr ⟨q, _, hq⟩
+      rename_i c approvals
+      cases hkind : c.kind with
+      | agent => exact absurd (Person.of_cons_agent hkind hnew) hold
+      | person =>
+          have hco : c.org = o := Person.added_cert_org hnew hold
+          subst hco
+          rw [hkind] at hauth
+          refine ⟨c, rfl, hkind, rfl, ?_⟩
+          rcases hauth with ⟨hfree, hw⟩ | ⟨hheld, a, hw, ⟨_, hv | ⟨⟨r, hr, hro, hra, hrp⟩, kind, hv⟩⟩, happ⟩
+          · exact .inl ⟨hw, hfree⟩
+          · exact .inr (.inl ⟨a, hw, hv⟩)
+          · have h := happ r hr hro hra
+            rw [hrp] at h
+            obtain ⟨q, hq, hqv⟩ := h
+            exact .inr (.inr ⟨a, kind, approvals, hw, hv, hheld, happ, q, hq, hqv⟩)
   | registerByParent hi hf hv hmay =>
       rename_i c p pk
       cases hkind : c.kind with
       | agent => exact absurd (Person.of_cons_agent hkind hnew) hold
       | person =>
+          have hco : c.org = o := Person.added_cert_org hnew hold
+          subst hco
           rcases hmay with rfl | h
-          · exact .inr ⟨p, _, hv⟩
+          · exact ⟨c, rfl, hkind, rfl, .inr (.inl ⟨p, rfl, hv⟩)⟩
           · rw [hkind] at h; cases h
 
-/-- **In the design, an agent can ask for a person.** There is a record where
-an agent admin asks the key holder, and a person is registered. The root key
-signs, so results 1 to 4 still hold; what changes is who may ask. -/
+/-- **In the design, an agent can ask for a person.** There is a record the
+system reaches under the admin rule, and an agent `a` valid in organisation 0,
+such that an act `a` asks for is accepted and afterwards `k` holds a chain of
+person certificates in 0 that it did not hold before. In the construction the
+root key is with a key holder, `a` is an admin, and the root is the new
+certificate's issuer. -/
 theorem design_agent_admin_can_ask_for_person :
-    ∃ (s s' : State) (a k : Key),
+    ∃ (s s' : State) (a k : Key), Reachable adminRule s ∧
       Valid s 0 a .agent ∧ Step adminRule s (.id a) s' ∧ Person s' 0 k ∧ ¬ Person s 0 k := by
   let agentCert : Cert := ⟨0, 1, .agent, .root⟩
   let s : State := ⟨[0], [agentCert], [], [], [⟨0, .admin, 1⟩], [], [.root 0], [], [], []⟩
@@ -494,7 +535,24 @@ theorem design_agent_admin_can_ask_for_person :
   have hvalid : Valid s 0 1 .agent :=
     .agentOfRoot (c := agentCert) (List.mem_cons_self) rfl rfl rfl rfl (by simp [s])
   have hadmin : Admin s 0 1 := ⟨List.mem_cons_self, .agent, hvalid⟩
-  refine ⟨s, { s with certs := c :: s.certs }, 1, 2, hvalid, ?_, ?_, ?_⟩
+  have hreach : Reachable adminRule s := by
+    let e : State := ⟨[], [], [], [], [], [], [], [], [], []⟩
+    let ma : Membership := ⟨0, .admin, 1⟩
+    let s1 : State := { e with orgs := [0] }
+    let s2 : State := { s1 with certs := [agentCert] }
+    let s3 : State := { s2 with members := [ma] }
+    have r1 : Reachable adminRule s1 := .step (.start []) (Step.createOrg (o := 0) (by simp))
+    have r2 : Reachable adminRule s2 :=
+      .step r1 (Step.registerByRoot (c := agentCert) (who := .controller (.root 0)) (approvals := [])
+        rfl (by simp [s1, agentCert]) (by intro d hd; simp [s1, e] at hd)
+        (.inl ⟨by simp [s1, e], rfl⟩))
+    have v2 : Valid s2 0 1 .agent :=
+      .agentOfRoot (c := agentCert) (by simp [s2]) rfl rfl rfl rfl (by simp [s2, s1, e])
+    have r3 : Reachable adminRule s3 :=
+      .step r2 (Step.admitAdmin (m := ma) (kind := .agent) (who := .controller (.team 0 .admin))
+        (approvals := []) rfl v2 (.inl ⟨by simp [s2, s1, e], rfl⟩))
+    exact .step r3 (Step.entrust (key := .root 0) (by simp [s3, s2, s1, e]))
+  refine ⟨s, { s with certs := c :: s.certs }, 1, 2, hreach, hvalid, ?_, ?_, ?_⟩
   · refine Step.registerByRoot (c := c) (approvals := []) rfl (by simp [s, c]) ?_ ?_
     · intro d hd
       have : d = agentCert := by simpa [s] using hd
