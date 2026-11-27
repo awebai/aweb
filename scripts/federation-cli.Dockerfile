@@ -31,9 +31,9 @@ COPY --from=build /out/aw /usr/local/bin/aw
 COPY --from=build /out/id-tree-verifier /usr/local/bin/id-tree-verifier
 COPY --chmod=0644 scripts/cross-registry-human-journey.py /usr/local/bin/cross-registry-human-journey.py
 COPY --chmod=0644 scripts/cross-registry-offline-verifier.py /usr/local/bin/cross-registry-offline-verifier.py
-COPY --from=channel-build /journey/channel-core/dist /journey/channel-core/dist
-COPY --from=channel-build /journey/channel-core/node_modules /journey/channel-core/node_modules
-COPY --chmod=0644 packages/channel-core/package.json /journey/channel-core/package.json
+COPY --from=channel-build /journey/channel-core/dist /journey/packages/channel-core/dist
+COPY --from=channel-build /journey/channel-core/node_modules /journey/packages/channel-core/node_modules
+COPY --chmod=0644 packages/channel-core/package.json /journey/packages/channel-core/package.json
 COPY --chmod=0644 scripts/cross-registry-inbound-verifier.mjs /journey/scripts/cross-registry-inbound-verifier.mjs
 RUN chmod 0755 /journey/scripts
 ENTRYPOINT ["/usr/local/bin/aw"]
