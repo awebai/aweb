@@ -42,7 +42,9 @@ async def _health(env, alias):
     assert listed.status_code == 200, listed.text
     detail = await env.client.get(f"/v1/teams/{TEAM}/agents/{alias}", headers=headers)
     assert detail.status_code == 200, detail.text
-    from_list = next(agent["health"] for agent in listed.json()["agents"] if agent["alias"] == alias)
+    from_list = next(
+        agent["health"] for agent in listed.json()["agents"] if agent["alias"] == alias
+    )
     assert detail.json()["health"] == from_list
     return from_list
 
@@ -90,7 +92,9 @@ async def test_designated_host_that_has_not_reported_says_so(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_host_report_is_the_health_and_a_reachable_report_has_no_reason(privacy_app):
+async def test_host_report_is_the_health_and_a_reachable_report_has_no_reason(
+    privacy_app,
+):
     env = privacy_app
     await _designate(env, "alice", "bob")
     document = _document(env, "alice", "bob", reachable="yes")
@@ -100,7 +104,11 @@ async def test_host_report_is_the_health_and_a_reachable_report_has_no_reason(pr
     health = await _health(env, "alice")
 
     assert health == _reported(env, "bob", document)
-    assert (health["reason_text"], health["fixing_by"], health["fixing_text"]) == (None, None, None)
+    assert (health["reason_text"], health["fixing_by"], health["fixing_text"]) == (
+        None,
+        None,
+        None,
+    )
 
 
 async def _store_expired_report(env, publisher, subject, document):
@@ -141,15 +149,23 @@ async def test_report_past_valid_until_is_stale_on_read(privacy_app):
     env = privacy_app
     now = datetime.now(timezone.utc).replace(microsecond=0)
     live = _document(
-        env, "alice", "alice", observed_at=_ts(now), valid_until=_ts(now + timedelta(minutes=5)),
+        env,
+        "alice",
+        "alice",
+        observed_at=_ts(now),
+        valid_until=_ts(now + timedelta(minutes=5)),
     )
     published = await _publish(env, "alice", "alice", live)
     assert published.status_code == 200, published.text
     assert await _health(env, "alice") == _reported(env, "alice", live, stale=False)
 
     expired = _document(
-        env, "alice", "alice", seq=live["seq"] + 1,
-        observed_at=_ts(now - timedelta(minutes=10)), valid_until=_ts(now - timedelta(minutes=5)),
+        env,
+        "alice",
+        "alice",
+        seq=live["seq"] + 1,
+        observed_at=_ts(now - timedelta(minutes=10)),
+        valid_until=_ts(now - timedelta(minutes=5)),
     )
     await _store_expired_report(env, "alice", "alice", expired)
 
@@ -163,7 +179,9 @@ async def test_host_that_left_the_team_falls_back_to_aweb(privacy_app):
     published = await _publish(env, "bob", "alice", _document(env, "alice", "bob"))
     assert published.status_code == 200, published.text
 
-    retired = await _team_request(env, "bob", "DELETE", f"/v1/workspaces/{env.actors['bob'].workspace}")
+    retired = await _team_request(
+        env, "bob", "DELETE", f"/v1/workspaces/{env.actors['bob'].workspace}"
+    )
     assert retired.status_code == 200, retired.text
 
     assert (await _health(env, "alice"))["source"] == "aweb"
@@ -197,7 +215,14 @@ async def test_public_team_shows_health_to_anonymous_readers(privacy_app):
     assert listed.status_code == 200, listed.text
     assert detail.status_code == 200, detail.text
     expected = _reported(env, "alice", document)
-    assert next(agent["health"] for agent in listed.json()["agents"] if agent["alias"] == "alice") == expected
+    assert (
+        next(
+            agent["health"]
+            for agent in listed.json()["agents"]
+            if agent["alias"] == "alice"
+        )
+        == expected
+    )
     assert detail.json()["health"] == expected
 
 

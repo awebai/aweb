@@ -102,11 +102,15 @@ async def chat_server(shared_test_pool, monkeypatch):
             by_did = {identity["did"]: identity for identity in custody.values()}
             envelope = encrypt_e2ee_chat(
                 sender=custody[alias_of[kwargs["agent_id"]]],
-                recipients=[by_did[recipient["did_key"]] for recipient in kwargs["recipients"]],
+                recipients=[
+                    by_did[recipient["did_key"]] for recipient in kwargs["recipients"]
+                ],
                 body=payload["body"],
                 message_id=payload["message_id"],
                 conversation_id=payload["conversation_id"],
-                created_at=datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00")),
+                created_at=datetime.fromisoformat(
+                    payload["timestamp"].replace("Z", "+00:00")
+                ),
             )
             return {
                 "content_mode": "encrypted_v2",
@@ -208,14 +212,18 @@ async def chat_server(shared_test_pool, monkeypatch):
                 else:
                     body = {"message": message}
                     body.update(
-                        {"to_aliases": [to_alias]} if to_alias else {"to_addresses": [to_address]}
+                        {"to_aliases": [to_alias]}
+                        if to_alias
+                        else {"to_addresses": [to_address]}
                     )
                     if wait_seconds is not None:
                         body["wait_seconds"] = wait_seconds
                     sent = await rest_chat(alias, body)
                 return sent["session_id"], sent["message_id"]
 
-            async def continued_chat(via, alias, session_id, message, *, wait_seconds=None):
+            async def continued_chat(
+                via, alias, session_id, message, *, wait_seconds=None
+            ):
                 if via == "mcp":
                     arguments = {
                         "conversation_id": session_id,
@@ -306,7 +314,9 @@ async def test_a_send_that_waits_records_the_wait_on_the_session(chat_server, vi
     }
 
 
-async def _pending_for_bob_while_pilot_waits(server, sending, *, earlier_message_ids=()):
+async def _pending_for_bob_while_pilot_waits(
+    server, sending, *, earlier_message_ids=()
+):
     """Bob reads everything pilot sent while ``sending``, a send that waits 60 seconds, is in flight.
 
     Returns the session, the waiting message and bob's pending conversations;
@@ -362,13 +372,16 @@ async def test_a_recorded_wait_keeps_the_chat_pending_for_the_other_party_after_
 ):
     server = chat_server
     sending = asyncio.create_task(
-        server.first_chat(via, "pilot", "are you there?", to_alias="bob", wait_seconds=60)
+        server.first_chat(
+            via, "pilot", "are you there?", to_alias="bob", wait_seconds=60
+        )
     )
 
     session_id, _, pending = await _pending_for_bob_while_pilot_waits(server, sending)
 
     assert [
-        (item["session_id"], item["unread_count"], item["wait_seconds"]) for item in pending
+        (item["session_id"], item["unread_count"], item["wait_seconds"])
+        for item in pending
     ] == [
         (session_id, 0, 60),
     ]
@@ -381,9 +394,13 @@ async def test_a_waiting_message_in_a_session_records_the_wait_and_keeps_the_cha
     chat_server, via
 ):
     server = chat_server
-    session_id, opened = await server.first_chat(via, "pilot", "hello bob", to_alias="bob")
+    session_id, opened = await server.first_chat(
+        via, "pilot", "hello bob", to_alias="bob"
+    )
     sending = asyncio.create_task(
-        server.continued_chat(via, "pilot", session_id, "are you there?", wait_seconds=60)
+        server.continued_chat(
+            via, "pilot", session_id, "are you there?", wait_seconds=60
+        )
     )
 
     waited_session, waiting_message, pending = await _pending_for_bob_while_pilot_waits(
@@ -394,7 +411,8 @@ async def test_a_waiting_message_in_a_session_records_the_wait_and_keeps_the_cha
 
     assert waited_session == session_id
     assert [
-        (item["session_id"], item["unread_count"], item["wait_seconds"]) for item in pending
+        (item["session_id"], item["unread_count"], item["wait_seconds"])
+        for item in pending
     ] == [
         (session_id, 0, 60),
     ]
@@ -409,7 +427,9 @@ async def test_a_waiting_message_in_a_session_records_the_wait_and_keeps_the_cha
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("via", ["mcp", "rest"])
-async def test_a_message_that_does_not_wait_leaves_the_recorded_wait_as_it_is(chat_server, via):
+async def test_a_message_that_does_not_wait_leaves_the_recorded_wait_as_it_is(
+    chat_server, via
+):
     server = chat_server
 
     async def recorded_wait(session_id):
@@ -488,7 +508,9 @@ async def test_two_interleaved_sends_that_reuse_or_create_share_one_session_and_
             server.infra,
             pilot,
             target,
-            CreateSessionRequest(to_aliases=["bob"], session_id=str(session_id), message=message),
+            CreateSessionRequest(
+                to_aliases=["bob"], session_id=str(session_id), message=message
+            ),
             server.runtime,
         )
 
@@ -544,8 +566,12 @@ async def test_two_concurrent_mcp_sends_for_one_pair_end_with_one_live_session(
         [(session_id, "from bob"), (session_id, "from pilot")],
     )
     # Each message is signed for the session it is stored in.
-    stored = await server.db.fetch_all("SELECT signed_payload FROM {{tables.chat_messages}}")
-    assert {json.loads(row["signed_payload"])["conversation_id"] for row in stored} == {session_id}
+    stored = await server.db.fetch_all(
+        "SELECT signed_payload FROM {{tables.chat_messages}}"
+    )
+    assert {json.loads(row["signed_payload"])["conversation_id"] for row in stored} == {
+        session_id
+    }
 
 
 @pytest.mark.asyncio
@@ -553,10 +579,14 @@ async def test_two_concurrent_mcp_sends_for_one_pair_end_with_one_live_session(
 async def test_chat_message_sent_has_one_context(chat_server, via):
     server = chat_server
 
-    session_id, first = await server.first_chat(via, "pilot", "hello bob", to_alias="bob")
+    session_id, first = await server.first_chat(
+        via, "pilot", "hello bob", to_alias="bob"
+    )
     second = await server.continued_chat(via, "pilot", session_id, "still there?")
 
-    sent = [context for kind, context in server.mutations if kind == "chat.message_sent"]
+    sent = [
+        context for kind, context in server.mutations if kind == "chat.message_sent"
+    ]
     assert sent == [
         {
             "team_id": TEAM,
@@ -588,8 +618,12 @@ async def test_mcp_signed_chat_payloads_are_stored_as_signed_for_each_way_of_nam
     assert "error" not in by_alias, by_alias
     session_id = by_alias["session_id"]
     later = [
-        await server.mcp_chat("pilot", to=server.dids["bob"], message="by did", plaintext=True),
-        await server.mcp_chat("pilot", to="acme.com/bob", message="by address", plaintext=True),
+        await server.mcp_chat(
+            "pilot", to=server.dids["bob"], message="by did", plaintext=True
+        ),
+        await server.mcp_chat(
+            "pilot", to="acme.com/bob", message="by address", plaintext=True
+        ),
         await server.mcp_chat(
             "pilot",
             conversation_id=session_id,
@@ -598,7 +632,9 @@ async def test_mcp_signed_chat_payloads_are_stored_as_signed_for_each_way_of_nam
             wait=True,
             wait_seconds=0,
         ),
-        await server.mcp_chat("pilot", to="bob", message="hang on", plaintext=True, hang_on=True),
+        await server.mcp_chat(
+            "pilot", to="bob", message="hang on", plaintext=True, hang_on=True
+        ),
         await server.mcp_chat(
             "pilot",
             conversation_id=session_id,
@@ -641,7 +677,10 @@ async def test_mcp_signed_chat_payloads_are_stored_as_signed_for_each_way_of_nam
             bob_did,
             server.dids["bob"],
         )
-        assert (payload["from"], payload["from_stable_id"]) == ("pilot", server.dids["pilot"])
+        assert (payload["from"], payload["from_stable_id"]) == (
+            "pilot",
+            server.dids["pilot"],
+        )
     assert [payload.get("wait_seconds") for payload in signed] == [
         0,
         None,
@@ -693,10 +732,14 @@ async def test_mcp_encrypted_chat_to_a_hosted_recipient_needs_the_senders_hosted
 
     sent = await server.mcp_chat("pilot", to="bob", message="for bob only")
 
-    stored = await server.db.fetch_all("SELECT content_mode, body FROM {{tables.chat_messages}}")
+    stored = await server.db.fetch_all(
+        "SELECT content_mode, body FROM {{tables.chat_messages}}"
+    )
     if sender_key_published:
         assert "error" not in sent, sent
-        assert [dict(row) for row in stored] == [{"content_mode": "encrypted_v2", "body": ""}]
+        assert [dict(row) for row in stored] == [
+            {"content_mode": "encrypted_v2", "body": ""}
+        ]
     else:
         assert sent == {
             "error": "your encryption key isn't published yet; try again shortly, "
@@ -815,7 +858,9 @@ FIRST_CHAT_RECIPIENTS = [
 
 @pytest.mark.parametrize("named,named_alias,row,signed_from", FIRST_CHAT_RECIPIENTS)
 @pytest.mark.parametrize("wait_seconds", [None, 120])
-@pytest.mark.parametrize("leaving,hang_on", [(False, False), (True, False), (False, True)])
+@pytest.mark.parametrize(
+    "leaving,hang_on", [(False, False), (True, False), (False, True)]
+)
 def test_the_fields_mcp_signs_for_a_first_chat_satisfy_the_send_validation(
     named,
     named_alias,
@@ -956,7 +1001,9 @@ def test_a_signed_wait_the_message_does_not_carry_is_refused_by_the_send_validat
 
     with pytest.raises(DeliveryRefusal) as refused:
         _validate_signed_chat_payload(
-            signature=sign_message(sender_key, canonical_signed_payload(fields).encode()),
+            signature=sign_message(
+                sender_key, canonical_signed_payload(fields).encode()
+            ),
             signed_payload=canonical_signed_payload(fields),
             recipient_rows=rows,
             from_alias=sender.alias,
@@ -983,7 +1030,10 @@ def test_the_request_that_opens_a_session_may_carry_hang_on():
     from aweb.routes.chat import CreateSessionRequest
 
     assert CreateSessionRequest(to_aliases=["bob"], message="hello").hang_on is False
-    assert CreateSessionRequest(to_aliases=["bob"], message="hello", hang_on=True).hang_on is True
+    assert (
+        CreateSessionRequest(to_aliases=["bob"], message="hello", hang_on=True).hang_on
+        is True
+    )
 
 
 def _authority_refusal(reason):
@@ -1071,7 +1121,9 @@ NEXT_ACTIONS = [
 
 
 @pytest.mark.parametrize("refusal,known,answer", NEXT_ACTIONS)
-def test_mcp_chat_refusals_name_the_next_action_and_keep_their_code(refusal, known, answer):
+def test_mcp_chat_refusals_name_the_next_action_and_keep_their_code(
+    refusal, known, answer
+):
     from aweb.mcp.tools.chat import _send_refusal
 
     assert json.loads(_send_refusal(refusal(), **known)) == answer
@@ -1081,7 +1133,9 @@ def test_mcp_chat_codes_keep_their_code_and_add_a_recovery_action():
     from aweb.mcp.tools.chat import _send_refusal
 
     # Without custody context, keep the code and give a general recovery action.
-    assert json.loads(_send_refusal(_authority_refusal("recipient_custodial_no_e2ee"))) == {
+    assert json.loads(
+        _send_refusal(_authority_refusal("recipient_custodial_no_e2ee"))
+    ) == {
         "error": "recipient_custodial_no_e2ee",
         "message": "The federation service refused this send. Check the recipient and signed message with the server operator, then retry.",
     }
@@ -1093,8 +1147,14 @@ def test_mcp_chat_codes_keep_their_code_and_add_a_recovery_action():
     }
     # An address that reaches no one is refused in the words for a name nobody holds.
     for refusal, reason in (
-        (_authority_refusal("recipient_identity_not_found"), "recipient_identity_not_found"),
-        (_authority_refusal("local_recipient_route_missing"), "recipient_identity_not_found"),
+        (
+            _authority_refusal("recipient_identity_not_found"),
+            "recipient_identity_not_found",
+        ),
+        (
+            _authority_refusal("local_recipient_route_missing"),
+            "recipient_identity_not_found",
+        ),
         (RecipientAddressNotFound(address="a.test/b"), "recipient_identity_not_found"),
     ):
         assert json.loads(_send_refusal(refusal, address="a.test/b")) == {
@@ -1115,7 +1175,8 @@ def test_a_person_named_as_a_chat_recipient_is_refused_with_the_mail_direction(m
     answer = json.loads(_send_refusal(refused, address="acme.com/juan", mode=mode))
 
     assert (
-        answer["error"] == "juan is a person; aweb reaches people by mail: aw mail send --to juan"
+        answer["error"]
+        == "juan is a person; aweb reaches people by mail: aw mail send --to juan"
     )
     assert (answer["reason"], answer["retryable"], answer["recipients"]) == (
         "recipient_human_mail_only",
@@ -1169,7 +1230,9 @@ def test_a_chat_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_c
     with pytest.raises(DeliveryRefusal) as refused:
         validate_encrypted_chat_payload(
             payload,
-            auth=MessagingAuth(did_key=pilot_did, did_aw="did:aw:pilot", address="acme.com/pilot"),
+            auth=MessagingAuth(
+                did_key=pilot_did, did_aw="did:aw:pilot", address="acme.com/pilot"
+            ),
             actor_did="did:aw:pilot",
             session_id=session_id,
             recipient_rows=[
@@ -1190,6 +1253,8 @@ def test_a_chat_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_c
             "Check whether the original message was delivered before preparing a new encrypted message."
         ),
     )
-    assert json.loads(_send_refusal(refused.value, mode=SendRefusalMode.HOSTED_ENVELOPE)) == {
+    assert json.loads(
+        _send_refusal(refused.value, mode=SendRefusalMode.HOSTED_ENVELOPE)
+    ) == {
         "error": "this recipient's key changed; resend the message",
     }

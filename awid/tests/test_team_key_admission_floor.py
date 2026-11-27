@@ -25,7 +25,9 @@ def _keypair():
     return bytes(key), did_from_public_key(bytes(key.verify_key))
 
 
-def _rotation_act(*, signing_key: bytes, signer_did: str, new_key: str, signed_at: datetime):
+def _rotation_act(
+    *, signing_key: bytes, signer_did: str, new_key: str, signed_at: datetime
+):
     payload = canonical_json_bytes(
         {
             "operation": "rotate_team_key",
@@ -107,7 +109,9 @@ async def test_first_sight_pin_accepts_a_genuine_act_after_admission():
 
 
 @pytest.mark.asyncio
-async def test_staged_admission_floor_records_would_refuse_without_breaking_the_flow(caplog):
+async def test_staged_admission_floor_records_would_refuse_without_breaking_the_flow(
+    caplog,
+):
     controller_key, controller_did = _keypair()
     _, current_key = _keypair()
     _, historical_key = _keypair()

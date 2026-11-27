@@ -117,7 +117,9 @@ def _signing(act: str) -> bytes:
     try:
         return base64.b64decode(act, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="act must be standard base64 of the signed bytes") from exc
+        raise HTTPException(
+            status_code=422, detail="act must be standard base64 of the signed bytes"
+        ) from exc
 
 
 @router.get("", response_model=HookBindingsResponse)
@@ -129,13 +131,23 @@ async def list_hook_bindings_route(
 ) -> HookBindingsResponse:
     try:
         authorized_team_id, _ = await _caller(request, db_infra, team_id)
-        bindings = await list_app_bindings(db_infra.get_manager("aweb"), team_id=authorized_team_id, app_id=app_id)
+        bindings = await list_app_bindings(
+            db_infra.get_manager("aweb"), team_id=authorized_team_id, app_id=app_id
+        )
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    return HookBindingsResponse(team_id=authorized_team_id, bindings=[_as_response(b) for b in bindings])
+    return HookBindingsResponse(
+        team_id=authorized_team_id, bindings=[_as_response(b) for b in bindings]
+    )
 
 
-async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id: str, payload: OwnerActRequest, change):
+async def _owner_act_route(
+    request: Request,
+    db_infra: DatabaseInfra,
+    binding_id: str,
+    payload: OwnerActRequest,
+    change,
+):
     signing = _signing(payload.act)
     try:
         identity = await get_team_identity(request, db_infra)
@@ -150,8 +162,12 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
             pin_memo=team_key_pin_memo_for(state),
         )
         binding = await change(
-            db, verifier, team_id=identity.team_id, binding_id=binding_id,
-            signing=signing, signature=payload.signature,
+            db,
+            verifier,
+            team_id=identity.team_id,
+            binding_id=binding_id,
+            signing=signing,
+            signature=payload.signature,
         )
     except ServiceError as exc:
         if exc.status_code >= 500:
@@ -161,8 +177,13 @@ async def _owner_act_route(request: Request, db_infra: DatabaseInfra, binding_id
         raise team_key_unverified_exception() from None
     except OwnerActTeamKeyUnavailable as exc:
         # The team key is read before any transaction, so nothing was written.
-        logger.warning("AWID registry dependency failed reading the owner-act team key", exc_info=True)
-        raise awid_dependency_http_exception(exc.dependency_error, operation="AWID owner-act team key") from exc
+        logger.warning(
+            "AWID registry dependency failed reading the owner-act team key",
+            exc_info=True,
+        )
+        raise awid_dependency_http_exception(
+            exc.dependency_error, operation="AWID owner-act team key"
+        ) from exc
     return _as_response(binding)
 
 
@@ -173,7 +194,9 @@ async def activate_hook_binding_route(
     request: Request,
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> HookBindingResponse:
-    return await _owner_act_route(request, db_infra, binding_id, payload, activate_binding)
+    return await _owner_act_route(
+        request, db_infra, binding_id, payload, activate_binding
+    )
 
 
 @router.post("/{binding_id}/revoke", response_model=HookBindingResponse)
@@ -183,4 +206,6 @@ async def revoke_hook_binding_route(
     request: Request,
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> HookBindingResponse:
-    return await _owner_act_route(request, db_infra, binding_id, payload, revoke_binding)
+    return await _owner_act_route(
+        request, db_infra, binding_id, payload, revoke_binding
+    )

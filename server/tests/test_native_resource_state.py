@@ -32,7 +32,13 @@ async def test_host_reference_selects_same_native_serving_facts():
     api.state.on_mutation = on_mutation
     api.state.public_origin = "https://native.example.test"
     resources = EmbeddedResources(
-        api, None, redis, registry, api.state.public_origin, OutboxRecoveryOwnership.HOST, on_mutation,
+        api,
+        None,
+        redis,
+        registry,
+        api.state.public_origin,
+        OutboxRecoveryOwnership.HOST,
+        on_mutation,
         proxy_verification=application_proxy_verification(api.state),
     )
     host.state.native_resources = resources
@@ -47,7 +53,9 @@ async def test_host_reference_selects_same_native_serving_facts():
         assert runtime.identity_binding_cache is identity_binding_cache(api.state)
         assert application_public_origins(host.state) == {api.state.public_origin}
         assert mutation_callback_from_scope({"app": host}) is on_mutation
-        request = Request({"type": "http", "method": "GET", "path": "/", "headers": [], "app": host})
+        request = Request(
+            {"type": "http", "method": "GET", "path": "/", "headers": [], "app": host}
+        )
         assert mutation_callback(request) is on_mutation
         assert agent_wake_publisher(api.state) is publisher
         assert messaging_runtime(api.state).registry_client is registry

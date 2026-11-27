@@ -7,9 +7,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/awebai/aw/canonicaljson"
-	"github.com/awebai/aw/signaturewire"
-	"github.com/awebai/aw/strictjson"
+	"github.com/awebai/aw/internal/canonicaljson"
+	"github.com/awebai/aw/internal/signaturewire"
+	"github.com/awebai/aw/internal/strictjson"
 )
 
 // OwnerActPrefix domain-separates owner acts: no team certificate, controller

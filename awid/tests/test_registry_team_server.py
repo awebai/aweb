@@ -62,7 +62,10 @@ def test_builder_formats_utc_seconds_like_go():
     local = datetime(2026, 1, 20, 12, 0, 0, 123456, tzinfo=timezone(timedelta(hours=2)))
     assert (
         team_server_record.build_team_server_record(
-            VECTOR["team_id"], VECTOR["team_did_key"], case["record"]["server_url"], local
+            VECTOR["team_id"],
+            VECTOR["team_did_key"],
+            case["record"]["server_url"],
+            local,
         )
         == case["record"]
     )
@@ -85,14 +88,20 @@ async def test_publish_read_and_idempotent_retry(database_url, visibility):
             signature = team_server_record.sign_team_server_record(bytes(key), record)
             expected = {"record": record, "signature": signature}
             assert (
-                await client.publish_team_server_record(DOMAIN, NAME, record, signature) == expected
+                await client.publish_team_server_record(DOMAIN, NAME, record, signature)
+                == expected
             )
             assert await client.get_team_server_record(DOMAIN, NAME) == expected
             assert (
-                await client.publish_team_server_record(DOMAIN, NAME, record, signature) == expected
+                await client.publish_team_server_record(DOMAIN, NAME, record, signature)
+                == expected
             )
             verified = team_server_record.verify_team_server_record(
-                record, signature, team_id=TEAM_ID, current_team_did_key=did, now=datetime.now(UTC)
+                record,
+                signature,
+                team_id=TEAM_ID,
+                current_team_did_key=did,
+                now=datetime.now(UTC),
             )
             assert verified.server_url == SERVER_URL
             assert all(
@@ -139,13 +148,19 @@ async def test_publish_preserves_typed_refusals(database_url, failure, status, d
     key = SigningKey.generate()
     did = did_from_public_key(bytes(key.verify_key))
     issued_at = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=10)
-    original = signed_team_server_record(TEAM_ID, key, server_url=SERVER_URL, issued_at=issued_at)
+    original = signed_team_server_record(
+        TEAM_ID, key, server_url=SERVER_URL, issued_at=issued_at
+    )
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, did)
-        await registry.publish_team_server(TEAM_ID, key, server_url=SERVER_URL, issued_at=issued_at)
+        await registry.publish_team_server(
+            TEAM_ID, key, server_url=SERVER_URL, issued_at=issued_at
+        )
         record = {
             **original["record"],
-            "issued_at": (issued_at + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "issued_at": (issued_at + timedelta(seconds=1)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
         }
         signer, target_name = key, NAME
         if failure == "unknown-team":
@@ -154,18 +169,24 @@ async def test_publish_preserves_typed_refusals(database_url, failure, status, d
         elif failure == "wrong-signer":
             signer = SigningKey.generate()
         elif failure == "old-record":
-            record["issued_at"] = (issued_at - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            record["issued_at"] = (issued_at - timedelta(seconds=1)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
         elif failure == "invalid-url":
             record["server_url"] = "http://coord.publisher.example"
         elif failure == "future-record":
             record["issued_at"] = (datetime.now(UTC) + timedelta(minutes=10)).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             )
-        signature = sign_message(bytes(signer), team_server_record.record_signing_bytes(record))
+        signature = sign_message(
+            bytes(signer), team_server_record.record_signing_bytes(record)
+        )
         client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
         try:
             with pytest.raises(RegistryError) as refused:
-                await client.publish_team_server_record(DOMAIN, target_name, record, signature)
+                await client.publish_team_server_record(
+                    DOMAIN, target_name, record, signature
+                )
             assert refused.value.status_code == status
             assert refused.value.detail == detail
             assert await client.get_team_server_record(DOMAIN, NAME) == original
@@ -209,7 +230,11 @@ async def test_publish_pins_home_and_read_follows_domain_without_leaking_service
                     httpx.URL(REGISTRY_URL).host,
                     f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server",
                 ),
-                ("GET", "foreign.registry.example", f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server"),
+                (
+                    "GET",
+                    "foreign.registry.example",
+                    f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server",
+                ),
             ]
             assert json.loads(registry.transport.calls[action_start].content) == body
             publish, read = registry.transport.calls[action_start:]
@@ -234,14 +259,19 @@ async def test_publish_sends_service_token_to_configured_registry(database_url):
         )
         try:
             assert await client.publish_team_server_record(DOMAIN, NAME, **body) == body
-            assert registry.transport.calls[-1].headers[AWID_SERVICE_TOKEN_HEADER] == SERVICE_TOKEN
+            assert (
+                registry.transport.calls[-1].headers[AWID_SERVICE_TOKEN_HEADER]
+                == SERVICE_TOKEN
+            )
         finally:
             await client.aclose()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("credential", ["ordinary", "invalid-token", "trusted-service"])
-async def test_publish_limit_preserves_only_trusted_service_exemption(database_url, credential):
+async def test_publish_limit_preserves_only_trusted_service_exemption(
+    database_url, credential
+):
     key = SigningKey.generate()
     body = signed_team_server_record(
         TEAM_ID, key, server_url=SERVER_URL, issued_at=datetime.now(UTC)
@@ -249,18 +279,26 @@ async def test_publish_limit_preserves_only_trusted_service_exemption(database_u
     headers = {}
     if credential != "ordinary":
         headers[AWID_SERVICE_TOKEN_HEADER] = (
-            SERVICE_TOKEN if credential == "trusted-service" else "invalid-service-token"
+            SERVICE_TOKEN
+            if credential == "trusted-service"
+            else "invalid-service-token"
         )
     async with running_registry(database_url) as registry:
         # Exercise the production in-memory limiter, replacing the harness's NoOp default.
         registry.app.state.rate_limiter = MemoryFixedWindowRateLimiter()
         await registry.add_team(TEAM_ID, did_from_public_key(bytes(key.verify_key)))
-        async with httpx.AsyncClient(transport=registry.transport, base_url=REGISTRY_URL) as client:
+        async with httpx.AsyncClient(
+            transport=registry.transport, base_url=REGISTRY_URL
+        ) as client:
             path = f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server"
             for _ in range(30):
-                assert (await client.put(path, json=body, headers=headers)).status_code == 200
+                assert (
+                    await client.put(path, json=body, headers=headers)
+                ).status_code == 200
             response = await client.put(path, json=body, headers=headers)
-            assert response.status_code == (200 if credential == "trusted-service" else 429)
+            assert response.status_code == (
+                200 if credential == "trusted-service" else 429
+            )
             if credential != "trusted-service":
                 # The trusted caller can still publish when the ordinary bucket is exhausted.
                 assert (

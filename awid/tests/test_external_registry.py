@@ -55,7 +55,10 @@ class HTTP:
         self.paths: list[tuple[str, bool]] = []
 
     async def get_json(
-        self, path: str, *, bypass_cache: bool = False,
+        self,
+        path: str,
+        *,
+        bypass_cache: bool = False,
         not_found_reason: str = "sender_identity_not_found",
     ):
         self.paths.append((path, bypass_cache))
@@ -114,7 +117,9 @@ async def test_fetches_complete_verified_evidence_from_one_strict_origin() -> No
         http_factory=factory,
         origin_context=OriginContext(),
     )
-    evidence = await resolver.fetch_evidence("alpha.example.com/Alice", authority_generation=4)
+    evidence = await resolver.fetch_evidence(
+        "alpha.example.com/Alice", authority_generation=4
+    )
     vector, _ = _identity()
     assert evidence.did_aw == vector["mapping"]["did_aw"]
     assert evidence.current_did_key == vector["mapping"]["rotated_did_key"]
@@ -159,7 +164,9 @@ async def test_degraded_or_unanchored_head_forces_full_log() -> None:
         host_resolver=Hosts(),
         http_factory=lambda *_args: http,
     )
-    evidence = await resolver.fetch_evidence("alpha.example.com/Alice", authority_generation=5)
+    evidence = await resolver.fetch_evidence(
+        "alpha.example.com/Alice", authority_generation=5
+    )
     assert evidence.verified_log.seq == 2
     assert any(path.endswith("/log") for path, _ in http.paths)
 
@@ -238,27 +245,45 @@ def test_request_claim_comparison_is_not_stored_in_fetched_evidence() -> None:
             current_did_key="did:key:correct",
             delivery_origin="https://aweb.example",
         )
-    assert compare_claim_to_evidence(
-        evidence,
-        did_aw="did:aw:correct",
-        current_did_key="did:key:correct",
-        delivery_origin="https://aweb.example",
-    ) is evidence
+    assert (
+        compare_claim_to_evidence(
+            evidence,
+            did_aw="did:aw:correct",
+            current_did_key="did:key:correct",
+            delivery_origin="https://aweb.example",
+        )
+        is evidence
+    )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case,accepted", [
-    ("delegated", True), ("exact", True), ("inherited_same_key", True),
-    ("missing", False), ("wrong_parent_key", False), ("wrong_child_key", False),
-    ("wrong_ancestor", False), ("non_ancestor", False), ("exact_mismatch", False),
-])
+@pytest.mark.parametrize(
+    "case,accepted",
+    [
+        ("delegated", True),
+        ("exact", True),
+        ("inherited_same_key", True),
+        ("missing", False),
+        ("wrong_parent_key", False),
+        ("wrong_child_key", False),
+        ("wrong_ancestor", False),
+        ("non_ancestor", False),
+        ("exact_mismatch", False),
+    ],
+)
 async def test_namespace_delegation_authority(case, accepted):
     vector, _ = _identity()
     parent = vector["mapping"]["initial_did_key"]
     child = vector["mapping"]["rotated_did_key"]
-    namespace = {"domain": "alpha.example.com", "controller_did": child,
-                 "delegation": {"parent_domain": "example.com",
-                                "parent_controller_key": parent, "controller_key": child}}
+    namespace = {
+        "domain": "alpha.example.com",
+        "controller_did": child,
+        "delegation": {
+            "parent_domain": "example.com",
+            "parent_controller_key": parent,
+            "controller_key": child,
+        },
+    }
     exact = case in {"exact", "exact_mismatch"}
     if case == "inherited_same_key":
         namespace = {"domain": "alpha.example.com", "controller_did": parent}
@@ -269,7 +294,9 @@ async def test_namespace_delegation_authority(case, accepted):
     elif case == "wrong_child_key":
         namespace["delegation"]["controller_key"] = parent
     elif case in {"wrong_ancestor", "non_ancestor"}:
-        namespace["delegation"]["parent_domain"] = "com" if case == "wrong_ancestor" else "other.com"
+        namespace["delegation"]["parent_domain"] = (
+            "com" if case == "wrong_ancestor" else "other.com"
+        )
 
     class DelegationDNS:
         async def lookup_txt(self, name):
@@ -277,20 +304,33 @@ async def test_namespace_delegation_authority(case, accepted):
                 return DNSLookup("nodata")
             assert name == ("_awid.alpha.example.com" if exact else "_awid.example.com")
             key = child if case == "exact" else parent
-            return DNSLookup("record", (f"awid=v1; controller={key}; registry=https://registry-a.example;",))
+            return DNSLookup(
+                "record",
+                (f"awid=v1; controller={key}; registry=https://registry-a.example;",),
+            )
 
     objects = responses()
     objects["/v1/namespaces/alpha.example.com"] = namespace
     http = HTTP(objects)
-    resolver = StrictExternalRegistry(txt_resolver=DelegationDNS(), host_resolver=Hosts(), http_factory=lambda *_: http)
+    resolver = StrictExternalRegistry(
+        txt_resolver=DelegationDNS(),
+        host_resolver=Hosts(),
+        http_factory=lambda *_: http,
+    )
     try:
         if not accepted:
             with pytest.raises(FederationAuthorityError) as caught:
-                await resolver.fetch_evidence("alpha.example.com/Alice", authority_generation=1)
+                await resolver.fetch_evidence(
+                    "alpha.example.com/Alice", authority_generation=1
+                )
             assert caught.value.reason == "sender_address_did_mismatch"
-            assert [path for path, _ in http.paths] == ["/v1/namespaces/alpha.example.com"]
+            assert [path for path, _ in http.paths] == [
+                "/v1/namespaces/alpha.example.com"
+            ]
         else:
-            evidence = await resolver.fetch_evidence("alpha.example.com/Alice", authority_generation=1)
+            evidence = await resolver.fetch_evidence(
+                "alpha.example.com/Alice", authority_generation=1
+            )
             assert evidence.controller_did == namespace["controller_did"]
             assert evidence.inherited is (not exact)
             assert evidence.did_aw == vector["mapping"]["did_aw"]

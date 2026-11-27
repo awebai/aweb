@@ -28,6 +28,7 @@ class RegistrationMode(StrEnum):
 
 
 class RegistrationState(StrEnum):
+    NOT_OBSERVED = "not_observed"
     REGISTERED = "registered"
     UNREGISTERED = "unregistered"
     UNAVAILABLE = "unavailable"
@@ -65,7 +66,9 @@ class CertificateRegistrationObservation:
         if (known is None) == (cause is None):
             raise ValueError("Provide known registrations or an unavailability cause")
         if cause is not None and not isinstance(cause, Exception):
-            raise TypeError("Registration unavailability must retain its exception cause")
+            raise TypeError(
+                "Registration unavailability must retain its exception cause"
+            )
         if known is not None:
             if isinstance(known, (str, bytes)) or not isinstance(known, Collection):
                 raise TypeError("Registered certificate IDs must be a collection")
@@ -141,9 +144,13 @@ def record_certificate_registration(
     )
     counted = None
     if request is not None:
-        counted = getattr(request.state, "certificate_registration_observations_counted", None)
+        counted = getattr(
+            request.state, "certificate_registration_observations_counted", None
+        )
         if counted is None:
-            counted = request.state.certificate_registration_observations_counted = set()
+            counted = request.state.certificate_registration_observations_counted = (
+                set()
+            )
     key = (observation.team_id, certificate_id, mode, decision.state)
     if counted is None or key not in counted:
         if counted is not None:
@@ -153,7 +160,9 @@ def record_certificate_registration(
             RegistrationState.UNREGISTERED: _MetricOutcome.WOULD_REFUSE,
             RegistrationState.UNAVAILABLE: _MetricOutcome.UNAVAILABLE,
         }[decision.state]
-        _REGISTRATION_OBSERVATIONS.labels(enforcement=mode.value, outcome=outcome.value).inc()
+        _REGISTRATION_OBSERVATIONS.labels(
+            enforcement=mode.value, outcome=outcome.value
+        ).inc()
     return decision
 
 
@@ -169,13 +178,16 @@ def configured_registration_mode() -> RegistrationMode:
 
 
 async def observe_certificate_registrations(
-    *, registry_client, team_id: str, mode: RegistrationMode,
+    *,
+    registry_client,
+    team_id: str,
+    mode: RegistrationMode,
 ) -> CertificateRegistrationObservation:
     """Acquire the registration snapshot shared by one standing check or batch.
 
-    docs/aweb-sot.md, Staged certificate-registration observations requires useful off-mode counts
-    without making measurement unavailability a new refusal. SDK cache/read
-    freshness remains with registered_certificates; this adds no other cache.
+    The configured off-mode request path skips this acquisition. Explicit
+    observation still supports census without making its unavailability a
+    refusal. SDK cache and freshness remain with registered_certificates.
     Invalid authority scope is rejected before acquisition, never counted as
     an unavailable observation. Adapters retain their existing wire outcomes.
     """

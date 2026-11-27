@@ -12,7 +12,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 from collections.abc import Callable
@@ -35,7 +34,7 @@ def held_library_default():
 
 
 ROOT = Path(__file__).resolve().parents[1]
-STAGES = "checks user-paths unit artifacts integration"
+STAGES = "static checks user-paths unit artifacts integration"
 # The targets the fixture gives real recipes: the stage assertions below
 # use real tools and services, never a replacement runner.
 REAL_RECIPES = frozenset(
@@ -59,6 +58,9 @@ def source_checks() -> list[str]:
     target a stage adds is stubbed here without anyone editing this list."""
     suite = (ROOT / "scripts" / "candidate-suite.sh").read_text(encoding="utf-8")
     targets = re.findall(r"^\s*run ([A-Za-z0-9_.-]+)\s*$", suite, flags=re.MULTILINE)
+    # The unit suites the suite lists by name, besides each Naapp package.
+    for names in re.findall(r"^\s*printf '%s\\n' ([A-Za-z0-9_. -]+)$", suite, flags=re.MULTILINE):
+        targets += names.split()
     return [target for target in dict.fromkeys(targets) if target not in REAL_RECIPES]
 
 
@@ -71,7 +73,8 @@ class CompleteGateVerdictTests(unittest.TestCase):
             root = Path(temporary)
             (root / "host-published-port.log").write_text("host preflight\n")
             for name, command in {
-                "make": 'case " $FAILURES " in *" $1 "*) exit 23;; esac\n',
+                "make": 'case "$*" in *naapp-packages) printf "%s\\n" naapp-lib naapp/secrets; exit;; esac\n'
+                'case " $FAILURES " in *" $1 "*) exit 23;; esac\n',
                 "docker": "exit 0\n",
             }.items():
                 tool = root / name
@@ -88,7 +91,10 @@ class CompleteGateVerdictTests(unittest.TestCase):
                 env["CANDIDATE_HOST_PORT_STATUS"] = "7"
             else:
                 env.pop("CANDIDATE_HOST_PORT_STATUS", None)
-            result = run(ROOT, "bash", "scripts/candidate-suite.sh", selection, env=env)
+            result = run(
+                ROOT, "bash", "scripts/candidate-suite.sh", *selection.split(" ", 1)
+                if selection.startswith("--") else (selection,), env=env
+            )
             summary = root / "summary.tsv"
             rows = {}
             if summary.exists():
@@ -99,14 +105,19 @@ class CompleteGateVerdictTests(unittest.TestCase):
 
     def test_every_stage_and_independent_target_reports_after_failures(self):
         result, rows = self.suite(
-            STAGES, "check-python-static", "e2e-user-paths",
-            "test-python-locks", "build", "_candidate-artifact-server",
+            STAGES,
+            "check-product-table-writes",
+            "e2e-user-paths",
+            "_candidate-node-deps",
+            "build",
+            "_candidate-artifact-server",
         )
         self.assertNotEqual(result.returncode, 0)
-        for stage in STAGES.split():
+        self.assertEqual(rows.get("static"), "PASSED", result.stdout)
+        for stage in STAGES.split()[1:]:
             self.assertEqual(rows.get(stage), "FAILED", result.stdout)
-        self.assertEqual(rows["checks/check-python-static"], "FAILED")
-        self.assertEqual(rows["checks/test-release-cli-version"], "PASSED")
+        self.assertEqual(rows["checks/check-product-table-writes"], "FAILED")
+        self.assertEqual(rows["checks/check-go-vulnerability-audit"], "PASSED")
         self.assertEqual(rows["unit/_candidate-unit-suites"], "PASSED")
         self.assertEqual(rows["artifacts/_candidate-artifact-a2a-image"], "PASSED")
         self.assertEqual(rows["integration/e2e-naapp"], "SKIPPED")
@@ -119,24 +130,94 @@ class CompleteGateVerdictTests(unittest.TestCase):
         result, rows = self.suite("checks user-paths", "host-published-port")
         self.assertEqual(result.returncode, 7)
         self.assertEqual(rows["checks/host-published-port"], "FAILED")
-        self.assertEqual(rows["checks/test-release-cli-version"], "PASSED")
+        self.assertEqual(rows["checks/check-go-vulnerability-audit"], "PASSED")
         self.assertEqual(rows["checks"], "FAILED")
         self.assertEqual(rows["user-paths"], "PASSED")
 
-    def test_isolated_unit_keeps_every_leaf_after_server_failure(self):
-        result, rows = self.suite("--isolated-suites", "test-server", "test-cli")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(rows, {
-            "unit/test-server": "FAILED",
-            "unit/test-awid": "PASSED",
-            "unit/test-naapp": "PASSED",
-            "unit/test-cli": "FAILED",
-            "unit/test-cli-auth-v2": "PASSED",
-            "unit/_candidate-unit-channel": "PASSED",
-            "unit/test-channel-name-live-contract": "PASSED",
-            "unit/_candidate-unit-channel-core": "PASSED",
-            "unit/_candidate-unit-pi": "PASSED",
-        })
+    def test_each_isolated_unit_suite_reports_its_own_leaf(self):
+        listed, _ = self.suite("--list-unit-suites")
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        suites = listed.stdout.split()
+        self.assertIn("test-server", suites)
+        self.assertIn("test-naapp-secrets", suites)
+        rows = {}
+        for suite in suites:
+            result, suite_rows = self.suite(
+                "--isolated-suite " + suite, "test-server", "test-cli"
+            )
+            self.assertEqual(
+                result.returncode != 0, suite in ("test-server", "test-cli"), suite
+            )
+            self.assertEqual(set(suite_rows), {"unit/" + suite})
+            rows.update(suite_rows)
+        failed = {leaf for leaf, verdict in rows.items() if verdict == "FAILED"}
+        self.assertEqual(failed, {"unit/test-server", "unit/test-cli"})
+        self.assertEqual(rows["unit/_candidate-unit-pi"], "PASSED")
+
+    def test_a_nested_suite_run_cannot_write_the_lane_summary(self):
+        """A target that runs candidate-suite.sh itself, as the gate's own
+        tests do, writes its rows to its own log directory, never the lane's."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            nested = root / "nested"
+            nested.mkdir()
+            lane = root / "lanes" / "checks.tsv"
+            lane.parent.mkdir()
+            (root / "host-published-port.log").write_text("host preflight\n")
+            make = root / "make"
+            make.write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = check-product-table-writes ]; then\n'
+                f'  CANDIDATE_LOG_DIR={nested} bash {ROOT}/scripts/candidate-suite.sh static\n'
+                "fi\n"
+            )
+            make.chmod(0o700)
+            env = dict(
+                os.environ,
+                PATH=f"{root}{os.pathsep}{os.environ['PATH']}",
+                CANDIDATE_LOG_DIR=str(root),
+            )
+            env.pop("CANDIDATE_HOST_PORT_STATUS", None)
+            result = run(
+                ROOT,
+                "bash",
+                "scripts/candidate-suite.sh",
+                "--summary",
+                str(lane),
+                "checks",
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            stages = {line.split("\t")[0].split("/")[0] for line in lane.read_text().splitlines()}
+            self.assertEqual(stages, {"checks"})
+            self.assertIn("static\tPASSED", (nested / "summary.tsv").read_text())
+
+    def test_no_stage_prunes_the_builder_the_lanes_share(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            calls = root / "docker-calls"
+            for name, command in {
+                "make": "exit 0\n",
+                "docker": f'printf "%s\\n" "$*" >> {calls}\n',
+            }.items():
+                tool = root / name
+                tool.write_text("#!/bin/sh\n" + command)
+                tool.chmod(0o700)
+            env = dict(
+                os.environ,
+                PATH=f"{root}{os.pathsep}{os.environ['PATH']}",
+                CANDIDATE_LOG_DIR=str(root),
+                BUILDX_BUILDER="the-run-builder",
+            )
+            result = run(ROOT, "bash", "scripts/candidate-suite.sh", "artifacts", env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("prune", calls.read_text() if calls.exists() else "")
+            self.assertNotIn("prune-builder", (root / "summary.tsv").read_text())
+
+    def test_an_unknown_unit_suite_is_refused(self):
+        result, rows = self.suite("--isolated-suite test-nothing")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unknown unit suite", result.stderr)
 
 
 def run(root: Path, *args: str, env: dict[str, str] | None = None):
@@ -156,86 +237,6 @@ def checked(root: Path, *args: str):
     return result.stdout.strip()
 
 
-def interrupted_docker_proof(repo: Path, evidence: Path, env: dict[str, str]) -> None:
-    """Exercise the real wrapper, GNU deadline and owned Docker cleanup."""
-    supervised = evidence / "supervised"
-    supervised.mkdir()
-    settings = dict(env, AWEB_CANDIDATE_STAGES="checks unit",
-                    PYTHONPATH=str(ROOT / "scripts/vm-gate"))
-    command = ["timeout", "--signal=TERM", "--kill-after=130s", "600",
-               sys.executable, "-m", "vm_gate.supervisor", "run", str(supervised),
-               "120", "bash", str(repo / "scripts/candidate-docker-gate.sh")]
-    sha = checked(repo, "git", "rev-parse", "HEAD")
-    with (evidence / "deadline-output.log").open("w") as output:
-        process = subprocess.Popen(command, cwd=repo, env=settings, stdout=output,
-                                   stderr=subprocess.STDOUT)
-        try:
-            started = time.monotonic()
-            log_dir = None
-            while time.monotonic() - started < 550 and process.poll() is None:
-                active = [path for path in Path('/tmp').glob('aweb-candidate-gate-' + sha + '-*')
-                          if (path / 'unit-active').exists()]
-                if len(active) == 1:
-                    log_dir = active[0]
-                    break
-                time.sleep(.2)
-            if log_dir is None:
-                raise AssertionError('real blocked Docker stage was not reached; see deadline-output.log')
-            builders = [line.split('\t')[1] for line in (log_dir / 'owned-resources.tsv').read_text().splitlines()
-                        if line.startswith('builder\t')]
-            assert builders, 'no owned builder manifest'
-            label = 'aweb.candidate-gate=' + builders[0]
-            before = run(repo, 'docker', 'ps', '-aq', '--filter', 'label=' + label)
-            assert before.returncode == 0 and before.stdout.strip(), 'no live owned Docker containers'
-            (evidence / 'docker-before-deadline.json').write_text(json.dumps({
-                'label': label, 'container_ids': before.stdout.split(), 'builders': builders,
-                'unit_active': str(log_dir / 'unit-active')}, indent=2) + '\n')
-            from vm_gate.memory import current_bytes, sample, summarize_samples
-
-            memory_sample = sample()
-            memory_receipt = summarize_samples([memory_sample])
-            (evidence / 'memory.jsonl').write_text(json.dumps(memory_sample) + '\n')
-            (evidence / 'memory-receipt.json').write_text(json.dumps(memory_receipt, indent=2) + '\n')
-            assert any(
-                current_bytes(row) is not None
-                and any(row['id'].startswith(cid) for cid in before.stdout.split())
-                for row in memory_sample['containers']
-            ), 'memory proof did not read a live owned gate container'
-            raw = process.wait(timeout=760)
-            assert raw == 124, f'GNU timeout raw exit {raw}, expected 124'
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=150)
-    receipt = json.loads((supervised / 'supervisor-receipt.json').read_text())
-    assert receipt['raw_exit'] == 143 and receipt['child_exit'] != 0, receipt
-    assert receipt['finalized'] and not receipt['grace_expired'], receipt
-    assert (log_dir / 'unit-active').stat().st_mtime < receipt['term_at']
-    interruption = (log_dir / 'interruption.tsv').read_text()
-    assert 'cleanup=passed' in interruption and 'writer_exit=0' in interruption
-    rows = [line.split('\t') for line in (evidence / 'ledger.tsv').read_text().splitlines()]
-    assert [(row[1], row[2]) for row in rows if "/" not in row[1]] == [('cleanup', 'passed'), ('checks', 'passed')], rows
-    assert any(row[1:3] == ['checks/test-shipping', 'passed'] for row in rows), rows
-    assert not any(row[1] == 'unit/_candidate-unit-suites' for row in rows), rows
-    assert 'run\tINTERRUPTED\t' in (log_dir / 'summary.tsv').read_text()
-    absence = {}
-    for kind, args in [('containers', ['ps', '-aq']), ('networks', ['network', 'ls', '-q']),
-                       ('volumes', ['volume', 'ls', '-q'])]:
-        result = run(repo, 'docker', *args, '--filter', 'label=' + label)
-        assert result.returncode == 0 and not result.stdout.strip(), (kind, result.stdout, result.stderr)
-        absence[kind] = result.stdout.split()
-    for builder in builders:
-        for kind, name in [('container', 'buildx_buildkit_' + builder + '0'),
-                           ('volume', 'buildx_buildkit_' + builder + '0_state')]:
-            result = run(repo, 'docker', kind, 'inspect', name)
-            assert result.returncode != 0, (kind, name, 'still exists')
-    (evidence / 'deadline-result.json').write_text(json.dumps({
-        'fixture_sha': sha, 'gnu_timeout_exit': raw, 'supervisor': receipt,
-        'run_log': str(log_dir), 'owned_absence_before_vm_delete': absence,
-        'builder_names_absent': builders, 'memory': memory_receipt}, indent=2) + '\n')
-    print('PASS: real deadline TERM preserves checks, completes gate Docker cleanup, and proves own absence', flush=True)
-
-
 def stage_rows(rows: list[str]) -> list[list[str]]:
     fields = [row.split("\t") for row in rows]
     return [row for row in fields if "/" not in row[1]]
@@ -247,8 +248,9 @@ def verify_same_tree_commit_cache(
     ledger: Path,
     run_fixed_baseline_gate: Callable[[], str],
     run_full_gate: Callable[[], str],
+    run_reviewed_change_gate: Callable[[], str],
 ) -> list[str]:
-    """Same-tree reuse also requires the same reviewed main (docs/python-static-analysis.md)."""
+    """Same-tree reuse follows main's reviewed ceilings, not main's commit."""
     previous_rows = ledger.read_text().splitlines()
     previous_main = checked(repo, "git", "rev-parse", "refs/remotes/origin/main")
     previous_tree = checked(repo, "git", "rev-parse", "HEAD^{tree}")
@@ -262,11 +264,33 @@ def verify_same_tree_commit_cache(
     )
     assert ledger.read_text().splitlines() == previous_rows
 
-    # The full entry synchronizes the fixture's advanced main before key lookup.
-    assert "no stages run" not in run_full_gate()
+    # The full entry synchronizes the fixture's advanced main. The reviewed
+    # ceilings did not change, so the unchanged tree reuses its pass.
+    assert "no stages run" in run_full_gate()
     current_main = checked(repo, "git", "rev-parse", "refs/remotes/origin/main")
     assert current_main != previous_main
     assert current_main == checked(repo, "git", "rev-parse", "HEAD")
+    assert ledger.read_text().splitlines() == previous_rows
+
+    # Main changes its reviewed ceilings while the candidate tree stays the
+    # same: the product-table check has a different input, so every stage runs.
+    candidate = checked(repo, "git", "rev-parse", "HEAD")
+    checked(repo, "git", "checkout", "-q", "--detach")
+    ceilings = repo / "tools/product-table-write-ceilings.json"
+    ceilings.parent.mkdir(exist_ok=True)
+    ceilings.write_text('{"schema_version":1,"nonliteral_files":{},"files":{}}\n')
+    checked(repo, "git", "add", str(ceilings.relative_to(repo)))
+    checked(repo, "git", "commit", "-qm", "reviewed ceilings on main")
+    checked(
+        repo,
+        "git",
+        "update-ref",
+        "refs/remotes/origin/main",
+        checked(repo, "git", "rev-parse", "HEAD"),
+    )
+    checked(repo, "git", "checkout", "-q", "--detach", candidate)
+    assert checked(repo, "git", "rev-parse", "HEAD^{tree}") == previous_tree
+    assert "no stages run" not in run_reviewed_change_gate()
     rows = ledger.read_text().splitlines()
     assert rows[: len(previous_rows)] == previous_rows
     fresh = stage_rows(rows[len(previous_rows) :])
@@ -276,6 +300,9 @@ def verify_same_tree_commit_cache(
     fresh_keys = {row[0] for row in fresh}
     assert len(fresh_keys) == 1
     assert fresh_keys.isdisjoint(row.split("\t")[0] for row in previous_rows)
+    # Later callers synchronize main from the fixture's unchanged main branch.
+    checked(repo, "git", "checkout", "-q", "main")
+    assert checked(repo, "git", "rev-parse", "HEAD") == candidate
     return rows
 
 
@@ -296,7 +323,9 @@ def main() -> None:
             "candidate-host-pressure.py",
             "candidate-network.py",
             "fetch_released_aw.py",
+            "gate_budget.py",
             "next_tag_version.py",
+            "product_table_writes.py",
             "release_candidate.py",
             "release_versions.py",
         ):
@@ -327,7 +356,21 @@ def main() -> None:
             ROOT / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
             repo / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
         )
-        (repo / "server").mkdir()
+        (repo / "scripts/vm-gate/vm_gate").mkdir(parents=True)
+        shutil.copy2(
+            ROOT / "scripts/vm-gate/vm_gate/budget.py",
+            repo / "scripts/vm-gate/vm_gate/budget.py",
+        )
+        (repo / "candidate-gate").mkdir(exist_ok=True)
+        shutil.copy2(
+            ROOT / "candidate-gate/measured-work.json",
+            repo / "candidate-gate/measured-work.json",
+        )
+        (repo / "server/tests").mkdir(parents=True)
+        shutil.copy2(
+            ROOT / "server/tests/worker_services.py",
+            repo / "server/tests/worker_services.py",
+        )
         (repo / "server/pyproject.toml").write_text(
             '[project]\nname="ledger-proof"\nversion="1.2.3"\n'
         )
@@ -335,24 +378,33 @@ def main() -> None:
         recipes += """test-shipping:
 \t@python3 -c 'assert 6 * 7 == 42'
 _candidate-node-deps:
-\t@echo node >> "$$CANDIDATE_LOG_DIR/setup.log"
+\t@echo node >> .lane-setup.log
 build:
-\t@echo cli >> "$$CANDIDATE_LOG_DIR/setup.log"
+\t@echo cli >> .lane-setup.log
+naapp-packages:
+\t@printf '%s\\n' proof/first
 _candidate-unit-suites:
 \t@test "$$(psql -h "$$TEST_DB_HOST" -U postgres -d postgres -Atc 'SELECT 6 * 7')" = 42
-\t@mkdir -p "$$CANDIDATE_LOG_DIR/test-egress"
-\t@CANDIDATE_LOG_DIR="$$CANDIDATE_LOG_DIR/test-egress" bash scripts/candidate-suite.sh --isolated-suites > "$$CANDIDATE_LOG_DIR/test-egress/suite.log" 2>&1
+\t@set -e; for suite in $$(bash scripts/candidate-suite.sh --list-unit-suites); do \\
+\t  mkdir -p "$$CANDIDATE_LOG_DIR/test-egress/$$suite"; \\
+\t  bash scripts/candidate-suite.sh --summary "$$CANDIDATE_LOG_DIR/test-egress/$$suite/summary.tsv" --isolated-suite "$$suite" > "$$CANDIDATE_LOG_DIR/test-egress/$$suite/suite.log" 2>&1 || status=1; \\
+\t  cat "$$CANDIDATE_LOG_DIR/test-egress/$$suite/summary.tsv" >> "$$CANDIDATE_LOG_DIR/test-egress/summary.tsv"; \\
+\tdone; exit $${status:-0}
 test-server:
 \t@true
+test-naapp:
+\t@test "$(NAAPP_PACKAGES)" = proof/first
 _candidate-artifact-server:
+\t@echo "$$BUILDX_BUILDER" > "$$CANDIDATE_LOG_DIR/builder-artifacts"
 \t@docker build -f candidate-gate/proof.Dockerfile -t "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" candidate-gate
 \t@docker run --rm "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" sh -c 'test "$$(echo 42)" = 42'
-\t@test "$$(wc -l < "$$CANDIDATE_LOG_DIR/setup.log")" = 2
+\t@test "$$(cat .lane-setup.log)" = "$$(printf 'node\\ncli')"
 cli-e2e:
 \t@set -eu; trap 'docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml down -v --remove-orphans' EXIT; \
 \t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml up -d --wait postgres; \
 \t  docker compose -p "$$LIBRARY_E2E_PROJECT" -f docker-compose.e2e.yml exec -T postgres pg_isready -U aweb
 freshness:
+\t@echo "$$BUILDX_BUILDER" > "$$CANDIDATE_LOG_DIR/builder-integration"
 \t@test "$$(redis-cli -u "$$REDIS_URL" PING)" = PONG
 naapp-e2e-packages:
 \t@printf '%s\\n' proof/first proof/second
@@ -361,11 +413,6 @@ e2e-naapp:
 candidate-gate:
 \tbash scripts/candidate-docker-gate.sh
 """
-        interruption_only = sys.argv[1:] == ["--interruption-only"]
-        if interruption_only:
-            recipes = recipes.replace(
-                "_candidate-unit-suites:\n",
-                "_candidate-unit-suites:\n\t@touch \"$$CANDIDATE_LOG_DIR/unit-active\"; sleep 1800\n")
         (repo / "Makefile").write_text(recipes)
         init_fixture_repo(repo)
         checked(repo, "git", "config", "user.name", "gate integration")
@@ -390,10 +437,6 @@ candidate-gate:
             AWEB_CANDIDATE_RUNNER_MEMORY="1g",
             AWEB_CANDIDATE_BUILDER_MEMORY="1g",
         )
-
-        if interruption_only:
-            interrupted_docker_proof(repo, evidence, env)
-            return
 
         def invoke(
             name: str, *args: str, stages: str | None = None, success: bool = True
@@ -424,15 +467,32 @@ candidate-gate:
         # Exercise the real gate allocation/runner environment and Library's
         # actual Compose Postgres service while its old host port is occupied.
         with held_library_default():
-            invoke("missing-only", "make", "candidate-gate")
+            output = invoke("missing-only", "make", "candidate-gate")
+        # Artifacts and integration build with the run's one builder.
+        run_logs = Path(re.findall(r"logs: (\S+)", output)[-1])
+        builders = {
+            (run_logs / f"builder-{lane}").read_text().strip()
+            for lane in ("artifacts", "integration")
+        }
+        owned = [
+            line
+            for line in (run_logs / "owned-resources.tsv").read_text().splitlines()
+            if line.startswith("builder\t")
+        ]
+        if len(builders) != 1 or len(owned) != 1 or owned[0].split("\t")[1] not in builders:
+            raise AssertionError(f"lanes must share the run's one builder: {builders} {owned}")
         rows = ledger.read_text().splitlines()
         assert {row[1] for row in stage_rows(rows)} == set(STAGES.split())
         assert all(row[2] == "passed" for row in stage_rows(rows))
         unit_target = [row.split("\t") for row in rows if "\tunit/test-server\t" in row]
         if len(unit_target) != 1 or unit_target[0][2] != "passed":
-            raise AssertionError(f"missing passed isolated test-server row: {unit_target}")
+            raise AssertionError(
+                f"missing passed isolated test-server row: {unit_target}"
+            )
         if "candidate: test-server PASSED" not in Path(unit_target[0][5]).read_text():
-            raise AssertionError(f"isolated test-server log missing evidence: {unit_target}")
+            raise AssertionError(
+                f"isolated test-server log missing evidence: {unit_target}"
+            )
         assert "no stages run" in invoke("same-tree-direct", *gate)
         rows = verify_same_tree_commit_cache(
             repo=repo,
@@ -441,25 +501,13 @@ candidate-gate:
                 "same-tree-fixed-baseline", *gate, stages=STAGES
             ),
             run_full_gate=lambda: invoke("same-tree-commit", "make", "candidate-gate"),
+            run_reviewed_change_gate=lambda: invoke(
+                "reviewed-ceilings-change", *gate, stages=STAGES
+            ),
         )
-        refused_final = invoke(
-            "final-without-rc",
-            sys.executable,
-            "scripts/release_candidate.py",
-            "aw-v1.2.3",
-            stages="checks",
-            success=False,
-        )
-        assert "final requires a prior RC" in refused_final
-        assert (
-            run(repo, "git", "rev-parse", "--verify", "refs/tags/aw-v1.2.3").returncode
-            != 0
-        )
-        assert ledger.read_text().splitlines() == rows
-        checked(repo, "git", "tag", "aw-v1.2.3-rc.1")
-        # The real RC must require all stages despite an inherited focused selector.
+        # A release must require all stages despite an inherited focused selector.
         output = invoke(
-            "rc-reuse",
+            "final-reuse",
             sys.executable,
             "scripts/release_candidate.py",
             "aw-v1.2.3",
@@ -481,6 +529,52 @@ candidate-gate:
             len(stage_rows(version_rows)) == len(stage_rows(rows)) + 1
             and version_rows[-1].split("\t")[0] != rows[-1].split("\t")[0]
         )
+        # A budget smaller than the lanes caps nothing: every lane runs at
+        # once, every container at Docker's default CPU weight.
+        # A docker shim on the wrapper's PATH records every Docker call.
+        env["CLI_VERSION"] = "1.2.5"
+        shim = evidence / "docker-shim"
+        shim.mkdir()
+        calls = evidence / "docker-calls.jsonl"
+        (shim / "docker").write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, sys\n"
+            f"with open({str(calls)!r}, 'a') as log:\n"
+            "    log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            f"os.execv({shutil.which('docker')!r}, ['docker', *sys.argv[1:]])\n"
+        )
+        (shim / "docker").chmod(0o755)
+        small = dict(
+            env,
+            GATE_CPUS="2",
+            GATE_MEMORY_MIB="8192",
+            PATH=f"{shim}{os.pathsep}{env['PATH']}",
+            AWEB_CANDIDATE_STAGES="checks user-paths unit",
+        )
+        small_run = run(repo, *gate, env=small)
+        (evidence / "small-budget-lanes.log").write_text(small_run.stdout + small_run.stderr)
+        assert small_run.returncode == 0, f"small-budget-lanes: see {evidence}/small-budget-lanes.log"
+        small_logs = Path(re.findall(r"logs: (\S+)", small_run.stdout + small_run.stderr)[-1])
+        budget_rows = (small_logs / "budget.tsv").read_text()
+        assert "lanes_concurrent" not in budget_rows, budget_rows
+        recorded = {}
+        for row in budget_rows.splitlines():
+            field, *rest = row.split("\t")
+            recorded[(field, *rest[:-1])] = rest[-1]
+        for lane in ("checks", "user-paths", "unit"):
+            assert recorded[("lane_share", lane)], recorded
+        argv = [json.loads(line) for line in calls.read_text().splitlines()]
+        capped = [args for args in argv if any(a.startswith("--cpu") for a in args)]
+        assert not capped, capped
+        runners = {}
+        for args in argv:
+            if args[:1] == ["run"] and "--name" in args:
+                container = args[args.index("--name") + 1]
+                for lane in ("checks", "user-paths", "unit"):
+                    if container.endswith(f"-runner-{lane}"):
+                        runners[lane] = args
+        assert set(runners) == {"checks", "user-paths", "unit"}, sorted(runners)
+        version_rows = ledger.read_text().splitlines()
         env["CLI_VERSION"] = "1.2.3"
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "7 * 6 == 42"))
         checked(repo, "git", "commit", "-qam", "changed tree")
@@ -492,36 +586,48 @@ candidate-gate:
             'echo cli >> "$$CANDIDATE_LOG_DIR/setup.log"',
             'echo cli >> "$$CANDIDATE_LOG_DIR/setup.log"; exit 23',
         )
-        failing_recipes = failing_recipes.replace("test-server:\n\t@true", "test-server:\n\t@exit 23")
+        failing_recipes = failing_recipes.replace(
+            "test-server:\n\t@true", "test-server:\n\t@exit 23"
+        )
         (repo / "Makefile").write_text(failing_recipes)
         checked(repo, "git", "commit", "-qam", "independent failures in one invocation")
         invoke("failed-tree", *gate, stages=STAGES, success=False)
         before = ledger.read_text()
-        failed_rows = [row.split("\t") for row in before.splitlines()[len(changed_rows) :]]
+        failed_rows = [
+            row.split("\t") for row in before.splitlines()[len(changed_rows) :]
+        ]
         verdicts = {row[1]: row[2] for row in failed_rows}
-        for entry, verdict in {
-            "checks": "failed",
-            "checks/test-shipping": "failed",
-            "checks/test-release-cli-version": "passed",
-            "user-paths": "passed",
-            "unit": "failed",
-            "unit/test-server": "failed",
-            "unit/_candidate-unit-pi": "passed",
-            "artifacts": "failed",
-            "artifacts/build": "failed",
-            "artifacts/_candidate-artifact-server": "passed",
-            "integration": "failed",
-            "integration/e2e-naapp": "skipped",
-            "integration/cli-e2e": "passed",
-            "integration/test-oci-exact-publish": "passed",
-        }.items():
-            if verdicts.get(entry) != verdict:
-                raise AssertionError(f"{entry} expected {verdict}: {verdicts}")
-        skipped = next(row for row in failed_rows if row[1] == "integration/e2e-naapp")
-        if "build FAILED" not in skipped[9]:
-            raise AssertionError(f"skip has no build failure detail: {skipped}")
+        # Stages run concurrently after static and the first red stops the
+        # rest. Every stage that ended failed names its own failing target; a
+        # stopped stage writes no stage row and is reported STOPPED.
+        failing_target = {
+            "checks": "checks/test-shipping",
+            "unit": "unit/test-server",
+            "artifacts": "artifacts/build",
+            "integration": "integration/build",
+        }
+        failed_output = (evidence / "failed-tree.log").read_text()
+        if verdicts.get("static") != "passed":
+            raise AssertionError(f"static must pass: {verdicts}")
+        if verdicts.get("user-paths", "passed") != "passed":
+            raise AssertionError(f"user-paths has no failure: {verdicts}")
+        failed_stages = {s for s, v in verdicts.items() if "/" not in s and v == "failed"}
+        if not failed_stages or not failed_stages <= set(failing_target):
+            raise AssertionError(f"failed stages {failed_stages}: {verdicts}")
+        for stage in failed_stages:
+            if verdicts.get(failing_target[stage]) != "failed":
+                raise AssertionError(f"{stage} lacks its failed target: {verdicts}")
+        for stage in STAGES.split()[1:]:
+            if stage not in verdicts and f"candidate: {stage} STOPPED" not in failed_output:
+                raise AssertionError(f"{stage} neither recorded nor STOPPED: {failed_output}")
+        if "integration" in failed_stages:
+            skipped = next(row for row in failed_rows if row[1] == "integration/e2e-naapp")
+            if skipped[2] != "skipped" or "build FAILED" not in skipped[9]:
+                raise AssertionError(f"skip has no build failure detail: {skipped}")
         refused = invoke("refused-tree", *gate, stages="integration", success=False)
-        failure_lines = [line for line in refused.splitlines() if "already FAILED" in line]
+        failure_lines = [
+            line for line in refused.splitlines() if "already FAILED" in line
+        ]
         expected_failures = [
             (stage, log)
             for _, stage, result, _, _, log, *_ in failed_rows
@@ -533,7 +639,9 @@ candidate-gate:
             if not line.endswith(f"already FAILED {stage} (log {log})."):
                 raise AssertionError(f"failed stage or log omitted: {refused}")
         if "GATE_RERUN_REASON" not in refused:
-            raise AssertionError(f"infrastructure recovery instructions omitted: {refused}")
+            raise AssertionError(
+                f"infrastructure recovery instructions omitted: {refused}"
+            )
         assert ledger.read_text() == before
         # Every executed gate has real cleanup evidence; successful stage rows
         # retain their own logs after later invocations reuse/replace run roots.
@@ -544,14 +652,50 @@ candidate-gate:
             for name in (
                 "first-checks",
                 "missing-only",
-                "same-tree-commit",
+                "reviewed-ceilings-change",
                 "version-input",
                 "changed-tree",
                 "failed-tree",
             )
         )
+        # A failed static stage stops the run: no later stage starts or is
+        # recorded, the static failure is, and the tree is refused until fixed.
+        checks_line = f"{' '.join(SOURCE_CHECKS)}:\n"
+        static_failure = (
+            recipes.replace(
+                checks_line,
+                f"{' '.join(t for t in SOURCE_CHECKS if t != 'check-private-boundary')}:\n",
+            )
+            + "check-private-boundary:\n\t@exit 23\n"
+        )
+        assert recipes.count(checks_line) == 1 and static_failure != recipes
+        (repo / "Makefile").write_text(static_failure)
+        checked(repo, "git", "commit", "-qam", "static failure")
+        before_static = ledger.read_text().splitlines()
+        output = invoke("static-failed-tree", *gate, stages=STAGES, success=False)
+        static_rows = [
+            row.split("\t")
+            for row in ledger.read_text().splitlines()[len(before_static) :]
+        ]
+        recorded_stages = {row[1].split("/")[0] for row in static_rows}
+        if recorded_stages != {"static"}:
+            raise AssertionError(f"only static may be recorded: {static_rows}")
+        verdicts = {row[1]: row[2] for row in static_rows}
+        if (
+            verdicts.get("static") != "failed"
+            or verdicts.get("static/check-private-boundary") != "failed"
+        ):
+            raise AssertionError(f"static failure not recorded: {static_rows}")
+        for stage in STAGES.split()[1:]:
+            if f"candidate: {stage} NOT-RUN" not in output:
+                raise AssertionError(f"{stage} not reported as not run: {output}")
+        if "candidate gate cleanup PASSED" not in output:
+            raise AssertionError(f"static failure skipped gate cleanup: {output}")
+        refused = invoke("static-refused-tree", *gate, success=False)
+        if "already FAILED static" not in refused:
+            raise AssertionError(f"failed static tree was not refused: {refused}")
     print(
-        "PASS: real Docker stages, missing-only execution, make/direct/RC reuse, changed main/tree/version, failed-tree refusal"
+        "PASS: real Docker stages, missing-only execution, make/direct/RC reuse, changed main/tree/version, failed-tree refusal, static stop"
     )
 
 

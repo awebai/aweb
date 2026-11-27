@@ -24,7 +24,10 @@ def test_message_signing_vectors_match_current_signing_contract() -> None:
     for case in vectors:
         payload = canonical_payload(case["message"])
         assert payload.decode("utf-8") == case["canonical_payload"]
-        assert sign_message(bytes.fromhex(case["signing_seed_hex"]), payload) == case["signature_b64"]
+        assert (
+            sign_message(bytes.fromhex(case["signing_seed_hex"]), payload)
+            == case["signature_b64"]
+        )
 
 
 def test_stable_id_vectors_match_current_derivation_contract() -> None:
@@ -77,7 +80,10 @@ def test_rotation_announcement_vectors_match_current_signing_contract() -> None:
                 }
             )
             assert payload.decode("utf-8") == link["canonical_payload"]
-            assert sign_message(bytes.fromhex(link["old_seed_hex"]), payload) == link["signature_b64"]
+            assert (
+                sign_message(bytes.fromhex(link["old_seed_hex"]), payload)
+                == link["signature_b64"]
+            )
 
 
 def test_dns_txt_vectors_match_current_dns_contract() -> None:
@@ -85,4 +91,7 @@ def test_dns_txt_vectors_match_current_dns_contract() -> None:
 
     for case in vectors:
         assert awid_txt_name(case["domain"]) == case["dns_name"]
-        assert awid_txt_value(case["controller_did"], case["registry_url"]) == case["dns_value"]
+        assert (
+            awid_txt_value(case["controller_did"], case["registry_url"])
+            == case["dns_value"]
+        )

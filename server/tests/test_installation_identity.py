@@ -21,17 +21,28 @@ MIGRATIONS = Path(aweb.__file__).parent / "migrations" / "aweb"
 TEAM = "demo:example.com"
 OTHER_TEAM = "other:example.com"
 ORIGIN = "https://fixture.example"
-MANIFEST = json.dumps({
-    "manifest_version": 1,
-    "app": {"id": "fixture", "origin": ORIGIN, "version": "1.0.0"},
-    "tools": [{"name": "list", "method": "GET", "path": "/v1/items", "scopes": ["fixture:read"]}],
-}).encode()
+MANIFEST = json.dumps(
+    {
+        "manifest_version": 1,
+        "app": {"id": "fixture", "origin": ORIGIN, "version": "1.0.0"},
+        "tools": [
+            {
+                "name": "list",
+                "method": "GET",
+                "path": "/v1/items",
+                "scopes": ["fixture:read"],
+            }
+        ],
+    }
+).encode()
 DIGEST = "sha256:" + hashlib.sha256(MANIFEST).hexdigest()
 
 
 async def migrate(db, path):
     await AsyncMigrationManager(
-        db, migrations_path=str(path), module_name="aweb-aweb",
+        db,
+        migrations_path=str(path),
+        module_name="aweb-aweb",
     ).apply_pending_migrations()
 
 
@@ -40,7 +51,8 @@ async def legacy_install(db, team_id):
     # not used to fabricate pre-migration evidence.
     await db.execute(
         "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ($1, 'example.com', $2, 'did:key:team')",
-        team_id, team_id.split(":")[0],
+        team_id,
+        team_id.split(":")[0],
     )
     await db.execute(
         "INSERT INTO {{tables.app_registry_apps}} (app_id, origin) VALUES ('fixture', $1) ON CONFLICT DO NOTHING",
@@ -50,13 +62,16 @@ async def legacy_install(db, team_id):
         """INSERT INTO {{tables.app_registry_entries}}
            (app_id, origin, digest, app_version, manifest_version)
            VALUES ('fixture', $1, $2, '1.0.0', 1) ON CONFLICT DO NOTHING""",
-        ORIGIN, DIGEST,
+        ORIGIN,
+        DIGEST,
     )
     await db.execute(
         """INSERT INTO {{tables.team_app_installs}}
            (team_id, app_id, origin, digest, app_version, manifest_version, granted_scopes, registered_from_manifest_bytes)
            VALUES ($1, 'fixture', $2, $3, '1.0.0', 1, ARRAY['fixture:read'], TRUE)""",
-        team_id, ORIGIN, DIGEST,
+        team_id,
+        ORIGIN,
+        DIGEST,
     )
 
 
@@ -78,7 +93,9 @@ async def db(test_db_factory, tmp_path):
 
 async def read(db, team_id=TEAM, **changes):
     async with db.transaction() as tx:
-        return await get_installation_on(tx, team_id=team_id, app_id="fixture", **changes)
+        return await get_installation_on(
+            tx, team_id=team_id, app_id="fixture", **changes
+        )
 
 
 async def test_migration_keeps_pins_and_scopes_without_claiming_origin_verification(db):
@@ -91,12 +108,18 @@ async def test_migration_keeps_pins_and_scopes_without_claiming_origin_verificat
     assert current["digest"] == DIGEST
     assert current["granted_scopes"] == ["fixture:read"]
     assert current["origin_verification_error"] is None
-    assert await db.fetch_value(
-        "SELECT manifest_bytes FROM {{tables.team_app_installs}} WHERE team_id = $1", TEAM,
-    ) is None
+    assert (
+        await db.fetch_value(
+            "SELECT manifest_bytes FROM {{tables.team_app_installs}} WHERE team_id = $1",
+            TEAM,
+        )
+        is None
+    )
 
 
-async def test_id_is_stable_across_reapplying_migrations_and_unique_per_installation(db):
+async def test_id_is_stable_across_reapplying_migrations_and_unique_per_installation(
+    db,
+):
     first = await read(db)
     other = await read(db, OTHER_TEAM)
     assert first["installation_id"] != other["installation_id"]
@@ -106,7 +129,12 @@ async def test_id_is_stable_across_reapplying_migrations_and_unique_per_installa
 
 async def test_reader_does_not_cross_teams_or_invent_an_installation(db):
     async with db.transaction() as tx:
-        assert await get_installation_on(tx, team_id="absent:example.com", app_id="fixture") is None
+        assert (
+            await get_installation_on(
+                tx, team_id="absent:example.com", app_id="fixture"
+            )
+            is None
+        )
         assert await get_installation_on(tx, team_id=TEAM, app_id="missing") is None
 
 
@@ -124,17 +152,27 @@ async def test_active_state_requires_verified_origin_and_pinned_bytes(db):
     assert (await read(db))["state"] == "pending_origin_verification"
 
 
-async def test_exact_pinned_bytes_can_activate_without_changing_identity_generation_or_scopes(db):
+async def test_exact_pinned_bytes_can_activate_without_changing_identity_generation_or_scopes(
+    db,
+):
     before = await read(db)
     # A trusted verifier supplies its origin-fetch evidence in this transaction.
     await db.execute(
         """UPDATE {{tables.team_app_installs}} SET manifest_bytes = $2,
-           state = 'active', origin_verified = TRUE WHERE team_id = $1""", TEAM, MANIFEST,
+           state = 'active', origin_verified = TRUE WHERE team_id = $1""",
+        TEAM,
+        MANIFEST,
     )
     after = await read(db)
     assert after["state"] == "active"
     assert after["origin_verified"] is True
-    for field in ("installation_id", "generation", "granted_scopes", "origin", "digest"):
+    for field in (
+        "installation_id",
+        "generation",
+        "granted_scopes",
+        "origin",
+        "digest",
+    ):
         assert after[field] == before[field]
 
 
@@ -145,19 +183,24 @@ async def test_bytes_that_disagree_with_the_pinned_digest_are_refused(db):
     with pytest.raises((asyncpg.CheckViolationError, QueryError)):
         await db.execute(
             "UPDATE {{tables.team_app_installs}} SET manifest_bytes = $1 WHERE team_id = $2",
-            b"different exact bytes", TEAM,
+            b"different exact bytes",
+            TEAM,
         )
     assert (await read(db))["digest"] == DIGEST
 
 
-async def test_update_lock_serializes_lifecycle_mutations_on_the_current_install_row(db):
+async def test_update_lock_serializes_lifecycle_mutations_on_the_current_install_row(
+    db,
+):
     locked = asyncio.Event()
     release = asyncio.Event()
     changed = asyncio.Event()
 
     async def reader():
         async with db.transaction() as tx:
-            current = await get_installation_on(tx, team_id=TEAM, app_id="fixture", for_update=True)
+            current = await get_installation_on(
+                tx, team_id=TEAM, app_id="fixture", for_update=True
+            )
             assert current["state"] == "pending_origin_verification"
             locked.set()
             await release.wait()
@@ -165,7 +208,8 @@ async def test_update_lock_serializes_lifecycle_mutations_on_the_current_install
     async def lifecycle():
         await locked.wait()
         await db.execute(
-            "UPDATE {{tables.team_app_installs}} SET state = 'uninstalled' WHERE team_id = $1 AND app_id = 'fixture'", TEAM,
+            "UPDATE {{tables.team_app_installs}} SET state = 'uninstalled' WHERE team_id = $1 AND app_id = 'fixture'",
+            TEAM,
         )
         changed.set()
 
@@ -181,19 +225,30 @@ async def test_update_lock_serializes_lifecycle_mutations_on_the_current_install
     assert (await read(db))["state"] == "uninstalled"
 
 
-async def test_generation_counter_survives_two_complete_uninstalls_and_reinstallations(db):
+async def test_generation_counter_survives_two_complete_uninstalls_and_reinstallations(
+    db,
+):
     previous = await read(db)
     for expected in (2, 3):
         async with db.transaction() as tx:
-            await get_installation_on(tx, team_id=TEAM, app_id="fixture", for_update=True)
-            await tx.execute("DELETE FROM {{tables.team_app_installs}} WHERE team_id = $1", TEAM)
-            generation = await next_installation_generation_on(tx, team_id=TEAM, app_id="fixture")
+            await get_installation_on(
+                tx, team_id=TEAM, app_id="fixture", for_update=True
+            )
+            await tx.execute(
+                "DELETE FROM {{tables.team_app_installs}} WHERE team_id = $1", TEAM
+            )
+            generation = await next_installation_generation_on(
+                tx, team_id=TEAM, app_id="fixture"
+            )
             assert generation == expected
             await tx.execute(
                 """INSERT INTO {{tables.team_app_installs}}
                    (team_id, app_id, origin, digest, app_version, manifest_version, granted_scopes, generation)
                    VALUES ($1, 'fixture', $2, $3, '1.0.0', 1, ARRAY['fixture:read'], $4)""",
-                TEAM, ORIGIN, DIGEST, generation,
+                TEAM,
+                ORIGIN,
+                DIGEST,
+                generation,
             )
         current = await read(db)
         assert current["installation_id"] != previous["installation_id"]
@@ -202,20 +257,33 @@ async def test_generation_counter_survives_two_complete_uninstalls_and_reinstall
     assert (await read(db, OTHER_TEAM))["generation"] == 1
 
 
-async def test_generation_allocations_serialize_and_rollback_with_the_registry_transaction(db):
+async def test_generation_allocations_serialize_and_rollback_with_the_registry_transaction(
+    db,
+):
     async def allocate():
         async with db.transaction() as tx:
-            return await next_installation_generation_on(tx, team_id=TEAM, app_id="fixture")
+            return await next_installation_generation_on(
+                tx, team_id=TEAM, app_id="fixture"
+            )
 
-    assert sorted(await asyncio.gather(*(allocate() for _ in range(12)))) == list(range(2, 14))
+    assert sorted(await asyncio.gather(*(allocate() for _ in range(12)))) == list(
+        range(2, 14)
+    )
     with pytest.raises(RuntimeError):
         async with db.transaction() as tx:
-            assert await next_installation_generation_on(tx, team_id=TEAM, app_id="fixture") == 14
+            assert (
+                await next_installation_generation_on(
+                    tx, team_id=TEAM, app_id="fixture"
+                )
+                == 14
+            )
             raise RuntimeError("abort installation")
     assert await allocate() == 14
 
 
-async def test_generation_counter_outlives_team_deletion_and_recreation_under_the_same_id(db):
+async def test_generation_counter_outlives_team_deletion_and_recreation_under_the_same_id(
+    db,
+):
     previous = await read(db)
     await db.execute("DELETE FROM {{tables.teams}} WHERE team_id = $1", TEAM)
     assert await read(db) is None
@@ -224,12 +292,17 @@ async def test_generation_counter_outlives_team_deletion_and_recreation_under_th
             "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ($1, 'example.com', 'demo', 'did:key:new-controller')",
             TEAM,
         )
-        generation = await next_installation_generation_on(tx, team_id=TEAM, app_id="fixture")
+        generation = await next_installation_generation_on(
+            tx, team_id=TEAM, app_id="fixture"
+        )
         await tx.execute(
             """INSERT INTO {{tables.team_app_installs}}
                (team_id, app_id, origin, digest, app_version, manifest_version, granted_scopes, generation)
                VALUES ($1, 'fixture', $2, $3, '1.0.0', 1, ARRAY['fixture:read'], $4)""",
-            TEAM, ORIGIN, DIGEST, generation,
+            TEAM,
+            ORIGIN,
+            DIGEST,
+            generation,
         )
     current = await read(db)
     assert current["installation_id"] != previous["installation_id"]

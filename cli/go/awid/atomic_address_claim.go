@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 const AtomicAddressClaimOperation = "claim_identity_address"

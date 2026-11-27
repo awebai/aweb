@@ -14,7 +14,10 @@ from redis.asyncio import from_url as async_redis_from_url
 from awid.log_config import configure_logging
 from awid.ratelimit import build_rate_limiter as _shared_build_rate_limiter
 from awid.request_body_limit import RequestBodyLimitMiddleware
-from .attestation_rotation import DEFAULT_ROTATE_MAX_BODY_BYTES, rotate_max_body_bytes_from_env
+from .attestation_rotation import (
+    DEFAULT_ROTATE_MAX_BODY_BYTES,
+    rotate_max_body_bytes_from_env,
+)
 from .config import get_settings
 from .routes.a2a_publications import router as a2a_publications_router
 from .routes.attestation_records import router as attestation_records_router
@@ -46,7 +49,9 @@ def _max_request_body_bytes(rotate_max_body_bytes: int) -> int:
     except ValueError:
         value = 0
     if value < 1:
-        raise ValueError("AWID_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes")
+        raise ValueError(
+            "AWID_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes"
+        )
     if value < rotate_max_body_bytes:
         raise ValueError(
             f"AWID_MAX_REQUEST_BODY_BYTES ({value}) must be at least the rotate body limit ({rotate_max_body_bytes})"
@@ -54,7 +59,9 @@ def _max_request_body_bytes(rotate_max_body_bytes: int) -> int:
     return value
 
 
-def _public_health_error(*, component: str, exc: Exception, checks: dict[str, str]) -> None:
+def _public_health_error(
+    *, component: str, exc: Exception, checks: dict[str, str]
+) -> None:
     logger.warning("awid health check failed for %s", component, exc_info=exc)
     checks[component] = "error"
 
@@ -71,7 +78,9 @@ def _make_standalone_lifespan():
         db_infra = AwidDatabaseInfra(schema=settings.db_schema)
 
         try:
-            redis = await async_redis_from_url(settings.redis_url, decode_responses=True)
+            redis = await async_redis_from_url(
+                settings.redis_url, decode_responses=True
+            )
             await redis.ping()
             await db_infra.initialize()
 
@@ -99,6 +108,7 @@ def _make_library_lifespan(
     rate_limiter=None,
 ):
     """Use the embedding host's connections and logging configuration."""
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         settings = get_settings()
@@ -132,7 +142,9 @@ def create_app(
     rate_limiter=None,
 ) -> FastAPI:
     if (db_infra is None) != (redis is None):
-        raise ValueError("Library mode requires both db_infra and redis, or neither for standalone mode")
+        raise ValueError(
+            "Library mode requires both db_infra and redis, or neither for standalone mode"
+        )
     if db_infra is not None and not db_infra.is_initialized:
         raise ValueError("db_infra must be initialized before passing to create_app()")
 
@@ -142,7 +154,9 @@ def create_app(
         assert redis is not None
         lifespan = _make_library_lifespan(db_infra, redis, rate_limiter)
 
-    app = FastAPI(title="awid.ai registry", version=_service_version(), lifespan=lifespan)
+    app = FastAPI(
+        title="awid.ai registry", version=_service_version(), lifespan=lifespan
+    )
     mount_registry(app)
     return app
 
@@ -187,7 +201,11 @@ def mount_registry(app: FastAPI) -> None:
 
         checks["schema"] = str(getattr(request.app.state, "db_schema", "awid"))
         checks["rate_limiter"] = type(request.app.state.rate_limiter).__name__
-        return {"status": "ok" if healthy else "unhealthy", "version": service_version, "checks": checks}
+        return {
+            "status": "ok" if healthy else "unhealthy",
+            "version": service_version,
+            "checks": checks,
+        }
 
     @app.get("/live", tags=["ops"])
     async def live() -> dict:
@@ -200,15 +218,23 @@ def mount_registry(app: FastAPI) -> None:
     @app.get("/ops/health", tags=["ops"])
     async def health(request: Request) -> JSONResponse:
         payload = await _health_payload(request)
-        return JSONResponse(status_code=200 if payload["status"] == "ok" else 503, content=payload)
+        return JSONResponse(
+            status_code=200 if payload["status"] == "ok" else 503, content=payload
+        )
 
     app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()
-    app.state.max_request_body_bytes = _max_request_body_bytes(app.state.rotate_max_body_bytes)
-    app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=app.state.max_request_body_bytes)
+    app.state.max_request_body_bytes = _max_request_body_bytes(
+        app.state.rotate_max_body_bytes
+    )
+    app.add_middleware(
+        RequestBodyLimitMiddleware, max_body_bytes=app.state.max_request_body_bytes
+    )
 
     # Covering controller signatures use configuration, never Host/forwarded headers.
     app.state.awid_public_origins = tuple(
-        value.strip() for value in os.getenv("AWID_PUBLIC_ORIGINS", "").split(",") if value.strip()
+        value.strip()
+        for value in os.getenv("AWID_PUBLIC_ORIGINS", "").split(",")
+        if value.strip()
     )
 
     app.include_router(did_router)

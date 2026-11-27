@@ -48,7 +48,10 @@ async def _open_stream(env, alias):
 async def _mint_grant(env, alias):
     _, grant_did = _session_keypair()
     minted = await _team_request(
-        env, alias, "POST", "/v1/identity-grants",
+        env,
+        alias,
+        "POST",
+        "/v1/identity-grants",
         {"grant_did_key": grant_did, "scopes": ["mail.read"], "ttl_seconds": 600},
     )
     assert minted.status_code == 200, minted.text
@@ -62,15 +65,22 @@ async def _grant_heartbeat(env, alias):
     env.app.state.public_origin = origin
     signing_key, grant_did = _session_keypair()
     minted = await _team_request(
-        env, alias, "POST", "/v1/identity-grants",
+        env,
+        alias,
+        "POST",
+        "/v1/identity-grants",
         {"grant_did_key": grant_did, "scopes": ["presence.write"], "ttl_seconds": 600},
     )
     assert minted.status_code == 200, minted.text
     beat = await env.client.post(
         "/v1/agents/heartbeat",
         headers=_grant_headers(
-            signing_key=signing_key, did_key=grant_did, grant_id=minted.json()["grant_id"],
-            method="POST", path="/v1/agents/heartbeat", aud=origin,
+            signing_key=signing_key,
+            did_key=grant_did,
+            grant_id=minted.json()["grant_id"],
+            method="POST",
+            path="/v1/agents/heartbeat",
+            aud=origin,
         ),
     )
     assert beat.status_code == 200, beat.text
@@ -103,7 +113,9 @@ async def test_open_event_stream_shows_listening(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_listening_ends_when_the_stream_stops_refreshing(privacy_app, monkeypatch):
+async def test_listening_ends_when_the_stream_stops_refreshing(
+    privacy_app, monkeypatch
+):
     env = privacy_app
     await _open_stream(env, "alice")
     record = json.loads(await env.redis.get(f"events-stream:{env.actors['alice'].id}"))
@@ -140,7 +152,10 @@ async def test_heartbeat_sets_last_active(privacy_app, monkeypatch):
     before = datetime.now(timezone.utc).replace(microsecond=0)
     actor = env.actors["alice"]
     beat = await _team_request(
-        env, "alice", "POST", "/v1/workspaces/heartbeat",
+        env,
+        "alice",
+        "POST",
+        "/v1/workspaces/heartbeat",
         {"workspace_id": str(actor.workspace), "alias": "alice"},
     )
     assert beat.status_code == 200, beat.text
@@ -160,7 +175,8 @@ async def test_grant_heartbeat_alone_sets_last_active(privacy_app):
 
     assert before <= _when(health["last_active"]) <= datetime.now(timezone.utc)
     workspace = await env.db.fetch_one(
-        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1", env.actors["alice"].workspace,
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
+        env.actors["alice"].workspace,
     )
     assert workspace["last_seen_at"] is None
 
@@ -173,7 +189,9 @@ async def test_grant_seat_shows_its_connection(privacy_app):
     assert (await _health(env, "alice"))["connection"] == "active"
     assert (await _health(env, "bob"))["connection"] is None
 
-    revoked = await _team_request(env, "alice", "POST", f"/v1/identity-grants/{grant_id}/revoke")
+    revoked = await _team_request(
+        env, "alice", "POST", f"/v1/identity-grants/{grant_id}/revoke"
+    )
     assert revoked.status_code == 200, revoked.text
 
     assert (await _health(env, "alice"))["connection"] == "revoked"
@@ -185,7 +203,9 @@ async def test_any_active_grant_makes_the_seat_active(privacy_app):
     await _mint_grant(env, "alice")
     newest = await _mint_grant(env, "alice")
     # The newest grant is revoked, so only the any-active rule keeps the seat active.
-    revoked = await _team_request(env, "alice", "POST", f"/v1/identity-grants/{newest}/revoke")
+    revoked = await _team_request(
+        env, "alice", "POST", f"/v1/identity-grants/{newest}/revoke"
+    )
     assert revoked.status_code == 200, revoked.text
 
     assert (await _health(env, "alice"))["connection"] == "active"
@@ -198,12 +218,22 @@ async def test_anonymous_public_reader_never_sees_the_connection(privacy_app):
     await _open_stream(env, "alice")
 
     for path in (f"/v1/teams/{TEAM}/agents", f"/v1/teams/{TEAM}/agents/alice"):
-        for headers in ({}, {"X-Dashboard-Token": "invalid"}, {"X-Dashboard-Token": _make_jwt(["other:example.test"])}):
+        for headers in (
+            {},
+            {"X-Dashboard-Token": "invalid"},
+            {"X-Dashboard-Token": _make_jwt(["other:example.test"])},
+        ):
             response = await env.client.get(path, headers=headers)
             assert response.status_code == 200, response.text
             body = response.json()
-            health = body["health"] if "health" in body else next(
-                agent["health"] for agent in body["agents"] if agent["alias"] == "alice"
+            health = (
+                body["health"]
+                if "health" in body
+                else next(
+                    agent["health"]
+                    for agent in body["agents"]
+                    if agent["alias"] == "alice"
+                )
             )
             assert health["connection"] is None
             assert health["listening"] is True
@@ -222,8 +252,11 @@ async def test_open_stream_keeps_listening_past_the_window(privacy_app, monkeypa
 
     async def hold_stream():
         async with env.client.stream(
-            "GET", "/v1/events/stream", params={"deadline": deadline},
-            headers=_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate), timeout=10,
+            "GET",
+            "/v1/events/stream",
+            params={"deadline": deadline},
+            headers=_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate),
+            timeout=10,
         ) as response:
             assert response.status_code == 200
             async for _ in response.aiter_lines():
@@ -246,7 +279,9 @@ async def test_open_stream_keeps_listening_past_the_window(privacy_app, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_embedding_app_calling_the_route_in_process_gets_observations(privacy_app):
+async def test_embedding_app_calling_the_route_in_process_gets_observations(
+    privacy_app,
+):
     # An embedding application may call the route function directly with
     # request, team_id and db, as Cloud does; Redis comes from app.state.
     from starlette.requests import Request
@@ -255,12 +290,20 @@ async def test_embedding_app_calling_the_route_in_process_gets_observations(priv
 
     env = privacy_app
     await _open_stream(env, "alice")
-    request = Request({
-        "type": "http", "method": "GET", "path": f"/v1/teams/{TEAM}/agents", "query_string": b"",
-        "headers": [(b"x-dashboard-token", _make_jwt([TEAM]).encode())], "app": env.app,
-    })
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": f"/v1/teams/{TEAM}/agents",
+            "query_string": b"",
+            "headers": [(b"x-dashboard-token", _make_jwt([TEAM]).encode())],
+            "app": env.app,
+        }
+    )
 
     listed = await list_team_agents(request, TEAM, db=env.infra)
 
-    health = next(agent["health"] for agent in listed["agents"] if agent["alias"] == "alice")
+    health = next(
+        agent["health"] for agent in listed["agents"] if agent["alias"] == "alice"
+    )
     assert health["listening"] is True

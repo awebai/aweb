@@ -16,7 +16,10 @@ from aweb.coordination.routes.team_instructions import (
     activate_team_instructions,
     create_team_instructions_version,
 )
-from aweb.coordination.routes.team_roles import activate_team_roles, create_team_roles_version
+from aweb.coordination.routes.team_roles import (
+    activate_team_roles,
+    create_team_roles_version,
+)
 
 TEAM_ID = "backend:acme.com"
 MIGRATIONS = Path(aweb.__file__).parent / "migrations" / "aweb"
@@ -47,7 +50,10 @@ async def _create_roles(db, number: int) -> str:
         db,
         team_id=TEAM_ID,
         base_roles_id=None,
-        bundle={"roles": {"dev": {"title": f"version {number}", "playbook_md": ""}}, "adapters": {}},
+        bundle={
+            "roles": {"dev": {"title": f"version {number}", "playbook_md": ""}},
+            "adapters": {},
+        },
         created_by_alias=None,
     )
     return version.id
@@ -57,15 +63,21 @@ INSTRUCTIONS = TeamDocument(
     name="instructions",
     table="team_instructions",
     create=_create_instructions,
-    activate=lambda db, version_id: activate_team_instructions(db, team_id=TEAM_ID, instructions_id=version_id),
+    activate=lambda db, version_id: activate_team_instructions(
+        db, team_id=TEAM_ID, instructions_id=version_id
+    ),
 )
 ROLES = TeamDocument(
     name="roles",
     table="team_roles",
     create=_create_roles,
-    activate=lambda db, version_id: activate_team_roles(db, team_id=TEAM_ID, roles_id=version_id),
+    activate=lambda db, version_id: activate_team_roles(
+        db, team_id=TEAM_ID, roles_id=version_id
+    ),
 )
-DOCUMENTS = pytest.mark.parametrize("document", [INSTRUCTIONS, ROLES], ids=lambda document: document.name)
+DOCUMENTS = pytest.mark.parametrize(
+    "document", [INSTRUCTIONS, ROLES], ids=lambda document: document.name
+)
 
 
 async def _create_versions(db, document: TeamDocument, count: int) -> list[str]:
@@ -126,7 +138,9 @@ async def test_concurrent_activations_leave_exactly_one_active(aweb_cloud_db, do
 
 @DOCUMENTS
 @pytest.mark.asyncio
-async def test_failed_activation_leaves_previous_version_active(aweb_cloud_db, document):
+async def test_failed_activation_leaves_previous_version_active(
+    aweb_cloud_db, document
+):
     db = aweb_cloud_db.aweb_db
     first, second = await _create_versions(db, document, 2)
     await document.activate(db, first)
@@ -157,16 +171,21 @@ async def test_failed_activation_leaves_previous_version_active(aweb_cloud_db, d
     assert await _active_ids(db, document) == [first]
 
 
-async def _insert_active(db, document: TeamDocument, team_id: str, version: int) -> None:
+async def _insert_active(
+    db, document: TeamDocument, team_id: str, version: int
+) -> None:
     await db.execute(
         f"INSERT INTO {{{{tables.{document.table}}}}} (team_id, version, is_active) VALUES ($1, $2, true)",
-        team_id, version,
+        team_id,
+        version,
     )
 
 
 @DOCUMENTS
 @pytest.mark.asyncio
-async def test_a_second_active_version_cannot_be_stored_by_any_writer(aweb_cloud_db, document):
+async def test_a_second_active_version_cannot_be_stored_by_any_writer(
+    aweb_cloud_db, document
+):
     db = aweb_cloud_db.aweb_db
     await _insert_active(db, document, TEAM_ID, 1)
     await _insert_active(db, document, "other:acme.com", 1)
@@ -178,9 +197,13 @@ async def test_a_second_active_version_cannot_be_stored_by_any_writer(aweb_cloud
 @DOCUMENTS
 @pytest.mark.asyncio
 async def test_migration_refuses_teams_with_two_active_versions_and_changes_nothing(
-    shared_test_pool, tmp_path, document,
+    shared_test_pool,
+    tmp_path,
+    document,
 ):
-    await AsyncDatabaseManager(pool=shared_test_pool, schema=None).execute("CREATE SCHEMA aweb")
+    await AsyncDatabaseManager(pool=shared_test_pool, schema=None).execute(
+        "CREATE SCHEMA aweb"
+    )
     db = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
     staged = tmp_path / "migrations"
     staged.mkdir()
@@ -188,7 +211,10 @@ async def test_migration_refuses_teams_with_two_active_versions_and_changes_noth
         if migration.name < ONE_ACTIVE_MIGRATION:
             shutil.copy(migration, staged / migration.name)
     manager = AsyncMigrationManager(
-        db, migrations_path=str(staged), module_name="one-active-upgrade-test", migrations_table="schema_migrations",
+        db,
+        migrations_path=str(staged),
+        module_name="one-active-upgrade-test",
+        migrations_table="schema_migrations",
     )
     await manager.apply_pending_migrations()
 
@@ -198,7 +224,9 @@ async def test_migration_refuses_teams_with_two_active_versions_and_changes_noth
     await _insert_active(db, document, "sound:acme.com", 1)
 
     shutil.copy(MIGRATIONS / ONE_ACTIVE_MIGRATION, staged / ONE_ACTIVE_MIGRATION)
-    with pytest.raises(Exception, match=f"2 teams have more than one active row in {document.table}"):
+    with pytest.raises(
+        Exception, match=f"2 teams have more than one active row in {document.table}"
+    ):
         await manager.apply_pending_migrations()
 
     active = await db.fetch_value(

@@ -30,7 +30,9 @@ class Settings(BaseSettings):
     )
     # Staged team-key pin enforcement, the one name the aweb server and every
     # naapp read: OFF logs team_key_pin_mismatch and serves the registry's key.
-    enforce_team_key_pins: bool = Field(default=False, validation_alias="AWEB_ENFORCE_TEAM_KEY_PINS")
+    enforce_team_key_pins: bool = Field(
+        default=False, validation_alias="AWEB_ENFORCE_TEAM_KEY_PINS"
+    )
     db_pool_min_connections: int = Field(default=1, ge=1)
     db_pool_max_connections: int = Field(default=5, ge=1)
     db_statement_cache_size: int = Field(default=0, ge=0)

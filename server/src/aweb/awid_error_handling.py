@@ -24,7 +24,9 @@ AWID_DEPENDENCY_ERRORS = (
 def awid_dependency_http_exception(
     exc: Exception, *, operation: str = "AWID registry", team_id: str | None = None
 ) -> HTTPException:
-    status_code, detail = classify_awid_dependency_error(exc, operation=operation, team_id=team_id)
+    status_code, detail = classify_awid_dependency_error(
+        exc, operation=operation, team_id=team_id
+    )
     return HTTPException(status_code=status_code, detail=detail)
 
 
@@ -48,7 +50,10 @@ def serves_team(registry_client, team_id: str) -> bool:
 
 
 def team_not_served_exception(team_id: str, *, operation: str) -> HTTPException:
-    return HTTPException(status_code=403, detail=f"{operation}: team {team_id} is not served by this server")
+    return HTTPException(
+        status_code=403,
+        detail=f"{operation}: team {team_id} is not served by this server",
+    )
 
 
 def _retryable_registry_failure(operation: str, reason: str) -> tuple[int, str]:
@@ -72,7 +77,9 @@ def _classify_upstream_status(
     status_code: int, *, operation: str, failure_type: str
 ) -> tuple[int, str | dict[str, str]]:
     if not status_code:
-        return _retryable_registry_failure(operation, f"upstream status error ({failure_type})")
+        return _retryable_registry_failure(
+            operation, f"upstream status error ({failure_type})"
+        )
     if 500 <= status_code < 600:
         return _retryable_registry_failure(
             operation, f"upstream error ({failure_type} status={status_code})"
@@ -94,18 +101,33 @@ def classify_awid_dependency_error(
     if isinstance(exc, MalformedTeamKeyError):
         return _unusable_registry_response(operation)
     if isinstance(exc, DnsVerificationError):
-        return _retryable_registry_failure(operation, f"DNS resolution failed ({class_name})")
-    if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError, TimeoutError)):
-        return _retryable_registry_failure(operation, f"upstream unavailable ({class_name})")
+        return _retryable_registry_failure(
+            operation, f"DNS resolution failed ({class_name})"
+        )
+    if isinstance(
+        exc,
+        (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError, TimeoutError),
+    ):
+        return _retryable_registry_failure(
+            operation, f"upstream unavailable ({class_name})"
+        )
     if isinstance(exc, httpx.RequestError):
         return _retryable_registry_failure(operation, f"request failed ({class_name})")
     if isinstance(exc, httpx.HTTPStatusError):
         response = getattr(exc, "response", None)
         status_code = int(getattr(response, "status_code", 0) or 0)
-        return _classify_upstream_status(status_code, operation=operation, failure_type=class_name)
-    if isinstance(exc, RegistryError) and exc.code == "unavailable" and exc.__cause__ is not None:
+        return _classify_upstream_status(
+            status_code, operation=operation, failure_type=class_name
+        )
+    if (
+        isinstance(exc, RegistryError)
+        and exc.code == "unavailable"
+        and exc.__cause__ is not None
+    ):
         # Preserve the safe category of an error wrapped by the client.
-        return classify_awid_dependency_error(exc.__cause__, operation=operation, team_id=team_id)
+        return classify_awid_dependency_error(
+            exc.__cause__, operation=operation, team_id=team_id
+        )
     if is_private_team_refusal(exc):
         if get_awid_service_token() is not None:
             return 503, (
@@ -121,7 +143,9 @@ def classify_awid_dependency_error(
         )
     if isinstance(exc, RegistryError):
         status_code = int(getattr(exc, "status_code", 500) or 500)
-        return _classify_upstream_status(status_code, operation=operation, failure_type=class_name)
+        return _classify_upstream_status(
+            status_code, operation=operation, failure_type=class_name
+        )
     return http.HTTPStatus.INTERNAL_SERVER_ERROR, (
         f"Unexpected {operation} dependency error ({class_name}). "
         "Ask the server operator to investigate."

@@ -24,7 +24,9 @@ async def test_send_selector_needs_the_recorded_identity_not_only_its_retained_k
 ):
     class NoMembershipLookup:
         def get_manager(self, _name):
-            raise AssertionError("Explicit stored-party selection does not choose a new member")
+            raise AssertionError(
+                "Explicit stored-party selection does not choose a new member"
+            )
 
     participant = {
         "did": "did:aw:recipient",
@@ -40,7 +42,9 @@ async def test_send_selector_needs_the_recorded_identity_not_only_its_retained_k
 
 
 @pytest.mark.asyncio
-async def test_continued_mail_retained_key_alone_does_not_replace_stable_binding(mail_server):
+async def test_continued_mail_retained_key_alone_does_not_replace_stable_binding(
+    mail_server,
+):
     env = mail_server
     first = await env.human_mail()
     conversation_id = first["conversation_id"]
@@ -57,7 +61,9 @@ async def test_continued_mail_retained_key_alone_does_not_replace_stable_binding
             "/v1/messages",
             content=raw,
             headers={
-                **_signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, raw),
+                **_signed_identity_headers(
+                    env.pilot_key, env.pilot_did, env.pilot_stable, raw
+                ),
                 "Content-Type": "application/json",
             },
         )

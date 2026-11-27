@@ -37,7 +37,8 @@ async def test_cached_key_refresh_admits_only_the_real_controller_rotation(pinni
 
             next_sk, next_did = await _change_key(env)
             assert (
-                await cached.get_team_public_key("example.test", TEAM.split(":", 1)[0]) == next_did
+                await cached.get_team_public_key("example.test", TEAM.split(":", 1)[0])
+                == next_did
             )
             pin = await env.db.fetch_one(
                 "SELECT team_did_key,team_key_act_at FROM {{tables.teams}} WHERE team_id=$1",

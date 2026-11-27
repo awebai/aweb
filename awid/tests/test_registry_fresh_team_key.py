@@ -38,12 +38,18 @@ async def test_fresh_team_key_distinguishes_unusable_controller_from_absent_team
 
         client = RegistryClient(REGISTRY_URL, transport=registry.transport)
         try:
-            assert await client.get_team_public_key_fresh(
-                domain, "valid", registry_origin=registry_origin
-            ) == did
-            assert await client.get_team_public_key_fresh(
-                domain, "absent", registry_origin=registry_origin
-            ) is None
+            assert (
+                await client.get_team_public_key_fresh(
+                    domain, "valid", registry_origin=registry_origin
+                )
+                == did
+            )
+            assert (
+                await client.get_team_public_key_fresh(
+                    domain, "absent", registry_origin=registry_origin
+                )
+                is None
+            )
             registry.transport.fault = unusable_answer
             with pytest.raises(MalformedTeamKeyError, match="usable controller key"):
                 await client.get_team_public_key_fresh(

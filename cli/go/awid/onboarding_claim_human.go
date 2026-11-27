@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 const onboardingClaimHumanPath = "/api/v1/claim-human"

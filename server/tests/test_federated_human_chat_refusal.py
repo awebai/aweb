@@ -114,7 +114,9 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
     async def send(cid, *, continuation=False):
         if adapter == "mcp":
             arguments = dict(message="hello", plaintext=True, leaving=True)
-            arguments.update({"session_id": cid} if continuation else {"to_address": bob.address})
+            arguments.update(
+                {"session_id": cid} if continuation else {"to_address": bob.address}
+            )
             path = "/human-refusal-mcp/"
             raw = json.dumps(
                 {
@@ -156,7 +158,10 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
             else:
                 path = "/v1/chat/sessions"
                 payload.update(
-                    session_id=cid, to_addresses=[bob.address], message="hello", leaving=True
+                    session_id=cid,
+                    to_addresses=[bob.address],
+                    message="hello",
+                    leaving=True,
                 )
             raw = json.dumps(payload).encode()
         response = await env.client.post(
@@ -200,10 +205,14 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
             target.id,
         )
         control = await send(str(uuid4()))
-        assert "error" not in control and control.get("http_status", 200) == 200, control
+        assert "error" not in control and control.get("http_status", 200) == 200, (
+            control
+        )
         cid = control["session_id"]
         assert (
-            await foreign_receiver.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}")
+            await foreign_receiver.db.fetch_value(
+                "SELECT count(*) FROM {{tables.chat_messages}}"
+            )
             == 1
         )
         # Publish the actual controller-signed kind and project from fresh SDK
@@ -226,9 +235,14 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(
         assert refused["recipients"] == [bob.address]
         assert kind_lookups == []
         assert foreign_receiver.statuses == [200, 422]
-        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 1
         assert (
-            await foreign_receiver.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}")
+            await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}")
+            == 1
+        )
+        assert (
+            await foreign_receiver.db.fetch_value(
+                "SELECT count(*) FROM {{tables.chat_messages}}"
+            )
             == 1
         )
         assert (

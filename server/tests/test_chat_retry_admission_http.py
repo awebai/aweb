@@ -8,7 +8,10 @@ import pytest
 from nacl.signing import SigningKey
 from awid.signing import canonical_json_bytes, sign_message
 
-from messaging_actor_support import messaging_actor_headers, remove_messaging_agent_from_sessions
+from messaging_actor_support import (
+    messaging_actor_headers,
+    remove_messaging_agent_from_sessions,
+)
 from test_mcp_chat_send_parity import chat_server as chat_server
 from test_mcp_mail_conversation_parity import mail_server as mail_server
 from test_messages_http import _signed_identity_headers
@@ -17,7 +20,9 @@ __all__ = ["chat_server", "mail_server"]
 
 
 @pytest.mark.asyncio
-async def test_named_plaintext_replay_without_timestamp_is_a_request_refusal(chat_server):
+async def test_named_plaintext_replay_without_timestamp_is_a_request_refusal(
+    chat_server,
+):
     env = chat_server
     session_id, message_id = await env.first_chat(
         "mcp", "pilot", "accepted original", to_alias="bob"
@@ -61,8 +66,12 @@ async def test_named_plaintext_replay_without_timestamp_is_a_request_refusal(cha
     assert valid.status_code == 200, valid.text
     assert valid.json()["message_id"] == message_id
     assert valid.json()["session_id"] == session_id
-    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 1
-    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_sessions}}") == 1
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 1
+    )
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_sessions}}") == 1
+    )
     assert env.mutations == before
 
 
@@ -82,7 +91,9 @@ def _accepted_plaintext_request(row):
 
 
 @pytest.mark.asyncio
-async def test_chat_cleanup_preserves_history_but_rejects_a_changed_live_replay(chat_server):
+async def test_chat_cleanup_preserves_history_but_rejects_a_changed_live_replay(
+    chat_server,
+):
     env = chat_server
     pilot, bob = env.actors["pilot"], env.actors["bob"]
     session_id, message_id = await env.first_chat(
@@ -106,22 +117,30 @@ async def test_chat_cleanup_preserves_history_but_rejects_a_changed_live_replay(
             },
         )
 
-    mail_body = json.dumps({
-        "to_did": bob.stable_id, "subject": "Existing thread", "body": "retained mail",
-    }).encode()
+    mail_body = json.dumps(
+        {
+            "to_did": bob.stable_id,
+            "subject": "Existing thread",
+            "body": "retained mail",
+        }
+    ).encode()
     mail = await env.client.post(
-        "/v1/messages", content=mail_body,
+        "/v1/messages",
+        content=mail_body,
         headers=messaging_actor_headers(pilot, body=mail_body, team=False),
     )
     assert mail.status_code == 200, mail.text
 
     async def history(params=None):
         response = await env.client.get(
-            "/v1/conversations", params=params,
+            "/v1/conversations",
+            params=params,
             headers=messaging_actor_headers(pilot, team=False),
         )
         assert response.status_code == 200, response.text
-        return {item["conversation_type"]: item for item in response.json()["conversations"]}
+        return {
+            item["conversation_type"]: item for item in response.json()["conversations"]
+        }
 
     before = (await history())["chat"]
     assert before["conversation_id"] == session_id
@@ -132,26 +151,46 @@ async def test_chat_cleanup_preserves_history_but_rejects_a_changed_live_replay(
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["message_id"] == message_id
     await remove_messaging_agent_from_sessions(
-        env.db, env.fixture.redis, team_id=pilot.team_id, agent_id=bob.agent_id,
+        env.db,
+        env.fixture.redis,
+        team_id=pilot.team_id,
+        agent_id=bob.agent_id,
         registry_client=env.registry,
     )
     refused = await retry()
     assert refused.status_code == 409, refused.text
-    assert "The stored chat participants differ from the resolved recipients" in refused.text
-    assert await env.db.fetch_value(
-        "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1", UUID(session_id)
-    ) == 1
+    assert (
+        "The stored chat participants differ from the resolved recipients"
+        in refused.text
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.chat_messages}} WHERE session_id=$1",
+            UUID(session_id),
+        )
+        == 1
+    )
 
-    for params in (None, {"participant_did": bob.stable_id}, {"participant_address": bob.address}):
+    for params in (
+        None,
+        {"participant_did": bob.stable_id},
+        {"participant_address": bob.address},
+    ):
         filtered = await history(params)
         assert set(filtered) == {"mail", "chat"}
         after = filtered["chat"]
         assert after["conversation_id"] == session_id
-        for field in ("participants", "participant_dids", "participant_addresses", "participant_details"):
+        for field in (
+            "participants",
+            "participant_dids",
+            "participant_addresses",
+            "participant_details",
+        ):
             assert after[field] == before[field]
 
     departed = await env.client.get(
-        "/v1/conversations", params={"conversation_type": "chat"},
+        "/v1/conversations",
+        params={"conversation_type": "chat"},
         headers=messaging_actor_headers(bob, team=False),
     )
     assert departed.status_code == 200, departed.text
@@ -165,13 +204,17 @@ async def test_changed_continued_chat_proof_verifies_before_the_age_only_refusal
 ):
     env = chat_server
     session_id, _ = await env.first_chat("mcp", "pilot", "opened", to_alias="bob")
-    message_id = await env.continued_chat("mcp", "pilot", session_id, "accepted original")
+    message_id = await env.continued_chat(
+        "mcp", "pilot", session_id, "accepted original"
+    )
     row = await env.db.fetch_one(
         "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1", UUID(message_id)
     )
     signed = json.loads(row["signed_payload"])
     signed["timestamp"] = (
-        (datetime.now(timezone.utc) - timedelta(minutes=6)).replace(microsecond=0).isoformat()
+        (datetime.now(timezone.utc) - timedelta(minutes=6))
+        .replace(microsecond=0)
+        .isoformat()
     )
     changed_bytes = canonical_json_bytes(signed)
     sender_key, sender_did = env.keys["pilot"]
@@ -191,7 +234,9 @@ async def test_changed_continued_chat_proof_verifies_before_the_age_only_refusal
             f"/v1/chat/sessions/{session_id}/messages",
             content=raw,
             headers={
-                **_signed_identity_headers(sender_key, sender_did, env.dids["pilot"], raw),
+                **_signed_identity_headers(
+                    sender_key, sender_did, env.dids["pilot"], raw
+                ),
                 "Content-Type": "application/json",
             },
         )
@@ -209,7 +254,9 @@ async def test_changed_continued_chat_proof_verifies_before_the_age_only_refusal
     repeated = await post(_accepted_plaintext_request(row))
     assert repeated.status_code == 200, repeated.text
     assert repeated.json()["message_id"] == message_id
-    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 2
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 2
+    )
     assert env.mutations == before
 
 
@@ -223,7 +270,10 @@ async def test_named_exact_retry_retains_local_party_after_current_key_gains_glo
     env = mail_server
     bob = await admitted_local_recipient(env, team="ops:acme.com")
     accepted = await env.mcp_call(
-        "send_chat", to="local-bob", message="accepted before registration", plaintext=True
+        "send_chat",
+        to="local-bob",
+        message="accepted before registration",
+        plaintext=True,
     )
     assert "error" not in accepted, accepted
     message_id, session_id = accepted["message_id"], accepted["session_id"]
@@ -261,7 +311,9 @@ async def test_named_exact_retry_retains_local_party_after_current_key_gains_glo
         "/v1/chat/sessions",
         content=raw,
         headers={
-            **_signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, raw),
+            **_signed_identity_headers(
+                env.pilot_key, env.pilot_did, env.pilot_stable, raw
+            ),
             "X-Team-ID": "ops:acme.com",
             "Content-Type": "application/json",
         },
@@ -269,5 +321,7 @@ async def test_named_exact_retry_retains_local_party_after_current_key_gains_glo
     assert repeated.status_code == 200, repeated.text
     assert repeated.json()["message_id"] == message_id
     assert repeated.json()["session_id"] == session_id
-    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 1
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 1
+    )
     assert env.custody.payloads == before

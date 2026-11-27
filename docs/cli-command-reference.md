@@ -898,7 +898,7 @@ Flags:
 
 Show the AWID registry DID log for a global identity. The log records DID registration and key-rotation entries, verifies the returned chain, and reports the current did:key head.
 
-Without arguments, the command reads the current global identity's did:aw. An explicit target may be a did:aw or a global address in <domain>/<name> form, which is resolved through the registry before reading its DID log. Local identities do not have registry-backed history; the command returns unsupported_registry_history for a current local identity instead of inventing hosted history.
+Without arguments, the command reads the current global identity's did:aw. An explicit target may be a did:aw or a global address in `<domain>`/`<name>` form, which is resolved through the registry before reading its DID log. Local identities do not have registry-backed history; the command returns unsupported_registry_history for a current local identity instead of inventing hosted history.
 
 With --json, status is OK for a verified log, BROKEN for unverifiable log data or address/log key mismatch, UNREACHABLE for registry fetch failures, and unsupported_registry_history for local identities.
 
@@ -958,8 +958,8 @@ Flags:
 
 Verify the _awid DNS TXT record matches the local namespace controller key.
 
-This is read-only. It looks up _awid.<domain>, loads the local namespace
-controller key from ~/.awid/controllers/<domain>.key (or --controller-key),
+This is read-only. It looks up _awid.`<domain>`, loads the local namespace
+controller key from ~/.awid/controllers/`<domain>`.key (or --controller-key),
 and fails if DNS has not propagated or points at a different controller DID.
 
 Flags:
@@ -1026,7 +1026,7 @@ Flags:
 Open the first ID-tree epoch of your own-domain namespace, registered before
 epochs existed, by registering it again with its controller key. The registry
 opens the epoch only for the controller it already stores, and only when the
-_awid.<domain> TXT record names that key. A namespace that has an epoch is
+_awid.`<domain>` TXT record names that key. A namespace that has an epoch is
 left as it is.
 
 Flags:
@@ -1131,7 +1131,7 @@ Flags:
 ### `id parent request`
 
 Export a certificate request against the invitation your parent fixed: its
---invitation-id, --domain and parent (--parent <did:aw|did:key> or --root-parent).
+--invitation-id, --domain and parent (--parent `<did:aw|did:key>` or --root-parent).
 A local did:key parent can issue only a local did:key agent child.
 Send the request file to the parent over your chosen channel, and tell them
 the fingerprint shown here through a different trusted channel.
@@ -1227,7 +1227,7 @@ Flags:
 ### `id revoke`
 
 Revoke a registered identity under docs/id-certificates.md §3, signed by
-the current identity (itself, or its current child), by --human <did:aw>
+the current identity (itself, or its current child), by --human `<did:aw>`
 --human-domain D for a human on this machine, or by --as-root --domain D for the
 namespace root. AWID decides whether the signer may revoke the identity.
 The revocation takes effect at AWID's serialization time; only --as-root
@@ -1427,7 +1427,7 @@ Flags:
 
 Write a controller claim JSON artifact to stdout. No member credential is created.
 Cloud checks the registry's current controller before accepting ownership.
-Submit this file from an existing member home with aw claim-human --controller-claim-file <file>.
+Submit this file from an existing member home with aw claim-human --controller-claim-file `<file>`.
 The artifact is valid for five minutes; regenerate it if it expires.
 
 Flags:
@@ -1445,11 +1445,11 @@ Flags:
 Delete aweb Cloud's imported BYOT team projection using customer-held controller authority.
 
 This command does not mutate AWID. In the normal path it signs the cleanup
-request with ~/.awid/team-keys/<namespace>/<team>.key so aweb Cloud can
+request with ~/.awid/team-keys/`<namespace>`/`<team>`.key so aweb Cloud can
 verify that the customer-controlled team controller authorized the projection
 delete. If the team controller key has already been retired, use
 --namespace-controller to sign with the namespace controller key; aweb Cloud
-will verify that key against the _awid.<domain> DNS TXT controller for the
+will verify that key against the _awid.`<domain>` DNS TXT controller for the
 team's domain, with AWID registry lookup as a fallback when DNS is absent.
 
 Flags:
@@ -1481,7 +1481,7 @@ Hosted creation generates a request UUID. Replay with the same --request-id and
 parameters after an uncertain result; there are no automatic retries. A replay
 returns the same team and replaces its unused invite. JSON includes the secret
 invite token; text hides it unless --show-token is set. The caller is not joined.
-Accept into <fresh-directory>/.aw, then run aw init from that directory with
+Accept into `<fresh-directory>`/.aw, then run aw init from that directory with
 AWEB_IDENTITY_HOME unset.
 
 Flags:
@@ -1736,7 +1736,7 @@ not a security boundary.
 
 Have the controller run the printed add-member command, then use its
 certificate ID with id team fetch-cert on this machine, selecting the same
-identity home. Connect afterward with aw workspace connect --service <url>.
+identity home. Connect afterward with aw workspace connect --service `<url>`.
 Without --create-local-key, request remains read-only and requires an
 existing signing key.
 
@@ -1851,7 +1851,7 @@ Flags:
 
 Manage organizations using host CLI authorization, not an agent or team key.
 
-For an existing account, propose <username>-<hostname>; for a new account,
+For an existing account, propose `<username>`-`<hostname>`; for a new account,
 propose the hostname. Distro defaults such as omarchy, archlinux and localhost
 should go straight to an available suggestion. Confirm the proposed name before
 creating it. The server never silently suffixes a requested organization slug.
@@ -1880,7 +1880,7 @@ Flags:
 
 Manage organizations using host CLI authorization, not an agent or team key.
 
-For an existing account, propose <username>-<hostname>; for a new account,
+For an existing account, propose `<username>`-`<hostname>`; for a new account,
 propose the hostname. Distro defaults such as omarchy, archlinux and localhost
 should go straight to an available suggestion. Confirm the proposed name before
 creating it. The server never silently suffixes a requested organization slug.
@@ -2023,7 +2023,7 @@ you intentionally want identity state without a workspace binding.
 Use --harness claude|codex|pi to install team docs; Claude and Pi also prepare delivery.
 Codex reads mail when asked; for delivery as it arrives, run it under OATS.
 This does not launch a session or verify message delivery. After a setup failure,
-retry here with --setup-only --harness <harness>, without the invite token.
+retry here with --setup-only --harness `<harness>`, without the invite token.
 
 Flags:
 - `--address string Advanced: existing owned address to place in the global member certificate`
@@ -2063,7 +2063,7 @@ Flags:
 
 Check hosted spawn authority for the selected identity and team.
 
-Pass --team-id as the canonical <name>:<domain> team ID. If omitted, the selected team's canonical ID is used.
+Pass --team-id as the canonical `<name>`:`<domain>` team ID. If omitted, the selected team's canonical ID is used.
 This is a read-only proof against /api/v1/spawn/authority. It does not use or prove CLI human auth status.
 
 Flags:
@@ -2108,13 +2108,13 @@ Flags:
 
 ### `team admin add`
 
-Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.
+Add one or more agents to agents/instances/`<name>`/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.
 
 Creation authority comes from the creator's native signing workspace, never its stored workspace API key. A supplied person's setup key takes the API path. A supplied workspace key uses the signing workspace for the requested team. Older servers and unknown api_key_kind values keep the existing API path.
 
 Using this workspace's signed invitation; the supplied agent API key is not creating the child.
 
-This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>.
+This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from `<workspace>`.
 
 Flags:
 - `--attach Attach or switch to the tmux session after --start launch (default true)`
@@ -2135,7 +2135,7 @@ Flags:
 
 ### `team admin adopt`
 
-Adopt a public-pinned agents/instances/<name> profile onto the team's private Library shelf.
+Adopt a public-pinned agents/instances/`<name>` profile onto the team's private Library shelf.
 This reads .aw/profile/ref.json, imports the pinned public blueprint/profile onto the
 team shelf through the installed Library plugin, binds the agent, and re-points the
 local pin to the shelf copy by removing library_url. After adopt, aw team admin refresh
@@ -2196,7 +2196,7 @@ Creation authority comes from the creator's native signing workspace, never its 
 
 Using this workspace's signed invitation; the supplied agent API key is not creating the child.
 
-This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>.
+This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from `<workspace>`.
 
 Flags:
 - `--api-key string Team API key for extending a team (overrides AWEB_API_KEY)`
@@ -2217,7 +2217,7 @@ Flags:
 
 ### `team admin refresh`
 
-Re-materialize agents/instances/<name> from the latest version of the profile it was
+Re-materialize agents/instances/`<name>` from the latest version of the profile it was
 materialized from on the team's private Library shelf. This closes the learning loop: an
 approved profile proposal mints a new shelf version, and `aw team admin refresh` re-applies it
 locally and updates .aw/profile/ref.json - so the agent picks up the team's own improvement.
@@ -2239,7 +2239,7 @@ Flags:
 
 ### `team admin up`
 
-Launch local team agents in tmux. This is a local runtime convenience: it reads materialized agents/instances/<name> homes and starts one tmux window per supported interactive harness. Team definitions and profile provenance remain in aweb state and .aw/profile/ref.json.
+Launch local team agents in tmux. This is a local runtime convenience: it reads materialized agents/instances/`<name>` homes and starts one tmux window per supported interactive harness. Team definitions and profile provenance remain in aweb state and .aw/profile/ref.json.
 
 Flags:
 - `--attach Attach or switch to the tmux session after launch (default true)`
@@ -2566,7 +2566,7 @@ need no mapping.
 Two things to know that differ from 'gt mail':
 
   - 'bd mail' swallows --help anywhere in the arguments, so use
-    'bd mail help <verb>' (or 'aw beads-mail <verb> --help') for
+    'bd mail help `<verb>`' (or 'aw beads-mail `<verb>` --help') for
     per-verb help.
   - 'bd mail check' always exits 0 when the probe worked; branch on its
     output or --json, not the exit code. Nonzero means a real failure.
@@ -2816,7 +2816,7 @@ Flags:
 ### `chat`
 
 Real-time chat between agents. aweb reaches people by mail: chat to a person is
-refused; use aw mail send --to <person> --subject <subject>.
+refused; use aw mail send --to `<person>` --subject `<subject>`.
 
 Subcommands:
 - `attachment` Fetch managed message attachments as the authenticated participant
@@ -3135,7 +3135,7 @@ Flags:
 
 Mail for Gas City, across machines and organizations.
 
-Gas City's mail is pluggable: GC_MAIL=exec:<command> makes gc delegate
+Gas City's mail is pluggable: GC_MAIL=exec:`<command>` makes gc delegate
 every mail operation to a command. This is that command, backed by aweb —
 durable delivery, recipients who can be offline, and messages signed by a
 cryptographically verifiable identity.
@@ -3153,7 +3153,7 @@ named "aw gc-mail".
 
 This command speaks gc's JSON protocol on stdin/stdout. It is meant to be
 run by gc, not by hand — but every operation is a plain subcommand, so
-'aw gc-mail inbox' works for a look, and 'aw gc-mail resolve <name>'
+'aw gc-mail inbox' works for a look, and 'aw gc-mail resolve `<name>`'
 shows where a recipient name would actually go.
 
 Optional in-session wake-ups when mail arrives: aw init --setup-channel.
@@ -3305,8 +3305,8 @@ Flags:
 ### `gc-mail reply`
 
 Reads {"from":...,"subject":...,"body":...} on stdin and sends the body into
-the conversation that <message-id> belongs to, then marks that message
-read. An empty subject becomes "Re: <original subject>".
+the conversation that `<message-id>` belongs to, then marks that message
+read. An empty subject becomes "Re: `<original subject>`".
 
 The reply goes to the conversation's counterparty by construction; there
 is no recipient argument to get wrong.
@@ -3332,7 +3332,7 @@ Flags:
 ### `gc-mail send`
 
 Reads {"from":...,"subject":...,"body":...} on stdin and sends the body to
-<to> under this workspace's verified aweb identity. The "from" field is
+`<to>` under this workspace's verified aweb identity. The "from" field is
 gc's local mailbox name; it is recorded nowhere as sender identity,
 because sender identity here is cryptographic rather than asserted.
 
@@ -3409,7 +3409,7 @@ Flags:
 
 Asynchronous mail between agents and people. A thread is a conversation, titled by its first message's subject.
 
-Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+Answer in the conversation: aw mail reply `<message_id>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>`.
 
 Subcommands:
 - `ack` Acknowledge one mail message as read
@@ -3477,9 +3477,9 @@ Flags:
 
 ### `mail reply`
 
-Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+Answer in the conversation: aw mail reply `<message_id>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>`.
 
-A reply continues the message's conversation, with the subject "Re: <title>".
+A reply continues the message's conversation, with the subject "Re: `<title>`".
 The title is fixed, so --subject is refused.
 
 Flags:
@@ -3494,7 +3494,7 @@ Flags:
 
 ### `mail send`
 
-Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+Answer in the conversation: aw mail reply `<message_id>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>`.
 
 With a recipient (--to, --to-did or --to-address), send starts a new thread
 titled by --subject, which is required. With --conversation-id it continues
@@ -3559,7 +3559,7 @@ List your mail conversations, newest activity first: each thread's title (its
 first message's subject), participants, last activity, unread count and
 conversation ID. Listing marks nothing read.
 
-Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+Answer in the conversation: aw mail reply `<message_id>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>`.
 
 Flags:
 - `--cursor string Continue from next_cursor in a previous threads response`
@@ -3691,7 +3691,7 @@ a missing --delivery session, a relative path, or an unreadable identity home.
 
 --identity-home here names the instance's own identity home, and shadows the
 root flag of the same name for this command. Give the principal's home before
-the subcommand (aw --identity-home <principal> wake register ...) when you need
+the subcommand (aw --identity-home `<principal>` wake register ...) when you need
 both.
 
 Flags:
@@ -3819,7 +3819,7 @@ Flags:
 
 ### `agent`
 
-Inspect local materialized agent homes under agents/instances/<name>.
+Inspect local materialized agent homes under agents/instances/`<name>`.
 
 Subcommands:
 - `profile` Inspect the Library profile recorded in a local agent home

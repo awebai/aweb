@@ -34,7 +34,8 @@ def _probe_app():
     async def probe(request: Request):
         body = await request.body()
         return {
-            "size": len(body), "sha256": hashlib.sha256(body).hexdigest(),
+            "size": len(body),
+            "sha256": hashlib.sha256(body).hexdigest(),
             "cached_sha256": request.state.body_sha256,
             "encoding": request.headers.get("content-encoding"),
             "length": request.headers.get("content-length"),
@@ -57,15 +58,20 @@ async def test_original_bytes_reach_body_cache_and_routes(encoding):
     headers = {"Content-Encoding": encoding} if encoding else {}
     if compressed:
         headers["Transfer-Encoding"] = "chunked"
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
         response = await client.post(
-            "/compression-probe", content=gzip.compress(body) if compressed else body,
+            "/compression-probe",
+            content=gzip.compress(body) if compressed else body,
             headers=headers,
         )
     assert response.status_code == 200, response.text
     result = response.json()
     assert result["size"] == len(body)
-    assert result["sha256"] == result["cached_sha256"] == hashlib.sha256(body).hexdigest()
+    assert (
+        result["sha256"] == result["cached_sha256"] == hashlib.sha256(body).hexdigest()
+    )
     assert result["length"] == str(len(body))
     assert result["encoding"] == (None if compressed else encoding)
     assert result["transfer"] is None
@@ -78,39 +84,68 @@ async def test_original_bytes_reach_body_cache_and_routes(encoding):
 async def test_large_plain_writes_remain_accepted(encoding):
     app, _ = _probe_app()
     body = b"x" * (CAP + 1)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
-        response = await client.post("/compression-probe", content=body,
-                                     headers={"Content-Encoding": encoding} if encoding else {})
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/compression-probe",
+            content=body,
+            headers={"Content-Encoding": encoding} if encoding else {},
+        )
     assert response.status_code == 200
     assert response.json()["size"] == len(body)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body,encoding,status", [
-    (gzip.compress(b"x" * (CAP + 1)), "gzip", 413),
-    (gzip.compress(random.Random(42).randbytes(CAP + 1)), "gzip", 413),
-    (b"not gzip", "gzip", 400),
-    (b"", "gzip", 400),
-    (gzip.compress(b"hello")[:-1], "gzip", 400),
-    (gzip.compress(b"hello")[:-1] + b"\xff", "gzip", 400),
-    (gzip.compress(b"hello") + b"junk", "gzip", 400),
-    (b"plain", "br", 415),
-    (gzip.compress(b"hello"), "gzip, identity", 415),
-], ids=["decoded-cap", "compressed-cap", "corrupt", "empty", "truncated", "bad-checksum", "trailing", "br", "stacked"])
+@pytest.mark.parametrize(
+    "body,encoding,status",
+    [
+        (gzip.compress(b"x" * (CAP + 1)), "gzip", 413),
+        (gzip.compress(random.Random(42).randbytes(CAP + 1)), "gzip", 413),
+        (b"not gzip", "gzip", 400),
+        (b"", "gzip", 400),
+        (gzip.compress(b"hello")[:-1], "gzip", 400),
+        (gzip.compress(b"hello")[:-1] + b"\xff", "gzip", 400),
+        (gzip.compress(b"hello") + b"junk", "gzip", 400),
+        (b"plain", "br", 415),
+        (gzip.compress(b"hello"), "gzip, identity", 415),
+    ],
+    ids=[
+        "decoded-cap",
+        "compressed-cap",
+        "corrupt",
+        "empty",
+        "truncated",
+        "bad-checksum",
+        "trailing",
+        "br",
+        "stacked",
+    ],
+)
 async def test_bad_encoding_refused_before_inner_middleware(body, encoding, status):
     app, seen = _probe_app()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
-        response = await client.post("/compression-probe", content=body, headers={"Content-Encoding": encoding})
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/compression-probe", content=body, headers={"Content-Encoding": encoding}
+        )
     assert response.status_code == status, response.text
     assert response.headers["accept-encoding"] == "gzip"
     assert seen == []
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path,status", [("/live", 200), ("/health", 503), ("/absent", 404), ("/compression-error", 500)])
+@pytest.mark.parametrize(
+    "path,status",
+    [("/live", 200), ("/health", 503), ("/absent", 404), ("/compression-error", 500)],
+)
 async def test_all_responses_advertise_gzip(path, status):
     app, _ = _probe_app()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app, raise_app_exceptions=False), base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
         response = await client.get(path)
     assert response.status_code == status
     assert response.headers.get_list("accept-encoding") == ["gzip"]
@@ -119,34 +154,61 @@ async def test_all_responses_advertise_gzip(path, status):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("auth", ["identity", "team-v2"])
 @pytest.mark.parametrize("encoding", [None, "identity", "gzip"])
-async def test_gzip_signed_mail_uses_decoded_bytes_and_rejects_tampering(privacy_app, auth, encoding):
+async def test_gzip_signed_mail_uses_decoded_bytes_and_rejects_tampering(
+    privacy_app, auth, encoding
+):
     env = privacy_app
     alice = env.actors["alice"]
-    original = json.dumps({"to_did": env.actors["bob"].did, "subject": "compressed signed mail", "body": "hello"}).encode()
+    original = json.dumps(
+        {
+            "to_did": env.actors["bob"].did,
+            "subject": "compressed signed mail",
+            "body": "hello",
+        }
+    ).encode()
     if auth == "identity":
         headers = _signed_identity_headers(alice.sk, alice.did, "", original)
     else:
-        headers = _signed_team_headers(alice.sk, alice.did, TEAM, alice.certificate, original)
+        headers = _signed_team_headers(
+            alice.sk, alice.did, TEAM, alice.certificate, original
+        )
         env.app.state.public_origin = "http://compression.test"
-        signed = canonical_json_bytes({
-            "v": 2, "aud": env.app.state.public_origin, "method": "POST", "path": "/v1/messages",
-            "body_sha256": hashlib.sha256(original).hexdigest(), "team_id": TEAM,
-            "timestamp": headers["X-AWEB-Timestamp"],
-        })
-        headers["X-AWEB-Signed-Payload"] = base64.urlsafe_b64encode(signed).rstrip(b"=").decode()
-        headers["Authorization"] = f"DIDKey {alice.did} {sign_message(alice.sk, signed)}"
+        signed = canonical_json_bytes(
+            {
+                "v": 2,
+                "aud": env.app.state.public_origin,
+                "method": "POST",
+                "path": "/v1/messages",
+                "body_sha256": hashlib.sha256(original).hexdigest(),
+                "team_id": TEAM,
+                "timestamp": headers["X-AWEB-Timestamp"],
+            }
+        )
+        headers["X-AWEB-Signed-Payload"] = (
+            base64.urlsafe_b64encode(signed).rstrip(b"=").decode()
+        )
+        headers["Authorization"] = (
+            f"DIDKey {alice.did} {sign_message(alice.sk, signed)}"
+        )
     headers["Content-Type"] = "application/json"
     if encoding:
         headers["Content-Encoding"] = encoding
     encode = gzip.compress if encoding == "gzip" else lambda body: body
-    response = await env.client.post("/v1/messages", content=encode(original), headers=headers)
+    response = await env.client.post(
+        "/v1/messages", content=encode(original), headers=headers
+    )
     assert response.status_code == 200, response.text
     assert response.headers["accept-encoding"] == "gzip"
-    row = await env.db.fetch_one("SELECT body FROM {{tables.messages}} WHERE message_id = $1", UUID(response.json()["message_id"]))
+    row = await env.db.fetch_one(
+        "SELECT body FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(response.json()["message_id"]),
+    )
     assert row["body"] == "hello"
     count = await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}")
     tampered = original.replace(b"hello", b"forged")
-    refused = await env.client.post("/v1/messages", content=encode(tampered), headers=headers)
+    refused = await env.client.post(
+        "/v1/messages", content=encode(tampered), headers=headers
+    )
     assert refused.status_code == 401, refused.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == count
 
@@ -163,13 +225,22 @@ async def _asgi_upload(chunks, *, cap=128, headers=None, nested=False):
             return {"type": "http.disconnect"}
         chunk = chunks[consumed]
         consumed += 1
-        return {"type": "http.request", "body": chunk, "more_body": consumed < len(chunks)}
+        return {
+            "type": "http.request",
+            "body": chunk,
+            "more_body": consumed < len(chunks),
+        }
 
     async def inner(scope, receive, send):
         body = await receive()
         seen.append((scope, body))
-        await send({"type": "http.response.start", "status": 200,
-                    "headers": [(b"accept-encoding", b"obsolete"), (b"x-fixture", b"kept")]})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"accept-encoding", b"obsolete"), (b"x-fixture", b"kept")],
+            }
+        )
         await send({"type": "http.response.body", "body": b"ok"})
 
     app = RequestDecompressionMiddleware(inner, max_body_bytes=cap)
@@ -189,19 +260,31 @@ async def _asgi_upload(chunks, *, cap=128, headers=None, nested=False):
 async def test_chunked_concatenated_members_and_nested_decoding(nested):
     body = b"hello" * 20
     packed = gzip.compress(body[:50]) + gzip.compress(body[50:])
-    sent, seen, _ = await _asgi_upload([packed[i:i+1] for i in range(len(packed))], nested=nested,
-        headers=[(b"content-encoding", b"gzip"), (b"content-length", b"wrong"), (b"transfer-encoding", b"chunked")])
+    sent, seen, _ = await _asgi_upload(
+        [packed[i : i + 1] for i in range(len(packed))],
+        nested=nested,
+        headers=[
+            (b"content-encoding", b"gzip"),
+            (b"content-length", b"wrong"),
+            (b"transfer-encoding", b"chunked"),
+        ],
+    )
     assert len(seen) == 1
     scope, message = seen[0]
     assert message == {"type": "http.request", "body": body, "more_body": False}
     assert scope["headers"] == [(b"content-length", b"100")]
     assert sent[0]["status"] == 200
-    assert sent[0]["headers"] == [(b"x-fixture", b"kept"), (b"accept-encoding", b"gzip")]
+    assert sent[0]["headers"] == [
+        (b"x-fixture", b"kept"),
+        (b"accept-encoding", b"gzip"),
+    ]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("decoded_size,status", [(128, 200), (129, 413)])
-async def test_decoded_cap_boundary_with_bounded_zlib_output(monkeypatch, decoded_size, status):
+async def test_decoded_cap_boundary_with_bounded_zlib_output(
+    monkeypatch, decoded_size, status
+):
     from aweb import request_compression
 
     factory = request_compression.zlib.decompressobj
@@ -251,8 +334,10 @@ async def test_compressed_cap_boundary(extra, status):
 
 @pytest.mark.asyncio
 async def test_duplicate_encoding_headers_are_unsupported():
-    sent, seen, consumed = await _asgi_upload([gzip.compress(b"hi")],
-        headers=[(b"content-encoding", b"gzip"), (b"content-encoding", b"identity")])
+    sent, seen, consumed = await _asgi_upload(
+        [gzip.compress(b"hi")],
+        headers=[(b"content-encoding", b"gzip"), (b"content-encoding", b"identity")],
+    )
     assert sent[0]["status"] == 415
     assert seen == [] and consumed == 0
 
@@ -265,13 +350,16 @@ async def test_decoder_internal_error_is_a_bounded_advertised_500(monkeypatch, c
         raise RuntimeError("fixture private internal detail")
 
     monkeypatch.setattr(RequestDecompressionMiddleware, "_decode", broken)
+
     async def inner(scope, receive, send):
         pytest.fail("decoder failure must not call the inner app")
 
     app = RequestDecompressionMiddleware(inner)
     transport = httpx.ASGITransport(app, raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/", content=gzip.compress(b"hi"), headers={"Content-Encoding": "gzip"})
+        response = await client.post(
+            "/", content=gzip.compress(b"hi"), headers={"Content-Encoding": "gzip"}
+        )
     assert response.status_code == 500
     assert response.headers.get_list("accept-encoding") == ["gzip"]
     assert response.content == b"Internal server error"
@@ -284,13 +372,17 @@ async def test_non_http_is_untouched(kind):
     from aweb.request_compression import RequestDecompressionMiddleware
 
     scope = {"type": kind}
+
     async def receive():
         return {"type": "fixture"}
+
     async def send(message):
         pass
+
     async def inner(actual_scope, actual_receive, actual_send):
         assert actual_scope is scope
         assert actual_receive is receive and actual_send is send
+
     await RequestDecompressionMiddleware(inner)(scope, receive, send)
 
 
@@ -309,7 +401,9 @@ async def test_inner_failure_after_response_start_never_sends_a_second_response(
 
     async def inner(scope, receive, send):
         await send({"type": "http.response.start", "status": 202, "headers": []})
-        await send({"type": "http.response.body", "body": b"partial", "more_body": True})
+        await send(
+            {"type": "http.response.body", "body": b"partial", "more_body": True}
+        )
         raise error
 
     async def receive():
@@ -319,21 +413,29 @@ async def test_inner_failure_after_response_start_never_sends_a_second_response(
         sent.append(message)
 
     with pytest.raises(RuntimeError) as raised:
-        await RequestDecompressionMiddleware(inner)({"type": "http", "headers": []}, receive, send)
+        await RequestDecompressionMiddleware(inner)(
+            {"type": "http", "headers": []}, receive, send
+        )
     assert raised.value is error
     starts = [message for message in sent if message["type"] == "http.response.start"]
     assert len(starts) == 1
     assert starts[0]["status"] == 202
     assert starts[0]["headers"] == [(b"accept-encoding", b"gzip")]
-    records = [record for record in caplog.records if record.name == "aweb.request_compression"]
+    records = [
+        record for record in caplog.records if record.name == "aweb.request_compression"
+    ]
     assert len(records) == 1
     assert records[0].exc_info[1] is error
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("encoding", [None, "gzip"], ids=["plain", "gzip"])
-@pytest.mark.parametrize("started", [False, True], ids=["before-response", "after-response"])
-async def test_application_error_reaches_asgi_server_after_one_response(encoding, started, caplog):
+@pytest.mark.parametrize(
+    "started", [False, True], ids=["before-response", "after-response"]
+)
+async def test_application_error_reaches_asgi_server_after_one_response(
+    encoding, started, caplog
+):
     from aweb.request_compression import RequestDecompressionMiddleware
 
     error = RuntimeError("fixture application failure")
@@ -343,7 +445,9 @@ async def test_application_error_reaches_asgi_server_after_one_response(encoding
         assert (await receive())["body"] == b"original bytes"
         if started:
             await send({"type": "http.response.start", "status": 202, "headers": []})
-            await send({"type": "http.response.body", "body": b"partial", "more_body": True})
+            await send(
+                {"type": "http.response.body", "body": b"partial", "more_body": True}
+            )
         raise error
 
     middleware = RequestDecompressionMiddleware(inner)
@@ -352,13 +456,17 @@ async def test_application_error_reaches_asgi_server_after_one_response(encoding
         async def record(message):
             sent.append(message)
             await send(message)
+
         await middleware(scope, receive, record)
 
     transport = httpx.ASGITransport(observed, raise_app_exceptions=True)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         with pytest.raises(RuntimeError) as raised:
             await client.post(
-                "/", content=gzip.compress(b"original bytes") if encoding else b"original bytes",
+                "/",
+                content=gzip.compress(b"original bytes")
+                if encoding
+                else b"original bytes",
                 headers={"Content-Encoding": encoding} if encoding else {},
             )
     assert raised.value is error
@@ -369,6 +477,8 @@ async def test_application_error_reaches_asgi_server_after_one_response(encoding
     bodies = [message for message in sent if message["type"] == "http.response.body"]
     assert len(bodies) == 1
     assert bodies[0]["body"] == (b"partial" if started else b"Internal server error")
-    records = [record for record in caplog.records if record.name == "aweb.request_compression"]
+    records = [
+        record for record in caplog.records if record.name == "aweb.request_compression"
+    ]
     assert len(records) == 1
     assert records[0].exc_info[1] is error

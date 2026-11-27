@@ -5,6 +5,7 @@ Run with --image naming an existing Python image. No image build is needed.
 The CLI adapter supplies a resolver default only when the harness leaves it unset;
 all Docker commands, DNS replies and child lookups are real.
 """
+
 import argparse
 import os
 from pathlib import Path
@@ -14,14 +15,21 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+# Set by --image and --evidence when run as a script.
+IMAGE = EVIDENCE = None
 
 
 class DockerDNS(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if IMAGE is None:
+            raise unittest.SkipTest("run as a script with --image and --evidence")
+
     def run_guard(self, child, *, collect_summary=False):
         evidence = EVIDENCE / self._testMethodName
-        with tempfile.TemporaryDirectory(prefix='aw-dns-default-') as temp:
-            adapter = Path(temp) / 'docker'
-            adapter.write_text('''#!/usr/bin/env python3
+        with tempfile.TemporaryDirectory(prefix="aw-dns-default-") as temp:
+            adapter = Path(temp) / "docker"
+            adapter.write_text("""#!/usr/bin/env python3
 import os
 import sys
 args = sys.argv[1:]
@@ -33,24 +41,40 @@ if args and args[0] == 'run' and '--dns' in args and not any(
 ):
     args[1:1] = ['--dns-search', 'runner.internal.cloudapp.net']
 os.execv(os.environ['TEST_REAL_DOCKER'], [os.environ['TEST_REAL_DOCKER'], *args])
-''')
+""")
             adapter.chmod(0o755)
-            env = dict(os.environ, TEST_REAL_DOCKER=shutil.which('docker'),
-                       TEST_DNS_SOURCE=str(ROOT / 'scripts/test-egress'),
-                       PATH=temp + os.pathsep + os.environ['PATH'])
-            summary_args = ['--collect-summary'] if collect_summary else []
+            env = dict(
+                os.environ,
+                TEST_REAL_DOCKER=shutil.which("docker"),
+                TEST_DNS_SOURCE=str(ROOT / "scripts/test-egress"),
+                PATH=temp + os.pathsep + os.environ["PATH"],
+            )
+            summary_args = ["--collect-summary"] if collect_summary else []
             result = subprocess.run(
-                ['python3', str(ROOT / 'scripts/test-egress/docker.py'),
-                 '--evidence', str(evidence), '--image', IMAGE, *summary_args,
-                 '--command', 'python3', '-c', child],
-                env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                [
+                    "python3",
+                    str(ROOT / "scripts/test-egress/docker.py"),
+                    "--evidence",
+                    str(evidence),
+                    "--image",
+                    IMAGE,
+                    *summary_args,
+                    "--command",
+                    "python3",
+                    "-c",
+                    child,
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
             )
         print(result.stdout, flush=True)
-        (evidence / 'qualification.log').write_text(result.stdout)
+        (evidence / "qualification.log").write_text(result.stdout)
         return result, evidence
 
     def qualify(self, name, *, child_status=0, collect_summary=False):
-        child = f'''import socket
+        child = f"""import socket
 from pathlib import Path
 print(Path('/etc/resolv.conf').read_text(), flush=True)
 try:
@@ -61,50 +85,58 @@ else:
     raise AssertionError('The no-upstream DNS sink resolved the lookup')
 print('Expected DNS refusal', flush=True)
 raise SystemExit({child_status})
-'''
+"""
         result, evidence = self.run_guard(child, collect_summary=collect_summary)
-        self.assertIn(f'Test child exit status: {child_status};', result.stdout)
+        self.assertIn(f"Test child exit status: {child_status};", result.stdout)
         return result.returncode, evidence
 
     def test_governance_alias_resolves_only_to_runner_loopback(self):
-        child = ("import socket\n"
-                 "answers = {a[4][0] for a in socket.getaddrinfo('signer.example.com', 443)}\n"
-                 "assert answers == {'127.0.0.1'}, answers\n"
-                 "print('Governance driver alias resolves to literal loopback', flush=True)\n")
+        child = (
+            "import socket\n"
+            "answers = {a[4][0] for a in socket.getaddrinfo('signer.example.com', 443)}\n"
+            "assert answers == {'127.0.0.1'}, answers\n"
+            "print('Governance driver alias resolves to literal loopback', flush=True)\n"
+        )
         result, evidence = self.run_guard(child)
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn('Governance driver alias resolves to literal loopback',
-                      (evidence / 'suite.log').read_text())
-        self.assertEqual((evidence / 'dns-denied.log').read_text(), '')
-        report = evidence / 'dns-denied.log.reported'
+        self.assertIn(
+            "Governance driver alias resolves to literal loopback",
+            (evidence / "suite.log").read_text(),
+        )
+        self.assertEqual((evidence / "dns-denied.log").read_text(), "")
+        report = evidence / "dns-denied.log.reported"
         if report.exists():
-            self.assertEqual(report.read_text(), '')
+            self.assertEqual(report.read_text(), "")
 
     def test_reserved_lookup_ignores_inherited_search(self):
-        status, evidence = self.qualify('override.test')
+        status, evidence = self.qualify("override.test")
         self.assertEqual(status, 0)
-        self.assertEqual((evidence / 'dns-denied.log').read_text(), '')
-        self.assertIn('override.test', (evidence / 'dns-denied.log.reported').read_text())
+        self.assertEqual((evidence / "dns-denied.log").read_text(), "")
+        self.assertIn(
+            "override.test", (evidence / "dns-denied.log.reported").read_text()
+        )
 
     def test_public_lookup_still_fails_guard(self):
-        status, evidence = self.qualify('example.com')
+        status, evidence = self.qualify("example.com")
         self.assertEqual(status, 1)
-        self.assertIn('example.com', (evidence / 'dns-denied.log').read_text())
+        self.assertIn("example.com", (evidence / "dns-denied.log").read_text())
 
     def test_missing_summary_retains_dns_report_and_child_exit(self):
-        status, evidence = self.qualify('example.com', child_status=23, collect_summary=True)
-        output = (evidence / 'qualification.log').read_text()
-        self.assertIn('TEST DNS EGRESS DENIED:', output)
-        self.assertIn('example.com', (evidence / 'dns-denied.log').read_text())
-        self.assertIn('TEST SUMMARY COPY FAILED:', output)
+        status, evidence = self.qualify(
+            "example.com", child_status=23, collect_summary=True
+        )
+        output = (evidence / "qualification.log").read_text()
+        self.assertIn("TEST DNS EGRESS DENIED:", output)
+        self.assertIn("example.com", (evidence / "dns-denied.log").read_text())
+        self.assertIn("TEST SUMMARY COPY FAILED:", output)
         self.assertEqual(status, 23, output)
-        self.assertFalse((evidence / 'summary.tsv').exists())
+        self.assertFalse((evidence / "summary.tsv").exists())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--image', required=True)
-    parser.add_argument('--evidence', type=Path, required=True)
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--evidence", type=Path, required=True)
     args, remaining = parser.parse_known_args()
     IMAGE, EVIDENCE = args.image, args.evidence.resolve()
     unittest.main(argv=[__file__, *remaining])

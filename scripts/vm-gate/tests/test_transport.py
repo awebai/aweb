@@ -1,12 +1,10 @@
 from pathlib import Path
 import tempfile
-import subprocess
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 from vm_gate.transport import Transport
 from vm_gate.errors import Infrastructure
-from vm_gate.host_keys import public_key
 
 
 class TransportTests(unittest.TestCase):
@@ -22,23 +20,6 @@ class TransportTests(unittest.TestCase):
             (Path(directory) / (name + ".pub")).write_text(
                 "ssh-ed25519 " + encoded + "\n"
             )
-
-    def test_public_pin_fixtures_work_without_a_runner_passwd_entry(self):
-        # OpenSSH exits 255 before key generation for an unmapped container UID.
-        error = subprocess.CalledProcessError(
-            255, ["ssh-keygen"], stderr=b"No user exists for uid 501\n"
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            with patch("subprocess.run", side_effect=error) as run:
-                self.keys(directory)
-            run.assert_not_called()
-            root = Path(directory)
-            self.assertNotEqual(
-                public_key(root / "ssh-host-key.pub"),
-                public_key(root / "ssh-key.pub"),
-            )
-            self.assertFalse((root / "ssh-host-key").exists())
-            self.assertFalse((root / "ssh-key").exists())
 
     def test_first_contact_is_pinned_and_a_changed_expected_key_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:

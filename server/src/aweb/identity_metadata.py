@@ -11,8 +11,6 @@ from awid.team_ids import parse_team_id
 from awid.signing import canonical_json_bytes
 from aweb.human_channels.contract import (
     ContractError,
-    ContractRecord,
-    canonical_record,
     decode_record,
 )
 
@@ -30,19 +28,6 @@ def native_participant_reference(did: str) -> dict[str, str] | None:
         ).value
     except ContractError:
         return None
-
-
-async def lookup_participant_identity_metadata(
-    db_or_manager, participant: ContractRecord
-) -> dict[str, str]:
-    """Typed metadata only; a guest never resolves as its bridge's agent row."""
-    if participant.schema not in ("NativeParticipant", "BridgedParticipant"):
-        raise ContractError("invalid", "participant reference")
-    ref = decode_record(participant.schema, canonical_record(participant)).value
-    if ref["kind"] == "bridged":
-        return {"participant_kind": "bridged", "author_assurance": "platform_attested"}
-    values = await lookup_identity_metadata_by_did(db_or_manager, [ref["did"]])
-    return {**values.get(ref["did"], {}), "participant_kind": "native"}
 
 
 def routable_chat_address(

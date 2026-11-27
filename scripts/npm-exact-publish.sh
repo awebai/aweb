@@ -7,10 +7,6 @@
 #       files[] entry contributed at least one path. Prints the sha256.
 #   publish-exact    --tgz <file> [--staged-final]
 #       npm publish of the exact staged tgz. Nothing is repacked.
-#   verify-published --tgz <file> --package <name> --version <X.Y.Z>
-#                    [--observed <file>]
-#       Download the registry tarball (or use --observed) and refuse
-#       unless its bytes are identical to the staged tgz.
 #   verify-published-bounded --tgz <file> --package <name> --version <X.Y.Z>
 #                    --post-action <publish|adopt>
 #                    [--dist-tag <tag>] [--deadline-seconds <n>] [--backoff-seconds <n>]
@@ -18,24 +14,6 @@
 #       visibility until a strict deadline. Succeeds only on the exact staged
 #       bytes and integrity (plus --dist-tag when supplied); the default
 #       window is 25 minutes. A present mismatch refuses without retry.
-#   require-publishable --manifest <manifest.json>
-#       Refuse unless the staged manifest records mode stage-only; a
-#       verify-only artifact must never continue to publication.
-#   verify-manifest  --staging <dir> --manifest <manifest.json>
-#                    --sha <source-sha> --version <X.Y.Z>
-#       Refuse unless the manifest binds the declared source and version
-#       and the staging dir holds exactly the manifest's files, each
-#       matching its digest, with a canonical set digest that recomputes.
-#   validate-inputs  [--sha <40-hex>] [--version <X.Y.Z>]
-#                    [--digest sha256:<64-hex>] [--run-id <n>] [--artifact-id <n>]
-#       Literal-format validation for dispatch inputs.
-#   decide-npm       --observed-status <http-code> [--digest <staged sha256>]
-#                    [--observed <remote sha256 | unavailable>]
-#       Tri-state registry decision. Only HTTP 404 proves absence. With
-#       --digest: 404 -> PUBLISH, 200 with identical --observed -> ADOPT,
-#       200 with different or unavailable digest refuses, any other
-#       status refuses (outage is never proof of absence). Without
-#       --digest (stage guard probe): 404 -> ABSENT, anything else refuses.
 #
 # pack-inspect also accepts --profile <channel|pi|skills> --source-root
 # <repo root>: package-specific contract checks against the unpacked tgz
@@ -61,8 +39,7 @@ sha256() {
 }
 
 MODE="${1:-}"; shift || true
-DIR='' VERSION='' OUT='' TGZ='' PACKAGE='' OBSERVED='' PROFILE='' SOURCE_ROOT=''
-MANIFEST='' STAGING='' SHA='' DIGEST='' RUN_ID='' ARTIFACT_ID='' STATUS=''
+DIR='' VERSION='' OUT='' TGZ='' PACKAGE='' PROFILE='' SOURCE_ROOT=''
 POST_ACTION='' DEADLINE_SECONDS='' BACKOFF_SECONDS='5' DIST_TAG=''
 STAGED_FINAL=0
 while [[ $# -gt 0 ]]; do
@@ -72,16 +49,8 @@ while [[ $# -gt 0 ]]; do
     --out) OUT="$2"; shift 2 ;;
     --tgz) TGZ="$2"; shift 2 ;;
     --package) PACKAGE="$2"; shift 2 ;;
-    --observed) OBSERVED="$2"; shift 2 ;;
-    --observed-status) STATUS="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     --source-root) SOURCE_ROOT="$2"; shift 2 ;;
-    --manifest) MANIFEST="$2"; shift 2 ;;
-    --staging) STAGING="$2"; shift 2 ;;
-    --sha) SHA="$2"; shift 2 ;;
-    --digest) DIGEST="$2"; shift 2 ;;
-    --run-id) RUN_ID="$2"; shift 2 ;;
-    --artifact-id) ARTIFACT_ID="$2"; shift 2 ;;
     --post-action) POST_ACTION="$2"; shift 2 ;;
     --dist-tag) DIST_TAG="$2"; shift 2 ;;
     --staged-final) STAGED_FINAL=1; shift ;;
@@ -222,30 +191,6 @@ PY
     [[ -z "$PROFILE" ]] || profile_inspect "$tgz"
     printf 'STAGED: %s sha256 %s\n' "$(basename "$tgz")" "$(sha256 "$tgz")"
     ;;
-  inspect-tgz)
-    [[ -n "$TGZ" && -f "$TGZ" && -n "$VERSION" ]] \
-      || { echo "inspect-tgz requires --tgz --version" >&2; exit 2; }
-    python3 - "$TGZ" "$VERSION" <<'PY'
-import json, sys, tarfile
-path, version = sys.argv[1], sys.argv[2]
-with tarfile.open(path) as t:
-    names = t.getnames()
-    pkg = json.load(t.extractfile("package/package.json"))
-if pkg["version"] != version:
-    sys.exit(f"REFUSE: tgz declares version {pkg['version']}, expected {version}")
-main = pkg.get("main")
-if main:
-    entry = "package/" + main.lstrip("./")
-    if entry not in names:
-        sys.exit(f"REFUSE: declared main {main.lstrip('./')} is missing from the tgz")
-for spec in pkg.get("files", []):
-    prefix = "package/" + spec.rstrip("/")
-    if not any(n == prefix or n.startswith(prefix + "/") for n in names):
-        sys.exit(f"REFUSE: files entry {spec} contributed nothing to the tgz")
-PY
-    [[ -z "$PROFILE" ]] || profile_inspect "$TGZ"
-    printf 'INSPECTED: %s sha256 %s\n' "$(basename "$TGZ")" "$(sha256 "$TGZ")"
-    ;;
   publish-exact)
     [[ -n "$TGZ" && -f "$TGZ" ]] || fail "publish-exact requires an existing --tgz"
     # Select from the staged bytes, not caller environment or a filename.
@@ -264,21 +209,6 @@ PYTAG
     npm publish "$TGZ" --ignore-scripts --access public --tag "$dist_tag"
     printf 'PUBLISHED: %s sha256 %s\n' "$(basename "$TGZ")" "$(sha256 "$TGZ")"
     ;;
-  verify-published)
-    [[ -n "$TGZ" && -f "$TGZ" ]] || fail "verify-published requires an existing --tgz"
-    if [[ -z "$OBSERVED" ]]; then
-      [[ -n "$PACKAGE" && -n "$VERSION" ]] \
-        || { echo "verify-published requires --package and --version (or --observed)" >&2; exit 2; }
-      OBSERVED="$(mktemp)"
-      tarball="$(npm view "${PACKAGE}@${VERSION}" dist.tarball)"
-      [[ -n "$tarball" ]] || fail "registry has no tarball for ${PACKAGE}@${VERSION}"
-      curl -fsSL -o "$OBSERVED" "$tarball"
-    fi
-    s="$(sha256 "$TGZ")"; o="$(sha256 "$OBSERVED")"
-    [[ "$s" == "$o" ]] \
-      || fail "published bytes $o do not equal staged bytes $s for $(basename "$TGZ")"
-    printf 'VERIFIED: published equals staged (%s)\n' "$s"
-    ;;
   verify-published-bounded)
     [[ -n "$TGZ" && -f "$TGZ" && -n "$PACKAGE" && -n "$VERSION" ]] \
       || fail "verify-published-bounded requires --tgz --package --version"
@@ -296,85 +226,8 @@ PYTAG
     root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     exec python3 "$root/cli/go/npm/readback.py" "${readback_args[@]}"
     ;;
-  decide-npm)
-    # Tri-state registry decision: HTTP 404 alone proves absence (PUBLISH);
-    # a present version adopts only on exact digest (ADOPT) and refuses on
-    # mismatch; any other status or an unavailable digest refuses - an
-    # outage is never permission to stage as absent or publish blind.
-    [[ -n "$STATUS" ]] \
-      || { echo "decide-npm requires --observed-status (and --digest when deciding a staged tgz)" >&2; exit 2; }
-    if [[ -z "$DIGEST" ]]; then
-      # Absence probe (stage guard): no staged bytes yet, so only absence
-      # can be proven; presence and outage both refuse.
-      case "$STATUS" in
-        404) echo ABSENT ;;
-        200) fail "version already exists on the registry" ;;
-        *) fail "registry returned status ${STATUS}; an outage is never proof of absence" ;;
-      esac
-      exit 0
-    fi
-    case "$STATUS" in
-      404) echo PUBLISH ;;
-      200)
-        [[ -n "$OBSERVED" && "$OBSERVED" != "unavailable" ]] \
-          || fail "present version with unavailable remote digest; refusing to act blind"
-        if [[ "$OBSERVED" == "$DIGEST" ]]; then
-          echo ADOPT
-        else
-          fail "registry serves $OBSERVED, staged is $DIGEST; permanent"
-        fi
-        ;;
-      *) fail "registry returned status ${STATUS}; an outage is never proof of absence" ;;
-    esac
-    ;;
-  require-publishable)
-    [[ -n "$MANIFEST" ]] || fail "require-publishable requires --manifest"
-    mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("mode",""))' "$MANIFEST")"
-    [[ "$mode" == "stage-only" ]] \
-      || fail "manifest mode is ${mode:-absent}; only stage-only artifacts publish"
-    echo "PUBLISHABLE: manifest mode is stage-only"
-    ;;
-  verify-manifest)
-    [[ -n "$STAGING" && -n "$MANIFEST" && -n "$SHA" && -n "$VERSION" ]] \
-      || fail "verify-manifest requires --staging --manifest --sha --version"
-    python3 - "$STAGING" "$MANIFEST" "$SHA" "$VERSION" <<'PYMAN'
-import hashlib, json, os, sys
-staging, manifest_path, sha, version = sys.argv[1:5]
-m = json.load(open(manifest_path))
-if m.get("source_sha") != sha:
-    sys.exit(f"REFUSE: manifest source_sha {m.get('source_sha')} does not equal declared {sha}")
-if m.get("candidate_version") != version:
-    sys.exit(f"REFUSE: manifest candidate_version {m.get('candidate_version')} does not equal declared {version}")
-files = m.get("files", {})
-recomputed = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
-if m.get("canonical_set_digest") != recomputed:
-    sys.exit("REFUSE: canonical set digest does not recompute from the files map")
-on_disk = sorted(n for n in os.listdir(staging) if n != "manifest.json")
-if on_disk != sorted(files):
-    sys.exit(f"REFUSE: staging files {on_disk} do not equal the manifest set {sorted(files)}")
-for name, digest in files.items():
-    with open(os.path.join(staging, name), "rb") as f:
-        actual = hashlib.sha256(f.read()).hexdigest()
-    if actual != digest:
-        sys.exit(f"REFUSE: digest mismatch for {name}")
-print(f"MANIFEST OK: {len(files)} files bound to {version}/{sha}")
-PYMAN
-    ;;
-  validate-inputs)
-    [[ -z "$SHA" ]] || [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] \
-      || fail "sha must be exactly 40 lowercase hex characters, got: $SHA"
-    [[ -z "$VERSION" ]] || [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?$ ]] \
-      || fail "version must be X.Y.Z or X.Y.Z-rc.N (N >= 1), got: $VERSION"
-    [[ -z "$DIGEST" ]] || [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
-      || fail "digest must be sha256:<64 lowercase hex>, got: $DIGEST"
-    [[ -z "$RUN_ID" ]] || [[ "$RUN_ID" =~ ^[0-9]+$ ]] \
-      || fail "run-id must be numeric, got: $RUN_ID"
-    [[ -z "$ARTIFACT_ID" ]] || [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]] \
-      || fail "artifact-id must be numeric, got: $ARTIFACT_ID"
-    echo "inputs well-formed"
-    ;;
   *)
-    echo "npm-exact-publish: mode must be pack-inspect | publish-exact | verify-published | require-publishable | verify-manifest | validate-inputs" >&2
+    echo "npm-exact-publish: mode must be pack-inspect | publish-exact | verify-published-bounded" >&2
     exit 2
     ;;
 esac

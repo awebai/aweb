@@ -14,7 +14,10 @@ from test_coordination_state_http import call_mcp, request_as
 from test_coordination_state_http import coordination_mcp
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app
-from test_workspace_liveness_http import _connect_registered_member, _send_member_request
+from test_workspace_liveness_http import (
+    _connect_registered_member,
+    _send_member_request,
+)
 
 __all__ = ["coordination_mcp", "privacy_app"]
 
@@ -115,7 +118,10 @@ async def test_route_heartbeat_and_online_list_keep_the_team_boundary(privacy_ap
     )
     await _connect_registered_member(env, alias="outsider", team_id=foreign_team)
     foreign_heartbeat = await _send_member_request(
-        env, alias="outsider", method="POST", path="/v1/agents/heartbeat",
+        env,
+        alias="outsider",
+        method="POST",
+        path="/v1/agents/heartbeat",
         team_id=foreign_team,
     )
     assert foreign_heartbeat.status_code == 200, foreign_heartbeat.text

@@ -21,7 +21,6 @@ from aweb.service_errors import ConflictError, ValidationError
 CONTACT_ADDRESS_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
 HANDLE_NAMESPACE_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+$")
 TARGET_AGENT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+$")
-CONTACT_REFERENCE_TYPES = {"identity", "handle"}
 CONTACT_STATUSES = {"pending", "active"}
 
 logger = logging.getLogger(__name__)
@@ -68,7 +67,9 @@ async def add_contact(
     if bound_did is not None and not bound_did.startswith("did:aw:"):
         raise ValidationError("Invalid contact_did_aw format")
     if (bound_did is None) != (controller_did is None):
-        raise ValidationError("Identity-bound contacts require DID and controller proof")
+        raise ValidationError(
+            "Identity-bound contacts require DID and controller proof"
+        )
     if controller_did is not None and not controller_did.startswith("did:key:z"):
         raise ValidationError("Invalid binding_controller_did format")
 
@@ -100,8 +101,13 @@ async def add_contact(
 
 
 async def ensure_identity_contact(
-    *, db, owner_did: str, contact_address: str, contact_did_aw: str,
-    binding_controller_did: str, label: str = "",
+    *,
+    db,
+    owner_did: str,
+    contact_address: str,
+    contact_did_aw: str,
+    binding_controller_did: str,
+    label: str = "",
 ) -> dict:
     """Accept a fresh resolved contact, or return an unchanged accepted identity.
 
@@ -113,15 +119,19 @@ async def ensure_identity_contact(
     async with db.transaction() as tx:
         try:
             return await add_contact(
-                TransactionInfra(None, tx), owner_did=owner_did,
-                contact_address=contact_address, contact_did_aw=contact_did_aw,
-                binding_controller_did=binding_controller_did, label=label,
+                TransactionInfra(None, tx),
+                owner_did=owner_did,
+                contact_address=contact_address,
+                contact_did_aw=contact_did_aw,
+                binding_controller_did=binding_controller_did,
+                label=label,
             )
         except ConflictError:
             row = await tx.fetch_one(
                 "SELECT * FROM {{tables.contacts}} "
                 "WHERE owner_did=$1 AND contact_address=$2 AND reference_type='identity' FOR UPDATE",
-                owner_did, normalize_hosted_handle_reference(contact_address),
+                owner_did,
+                normalize_hosted_handle_reference(contact_address),
             )
             if row is not None and row.get("contact_did_aw") == contact_did_aw.strip():
                 # Key/controller rotation for an unchanged stable identity is
@@ -132,10 +142,13 @@ async def ensure_identity_contact(
                 if row is not None and not row.get("contact_did_aw")
                 else "This contact is bound to a different identity. "
             )
-            raise ConflictError({
-                "code": "contact_identity_binding_required",
-                "message": reason + "Use the contact's explicit bind operation before retrying.",
-            }) from None
+            raise ConflictError(
+                {
+                    "code": "contact_identity_binding_required",
+                    "message": reason
+                    + "Use the contact's explicit bind operation before retrying.",
+                }
+            ) from None
 
 
 @dataclass(frozen=True)
@@ -145,7 +158,10 @@ class ContactTransferResult:
 
 
 async def transfer_contacts(
-    *, db, old_owner_dids: Sequence[str], target_owner_did: str,
+    *,
+    db,
+    old_owner_dids: Sequence[str],
+    target_owner_did: str,
 ) -> ContactTransferResult:
     """Transfer host-selected owners' contacts without accepting new bindings.
 
@@ -156,55 +172,87 @@ async def transfer_contacts(
     """
     target = str(target_owner_did or "").strip()
     if not target:
-        raise ValidationError("A target contact owner is required. Select the target identity before retrying.")
+        raise ValidationError(
+            "A target contact owner is required. Select the target identity before retrying."
+        )
     owners = normalize_owner_dids(owner_did=target, owner_dids=list(old_owner_dids))
     try:
         async with db.transaction() as tx:
             rows = await tx.fetch_all(
                 "SELECT * FROM {{tables.contacts}} WHERE owner_did=ANY($1::text[]) "
-                "ORDER BY contact_id FOR UPDATE", owners,
+                "ORDER BY contact_id FOR UPDATE",
+                owners,
             )
             groups: dict[tuple, list] = {}
             for row in rows:
                 reference = row["reference_type"]
                 key = (
-                    (reference, row["contact_address"]) if reference == "identity"
-                    else (reference, row["handle_namespace"], row["target_agent_name"] or "")
+                    (reference, row["contact_address"])
+                    if reference == "identity"
+                    else (
+                        reference,
+                        row["handle_namespace"],
+                        row["target_agent_name"] or "",
+                    )
                 )
                 groups.setdefault(key, []).append(row)
 
             survivors: list[dict] = []
             duplicates: list[UUID] = []
             for group in groups.values():
-                bindings = {row["contact_did_aw"] for row in group if row.get("contact_did_aw")}
+                bindings = {
+                    row["contact_did_aw"] for row in group if row.get("contact_did_aw")
+                }
                 if len(bindings) > 1:
-                    raise ConflictError({
-                        "code": "contact_transfer_binding_conflict",
-                        "message": "These owners accepted different identities for the same contact. "
-                        "Resolve the conflicting contact bindings explicitly before retrying the transfer.",
-                    })
-                chosen = min(group, key=lambda row: (
-                    not bool(row.get("contact_did_aw")), row["owner_did"] != target, str(row["contact_id"]),
-                ))
+                    raise ConflictError(
+                        {
+                            "code": "contact_transfer_binding_conflict",
+                            "message": "These owners accepted different identities for the same contact. "
+                            "Resolve the conflicting contact bindings explicitly before retrying the transfer.",
+                        }
+                    )
+                chosen = min(
+                    group,
+                    key=lambda row: (
+                        not bool(row.get("contact_did_aw")),
+                        row["owner_did"] != target,
+                        str(row["contact_id"]),
+                    ),
+                )
                 survivors.append(chosen)
-                duplicates.extend(row["contact_id"] for row in group if row["contact_id"] != chosen["contact_id"])
+                duplicates.extend(
+                    row["contact_id"]
+                    for row in group
+                    if row["contact_id"] != chosen["contact_id"]
+                )
 
             if duplicates:
-                await tx.execute("DELETE FROM {{tables.contacts}} WHERE contact_id=ANY($1::uuid[])", duplicates)
-            moving = [row["contact_id"] for row in survivors if row["owner_did"] != target]
+                await tx.execute(
+                    "DELETE FROM {{tables.contacts}} WHERE contact_id=ANY($1::uuid[])",
+                    duplicates,
+                )
+            moving = [
+                row["contact_id"] for row in survivors if row["owner_did"] != target
+            ]
             if moving:
                 await tx.execute(
-                    "UPDATE {{tables.contacts}} SET owner_did=$2 WHERE contact_id=ANY($1::uuid[])", moving, target,
+                    "UPDATE {{tables.contacts}} SET owner_did=$2 WHERE contact_id=ANY($1::uuid[])",
+                    moving,
+                    target,
                 )
             return ContactTransferResult(moved=len(moving), merged=len(duplicates))
     except (QueryError, asyncpg.UniqueViolationError) as exc:
-        if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
+        if isinstance(exc, QueryError) and not isinstance(
+            exc.__cause__, asyncpg.UniqueViolationError
+        ):
             raise
         logger.warning("Contacts changed during owner transfer", exc_info=True)
-        raise ConflictError({
-            "code": "contact_transfer_changed",
-            "message": "Contacts changed during the transfer. Retry the transfer with the current contacts.",
-        }) from exc
+        raise ConflictError(
+            {
+                "code": "contact_transfer_changed",
+                "message": "Contacts changed during the transfer. Retry the transfer with the current contacts.",
+            }
+        ) from exc
 
 
 async def add_handle_contact(
@@ -387,7 +435,8 @@ async def resolve_local_namespace_controller_did(
         return None
     if (
         resolved is None
-        or str(getattr(resolved, "did_aw", "") or "").strip() != str(contact_did_aw or "").strip()
+        or str(getattr(resolved, "did_aw", "") or "").strip()
+        != str(contact_did_aw or "").strip()
         or str(getattr(resolved, "current_did_key", "") or "").strip()
         != str(contact_current_did_key or "").strip()
         or namespace is None
@@ -490,8 +539,14 @@ async def bind_contact_identity(
         current_did = str(current.get("contact_did_aw") or "").strip() or None
         if current_did != expected:
             raise ConflictError("Contact identity binding changed")
-        if current_did is not None and current_did != bound_did and not replacement_accepted:
-            raise ConflictError("Contact identity replacement requires explicit acceptance")
+        if (
+            current_did is not None
+            and current_did != bound_did
+            and not replacement_accepted
+        ):
+            raise ConflictError(
+                "Contact identity replacement requires explicit acceptance"
+            )
         row = await tx.fetch_one(
             """
             UPDATE {{tables.contacts}}
@@ -588,7 +643,9 @@ async def resolve_handle_contact_agent(
         "identity_scope": row["identity_scope"],
         "status": row["status"],
         "created_at": row["created_at"].isoformat(),
-        "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
+        "last_seen_at": row["last_seen_at"].isoformat()
+        if row["last_seen_at"]
+        else None,
     }
 
 
@@ -646,7 +703,11 @@ def _normalize_handle_namespace(handle_namespace: str) -> str:
     namespace = normalize_hosted_handle_reference(handle_namespace)
     if namespace.startswith("@"):
         raise ValidationError("Invalid handle_namespace format")
-    if not namespace or "/" in namespace or not HANDLE_NAMESPACE_PATTERN.match(namespace):
+    if (
+        not namespace
+        or "/" in namespace
+        or not HANDLE_NAMESPACE_PATTERN.match(namespace)
+    ):
         raise ValidationError("Invalid handle_namespace format")
     return namespace
 
@@ -669,7 +730,9 @@ def _contact_row_to_dict(row) -> dict:
         "contact_did_aw": row.get("contact_did_aw"),
         "binding_controller_did": row.get("binding_controller_did"),
         "binding_accepted_at": (
-            row["binding_accepted_at"].isoformat() if row.get("binding_accepted_at") else None
+            row["binding_accepted_at"].isoformat()
+            if row.get("binding_accepted_at")
+            else None
         ),
         "label": row["label"],
         "created_at": row["created_at"].isoformat(),

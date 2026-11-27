@@ -46,7 +46,9 @@ async def admit_room_member(env, *, alias):
         identity_scope=certificate["identity_scope"],
         certificate=actor.certificate,
     )
-    connected = await env.client.post("/v1/connect", content=b"{}", headers=headers(actor, b"{}"))
+    connected = await env.client.post(
+        "/v1/connect", content=b"{}", headers=headers(actor, b"{}")
+    )
     assert connected.status_code == 200, connected.text
     assert connected.json()["agent_id"] == str(actor.id)
     return certificate
@@ -160,7 +162,9 @@ async def test_room_is_shared_and_history_includes_posts_before_join(privacy_app
         ("to_did", "did:key:some-recipient"),
         (
             "timestamp",
-            (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            (datetime.now(timezone.utc) - timedelta(hours=1)).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
         ),
     ],
     ids=[
@@ -177,7 +181,10 @@ async def test_room_refuses_wrong_signed_bindings(privacy_app, field, value):
     room = await metadata(privacy_app)
     response = await post(privacy_app, room, **{field: value})
     assert response.status_code == 422, response.text
-    assert await privacy_app.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 0
+    assert (
+        await privacy_app.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}")
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -187,13 +194,17 @@ async def test_room_signature_tampering_and_idempotent_replay(privacy_app):
     payload = post_payload(env, room)
     bad = dict(
         payload,
-        signed_payload=payload["signed_payload"].replace("Team announcement", "Different content"),
+        signed_payload=payload["signed_payload"].replace(
+            "Team announcement", "Different content"
+        ),
     )
     assert (await post(env, room, payload=bad)).status_code == 403
     first = await post(env, room, payload=payload)
     assert first.status_code == 200, first.text
     assert (await post(env, room, payload=payload)).json() == first.json()
-    conflict = post_payload(env, room, message_id=first.json()["message_id"], text="Another post")
+    conflict = post_payload(
+        env, room, message_id=first.json()["message_id"], text="Another post"
+    )
     assert (await post(env, room, payload=conflict)).status_code == 409
     assert await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 1
 
@@ -207,7 +218,9 @@ async def test_room_paging_and_foreign_cursor_refusal(privacy_app):
         response = await post(env, room, text=str(i))
         assert response.status_code == 200, response.text
         ids.append(response.json()["message_id"])
-    first = await env.client.get("/v1/room/messages?limit=2", headers=headers(env.actors["bob"]))
+    first = await env.client.get(
+        "/v1/room/messages?limit=2", headers=headers(env.actors["bob"])
+    )
     page = first.json()
     assert [m["message_id"] for m in page["messages"]] == ids[:2]
     assert page["has_more"]
@@ -255,7 +268,9 @@ async def test_room_keeps_adjacent_id_chain(privacy_app):
     chain = _bundle(env.actors["alice"].did)
     signed_headers = headers(env.actors["alice"], body)
     signed_headers["X-AWID-ID-Chain"] = encode_id_chain_header(chain)
-    result = await env.client.post("/v1/room/messages", content=body, headers=signed_headers)
+    result = await env.client.post(
+        "/v1/room/messages", content=body, headers=signed_headers
+    )
     assert result.status_code == 200, result.text
     assert result.json()["id_chain"] == chain
     assert result.json()["signed_payload"] == payload["signed_payload"]
@@ -375,7 +390,9 @@ async def test_room_cross_team_ids_and_cursors_do_not_authorize(privacy_app):
     first = await post(env, room)
     await post(env, room, text="second")
     page = (
-        await env.client.get("/v1/room/messages?limit=1", headers=headers(env.actors["alice"]))
+        await env.client.get(
+            "/v1/room/messages?limit=1", headers=headers(env.actors["alice"])
+        )
     ).json()
     other = "other-" + TEAM
     await env.db.execute(
@@ -429,14 +446,18 @@ async def test_room_cross_team_ids_and_cursors_do_not_authorize(privacy_app):
     bad = post_payload(env, room)
     body = json.dumps(bad).encode()
     assert (
-        await env.client.post("/v1/room/messages", content=body, headers=other_headers(body))
+        await env.client.post(
+            "/v1/room/messages", content=body, headers=other_headers(body)
+        )
     ).status_code == 422
     collision = post_payload(
         env, second_room, to="team-room:" + other, message_id=first.json()["message_id"]
     )
     body = json.dumps(collision).encode()
     assert (
-        await env.client.post("/v1/room/messages", content=body, headers=other_headers(body))
+        await env.client.post(
+            "/v1/room/messages", content=body, headers=other_headers(body)
+        )
     ).status_code == 409
 
 
@@ -571,7 +592,9 @@ async def test_hosted_mcp_room_signs_as_actor_and_reads_shared_history(
         assert "body" not in context
         assert len(calls) == 1
         room = await metadata(env)
-        assert (await post(env, room, actor="bob", text="Another team update")).status_code == 200
+        assert (
+            await post(env, room, actor="bob", text="Another team update")
+        ).status_code == 200
         pending = await call("room_pending")
         assert json.loads(pending["content"][0]["text"])["pending_count"] == 1
         read = await call("room_read")
@@ -584,12 +607,17 @@ async def test_hosted_mcp_room_signs_as_actor_and_reads_shared_history(
         pending = await call("room_pending")
         assert json.loads(pending["content"][0]["text"])["pending_count"] == 0
         refused = await call("room_post", body="no downgrade", e2ee=True)
-        assert refused.get("isError") and "room_e2ee_unsupported" in refused["content"][0]["text"]
+        assert (
+            refused.get("isError")
+            and "room_e2ee_unsupported" in refused["content"][0]["text"]
+        )
         assert len(calls) == 1
         wrong_actor = True
         refused = await call("room_post", body="wrong signer")
         assert refused.get("isError"), refused
-        assert await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 2
+        assert (
+            await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 2
+        )
         await env.registry_db.execute(
             """INSERT INTO {{tables.team_certificates}}
             (team_uuid,certificate_id,member_did_key,alias,revoked_at)
@@ -649,7 +677,9 @@ async def test_global_member_room_uses_real_awid_binding(privacy_app, address):
     "global_resident,grant",
     [(False, False), (False, True), (True, False), (True, True)],
 )
-async def test_real_cli_room_post_read_and_who(privacy_app, tmp_path, global_resident, grant):
+async def test_real_cli_room_post_read_and_who(
+    privacy_app, tmp_path, global_resident, grant
+):
     import asyncio
     from test_e2ee_local_sender_read_trust import _local_sender_mail
 
@@ -715,13 +745,19 @@ async def test_real_cli_room_post_read_and_who(privacy_app, tmp_path, global_res
         assert "Team room posts are readable" not in shown
         assert notice == ""
         missing_id = str(uuid4())
-        stdout, stderr = await raw("room", "read", "--message-id", missing_id, expected=1)
+        stdout, stderr = await raw(
+            "room", "read", "--message-id", missing_id, expected=1
+        )
         assert stdout == ""
         assert stderr == f"No room post {missing_id} in your team.\n"
-        stdout, stderr = await raw("room", "post", "--e2ee", "--body", "must not send", expected=1)
+        stdout, stderr = await raw(
+            "room", "post", "--e2ee", "--body", "must not send", expected=1
+        )
         assert stdout == ""
         assert "unknown flag: --e2ee" in stderr
-        assert await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 1
+        assert (
+            await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 1
+        )
         if not grant:
             await env.db.execute(
                 "UPDATE {{tables.agents}} SET deleted_at=now(),status='deleted' WHERE agent_id=$1",
@@ -739,13 +775,15 @@ async def test_room_does_not_change_existing_message_surfaces(privacy_app):
     env = privacy_app
     paths = ["/v1/messages/inbox", "/v1/chat/pending", "/v1/conversations"]
     original = [
-        (await env.client.get(path, headers=headers(env.actors["bob"]))).content for path in paths
+        (await env.client.get(path, headers=headers(env.actors["bob"]))).content
+        for path in paths
     ]
     room = await metadata(env)
     assert (await post(env, room)).status_code == 200
     await env.client.get("/v1/room/messages", headers=headers(env.actors["bob"]))
     after = [
-        (await env.client.get(path, headers=headers(env.actors["bob"]))).content for path in paths
+        (await env.client.get(path, headers=headers(env.actors["bob"]))).content
+        for path in paths
     ]
     assert after == original
 
@@ -761,14 +799,20 @@ async def test_room_unavailable_membership_authority_refuses(privacy_app):
     transport.down = True
     from awid.registry import RegistryClient
 
-    unavailable = RegistryClient(registry_url="http://registry.test", transport=transport)
+    unavailable = RegistryClient(
+        registry_url="http://registry.test", transport=transport
+    )
     previous = env.app.state.awid_registry_client
     env.app.state.awid_registry_client = unavailable
     try:
-        result = await env.client.get("/v1/room/messages", headers=headers(env.actors["alice"]))
+        result = await env.client.get(
+            "/v1/room/messages", headers=headers(env.actors["alice"])
+        )
         assert result.status_code == 503, result.text
         assert (await post(env, room)).status_code == 503
-        assert await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 0
+        assert (
+            await env.db.fetch_val("SELECT count(*) FROM {{tables.room_messages}}") == 0
+        )
     finally:
         env.app.state.awid_registry_client = previous
         await unavailable.aclose()

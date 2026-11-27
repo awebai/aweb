@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Candidate-gate docker wrapper. Inside the gate runner the Docker CLI talks to
 # the host daemon, so sibling containers and plain `docker build` calls are not
-# constrained by the runner cgroup. Add the run's ownership label/resource bounds
-# to direct siblings and route plain builds through the bounded BuildKit builder.
+# constrained by the runner cgroup. Add the run's ownership label and memory and
+# pid bounds to direct siblings (their CPU is Docker's default: no cap, no
+# weight), and route plain builds through the run's BuildKit builder.
 set -euo pipefail
 
 real="${AWEB_CANDIDATE_REAL_DOCKER:-/usr/bin/docker}"
@@ -13,7 +14,6 @@ fi
 shift || true
 
 label="${AWEB_CANDIDATE_RESOURCE_LABEL:-}"
-sibling_cpus="${AWEB_CANDIDATE_SIBLING_CPUS:-2}"
 sibling_memory="${AWEB_CANDIDATE_SIBLING_MEMORY:-4g}"
 sibling_pids="${AWEB_CANDIDATE_SIBLING_PIDS:-1024}"
 
@@ -141,7 +141,6 @@ compose_with_limits() {
       if [[ " ${build_services[*]} " == *" $service "* ]]; then
         printf '    build:\n      labels:\n        aweb.candidate-gate: %s\n' "$label"
       fi
-      printf '    cpus: "%s"\n' "$sibling_cpus"
       printf '    mem_limit: "%s"\n' "$sibling_memory"
       printf '    pids_limit: %s\n' "$sibling_pids"
     done
@@ -165,7 +164,6 @@ case "$cmd" in
     if [[ -n "$label" ]]; then
       exec "$real" "$cmd" \
         --label "aweb.candidate-gate=$label" \
-        --cpus "$sibling_cpus" \
         --memory "$sibling_memory" \
         --pids-limit "$sibling_pids" \
         "$@"

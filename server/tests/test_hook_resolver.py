@@ -35,13 +35,29 @@ from tests.real_stack import AWEB_URL
 
 TEAM = "backend:resolve.example"
 HOOK = ("aweb.hooks", 1, "post-secret-use-hook")
-LOGS = {"app_id": "logs", "origin": "https://logs.example", "digest": "sha256:" + "1" * 64}
-SECRETS = {"app_id": "secrets", "origin": "https://secrets.example", "digest": "sha256:" + "2" * 64}
+LOGS = {
+    "app_id": "logs",
+    "origin": "https://logs.example",
+    "digest": "sha256:" + "1" * 64,
+}
+SECRETS = {
+    "app_id": "secrets",
+    "origin": "https://secrets.example",
+    "digest": "sha256:" + "2" * 64,
+}
 INGEST = HookBindingDeclaration(
-    kind=REGISTRATION, catalog_id="aweb.hooks", catalog_version=1, hook=HOOK[2],
-    tool="ingest", method="POST", path="/hooks/ingest", scopes=("logs:ingest",),
+    kind=REGISTRATION,
+    catalog_id="aweb.hooks",
+    catalog_version=1,
+    hook=HOOK[2],
+    tool="ingest",
+    method="POST",
+    path="/hooks/ingest",
+    scopes=("logs:ingest",),
 )
-SECRET_USE = HookBindingDeclaration(kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook=HOOK[2])
+SECRET_USE = HookBindingDeclaration(
+    kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook=HOOK[2]
+)
 
 
 class Clock:
@@ -61,8 +77,14 @@ async def _install(db, app: dict, installation_id: str, declarations) -> dict:
     await seed_hook_installation(db, app, team_id=TEAM, installation_id=installation_id)
     async with db.transaction() as tx:
         written = await write_pending_bindings(
-            tx, team_id=TEAM, app_id=app["app_id"], origin=app["origin"], digest=app["digest"],
-            installation_id=installation_id, generation=1, declarations=list(declarations),
+            tx,
+            team_id=TEAM,
+            app_id=app["app_id"],
+            origin=app["origin"],
+            digest=app["digest"],
+            installation_id=installation_id,
+            generation=1,
+            declarations=list(declarations),
         )
     return {binding.kind: binding for binding in written}
 
@@ -76,7 +98,8 @@ async def _activate(db, binding_id: UUID) -> None:
             activation_act_sha256 = $2
         WHERE binding_id = $1
         """,
-        binding_id, "ab" * 32,
+        binding_id,
+        "ab" * 32,
     )
 
 
@@ -88,7 +111,13 @@ async def _key(db, app: dict, *, kid: str, purposes: list[str]) -> AppKey:
         INSERT INTO {{tables.team_app_keys}} (team_id, app_id, origin, digest, key_id, did_key, purposes)
         VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[])
         """,
-        TEAM, app["app_id"], app["origin"], app["digest"], kid, did_key, purposes,
+        TEAM,
+        app["app_id"],
+        app["origin"],
+        app["digest"],
+        kid,
+        did_key,
+        purposes,
     )
     return AppKey(kid=kid, did_key=did_key, signing_key=signing_key)
 
@@ -107,10 +136,14 @@ async def team(real_stack):
     async def resolver_for(
         app: dict, *, refresh_timeout: float = 5.0, directory_ttl: int | None = None
     ) -> HookResolver:
-        key = await _key(db, app, kid=f"resolve-{app['app_id']}", purposes=[HOOK_RESOLVE])
+        key = await _key(
+            db, app, kid=f"resolve-{app['app_id']}", purposes=[HOOK_RESOLVE]
+        )
         return HookResolver(
             directory=real_stack.directory(clock=clock, ttl_seconds=directory_ttl),
-            signer=AppCredentialSigner(app_id=app["app_id"], key=key, purpose=HOOK_RESOLVE),
+            signer=AppCredentialSigner(
+                app_id=app["app_id"], key=key, purpose=HOOK_RESOLVE
+            ),
             app_origin=app["origin"],
             transport=real_stack.aweb,
             refresh_timeout=refresh_timeout,
@@ -119,8 +152,13 @@ async def team(real_stack):
         )
 
     return {
-        "stack": real_stack, "db": db, "clock": clock, "resolver_for": resolver_for,
-        "team_key": team_key, "registration": logs[REGISTRATION], "production": secrets[PRODUCTION],
+        "stack": real_stack,
+        "db": db,
+        "clock": clock,
+        "resolver_for": resolver_for,
+        "team_key": team_key,
+        "registration": logs[REGISTRATION],
+        "production": secrets[PRODUCTION],
     }
 
 
@@ -135,14 +173,26 @@ async def test_a_producer_resolves_where_to_deliver(team):
     [binding] = resolution.items
     registration = team["registration"]
     assert binding.binding_id == registration.binding_id
-    assert (binding.kind, binding.app_id, binding.installation_id, binding.generation) == (
-        "registration", "logs", "inst-logs", 1,
+    assert (
+        binding.kind,
+        binding.app_id,
+        binding.installation_id,
+        binding.generation,
+    ) == (
+        "registration",
+        "logs",
+        "inst-logs",
+        1,
     )
     assert (binding.origin, binding.method, binding.path, binding.digest) == (
-        LOGS["origin"], "POST", "/hooks/ingest", LOGS["digest"],
+        LOGS["origin"],
+        "POST",
+        "/hooks/ingest",
+        LOGS["digest"],
     )
     stored = await team["db"].fetch_value(
-        "SELECT active_from FROM {{tables.app_hook_bindings}} WHERE binding_id = $1", registration.binding_id
+        "SELECT active_from FROM {{tables.app_hook_bindings}} WHERE binding_id = $1",
+        registration.binding_id,
     )
     assert binding.active_from == stored
     assert resolution.server_url == AWEB_URL
@@ -152,12 +202,16 @@ async def test_a_producer_resolves_where_to_deliver(team):
 
 @pytest.mark.asyncio
 async def test_a_target_resolves_who_may_produce_and_with_which_keys(team):
-    await _key(team["db"], SECRETS, kid="hook-1", purposes=["hook-delivery", "hook-event"])
+    await _key(
+        team["db"], SECRETS, kid="hook-1", purposes=["hook-delivery", "hook-event"]
+    )
     await _key(team["db"], SECRETS, kid="emit-1", purposes=["app-event"])
     resolver = await team["resolver_for"](LOGS)
     [production] = (await resolver.productions(TEAM, *HOOK)).items
     assert production.app_id == "secrets"
-    assert [(key.kid, key.purposes) for key in production.keys] == [("hook-1", ("hook-delivery", "hook-event"))]
+    assert [(key.kid, key.purposes) for key in production.keys] == [
+        ("hook-1", ("hook-delivery", "hook-event"))
+    ]
 
 
 @pytest.mark.asyncio
@@ -178,7 +232,16 @@ async def test_the_core_producers_keys_come_from_the_teams_server(team, monkeypa
     did_key = did_from_public_key(bytes(signing_key.verify_key))
     monkeypatch.setenv(
         "AWEB_HOOK_PRODUCER_KEYS",
-        json.dumps([{"kid": "hook-2026-10", "did_key": did_key, "valid_from": "2026-10-01T00:00:00Z", "valid_until": None}]),
+        json.dumps(
+            [
+                {
+                    "kid": "hook-2026-10",
+                    "did_key": did_key,
+                    "valid_from": "2026-10-01T00:00:00Z",
+                    "valid_until": None,
+                }
+            ]
+        ),
     )
     resolver = await team["resolver_for"](LOGS)
     [key] = (await resolver.core_producer_keys(TEAM)).items
@@ -238,7 +301,9 @@ async def test_a_slow_answer_expires_when_its_data_does(team):
 @pytest.mark.parametrize(("offered", "used"), [(10, 10), (120, 60)])
 async def test_an_answer_carries_the_window_it_is_reused_for(team, offered, used):
     resolver = await team["resolver_for"](SECRETS)
-    team["stack"].aweb.fault = _rewrite(lambda body: body.update(max_age_seconds=offered))
+    team["stack"].aweb.fault = _rewrite(
+        lambda body: body.update(max_age_seconds=offered)
+    )
     assert (await resolver.registrations(TEAM, *HOOK)).max_age_seconds == used
 
 
@@ -278,13 +343,17 @@ async def test_a_moved_install_fails_closed_not_empty(team):
 
 
 @pytest.mark.asyncio
-async def test_a_changed_team_server_record_is_followed_even_while_an_answer_is_fresh(team):
+async def test_a_changed_team_server_record_is_followed_even_while_an_answer_is_fresh(
+    team,
+):
     # Discovery refreshes sooner than the answer expires, so the moved record
     # is seen while the old server's answer is still fresh: it must not be reused.
     resolver = await team["resolver_for"](SECRETS, directory_ttl=10)
     await resolver.registrations(TEAM, *HOOK)
     await team["stack"].publish_server(
-        TEAM, team["team_key"], server_url="https://aweb.moved.example",
+        TEAM,
+        team["team_key"],
+        server_url="https://aweb.moved.example",
         issued_at=datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1),
     )
     team["clock"].now += seconds_to_ns(11)
@@ -333,7 +402,9 @@ async def test_a_malformed_registrations_answer_fails_closed(team, change):
 async def test_a_production_key_without_a_hook_purpose_fails_closed(team):
     await _key(team["db"], SECRETS, kid="hook-1", purposes=["hook-event"])
     resolver = await team["resolver_for"](LOGS)
-    team["stack"].aweb.fault = _rewrite(lambda body: body["bindings"][0]["keys"][0].update(purposes=["app-event"]))
+    team["stack"].aweb.fault = _rewrite(
+        lambda body: body["bindings"][0]["keys"][0].update(purposes=["app-event"])
+    )
     with pytest.raises(HookResolutionUnavailable):
         await resolver.productions(TEAM, *HOOK)
 
@@ -375,7 +446,9 @@ async def test_an_answer_past_the_size_bound_is_not_read(team):
     resolver = await team["resolver_for"](SECRETS)
 
     def oversized(request, response):
-        return httpx.Response(200, stream=httpx.ByteStream(b" " * (MAX_ANSWER_BYTES + 1)))
+        return httpx.Response(
+            200, stream=httpx.ByteStream(b" " * (MAX_ANSWER_BYTES + 1))
+        )
 
     team["stack"].aweb.fault = oversized
     with pytest.raises(HookResolutionUnavailable) as caught:
@@ -401,7 +474,9 @@ async def test_an_answer_past_the_size_bound_is_not_read(team):
         ("aweb.hooks", "1", "post-secret-use-hook"),
     ],
 )
-async def test_a_hook_no_binding_could_name_is_refused_before_anything_is_sent(team, hook):
+async def test_a_hook_no_binding_could_name_is_refused_before_anything_is_sent(
+    team, hook
+):
     resolver = await team["resolver_for"](SECRETS)
     calls = _aweb_calls(team)
     with pytest.raises(HookBindingRequired):
@@ -427,8 +502,18 @@ async def test_a_hook_no_binding_could_name_is_refused_before_anything_is_sent(t
 async def test_a_malformed_producer_keys_answer_fails_closed(team, monkeypatch, change):
     monkeypatch.setenv(
         "AWEB_HOOK_PRODUCER_KEYS",
-        json.dumps([{"kid": "hook-1", "did_key": did_from_public_key(bytes(SigningKey.generate().verify_key)),
-                     "valid_from": "2026-10-01T00:00:00Z", "valid_until": None}]),
+        json.dumps(
+            [
+                {
+                    "kid": "hook-1",
+                    "did_key": did_from_public_key(
+                        bytes(SigningKey.generate().verify_key)
+                    ),
+                    "valid_from": "2026-10-01T00:00:00Z",
+                    "valid_until": None,
+                }
+            ]
+        ),
     )
     resolver = await team["resolver_for"](LOGS)
     team["stack"].aweb.fault = _rewrite(change)
@@ -454,7 +539,9 @@ async def test_producer_keys_fail_closed_with_the_server_down(team):
         lambda body: body.update(hook="post-governance-hook"),
         lambda body: body["bindings"][0].update(kind="registration"),
         lambda body: body.update(max_age_seconds=True),
-        lambda body: body["bindings"][0].update(binding_id=body["bindings"][0]["binding_id"].upper()),
+        lambda body: body["bindings"][0].update(
+            binding_id=body["bindings"][0]["binding_id"].upper()
+        ),
     ],
 )
 async def test_a_malformed_productions_answer_fails_closed(team, change):
@@ -489,7 +576,9 @@ async def test_a_registration_with_keys_or_a_bool_version_fails_closed(team, cha
         lambda body: body["bindings"][0]["catalog"].update(version=0),
     ],
 )
-async def test_an_own_binding_with_a_malformed_catalog_version_fails_closed(team, change):
+async def test_an_own_binding_with_a_malformed_catalog_version_fails_closed(
+    team, change
+):
     resolver = await team["resolver_for"](LOGS)
     team["stack"].aweb.fault = _rewrite(change)
     with pytest.raises(HookResolutionUnavailable):
@@ -502,11 +591,15 @@ async def test_an_own_binding_with_a_malformed_catalog_version_fails_closed(team
 async def test_an_own_answer_must_answer_its_selector(team):
     resolver = await team["resolver_for"](LOGS)
     team["stack"].aweb.fault = _rewrite(
-        lambda body: body["bindings"][0].update(binding_id="00000000-0000-4000-8000-000000000000")
+        lambda body: body["bindings"][0].update(
+            binding_id="00000000-0000-4000-8000-000000000000"
+        )
     )
     with pytest.raises(HookResolutionUnavailable):
         await resolver.own_bindings(TEAM, binding_id=team["registration"].binding_id)
-    team["stack"].aweb.fault = _rewrite(lambda body: body["bindings"][0].update(hook="post-governance-hook"))
+    team["stack"].aweb.fault = _rewrite(
+        lambda body: body["bindings"][0].update(hook="post-governance-hook")
+    )
     with pytest.raises(HookResolutionUnavailable):
         await resolver.own_bindings(TEAM, hook=HOOK)
 
@@ -514,10 +607,20 @@ async def test_an_own_answer_must_answer_its_selector(team):
 @pytest.mark.asyncio
 async def test_each_selection_has_its_own_answer(team):
     db = team["db"]
-    relay = {"app_id": "relay", "origin": "https://relay.example", "digest": "sha256:" + "6" * 64}
+    relay = {
+        "app_id": "relay",
+        "origin": "https://relay.example",
+        "digest": "sha256:" + "6" * 64,
+    }
     relay_ingest = HookBindingDeclaration(
-        kind=REGISTRATION, catalog_id="aweb.hooks", catalog_version=1, hook=HOOK[2],
-        tool="relay-ingest", method="POST", path="/hooks/relay", scopes=("relay:ingest",),
+        kind=REGISTRATION,
+        catalog_id="aweb.hooks",
+        catalog_version=1,
+        hook=HOOK[2],
+        tool="relay-ingest",
+        method="POST",
+        path="/hooks/relay",
+        scopes=("relay:ingest",),
     )
     bindings = await _install(db, relay, "inst-relay", [relay_ingest, SECRET_USE])
     await _activate(db, bindings[REGISTRATION].binding_id)
@@ -534,7 +637,9 @@ async def test_each_selection_has_its_own_answer(team):
         await resolver.registrations(TEAM, "aweb.hooks", 1, "post-governance-hook")
     assert _aweb_calls(team) == calls + 1
 
-    by_id = await resolver.own_bindings(TEAM, binding_id=bindings[REGISTRATION].binding_id)
+    by_id = await resolver.own_bindings(
+        TEAM, binding_id=bindings[REGISTRATION].binding_id
+    )
     by_hook = await resolver.own_bindings(TEAM, hook=HOOK)
     assert len(by_id.items) == 1 and len(by_hook.items) == 2
     assert _aweb_calls(team) == calls + 3

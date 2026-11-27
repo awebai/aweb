@@ -3,6 +3,7 @@
 Keys represent a disposable host custodian, not a Cloud authentication fixture.
 No routing, identity discovery, delivery, or cryptography is mocked.
 """
+
 from __future__ import annotations
 
 from identity_binding_support import register_global_identity
@@ -20,73 +21,133 @@ import pytest
 
 from awid.did import stable_id_from_did_key
 from awid.e2ee_keys import build_encryption_key_assertion
-from awid.signing import canonical_json_bytes, sign_message, verify_signature, VerifyResult
+from awid.signing import (
+    canonical_json_bytes,
+    sign_message,
+    verify_signature,
+    VerifyResult,
+)
 from test_messages_http import _make_keypair, _make_certificate, _signed_team_headers
-from aweb.e2ee_messages import decrypt_e2ee_message, encrypt_e2ee_mail, generate_x25519_keypair
+from aweb.e2ee_messages import (
+    decrypt_e2ee_message,
+    encrypt_e2ee_mail,
+    generate_x25519_keypair,
+)
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 
 __all__ = ["privacy_app"]
 
 
 def _pem(path, kind, raw):
-    path.write_text(f"-----BEGIN {kind}-----\n{base64.b64encode(raw).decode()}\n-----END {kind}-----\n")
+    path.write_text(
+        f"-----BEGIN {kind}-----\n{base64.b64encode(raw).decode()}\n-----END {kind}-----\n"
+    )
     path.chmod(0o600)
 
 
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
-@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, True)])
-async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_path, grant, global_resident):
+@pytest.mark.parametrize(
+    "global_resident,grant", [(False, False), (False, True), (True, True)]
+)
+async def test_custodial_human_receives_encrypted_cli_reply(
+    privacy_app, tmp_path, grant, global_resident
+):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     now = datetime.now(timezone.utc)
     identities = {}
-    for name, custody in (("alice", "hosted_custodial"), ("bob", "self"), ("carol", "self")):
+    for name, custody in (
+        ("alice", "hosted_custodial"),
+        ("bob", "self"),
+        ("carol", "self"),
+    ):
         actor = env.actors[name]
         private, public = generate_x25519_keypair()
         address = "example.test/bob" if global_resident and name == "bob" else ""
         stable_id = stable_id_from_did_key(actor.did) if address else ""
         if address:
             assert await register_global_identity(env, actor, address) == stable_id
-            await env.db.execute("UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2 WHERE agent_id = $3",
-                                 stable_id, address, actor.id)
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2 WHERE agent_id = $3",
+                stable_id,
+                address,
+                actor.id,
+            )
         assertion = build_encryption_key_assertion(
-            signing_key=actor.sk, identity_did=actor.did, identity_stable_id=stable_id,
-            encryption_public_key=public, custody=custody, now=now,
+            signing_key=actor.sk,
+            identity_did=actor.did,
+            identity_stable_id=stable_id,
+            encryption_public_key=public,
+            custody=custody,
+            now=now,
         )
-        identities[name] = dict(address=address, did=actor.did, stable_id=stable_id, team_id=TEAM,
-                                signing_key=actor.sk, private_key=private, encryption_key=assertion)
-    await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id = $1", env.actors["alice"].id)
+        identities[name] = dict(
+            address=address,
+            did=actor.did,
+            stable_id=stable_id,
+            team_id=TEAM,
+            signing_key=actor.sk,
+            private_key=private,
+            encryption_key=assertion,
+        )
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id = $1",
+        env.actors["alice"].id,
+    )
     human, agent = identities["alice"], identities["bob"]
     peer = identities["carol"]
     peer_body = json.dumps(peer["encryption_key"]).encode()
     peer_actor = env.actors["carol"]
-    peer_headers = _signed_team_headers(peer_actor.sk, peer_actor.did, TEAM, peer_actor.certificate, peer_body)
+    peer_headers = _signed_team_headers(
+        peer_actor.sk, peer_actor.did, TEAM, peer_actor.certificate, peer_body
+    )
     peer_headers["Content-Type"] = "application/json"
-    published = await env.client.put("/v1/agents/me/encryption-key", content=peer_body, headers=peer_headers)
+    published = await env.client.put(
+        "/v1/agents/me/encryption-key", content=peer_body, headers=peer_headers
+    )
     assert published.status_code == 200, published.text
     message_id, conversation_id = str(uuid4()), str(uuid4())
-    source = encrypt_e2ee_mail(sender=human, recipients=[agent], subject="Human question",
-                              body="Human private text", message_id=message_id,
-                              conversation_id=conversation_id, created_at=now)
+    source = encrypt_e2ee_mail(
+        sender=human,
+        recipients=[agent],
+        subject="Human question",
+        body="Human private text",
+        message_id=message_id,
+        conversation_id=conversation_id,
+        created_at=now,
+    )
     payload = {
-        "to_did": agent["stable_id"] or agent["did"], "message_id": message_id, "conversation_id": conversation_id,
-        "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": source,
+        "to_did": agent["stable_id"] or agent["did"],
+        "message_id": message_id,
+        "conversation_id": conversation_id,
+        "content_mode": "encrypted_v2",
+        "message_version": 2,
+        "encrypted_envelope": source,
     }
     if global_resident:
         # Registering the mapping is not asserting a global messaging subject.
         # Prove each exact DID/key through real auth before using that projection.
         from test_messages_http import _signed_identity_headers
+
         for name in ("alice", "bob"):
             identity = identities[name]
-            headers = _signed_identity_headers(identity["signing_key"], identity["did"], identity["stable_id"], b"")
+            headers = _signed_identity_headers(
+                identity["signing_key"], identity["did"], identity["stable_id"], b""
+            )
             checked = await env.client.get("/v1/messages/inbox", headers=headers)
             assert checked.status_code == 200, checked.text
         raw = json.dumps(payload).encode()
-        sent = await env.client.post("/v1/messages", content=raw, headers={
-            "Content-Type": "application/json",
-            **_signed_identity_headers(human["signing_key"], human["did"], human["stable_id"], raw),
-        })
+        sent = await env.client.post(
+            "/v1/messages",
+            content=raw,
+            headers={
+                "Content-Type": "application/json",
+                **_signed_identity_headers(
+                    human["signing_key"], human["did"], human["stable_id"], raw
+                ),
+            },
+        )
     else:
         sent = await _request(env, "alice", "POST", "/v1/messages", payload)
     assert sent.status_code == 200, sent.text
@@ -97,21 +158,47 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     # API-key local init intentionally omits identity.yaml. Neither root nor
     # grant custody may require it or manufacture global identity state.
     if global_resident:
-        (identity_home / "identity.yaml").write_text(json.dumps({
-            "did": agent["did"], "stable_id": agent["stable_id"], "address": agent["address"],
-            "custody": "self", "identity_scope": "global", "created_at": now.isoformat(),
-        }))
+        (identity_home / "identity.yaml").write_text(
+            json.dumps(
+                {
+                    "did": agent["did"],
+                    "stable_id": agent["stable_id"],
+                    "address": agent["address"],
+                    "custody": "self",
+                    "identity_scope": "global",
+                    "created_at": now.isoformat(),
+                }
+            )
+        )
     else:
         assert not (identity_home / "identity.yaml").exists()
     team_sk, _, team_did = _make_keypair()
-    await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
-    await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
+    await env.db.execute(
+        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2",
+        team_did,
+        TEAM,
+    )
+    await env.registry_db.execute(
+        "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2",
+        team_did,
+        TEAM.split(":", 1)[0],
+    )
     # The team has always had this key: its members were accepted under it.
     await env.db.execute(
-        "UPDATE {{tables.agents}} SET accepted_team_did_key = $1 WHERE team_id = $2", team_did, TEAM,
+        "UPDATE {{tables.agents}} SET accepted_team_did_key = $1 WHERE team_id = $2",
+        team_did,
+        TEAM,
     )
-    cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
-                             member_did_aw=agent["stable_id"], member_address=agent["address"])
+    cert = _make_certificate(
+        team_sk,
+        team_did,
+        agent["did"],
+        team_id=TEAM,
+        alias="bob",
+        identity_scope="global" if global_resident else "local",
+        member_did_aw=agent["stable_id"],
+        member_address=agent["address"],
+    )
     # Match the CLI wire format: absent optional local fields, not empty strings.
     cert.pop("signature")
     if not global_resident:
@@ -123,56 +210,122 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     (identity_home / cert_path).write_text(json.dumps(cert))
     (identity_home / cert_path).chmod(0o600)
     membership = {"team_id": TEAM, "alias": "bob", "cert_path": cert_path}
-    (identity_home / "teams.yaml").write_text(json.dumps({"active_team": TEAM, "memberships": [membership]}))
-    (identity_home / "workspace.yaml").write_text(json.dumps({
-        "aweb_url": str(env.client.base_url), "memberships": [{**membership, "workspace_id": str(env.actors["bob"].workspace)}],
-    }))
+    (identity_home / "teams.yaml").write_text(
+        json.dumps({"active_team": TEAM, "memberships": [membership]})
+    )
+    (identity_home / "workspace.yaml").write_text(
+        json.dumps(
+            {
+                "aweb_url": str(env.client.base_url),
+                "memberships": [
+                    {**membership, "workspace_id": str(env.actors["bob"].workspace)}
+                ],
+            }
+        )
+    )
     _pem(identity_home / "signing.key", "ED25519 PRIVATE KEY", agent["signing_key"])
     _pem(identity_home / "encryption.key", "X25519 PRIVATE KEY", agent["private_key"])
     assertion = agent["encryption_key"]
     (identity_home / "assertion.json").write_text(json.dumps(assertion))
-    (identity_home / "encryption.yaml").write_text(json.dumps({
-        "active_key_id": assertion["encryption_key_id"], "keys": [{
-            "key_id": assertion["encryption_key_id"], "public_key": assertion["encryption_public_key"],
-            "private_key_path": "encryption.key",
-            "assertion_path": "assertion.json",
-            **{key: assertion[key] for key in ("created_at", "not_before", "expires_at")},
-            "published_at": now.isoformat(),
-        }],
-    }))
+    (identity_home / "encryption.yaml").write_text(
+        json.dumps(
+            {
+                "active_key_id": assertion["encryption_key_id"],
+                "keys": [
+                    {
+                        "key_id": assertion["encryption_key_id"],
+                        "public_key": assertion["encryption_public_key"],
+                        "private_key_path": "encryption.key",
+                        "assertion_path": "assertion.json",
+                        **{
+                            key: assertion[key]
+                            for key in ("created_at", "not_before", "expires_at")
+                        },
+                        "published_at": now.isoformat(),
+                    }
+                ],
+            }
+        )
+    )
     binary = Path(os.environ["AW_TEST_CLI_BINARY"])
-    child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
-    child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
-                     HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"),
-                     AWID_REGISTRY_URL=str(env.client.base_url))
-    async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
+    child_env = {
+        k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))
+    }
+    child_env.update(
+        AWEB_IDENTITY_HOME=str(identity_home),
+        AWEB_URL=str(env.client.base_url),
+        HOME=str(tmp_path),
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
+        AWID_REGISTRY_URL=str(env.client.base_url),
+    )
+    async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (
+        command_dir,
+        command_env,
+    ):
         body_file = tmp_path / "reply.txt"
         body_file.write_text("Agent private reply")
-        reply = await asyncio.create_subprocess_exec(str(binary), "mail", "reply", message_id,
-                                                    "--body-file", str(body_file), "--json", cwd=command_dir,
-                                                    env=command_env, stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.STDOUT)
+        reply = await asyncio.create_subprocess_exec(
+            str(binary),
+            "mail",
+            "reply",
+            message_id,
+            "--body-file",
+            str(body_file),
+            "--json",
+            cwd=command_dir,
+            env=command_env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
         output, _ = await asyncio.wait_for(reply.communicate(), 30)
         assert reply.returncode == 0, output.decode()
         # An explicit end-to-end reply to the hosted human is refused before any
         # request: aweb's service holds her key. Nothing is stored.
-        explicit = await asyncio.create_subprocess_exec(str(binary), "mail", "reply", message_id, "--e2ee",
-                                                       "--body-file", str(body_file), "--json", cwd=command_dir,
-                                                       env=command_env, stdout=asyncio.subprocess.PIPE,
-                                                       stderr=asyncio.subprocess.PIPE)
+        explicit = await asyncio.create_subprocess_exec(
+            str(binary),
+            "mail",
+            "reply",
+            message_id,
+            "--e2ee",
+            "--body-file",
+            str(body_file),
+            "--json",
+            cwd=command_dir,
+            env=command_env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         explicit_out, _ = await asyncio.wait_for(explicit.communicate(), 30)
         assert explicit.returncode == 1, explicit_out.decode()
-        assert json.loads(explicit_out)["error"]["code"] == "recipient_custodial_no_e2ee"
+        assert (
+            json.loads(explicit_out)["error"]["code"] == "recipient_custodial_no_e2ee"
+        )
         # Alias encryption to her is refused the same way, and never falls back
         # to plaintext.
-        forbidden = await asyncio.create_subprocess_exec(str(binary), "mail", "send", "--to", "alice",
-                                                        "--subject", "Private", "--e2ee", "--body-file", str(body_file), cwd=command_dir,
-                                                        env=command_env, stdout=asyncio.subprocess.PIPE,
-                                                        stderr=asyncio.subprocess.STDOUT)
+        forbidden = await asyncio.create_subprocess_exec(
+            str(binary),
+            "mail",
+            "send",
+            "--to",
+            "alice",
+            "--subject",
+            "Private",
+            "--e2ee",
+            "--body-file",
+            str(body_file),
+            cwd=command_dir,
+            env=command_env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
         refused, _ = await asyncio.wait_for(forbidden.communicate(), 30)
         assert forbidden.returncode != 0
-        assert (await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 2
-        response = await _request(env, "alice", "GET", f"/v1/messages/conversations/{conversation_id}")
+        assert (
+            await env.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}")
+        )["n"] == 2
+        response = await _request(
+            env, "alice", "GET", f"/v1/messages/conversations/{conversation_id}"
+        )
         assert response.status_code == 200, response.text
         messages = response.json()["messages"]
         assert len(messages) == 2
@@ -184,30 +337,80 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
         assert delivered["body"] == "Agent private reply"
 
         # Exercise the reported first-send form before any peer conversation exists.
-        default_sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
-                                  "--subject", "First send", "--plaintext", "--body-file", str(body_file), "--json")
-        default_read = await _request(env, "carol", "GET", f"/v1/messages/{default_sent['message_id']}")
+        default_sent = await _cli(
+            binary,
+            command_dir,
+            command_env,
+            "mail",
+            "send",
+            "--to",
+            "carol",
+            "--subject",
+            "First send",
+            "--plaintext",
+            "--body-file",
+            str(body_file),
+            "--json",
+        )
+        default_read = await _request(
+            env, "carol", "GET", f"/v1/messages/{default_sent['message_id']}"
+        )
         assert default_read.status_code == 200, default_read.text
         default_message = default_read.json()
         assert default_message["body"] == body_file.read_text()
         assert default_message["from_alias"] == "bob"
-        assert verify_signature(agent["did"], default_message["signed_payload"].encode(),
-                                default_message["signature"]) == VerifyResult.VERIFIED
+        assert (
+            verify_signature(
+                agent["did"],
+                default_message["signed_payload"].encode(),
+                default_message["signature"],
+            )
+            == VerifyResult.VERIFIED
+        )
 
         # A local resident must also sign ordinary grant sends, not only the
         # source-bound encrypted reply path above. Exercise actual peer reads.
         for mode in ("--plaintext", "--e2ee"):
             text = f"Local resident peer send {mode}"
             body_file.write_text(text)
-            control = await _cli(binary, command_dir if global_resident else tmp_path,
-                                 command_env if global_resident else child_env, "mail", "send", "--to", "carol",
-                                 "--subject", "Peer send", mode, "--body-file", str(body_file), "--json")
-            control_read = await _request(env, "carol", "GET", f"/v1/messages/{control['message_id']}")
+            control = await _cli(
+                binary,
+                command_dir if global_resident else tmp_path,
+                command_env if global_resident else child_env,
+                "mail",
+                "send",
+                "--to",
+                "carol",
+                "--subject",
+                "Peer send",
+                mode,
+                "--body-file",
+                str(body_file),
+                "--json",
+            )
+            control_read = await _request(
+                env, "carol", "GET", f"/v1/messages/{control['message_id']}"
+            )
             assert control_read.status_code == 200, control_read.text
             control_message = control_read.json()
-            sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
-                              "--subject", "Peer send", mode, "--body-file", str(body_file), "--json")
-            received = await _request(env, "carol", "GET", f"/v1/messages/{sent['message_id']}")
+            sent = await _cli(
+                binary,
+                command_dir,
+                command_env,
+                "mail",
+                "send",
+                "--to",
+                "carol",
+                "--subject",
+                "Peer send",
+                mode,
+                "--body-file",
+                str(body_file),
+                "--json",
+            )
+            received = await _request(
+                env, "carol", "GET", f"/v1/messages/{sent['message_id']}"
+            )
             assert received.status_code == 200, received.text
             delivered = received.json()
             assert delivered["from_did"] == (agent["stable_id"] or agent["did"])
@@ -215,8 +418,14 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
             if mode == "--plaintext":
                 assert delivered["body"] == text
                 for message in (control_message, delivered):
-                    assert verify_signature(agent["did"], message["signed_payload"].encode(),
-                                            message["signature"]) == VerifyResult.VERIFIED
+                    assert (
+                        verify_signature(
+                            agent["did"],
+                            message["signed_payload"].encode(),
+                            message["signature"],
+                        )
+                        == VerifyResult.VERIFIED
+                    )
                 actual_from = json.loads(delivered["signed_payload"])["from"]
                 control_from = json.loads(control_message["signed_payload"])["from"]
                 if not global_resident:
@@ -227,37 +436,97 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
                 assert sender == control_message["encrypted_envelope"]["from"]
                 assert sender["did"] == agent["did"]
                 assert sender.get("address", "") == agent["address"]
-                decrypted = decrypt_e2ee_message(delivered["encrypted_envelope"], {
-                    **peer, "encryption_key_id": peer["encryption_key"]["encryption_key_id"],
-                })
+                decrypted = decrypt_e2ee_message(
+                    delivered["encrypted_envelope"],
+                    {
+                        **peer,
+                        "encryption_key_id": peer["encryption_key"][
+                            "encryption_key_id"
+                        ],
+                    },
+                )
                 assert decrypted["body"] == text
 
         # A later send to the same correspondent starts its own thread too.
-        default_sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
-                                  "--subject", "Another topic", "--plaintext", "--body-file", str(body_file), "--json")
-        default_read = await _request(env, "carol", "GET", f"/v1/messages/{default_sent['message_id']}")
+        default_sent = await _cli(
+            binary,
+            command_dir,
+            command_env,
+            "mail",
+            "send",
+            "--to",
+            "carol",
+            "--subject",
+            "Another topic",
+            "--plaintext",
+            "--body-file",
+            str(body_file),
+            "--json",
+        )
+        default_read = await _request(
+            env, "carol", "GET", f"/v1/messages/{default_sent['message_id']}"
+        )
         assert default_read.status_code == 200, default_read.text
         default_message = default_read.json()
         assert default_message["body"] == body_file.read_text()
         assert default_message["from_alias"] == "bob"
-        assert verify_signature(agent["did"], default_message["signed_payload"].encode(),
-                                default_message["signature"]) == VerifyResult.VERIFIED
+        assert (
+            verify_signature(
+                agent["did"],
+                default_message["signed_payload"].encode(),
+                default_message["signature"],
+            )
+            == VerifyResult.VERIFIED
+        )
 
-
-        chat_first = await _cli(binary, command_dir, command_env, "chat", "send-and-wait", "carol",
-                                "--wait", "0", "--plaintext", "--body-file", str(body_file), "--json")
-        chat_next = await _cli(binary, command_dir, command_env, "chat", "send-and-wait", "carol",
-                               "--wait", "0", "--plaintext", "--body-file", str(body_file), "--json")
+        chat_first = await _cli(
+            binary,
+            command_dir,
+            command_env,
+            "chat",
+            "send-and-wait",
+            "carol",
+            "--wait",
+            "0",
+            "--plaintext",
+            "--body-file",
+            str(body_file),
+            "--json",
+        )
+        chat_next = await _cli(
+            binary,
+            command_dir,
+            command_env,
+            "chat",
+            "send-and-wait",
+            "carol",
+            "--wait",
+            "0",
+            "--plaintext",
+            "--body-file",
+            str(body_file),
+            "--json",
+        )
         assert chat_next["session_id"] == chat_first["session_id"]
-        chat_read = await _request(env, "carol", "GET", f"/v1/chat/sessions/{chat_first['session_id']}/messages")
+        chat_read = await _request(
+            env,
+            "carol",
+            "GET",
+            f"/v1/chat/sessions/{chat_first['session_id']}/messages",
+        )
         assert chat_read.status_code == 200, chat_read.text
         assert len(chat_read.json()["messages"]) == 2
 
 
 async def _cli(binary, cwd, env, *args):
-    proc = await asyncio.create_subprocess_exec(str(binary), *args, cwd=cwd, env=env,
-                                              stdout=asyncio.subprocess.PIPE,
-                                              stderr=asyncio.subprocess.STDOUT)
+    proc = await asyncio.create_subprocess_exec(
+        str(binary),
+        *args,
+        cwd=cwd,
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
     output, _ = await asyncio.wait_for(proc.communicate(), 30)
     assert proc.returncode == 0, output.decode()
     return json.loads(output)
@@ -270,8 +539,9 @@ async def _reply_context(binary, root, env, grant, address="", *, ttl="5m"):
         return
     log_path = root / "custody.log"
     with log_path.open("wb") as log:
-        service = await asyncio.create_subprocess_exec(str(binary), "custody", "serve",
-                                                      cwd=root, env=env, stdout=log, stderr=log)
+        service = await asyncio.create_subprocess_exec(
+            str(binary), "custody", "serve", cwd=root, env=env, stdout=log, stderr=log
+        )
         try:
             for _ in range(100):
                 assert service.returncode is None, log_path.read_text()
@@ -286,8 +556,23 @@ async def _reply_context(binary, root, env, grant, address="", *, ttl="5m"):
                 pytest.fail(f"custody not ready: {status}; {log_path.read_text()}")
             seat = root / "seat"
             seat.mkdir()
-            minted = await _cli(binary, root, env, "id", "grant", "mint", "--bundle", "normal-agent",
-                       "--ttl", ttl, "--custody-socket", "auto", "--out", str(seat / ".aw"), "--json")
+            minted = await _cli(
+                binary,
+                root,
+                env,
+                "id",
+                "grant",
+                "mint",
+                "--bundle",
+                "normal-agent",
+                "--ttl",
+                ttl,
+                "--custody-socket",
+                "auto",
+                "--out",
+                str(seat / ".aw"),
+                "--json",
+            )
             assert minted.get("address", "") == address
             assert minted["alias"] == "bob"
             assert not (seat / ".aw" / "signing.key").exists()

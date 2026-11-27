@@ -119,9 +119,7 @@ def test_active_team_instructions_response_uses_team_instruction_ids():
     )
     data = response.model_dump()
     assert data["team_instructions_id"] == "770e8400-e29b-41d4-a716-446655440000"
-    assert (
-        data["active_team_instructions_id"] == "770e8400-e29b-41d4-a716-446655440000"
-    )
+    assert data["active_team_instructions_id"] == "770e8400-e29b-41d4-a716-446655440000"
     assert data["document"]["format"] == "markdown"
 
 
@@ -231,7 +229,9 @@ async def test_mcp_roles_show_emits_team_roles_ids(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcp_instructions_show_falls_back_to_created_at_when_updated_at_missing(monkeypatch):
+async def test_mcp_instructions_show_falls_back_to_created_at_when_updated_at_missing(
+    monkeypatch,
+):
     monkeypatch.setattr(
         common_tools,
         "get_auth",
@@ -267,7 +267,9 @@ async def test_bootstrap_team_roles_uses_empty_bundle(monkeypatch):
         async def fetch_one(self, *_args, **_kwargs):
             return None
 
-    async def fake_create_team_roles_version(_db, *, team_id, base_roles_id, bundle, created_by_alias):
+    async def fake_create_team_roles_version(
+        _db, *, team_id, base_roles_id, bundle, created_by_alias
+    ):
         captured_bundle["value"] = bundle
         return team_roles_module.TeamRolesVersion(
             id="version-1",
@@ -282,10 +284,16 @@ async def test_bootstrap_team_roles_uses_empty_bundle(monkeypatch):
     async def fake_activate_team_roles(_db, *, team_id, roles_id):
         return None
 
-    monkeypatch.setattr(team_roles_module, "create_team_roles_version", fake_create_team_roles_version)
-    monkeypatch.setattr(team_roles_module, "activate_team_roles", fake_activate_team_roles)
+    monkeypatch.setattr(
+        team_roles_module, "create_team_roles_version", fake_create_team_roles_version
+    )
+    monkeypatch.setattr(
+        team_roles_module, "activate_team_roles", fake_activate_team_roles
+    )
 
-    result = await get_active_team_roles(_FakeDB(), "backend:acme.com", bootstrap_if_missing=True)
+    result = await get_active_team_roles(
+        _FakeDB(), "backend:acme.com", bootstrap_if_missing=True
+    )
 
     assert captured_bundle["value"] == {"roles": {}, "adapters": {}}
     assert result is not None

@@ -84,13 +84,6 @@ func recordIssued(store IDIssuanceStore, now time.Time) func(map[string]any, str
 
 func idRecordTime(now time.Time) string { return now.UTC().Format("2006-01-02T15:04:05Z") }
 
-// idIssuanceRecorded is provenance: an entry exists under id, its stored
-// certificate re-derives exactly that id, and it verifies under a key from
-// the parent's own history. The entry's name and time prove nothing.
-func idIssuanceRecorded(store IDIssuanceStore, parent *idStatusIdentity, id string) error {
-	return idIssuanceRecordedByKey(store, id, func(key string) bool { return parentKeyHistoryHas(parent, key) })
-}
-
 func idIssuanceRecordedByKey(store IDIssuanceStore, id string, keyInHistory func(string) bool) error {
 	refused := idCertificateRefusal(IDRefusalIssuanceNotRecorded)
 	entry, err := store.Entry(id)

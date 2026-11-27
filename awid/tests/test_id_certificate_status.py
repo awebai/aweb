@@ -53,7 +53,13 @@ async def tree(clocked_client, manual_clock):
     tree = Tree(clocked_client, manual_clock)
     tree.clock.now = at("2026-10-26T00:00:00Z")
     await tree.root()
-    for key_name in ("alice", "bob", "global_agent", "other_human", "replacement_human"):
+    for key_name in (
+        "alice",
+        "bob",
+        "global_agent",
+        "other_human",
+        "replacement_human",
+    ):
         await tree.vector_did(key_name)
     await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
     await tree.enroll("other-human", when=at("2026-10-26T00:02:00Z"))
@@ -65,14 +71,18 @@ async def tree(clocked_client, manual_clock):
 @pytest.fixture
 def one_rate_window(monkeypatch):
     """Keep every request of a budget test inside one fixed rate-limit window."""
-    monkeypatch.setattr(ratelimit_module, "time", SimpleNamespace(time=lambda: 1_800_000_000.0))
+    monkeypatch.setattr(
+        ratelimit_module, "time", SimpleNamespace(time=lambda: 1_800_000_000.0)
+    )
 
 
 async def _status(tree, body, *, when=OBSERVED_AT, headers=None):
     tree.clock.now = when
     raw = json.dumps(body, separators=(",", ":")).encode()
     sent = {"Content-Type": "application/json"}
-    return await tree.client.post(STATUS_PATH, content=raw, headers={**sent, **(headers or {})})
+    return await tree.client.post(
+        STATUS_PATH, content=raw, headers={**sent, **(headers or {})}
+    )
 
 
 def _request(*ids):
@@ -111,31 +121,64 @@ async def test_status_never_discloses_private_team_data(case, tree):
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body) == {"v", "domain", "observed_at", "namespace", "identities", "missing"}
+    assert set(body) == {
+        "v",
+        "domain",
+        "observed_at",
+        "namespace",
+        "identities",
+        "missing",
+    }
     assert set(body["namespace"]) == {"epochs"}
     for epoch in body["namespace"]["epochs"]:
-        assert set(epoch) == {"seq", "did_key", "registered_at", "retired_at", "continuity"}
+        assert set(epoch) == {
+            "seq",
+            "did_key",
+            "registered_at",
+            "retired_at",
+            "continuity",
+        }
     for identity in body["identities"]:
         assert set(identity) == {
-            "id", "current_certificate_id", "current_key_seq", "key_history", "certificates", "revocation",
+            "id",
+            "current_certificate_id",
+            "current_key_seq",
+            "key_history",
+            "certificates",
+            "revocation",
         }
         for revision in identity["certificates"]:
-            assert set(revision) == {"signed", "registered_at", "superseded_at", "issuer_key_seq"}
+            assert set(revision) == {
+                "signed",
+                "registered_at",
+                "superseded_at",
+                "issuer_key_seq",
+            }
     assert "invitation" not in resp.text
     assert case["expected"]["accepted"] is True
-    assert not any(value for flag, value in case["expected"].items() if flag.startswith("contains_"))
+    assert not any(
+        value
+        for flag, value in case["expected"].items()
+        if flag.startswith("contains_")
+    )
 
 
 @consumes("status-prefix-enumeration-refuses")
 async def test_status_prefix_enumeration_refuses(case, tree):
     resp = await _status(tree, case["input"]["request"])
 
-    assert (resp.status_code, _code(resp)) == (case["expected"]["http_status"], case["expected"]["reason"]), resp.text
+    assert (resp.status_code, _code(resp)) == (
+        case["expected"]["http_status"],
+        case["expected"]["reason"],
+    ), resp.text
 
 
 @consumes("status-rate-limit")
 async def test_status_rate_limit(case, tree, one_rate_window):
-    statuses = [(await _status(tree, _request("alice"))).status_code for _ in range(case["input"]["requests_in_minute"])]
+    statuses = [
+        (await _status(tree, _request("alice"))).status_code
+        for _ in range(case["input"]["requests_in_minute"])
+    ]
 
     assert statuses[:-1] == [200] * (case["input"]["requests_in_minute"] - 1)
     assert statuses[-1] == case["expected"]["http_status"]
@@ -143,14 +186,30 @@ async def test_status_rate_limit(case, tree, one_rate_window):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("credential", ["valid", "missing", "wrong", "unconfigured"])
-async def test_status_service_token_skips_only_the_ip_budget(tree, monkeypatch, one_rate_window, credential):
+async def test_status_service_token_skips_only_the_ip_budget(
+    tree, monkeypatch, one_rate_window, credential
+):
     app = tree.client.app
-    monkeypatch.setattr(app.state, "awid_service_token", None if credential == "unconfigured" else SERVICE_TOKEN)
-    headers = {} if credential == "missing" else {
-        "X-AWID-Service-Token": "wrong-status-service-token-at-least-32-bytes" if credential == "wrong" else SERVICE_TOKEN,
-    }
-    responses = [await _status(tree, _request("alice"), headers=headers) for _ in range(61)]
-    assert [r.status_code for r in responses] == [200] * 60 + [200 if credential == "valid" else 429]
+    monkeypatch.setattr(
+        app.state,
+        "awid_service_token",
+        None if credential == "unconfigured" else SERVICE_TOKEN,
+    )
+    headers = (
+        {}
+        if credential == "missing"
+        else {
+            "X-AWID-Service-Token": "wrong-status-service-token-at-least-32-bytes"
+            if credential == "wrong"
+            else SERVICE_TOKEN,
+        }
+    )
+    responses = [
+        await _status(tree, _request("alice"), headers=headers) for _ in range(61)
+    ]
+    assert [r.status_code for r in responses] == [200] * 60 + [
+        200 if credential == "valid" else 429
+    ]
     assert all(r.json() == responses[0].json() for r in responses[:60])
     if credential == "valid":
         assert responses[-1].json() == responses[0].json()
@@ -159,7 +218,11 @@ async def test_status_service_token_skips_only_the_ip_budget(tree, monkeypatch, 
             assert (await _status(tree, _request("alice"))).status_code == 200
     assert (await _status(tree, _request("alice"))).status_code == 429
     monkeypatch.setattr(app.state, "awid_service_token", SERVICE_TOKEN)
-    assert (await _status(tree, _request("alice"), headers={"X-AWID-Service-Token": SERVICE_TOKEN})).status_code == 200
+    assert (
+        await _status(
+            tree, _request("alice"), headers={"X-AWID-Service-Token": SERVICE_TOKEN}
+        )
+    ).status_code == 200
     # Nor do exempt calls reset an exhausted public window.
     assert (await _status(tree, _request("alice"))).status_code == 429
 
@@ -168,7 +231,9 @@ async def test_status_service_token_skips_only_the_ip_budget(tree, monkeypatch, 
 async def test_status_service_token_keeps_body_validation(tree, monkeypatch):
     monkeypatch.setattr(tree.client.app.state, "awid_service_token", SERVICE_TOKEN)
     headers = {"X-AWID-Service-Token": SERVICE_TOKEN}
-    bad_body = await _status(tree, {"v": 1, "domain": DOMAIN, "ids": ["prefix*"]}, headers=headers)
+    bad_body = await _status(
+        tree, {"v": 1, "domain": DOMAIN, "ids": ["prefix*"]}, headers=headers
+    )
     assert bad_body.status_code == 400
     assert _code(bad_body) == "invalid_shape"
 
@@ -194,7 +259,12 @@ async def test_a_rate_limited_request_does_no_dns_lookup(tree, one_rate_window):
 
 @pytest.mark.asyncio
 async def test_a_revoked_identity_is_reported_as_in_its_fixture(tree):
-    revoked = await tree.revoke("alice", "alice", expected_head=certificate_id("alice"), when=at("2026-10-26T00:20:00Z"))
+    revoked = await tree.revoke(
+        "alice",
+        "alice",
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:20:00Z"),
+    )
     assert revoked.status_code == 200, revoked.text
 
     resp = await _status(tree, VECTORS["batch_example"]["request"])
@@ -209,8 +279,18 @@ async def test_public_chain_not_private_team_read_authority(case, tree):
     team_key, team_public = generate_keypair()
     created = await tree.client.post(
         f"/v1/namespaces/{DOMAIN}/teams",
-        json={"name": "ops", "team_did_key": did_from_public_key(team_public), "visibility": "private"},
-        headers=build_signed_headers(seed("root"), did_key("root"), domain=DOMAIN, operation="create_team", name="ops"),
+        json={
+            "name": "ops",
+            "team_did_key": did_from_public_key(team_public),
+            "visibility": "private",
+        },
+        headers=build_signed_headers(
+            seed("root"),
+            did_key("root"),
+            domain=DOMAIN,
+            operation="create_team",
+            name="ops",
+        ),
     )
     assert created.status_code == 200, created.text
     chain = [certificate(name) for name in case["input"]["chain"]]
@@ -221,15 +301,26 @@ async def test_public_chain_not_private_team_read_authority(case, tree):
         f"/v1/namespaces/{DOMAIN}/teams/ops/certificates",
         f"/v1/namespaces/{DOMAIN}/teams/ops/revocations",
     ):
-        timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        timestamp = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
         signature = sign_message(seed(reader), f"{timestamp}\nGET\n{path}".encode())
-        resp = await tree.client.get(path, headers={
-            "Authorization": f"DIDKey {did_key(reader)} {signature}",
-            "X-AWEB-Timestamp": timestamp,
-            "X-AWID-ID-Chain": chain_header(chain),
-        })
+        resp = await tree.client.get(
+            path,
+            headers={
+                "Authorization": f"DIDKey {did_key(reader)} {signature}",
+                "X-AWEB-Timestamp": timestamp,
+                "X-AWID-ID-Chain": chain_header(chain),
+            },
+        )
 
-        assert (resp.status_code, _code(resp)) == (case["expected"]["http_status"], case["expected"]["reason"]), resp.text
+        assert (resp.status_code, _code(resp)) == (
+            case["expected"]["http_status"],
+            case["expected"]["reason"],
+        ), resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -260,20 +351,30 @@ async def test_unregistered_and_other_domain_ids_are_missing(tree):
 @pytest.mark.asyncio
 async def test_the_closure_carries_the_parent_revision_in_force_at_registration(tree):
     await tree.register(
-        [certificate("alice"), certificate("post-replacement-child-of-old-owner")], when=at("2026-10-26T00:05:00Z"),
+        [certificate("alice"), certificate("post-replacement-child-of-old-owner")],
+        when=at("2026-10-26T00:05:00Z"),
     )
     tree.clock.now = at("2026-10-26T00:10:00Z")
     await tree.replace_root("root_rotated")
     readmitted = await tree.register(
-        [certificate("alice-readmitted")], expected_head=certificate_id("alice"), when=at("2026-10-26T00:14:00Z"),
+        [certificate("alice-readmitted")],
+        expected_head=certificate_id("alice"),
+        when=at("2026-10-26T00:14:00Z"),
     )
     assert readmitted.status_code == 200, readmitted.text
 
     resp = await _status(tree, _request("replacement_human"))
 
     assert resp.status_code == 200, resp.text
-    [alice] = [identity for identity in resp.json()["identities"] if identity["id"] == did_aw("alice")]
-    assert [(revision["registered_at"], revision["superseded_at"]) for revision in alice["certificates"]] == [
+    [alice] = [
+        identity
+        for identity in resp.json()["identities"]
+        if identity["id"] == did_aw("alice")
+    ]
+    assert [
+        (revision["registered_at"], revision["superseded_at"])
+        for revision in alice["certificates"]
+    ] == [
         ("2026-10-26T00:01:00.000000Z", "2026-10-26T00:14:00.000000Z"),
         ("2026-10-26T00:14:00.000000Z", None),
     ]
@@ -281,16 +382,27 @@ async def test_the_closure_carries_the_parent_revision_in_force_at_registration(
 
 def _human(subject: str, parent: dict, issuer: str) -> dict:
     fields = copy.deepcopy(certificate("alice")["certificate"])
-    fields.update(id=did_aw(subject), parent=parent, issuer_key=did_key(issuer), issued_at="2026-10-26T00:05:00Z")
+    fields.update(
+        id=did_aw(subject),
+        parent=parent,
+        issuer_key=did_key(issuer),
+        issued_at="2026-10-26T00:05:00Z",
+    )
     return sign(fields, issuer)
 
 
 @pytest.mark.asyncio
 async def test_neighbouring_reparents_whose_union_cycles_are_returned(tree):
     root_parent = {"kind": "namespace", "id": DOMAIN}
-    b_under_alice = _human("replacement_human", {"kind": "identity", "id": did_aw("alice")}, "alice")
+    b_under_alice = _human(
+        "replacement_human", {"kind": "identity", "id": did_aw("alice")}, "alice"
+    )
     b_under_root = _human("replacement_human", root_parent, "root")
-    a_under_b = _human("alice", {"kind": "identity", "id": did_aw("replacement_human")}, "replacement_human")
+    a_under_b = _human(
+        "alice",
+        {"kind": "identity", "id": did_aw("replacement_human")},
+        "replacement_human",
+    )
     steps = [
         ([certificate("alice"), b_under_alice], None, "2026-10-26T00:05:00Z"),
         ([b_under_root], b_under_alice, "2026-10-26T00:06:00Z"),
@@ -318,16 +430,25 @@ async def test_an_id_registered_in_another_domain_is_missing_here(tree):
     assert (await tree.register_namespace("depth2", domain=other)).status_code == 200
     await tree.did("depth1")
     fields = copy.deepcopy(certificate("alice")["certificate"])
-    fields.update(id=did_aw("depth1"), domain=other, parent={"kind": "namespace", "id": other},
-                  issuer_key=did_key("depth2"))
-    registered = await tree.register([sign(fields, "depth2")], when=at("2026-10-26T00:06:00Z"))
+    fields.update(
+        id=did_aw("depth1"),
+        domain=other,
+        parent={"kind": "namespace", "id": other},
+        issuer_key=did_key("depth2"),
+    )
+    registered = await tree.register(
+        [sign(fields, "depth2")], when=at("2026-10-26T00:06:00Z")
+    )
     assert registered.status_code == 200, registered.text
     tree.exact_dns("root")
 
     resp = await _status(tree, {"v": 1, "domain": DOMAIN, "ids": [did_aw("depth1")]})
 
     assert resp.status_code == 200, resp.text
-    assert (resp.json()["identities"], resp.json()["missing"]) == ([], [did_aw("depth1")])
+    assert (resp.json()["identities"], resp.json()["missing"]) == (
+        [],
+        [did_aw("depth1")],
+    )
     assert resp.json()["namespace"] == VECTORS["status_fixtures"]["normal"]["namespace"]
 
 
@@ -337,11 +458,16 @@ async def test_the_snapshot_is_coherent_while_a_revocation_commits(tree, awid_db
     async with db.transaction() as holder:
         # The status snapshot reads each identity's key history after its
         # other rows, so holding that table pauses it part-way through.
-        await holder.execute("LOCK TABLE {{tables.did_aw_log}} IN ACCESS EXCLUSIVE MODE")
+        await holder.execute(
+            "LOCK TABLE {{tables.did_aw_log}} IN ACCESS EXCLUSIVE MODE"
+        )
         status = asyncio.create_task(_status(tree, VECTORS["batch_example"]["request"]))
         await wait_until_blocked_on_lock(db, status)
         revoked = await tree.revoke(
-            "root", "other_human", expected_head=certificate_id("other-human"), when=at("2026-10-26T00:20:00Z"),
+            "root",
+            "other_human",
+            expected_head=certificate_id("other-human"),
+            when=at("2026-10-26T00:20:00Z"),
         )
         assert revoked.status_code == 200, revoked.text
         tree.clock.now = OBSERVED_AT
@@ -360,9 +486,24 @@ async def test_the_snapshot_is_coherent_while_a_revocation_commits(tree, awid_db
         {"v": 1, "domain": DOMAIN, "ids": ["alice"]},
         {"v": 1, "domain": DOMAIN, "ids": [did_key("alice")]},
         {"v": 1, "domain": DOMAIN, "ids": [did_aw("alice"), did_aw("alice")]},
-        {"v": 1, "domain": DOMAIN, "ids": [did_aw(name) for name in (
-            "alice", "bob", "global_agent", "other_human", "depth1", "depth2", "depth3", "depth4", "depth5",
-        )]},
+        {
+            "v": 1,
+            "domain": DOMAIN,
+            "ids": [
+                did_aw(name)
+                for name in (
+                    "alice",
+                    "bob",
+                    "global_agent",
+                    "other_human",
+                    "depth1",
+                    "depth2",
+                    "depth3",
+                    "depth4",
+                    "depth5",
+                )
+            ],
+        },
         {"v": 1, "domain": 7, "ids": []},
     ],
 )
@@ -375,13 +516,17 @@ async def test_the_status_body_has_exactly_the_contract_fields(tree, body):
 
 @pytest.mark.asyncio
 async def test_the_domain_is_canonicalized_before_lookup(tree):
-    resp = await _status(tree, {"v": 1, "domain": "Example.COM.", "ids": [did_aw("alice")]})
+    resp = await _status(
+        tree, {"v": 1, "domain": "Example.COM.", "ids": [did_aw("alice")]}
+    )
 
     assert resp.status_code == 200, resp.text
     assert (resp.json()["domain"], _ids(resp)) == (DOMAIN, [did_aw("alice")])
 
 
-@pytest.mark.parametrize("domain", ["", "exa mple.com", "-example.com", "example..com", "a" * 64 + ".com"])
+@pytest.mark.parametrize(
+    "domain", ["", "exa mple.com", "-example.com", "example..com", "a" * 64 + ".com"]
+)
 @pytest.mark.asyncio
 async def test_an_invalid_domain_name_refuses(tree, domain):
     resp = await _status(tree, {"v": 1, "domain": domain, "ids": []})
@@ -428,7 +573,9 @@ async def test_evidence_over_the_byte_limit_is_unavailable_not_partial(tree):
     for _ in range(200):
         next_key, next_public = generate_keypair()
         next_did = did_from_public_key(next_public)
-        resp = await request_rotation(tree.client, signing_key, did_aw("alice"), current, next_did)
+        resp = await request_rotation(
+            tree.client, signing_key, did_aw("alice"), current, next_did
+        )
         assert resp.status_code == 200, resp.text
         signing_key, current = next_key, next_did
     tree.client.app.state.rate_limiter = limiter
@@ -444,7 +591,10 @@ async def test_the_snapshot_transaction_cannot_write(tree, awid_db_infra, monkey
     real_latest = id_status.latest_domain_event
 
     async def latest_that_writes(tx, domain):
-        await tx.execute("UPDATE {{tables.id_identities}} SET revoked_at = NULL WHERE domain = $1", domain)
+        await tx.execute(
+            "UPDATE {{tables.id_identities}} SET revoked_at = NULL WHERE domain = $1",
+            domain,
+        )
         return await real_latest(tx, domain)
 
     monkeypatch.setattr(id_status, "latest_domain_event", latest_that_writes)
@@ -464,13 +614,24 @@ async def test_observed_at_never_precedes_the_snapshot(tree):
 async def _drop_key_history(awid_db_infra, key_name: str) -> None:
     """Delete an identity's key mapping; its DID log goes with it (001_registry.sql)."""
     db = awid_db_infra.get_manager("aweb")
-    await db.execute("DELETE FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw(key_name))
-    assert await db.fetch_all("SELECT 1 FROM {{tables.did_aw_log}} WHERE did_aw = $1", did_aw(key_name)) == []
+    await db.execute(
+        "DELETE FROM {{tables.did_aw_mappings}} WHERE did_aw = $1", did_aw(key_name)
+    )
+    assert (
+        await db.fetch_all(
+            "SELECT 1 FROM {{tables.did_aw_log}} WHERE did_aw = $1", did_aw(key_name)
+        )
+        == []
+    )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("requested", ["alice", "bob"], ids=["the-identity-itself", "its-child"])
-async def test_an_identity_without_key_history_is_unavailable_evidence(tree, awid_db_infra, requested):
+@pytest.mark.parametrize(
+    "requested", ["alice", "bob"], ids=["the-identity-itself", "its-child"]
+)
+async def test_an_identity_without_key_history_is_unavailable_evidence(
+    tree, awid_db_infra, requested
+):
     await _drop_key_history(awid_db_infra, "alice")
     resp = await _status(tree, _request(requested))
     assert (resp.status_code, _code(resp)) == (503, "evidence_unavailable"), resp.text

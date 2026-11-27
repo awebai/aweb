@@ -22,7 +22,11 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
-from awid.did import did_from_public_key, did_key_from_signing_key, stable_id_from_public_key
+from awid.did import (
+    did_from_public_key,
+    did_key_from_signing_key,
+    stable_id_from_public_key,
+)
 from awid.e2ee_keys import (
     build_encryption_key_assertion,
     canonical_encryption_assertion,
@@ -60,6 +64,7 @@ from did_key_fixtures import named_did_key, named_signing_key
 
 # Pytest loads the canonical fixture after this module's shared helpers exist.
 pytest_plugins = ("chat_pair_support",)
+
 
 def _make_keypair():
     sk = SigningKey.generate()
@@ -107,7 +112,9 @@ def _signed_identity_headers(agent_sk, agent_did_key, did_aw: str, body_bytes=b"
     }
 
 
-def _signed_team_headers(agent_sk, agent_did_key, team_id: str, cert_header: str, body_bytes=b""):
+def _signed_team_headers(
+    agent_sk, agent_did_key, team_id: str, cert_header: str, body_bytes=b""
+):
     timestamp = datetime.now(timezone.utc).isoformat()
     payload = canonical_json_bytes(
         {
@@ -341,7 +348,9 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
                 message = await original_receive()
                 if message["type"] == "http.disconnect":
                     return message
-                if message["type"] == "http.request" and not message.get("more_body", False):
+                if message["type"] == "http.request" and not message.get(
+                    "more_body", False
+                ):
                     continue
                 return message
 
@@ -377,7 +386,9 @@ def _build_test_app(aweb_db, registry, *, verified_bindings=()):
     return app
 
 
-def _cert(certificate_id: str, member_did_aw: str, member_did_key: str, alias: str = "alice"):
+def _cert(
+    certificate_id: str, member_did_aw: str, member_did_key: str, alias: str = "alice"
+):
     return {
         "certificate_id": certificate_id,
         "member_did_aw": member_did_aw,
@@ -450,8 +461,6 @@ async def _conversation_participants(aweb_db, conversation_id: str):
     return [dict(row) for row in rows]
 
 
-
-
 async def _registered_routing_pair(pair):
     """Borrow the real pair; current facts come from SDK writes and native admission."""
     from types import SimpleNamespace
@@ -477,9 +486,7 @@ async def _registered_routing_pair(pair):
         team_id = f"members:{domain}"
         await register_messaging_team(env, team_id=team_id)
         registry = node.server.app.state.awid_registry_client
-        await registry.update_namespace_delivery_origin(
-            domain, controller, node.origin
-        )
+        await registry.update_namespace_delivery_origin(domain, controller, node.origin)
         actor = await admit_messaging_actor(
             env,
             alias=alias,
@@ -568,19 +575,25 @@ async def _admit_registered_local(node):
 async def _store_retained_route(node, *, kind, conversation_id, team_id, parties):
     """Build an already trusted route with the product's persistence owner."""
     from aweb.messaging.chat import ensure_session
-    from aweb.messaging.conversations import ConversationParticipant, create_conversation
+    from aweb.messaging.conversations import (
+        ConversationParticipant,
+        create_conversation,
+    )
     from aweb.messaging.kinds import MessageKind
 
     infra = node.server.app.state.db
     conversation_id = UUID(str(conversation_id))
     if kind is MessageKind.CHAT:
-        assert await ensure_session(
-            infra,
-            team_id=team_id,
-            participant_rows=parties,
-            created_by=parties[0]["did"],
-            session_id=conversation_id,
-        ) == conversation_id
+        assert (
+            await ensure_session(
+                infra,
+                team_id=team_id,
+                participant_rows=parties,
+                created_by=parties[0]["did"],
+                session_id=conversation_id,
+            )
+            == conversation_id
+        )
     else:
         await create_conversation(
             infra,
@@ -772,7 +785,9 @@ async def test_send_message_to_local_alias_creates_conversation(aweb_cloud_db):
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -786,7 +801,9 @@ async def test_send_message_to_local_alias_creates_conversation(aweb_cloud_db):
     )
     assert str(row["conversation_id"]) == conversation_id
 
-    participants = await _conversation_participants(aweb_cloud_db.aweb_db, conversation_id)
+    participants = await _conversation_participants(
+        aweb_cloud_db.aweb_db, conversation_id
+    )
     by_did = {row["did"]: row for row in participants}
     assert by_did["did:aw:alice"]["role"] == "initiator"
     assert str(by_did["did:aw:alice"]["agent_id"]) == alice_agent_id
@@ -808,7 +825,9 @@ async def test_send_message_to_local_alias_creates_conversation(aweb_cloud_db):
         )
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         inbox_resp = await client.get("/v1/messages/inbox")
 
     assert inbox_resp.status_code == 200, inbox_resp.text
@@ -870,7 +889,9 @@ async def test_send_message_with_ingress_headers_is_an_ordinary_send(
         **ingress_headers,
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -926,7 +947,9 @@ async def test_inbox_pagination_returns_every_message_without_overlap(aweb_cloud
         )
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.get("/v1/messages/inbox?limit=2")
         assert first.status_code == 200, first.text
         first_body = first.json()
@@ -1001,7 +1024,12 @@ async def test_signed_human_plaintext_mail_lost_response_retry(aweb_cloud_db):
 
     app.dependency_overrides[get_messaging_auth] = _auth
     message_id, conversation_id = str(uuid4()), str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
     def request_body(body):
         signed = canonical_json_bytes(
@@ -1048,7 +1076,9 @@ async def test_signed_human_plaintext_mail_lost_response_retry(aweb_cloud_db):
         )
         # The first response was lost after commit; retry the exact signed request.
         retry = await client.post("/v1/messages", json=original)
-        changed = await client.post("/v1/messages", json=request_body("changed content"))
+        changed = await client.post(
+            "/v1/messages", json=request_body("changed content")
+        )
 
     assert retry.status_code == 200, retry.text
     assert retry.json() == first.json()
@@ -1131,16 +1161,22 @@ async def test_send_encrypted_message_stores_opaque_envelope_only(aweb_cloud_db)
         **_signed_identity_headers(alice_sk, alice_did_key, alice_stable, body_bytes),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
     assert resp.status_code == 200, resp.text
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         replay_resp = await client.post(
             "/v1/messages",
             content=body_bytes,
             headers={
-                **_signed_identity_headers(alice_sk, alice_did_key, alice_stable, body_bytes),
+                **_signed_identity_headers(
+                    alice_sk, alice_did_key, alice_stable, body_bytes
+                ),
                 "Content-Type": "application/json",
             },
         )
@@ -1158,12 +1194,16 @@ async def test_send_encrypted_message_stores_opaque_envelope_only(aweb_cloud_db)
     )
     different_payload = {**payload, "encrypted_envelope": different_envelope}
     different_body = json.dumps(different_payload, separators=(",", ":")).encode()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         mutation_resp = await client.post(
             "/v1/messages",
             content=different_body,
             headers={
-                **_signed_identity_headers(alice_sk, alice_did_key, alice_stable, different_body),
+                **_signed_identity_headers(
+                    alice_sk, alice_did_key, alice_stable, different_body
+                ),
                 "Content-Type": "application/json",
             },
         )
@@ -1209,7 +1249,9 @@ async def test_send_encrypted_message_stores_opaque_envelope_only(aweb_cloud_db)
         )
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         inbox_resp = await client.get("/v1/messages/inbox")
 
     assert inbox_resp.status_code == 200, inbox_resp.text
@@ -1279,18 +1321,24 @@ async def test_send_encrypted_message_to_local_alias_without_address(aweb_cloud_
     }
     body_bytes = json.dumps(payload, separators=(",", ":")).encode()
     app.dependency_overrides[get_messaging_auth] = _auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/messages",
             content=body_bytes,
             headers={
-                **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
+                **_signed_identity_headers(
+                    alice_sk, alice_did_key, "did:aw:alice", body_bytes
+                ),
                 "Content-Type": "application/json",
             },
         )
 
     assert resp.status_code == 200, resp.text
-    participants = await _conversation_participants(aweb_cloud_db.aweb_db, conversation_id)
+    participants = await _conversation_participants(
+        aweb_cloud_db.aweb_db, conversation_id
+    )
     assert [row["alias"] for row in participants] == ["alice", "bob"]
     assert participants[1]["address"] == "acme.com/bob"
     assert participants[1]["current_did_key"] == bob_did_key
@@ -1332,7 +1380,9 @@ async def test_send_message_to_address_reuses_alias_thread(aweb_cloud_db):
         )
 
     app.dependency_overrides[get_messaging_auth] = _auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -1345,7 +1395,10 @@ async def test_send_message_to_address_reuses_alias_thread(aweb_cloud_db):
         conversation_id = first.json()["conversation_id"]
         message_id = str(uuid4())
         timestamp = (
-            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
         )
         signed_payload = canonical_json_bytes(
             {
@@ -1435,7 +1488,9 @@ async def test_reused_alias_new_identity_explicit_id_creates_new_thread(aweb_clo
         )
 
     app.dependency_overrides[get_messaging_auth] = _old_worker_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -1476,7 +1531,9 @@ async def test_reused_alias_new_identity_explicit_id_creates_new_thread(aweb_clo
         )
 
     app.dependency_overrides[get_messaging_auth] = _new_worker_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         second = await client.post(
             "/v1/messages",
             json={
@@ -1537,7 +1594,9 @@ async def test_reused_alias_new_identity_without_explicit_id_creates_new_thread(
         )
 
     app.dependency_overrides[get_messaging_auth] = _old_worker_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -1573,7 +1632,9 @@ async def test_reused_alias_new_identity_without_explicit_id_creates_new_thread(
         )
 
     app.dependency_overrides[get_messaging_auth] = _new_worker_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         second = await client.post(
             "/v1/messages",
             json={
@@ -1631,7 +1692,9 @@ async def test_reused_recipient_alias_new_identity_without_explicit_id_creates_n
         )
 
     app.dependency_overrides[get_messaging_auth] = _old_worker_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -1667,7 +1730,9 @@ async def test_reused_recipient_alias_new_identity_without_explicit_id_creates_n
         )
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         second = await client.post(
             "/v1/messages",
             json={
@@ -1730,7 +1795,9 @@ async def test_agent_deleted_participant_did_not_matched_by_reused_address(
         )
 
     app.dependency_overrides[get_messaging_auth] = _old_worker_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -1785,7 +1852,9 @@ async def test_agent_deleted_participant_did_not_matched_by_reused_address(
         )
 
     app.dependency_overrides[get_messaging_auth] = _new_worker_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         second = await client.post(
             "/v1/messages",
             json={
@@ -1859,7 +1928,9 @@ async def test_empty_did_participant_not_matched_by_reused_address(aweb_cloud_db
         )
 
     app.dependency_overrides[get_messaging_auth] = _new_worker_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/messages",
             json={
@@ -1915,7 +1986,9 @@ async def test_same_stable_did_rotation_continues_existing_thread(aweb_cloud_db)
         )
 
     app.dependency_overrides[get_messaging_auth] = _old_worker_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -1959,7 +2032,9 @@ async def test_same_stable_did_rotation_continues_existing_thread(aweb_cloud_db)
         )
 
     app.dependency_overrides[get_messaging_auth] = _rotated_worker_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         second = await client.post(
             "/v1/messages",
             json={
@@ -1971,12 +2046,16 @@ async def test_same_stable_did_rotation_continues_existing_thread(aweb_cloud_db)
 
     assert second.status_code == 200, second.text
     assert second.json()["conversation_id"] == conversation_id
-    participants = await _conversation_participants(aweb_cloud_db.aweb_db, conversation_id)
+    participants = await _conversation_participants(
+        aweb_cloud_db.aweb_db, conversation_id
+    )
     assert {participant["did"] for participant in participants} == {
         "did:aw:worker",
         "did:aw:bob",
     }
-    assert bob_agent_id in {str(participant["agent_id"]) for participant in participants}
+    assert bob_agent_id in {
+        str(participant["agent_id"]) for participant in participants
+    }
 
 
 @pytest.mark.asyncio
@@ -2019,7 +2098,9 @@ async def test_send_message_to_cross_team_did_creates_conversation(aweb_cloud_db
         "subject": "conversation to did",
         "body": "hello",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -2031,7 +2112,9 @@ async def test_send_message_to_cross_team_did_creates_conversation(aweb_cloud_db
     message = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT conversation_id, to_did FROM {{tables.messages}} WHERE subject = 'conversation to did'"
     )
-    participants = await _conversation_participants(aweb_cloud_db.aweb_db, conversation_id)
+    participants = await _conversation_participants(
+        aweb_cloud_db.aweb_db, conversation_id
+    )
     by_did = {row["did"]: row for row in participants}
 
     assert conversation["team_id"] == "backend:acme.com"
@@ -2219,7 +2302,9 @@ async def test_send_message_to_external_address_requires_signed_payload(aweb_clo
     )
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=named_did_key("bob"))
+        return_value=KeyResolution(
+            did_aw="did:aw:bob", current_did_key=named_did_key("bob")
+        )
     )
     registry.resolve_address = AsyncMock(
         return_value=Address(
@@ -2238,7 +2323,9 @@ async def test_send_message_to_external_address_requires_signed_payload(aweb_clo
 
     async def _remote_handler(request: httpx.Request) -> httpx.Response:
         remote_requests.append(request)
-        return httpx.Response(500, json={"detail": "unsigned mail must never reach the wire"})
+        return httpx.Response(
+            500, json={"detail": "unsigned mail must never reach the wire"}
+        )
 
     app.state.federation_mail_transport = httpx.MockTransport(_remote_handler)
 
@@ -2255,8 +2342,15 @@ async def test_send_message_to_external_address_requires_signed_payload(aweb_clo
     app.dependency_overrides[get_messaging_auth] = _auth
     message_id = str(uuid4())
     conversation_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/messages",
             json={
@@ -2271,7 +2365,10 @@ async def test_send_message_to_external_address_requires_signed_payload(aweb_clo
         )
 
     assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"] == "Federated mail delivery requires a sender-signed payload"
+    assert (
+        resp.json()["detail"]
+        == "Federated mail delivery requires a sender-signed payload"
+    )
     assert remote_requests == []
     projected_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
@@ -2296,7 +2393,9 @@ async def test_send_encrypted_message_to_external_address_posts_ciphertext_only(
     )
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=named_did_key("bob"))
+        return_value=KeyResolution(
+            did_aw="did:aw:bob", current_did_key=named_did_key("bob")
+        )
     )
     registry.resolve_address = AsyncMock(
         return_value=Address(
@@ -2368,7 +2467,9 @@ async def test_send_encrypted_message_to_external_address_posts_ciphertext_only(
         "message_version": 2,
         "encrypted_envelope": envelope,
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -2440,7 +2541,12 @@ async def test_send_message_from_local_didkey_to_global_did_first_contact_fails_
     app.dependency_overrides[get_messaging_auth] = _auth
     message_id = str(uuid4())
     conversation_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = canonical_json_bytes(
         {
             "body": "local to global",
@@ -2457,7 +2563,9 @@ async def test_send_message_from_local_didkey_to_global_did_first_contact_fails_
         }
     ).decode()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/messages",
             json={
@@ -2555,7 +2663,12 @@ async def test_retired_mail_recipient_refuses_even_with_a_learned_return_route(
 
     app.dependency_overrides[get_messaging_auth] = _auth
     message_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = canonical_json_bytes(
         {
             "body": "reply via learned route",
@@ -2573,7 +2686,9 @@ async def test_retired_mail_recipient_refuses_even_with_a_learned_return_route(
         }
     ).decode()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         routed = await client.post(
             "/v1/messages",
             json={
@@ -2626,7 +2741,10 @@ async def test_retired_mail_recipient_refuses_even_with_a_learned_return_route(
     )
     blocked_message_id = str(uuid4())
     blocked_timestamp = (
-        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
     )
     blocked_payload = canonical_json_bytes(
         {
@@ -2645,7 +2763,9 @@ async def test_retired_mail_recipient_refuses_even_with_a_learned_return_route(
         }
     ).decode()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         blocked = await client.post(
             "/v1/messages",
             json={
@@ -2667,7 +2787,12 @@ async def test_retired_mail_recipient_refuses_even_with_a_learned_return_route(
     }
     assert remote_requests == []
     registry.resolve_key.assert_not_awaited()
-    assert await aweb_cloud_db.aweb_db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT count(*) FROM {{tables.messages}}"
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -2709,7 +2834,9 @@ async def test_send_message_to_external_address_without_delivery_origin_fails_cl
         )
 
     app.dependency_overrides[get_messaging_auth] = _auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/messages",
             json={
@@ -2772,7 +2899,12 @@ async def test_send_message_to_external_address_remote_failure_does_not_create_l
     app.dependency_overrides[get_messaging_auth] = _auth
     message_id = str(uuid4())
     conversation_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = canonical_json_bytes(
         {
             "body": "hello",
@@ -2800,7 +2932,9 @@ async def test_send_message_to_external_address_remote_failure_does_not_create_l
         "signature": sign_message(alice_sk, signed_payload.encode()),
         "signed_payload": signed_payload,
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 502
@@ -2885,7 +3019,9 @@ async def test_send_message_to_hosted_handle_alias_uses_canonical_address(
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", content=body, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -2939,7 +3075,9 @@ async def test_send_message_continues_conversation_without_address_discovery(
         )
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={"to_did": "did:aw:bob", "subject": "initial", "body": "hello"},
@@ -2962,7 +3100,9 @@ async def test_send_message_continues_conversation_without_address_discovery(
         side_effect=AssertionError("continuation must not resolve address")
     )
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         reply = await client.post(
             "/v1/messages",
             json={"conversation_id": conversation_id, "subject": "reply", "body": "hi"},
@@ -3020,7 +3160,9 @@ async def test_send_message_to_address_with_explicit_id_skips_address_discovery(
         )
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -3047,7 +3189,9 @@ async def test_send_message_to_address_with_explicit_id_skips_address_discovery(
         side_effect=AssertionError("address reply must use conversation")
     )
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         reply = await client.post(
             "/v1/messages",
             json={
@@ -3111,7 +3255,9 @@ async def test_send_message_to_address_with_existing_conversation_id_continues_l
         )
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -3135,10 +3281,14 @@ async def test_send_message_to_address_with_existing_conversation_id_continues_l
 
     registry = app.state.awid_registry_client
     registry.resolve_address = AsyncMock(
-        side_effect=AssertionError("same conversation reply must not rediscover address")
+        side_effect=AssertionError(
+            "same conversation reply must not rediscover address"
+        )
     )
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         reply = await client.post(
             "/v1/messages",
             json={
@@ -3201,7 +3351,9 @@ async def test_signed_address_continuation_keeps_ephemeral_participant_address(
         )
 
     app.dependency_overrides[get_messaging_auth] = _gsk_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -3224,7 +3376,12 @@ async def test_signed_address_continuation_keeps_ephemeral_participant_address(
         )
 
     message_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = canonical_json_bytes(
         {
             "body": "reply",
@@ -3247,7 +3404,9 @@ async def test_signed_address_continuation_keeps_ephemeral_participant_address(
     registry.resolve_address = AsyncMock(
         side_effect=AssertionError("local continuation must not rediscover address")
     )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         reply = await client.post(
             "/v1/messages",
             json={
@@ -3325,7 +3484,9 @@ async def test_mail_conversation_history_requires_participant_and_includes_sent_
         )
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -3338,7 +3499,9 @@ async def test_mail_conversation_history_requires_participant_and_includes_sent_
     conversation_id = first.json()["conversation_id"]
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         reply = await client.post(
             "/v1/messages",
             json={
@@ -3350,7 +3513,9 @@ async def test_mail_conversation_history_requires_participant_and_includes_sent_
     assert reply.status_code == 200, reply.text
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         history = await client.get(f"/v1/messages/conversations/{conversation_id}")
 
     assert history.status_code == 200, history.text
@@ -3372,7 +3537,9 @@ async def test_mail_conversation_history_requires_participant_and_includes_sent_
         )
 
     app.dependency_overrides[get_messaging_auth] = _mallory_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         forbidden = await client.get(f"/v1/messages/conversations/{conversation_id}")
     assert forbidden.status_code == 404
     assert forbidden.json() == {"detail": "Not found"}
@@ -3407,7 +3574,9 @@ async def test_mail_conversation_history_distinguishes_missing_and_legacy_messag
         "did:aw:alice",
     )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         legacy = await client.get(f"/v1/messages/conversations/{legacy_message_id}")
         missing = await client.get(
             "/v1/messages/conversations/99999999-9999-4999-8999-999999999999"
@@ -3457,7 +3626,9 @@ async def test_send_message_continuation_rejects_non_participant_and_closed(
         )
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={"to_did": "did:aw:bob", "subject": "initial closed", "body": "hello"},
@@ -3475,7 +3646,9 @@ async def test_send_message_continuation_rejects_non_participant_and_closed(
         )
 
     app.dependency_overrides[get_messaging_auth] = _mallory_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         leaked = await client.post(
             "/v1/messages",
             json={
@@ -3492,7 +3665,9 @@ async def test_send_message_continuation_rejects_non_participant_and_closed(
         UUID(conversation_id),
     )
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         closed = await client.post(
             "/v1/messages",
             json={
@@ -3542,7 +3717,9 @@ async def test_send_message_explicit_recipient_with_closed_conversation_id_rejec
         )
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -3558,7 +3735,9 @@ async def test_send_message_explicit_recipient_with_closed_conversation_id_rejec
         "UPDATE {{tables.conversations}} SET status = 'closed' WHERE conversation_id = $1",
         UUID(conversation_id),
     )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         closed = await client.post(
             "/v1/messages",
             json={
@@ -3619,7 +3798,9 @@ async def test_send_message_explicit_recipient_with_existing_conversation_id_rej
         )
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={
@@ -3682,7 +3863,9 @@ async def test_signed_continuation_requires_matching_conversation_id(aweb_cloud_
         )
 
     app.dependency_overrides[get_messaging_auth] = _auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={"to_did": "did:aw:bob", "subject": "initial signed", "body": "hello"},
@@ -3715,7 +3898,9 @@ async def test_signed_continuation_requires_matching_conversation_id(aweb_cloud_
         "signature": "test-signature",
         "signed_payload": signed_payload,
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -3796,7 +3981,10 @@ async def test_signed_plaintext_mail_rejects_timestamp_outside_federation_window
 ):
     app, alice_sk, alice_did_key = await _signed_local_mail_app(aweb_cloud_db)
     timestamp = (
-        (datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=offset_seconds))
+        (
+            datetime.now(timezone.utc).replace(microsecond=0)
+            + timedelta(seconds=offset_seconds)
+        )
         .isoformat()
         .replace("+00:00", "Z")
     )
@@ -3807,7 +3995,9 @@ async def test_signed_plaintext_mail_rejects_timestamp_outside_federation_window
         subject=f"mail skew {offset_seconds}",
     )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post("/v1/messages", json=payload)
 
     assert response.status_code == 422, response.text
@@ -3822,7 +4012,9 @@ async def test_signed_plaintext_mail_stores_server_time_and_preserves_attestatio
     aweb_cloud_db,
 ):
     app, alice_sk, alice_did_key = await _signed_local_mail_app(aweb_cloud_db)
-    attested_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=4)
+    attested_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(
+        minutes=4
+    )
     message_id, payload = _signed_local_mail_payload(
         alice_sk,
         alice_did_key,
@@ -3831,7 +4023,9 @@ async def test_signed_plaintext_mail_stores_server_time_and_preserves_attestatio
     )
 
     before = datetime.now(timezone.utc)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post("/v1/messages", json=payload)
     after = datetime.now(timezone.utc)
 
@@ -3843,9 +4037,9 @@ async def test_signed_plaintext_mail_stores_server_time_and_preserves_attestatio
     assert before <= row["created_at"] <= after
     assert row["created_at"] != attested_at
     assert json.loads(row["signed_payload"])["timestamp"] == payload["timestamp"]
-    assert datetime.fromisoformat(response.json()["delivered_at"]) == row["created_at"].replace(
-        microsecond=0
-    )
+    assert datetime.fromisoformat(response.json()["delivered_at"]) == row[
+        "created_at"
+    ].replace(microsecond=0)
 
 
 @pytest.mark.asyncio
@@ -3853,7 +4047,12 @@ async def test_signed_plaintext_mail_rejects_non_base64_signature_before_storage
     aweb_cloud_db,
 ):
     app, alice_sk, alice_did_key = await _signed_local_mail_app(aweb_cloud_db)
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     message_id, payload = _signed_local_mail_payload(
         alice_sk,
         alice_did_key,
@@ -3862,7 +4061,9 @@ async def test_signed_plaintext_mail_rejects_non_base64_signature_before_storage
     )
     payload["signature"] = base64.b64encode(bytes(64)).rstrip(b"=").decode() + "!!!!"
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post("/v1/messages", json=payload)
 
     assert response.status_code == 422, response.text
@@ -3879,7 +4080,12 @@ async def test_signed_plaintext_mail_rejects_wrong_length_signature_before_stora
     aweb_cloud_db,
 ):
     app, alice_sk, alice_did_key = await _signed_local_mail_app(aweb_cloud_db)
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     message_id, payload = _signed_local_mail_payload(
         alice_sk,
         alice_did_key,
@@ -3888,7 +4094,9 @@ async def test_signed_plaintext_mail_rejects_wrong_length_signature_before_stora
     )
     payload["signature"] = base64.b64encode(bytes(63)).rstrip(b"=").decode()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post("/v1/messages", json=payload)
 
     assert response.status_code == 422, response.text
@@ -3903,7 +4111,12 @@ async def test_signed_plaintext_mail_rejects_wrong_length_signature_before_stora
 @pytest.mark.asyncio
 async def test_signed_plaintext_mail_requires_signed_payload(aweb_cloud_db):
     app, alice_sk, alice_did_key = await _signed_local_mail_app(aweb_cloud_db)
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     _, payload = _signed_local_mail_payload(
         alice_sk,
         alice_did_key,
@@ -3912,11 +4125,16 @@ async def test_signed_plaintext_mail_requires_signed_payload(aweb_cloud_db):
         include_signed_payload=False,
     )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post("/v1/messages", json=payload)
 
     assert response.status_code == 422, response.text
-    assert response.json()["detail"] == "signed_payload is required when signature is provided"
+    assert (
+        response.json()["detail"]
+        == "signed_payload is required when signature is provided"
+    )
 
 
 @pytest.mark.asyncio
@@ -3991,13 +4209,17 @@ async def test_signed_legacy_first_mail_status_is_visible_and_allows_continuatio
     }
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post("/v1/messages", json=payload)
     assert first.status_code == 200, first.text
     conversation_id = first.json()["conversation_id"]
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         history = await client.get(f"/v1/messages/conversations/{conversation_id}")
         reply = await client.post(
             "/v1/messages",
@@ -4089,7 +4311,9 @@ async def test_signed_legacy_latest_mail_that_is_not_first_still_blocks_continua
     }
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post("/v1/messages", json=first_payload)
     assert first.status_code == 200, first.text
 
@@ -4132,7 +4356,9 @@ async def test_signed_legacy_latest_mail_that_is_not_first_still_blocks_continua
     )
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         reply = await client.post(
             "/v1/messages",
             json={
@@ -4221,13 +4447,17 @@ async def test_signed_conversation_id_binding_status_is_visible_and_allows_conti
     }
 
     app.dependency_overrides[get_messaging_auth] = _alice_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post("/v1/messages", json=payload)
     assert first.status_code == 200, first.text
     assert first.json()["conversation_id"] == conversation_id
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         history = await client.get(f"/v1/messages/conversations/{conversation_id}")
         reply = await client.post(
             "/v1/messages",
@@ -4360,7 +4590,9 @@ async def test_messages_inbox_filters_by_message_id(registered_mail_actors):
     )
     response = await env.client.get(
         "/v1/messages/inbox?unread_only=true&message_id=22222222-2222-2222-2222-222222222222",
-        headers=_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id),
+        headers=_signed_identity_headers(
+            alice.signing_key, alice.did_key, alice.stable_id
+        ),
     )
     assert response.status_code == 200, response.text
     assert [message["message_id"] for message in response.json()["messages"]] == [
@@ -4422,7 +4654,9 @@ async def test_messages_inbox_rejects_invalid_identity_signature(aweb_cloud_db):
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
     headers = _signed_identity_headers(other_sk, alice_did_key, "did:aw:alice")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/messages/inbox", headers=headers)
 
     assert resp.status_code == 401
@@ -4441,7 +4675,9 @@ async def test_messages_inbox_requires_timestamp(aweb_cloud_db):
 
     headers = _signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice")
     headers.pop("X-AWEB-Timestamp")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.get("/v1/messages/inbox", headers=headers)
 
     assert resp.status_code == 401
@@ -4798,7 +5034,9 @@ async def test_send_message_to_current_did_remains_visible_after_recipient_rotat
     app.dependency_overrides[get_messaging_auth] = _send_auth_override
 
     payload = {"to_did": bob_old_did_key, "subject": "hello current did", "body": "hi"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         send_resp = await client.post("/v1/messages", json=payload)
     assert send_resp.status_code == 200, send_resp.text
     row = await aweb_cloud_db.aweb_db.fetch_one(
@@ -4823,7 +5061,9 @@ async def test_send_message_to_current_did_remains_visible_after_recipient_rotat
         )
 
     app.dependency_overrides[get_messaging_auth] = _inbox_auth_override
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         inbox_resp = await client.get("/v1/messages/inbox")
 
     assert inbox_resp.status_code == 200, inbox_resp.text
@@ -4869,7 +5109,9 @@ async def test_send_message_rejects_mismatched_to_did_and_to_stable_id(aweb_clou
         "subject": "mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -4924,7 +5166,9 @@ async def test_send_message_rejects_mismatched_to_address_and_to_stable_id(
         "subject": "mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -5021,7 +5265,12 @@ def _federated_mail_payload(
 ):
     message_id = message_id or str(uuid4())
     conversation_id = conversation_id or str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = canonical_json_bytes(
         {
             "body": body,
@@ -5122,10 +5371,14 @@ async def test_receive_old_v1_federated_mail_ignores_deprecated_fields_and_deliv
     participants = await _conversation_participants(
         aweb_cloud_db.aweb_db, envelope["conversation_id"]
     )
-    sender_participant = next((item for item in participants if item["did"] == alice.stable_id))
+    sender_participant = next(
+        (item for item in participants if item["did"] == alice.stable_id)
+    )
     assert sender_participant["address"] == alice.address
     assert sender_participant["delivery_origin"] == world.source.node.origin
-    assert sender_participant["transport_hint"] == f"federation:{world.source.node.origin}"
+    assert (
+        sender_participant["transport_hint"] == f"federation:{world.source.node.origin}"
+    )
 
 
 @pytest.mark.asyncio
@@ -5167,7 +5420,6 @@ async def test_receive_federated_mail_first_contact_to_unknown_local_didkey_fail
     )
 
 
-
 @pytest.mark.asyncio
 async def test_receive_federated_mail_existing_local_didkey_first_contact_fails_closed(
     route_pair,
@@ -5205,7 +5457,6 @@ async def test_receive_federated_mail_existing_local_didkey_first_contact_fails_
         )
         == 0
     )
-
 
 
 @pytest.mark.asyncio
@@ -5382,7 +5633,9 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
 
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(
-        side_effect=AssertionError("federated continuation must use stored current did:key")
+        side_effect=AssertionError(
+            "federated continuation must use stored current did:key"
+        )
     )
     registry.resolve_address = AsyncMock(
         side_effect=AssertionError("federated continuation must not rediscover address")
@@ -5426,7 +5679,12 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
     message_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = canonical_json_bytes(
         {
             "body": "federated continuation",
@@ -5444,7 +5702,9 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
             "type": "mail",
         }
     )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/messages",
             json={
@@ -5477,7 +5737,10 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
     )
     second_message_id = str(uuid4())
     second_timestamp = (
-        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
     )
     second_signed_payload = canonical_json_bytes(
         {
@@ -5496,7 +5759,9 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
             "type": "mail",
         }
     )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         missing_key = await client.post(
             "/v1/messages",
             json={
@@ -5569,7 +5834,9 @@ async def test_send_message_federated_conversation_reply_requires_signed_payload
 
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(
-        side_effect=AssertionError("federated continuation must use stored current did:key")
+        side_effect=AssertionError(
+            "federated continuation must use stored current did:key"
+        )
     )
     registry.resolve_address = AsyncMock(
         side_effect=AssertionError("federated continuation must not rediscover address")
@@ -5581,7 +5848,9 @@ async def test_send_message_federated_conversation_reply_requires_signed_payload
 
     async def _remote_handler(request: httpx.Request) -> httpx.Response:
         remote_calls.append(json.loads(request.content.decode("utf-8")))
-        return httpx.Response(500, json={"detail": "unsigned mail must never reach the wire"})
+        return httpx.Response(
+            500, json={"detail": "unsigned mail must never reach the wire"}
+        )
 
     app.state.federation_mail_transport = httpx.MockTransport(_remote_handler)
 
@@ -5597,8 +5866,15 @@ async def test_send_message_federated_conversation_reply_requires_signed_payload
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
     message_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/messages",
             json={
@@ -5614,7 +5890,10 @@ async def test_send_message_federated_conversation_reply_requires_signed_payload
         )
 
     assert resp.status_code == 422, resp.text
-    assert resp.json()["detail"] == "Federated mail delivery requires a sender-signed payload"
+    assert (
+        resp.json()["detail"]
+        == "Federated mail delivery requires a sender-signed payload"
+    )
     assert remote_calls == []
     projected_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
@@ -5689,7 +5968,9 @@ async def test_send_message_federated_conversation_reply_requires_sender_attesta
 
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(
-        side_effect=AssertionError("federated continuation must use stored current did:key")
+        side_effect=AssertionError(
+            "federated continuation must use stored current did:key"
+        )
     )
     registry.resolve_address = AsyncMock(
         side_effect=AssertionError("federated continuation must not rediscover address")
@@ -5701,7 +5982,9 @@ async def test_send_message_federated_conversation_reply_requires_sender_attesta
 
     async def _remote_handler(request: httpx.Request) -> httpx.Response:
         remote_calls.append(json.loads(request.content.decode("utf-8")))
-        return httpx.Response(500, json={"detail": "incomplete mail must never reach the wire"})
+        return httpx.Response(
+            500, json={"detail": "incomplete mail must never reach the wire"}
+        )
 
     app.state.federation_mail_transport = httpx.MockTransport(_remote_handler)
 
@@ -5717,7 +6000,12 @@ async def test_send_message_federated_conversation_reply_requires_sender_attesta
 
     app.dependency_overrides[get_messaging_auth] = _bob_auth
     message_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = canonical_json_bytes(
         {
             "body": "federated continuation",
@@ -5749,7 +6037,9 @@ async def test_send_message_federated_conversation_reply_requires_sender_attesta
     }
     del body[omitted]
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=body)
 
     assert resp.status_code == 422, resp.text
@@ -5810,7 +6100,6 @@ async def test_receive_federated_mail_stored_route_rejects_wrong_target_current_
         )
         == 1
     )
-
 
 
 @pytest.mark.asyncio
@@ -5901,7 +6190,6 @@ async def test_receive_federated_mail_historical_continuation_uses_stored_sender
     assert replay.status_code == 200, replay.text
     assert replay.json()["message_id"] == payload["envelope"]["message_id"]
     assert _registered_address_reads(world.target) == address_reads_before
-
 
 
 @pytest.mark.asyncio
@@ -6422,7 +6710,6 @@ async def test_receive_federated_mail_keeps_success_after_postcommit_outbox_db_f
     )
 
 
-
 @pytest.mark.asyncio
 async def test_receive_federated_encrypted_mail_rejects_plaintext_wrapper_and_timestamp_mismatch(
     route_pair,
@@ -6527,7 +6814,6 @@ async def test_receive_federated_mail_rejects_wrong_delivery_origin(route_pair):
     assert _registered_address_reads(world.target) == address_reads_before
 
 
-
 @pytest.mark.asyncio
 async def test_receive_federated_mail_rejects_sender_key_drift(route_pair):
     world = await _registered_routing_pair(route_pair)
@@ -6557,7 +6843,6 @@ async def test_receive_federated_mail_rejects_sender_key_drift(route_pair):
     assert _registered_address_reads(world.target) == address_reads_before
 
 
-
 @pytest.mark.asyncio
 async def test_receive_federated_mail_rejects_target_binding_mismatch(route_pair):
     world = await _registered_routing_pair(route_pair)
@@ -6577,9 +6862,7 @@ async def test_receive_federated_mail_rejects_target_binding_mismatch(route_pair
     )
     other_key, _, other_did = _make_keypair()
     other_identity = await registry.register_did(other_did, other_key)
-    await registry.reassign_address(
-        domain, alias, other_identity.did_aw, controller
-    )
+    await registry.reassign_address(domain, alias, other_identity.did_aw, controller)
     payload = _federated_mail_payload(
         sender_sk=alice_sk,
         sender_did_key=alice_did_key,
@@ -6597,7 +6880,6 @@ async def test_receive_federated_mail_rejects_target_binding_mismatch(route_pair
         resp = await client.post("/v1/federation/messages", json=payload)
     assert resp.status_code == 422, resp.text
     assert resp.json()["reason"] == "recipient_address_did_mismatch"
-
 
 
 @pytest.mark.asyncio
@@ -6645,7 +6927,6 @@ async def test_receive_federated_mail_allows_explicit_inbound_mode_open(route_pa
     assert count == 1
 
 
-
 @pytest_asyncio.fixture
 async def registered_selector_pair(shared_test_pool, monkeypatch):
     from messaging_actor_support import admit_messaging_actor, register_messaging_team
@@ -6672,7 +6953,11 @@ async def _send_registered_selector_mail(env, sender, payload):
         content=body,
         headers={
             **_signed_team_headers(
-                sender.signing_key, sender.did_key, sender.team_id, sender.certificate, body
+                sender.signing_key,
+                sender.did_key,
+                sender.team_id,
+                sender.certificate,
+                body,
             ),
             "Content-Type": "application/json",
         },
@@ -6686,7 +6971,9 @@ async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_iden
     env, sender, recipient, secondary = registered_selector_pair
     registry = env.app.state.awid_registry_client
     current_key, _, current_did = _make_keypair()
-    await registry.rotate_key(recipient.stable_id, current_did, recipient.signing_key, current_key)
+    await registry.rotate_key(
+        recipient.stable_id, current_did, recipient.signing_key, current_key
+    )
     certificate_fields = _make_certificate(
         env.team_sk,
         env.team_did,
@@ -6716,7 +7003,9 @@ async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_iden
         "/v1/connect",
         content=b"{}",
         headers={
-            **_signed_team_headers(current_key, current_did, secondary, certificate, b"{}"),
+            **_signed_team_headers(
+                current_key, current_did, secondary, certificate, b"{}"
+            ),
             "Content-Type": "application/json",
         },
     )
@@ -6726,7 +7015,9 @@ async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_iden
         "/v1/agents/me/inbound-mode",
         content=policy,
         headers={
-            **_signed_team_headers(current_key, current_did, secondary, certificate, policy),
+            **_signed_team_headers(
+                current_key, current_did, secondary, certificate, policy
+            ),
             "Content-Type": "application/json",
         },
     )
@@ -6746,7 +7037,9 @@ async def test_send_message_accepts_to_stable_id_did_binding_with_duplicate_iden
     assert obsolete.status_code == 422, obsolete.text
     assert "to_did" in obsolete.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
-    response = await _send_registered_selector_mail(env, sender, {**payload, "to_did": current_did})
+    response = await _send_registered_selector_mail(
+        env, sender, {**payload, "to_did": current_did}
+    )
     assert response.status_code == 200, response.text
     row = await env.db.fetch_one(
         "SELECT to_did,to_agent_id,to_alias FROM {{tables.messages}} WHERE message_id=$1",
@@ -6833,7 +7126,9 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_stable_id(
         "subject": "mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -6879,7 +7174,9 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_stable_id(aweb_cl
         "subject": "mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -6932,7 +7229,9 @@ async def test_send_message_rejects_mismatched_to_address_and_to_did(aweb_cloud_
         "subject": "mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -6996,10 +7295,14 @@ async def test_send_message_accepts_signed_local_address_binding_without_registr
         "from_did": "did:aw:alice",
         "message_id": message_id,
         "timestamp": timestamp,
-        "signature": sign_message(named_signing_key("z6MkAliceCurrent"), signed_payload),
+        "signature": sign_message(
+            named_signing_key("z6MkAliceCurrent"), signed_payload
+        ),
         "signed_payload": signed_payload.decode(),
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -7058,7 +7361,9 @@ async def test_send_message_rejects_mismatched_local_to_address_binding_when_awi
         "subject": "local address mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -7108,7 +7413,9 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_did(aweb_cloud
         "subject": "mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -7154,7 +7461,9 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_did(aweb_cloud_db
         "subject": "mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -7249,7 +7558,9 @@ async def test_send_message_rejects_mismatched_to_agent_id_and_to_address(
         "subject": "mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -7307,7 +7618,9 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_address(aweb_clou
         "subject": "mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -7367,7 +7680,9 @@ async def test_send_message_accepts_to_address_alias_binding_with_duplicate_iden
         "subject": "duplicate address alias binding rows",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -7426,7 +7741,9 @@ async def test_send_message_rejects_mismatched_to_alias_and_to_agent_id(aweb_clo
         "subject": "mismatch",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 422
@@ -7478,7 +7795,9 @@ async def test_send_message_accepts_to_agent_id_alias_binding_with_duplicate_ide
         "subject": "duplicate agent alias binding rows",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -7628,7 +7947,12 @@ async def test_send_message_resolves_tilde_alias_cross_team(aweb_cloud_db):
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
     message_id = str(uuid4())
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     signed_payload = json.dumps(
         {
             "type": "mail",
@@ -7642,7 +7966,9 @@ async def test_send_message_resolves_tilde_alias_cross_team(aweb_cloud_db):
             "timestamp": timestamp,
         }
     )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/messages",
             json={
@@ -7712,7 +8038,9 @@ async def test_send_message_rejects_invalid_tilde_alias_targets(
 
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post(
             "/v1/messages",
             json={"to_alias": target, "subject": "hello", "body": "hi"},
@@ -7857,15 +8185,21 @@ async def test_send_message_team_auth_uses_global_certificate_before_reconnect(
     team_id = "upgrade:acme.com"
     await register_messaging_team(env, team_id=team_id)
     alice = await admit_messaging_actor(env, team_id=team_id, alias="alice", local=True)
-    bob = await admit_messaging_actor(env, team_id=team_id, alias="bob", address="acme.com/upgrade-bob")
-    alice = await issue_global_certificate_to_local_member(env, alice, address="acme.com/upgrade-alice")
+    bob = await admit_messaging_actor(
+        env, team_id=team_id, alias="bob", address="acme.com/upgrade-bob"
+    )
+    alice = await issue_global_certificate_to_local_member(
+        env, alice, address="acme.com/upgrade-alice"
+    )
     await set_messaging_inbound_mode(env, bob, mode="team_and_contacts")
     await add_messaging_contact(env, bob, address=alice.address)
     alice_row = await env.db.fetch_one(
         "SELECT agent_id, did_aw, address FROM {{tables.agents}} WHERE agent_id=$1",
         UUID(alice.agent_id),
     )
-    assert alice_row is not None and not alice_row["did_aw"] and not alice_row["address"]
+    assert (
+        alice_row is not None and not alice_row["did_aw"] and not alice_row["address"]
+    )
     payload = {"to_alias": "bob", "subject": "hello partial", "body": "hi"}
     body_bytes = json.dumps(payload).encode()
     headers = {
@@ -7891,13 +8225,20 @@ async def test_global_inbox_does_not_include_current_key_identity(
 
     env, _ = registered_mail_actors
     locals = await register_messaging_actors(
-        env, team_id="before-enrollment:local.test", aliases=("sender", "reader"), local=True,
+        env,
+        team_id="before-enrollment:local.test",
+        aliases=("sender", "reader"),
+        local=True,
     )
     bob = locals["reader"]
     await send_messaging_mail(
-        env, locals["sender"], payload={"to_alias": "reader", "subject": "hello", "body": "hi"},
+        env,
+        locals["sender"],
+        payload={"to_alias": "reader", "subject": "hello", "body": "hi"},
     )
-    mapping = await env.app.state.awid_registry_client.register_did(bob.did_key, bob.signing_key)
+    mapping = await env.app.state.awid_registry_client.register_did(
+        bob.did_key, bob.signing_key
+    )
     assert (
         await env.db.fetch_value(
             "SELECT count(*) FROM {{tables.agents}} WHERE did_aw=$1", mapping.did_aw
@@ -7916,7 +8257,9 @@ async def test_global_inbox_does_not_include_current_key_identity(
 
 
 @pytest.mark.asyncio
-async def test_messages_inbox_and_ack_accept_persistent_cert_auth(shared_test_pool, monkeypatch):
+async def test_messages_inbox_and_ack_accept_persistent_cert_auth(
+    shared_test_pool, monkeypatch
+):
     from identity_binding_support import register_global_identity
     from test_dashboard_privacy import TEAM, privacy_stack
 
@@ -7968,7 +8311,9 @@ async def test_messages_inbox_and_ack_accept_persistent_cert_auth(shared_test_po
             headers=_signed_team_headers(alice.sk, alice.did, TEAM, cert),
         )
         assert inbox.status_code == 200, inbox.text
-        assert [item["subject"] for item in inbox.json()["messages"]] == ["persistent cert inbox"]
+        assert [item["subject"] for item in inbox.json()["messages"]] == [
+            "persistent cert inbox"
+        ]
         assert acknowledged.status_code == 200, acknowledged.text
         row = await env.db.fetch_one(
             "SELECT read_at FROM {{tables.messages}} WHERE message_id=$1",
@@ -7995,7 +8340,10 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
     alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
     bob_sk, bob_did_key = (bob.signing_key, bob.did_key)
     local_actors = await register_messaging_actors(
-        env, team_id="recipient-view:local.test", aliases=("sender", "reader"), local=True,
+        env,
+        team_id="recipient-view:local.test",
+        aliases=("sender", "reader"),
+        local=True,
     )
     local_reader = local_actors["reader"]
     encrypted_id = "66666666-6666-4666-8666-666666666666"
@@ -8069,7 +8417,9 @@ async def test_exact_message_read_is_participant_visible_side_effect_free_and_ce
         )
         local_key_read = await client.get(
             "/v1/messages/88888888-8888-4888-8888-888888888888",
-            headers=_signed_identity_headers(local_reader.signing_key, local_reader.did_key, ""),
+            headers=_signed_identity_headers(
+                local_reader.signing_key, local_reader.did_key, ""
+            ),
         )
         sender_encrypted = await client.get(
             f"/v1/messages/{encrypted_id}", headers=alice_headers
@@ -8202,7 +8552,9 @@ async def _assert_registered_mail_field_refusal(
             "/v1/messages",
             content=raw,
             headers={
-                **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                **_signed_identity_headers(
+                    alice.signing_key, alice.did_key, alice.stable_id, raw
+                ),
                 "Content-Type": "application/json",
             },
         )
@@ -8215,7 +8567,9 @@ async def _assert_registered_mail_field_refusal(
     assert refused.status_code == 422, refused.text
     assert detail in refused.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
-    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 0
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 0
+    )
     accepted = await post(request(original))
     assert accepted.status_code == 200, accepted.text
     stored = await env.db.fetch_one(
@@ -8228,7 +8582,9 @@ async def _assert_registered_mail_field_refusal(
 
 
 @pytest.mark.asyncio
-async def test_send_message_requires_timestamp_when_signature_is_provided(registered_mail_actors):
+async def test_send_message_requires_timestamp_when_signature_is_provided(
+    registered_mail_actors,
+):
     await _assert_registered_mail_field_refusal(
         registered_mail_actors,
         omit_fields=("timestamp",),
@@ -8237,7 +8593,9 @@ async def test_send_message_requires_timestamp_when_signature_is_provided(regist
 
 
 @pytest.mark.asyncio
-async def test_send_message_rejects_signed_payload_body_mismatch(registered_mail_actors):
+async def test_send_message_rejects_signed_payload_body_mismatch(
+    registered_mail_actors,
+):
     await _assert_registered_mail_field_refusal(
         registered_mail_actors,
         request_changes={"body": "tampered hi"},
@@ -8246,7 +8604,9 @@ async def test_send_message_rejects_signed_payload_body_mismatch(registered_mail
 
 
 @pytest.mark.asyncio
-async def test_send_message_rejects_signed_payload_priority_mismatch(registered_mail_actors):
+async def test_send_message_rejects_signed_payload_priority_mismatch(
+    registered_mail_actors,
+):
     await _assert_registered_mail_field_refusal(
         registered_mail_actors,
         request_changes={"priority": "urgent"},
@@ -8255,7 +8615,9 @@ async def test_send_message_rejects_signed_payload_priority_mismatch(registered_
 
 
 @pytest.mark.asyncio
-async def test_send_message_rejects_signed_payload_recipient_mismatch(registered_mail_actors):
+async def test_send_message_rejects_signed_payload_recipient_mismatch(
+    registered_mail_actors,
+):
     _, actors = registered_mail_actors
     await _assert_registered_mail_field_refusal(
         registered_mail_actors,
@@ -8265,7 +8627,9 @@ async def test_send_message_rejects_signed_payload_recipient_mismatch(registered
 
 
 @pytest.mark.asyncio
-async def test_send_message_rejects_signed_payload_from_stable_id_mismatch(registered_mail_actors):
+async def test_send_message_rejects_signed_payload_from_stable_id_mismatch(
+    registered_mail_actors,
+):
     _, actors = registered_mail_actors
     await _assert_registered_mail_field_refusal(
         registered_mail_actors,
@@ -8275,7 +8639,9 @@ async def test_send_message_rejects_signed_payload_from_stable_id_mismatch(regis
 
 
 @pytest.mark.asyncio
-async def test_send_message_rejects_signed_payload_from_mismatch(registered_mail_actors):
+async def test_send_message_rejects_signed_payload_from_mismatch(
+    registered_mail_actors,
+):
     _, actors = registered_mail_actors
     await _assert_registered_mail_field_refusal(
         registered_mail_actors,
@@ -8515,25 +8881,55 @@ async def test_send_message_to_global_address_allows_explicit_inbound_mode_open(
 
 
 @pytest.mark.asyncio
-async def test_send_message_to_address_local_ephemeral_without_route_is_not_routable(registered_mail_actors):
+async def test_send_message_to_address_local_ephemeral_without_route_is_not_routable(
+    registered_mail_actors,
+):
     from types import SimpleNamespace
     from aweb.application_state import application_registry_client
     from test_local_policy_refusal_boundaries import admitted_local_recipient
+
     env, actors = registered_mail_actors
-    alice = actors['alice']
-    server = SimpleNamespace(fixture=env, registry=application_registry_client(env.app.state))
-    bob = await admitted_local_recipient(server, team='eng:otherco.com', alias='bob')
-    body = json.dumps({'to_address': 'otherco.com/bob', 'subject': 'blocked', 'body': 'hi'}).encode()
-    refused = await env.client.post('/v1/messages', content=body, headers={**_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, body), 'Content-Type': 'application/json'})
+    alice = actors["alice"]
+    server = SimpleNamespace(
+        fixture=env, registry=application_registry_client(env.app.state)
+    )
+    bob = await admitted_local_recipient(server, team="eng:otherco.com", alias="bob")
+    body = json.dumps(
+        {"to_address": "otherco.com/bob", "subject": "blocked", "body": "hi"}
+    ).encode()
+    refused = await env.client.post(
+        "/v1/messages",
+        content=body,
+        headers={
+            **_signed_identity_headers(
+                alice.signing_key, alice.did_key, alice.stable_id, body
+            ),
+            "Content-Type": "application/json",
+        },
+    )
     assert refused.status_code == 404, refused.text
-    assert refused.json()['reason'] == 'local_recipient_route_missing'
-    assert refused.json()['retryable'] is False
-    assert refused.json()['detail'] == 'otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry.'
-    assert await env.db.fetch_value('SELECT count(*) FROM {{tables.messages}}') == 0
-    member_body = json.dumps({'to_alias': 'bob', 'subject': 'same-team', 'body': 'allowed'}).encode()
-    accepted = await env.client.post('/v1/messages', content=member_body, headers={**_signed_team_headers(bob.sk, bob.did, bob.team, bob.certificate, member_body), 'Content-Type': 'application/json'})
+    assert refused.json()["reason"] == "local_recipient_route_missing"
+    assert refused.json()["retryable"] is False
+    assert (
+        refused.json()["detail"]
+        == "otherco.com/bob is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry."
+    )
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    member_body = json.dumps(
+        {"to_alias": "bob", "subject": "same-team", "body": "allowed"}
+    ).encode()
+    accepted = await env.client.post(
+        "/v1/messages",
+        content=member_body,
+        headers={
+            **_signed_team_headers(
+                bob.sk, bob.did, bob.team, bob.certificate, member_body
+            ),
+            "Content-Type": "application/json",
+        },
+    )
     assert accepted.status_code == 200, accepted.text
-    assert await env.db.fetch_value('SELECT to_did FROM {{tables.messages}}') == bob.did
+    assert await env.db.fetch_value("SELECT to_did FROM {{tables.messages}}") == bob.did
 
 
 @pytest.mark.asyncio
@@ -8578,7 +8974,6 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
     assert reads.count(("GET", "/v1/namespaces/otherco.com/addresses/bob")) == 1
 
 
-
 @pytest.mark.parametrize("recipient_identity_scope", ["global", "local"])
 @pytest.mark.asyncio
 async def test_send_message_to_address_uses_same_team_local_recipient_when_awid_misses(
@@ -8620,7 +9015,9 @@ async def test_send_message_to_address_uses_same_team_local_recipient_when_awid_
 
     subject = f"same team hidden {recipient_identity_scope}"
     payload = {"to_address": "otherco.com/bob", "subject": subject, "body": "hi"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -8675,7 +9072,6 @@ async def test_send_message_to_address_rejects_cross_team_local_persistent_when_
     assert reads.count(("GET", "/v1/namespaces/otherco.com/addresses/bob")) == 1
 
 
-
 @pytest.mark.asyncio
 async def test_send_message_to_address_uses_local_persistent_when_registry_unconfigured(
     aweb_cloud_db,
@@ -8706,7 +9102,9 @@ async def test_send_message_to_address_uses_local_persistent_when_registry_uncon
     app.dependency_overrides[get_messaging_auth] = _auth_override
 
     payload = {"to_address": "otherco.com/bob", "subject": "local direct", "body": "hi"}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -8752,7 +9150,9 @@ async def test_send_message_to_stable_id_address_binding_uses_local_persistent_w
         "subject": "local bound",
         "body": "hi",
     }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -8784,14 +9184,21 @@ async def test_send_message_to_private_address_uses_client_recipient_binding(
     )
     alice = sender_actors["alice"]
     others = await register_messaging_actors(
-        env, team_id="ops:otherco.com", aliases=("bob",), local=recipient_identity_scope == "local"
+        env,
+        team_id="ops:otherco.com",
+        aliases=("bob",),
+        local=recipient_identity_scope == "local",
     )
     bob = others["bob"]
     if recipient_identity_scope == "local":
-        bob = await issue_global_certificate_to_local_member(env, bob, address="otherco.com/bob")
+        bob = await issue_global_certificate_to_local_member(
+            env, bob, address="otherco.com/bob"
+        )
     else:
         await set_messaging_inbound_mode(env, bob, mode="open")
-    policy = await env.client.get("/v1/agents/me/inbound-mode", headers=messaging_actor_headers(bob))
+    policy = await env.client.get(
+        "/v1/agents/me/inbound-mode", headers=messaging_actor_headers(bob)
+    )
     assert policy.status_code == 200, policy.text
     assert policy.json()["identity_scope"] == recipient_identity_scope
     assert policy.json()["inbound_mode"] == "open"
@@ -8928,7 +9335,6 @@ async def test_send_message_to_private_address_rejects_unverified_client_recipie
     assert "Recipient address not found" in resp.text
 
 
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("expiry_seconds", [-1, 0, 1, None])
 async def test_recipient_mail_starts_new_conversation_regardless_of_pair_expiry(
@@ -8970,14 +9376,18 @@ async def test_recipient_mail_starts_new_conversation_regardless_of_pair_expiry(
         )
 
     app.dependency_overrides[get_messaging_auth] = auth
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
         first = await client.post(
             "/v1/messages",
             json={"to_alias": "bob", "subject": "before expiry", "body": "hello"},
         )
         assert first.status_code == 200, first.text
         old_id = first.json()["conversation_id"]
-        expiry = None if expiry_seconds is None else now + timedelta(seconds=expiry_seconds)
+        expiry = (
+            None if expiry_seconds is None else now + timedelta(seconds=expiry_seconds)
+        )
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.conversations}} SET expires_at = $2 WHERE conversation_id = $1",
             UUID(old_id),

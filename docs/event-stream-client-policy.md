@@ -11,7 +11,7 @@ clients implement the stream today, each with its own rules:
 
 - `channel-core/src/api/events.ts` (the Claude Code plugin and the Pi
   extension);
-- `cli/go/wake/stream.go` (the `aw wake` broker, one stream per identity; the
+- `cli/go/internal/wake/stream.go` (the `aw wake` broker, one stream per identity; the
   channel-core child it runs for each instance does not open the stream, it
   is fed the broker's events);
 - `cli/go/run/eventbus.go` (`aw run`).

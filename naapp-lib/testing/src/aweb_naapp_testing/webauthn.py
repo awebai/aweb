@@ -204,5 +204,9 @@ def without_user_verification(assertion: dict, key) -> dict:
         signature = base64.b64decode(encoded + "=" * (-len(encoded) % 4))
     return {
         **assertion,
-        "response": {**response, "authenticatorData": b64url(bytes(auth_data)), "signature": b64url(signature)},
+        "response": {
+            **response,
+            "authenticatorData": b64url(bytes(auth_data)),
+            "signature": b64url(signature),
+        },
     }

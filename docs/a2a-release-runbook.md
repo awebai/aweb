@@ -13,7 +13,7 @@ and are not release authority for the OSS gateway.
 
 | Surface | Authority |
 |---|---|
-| Agent Card / JSON-RPC / bridge behavior | `cli/go/a2a/`, `cli/go/a2agw/`, and `docs/vectors/a2a-v1.json` / `a2a-bridge-envelope-v0.json` |
+| Agent Card / JSON-RPC / bridge behavior | `cli/go/internal/a2a/`, `cli/go/internal/a2agw/`, and `docs/vectors/a2a-v1.json` / `a2a-bridge-envelope-v0.json` |
 | `aw a2a` commands | `cli/go/cmd/aw/a2a.go` and live Cobra help |
 | Gateway binary/image | `cli/go/cmd/aweb-a2a-gw/`, `cli/go/Dockerfile.a2a-gw`, and release workflow/Make targets |
 | AWID publication/delegation | `a2a-awid-publication-contract.md`, `awid/src/awid_service/routes/a2a_publications.py`, migration `007_a2a_publications.sql`, and publication vector |

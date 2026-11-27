@@ -78,9 +78,12 @@ async def test_identity_evidence_and_private_team_reads_keep_both_inputs(
             cleanup_keys.extend(
                 [
                     registry._team_metadata_cache_key(domain, name),
-                    await registry._generation_cache_key(registry._id_status_cache_key(
-                        {"v": 1, "domain": domain, "ids": [subject["id"]]}
-                    ), registry._id_status_generation_key(domain)),
+                    await registry._generation_cache_key(
+                        registry._id_status_cache_key(
+                            {"v": 1, "domain": domain, "ids": [subject["id"]]}
+                        ),
+                        registry._id_status_generation_key(domain),
+                    ),
                 ]
             )
         evidence = await registry.id_chain_evidence(None, subject, domain=domain)

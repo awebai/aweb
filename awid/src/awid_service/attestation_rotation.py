@@ -16,7 +16,13 @@ from typing import Any
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from awid.attestation_records import MEMBER_CUSTODY, MEMBER_PERSON, TEAM_CUSTODIAN, RecordError, verify_record
+from awid.attestation_records import (
+    MEMBER_CUSTODY,
+    MEMBER_PERSON,
+    TEAM_CUSTODIAN,
+    RecordError,
+    verify_record,
+)
 from awid.signing import canonical_json_bytes
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 
@@ -60,31 +66,71 @@ def rotate_max_body_bytes_from_env() -> int:
 
 
 def issued_at_of(record: dict[str, Any]) -> datetime:
-    return datetime.strptime(record["issued_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return datetime.strptime(record["issued_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )
 
 
 def _comparable(record: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in record.items() if key not in ("team_did_key", "issued_at")}
+    return {
+        key: value
+        for key, value in record.items()
+        if key not in ("team_did_key", "issued_at")
+    }
 
 
-def _verified(kind: str, entry: SignedRecord, *, team_id: str, new_team_did_key: str, now: datetime) -> dict:
+def _verified(
+    kind: str,
+    entry: SignedRecord,
+    *,
+    team_id: str,
+    new_team_did_key: str,
+    now: datetime,
+) -> dict:
     record_type = _KINDS[kind][0]
     record = entry.record
     if record.get("type") != record_type:
-        raise HTTPException(status_code=422, detail={"code": "record_invalid", "message": f"{kind} holds another record type"})
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "record_invalid",
+                "message": f"{kind} holds another record type",
+            },
+        )
     try:
         verify_record(record, entry.signature, team_did_key=new_team_did_key)
     except RecordError as exc:
-        raise HTTPException(status_code=422, detail={"code": "record_invalid", "message": f"{kind}: {exc}"}) from exc
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "record_invalid", "message": f"{kind}: {exc}"},
+        ) from exc
     if record["team_id"] != team_id:
-        raise HTTPException(status_code=422, detail={"code": "record_invalid", "message": f"{kind}: record is for another team"})
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "record_invalid",
+                "message": f"{kind}: record is for another team",
+            },
+        )
     if issued_at_of(record) > now + MAX_FUTURE_ISSUED_AT:
-        raise HTTPException(status_code=422, detail={"code": "issued_at_in_future", "message": f"{kind}: issued_at is ahead"})
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "issued_at_in_future",
+                "message": f"{kind}: issued_at is ahead",
+            },
+        )
     return record
 
 
 async def _resigned_team_server(
-    tx, *, team_uuid, team_id: str, new_team_did_key: str, entry: SignedRecord | None, now: datetime,
+    tx,
+    *,
+    team_uuid,
+    team_id: str,
+    new_team_did_key: str,
+    entry: SignedRecord | None,
+    now: datetime,
 ) -> tuple[bool, bool, bool, tuple[dict, str, str, datetime] | None]:
     """Check the re-signed aweb.team-server/1 record against the stored one.
 
@@ -100,20 +146,38 @@ async def _resigned_team_server(
         return stored is not None, False, False, None
     try:
         verified = verify_team_server_record(
-            entry.record, entry.signature, team_id=team_id, current_team_did_key=new_team_did_key, now=now,
+            entry.record,
+            entry.signature,
+            team_id=team_id,
+            current_team_did_key=new_team_did_key,
+            now=now,
         )
     except TeamServerRecordError as exc:
-        raise HTTPException(status_code=422, detail={"code": exc.code, "message": f"team_server: {exc}"}) from exc
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": f"team_server: {exc}"}
+        ) from exc
     if stored is None:
         return False, True, False, None
-    unchanged = _comparable(entry.record) == _comparable(json.loads(stored["record_json"]))
+    unchanged = _comparable(entry.record) == _comparable(
+        json.loads(stored["record_json"])
+    )
     if not unchanged or verified.issued_at <= stored["issued_at"]:
         return False, False, True, None
-    return False, False, False, (entry.record, entry.signature, verified.server_url, verified.issued_at)
+    return (
+        False,
+        False,
+        False,
+        (entry.record, entry.signature, verified.server_url, verified.issued_at),
+    )
 
 
 async def apply_resigned_records(
-    tx, *, team_uuid, team_id: str, new_team_did_key: str, resigned: ResignedRecords | None,
+    tx,
+    *,
+    team_uuid,
+    team_id: str,
+    new_team_did_key: str,
+    resigned: ResignedRecords | None,
 ) -> None:
     """Replace every stored record with its re-signed form, or refuse with nothing changed.
 
@@ -123,9 +187,18 @@ async def apply_resigned_records(
     if resigned is None:
         return
     now = datetime.now(timezone.utc)
-    server_missing, server_extra, server_changed, server_update = await _resigned_team_server(
-        tx, team_uuid=team_uuid, team_id=team_id, new_team_did_key=new_team_did_key,
-        entry=resigned.team_server, now=now,
+    (
+        server_missing,
+        server_extra,
+        server_changed,
+        server_update,
+    ) = await _resigned_team_server(
+        tx,
+        team_uuid=team_uuid,
+        team_id=team_id,
+        new_team_did_key=new_team_did_key,
+        entry=resigned.team_server,
+        now=now,
     )
     missing: dict[str, Any] = {"team_server": server_missing}
     extra: dict[str, Any] = {"team_server": server_extra}
@@ -145,28 +218,43 @@ async def apply_resigned_records(
         given: dict[str, tuple[dict, str]] = {}
         kind_extra: set[str] = set()
         for entry in getattr(resigned, kind):
-            record = _verified(kind, entry, team_id=team_id, new_team_did_key=new_team_did_key, now=now)
+            record = _verified(
+                kind, entry, team_id=team_id, new_team_did_key=new_team_did_key, now=now
+            )
             key = record[key_field]
             if key in given or key not in stored:
                 kind_extra.add(key)
             given[key] = (record, entry.signature)
         kind_missing = sorted(set(stored) - set(given))
         kind_changed = sorted(
-            key for key, (record, _) in given.items()
-            if key in stored and key not in kind_extra and (
-                _comparable(record) != _comparable(json.loads(stored[key]["record_json"]))
+            key
+            for key, (record, _) in given.items()
+            if key in stored
+            and key not in kind_extra
+            and (
+                _comparable(record)
+                != _comparable(json.loads(stored[key]["record_json"]))
                 or issued_at_of(record) <= stored[key]["issued_at"]
             )
         )
-        missing[kind], extra[kind], changed[kind] = kind_missing, sorted(kind_extra), kind_changed
-        updates.extend((table, key_field, record, signature) for record, signature in given.values())
+        missing[kind], extra[kind], changed[kind] = (
+            kind_missing,
+            sorted(kind_extra),
+            kind_changed,
+        )
+        updates.extend(
+            (table, key_field, record, signature)
+            for record, signature in given.values()
+        )
     if any(missing.values()) or any(extra.values()) or any(changed.values()):
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "resigned_records_incomplete",
                 "message": "resigned_records must re-sign exactly every stored record",
-                "missing": missing, "extra": extra, "changed": changed,
+                "missing": missing,
+                "extra": extra,
+                "changed": changed,
             },
         )
     if server_update is not None:
@@ -178,8 +266,12 @@ async def apply_resigned_records(
                 updated_at = NOW()
             WHERE team_uuid = $1
             """,
-            team_uuid, canonical_json_bytes(record).decode("utf-8"), signature, new_team_did_key,
-            server_url, issued_at,
+            team_uuid,
+            canonical_json_bytes(record).decode("utf-8"),
+            signature,
+            new_team_did_key,
+            server_url,
+            issued_at,
         )
     for table, key_field, record, signature in updates:
         await tx.execute(
@@ -188,14 +280,26 @@ async def apply_resigned_records(
             SET record_json = $3, signature = $4, team_did_key = $5, issued_at = $6, updated_at = NOW()
             WHERE team_uuid = $1 AND {key_field} = $2
             """,
-            team_uuid, record[key_field], canonical_json_bytes(record).decode("utf-8"), signature,
-            new_team_did_key, issued_at_of(record),
+            team_uuid,
+            record[key_field],
+            canonical_json_bytes(record).decode("utf-8"),
+            signature,
+            new_team_did_key,
+            issued_at_of(record),
         )
 
 
 async def record_member_records(
-    tx, *, team_uuid, team_id: str, new_team_did_key: str, certificate_id: str, member_did_key: str,
-    custody: SignedRecord | None, person: SignedRecord | None, now: datetime,
+    tx,
+    *,
+    team_uuid,
+    team_id: str,
+    new_team_did_key: str,
+    certificate_id: str,
+    member_did_key: str,
+    custody: SignedRecord | None,
+    person: SignedRecord | None,
+    now: datetime,
 ) -> None:
     """Record a replacement member certificate's custody and person records in
     the rotation's transaction: each verifies under the new key, names that
@@ -203,22 +307,37 @@ async def record_member_records(
     for kind, entry in (("member_custody", custody), ("member_person", person)):
         if entry is None:
             continue
-        record = _verified(kind, entry, team_id=team_id, new_team_did_key=new_team_did_key, now=now)
-        if record.get("certificate_id") != certificate_id or record.get("member_did_key") != member_did_key:
+        record = _verified(
+            kind, entry, team_id=team_id, new_team_did_key=new_team_did_key, now=now
+        )
+        if (
+            record.get("certificate_id") != certificate_id
+            or record.get("member_did_key") != member_did_key
+        ):
             raise HTTPException(
                 status_code=422,
-                detail={"code": "record_invalid", "message": f"{kind}: record is for another certificate or member"},
+                detail={
+                    "code": "record_invalid",
+                    "message": f"{kind}: record is for another certificate or member",
+                },
             )
         canonical = canonical_json_bytes(record).decode("utf-8")
         if kind == "member_custody":
             custodian = await tx.fetch_one(
                 "SELECT record_json FROM {{tables.team_custodians}} WHERE team_uuid = $1 AND custodian_id = $2",
-                team_uuid, record.get("custodian_id"),
+                team_uuid,
+                record.get("custodian_id"),
             )
-            if custodian is None or not json.loads(custodian["record_json"])["issuer_did_keys"]:
+            if (
+                custodian is None
+                or not json.loads(custodian["record_json"])["issuer_did_keys"]
+            ):
                 raise HTTPException(
                     status_code=409,
-                    detail={"code": "custodian_not_registered", "message": "The custodian is not registered for this team"},
+                    detail={
+                        "code": "custodian_not_registered",
+                        "message": "The custodian is not registered for this team",
+                    },
                 )
             await tx.execute(
                 """
@@ -226,8 +345,13 @@ async def record_member_records(
                     (team_uuid, certificate_id, custodian_id, record_json, signature, team_did_key, issued_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
-                team_uuid, certificate_id, record["custodian_id"], canonical, entry.signature,
-                new_team_did_key, issued_at_of(record),
+                team_uuid,
+                certificate_id,
+                record["custodian_id"],
+                canonical,
+                entry.signature,
+                new_team_did_key,
+                issued_at_of(record),
             )
         else:
             await tx.execute(
@@ -236,6 +360,11 @@ async def record_member_records(
                     (team_uuid, certificate_id, single_person, record_json, signature, team_did_key, issued_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
-                team_uuid, certificate_id, record["single_person"], canonical, entry.signature,
-                new_team_did_key, issued_at_of(record),
+                team_uuid,
+                certificate_id,
+                record["single_person"],
+                canonical,
+                entry.signature,
+                new_team_did_key,
+                issued_at_of(record),
             )

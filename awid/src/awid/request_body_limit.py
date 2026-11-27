@@ -35,7 +35,11 @@ class RequestBodyLimitMiddleware:
     refusal is a 413 whatever the rule does."""
 
     def __init__(
-        self, app: ASGIApp, *, max_body_bytes: int, logged_path: Callable[[str], str] | None = None,
+        self,
+        app: ASGIApp,
+        *,
+        max_body_bytes: int,
+        logged_path: Callable[[str], str] | None = None,
     ) -> None:
         if max_body_bytes < 1:
             raise ValueError("max_body_bytes must be positive")
@@ -52,7 +56,10 @@ class RequestBodyLimitMiddleware:
             # Answered before the app runs, so this is the request's only record.
             logger.warning(
                 "Request body too large: %s %s declared %d bytes, limit %d",
-                scope["method"], self._path_for_log(scope["path"]), declared, self.max_body_bytes,
+                scope["method"],
+                self._path_for_log(scope["path"]),
+                declared,
+                self.max_body_bytes,
             )
             await _too_large(scope, receive, send)
             return
@@ -70,7 +77,10 @@ class RequestBodyLimitMiddleware:
                         refused = True
                         logger.warning(
                             "Request body too large: %s %s received %d bytes, limit %d",
-                            scope["method"], self._path_for_log(scope["path"]), received, self.max_body_bytes,
+                            scope["method"],
+                            self._path_for_log(scope["path"]),
+                            received,
+                            self.max_body_bytes,
                         )
                     raise RequestBodyTooLarge()
             return message

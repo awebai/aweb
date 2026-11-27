@@ -124,7 +124,9 @@ def _request(
 
 @pytest.mark.asyncio
 async def test_lifecycle_plan_reports_claims_without_mutating(aweb_cloud_db):
-    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(aweb_cloud_db.aweb_db)
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
+        aweb_cloud_db.aweb_db
+    )
 
     result = await plan_lifecycle_cascade(
         aweb_cloud_db.aweb_db,
@@ -650,7 +652,9 @@ async def test_global_replay_advances_past_a_full_failed_batch(
 async def test_lifecycle_apply_reports_post_commit_event_failures(
     aweb_cloud_db, monkeypatch, lifecycle_redis
 ):
-    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(aweb_cloud_db.aweb_db)
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
+        aweb_cloud_db.aweb_db
+    )
     cleared_workspaces: list[list[str]] = []
 
     async def _fail_workspace_event(_redis, _event):
@@ -682,7 +686,9 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(
     assert len(result.failed_event_intents) == 1
     assert result.failed_event_intents[0].event_kind == "workspace_task_unclaimed"
     assert result.presence_cleanup_status == "cleared"
-    assert {str(workspace_id), str(agent_id)} in [set(ids) for ids in cleared_workspaces]
+    assert {str(workspace_id), str(agent_id)} in [
+        set(ids) for ids in cleared_workspaces
+    ]
 
     claim_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
@@ -1014,7 +1020,9 @@ async def test_lifecycle_archive_global_agent_rejects_non_global_target(
         registry_client=None,
     )
 
-    assert "lifecycle_identity_scope_precondition_failed" in {error.code for error in result.errors}
+    assert "lifecycle_identity_scope_precondition_failed" in {
+        error.code for error in result.errors
+    }
     agent = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT status, deleted_at FROM {{tables.agents}} WHERE agent_id = $1",
         agent_id,
@@ -1063,7 +1071,9 @@ async def test_chat_waiting_cleanup_wakes_the_remaining_participants(aweb_cloud_
                 result = await apply_lifecycle_cascade(
                     db,
                     redis,
-                    _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+                    _request(
+                        team_id=team_id, agent_id=agent_id, workspace_id=workspace_id
+                    ),
                     registry_client=None,
                 )
                 assert result.chat_waiting_cleanup_status == "cleared"

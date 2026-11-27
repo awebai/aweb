@@ -41,9 +41,12 @@ class WorkspaceActivity:
     last_seen_at: datetime | None
     presence: Mapping[str, str] | None
 
-    def is_newer_than(self, *, cutoff: datetime) -> bool:
-        """Whether any valid heartbeat observed activity strictly after the cutoff."""
-        return self.last_seen_at is not None and self.last_seen_at > cutoff
+    def is_newer_than(
+        self, *, cutoff: datetime, reserved_at: datetime | None = None
+    ) -> bool:
+        """Check observed activity, with a reservation fallback for lifecycle callers."""
+        timestamp = self.last_seen_at if self.last_seen_at is not None else reserved_at
+        return timestamp is not None and timestamp > cutoff
 
     def is_online(self, *, now: datetime) -> bool:
         """All displays use the configured activity window (docs/agent-health.md)."""
@@ -110,6 +113,7 @@ async def workspace_activity_by_id(
     failure_policy: GrantLivenessFailurePolicy,
     request: Request | None = None,
     workspace_rows: Sequence[Mapping[str, Any]] | None = None,
+    presence_display_fields: tuple[str, ...] | None = None,
 ) -> dict[str, WorkspaceActivity]:
     """Combine the timestamps written by root, MCP and valid grant heartbeats.
 
@@ -119,6 +123,7 @@ async def workspace_activity_by_id(
     Missing Redis is supported for SQL-only embedding callers. A failed or
     malformed Redis read raises, so lifecycle cleanup cannot mistake it for
     proof of inactivity.
+    A projected display still reads workspace, team and timestamp evidence.
     """
     if not workspace_ids:
         return {}
@@ -150,13 +155,20 @@ async def workspace_activity_by_id(
         )
         rows = list({str(row["workspace_id"]): row for row in workspace_rows}.values())
     workspace_ids = list(dict.fromkeys(workspace_ids))
+    fields = (
+        ("workspace_id", "team_id", "last_seen", *presence_display_fields)
+        if presence_display_fields is not None
+        else None
+    )
     presences = (
-        await list_agent_presences_by_workspace_ids(redis, workspace_ids)
+        await list_agent_presences_by_workspace_ids(redis, workspace_ids, fields=fields)
         if redis is not None
         else []
     )
     presence_by_id = {
-        record["workspace_id"]: record for record in presences if record.get("workspace_id")
+        record["workspace_id"]: record
+        for record in presences
+        if record.get("workspace_id")
     }
     result = {}
     for row in rows:

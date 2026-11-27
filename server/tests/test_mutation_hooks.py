@@ -37,7 +37,9 @@ class _DbShim:
 
 
 @pytest.mark.asyncio
-async def test_agent_deleted_cascade_releases_claims_events_and_presence(aweb_cloud_db, monkeypatch):
+async def test_agent_deleted_cascade_releases_claims_events_and_presence(
+    aweb_cloud_db, monkeypatch
+):
     agent_id = uuid4()
     workspace_id = uuid4()
     published_workspace: list[object] = []
@@ -92,7 +94,9 @@ async def test_agent_deleted_cascade_releases_claims_events_and_presence(aweb_cl
     monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
     monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_clear_presence)
 
-    handler = mutation_hooks.create_mutation_handler(redis=object(), db_infra=_DbShim(aweb_cloud_db.aweb_db))
+    handler = mutation_hooks.create_mutation_handler(
+        redis=object(), db_infra=_DbShim(aweb_cloud_db.aweb_db)
+    )
     await handler("agent.deleted", {"agent_id": str(agent_id)})
 
     workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
@@ -126,11 +130,15 @@ async def test_agent_deleted_cascade_releases_claims_events_and_presence(aweb_cl
         and event.alias == "alice"
         for event in published_team
     )
-    assert {str(workspace_id), str(agent_id)} in [set(ids) for ids in cleared_workspaces]
+    assert {str(workspace_id), str(agent_id)} in [
+        set(ids) for ids in cleared_workspaces
+    ]
 
 
 @pytest.mark.asyncio
-async def test_mutation_handler_backfills_from_did_aw_from_agent_id(aweb_cloud_db, monkeypatch):
+async def test_mutation_handler_backfills_from_did_aw_from_agent_id(
+    aweb_cloud_db, monkeypatch
+):
     agent_id = uuid4()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -147,7 +155,8 @@ async def test_mutation_handler_backfills_from_did_aw_from_agent_id(aweb_cloud_d
     )
 
     await aweb_cloud_db.aweb_db.execute(
-        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1", agent_id,
+        "UPDATE {{tables.agents}} SET did_aw_verified_key=did_key WHERE agent_id=$1",
+        agent_id,
     )
     seen: dict[str, str] = {}
 
@@ -157,9 +166,13 @@ async def test_mutation_handler_backfills_from_did_aw_from_agent_id(aweb_cloud_d
         return None
 
     monkeypatch.setattr(mutation_hooks, "_translate", _capture_translate)
-    monkeypatch.setattr(mutation_hooks, "_translate_team_event", lambda event_type, ctx: None)
+    monkeypatch.setattr(
+        mutation_hooks, "_translate_team_event", lambda event_type, ctx: None
+    )
 
-    handler = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db))
+    handler = mutation_hooks.create_mutation_handler(
+        redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db)
+    )
     await handler(
         "message.sent",
         {
@@ -176,7 +189,9 @@ async def test_mutation_handler_backfills_from_did_aw_from_agent_id(aweb_cloud_d
 
 
 @pytest.mark.asyncio
-async def test_mutation_handler_backfills_actor_workspace_id_from_agent_id(aweb_cloud_db, monkeypatch):
+async def test_mutation_handler_backfills_actor_workspace_id_from_agent_id(
+    aweb_cloud_db, monkeypatch
+):
     agent_id = uuid4()
     workspace_id = uuid4()
     await aweb_cloud_db.aweb_db.execute(
@@ -196,9 +211,13 @@ async def test_mutation_handler_backfills_actor_workspace_id_from_agent_id(aweb_
         return None
 
     monkeypatch.setattr(mutation_hooks, "_translate", _capture_translate)
-    monkeypatch.setattr(mutation_hooks, "_translate_team_event", lambda event_type, ctx: None)
+    monkeypatch.setattr(
+        mutation_hooks, "_translate_team_event", lambda event_type, ctx: None
+    )
 
-    handler = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db))
+    handler = mutation_hooks.create_mutation_handler(
+        redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db)
+    )
     await handler(
         "task.created",
         {
@@ -274,7 +293,9 @@ def test_translate_redacts_encrypted_mail_subjects():
 
 
 @pytest.mark.asyncio
-async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, monkeypatch):
+async def test_mutation_handler_publishes_dashboard_team_events(
+    aweb_cloud_db, monkeypatch
+):
     published: list[object] = []
 
     async def _capture_publish_team(_redis, event):
@@ -283,7 +304,9 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
 
     monkeypatch.setattr(mutation_hooks, "publish_team_event", _capture_publish_team)
 
-    handler = mutation_hooks.create_mutation_handler(redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db))
+    handler = mutation_hooks.create_mutation_handler(
+        redis=None, db_infra=_DbShim(aweb_cloud_db.aweb_db)
+    )
 
     await handler(
         "message.acknowledged",
@@ -421,32 +444,48 @@ def test_translate_task_claim_events():
 
 
 @pytest.mark.asyncio
-async def test_task_status_changed_cascade_publishes_one_team_status_event(mutation_server):
+async def test_task_status_changed_cascade_publishes_one_team_status_event(
+    mutation_server,
+):
     env = mutation_server
-    task = await env.rest_task("pilot", "POST", "/v1/tasks", {"title": "Ship dashboard events"})
-    env.app.state.on_mutation = mutation_hooks.create_mutation_handler(env.redis, env.app.state.db)
+    task = await env.rest_task(
+        "pilot", "POST", "/v1/tasks", {"title": "Ship dashboard events"}
+    )
+    env.app.state.on_mutation = mutation_hooks.create_mutation_handler(
+        env.redis, env.app.state.db
+    )
     before = len(env.published)
     await env.rest_task(
         "pilot", "PATCH", f"/v1/tasks/{task['task_ref']}", {"status": "in_progress"}
     )
     observed = env.published[before:]
-    team = [event for channel, event in observed if channel == f"team-events:{MUTATION_TEAM}"]
+    team = [
+        event
+        for channel, event in observed
+        if channel == f"team-events:{MUTATION_TEAM}"
+    ]
     status = [event for event in team if event["type"] == "task.status_changed"]
     assert len(status) == 1
     assert status[0]["task_ref"] == task["task_ref"]
     assert (status[0]["old_status"], status[0]["new_status"]) == ("open", "in_progress")
     assert any(event["type"] == "task.claimed" for event in team)
-    assert any(channel == f"events:{env.workspaces['pilot']}" for channel, _ in observed)
-
-
+    assert any(
+        channel == f"events:{env.workspaces['pilot']}" for channel, _ in observed
+    )
 
 
 @pytest.mark.asyncio
-async def test_task_status_changed_claims_with_workspace_id_not_agent_id(mutation_server):
+async def test_task_status_changed_claims_with_workspace_id_not_agent_id(
+    mutation_server,
+):
     env = mutation_server
-    task = await env.rest_task("pilot", "POST", "/v1/tasks", {"title": "Fix workspace split"})
+    task = await env.rest_task(
+        "pilot", "POST", "/v1/tasks", {"title": "Fix workspace split"}
+    )
     assert str(env.workspaces["pilot"]) != env.agents["pilot"]
-    env.app.state.on_mutation = mutation_hooks.create_mutation_handler(env.redis, env.app.state.db)
+    env.app.state.on_mutation = mutation_hooks.create_mutation_handler(
+        env.redis, env.app.state.db
+    )
     before = len(env.published)
     await env.rest_task(
         "pilot", "PATCH", f"/v1/tasks/{task['task_ref']}", {"status": "in_progress"}
@@ -458,11 +497,10 @@ async def test_task_status_changed_claims_with_workspace_id_not_agent_id(mutatio
     )
     assert claim["workspace_id"] == env.workspaces["pilot"]
     assert any(
-        channel == f"events:{env.workspaces['pilot']}" and event["type"] == "task.claimed"
+        channel == f"events:{env.workspaces['pilot']}"
+        and event["type"] == "task.claimed"
         for channel, event in env.published[before:]
     )
-
-
 
 
 @pytest.mark.asyncio
@@ -501,16 +539,22 @@ async def test_status_change_cascade_announces_released_claims_and_changes_no_cl
         omitted = dict(closed[0])
         omitted.pop("released_claim_workspace_ids")
         before_empty = len(env.published)
-        await handler("task.status_changed", {**closed[0], "released_claim_workspace_ids": []})
+        await handler(
+            "task.status_changed", {**closed[0], "released_claim_workspace_ids": []}
+        )
         await handler("task.status_changed", omitted)
         await env.rest_task("pilot", "GET", path)
     assert caplog.records == []
     workspace_channel = f"events:{env.workspaces['pilot']}"
     team_channel = f"team-events:{MUTATION_TEAM}"
     unclaimed = [
-        (channel, event) for channel, event in announced if event["type"] == "task.unclaimed"
+        (channel, event)
+        for channel, event in announced
+        if event["type"] == "task.unclaimed"
     ]
-    assert [(channel, event["task_ref"], event["alias"]) for channel, event in unclaimed] == [
+    assert [
+        (channel, event["task_ref"], event["alias"]) for channel, event in unclaimed
+    ] == [
         (workspace_channel, task["task_ref"], "pilot"),
         (team_channel, task["task_ref"], "pilot"),
     ]
@@ -544,10 +588,10 @@ async def test_status_change_cascade_announces_released_claims_and_changes_no_cl
     assert [row["workspace_id"] for row in remaining] == [env.workspaces["bob"]]
 
 
-
-
 @pytest.mark.asyncio
-async def test_a_chat_event_uses_the_aliases_and_preview_its_sender_supplied(aweb_cloud_db, monkeypatch):
+async def test_a_chat_event_uses_the_aliases_and_preview_its_sender_supplied(
+    aweb_cloud_db, monkeypatch
+):
     import asyncpg.connection
 
     published: list[object] = []
@@ -570,8 +614,12 @@ async def test_a_chat_event_uses_the_aliases_and_preview_its_sender_supplied(awe
 
     from redis.asyncio import Redis
 
-    async with Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True) as redis:
-        handler = mutation_hooks.create_mutation_handler(redis=redis, db_infra=_DbShim(aweb_cloud_db.aweb_db))
+    async with Redis.from_url(
+        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+    ) as redis:
+        handler = mutation_hooks.create_mutation_handler(
+            redis=redis, db_infra=_DbShim(aweb_cloud_db.aweb_db)
+        )
         await _send_supplied_chat_event(handler)
 
     chat_events = [event for event in published if isinstance(event, ChatMessageEvent)]
@@ -579,6 +627,47 @@ async def test_a_chat_event_uses_the_aliases_and_preview_its_sender_supplied(awe
     assert chat_events[0].to_aliases == ["bob"]
     assert chat_events[0].preview == "hello bob"
     assert chat_reads == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_workspace", [False, True])
+async def test_mail_event_batches_presence_without_shifting_missing_hashes(
+    mutation_server, monkeypatch, same_workspace
+):
+    from aweb.presence import clear_workspace_presence, update_agent_presence
+    from redis.asyncio.client import Pipeline
+
+    redis = mutation_server.redis
+    recipient = str(uuid4())
+    sender = recipient if same_workspace else str(uuid4())
+    await update_agent_presence(
+        redis, workspace_id=recipient, alias="recipient", team_id=MUTATION_TEAM
+    )
+    batches = []
+    original = Pipeline.execute
+
+    async def observe(pipeline, *args, **kwargs):
+        keys = [
+            commands[1]
+            for commands, _ in pipeline.command_stack
+            if commands[0] == "HGETALL"
+        ]
+        if keys:
+            batches.append(keys)
+        return await original(pipeline, *args, **kwargs)
+
+    monkeypatch.setattr(Pipeline, "execute", observe)
+    event = MessageDeliveredEvent(workspace_id=recipient, from_workspace=sender)
+    try:
+        await mutation_hooks._enrich(event, redis, _DbShim(mutation_server.db), {})
+        expected_keys = list(
+            dict.fromkeys((f"presence:{sender}", f"presence:{recipient}"))
+        )
+        assert batches == [expected_keys]
+        assert event.from_alias == ("recipient" if same_workspace else "")
+        assert event.to_alias == "recipient"
+    finally:
+        await clear_workspace_presence(redis, [recipient])
 
 
 async def _send_supplied_chat_event(handler):

@@ -37,10 +37,6 @@ async def fetch_workspace_aliases(
     return {str(row["workspace_id"]): row["alias"] for row in rows}
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 async def list_active_claims(
     db_infra: "DatabaseInfrastructure",
     *,

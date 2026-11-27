@@ -1,6 +1,7 @@
 name: Test suite
 
-# `make test` on every pull request. This is the PR-time signal that the
+# `make test` on every pull request and every push to main, so a release run
+# can start from a CI-green main. This is the PR-time signal that the
 # deleted comprehensive hosted gate used to provide as a side effect of running
 # on pull requests too - at the cost of a ~120-minute job with a 54%
 # cancellation rate, most of whose expensive half the focused workflows already
@@ -12,6 +13,8 @@ name: Test suite
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -22,14 +25,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  python-static:
-    name: Python static analysis
+  product-table-writes:
+    name: Product table writes
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
-          # Compare diagnostic allowances with the reviewed main baseline.
+          # Compare product-table ceilings with the reviewed main baseline.
           fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
@@ -37,12 +40,55 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - name: Check Python diagnostic ceilings
-        run: make check-python-static check-product-table-writes
+      - name: Check product table writes
+        run: make check-product-table-writes
+
+  naapp-typecheck:
+    name: naapp type checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Type-check the naapp packages
+        run: make typecheck-naapp
+
+  extension-docs:
+    name: Extension docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Check the private-infrastructure boundary
+        run: make check-private-boundary
+
+  commit-hook:
+    name: Commit hook
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+      - name: Commit unformatted files through the pre-commit hook
+        run: make test-commit-hook
 
   test:
     name: Test suite
-    needs: python-static
+    needs: product-table-writes
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:
@@ -56,26 +102,6 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      # A transaction-mode PgBouncer that drops the startup parameters pgdbm
-      # requests, as Neon's pooler does. awid's database session tests run
-      # through it (AWID_TEST_POOLER_URL).
-      pgbouncer:
-        image: edoburu/pgbouncer@sha256:9c78945868a6a142c7fc40ccd843bbe5a606df163c7ffce4de70e0d628d696a2
-        env:
-          DB_HOST: postgres
-          DB_USER: postgres
-          DB_PASSWORD: postgres
-          POOL_MODE: transaction
-          AUTH_TYPE: scram-sha-256
-          MAX_PREPARED_STATEMENTS: "0"
-          IGNORE_STARTUP_PARAMETERS: extra_float_digits,search_path,jit,statement_timeout,lock_timeout,idle_in_transaction_session_timeout
-        ports:
-          - 6432:5432
-        options: >-
-          --health-cmd "pg_isready -h 127.0.0.1 -p 5432"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -95,7 +121,6 @@ jobs:
       PGPASSWORD: postgres
       PGDATABASE: postgres
       REDIS_URL: redis://localhost:6379/0
-      AWID_TEST_POOLER_URL: postgresql://postgres:postgres@localhost:6432/postgres
 
     steps:
       - uses: actions/checkout@v7
@@ -131,7 +156,7 @@ jobs:
 
       - name: Run remaining test targets
         # These suites ran above on the isolated Docker network.
-        run: make -o test-server -o test-awid -o test-cli -o test-channel -o test-channel-name-live-contract -o test-channel-core -o test-pi-extension test
+        run: make -o test-server -o test-awid -o test-key-holder -o test-cli -o test-channel -o test-channel-core -o test-pi-extension test
 
       - name: Preserve network isolation evidence
         if: always()

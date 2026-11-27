@@ -41,14 +41,20 @@ def _covering(
     its domain and timestamp, and its extra claims) over exactly this request;
     with ``sent``, checked against the request's signed-payload header."""
     expected = covering_payload(
-        aud=canonical_server_origin(f"{request.url.scheme}://{request.url.netloc.decode()}"),
+        aud=canonical_server_origin(
+            f"{request.url.scheme}://{request.url.netloc.decode()}"
+        ),
         method=request.method,
         path=request.url.raw_path.decode(),
         domain=claims["domain"],
         operation=claims["operation"],
         body=request.content,
         timestamp=claims["timestamp"],
-        claims={k: v for k, v in claims.items() if k not in ("domain", "operation", "timestamp")},
+        claims={
+            k: v
+            for k, v in claims.items()
+            if k not in ("domain", "operation", "timestamp")
+        },
     )
     if sent:
         header = request.headers[
@@ -69,7 +75,9 @@ class _FakeRedis:
             raise RedisError("redis unavailable")
         return self.values.get(key)
 
-    async def set(self, key: str, value: str, *, ex: int | None = None, nx: bool = False):
+    async def set(
+        self, key: str, value: str, *, ex: int | None = None, nx: bool = False
+    ):
         if self.fail:
             raise RedisError("redis unavailable")
         if nx and key in self.values:
@@ -138,7 +146,9 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
             )
             return httpx.Response(200, json={"registered": True})
         if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/full":
-            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            auth_did_key, signature = _authorization_parts(
+                request.headers["authorization"]
+            )
             timestamp = request.headers["x-aweb-timestamp"]
             assert auth_did_key == did_key
             verify_did_key_signature(
@@ -166,7 +176,10 @@ async def test_register_did_posts_create_then_fetches_full_mapping():
 
     assert mapping.did_aw == did_aw
     assert mapping.current_did_key == did_key
-    assert [request.url.path for request in requests] == ["/v1/did", f"/v1/did/{did_aw}/full"]
+    assert [request.url.path for request in requests] == [
+        "/v1/did",
+        f"/v1/did/{did_aw}/full",
+    ]
 
 
 @pytest.mark.asyncio
@@ -212,7 +225,10 @@ async def test_register_address_resolves_current_key_before_posting():
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.method == "GET" and request.url.path == f"/v1/did/{subject_did_aw}/key":
+        if (
+            request.method == "GET"
+            and request.url.path == f"/v1/did/{subject_did_aw}/key"
+        ):
             return httpx.Response(
                 200,
                 json={
@@ -221,14 +237,19 @@ async def test_register_address_resolves_current_key_before_posting():
                     "log_head": None,
                 },
             )
-        if request.method == "POST" and request.url.path == "/v1/namespaces/acme.com/addresses":
+        if (
+            request.method == "POST"
+            and request.url.path == "/v1/namespaces/acme.com/addresses"
+        ):
             payload = json.loads(request.content.decode("utf-8"))
             assert payload == {
                 "name": "support",
                 "did_aw": subject_did_aw,
                 "current_did_key": subject_did_key,
             }
-            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            auth_did_key, signature = _authorization_parts(
+                request.headers["authorization"]
+            )
             timestamp = request.headers["x-aweb-timestamp"]
             assert auth_did_key == controller_did
             verify_did_key_signature(
@@ -339,7 +360,9 @@ async def test_get_namespace_uses_discovered_registry_for_domain():
         return "https://registry.example"
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url == httpx.URL("https://registry.example/v1/namespaces/example.com")
+        assert request.url == httpx.URL(
+            "https://registry.example/v1/namespaces/example.com"
+        )
         return httpx.Response(
             200,
             json={
@@ -439,7 +462,10 @@ async def test_register_namespace_supports_parent_authorized_subdomains():
             signature_b64=parent_signature,
         )
         payload = json.loads(request.content.decode("utf-8"))
-        assert payload == {"domain": "project.aweb.ai", "controller_did": child_controller_did}
+        assert payload == {
+            "domain": "project.aweb.ai",
+            "controller_did": child_controller_did,
+        }
         return httpx.Response(
             200,
             json={
@@ -592,7 +618,9 @@ async def test_register_namespace_parent_authorization_binds_child_controller_di
     other_controller_did = did_from_public_key(other_public_key)
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        auth_did_key, auth_signature = _authorization_parts(request.headers["authorization"])
+        auth_did_key, auth_signature = _authorization_parts(
+            request.headers["authorization"]
+        )
         parent_did_key, parent_signature = _authorization_parts(
             request.headers["x-aweb-parent-authorization"]
         )
@@ -706,7 +734,9 @@ async def test_rotate_namespace_controller_supports_parent_authorization_headers
     parent_controller_did = did_from_public_key(parent_public_key)
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        auth_did_key, auth_signature = _authorization_parts(request.headers["authorization"])
+        auth_did_key, auth_signature = _authorization_parts(
+            request.headers["authorization"]
+        )
         parent_did_key, parent_signature = _authorization_parts(
             request.headers["x-aweb-parent-authorization"]
         )
@@ -780,7 +810,10 @@ async def test_list_update_delete_and_reverse_lookup_address_methods():
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if request.method == "GET" and request.url.path == "/v1/namespaces/acme.com/addresses":
+        if (
+            request.method == "GET"
+            and request.url.path == "/v1/namespaces/acme.com/addresses"
+        ):
             return httpx.Response(
                 200,
                 json={
@@ -801,7 +834,9 @@ async def test_list_update_delete_and_reverse_lookup_address_methods():
             request.method == "PUT"
             and request.url.path == "/v1/namespaces/acme.com/addresses/support"
         ):
-            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            auth_did_key, signature = _authorization_parts(
+                request.headers["authorization"]
+            )
             timestamp = request.headers["x-aweb-timestamp"]
             assert auth_did_key == controller_did
             verify_did_key_signature(
@@ -835,7 +870,9 @@ async def test_list_update_delete_and_reverse_lookup_address_methods():
             request.method == "DELETE"
             and request.url.path == "/v1/namespaces/acme.com/addresses/support"
         ):
-            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            auth_did_key, signature = _authorization_parts(
+                request.headers["authorization"]
+            )
             timestamp = request.headers["x-aweb-timestamp"]
             assert auth_did_key == controller_did
             verify_did_key_signature(
@@ -852,7 +889,10 @@ async def test_list_update_delete_and_reverse_lookup_address_methods():
                 signature_b64=signature,
             )
             return httpx.Response(200, json={"status": "deleted"})
-        if request.method == "GET" and request.url.path == f"/v1/did/{subject_did_aw}/addresses":
+        if (
+            request.method == "GET"
+            and request.url.path == f"/v1/did/{subject_did_aw}/addresses"
+        ):
             return httpx.Response(
                 200,
                 json={
@@ -1112,7 +1152,12 @@ async def test_service_token_is_sent_only_to_the_configured_registry():
         if request.url.path == "/v1/namespaces/external.example/addresses/alice":
             return httpx.Response(
                 404,
-                json={"detail": {"code": "address_not_found", "message": "Address not found"}},
+                json={
+                    "detail": {
+                        "code": "address_not_found",
+                        "message": "Address not found",
+                    }
+                },
             )
         raise AssertionError(f"unexpected request: {request.url}")
 
@@ -1146,7 +1191,9 @@ async def test_service_token_never_follows_a_cross_origin_redirect():
         if request.url.host == "api.awid.ai":
             return httpx.Response(
                 302,
-                headers={"Location": "https://untrusted.example/v1/did/did:aw:home/key"},
+                headers={
+                    "Location": "https://untrusted.example/v1/did/did:aw:home/key"
+                },
             )
         return httpx.Response(
             200,
@@ -1263,7 +1310,12 @@ async def test_cached_registry_client_never_reuses_a_key_resolution_without_enro
     async def handler(request: httpx.Request) -> httpx.Response:
         request_count["value"] += 1
         return httpx.Response(
-            200, json={"did_aw": did_aw, "current_did_key": "did:key:legacy", "log_head": None}
+            200,
+            json={
+                "did_aw": did_aw,
+                "current_did_key": "did:key:legacy",
+                "log_head": None,
+            },
         )
 
     client = CachedRegistryClient(
@@ -1538,7 +1590,9 @@ async def test_cached_registry_client_serves_stale_team_metadata_then_refreshes_
 
 
 @pytest.mark.asyncio
-async def test_cached_registry_client_serves_stale_then_refreshes_in_background(monkeypatch):
+async def test_cached_registry_client_serves_stale_then_refreshes_in_background(
+    monkeypatch,
+):
     signing_key, public_key = generate_keypair()
     old_did_key = did_from_public_key(public_key)
     new_signing_key, new_public_key = generate_keypair()
@@ -1715,11 +1769,16 @@ async def test_cached_registry_client_invalidate_address_cache_removes_signed_en
         encode=registry_module._address_to_json,
     )
 
-    await client._invalidate_address_cache(domain="acme.com", name="support", did_aws=[])
+    await client._invalidate_address_cache(
+        domain="acme.com", name="support", did_aws=[]
+    )
 
     current_key = await client._generation_cache_key(
         client._address_cache_key(
-            "acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=owner_did_key
+            "acme.com",
+            "support",
+            registry_url="https://api.awid.ai",
+            caller_did_key=owner_did_key,
         ),
         client._address_generation_key("acme.com", "https://api.awid.ai"),
     )
@@ -1741,7 +1800,9 @@ async def test_cached_registry_client_invalidate_address_cache_removes_signed_li
     await client._write_cache_entry(
         await client._generation_cache_key(
             client._domain_addresses_cache_key(
-                "acme.com", registry_url="https://api.awid.ai", caller_did_key=owner_did_key
+                "acme.com",
+                registry_url="https://api.awid.ai",
+                caller_did_key=owner_did_key,
             ),
             client._address_generation_key("acme.com", "https://api.awid.ai"),
         ),
@@ -1760,7 +1821,9 @@ async def test_cached_registry_client_invalidate_address_cache_removes_signed_li
         encode=lambda value: [registry_module._address_to_json(item) for item in value],
     )
 
-    await client._invalidate_address_cache(domain="acme.com", name="support", did_aws=[])
+    await client._invalidate_address_cache(
+        domain="acme.com", name="support", did_aws=[]
+    )
 
     current_key = await client._generation_cache_key(
         client._domain_addresses_cache_key(
@@ -1797,9 +1860,15 @@ async def test_cached_registry_client_invalidates_address_reads_on_update():
             and request.url.path == "/v1/namespaces/acme.com/addresses/support"
         ):
             return httpx.Response(200, json=address_payload)
-        if request.method == "GET" and request.url.path == "/v1/namespaces/acme.com/addresses":
+        if (
+            request.method == "GET"
+            and request.url.path == "/v1/namespaces/acme.com/addresses"
+        ):
             return httpx.Response(200, json={"addresses": [address_payload]})
-        if request.method == "GET" and request.url.path == f"/v1/did/{subject_did_aw}/addresses":
+        if (
+            request.method == "GET"
+            and request.url.path == f"/v1/did/{subject_did_aw}/addresses"
+        ):
             return httpx.Response(200, json={"addresses": [address_payload]})
         if (
             request.method == "PUT"
@@ -1807,7 +1876,9 @@ async def test_cached_registry_client_invalidates_address_reads_on_update():
         ):
             reachability["value"] = "public"
             address_payload["reachability"] = "public"
-            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            auth_did_key, signature = _authorization_parts(
+                request.headers["authorization"]
+            )
             timestamp = request.headers["x-aweb-timestamp"]
             assert auth_did_key == controller_did
             verify_did_key_signature(
@@ -1939,7 +2010,9 @@ async def test_cached_registry_client_invalidates_namespace_cache_on_register():
     )
 
     stale = await client.get_namespace("example.com")
-    created = await client.register_namespace("example.com", controller_did, controller_signing_key)
+    created = await client.register_namespace(
+        "example.com", controller_did, controller_signing_key
+    )
     refreshed = await client.get_namespace("example.com")
 
     assert stale is not None
@@ -1992,7 +2065,9 @@ async def test_cached_registry_client_invalidates_namespace_cache_on_rotate():
     )
 
     stale = await client.get_namespace("example.com")
-    rotated = await client.rotate_namespace_controller("example.com", new_did, new_signing_key)
+    rotated = await client.rotate_namespace_controller(
+        "example.com", new_did, new_signing_key
+    )
     refreshed = await client.get_namespace("example.com")
 
     assert stale is not None
@@ -2012,7 +2087,10 @@ async def test_cached_registry_client_invalidates_address_cache_on_register():
     address_name = {"value": "stale"}
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == f"/v1/did/{subject_did_aw}/key":
+        if (
+            request.method == "GET"
+            and request.url.path == f"/v1/did/{subject_did_aw}/key"
+        ):
             return httpx.Response(
                 200,
                 json={
@@ -2037,10 +2115,15 @@ async def test_cached_registry_client_invalidates_address_cache_on_register():
                     "created_at": "2026-04-03T00:00:00Z",
                 },
             )
-        if request.method == "POST" and request.url.path == "/v1/namespaces/acme.com/addresses":
+        if (
+            request.method == "POST"
+            and request.url.path == "/v1/namespaces/acme.com/addresses"
+        ):
             payload = json.loads(request.content.decode("utf-8"))
             assert payload["did_aw"] == subject_did_aw
-            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            auth_did_key, signature = _authorization_parts(
+                request.headers["authorization"]
+            )
             timestamp = request.headers["x-aweb-timestamp"]
             assert auth_did_key == controller_did
             verify_did_key_signature(
@@ -2079,7 +2162,10 @@ async def test_cached_registry_client_invalidates_address_cache_on_register():
     await client._write_cache_entry(
         await client._generation_cache_key(
             client._address_cache_key(
-                "acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=None
+                "acme.com",
+                "support",
+                registry_url="https://api.awid.ai",
+                caller_did_key=None,
             ),
             client._address_generation_key("acme.com", "https://api.awid.ai"),
         ),
@@ -2140,14 +2226,18 @@ async def test_cached_registry_client_invalidates_did_cache_before_rotate_key():
                 },
             )
         if request.method == "GET" and request.url.path == f"/v1/did/{did_aw}/full":
-            auth_did_key, signature = _authorization_parts(request.headers["authorization"])
+            auth_did_key, signature = _authorization_parts(
+                request.headers["authorization"]
+            )
             timestamp = request.headers["x-aweb-timestamp"]
             verify_did_key_signature(
                 did_key=auth_did_key,
                 payload=f"{timestamp}\nGET\n{request.url.path}".encode("utf-8"),
                 signature_b64=signature,
             )
-            response_did_key = new_did_key if auth_did_key == new_did_key else old_did_key
+            response_did_key = (
+                new_did_key if auth_did_key == new_did_key else old_did_key
+            )
             return httpx.Response(
                 200,
                 json={
@@ -2177,7 +2267,9 @@ async def test_cached_registry_client_invalidates_did_cache_before_rotate_key():
     head["seq"] = 5
     head["entry_hash"] = "head-5"
 
-    mapping = await client.rotate_key(did_aw, new_did_key, old_signing_key, new_signing_key)
+    mapping = await client.rotate_key(
+        did_aw, new_did_key, old_signing_key, new_signing_key
+    )
 
     assert mapping.current_did_key == new_did_key
 
@@ -2202,7 +2294,10 @@ async def test_cached_registry_client_delete_address_invalidates_reverse_lookup_
         ):
             deleted["value"] = True
             return httpx.Response(200, json={"status": "deleted"})
-        if request.method == "GET" and request.url.path == f"/v1/did/{subject_did_aw}/addresses":
+        if (
+            request.method == "GET"
+            and request.url.path == f"/v1/did/{subject_did_aw}/addresses"
+        ):
             addresses = []
             if not deleted["value"]:
                 addresses.append(
@@ -2227,7 +2322,10 @@ async def test_cached_registry_client_delete_address_invalidates_reverse_lookup_
     await client._write_cache_entry(
         await client._generation_cache_key(
             client._address_cache_key(
-                "acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=None
+                "acme.com",
+                "support",
+                registry_url="https://api.awid.ai",
+                caller_did_key=None,
             ),
             client._address_generation_key("acme.com", "https://api.awid.ai"),
         ),
@@ -2305,7 +2403,10 @@ async def test_cached_registry_client_invalidates_reassign_address_caches():
                     "log_head": None,
                 },
             )
-        if request.method == "GET" and request.url.path == f"/v1/did/{old_did_aw}/addresses":
+        if (
+            request.method == "GET"
+            and request.url.path == f"/v1/did/{old_did_aw}/addresses"
+        ):
             addresses = []
             if current_did_aw["value"] == old_did_aw:
                 addresses.append(
@@ -2320,7 +2421,10 @@ async def test_cached_registry_client_invalidates_reassign_address_caches():
                     }
                 )
             return httpx.Response(200, json={"addresses": addresses})
-        if request.method == "GET" and request.url.path == f"/v1/did/{new_did_aw}/addresses":
+        if (
+            request.method == "GET"
+            and request.url.path == f"/v1/did/{new_did_aw}/addresses"
+        ):
             addresses = []
             if current_did_aw["value"] == new_did_aw:
                 addresses.append(
@@ -2469,7 +2573,9 @@ async def test_fresh_team_read_bypasses_and_refreshes_the_cached_team():
         redis_client=_FakeRedis(),
         transport=httpx.MockTransport(handler),
     )
-    assert (await client.get_team("acme.com", "backend")).team_did_key == "did:key:z6MkOldTeam"
+    assert (
+        await client.get_team("acme.com", "backend")
+    ).team_did_key == "did:key:z6MkOldTeam"
 
     state["team_did_key"] = "did:key:z6MkRotatedTeam"
     stale = await client.get_team("acme.com", "backend")

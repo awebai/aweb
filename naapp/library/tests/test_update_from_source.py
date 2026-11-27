@@ -42,9 +42,15 @@ def _v2_payload(new_mission: str) -> dict:
     out: list[dict[str, str]] = []
     for entry in collect_files(_SOURCE):
         if entry["path"] == "blueprint.yaml":
-            out.append(_reblueprint(entry, entry["content_utf8"].replace("version: 0.1.0", "version: 0.2.0")))
+            out.append(
+                _reblueprint(
+                    entry, entry["content_utf8"].replace("version: 0.1.0", "version: 0.2.0")
+                )
+            )
         elif entry["path"] == "profiles/coordinator/profile.yaml":
-            out.append(_reblueprint(entry, entry["content_utf8"].replace(_ORIGINAL_MISSION, new_mission)))
+            out.append(
+                _reblueprint(entry, entry["content_utf8"].replace(_ORIGINAL_MISSION, new_mission))
+            )
         else:
             out.append(entry)
     return {"files": out, "schema": BLUEPRINT_PAYLOAD_SCHEMA}
@@ -59,7 +65,9 @@ async def _setup(db) -> SimpleNamespace:
     )
     principal = SimpleNamespace(team_id=_TEAM, alias="dev")
     await publish_blueprint(
-        db, principal=principal, payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA}
+        db,
+        principal=principal,
+        payload={"files": collect_files(_SOURCE), "schema": BLUEPRINT_PAYLOAD_SCHEMA},
     )
     await import_to_shelf(
         db,
@@ -75,7 +83,9 @@ async def _setup(db) -> SimpleNamespace:
 async def test_update_from_source_mints_merged_version(migrated_db) -> None:
     db = migrated_db
     principal = await _setup(db)
-    await publish_blueprint(db, principal=principal, payload=_v2_payload("Coordinate sharply and keep evidence."))
+    await publish_blueprint(
+        db, principal=principal, payload=_v2_payload("Coordinate sharply and keep evidence.")
+    )
 
     result = await update_from_source(
         db,
@@ -90,7 +100,9 @@ async def test_update_from_source_mints_merged_version(migrated_db) -> None:
     shelf = await list_shelf(db, principal=principal)
     coordinator = next(p for p in shelf["profiles"] if p["profile_ref"] == "coordinator")
     assert coordinator["version"] == "0.2.0"
-    assert coordinator["summary"] == "Coordinate sharply and keep evidence."  # mission pulled upstream
+    assert (
+        coordinator["summary"] == "Coordinate sharply and keep evidence."
+    )  # mission pulled upstream
     assert coordinator["source_blueprint_version"] == "0.2.0"  # pin advanced
     assert coordinator["update_available"] is False  # now current
 

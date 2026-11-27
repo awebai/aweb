@@ -739,7 +739,8 @@ async def status_stream(
 
     await require_valid_stream_grant(request, db_infra, identity)
     deadline = clamp_deadline_to_grant(
-        datetime.now(timezone.utc) + timedelta(seconds=STREAM_MAX_DURATION_SECONDS), identity
+        datetime.now(timezone.utc) + timedelta(seconds=STREAM_MAX_DURATION_SECONDS),
+        identity,
     )
     stream_limit = asyncio.get_running_loop().time() + max(
         0, (deadline - datetime.now(timezone.utc)).total_seconds()

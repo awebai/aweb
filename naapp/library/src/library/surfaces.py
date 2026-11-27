@@ -41,7 +41,7 @@ _NAV_LINKS = (
     NavLink("aweb", "https://aweb.ai"),
 )
 _FOOTER_BLURB = (
-    "Public blueprints and private team shelves for <span class=\"brand-word\">awid</span> teams — "
+    'Public blueprints and private team shelves for <span class="brand-word">awid</span> teams — '
     "adopt, bind, materialize, and evolve your agents' profiles."
 )
 _FOOTER_COLUMNS = (
@@ -63,9 +63,7 @@ _FOOTER_COLUMNS = (
         ),
     ),
 )
-_FOOTER_BOTTOM = (
-    'library is a Native Agentic App on the <span class="brand-word">aweb</span>.ai hub. <span class="brand-word">awid</span> is the identity authority.'
-)
+_FOOTER_BOTTOM = 'library is a Native Agentic App on the <span class="brand-word">aweb</span>.ai hub. <span class="brand-word">awid</span> is the identity authority.'
 # library's domain values for the shared docs generators: live path-param values
 # that make the public catalog reads genuinely runnable, the public-reads phrase,
 # and the /reference section copy in library's own nouns.

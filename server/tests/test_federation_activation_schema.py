@@ -134,25 +134,36 @@ async def test_migration_015_collision_aborts_without_partial_effects(
 
     detail = f"{error.value!r}; cause={error.value.__cause__!r}"
     assert "mail/chat message_id collision" in detail
-    assert await database.fetch_value(
-        "SELECT to_regclass('aweb.message_ingress_receipts')"
-    ) is None
-    assert await database.fetch_value(
-        """
+    assert (
+        await database.fetch_value(
+            "SELECT to_regclass('aweb.message_ingress_receipts')"
+        )
+        is None
+    )
+    assert (
+        await database.fetch_value(
+            """
         SELECT COUNT(*) FROM information_schema.columns
         WHERE table_schema = 'aweb' AND table_name = 'contacts'
           AND column_name IN (
               'contact_did_aw', 'binding_controller_did', 'binding_accepted_at'
           )
         """
-    ) == 0
-    assert await database.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.schema_migrations}} WHERE filename = '015_federation_delivery_policy.sql'"
-    ) == 0
+        )
+        == 0
+    )
+    assert (
+        await database.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.schema_migrations}} WHERE filename = '015_federation_delivery_policy.sql'"
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
-async def test_message_ingress_receipt_is_receiver_wide_and_transactional(aweb_cloud_db) -> None:
+async def test_message_ingress_receipt_is_receiver_wide_and_transactional(
+    aweb_cloud_db,
+) -> None:
     db = aweb_cloud_db.aweb_db
     message_id = uuid4()
     session_id = uuid4()
@@ -193,11 +204,16 @@ async def test_message_ingress_receipt_is_receiver_wide_and_transactional(aweb_c
         "legacy_unreplayable": True,
     }
 
-    await db.execute("DELETE FROM {{tables.messages}} WHERE message_id = $1", message_id)
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.message_ingress_receipts}} WHERE message_id = $1",
-        message_id,
-    ) == 1
+    await db.execute(
+        "DELETE FROM {{tables.messages}} WHERE message_id = $1", message_id
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.message_ingress_receipts}} WHERE message_id = $1",
+            message_id,
+        )
+        == 1
+    )
     with pytest.raises(QueryError, match="message_id already claimed by mail storage"):
         await db.execute(
             """
@@ -224,14 +240,19 @@ async def test_message_and_receipt_roll_back_together(aweb_cloud_db) -> None:
             )
             raise RuntimeError("forced rollback")
 
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.message_ingress_receipts}} WHERE message_id = $1",
-        message_id,
-    ) == 0
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.message_ingress_receipts}} WHERE message_id = $1",
+            message_id,
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
-async def test_contact_identity_binding_is_nullable_but_required_for_authority(aweb_cloud_db) -> None:
+async def test_contact_identity_binding_is_nullable_but_required_for_authority(
+    aweb_cloud_db,
+) -> None:
     columns = await aweb_cloud_db.aweb_db.fetch_all(
         """
         SELECT column_name, is_nullable
@@ -259,7 +280,9 @@ async def test_contact_identity_binding_is_nullable_but_required_for_authority(a
 
 
 @pytest.mark.asyncio
-async def test_message_ingress_receipt_primary_key_is_only_message_id(aweb_cloud_db) -> None:
+async def test_message_ingress_receipt_primary_key_is_only_message_id(
+    aweb_cloud_db,
+) -> None:
     rows = await aweb_cloud_db.aweb_db.fetch_all(
         """
         SELECT a.attname

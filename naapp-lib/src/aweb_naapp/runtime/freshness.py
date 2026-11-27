@@ -91,7 +91,8 @@ class FreshnessCache[K: Hashable, V]:
             if isinstance(max_age, bool) or not isinstance(max_age, int) or max_age < 1:
                 raise ValueError("an answer's max_age_seconds must be a positive whole number")
             fresh = Fresh(
-                value=value, fresh_until=asked_at + seconds_to_ns(min(max_age, FRESHNESS_CEILING_SECONDS))
+                value=value,
+                fresh_until=asked_at + seconds_to_ns(min(max_age, FRESHNESS_CEILING_SECONDS)),
             )
             self._entries[key] = fresh
             return fresh

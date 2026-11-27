@@ -26,9 +26,11 @@ class _FirstContactBudget:
 @pytest.mark.parametrize(
     ("configured_header", "headers", "expected"),
     [
-        ("X-Forwarded-For", [{"X-Forwarded-For": "203.0.113.1"},
-                             {"X-Forwarded-For": "198.51.100.2"}],
-         ["203.0.113.1", "198.51.100.2"]),
+        (
+            "X-Forwarded-For",
+            [{"X-Forwarded-For": "203.0.113.1"}, {"X-Forwarded-For": "198.51.100.2"}],
+            ["203.0.113.1", "198.51.100.2"],
+        ),
         ("X-Client-IP", [{"X-Client-IP": "spoofed, 203.0.113.3"}], ["203.0.113.3"]),
         (None, [{"X-Forwarded-For": "203.0.113.1"}], ["10.0.0.2"]),
         ("", [{"X-Forwarded-For": "203.0.113.1"}], ["10.0.0.2"]),

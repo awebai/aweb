@@ -1783,3 +1783,27 @@ func TestRunNeverBootstrapsInheritedIdentity(t *testing.T) {
 		t.Fatal("run created checkout identity")
 	}
 }
+
+func initRunCommandVars() {
+	runWaitSeconds = awrun.DefaultWaitSeconds
+	runContinueMode = false
+	runMaxRuns = 0
+	runIdleWait = awrun.DefaultIdleWaitSeconds
+	runInitialPrompt = ""
+	runBasePrompt = ""
+	runWorkPrompt = ""
+	runCommsPrompt = ""
+	runWorkingDir = ""
+	runAllowedTools = ""
+	runModel = ""
+	runProviderPTY = false
+	runAutofeedWork = false
+	runInitConfig = false
+	runTrustConfig = false
+}
+
+func setRunCommandIO(cmd *cobra.Command, in io.Reader, out io.Writer, errOut io.Writer) {
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(errOut)
+}

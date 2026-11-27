@@ -67,10 +67,17 @@ def _did_fields() -> list[tuple[str, object]]:
 
 def test_the_request_models_are_found():
     names = {model.__qualname__ for model in _request_models()}
-    assert {"AddressRegisterRequest", "AddressReassignRequest", "DidRegisterRequest", "TeamCreateRequest"} <= names
+    assert {
+        "AddressRegisterRequest",
+        "AddressReassignRequest",
+        "DidRegisterRequest",
+        "TeamCreateRequest",
+    } <= names
 
 
-@pytest.mark.parametrize("name,field", _did_fields(), ids=[name for name, _ in _did_fields()])
+@pytest.mark.parametrize(
+    "name,field", _did_fields(), ids=[name for name, _ in _did_fields()]
+)
 def test_a_did_field_declares_a_maximum_length(name, field):
     bounds = [item.max_length for item in field.metadata if isinstance(item, MaxLen)]
     assert bounds and bounds[0] <= 256, f"{name} declares no maximum length"
@@ -78,8 +85,14 @@ def test_a_did_field_declares_a_maximum_length(name, field):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("field", ["did_aw", "current_did_key"])
-async def test_an_address_registration_refuses_an_over_long_did_as_too_long(client, field):
-    body = {"name": "alice", "did_aw": "did:aw:" + "1" * 20, "current_did_key": "did:key:z" + "1" * 47}
+async def test_an_address_registration_refuses_an_over_long_did_as_too_long(
+    client, field
+):
+    body = {
+        "name": "alice",
+        "did_aw": "did:aw:" + "1" * 20,
+        "current_did_key": "did:key:z" + "1" * 47,
+    }
     body[field] = body[field] + "1" * 300
     response = await client.post("/v1/namespaces/example.com/addresses", json=body)
     assert response.status_code == 422, response.text
@@ -89,10 +102,14 @@ async def test_an_address_registration_refuses_an_over_long_did_as_too_long(clie
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("field", ["did_aw", "current_did_key"])
-async def test_an_address_reassignment_refuses_an_over_long_did_as_too_long(client, field):
+async def test_an_address_reassignment_refuses_an_over_long_did_as_too_long(
+    client, field
+):
     body = {"did_aw": "did:aw:" + "1" * 20, "current_did_key": "did:key:z" + "1" * 47}
     body[field] = body[field] + "1" * 300
-    response = await client.post("/v1/namespaces/example.com/addresses/alice/reassign", json=body)
+    response = await client.post(
+        "/v1/namespaces/example.com/addresses/alice/reassign", json=body
+    )
     assert response.status_code == 422, response.text
     errors = [error for error in response.json()["detail"] if error["loc"][-1] == field]
     assert [error["type"] for error in errors] == ["string_too_long"]

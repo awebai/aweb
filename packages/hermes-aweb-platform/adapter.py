@@ -29,7 +29,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, NamedTuple, Optional
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, ProcessingOutcome, SendResult
+from gateway.platforms.base import (
+    BasePlatformAdapter,
+    MessageEvent,
+    MessageType,
+    ProcessingOutcome,
+    SendResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +56,12 @@ class InputRoute(NamedTuple):
 # Task-local routing survives Hermes background tasks and its context-preserving
 # worker-thread bridge. Each ordinary input keeps its own reply route. Explicit
 # reply_to anchors also support Hermes final-delivery recovery.
-_input_route: ContextVar[Optional[InputRoute]] = ContextVar("aweb_input_route", default=None)
-_query_cleanup_deadline: ContextVar[float | None] = ContextVar("aweb_query_cleanup_deadline", default=None)
+_input_route: ContextVar[Optional[InputRoute]] = ContextVar(
+    "aweb_input_route", default=None
+)
+_query_cleanup_deadline: ContextVar[float | None] = ContextVar(
+    "aweb_query_cleanup_deadline", default=None
+)
 
 
 class _Lane:
@@ -119,7 +129,10 @@ def _env_enablement() -> dict | None:
     if workdir:
         seed["workdir"] = workdir
     if home:
-        seed["home_channel"] = {"chat_id": home, "name": os.getenv("AWEB_HOME_CHANNEL_NAME", home)}
+        seed["home_channel"] = {
+            "chat_id": home,
+            "name": os.getenv("AWEB_HOME_CHANNEL_NAME", home),
+        }
     return seed
 
 
@@ -131,10 +144,24 @@ class AwebAdapter(BasePlatformAdapter):
     def __init__(self, config: PlatformConfig):
         super().__init__(config=config, platform=Platform("aweb"))
         extra = getattr(config, "extra", {}) or {}
-        self.aw_bin = str(extra.get("aw_bin") or os.getenv("AWEB_PLATFORM_AW_BIN", "aw"))
-        self.workdir = str(extra.get("workdir") or os.getenv("AWEB_PLATFORM_WORKDIR", "") or os.getcwd())
-        self.enable_mail = bool(extra.get("enable_mail", _truthy(os.getenv("AWEB_PLATFORM_ENABLE_MAIL"), True)))
-        self.enable_chat = bool(extra.get("enable_chat", _truthy(os.getenv("AWEB_PLATFORM_ENABLE_CHAT"), True)))
+        self.aw_bin = str(
+            extra.get("aw_bin") or os.getenv("AWEB_PLATFORM_AW_BIN", "aw")
+        )
+        self.workdir = str(
+            extra.get("workdir")
+            or os.getenv("AWEB_PLATFORM_WORKDIR", "")
+            or os.getcwd()
+        )
+        self.enable_mail = bool(
+            extra.get(
+                "enable_mail", _truthy(os.getenv("AWEB_PLATFORM_ENABLE_MAIL"), True)
+            )
+        )
+        self.enable_chat = bool(
+            extra.get(
+                "enable_chat", _truthy(os.getenv("AWEB_PLATFORM_ENABLE_CHAT"), True)
+            )
+        )
         self._stream_task: Optional[asyncio.Task] = None
         self._stderr_task: Optional[asyncio.Task] = None
         self._proc: Optional[asyncio.subprocess.Process] = None
@@ -187,10 +214,18 @@ class AwebAdapter(BasePlatformAdapter):
                 self._set_fatal_error("team_policy_conflict", conflict, retryable=False)
                 return False
         if not validate_config(self.config):
-            self._set_fatal_error("aw_missing", "aw binary not found; set AWEB_PLATFORM_AW_BIN", retryable=False)
+            self._set_fatal_error(
+                "aw_missing",
+                "aw binary not found; set AWEB_PLATFORM_AW_BIN",
+                retryable=False,
+            )
             return False
         if not os.path.isdir(self.workdir):
-            self._set_fatal_error("workdir_missing", f"Aweb workdir does not exist: {self.workdir}", retryable=False)
+            self._set_fatal_error(
+                "workdir_missing",
+                f"Aweb workdir does not exist: {self.workdir}",
+                retryable=False,
+            )
             return False
         if self._allow_team:
             self._own_team_id = None
@@ -200,7 +235,11 @@ class AwebAdapter(BasePlatformAdapter):
                     selected = await self._run_aw_json("workspace", "status")
                 if generation != self._connect_generation:
                     return False
-                team = selected.get("selected_team") if isinstance(selected, dict) else None
+                team = (
+                    selected.get("selected_team")
+                    if isinstance(selected, dict)
+                    else None
+                )
                 if not isinstance(team, str) or not team.strip():
                     raise ValueError("selected_team missing")
                 self._own_team_id = team
@@ -209,8 +248,15 @@ class AwebAdapter(BasePlatformAdapter):
             except (OSError, RuntimeError, ValueError, TimeoutError):
                 if generation != self._connect_generation:
                     return False
-                logger.warning("Aweb: cannot establish the selected canonical team; refusing strict-mode connect", exc_info=True)
-                self._set_fatal_error("team_unavailable", "Cannot establish the selected Aweb team", retryable=True)
+                logger.warning(
+                    "Aweb: cannot establish the selected canonical team; refusing strict-mode connect",
+                    exc_info=True,
+                )
+                self._set_fatal_error(
+                    "team_unavailable",
+                    "Cannot establish the selected Aweb team",
+                    retryable=True,
+                )
                 return False
             finally:
                 _query_cleanup_deadline.reset(cleanup_token)
@@ -225,7 +271,10 @@ class AwebAdapter(BasePlatformAdapter):
             async with asyncio.timeout_at(deadline):
                 await self._stream_ready.wait()
         except TimeoutError:
-            logger.warning("Aweb: no connected/heartbeat frame within %.1fs; background reconnect continues", CONNECT_TIMEOUT)
+            logger.warning(
+                "Aweb: no connected/heartbeat frame within %.1fs; background reconnect continues",
+                CONNECT_TIMEOUT,
+            )
         except asyncio.CancelledError:
             if generation == self._connect_generation:
                 await self._disconnect(deadline)
@@ -243,7 +292,12 @@ class AwebAdapter(BasePlatformAdapter):
         self._stream_live = False
         # Wake an in-progress connect without claiming live proof.
         self._stream_ready.set()
-        workers = [task for lane in self._lanes.values() for task in (lane.worker, lane.turn) if task]
+        workers = [
+            task
+            for lane in self._lanes.values()
+            for task in (lane.worker, lane.turn)
+            if task
+        ]
         if self._mail_task:
             workers.append(self._mail_task)
         for task in workers:
@@ -285,7 +339,9 @@ class AwebAdapter(BasePlatformAdapter):
                     stderr=asyncio.subprocess.PIPE,
                 )
                 if self._proc.stderr is not None:
-                    self._stderr_task = asyncio.create_task(self._log_stderr(self._proc.stderr))
+                    self._stderr_task = asyncio.create_task(
+                        self._log_stderr(self._proc.stderr)
+                    )
                 assert self._proc.stdout is not None
                 async for raw in self._proc.stdout:
                     if not self._running:
@@ -310,7 +366,9 @@ class AwebAdapter(BasePlatformAdapter):
             finally:
                 self._stream_health(False)
                 if self._proc and self._proc.returncode is None:
-                    await self._stop_process(self._proc, deadline=self._disconnect_deadline)
+                    await self._stop_process(
+                        self._proc, deadline=self._disconnect_deadline
+                    )
                 if self._stderr_task:
                     self._stderr_task.cancel()
                     await asyncio.gather(self._stderr_task, return_exceptions=True)
@@ -392,7 +450,9 @@ class AwebAdapter(BasePlatformAdapter):
             reason = "team differs from the receiver's selected team"
         else:
             return True
-        logger.warning("Aweb: strict team policy refused input: %s; input stays unread", reason)
+        logger.warning(
+            "Aweb: strict team policy refused input: %s; input stays unread", reason
+        )
         return False
 
     def _strict_policy_conflict(self) -> str | None:
@@ -402,15 +462,22 @@ class AwebAdapter(BasePlatformAdapter):
         from gateway.pairing import PairingStore
 
         def broad_grant():
-            return (any(_truthy(_auth_env(key)) for key in ("AWEB_ALLOW_ALL_USERS", "GATEWAY_ALLOW_ALL_USERS"))
-                    or any(_auth_env(key).strip() for key in ("AWEB_ALLOWED_USERS", "GATEWAY_ALLOWED_USERS")))
+            return any(
+                _truthy(_auth_env(key))
+                for key in ("AWEB_ALLOW_ALL_USERS", "GATEWAY_ALLOW_ALL_USERS")
+            ) or any(
+                _auth_env(key).strip()
+                for key in ("AWEB_ALLOWED_USERS", "GATEWAY_ALLOWED_USERS")
+            )
 
         if broad_grant():
             return "AWEB_ALLOW_TEAM requires platform/global allow-all=false and empty platform/global allowlists"
         runner = self.gateway_runner
         # A routed source may be authorized in another served runtime home.
         # Inspect the same profile scope Hermes uses for that authorization.
-        homes = getattr(getattr(runner, "config", None), "_runtime_profile_homes", ()) or ()
+        homes = (
+            getattr(getattr(runner, "config", None), "_runtime_profile_homes", ()) or ()
+        )
         if homes:
             from pathlib import Path
 
@@ -425,7 +492,10 @@ class AwebAdapter(BasePlatformAdapter):
         extra = getattr(self.config, "extra", {}) or {}
         if extra.get("allowed_users") or extra.get("allow_from"):
             return "AWEB_ALLOW_TEAM conflicts with a configured adapter allowlist"
-        stores = [getattr(runner, "pairing_store", None), *(getattr(runner, "pairing_stores", {}) or {}).values()]
+        stores = [
+            getattr(runner, "pairing_store", None),
+            *(getattr(runner, "pairing_stores", {}) or {}).values(),
+        ]
         stores = [store for store in stores if store is not None] or [PairingStore()]
         if any(store.list_approved("aweb") for store in stores):
             return "AWEB_ALLOW_TEAM conflicts with existing aweb pairing grants; revoke them locally before starting"
@@ -437,9 +507,18 @@ class AwebAdapter(BasePlatformAdapter):
             return False
         kind, target = source.chat_id.split(":", 1)
         if kind == "mail":
-            payload = await self._run_aw_json("mail", "show", "--message-id", source.message_id)
+            payload = await self._run_aw_json(
+                "mail", "show", "--message-id", source.message_id
+            )
         elif kind == "chat":
-            payload = await self._run_aw_json("chat", "history", "--session-id", target, "--message-id", source.message_id)
+            payload = await self._run_aw_json(
+                "chat",
+                "history",
+                "--session-id",
+                target,
+                "--message-id",
+                source.message_id,
+            )
             if payload.get("session_id") != target:
                 return False
         else:
@@ -447,14 +526,26 @@ class AwebAdapter(BasePlatformAdapter):
         for message in payload.get("messages") or []:
             if message.get("message_id") != source.message_id:
                 continue
-            sender = message.get("from_address") or message.get("from_alias") or message.get("from_agent") or "aweb"
-            return (sender == source.user_id and (kind == "chat" or message.get("conversation_id") == target)
-                    and self._team_admits(message))
+            sender = (
+                message.get("from_address")
+                or message.get("from_alias")
+                or message.get("from_agent")
+                or "aweb"
+            )
+            return (
+                sender == source.user_id
+                and (kind == "chat" or message.get("conversation_id") == target)
+                and self._team_admits(message)
+            )
         return False
 
     async def _dispatch_mail_event(self, event: dict) -> None:
         message_id = str(event.get("message_id") or "").strip()
-        if not message_id or message_id in self._mail_events or "mail:" + message_id in self._queued:
+        if (
+            not message_id
+            or message_id in self._mail_events
+            or "mail:" + message_id in self._queued
+        ):
             return
         if "mail:" + message_id in self._seen or "mail:" + message_id in self._ignored:
             return
@@ -470,27 +561,51 @@ class AwebAdapter(BasePlatformAdapter):
             self._mail_wake.clear()
             for message_id, hint in list(self._mail_events.items()):
                 try:
-                    payload = await self._run_aw_json("mail", "show", "--message-id", message_id)
+                    payload = await self._run_aw_json(
+                        "mail", "show", "--message-id", message_id
+                    )
                     msg = _first_mapping_item(payload, "messages")
                     if not msg:
-                        raise RuntimeError(f"actionable mail {message_id} was not returned")
+                        raise RuntimeError(
+                            f"actionable mail {message_id} was not returned"
+                        )
                     if not self._team_admits(msg):
                         self._ignored.add("mail:" + message_id)
                         self._mail_events.pop(message_id, None)
                         continue
-                    conversation_id = str(msg.get("conversation_id") or hint.get("conversation_id") or message_id)
-                    sender = str(msg.get("from_address") or hint.get("from_address") or msg.get("from_alias") or "aweb")
-                    subject, body = str(msg.get("subject") or ""), str(msg.get("body") or "")
+                    conversation_id = str(
+                        msg.get("conversation_id")
+                        or hint.get("conversation_id")
+                        or message_id
+                    )
+                    sender = str(
+                        msg.get("from_address")
+                        or hint.get("from_address")
+                        or msg.get("from_alias")
+                        or "aweb"
+                    )
+                    subject, body = (
+                        str(msg.get("subject") or ""),
+                        str(msg.get("body") or ""),
+                    )
                     source = self.build_source(
-                        chat_id=f"mail:{conversation_id}", chat_name=subject or sender, chat_type="dm",
-                        user_id=sender, user_name=sender, message_id=message_id,
+                        chat_id=f"mail:{conversation_id}",
+                        chat_name=subject or sender,
+                        chat_type="dm",
+                        user_id=sender,
+                        user_name=sender,
+                        message_id=message_id,
                         role_authorized=self._allow_team,
                     )
                     event = MessageEvent(
-                        text=CONTENT_PREFIX + (f"Subject: {subject}\n\n{body}" if subject else body),
-                        message_type=MessageType.TEXT, source=source, message_id=message_id,
+                        text=CONTENT_PREFIX
+                        + (f"Subject: {subject}\n\n{body}" if subject else body),
+                        message_type=MessageType.TEXT,
+                        source=source,
+                        message_id=message_id,
                         allow_gateway_control=False,
-                        raw_message=msg, timestamp=_event_timestamp(msg.get("created_at")),
+                        raw_message=msg,
+                        timestamp=_event_timestamp(msg.get("created_at")),
                     )
                     lane = self._lane(str(source.chat_id))
                     lane.pending[message_id] = event
@@ -500,7 +615,9 @@ class AwebAdapter(BasePlatformAdapter):
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    logger.exception("Aweb: mail fetch failed; retaining %s for retry", message_id)
+                    logger.exception(
+                        "Aweb: mail fetch failed; retaining %s for retry", message_id
+                    )
             if self._mail_events:
                 await asyncio.sleep(RECONNECT_BACKOFF[0])
                 self._mail_wake.set()
@@ -521,7 +638,10 @@ class AwebAdapter(BasePlatformAdapter):
             while self._running:
                 busy = lane.turn is not None and not lane.turn.done()
                 try:
-                    await asyncio.wait_for(lane.wake.wait(), timeout=.1 if busy else (1 if lane.pending else 60))
+                    await asyncio.wait_for(
+                        lane.wake.wait(),
+                        timeout=0.1 if busy else (1 if lane.pending else 60),
+                    )
                 except asyncio.TimeoutError:
                     if not busy and not lane.pending and not lane.wake.is_set():
                         self._lanes.pop(lane.chat_id, None)
@@ -529,46 +649,71 @@ class AwebAdapter(BasePlatformAdapter):
                 refresh = lane.wake.is_set()
                 lane.wake.clear()
                 if getattr(self.gateway_runner, "_startup_restore_in_progress", False):
-                    await asyncio.sleep(.1)
+                    await asyncio.sleep(0.1)
                     lane.wake.set()
                     continue
                 if refresh and lane.chat_id.startswith("chat:"):
                     try:
                         payload = await self._run_aw_json(
-                            "chat", "history", "--session-id", lane.chat_id[5:],
-                            "--unread-only", "--limit", "2000",
+                            "chat",
+                            "history",
+                            "--session-id",
+                            lane.chat_id[5:],
+                            "--unread-only",
+                            "--limit",
+                            "2000",
                         )
                         messages = payload.get("messages") or []
                         if len(messages) >= 2000:
-                            logger.error("Aweb: session %s reached the 2000-message history limit; refusing ambiguous newest window", lane.chat_id)
+                            logger.error(
+                                "Aweb: session %s reached the 2000-message history limit; refusing ambiguous newest window",
+                                lane.chat_id,
+                            )
                             continue
                         for msg in messages:
                             message_id = str(msg.get("message_id") or "").strip()
                             if not message_id:
-                                raise RuntimeError("Aweb unread history omitted message_id")
+                                raise RuntimeError(
+                                    "Aweb unread history omitted message_id"
+                                )
                             if message_id in lane.pending:
                                 continue
                             if f"chat:{lane.chat_id[5:]}:{message_id}" in self._ignored:
                                 continue
                             if not self._team_admits(msg):
-                                self._ignored.add(f"chat:{lane.chat_id[5:]}:{message_id}")
+                                self._ignored.add(
+                                    f"chat:{lane.chat_id[5:]}:{message_id}"
+                                )
                                 continue
-                            sender = str(msg.get("from_address") or msg.get("from_agent") or "aweb")
+                            sender = str(
+                                msg.get("from_address")
+                                or msg.get("from_agent")
+                                or "aweb"
+                            )
                             source = self.build_source(
-                                chat_id=lane.chat_id, chat_name=sender, chat_type="dm",
-                                user_id=sender, user_name=sender, message_id=message_id,
+                                chat_id=lane.chat_id,
+                                chat_name=sender,
+                                chat_type="dm",
+                                user_id=sender,
+                                user_name=sender,
+                                message_id=message_id,
                                 role_authorized=self._allow_team,
                             )
                             lane.pending[message_id] = MessageEvent(
-                                text=CONTENT_PREFIX + str(msg.get("body") or ""), message_type=MessageType.TEXT,
-                                source=source, message_id=message_id, raw_message=msg,
+                                text=CONTENT_PREFIX + str(msg.get("body") or ""),
+                                message_type=MessageType.TEXT,
+                                source=source,
+                                message_id=message_id,
+                                raw_message=msg,
                                 allow_gateway_control=False,
                                 timestamp=_event_timestamp(msg.get("timestamp")),
                             )
                     except asyncio.CancelledError:
                         raise
                     except Exception:
-                        logger.exception("Aweb: unread history failed; retrying %s", lane.chat_id)
+                        logger.exception(
+                            "Aweb: unread history failed; retrying %s", lane.chat_id
+                        )
                         await asyncio.sleep(1)
                         lane.wake.set()
                         continue
@@ -590,7 +735,9 @@ class AwebAdapter(BasePlatformAdapter):
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Aweb: input lane failed; input stays unread: %s", lane.chat_id)
+            logger.exception(
+                "Aweb: input lane failed; input stays unread: %s", lane.chat_id
+            )
 
     async def handle_message(self, event: MessageEvent) -> None:
         # Hermes-created tasks inherit this immutable snapshot; another input
@@ -619,7 +766,9 @@ class AwebAdapter(BasePlatformAdapter):
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Aweb: input failed; retaining %s for retry", event.message_id)
+            logger.exception(
+                "Aweb: input failed; retaining %s for retry", event.message_id
+            )
         if self._running and key not in self._seen and key not in self._ignored:
             await asyncio.sleep(1)
 
@@ -634,7 +783,9 @@ class AwebAdapter(BasePlatformAdapter):
         # content. Its source-aware authorization gate distinguishes these; do
         # not convert a refusal into a source read receipt.
         runner = self.gateway_runner
-        if runner is not None and not runner._is_user_authorized_for_source(event.source):
+        if runner is not None and not runner._is_user_authorized_for_source(
+            event.source
+        ):
             self._ignored.add(key)
             return
         self._completed_inputs.add(key)
@@ -650,11 +801,20 @@ class AwebAdapter(BasePlatformAdapter):
         if route.kind == "mail":
             await self._run_aw_json("mail", "ack", route.message_id)
         else:
-            await self._run_aw_json("chat", "read", "--session-id", route.target, "--message-id", route.message_id)
+            await self._run_aw_json(
+                "chat",
+                "read",
+                "--session-id",
+                route.target,
+                "--message-id",
+                route.message_id,
+            )
         self._dedup(key)
         self._completed_inputs.discard(key)
 
-    async def on_processing_complete(self, event: MessageEvent, outcome: ProcessingOutcome) -> None:
+    async def on_processing_complete(
+        self, event: MessageEvent, outcome: ProcessingOutcome
+    ) -> None:
         await super().on_processing_complete(event, outcome)
         if outcome == ProcessingOutcome.SUCCESS:
             await self._ack_input(event)
@@ -671,32 +831,56 @@ class AwebAdapter(BasePlatformAdapter):
         logger.warning("%s; no prompt was sent", error)
         # An ordinary send failure invites Hermes to retry as plain text. Its
         # definitive policy-decline disposition clears the waiter immediately.
-        return SendResult(success=False, error=error,
-                          raw_response={"success": False, "code": "egress_declined"})
+        return SendResult(
+            success=False,
+            error=error,
+            raw_response={"success": False, "code": "egress_declined"},
+        )
 
     async def send_exec_approval(
-        self, chat_id: str, command: str, session_key: str, description: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None, allow_permanent: bool = True,
-        allow_session: bool = True, smart_denied: bool = False, request_id: Optional[str] = None,
+        self,
+        chat_id: str,
+        command: str,
+        session_key: str,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        allow_permanent: bool = True,
+        allow_session: bool = True,
+        smart_denied: bool = False,
+        request_id: Optional[str] = None,
     ) -> SendResult:
         # Override the entire method: the base implementation can send a full
         # command preview BEFORE invoking _send_exec_approval_prompt.
         return self._decline_prompt("tool approval")
 
     async def send_clarify(
-        self, chat_id: str, question: str, choices: Optional[list], clarify_id: str,
-        session_key: str, metadata: Optional[Dict[str, Any]] = None,
+        self,
+        chat_id: str,
+        question: str,
+        choices: Optional[list],
+        clarify_id: str,
+        session_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         return self._decline_prompt("interactive clarification")
 
-    async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> SendResult:
+    async def send(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
         if metadata and metadata.get("is_approval_prompt"):
             return self._decline_prompt("interactive prompt")
         # Narrow upstream compatibility boundary: Hermes supplies this localized
         # notice without a typed notice-kind. Match only its exact Aweb render;
         # ordinary model output and quoted command names remain untouched.
         from agent.i18n import t
-        if content == t("gateway.notify.no_home_channel", platform="Aweb", sethome_cmd="/sethome"):
+
+        if content == t(
+            "gateway.notify.no_home_channel", platform="Aweb", sethome_cmd="/sethome"
+        ):
             global _home_notice_logged
             if not _home_notice_logged:
                 logger.info(
@@ -707,7 +891,11 @@ class AwebAdapter(BasePlatformAdapter):
                 _home_notice_logged = True
             return SendResult(success=True)
         if len(content) > self.MAX_MESSAGE_LENGTH:
-            logger.warning("Aweb: truncating outbound message from %d to %d chars", len(content), self.MAX_MESSAGE_LENGTH)
+            logger.warning(
+                "Aweb: truncating outbound message from %d to %d chars",
+                len(content),
+                self.MAX_MESSAGE_LENGTH,
+            )
             content = content[: self.MAX_MESSAGE_LENGTH]
         route = _input_route.get()
         if reply_to and chat_id.startswith(("mail:", "chat:")):
@@ -719,7 +907,10 @@ class AwebAdapter(BasePlatformAdapter):
             else:
                 result = await self._send_chat_reply(route, content)
         elif chat_id.startswith(("mail:", "chat:")):
-            result = SendResult(success=False, error="Aweb reply requires its triggering input route or reply_to")
+            result = SendResult(
+                success=False,
+                error="Aweb reply requires its triggering input route or reply_to",
+            )
         else:
             result = await self._send_chat_to_target(chat_id, content)
         return result
@@ -727,8 +918,19 @@ class AwebAdapter(BasePlatformAdapter):
     async def _send_mail_reply(self, route: InputRoute, content: str) -> SendResult:
         body_path = self._write_temp_body(content)
         try:
-            payload = await self._run_aw_json("mail", "reply", route.message_id, "--plaintext", "--body-file", body_path)
-            result = SendResult(success=True, message_id=str(payload.get("message_id") or ""), raw_response=payload)
+            payload = await self._run_aw_json(
+                "mail",
+                "reply",
+                route.message_id,
+                "--plaintext",
+                "--body-file",
+                body_path,
+            )
+            result = SendResult(
+                success=True,
+                message_id=str(payload.get("message_id") or ""),
+                raw_response=payload,
+            )
             self._completed_inputs.add("mail:" + route.message_id)
             try:
                 await self._ack_route(route)
@@ -750,16 +952,30 @@ class AwebAdapter(BasePlatformAdapter):
                 logger.exception("Aweb: chat reply persisted but read mark failed")
         return result
 
-    async def _send_chat_to_session(self, session_id: str, content: str, *, leave: bool = False) -> SendResult:
+    async def _send_chat_to_session(
+        self, session_id: str, content: str, *, leave: bool = False
+    ) -> SendResult:
         if not session_id:
             return SendResult(success=False, error="Aweb session_id is empty")
         body_path = self._write_temp_body(content)
-        args = ["chat", "send", "--session-id", session_id, "--plaintext", "--body-file", body_path]
+        args = [
+            "chat",
+            "send",
+            "--session-id",
+            session_id,
+            "--plaintext",
+            "--body-file",
+            body_path,
+        ]
         if leave:
             args.append("--leave")
         try:
             payload = await self._run_aw_json(*args)
-            msg_id = str(payload.get("message_id") or payload.get("MessageID") or int(time.time() * 1000))
+            msg_id = str(
+                payload.get("message_id")
+                or payload.get("MessageID")
+                or int(time.time() * 1000)
+            )
             return SendResult(success=True, message_id=msg_id, raw_response=payload)
         except Exception as exc:
             return SendResult(success=False, error=str(exc))
@@ -773,8 +989,14 @@ class AwebAdapter(BasePlatformAdapter):
         if not target:
             return SendResult(success=False, error="Aweb target is empty")
         try:
-            payload = await self._run_aw_json("chat", "send-and-leave", "--plaintext", target, content)
-            msg_id = str(payload.get("message_id") or payload.get("MessageID") or int(time.time() * 1000))
+            payload = await self._run_aw_json(
+                "chat", "send-and-leave", "--plaintext", target, content
+            )
+            msg_id = str(
+                payload.get("message_id")
+                or payload.get("MessageID")
+                or int(time.time() * 1000)
+            )
             return SendResult(success=True, message_id=msg_id, raw_response=payload)
         except Exception as exc:
             return SendResult(success=False, error=str(exc))
@@ -793,10 +1015,16 @@ class AwebAdapter(BasePlatformAdapter):
         return path
 
     @staticmethod
-    async def _stop_process(proc: asyncio.subprocess.Process, *, deadline: float | None = None) -> None:
+    async def _stop_process(
+        proc: asyncio.subprocess.Process, *, deadline: float | None = None
+    ) -> None:
         if proc.returncode is not None:
             return
-        remaining = 5.0 if deadline is None else max(0.0, deadline - asyncio.get_running_loop().time())
+        remaining = (
+            5.0
+            if deadline is None
+            else max(0.0, deadline - asyncio.get_running_loop().time())
+        )
         if remaining <= 0:
             try:
                 proc.kill()
@@ -830,20 +1058,37 @@ class AwebAdapter(BasePlatformAdapter):
         out = stdout.decode("utf-8", errors="replace").strip()
         err = stderr.decode("utf-8", errors="replace").strip()
         if proc.returncode != 0:
-            raise RuntimeError(f"aw {' '.join(args)} failed rc={proc.returncode}: {err or out}")
+            raise RuntimeError(
+                f"aw {' '.join(args)} failed rc={proc.returncode}: {err or out}"
+            )
         if not out:
             return {}
         try:
             return json.loads(out)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"aw {' '.join(args)} returned non-JSON: {out[:300]}") from exc
+            raise RuntimeError(
+                f"aw {' '.join(args)} returned non-JSON: {out[:300]}"
+            ) from exc
 
 
-async def _standalone_send(pconfig, chat_id: str, message: str, *, thread_id: Optional[str] = None, media_files: Optional[List[str]] = None, force_document: bool = False) -> Dict[str, Any]:
+async def _standalone_send(
+    pconfig,
+    chat_id: str,
+    message: str,
+    *,
+    thread_id: Optional[str] = None,
+    media_files: Optional[List[str]] = None,
+    force_document: bool = False,
+) -> Dict[str, Any]:
     adapter = AwebAdapter(pconfig)
     result = await adapter._send_chat_to_target(chat_id, message)
     if result.success:
-        return {"success": True, "platform": "aweb", "chat_id": chat_id, "message_id": result.message_id}
+        return {
+            "success": True,
+            "platform": "aweb",
+            "chat_id": chat_id,
+            "message_id": result.message_id,
+        }
     return {"error": result.error or "Aweb send failed"}
 
 
@@ -852,13 +1097,17 @@ def interactive_setup() -> None:
     print("Aweb setup")
     print("----------")
     print("Requirements:")
-    print("  1. aw CLI installed and upgraded to a version with `aw chat send --session-id`, `aw mail ack`, and `aw chat read`.")
+    print(
+        "  1. aw CLI installed and upgraded to a version with `aw chat send --session-id`, `aw mail ack`, and `aw chat read`."
+    )
     print("  2. A configured aw workspace for the Hermes gateway identity.")
     print()
     try:
         from hermes_cli.config import get_env_value, save_env_value
     except Exception:
-        print("Set AWEB_PLATFORM_ENABLED=true and AWEB_PLATFORM_WORKDIR manually in ~/.hermes/.env")
+        print(
+            "Set AWEB_PLATFORM_ENABLED=true and AWEB_PLATFORM_WORKDIR manually in ~/.hermes/.env"
+        )
         return
 
     def prompt(var: str, label: str, default: str = "") -> None:
@@ -870,9 +1119,17 @@ def interactive_setup() -> None:
     save_env_value("AWEB_PLATFORM_ENABLED", "true")
     prompt("AWEB_PLATFORM_WORKDIR", "aw workspace directory", os.getcwd())
     prompt("AWEB_PLATFORM_AW_BIN", "aw binary", "aw")
-    prompt("AWEB_ALLOWED_USERS", "allowed Aweb senders (comma-separated; blank=use AWEB_ALLOW_ALL_USERS)", "")
-    prompt("AWEB_HOME_CHANNEL", "home Aweb alias/address for cron delivery (optional)", "")
-    print("Done. Restart Hermes gateway after confirming `aw workspace status` works in that directory.")
+    prompt(
+        "AWEB_ALLOWED_USERS",
+        "allowed Aweb senders (comma-separated; blank=use AWEB_ALLOW_ALL_USERS)",
+        "",
+    )
+    prompt(
+        "AWEB_HOME_CHANNEL", "home Aweb alias/address for cron delivery (optional)", ""
+    )
+    print(
+        "Done. Restart Hermes gateway after confirming `aw workspace status` works in that directory."
+    )
 
 
 def register(ctx) -> None:

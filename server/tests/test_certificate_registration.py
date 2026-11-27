@@ -41,7 +41,8 @@ def test_staged_facts_preserve_ordinary_flow_and_required_facts_preserve_refusal
     )
     assert decision.state is expected
     assert decision.allows_registration == (
-        mode is RegistrationMode.NOT_REQUIRED or expected is RegistrationState.REGISTERED
+        mode is RegistrationMode.NOT_REQUIRED
+        or expected is RegistrationState.REGISTERED
     )
     if expected is RegistrationState.UNAVAILABLE:
         assert observation.unavailable_cause is cause
@@ -49,13 +50,18 @@ def test_staged_facts_preserve_ordinary_flow_and_required_facts_preserve_refusal
 
 
 def test_would_refuse_is_counted_once_per_certificate_observation_in_one_request():
-    request = Request({"type": "http", "method": "GET", "path": "/v1/agents", "headers": []})
+    request = Request(
+        {"type": "http", "method": "GET", "path": "/v1/agents", "headers": []}
+    )
     observation = CertificateRegistrationObservation(
         team_id=TEAM, registered_certificate_ids=frozenset()
     )
     labels = {"enforcement": "not_required", "outcome": "would_refuse"}
     before = (
-        REGISTRY.get_sample_value("aweb_certificate_registration_observations_total", labels) or 0
+        REGISTRY.get_sample_value(
+            "aweb_certificate_registration_observations_total", labels
+        )
+        or 0
     )
     for _ in range(2):
         decision = record_certificate_registration(
@@ -65,14 +71,19 @@ def test_would_refuse_is_counted_once_per_certificate_observation_in_one_request
             mode=RegistrationMode.NOT_REQUIRED,
         )
         assert decision.allows_registration
-    after = REGISTRY.get_sample_value("aweb_certificate_registration_observations_total", labels)
+    after = REGISTRY.get_sample_value(
+        "aweb_certificate_registration_observations_total", labels
+    )
     assert after == before + 1
 
 
 @pytest.mark.parametrize(
-    "registered_ids,cause", [(frozenset(), None), (None, ConnectionError("unavailable"))]
+    "registered_ids,cause",
+    [(frozenset(), None), (None, ConnectionError("unavailable"))],
 )
-def test_invalid_authority_scope_is_never_measurement_unavailability(registered_ids, cause):
+def test_invalid_authority_scope_is_never_measurement_unavailability(
+    registered_ids, cause
+):
     with pytest.raises(AuthenticationError) as refused:
         CertificateRegistrationObservation(
             team_id="invalid-team",
@@ -80,12 +91,16 @@ def test_invalid_authority_scope_is_never_measurement_unavailability(registered_
             unavailable_cause=cause,
         )
     assert refused.value.status_code == 401
-    assert "Reconnect using a certificate for a canonical team ID." in refused.value.detail
+    assert (
+        "Reconnect using a certificate for a canonical team ID." in refused.value.detail
+    )
 
 
 def test_observed_registration_ids_are_an_immutable_snapshot():
     ids = {"member"}
-    observation = CertificateRegistrationObservation(team_id=TEAM, registered_certificate_ids=ids)
+    observation = CertificateRegistrationObservation(
+        team_id=TEAM, registered_certificate_ids=ids
+    )
     ids.clear()
     assert (
         evaluate_certificate_registration(
@@ -99,9 +114,13 @@ def test_observed_registration_ids_are_an_immutable_snapshot():
         observation.registered_certificate_ids = frozenset()
 
 
-@pytest.mark.parametrize("ids,cause", [(None, None), (frozenset(), ConnectionError("unavailable"))])
+@pytest.mark.parametrize(
+    "ids,cause", [(None, None), (frozenset(), ConnectionError("unavailable"))]
+)
 def test_observation_requires_known_ids_or_a_distinct_unavailability_cause(ids, cause):
-    with pytest.raises(ValueError, match="known registrations or an unavailability cause"):
+    with pytest.raises(
+        ValueError, match="known registrations or an unavailability cause"
+    ):
         CertificateRegistrationObservation(
             team_id=TEAM, registered_certificate_ids=ids, unavailable_cause=cause
         )

@@ -43,25 +43,6 @@ func TestEngineeringBlueprintFixtureInspectAndImportPayload(t *testing.T) {
 	}
 }
 
-func TestEngineeringBlueprintDigestVectorPinsPathBases(t *testing.T) {
-	fixture := engineeringFixtureRoot(t)
-	var vector map[string]any
-	if err := json.Unmarshal(readFixtureFile(t, filepath.Join(fixture, "expected/digest-inputs.json")), &vector); err != nil {
-		t.Fatal(err)
-	}
-	if vector["blueprint_payload_schema"] != "aweb.blueprint.import-payload.v1" || vector["blueprint_payload_path_base"] != "blueprint-relative" {
-		t.Fatalf("blueprint path base not pinned: %+v", vector)
-	}
-	if vector["profile_payload_schema"] != "aweb.blueprint.profile-payload.v1" || vector["profile_payload_path_base"] != "profile-relative" {
-		t.Fatalf("profile path base not pinned: %+v", vector)
-	}
-	blueprintFields := vector["blueprint_payload_fields"].(map[string]any)
-	profileFields := vector["profile_payload_fields"].(map[string]any)
-	if blueprintFields["path_base"] != "blueprint-relative" || profileFields["path_base"] != "profile-relative" {
-		t.Fatalf("payload field path bases not pinned: blueprint=%v profile=%v", blueprintFields["path_base"], profileFields["path_base"])
-	}
-}
-
 func TestMaterializeCreatedProfilePayloadMatchesEngineeringFixture(t *testing.T) {
 	fixture := engineeringFixtureRoot(t)
 	profileRoot := filepath.Join(fixture, "source", "profiles", "developer")

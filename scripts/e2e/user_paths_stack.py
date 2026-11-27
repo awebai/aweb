@@ -210,7 +210,7 @@ def configuration(dns=None, server_image=None, *, production=False):
                 f"{WORK}/production-package:/work/production-package:ro"
             ]
     for service in services.values():
-        service.update(cpus=1, mem_limit="1g", pids_limit=256)
+        service.update(mem_limit="1g", pids_limit=256)
     for name in ("awid", "server", "peer", "cli"):
         if dns:
             services[name]["dns"] = [dns]
@@ -317,8 +317,6 @@ def qualify_released_clients(released_aw, runtimes, observations, production):
             "bridge",
             "--user",
             CLIENT_USER,
-            "--cpus",
-            "1",
             "--memory",
             "512m",
             "--pids-limit",
@@ -720,8 +718,6 @@ def main():
                 "bridge",
                 "--user",
                 CLIENT_USER,
-                "--cpus",
-                "1",
                 "--memory",
                 "512m",
                 "--pids-limit",
@@ -759,8 +755,6 @@ def main():
                     "bridge",
                     "--user",
                     CLIENT_USER,
-                    "--cpus",
-                    "1",
                     "--memory",
                     "512m",
                     "--pids-limit",
@@ -809,7 +803,12 @@ def main():
                     (EVIDENCE / "baseline-runtime.txt").write_text(actual)
                 if CANDIDATE_BIN:
                     version = compose(
-                        "exec", "-T", "cli", "/work/candidate-aw", "version", capture=True
+                        "exec",
+                        "-T",
+                        "cli",
+                        "/work/candidate-aw",
+                        "version",
+                        capture=True,
                     ).stdout
                     assert os.environ["USER_PATHS_CANDIDATE_SHA"] in version, version
                     (EVIDENCE / "candidate-version.txt").write_text(version)
@@ -832,7 +831,9 @@ def main():
                         else []
                     )
                     try:
-                        baseline_args = ["--baseline-chat-only"] if BASELINE_READY else []
+                        baseline_args = (
+                            ["--baseline-chat-only"] if BASELINE_READY else []
+                        )
                         if CANDIDATE_BIN:
                             baseline_args = ["--local-chat-direction", lane]
                         compose(

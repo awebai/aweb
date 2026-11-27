@@ -31,7 +31,9 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
     """
     if isinstance(result, CallToolResult) and result.isError:
         return result
-    if not isinstance(result, (CallToolResult, dict, Sequence)) or isinstance(result, (str, bytes)):
+    if not isinstance(result, (CallToolResult, dict, Sequence)) or isinstance(
+        result, (str, bytes)
+    ):
         return result
     try:
         auth = get_auth()
@@ -61,7 +63,7 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
             SELECT
                 (SELECT COUNT(*) FROM {{{{tables.messages}}}} m
                  WHERE m.read_at IS NULL
-                   AND {incoming_mail_sql('$3')}) AS unread_mail,
+                   AND {incoming_mail_sql("$3")}) AS unread_mail,
                 (SELECT COUNT(*) FROM mine p
                  JOIN {{{{tables.chat_messages}}}} m ON m.session_id = p.session_id
                  WHERE m.from_did <> p.did
@@ -104,8 +106,10 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
         instructions.append("Read mail with check_mail.")
     if chat:
         pending.append(f"{chat} unread chat message{'s' if chat != 1 else ''}")
-        instructions.append("Read chats with check_chats and read_chat, "
-                            "then mark them read with mark_chat_read.")
+        instructions.append(
+            "Read chats with check_chats and read_chat, "
+            "then mark them read with mark_chat_read."
+        )
     if room:
         pending.append(f"{room} new team room post{'s' if room != 1 else ''}")
         instructions.append("Read the room with room_read.")
@@ -117,10 +121,16 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
             instructions = [f"Read {'it' if mail == 1 else 'them'} with check_mail."]
         elif chat:
             pronoun = "it" if chat == 1 else "them"
-            instructions = [f"Read {pronoun} with check_chats and read_chat, "
-                            f"then mark {pronoun} read with mark_chat_read."]
+            instructions = [
+                f"Read {pronoun} with check_chats and read_chat, "
+                f"then mark {pronoun} read with mark_chat_read."
+            ]
     else:
-        waiting = ", ".join(pending[:-1]) + (", and " if len(pending) > 2 else " and ") + pending[-1]
+        waiting = (
+            ", ".join(pending[:-1])
+            + (", and " if len(pending) > 2 else " and ")
+            + pending[-1]
+        )
     text = f"[aweb] You have {waiting}. {' '.join(instructions)}"
     nudge = TextContent(type="text", text=text)
     if isinstance(result, CallToolResult):
@@ -134,4 +144,6 @@ async def append_pending_nudge(result: Any, db_infra: Any) -> Any:
         structured = result
     else:
         content, structured = result, None
-    return CallToolResult(content=[*content, nudge], structuredContent=structured, isError=False)
+    return CallToolResult(
+        content=[*content, nudge], structuredContent=structured, isError=False
+    )

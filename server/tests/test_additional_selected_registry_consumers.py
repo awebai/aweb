@@ -30,7 +30,9 @@ async def test_status_grant_presence_uses_selected_registry_on_resource_only_roo
 ):
     env = privacy_app
     actor, cert_info = await _admitted_cert_info(env, alias="alice")
-    identity = await resolve_team_identity(env.db, cert_info, request=root_request(env.app))
+    identity = await resolve_team_identity(
+        env.db, cert_info, request=root_request(env.app)
+    )
     session_key, session_did = _session_keypair()
     body = json.dumps(
         {"grant_did_key": session_did, "scopes": ["presence.write"], "ttl_seconds": 600}
@@ -113,7 +115,9 @@ async def test_controller_service_registration_uses_selected_root_registry(
         assert refused.value.code == "registry_client_unavailable"
     else:
         assert not hasattr(root.state, "awid_registry_client")
-        result = await register_team_with_service(body, root_request(root), db=env.infra)
+        result = await register_team_with_service(
+            body, root_request(root), db=env.infra
+        )
         assert result.status == "dry-run"
         assert result.team_did_key == env.team_did
         assert result.awid_team_id == TEAM

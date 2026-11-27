@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/internal/custodypath"
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 // ErrAppToolDenied identifies a structured resident-custody refusal. Display

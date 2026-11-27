@@ -32,7 +32,9 @@ class SessionActivity:
     def __init__(self, session_id: str, agents: dict[str, str]):
         self._session_id = session_id
         self._aliases = dict(agents)
-        self._agent_by_channel = {activity_channel_name(agent_id): agent_id for agent_id in agents}
+        self._agent_by_channel = {
+            activity_channel_name(agent_id): agent_id for agent_id in agents
+        }
         self._last_rev: dict[str, int] = {}
 
     @property
@@ -94,8 +96,18 @@ class SessionActivity:
             for name in ("tool", "summary"):
                 if name in event:
                     data[name] = event[name]
-            data.update(turn_id=event["turn_id"], seq=event["seq"], expires_at=event["expires_at"])
+            data.update(
+                turn_id=event["turn_id"],
+                seq=event["seq"],
+                expires_at=event["expires_at"],
+            )
             return _sse(data)
         if event["phase"] == "turn_ended":
             return _sse({"agent": alias, "phase": "cleared"})
-        return _sse({"agent": alias, "phase": "busy_elsewhere", "expires_at": event["expires_at"]})
+        return _sse(
+            {
+                "agent": alias,
+                "phase": "busy_elsewhere",
+                "expires_at": event["expires_at"],
+            }
+        )

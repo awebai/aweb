@@ -64,13 +64,17 @@ async def apply_agent_disposition_on(
         deleted_at,
         MemberStatus.ACTIVE,
     )
-    if disposition == AgentDisposition.PREPARED_REMOVAL and len(rows) != len(set(agent_ids)):
+    if disposition == AgentDisposition.PREPARED_REMOVAL and len(rows) != len(
+        set(agent_ids)
+    ):
         # The caller transaction rolls back any preceding coordination writes.
         raise AgentDispositionConflict(agent_ids=tuple(agent_ids))
     return len(rows)
 
 
-async def clear_agent_coordination_on(tx, *, agent_ids: list[UUID], team_id: str) -> None:
+async def clear_agent_coordination_on(
+    tx, *, agent_ids: list[UUID], team_id: str
+) -> None:
     """Retire ephemeral state, retaining control history and credentials.
 
     Implements docs/aweb-sot.md:1227–1252. These writes use

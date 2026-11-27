@@ -9,12 +9,28 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, Request
 
 from awid.team_ids import parse_team_id
-from aweb.application_state import RegistryClientUnavailable, application_registry_client
-from aweb.app_credentials import APP_REQUEST, PURPOSES, AppCredential, verify_app_credential
-from aweb.certificate_registration import CertificateRegistrationObservation, RegistrationMode
+from aweb.application_state import (
+    RegistryClientUnavailable,
+    application_registry_client,
+)
+from aweb.app_credentials import (
+    APP_REQUEST,
+    PURPOSES,
+    AppCredential,
+    verify_app_credential,
+)
+from aweb.certificate_registration import (
+    CertificateRegistrationObservation,
+    RegistrationMode,
+)
 from aweb.claims import lock_task_claim_workspaces_on, release_task_claims_on
 from aweb.member_team_key import current_member_sql, read_certificate_standings
-from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from aweb.service_errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from aweb.task_contracts import validate_app_task
 from awid.team_certificate import TeamCertificateError, verify_team_certificate_claims
 from aweb.team_auth import certificate_refusal, project_verified_team_certificate
@@ -69,7 +85,9 @@ async def _current_certificates(request, team_id):
     try:
         domain, name = parse_team_id(team_id)
         registry = application_registry_client(request.app.state)
-        return await registry.list_team_certificates_fresh(domain, name, active_only=True)
+        return await registry.list_team_certificates_fresh(
+            domain, name, active_only=True
+        )
     except RegistryClientUnavailable:
         raise
     except Exception as exc:
@@ -98,7 +116,9 @@ async def verify_authorization_certificate(request, authorization):
         if exc.status_code == 401:
             raise
         if exc.status_code == 422:
-            raise HTTPException(status_code=422, detail="registry_response_unusable") from exc
+            raise HTTPException(
+                status_code=422, detail="registry_response_unusable"
+            ) from exc
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
@@ -120,10 +140,14 @@ async def verify_authorization_certificate(request, authorization):
     certificates = await _current_certificates(request, team_id)
     try:
         standings = await read_certificate_standings(
-            application_registry_client(request.app.state), team_id, [certificate_id],
-            mode=RegistrationMode.REQUIRED, revocation_evidence=EvidenceMode.FRESH,
+            application_registry_client(request.app.state),
+            team_id,
+            [certificate_id],
+            mode=RegistrationMode.REQUIRED,
+            revocation_evidence=EvidenceMode.FRESH,
             registrations=CertificateRegistrationObservation(
-                team_id=team_id, registered_certificate_ids={c.certificate_id for c in certificates},
+                team_id=team_id,
+                registered_certificate_ids={c.certificate_id for c in certificates},
             ),
         )
         standings[certificate_id].require_active()

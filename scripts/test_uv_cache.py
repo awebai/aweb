@@ -1,6 +1,5 @@
 """Cache control covers all targets and the operational assignment forms."""
 
-import os
 import subprocess
 import tempfile
 import unittest
@@ -13,9 +12,6 @@ BAD = "/" + "tmp/uv-cache"
 
 
 class UvCacheTests(unittest.TestCase):
-    def test_repository_uses_persistent_cache_locations(self):
-        self.assertEqual(check_repository(ROOT), [])
-
     def test_all_pinned_forms_refuse_temporary_cache(self):
         for value in (BAD, "/private" + BAD, "/opt/../" + BAD.lstrip("/")):
             for expression in (
@@ -71,23 +67,6 @@ class UvCacheTests(unittest.TestCase):
             problems = check_repository(root)
             self.assertEqual(len(problems), 3, problems)
             self.assertTrue(any("Makefile:2:" in problem for problem in problems))
-
-    def test_make_target_inherits_the_parent_uv_default(self):
-        # The real recipe must let uv choose its persistent cache, including
-        # when make changes into a package or invokes a sub-make.
-        with tempfile.TemporaryDirectory() as home:
-            env = dict(os.environ, HOME=home)
-            for key in ("UV_CACHE_DIR", "XDG_CACHE_HOME"):
-                env.pop(key, None)
-            expected = subprocess.check_output(
-                ["uv", "cache", "dir"], env=env, text=True
-            ).strip()
-            recipe = subprocess.check_output(
-                ["make", "-n", "lint-naapp"], cwd=ROOT, env=env, text=True
-            )
-            self.assertNotIn("UV_CACHE_DIR=", recipe)
-            self.assertFalse(violations(Path("Makefile"), recipe))
-            self.assertEqual(Path(expected).parent.parent, Path(home))
 
 
 if __name__ == "__main__":

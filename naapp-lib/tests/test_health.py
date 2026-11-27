@@ -203,7 +203,10 @@ def test_the_probes_answer_with_the_servers_fields_and_status_codes() -> None:
     with `status` `ok`; `/ready` and `/health` answer 200 with `status` `ok`,
     or 503 with `status` `unhealthy`, and name each dependency in `checks` as
     `ok` or `error`."""
-    for database_ok, code, status, state in ((True, 200, "ok", "ok"), (False, 503, "unhealthy", "error")):
+    for database_ok, code, status, state in (
+        (True, 200, "ok", "ok"),
+        (False, 503, "unhealthy", "error"),
+    ):
         client = _checked({"database": _check(database_ok)})
         live = client.get("/live")
         assert (live.status_code, live.json()["status"]) == (200, "ok")
@@ -266,9 +269,7 @@ async def test_concurrent_requests_share_one_run_of_each_check() -> None:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="https://example.test"
     ) as client:
-        responses = await asyncio.gather(
-            *(client.get(path) for path in ("/health", "/ready") * 10)
-        )
+        responses = await asyncio.gather(*(client.get(path) for path in ("/health", "/ready") * 10))
         assert all(response.json()["checks"]["kms"] == "ok" for response in responses)
         assert calls == ["run"]
         await client.get("/ready")

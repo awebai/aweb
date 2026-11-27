@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/awebai/aw/wake"
+	"github.com/awebai/aw/internal/wake"
 )
 
 // Exercise an actual accepted Unix connection that closes during the exchange.

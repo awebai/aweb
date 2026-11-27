@@ -97,10 +97,17 @@ class EmbeddedResources:
         if self._failure is not None:
             return self._failure
         if self._stage is ResourceStartupStage.CLOSED:
-            return NativeResourceReadiness(False, self._stage,
-                "Native resources have stopped. Restart native startup and verify the API and MCP mounts before serving traffic.")
+            return NativeResourceReadiness(
+                False,
+                self._stage,
+                "Native resources have stopped. Restart native startup and verify the API and MCP mounts before serving traffic.",
+            )
         if self._stage is not ResourceStartupStage.READY:
-            return NativeResourceReadiness(False, self._stage, f"Native {self._stage.value} resources are starting.")
+            return NativeResourceReadiness(
+                False,
+                self._stage,
+                f"Native {self._stage.value} resources are starting.",
+            )
         failed = None
         if self.mcp_app is None or not self.mcp_app.is_running:
             failed = ResourceStartupStage.MCP
@@ -111,10 +118,16 @@ class EmbeddedResources:
             if recovery is None or recovery.done():
                 failed = ResourceStartupStage.RECOVERY
         if failed is not None:
-            return NativeResourceReadiness(False, failed,
-                f"Native {failed.value} resources are not running. Restart native startup and verify the API and MCP mounts before serving traffic.")
-        return NativeResourceReadiness(True, ResourceStartupStage.READY,
-            "Native resources are running. Verify the host's actual API and MCP mounts before serving traffic.")
+            return NativeResourceReadiness(
+                False,
+                failed,
+                f"Native {failed.value} resources are not running. Restart native startup and verify the API and MCP mounts before serving traffic.",
+            )
+        return NativeResourceReadiness(
+            True,
+            ResourceStartupStage.READY,
+            "Native resources are running. Verify the host's actual API and MCP mounts before serving traffic.",
+        )
 
 
 class MCPFactory(Protocol):
@@ -125,40 +138,64 @@ def native_resources(app: FastAPI) -> EmbeddedResources:
     """The one typed reference a host may share with wrappers and adapters."""
     resources = getattr(app.state, "native_resources", None)
     if not isinstance(resources, EmbeddedResources):
-        raise EmbeddingStartupError(ResourceStartupStage.CONFIGURATION,
-            "Native resources are unavailable. Start native resources for this application before retrying.")
+        raise EmbeddingStartupError(
+            ResourceStartupStage.CONFIGURATION,
+            "Native resources are unavailable. Start native resources for this application before retrying.",
+        )
     return resources
 
 
 def default_mcp_factory(resources: EmbeddedResources) -> ManagedMCPApp:
     """Build the native managed MCP app from the shared serving references."""
     return create_mcp_app(
-        db_infra=resources.db_infra, redis=resources.redis,
-        registry_client=resources.registry_client, federation_authority=resources.federation_authority,
-        public_origin=resources.public_origin, streamable_http_path="/",
+        db_infra=resources.db_infra,
+        redis=resources.redis,
+        registry_client=resources.registry_client,
+        federation_authority=resources.federation_authority,
+        public_origin=resources.public_origin,
+        streamable_http_path="/",
         proxy_verification=resources.proxy_verification,
     )
 
 
 @asynccontextmanager
 async def start_native_resources(
-    *, api_app: FastAPI, db_infra: DatabaseInfrastructure, redis: Redis,
-    registry_client: RegistryClient, mcp_factory: MCPFactory,
+    *,
+    api_app: FastAPI,
+    db_infra: DatabaseInfrastructure,
+    redis: Redis,
+    registry_client: RegistryClient,
+    mcp_factory: MCPFactory,
     outbox_recovery: OutboxRecoveryOwnership,
     on_mutation: MutationCallback | None = None,
 ) -> AsyncIterator[EmbeddedResources]:
     """Shared native owner; caller retains DB, Redis and registry lifecycles."""
 
     if type(outbox_recovery) is not OutboxRecoveryOwnership:
-        raise EmbeddingStartupError(ResourceStartupStage.CONFIGURATION,
-            "Outbox recovery ownership is required. Select HOST or NATIVE ownership and restart native startup before serving traffic.")
+        raise EmbeddingStartupError(
+            ResourceStartupStage.CONFIGURATION,
+            "Outbox recovery ownership is required. Select HOST or NATIVE ownership and restart native startup before serving traffic.",
+        )
     existing = getattr(api_app.state, "native_resources", None)
-    if isinstance(existing, EmbeddedResources) and existing._stage is not ResourceStartupStage.CLOSED and existing._failure is None:
-        raise EmbeddingStartupError(ResourceStartupStage.CONFIGURATION,
-            "This application already owns native resources. Stop its current native context before starting another one.")
+    if (
+        isinstance(existing, EmbeddedResources)
+        and existing._stage is not ResourceStartupStage.CLOSED
+        and existing._failure is None
+    ):
+        raise EmbeddingStartupError(
+            ResourceStartupStage.CONFIGURATION,
+            "This application already owns native resources. Stop its current native context before starting another one.",
+        )
     resources = EmbeddedResources(
-        api_app, db_infra, redis, registry_client, api_app.state.public_origin, outbox_recovery,
-        create_mutation_handler(redis, db_infra) if on_mutation is None else on_mutation,
+        api_app,
+        db_infra,
+        redis,
+        registry_client,
+        api_app.state.public_origin,
+        outbox_recovery,
+        create_mutation_handler(redis, db_infra)
+        if on_mutation is None
+        else on_mutation,
         proxy_verification=application_proxy_verification(api_app.state),
     )
     api_app.state.native_resources = resources
@@ -169,7 +206,9 @@ async def start_native_resources(
             await db_infra.get_manager("aweb").fetch_value("SELECT 1")
             migrations = await pending_native_migrations(db_infra.get_manager("aweb"))
             if not migrations.ready:
-                raise EmbeddingStartupError(ResourceStartupStage.DATABASE, migrations.message)
+                raise EmbeddingStartupError(
+                    ResourceStartupStage.DATABASE, migrations.message
+                )
             resources._stage = ResourceStartupStage.REGISTRY
             await validate_awid_registry_client(registry_client)
             api_app.state.db = db_infra
@@ -177,7 +216,9 @@ async def start_native_resources(
             api_app.state.awid_registry_client = registry_client
             api_app.state.on_mutation = resources.on_mutation
             resources._stage = ResourceStartupStage.FEDERATION
-            resources.federation_authority = build_federation_authority_activation(db_infra, public_origin=resources.public_origin)
+            resources.federation_authority = build_federation_authority_activation(
+                db_infra, public_origin=resources.public_origin
+            )
             cleanup.push_async_callback(resources.federation_authority.aclose)
             api_app.state.federation_authority = resources.federation_authority
             resources._stage = ResourceStartupStage.WAKES
@@ -205,7 +246,11 @@ async def start_native_resources(
     except Exception as exc:
         if yielded:
             raise
-        error = exc if isinstance(exc, EmbeddingStartupError) else EmbeddingStartupError(resources._stage)
+        error = (
+            exc
+            if isinstance(exc, EmbeddingStartupError)
+            else EmbeddingStartupError(resources._stage)
+        )
         resources._failure = error.readiness
         logger.exception("Native resource startup failed at %s", error.stage.value)
         if error is exc:
@@ -215,8 +260,13 @@ async def start_native_resources(
 
 @asynccontextmanager
 async def embedded_aweb(
-    *, db_infra: DatabaseInfrastructure, redis: Redis, registry_client: RegistryClient,
-    public_origin: str, mcp_factory: MCPFactory, outbox_recovery: OutboxRecoveryOwnership,
+    *,
+    db_infra: DatabaseInfrastructure,
+    redis: Redis,
+    registry_client: RegistryClient,
+    public_origin: str,
+    mcp_factory: MCPFactory,
+    outbox_recovery: OutboxRecoveryOwnership,
     on_mutation: MutationCallback | None = None,
     attachment_backend: AttachmentBackend | None = None,
     proxy_verification: ProxyVerificationConfig | None = None,
@@ -229,20 +279,29 @@ async def embedded_aweb(
     from aweb.api import create_app
 
     if type(outbox_recovery) is not OutboxRecoveryOwnership:
-        raise EmbeddingStartupError(ResourceStartupStage.CONFIGURATION,
-            "Outbox recovery ownership is required. Select HOST or NATIVE ownership and restart native startup before serving traffic.")
+        raise EmbeddingStartupError(
+            ResourceStartupStage.CONFIGURATION,
+            "Outbox recovery ownership is required. Select HOST or NATIVE ownership and restart native startup before serving traffic.",
+        )
     try:
         api_app = create_app(
-            db_infra=db_infra, redis=redis, public_origin=public_origin,
+            db_infra=db_infra,
+            redis=redis,
+            public_origin=public_origin,
             host_runs_outbox_recovery=outbox_recovery is OutboxRecoveryOwnership.HOST,
-            attachment_backend=attachment_backend, proxy_verification=proxy_verification,
+            attachment_backend=attachment_backend,
+            proxy_verification=proxy_verification,
         )
     except Exception as exc:
         logger.exception("Native application construction failed")
         raise EmbeddingStartupError(ResourceStartupStage.CONFIGURATION) from exc
     async with start_native_resources(
-        api_app=api_app, db_infra=db_infra, redis=redis, registry_client=registry_client,
-        mcp_factory=mcp_factory, outbox_recovery=outbox_recovery,
+        api_app=api_app,
+        db_infra=db_infra,
+        redis=redis,
+        registry_client=registry_client,
+        mcp_factory=mcp_factory,
+        outbox_recovery=outbox_recovery,
         on_mutation=on_mutation,
     ) as resources:
         yield resources

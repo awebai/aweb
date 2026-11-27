@@ -1,4 +1,4 @@
-.PHONY: test test-server lint compile run e2e e2e-up e2e-down api-serve api-stop \
+.PHONY: test test-server lint typecheck compile run e2e e2e-up e2e-down api-serve api-stop \
 	prod-tools-prepare prod-shelf-pin prod-ops-test prod-public-identity prod-status prod-health-client-proof prod-move-build prod-deploy prod-wait prod-verify prod-rollback prod-recovery \
 	prod-gate-candidate prod-gate-recovery prod-gate-current-incumbent \
 	aatk-predicate-inventory aatk-spec-check aatk-validate-preplan aatk-validate-release
@@ -42,8 +42,10 @@ test:
 test-server:
 	uv run pytest -q -m "not e2e"
 
-lint:
+lint: typecheck
 	uv run ruff check .
+
+typecheck:
 	uv run mypy src
 
 compile:

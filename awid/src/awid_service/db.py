@@ -30,8 +30,12 @@ def database_config_from_settings(settings: Any) -> DatabaseConfig:
     return build_database_config(
         connection_string=settings.database_url,
         statement_cache_size=getattr(settings, "database_statement_cache_size", None),
-        uses_transaction_pooler=bool(getattr(settings, "database_uses_transaction_pooler", False)),
-        pooler_max_connections=int(getattr(settings, "database_pooler_max_connections", 10)),
+        uses_transaction_pooler=bool(
+            getattr(settings, "database_uses_transaction_pooler", False)
+        ),
+        pooler_max_connections=int(
+            getattr(settings, "database_pooler_max_connections", 10)
+        ),
         shared_pool_search_path="pg_catalog" if require else None,
     )
 
@@ -44,14 +48,18 @@ def _search_path_entries(value: str | None) -> list[str]:
     return [entry.strip() for entry in (value or "").split(",") if entry.strip()]
 
 
-async def _sample_session_settings(conn: Any, names: list[str], barrier: asyncio.Barrier) -> dict[str, Any]:
+async def _sample_session_settings(
+    conn: Any, names: list[str], barrier: asyncio.Barrier
+) -> dict[str, Any]:
     # One transaction pins one server connection behind a transaction pooler, so
     # the role, backend and settings read here all describe the same connection.
     # The barrier keeps every transaction of the round open at once, so each
     # sample holds a different server connection.
     try:
         async with conn.transaction():
-            identity = await conn.fetchrow("SELECT current_user AS role, pg_backend_pid() AS backend")
+            identity = await conn.fetchrow(
+                "SELECT current_user AS role, pg_backend_pid() AS backend"
+            )
             rows = await conn.fetch(
                 "SELECT name, setting FROM pg_catalog.pg_settings WHERE name = ANY($1::text[])",
                 names,
@@ -107,7 +115,9 @@ async def verify_session_settings(
     round at once.
     """
     requested = config.get_server_settings()
-    required = {name: requested[name] for name in REQUIRED_SESSION_SETTINGS if name in requested}
+    required = {
+        name: requested[name] for name in REQUIRED_SESSION_SETTINGS if name in requested
+    }
     if config.shared_pool_search_path is not None:
         required["search_path"] = config.shared_pool_search_path
     names = sorted(required)
@@ -122,7 +132,10 @@ async def verify_session_settings(
             try:
                 barrier = asyncio.Barrier(width)
                 results = await asyncio.gather(
-                    *(_sample_session_settings(conn, names, barrier) for conn in connections),
+                    *(
+                        _sample_session_settings(conn, names, barrier)
+                        for conn in connections
+                    ),
                     return_exceptions=True,
                 )
             finally:
@@ -131,7 +144,14 @@ async def verify_session_settings(
             errors = [result for result in results if isinstance(result, BaseException)]
             if errors:
                 # The barrier aborts on the first failure, so later ones are BrokenBarrierError.
-                cause = next((e for e in errors if not isinstance(e, asyncio.BrokenBarrierError)), errors[0])
+                cause = next(
+                    (
+                        e
+                        for e in errors
+                        if not isinstance(e, asyncio.BrokenBarrierError)
+                    ),
+                    errors[0],
+                )
                 raise cause
             samples.extend(results)
 
@@ -153,7 +173,9 @@ async def verify_session_settings(
 
     def matches(name: str, effective: str | None) -> bool:
         if name == "search_path":
-            return _search_path_entries(effective) == _search_path_entries(required[name])
+            return _search_path_entries(effective) == _search_path_entries(
+                required[name]
+            )
         return effective == required[name]
 
     failing = [
@@ -176,7 +198,10 @@ async def verify_session_settings(
         f"  {name}: requested {required[name]!r}, connections have {sorted(map(str, values))}"
         for name, values in sorted(wrong.items())
     ]
-    fixes = [f"  ALTER ROLE \"{role}\" SET {name} = '{required[name]}';" for name in sorted(wrong)]
+    fixes = [
+        f"  ALTER ROLE \"{role}\" SET {name} = '{required[name]}';"
+        for name in sorted(wrong)
+    ]
     raise DatabaseSessionSettingsError(
         f"Database session settings missing on {len(failing)} of {len(samples)} sampled server "
         f"connections (backends {backends}); a connection pooler probably dropped the startup "
@@ -241,7 +266,9 @@ class AwidDatabaseInfra:
             self._manager = AsyncDatabaseManager(pool=shared_pool, schema=self.schema)
 
             quoted_schema = self.schema.replace('"', '""')
-            await self._manager.execute(f'CREATE SCHEMA IF NOT EXISTS "{quoted_schema}"')
+            await self._manager.execute(
+                f'CREATE SCHEMA IF NOT EXISTS "{quoted_schema}"'
+            )
 
             if run_migrations:
                 import awid_service

@@ -135,3 +135,8 @@ func TestAppApprovalCatalogRejectsMalformedAndSymlinks(t *testing.T) {
 		t.Fatal("followed catalog symlink")
 	}
 }
+
+func selectGrantAppSnapshots(home, teamID string, explicit bool, values, deniedOrigins []string) (map[string]grantAppSnapshot, error) {
+	apps, _, err := prepareGrantAppSnapshots(home, teamID, explicit, values, deniedOrigins)
+	return apps, err
+}

@@ -19,7 +19,9 @@ class _DB:
 
 
 @pytest.mark.asyncio
-async def test_address_only_contact_is_inert_until_identity_bound(aweb_cloud_db) -> None:
+async def test_address_only_contact_is_inert_until_identity_bound(
+    aweb_cloud_db,
+) -> None:
     db = _DB(aweb_cloud_db.aweb_db)
     await add_contact(
         db,
@@ -37,7 +39,9 @@ async def test_address_only_contact_is_inert_until_identity_bound(aweb_cloud_db)
 
 
 @pytest.mark.asyncio
-async def test_contact_authority_requires_exact_address_and_stable_identity(aweb_cloud_db) -> None:
+async def test_contact_authority_requires_exact_address_and_stable_identity(
+    aweb_cloud_db,
+) -> None:
     db = _DB(aweb_cloud_db.aweb_db)
     await add_contact(
         db,
@@ -69,7 +73,9 @@ async def test_contact_authority_requires_exact_address_and_stable_identity(aweb
 
 
 @pytest.mark.asyncio
-async def test_contact_binding_requires_explicit_cas_for_reassignment(aweb_cloud_db) -> None:
+async def test_contact_binding_requires_explicit_cas_for_reassignment(
+    aweb_cloud_db,
+) -> None:
     db = _DB(aweb_cloud_db.aweb_db)
     contact = await add_contact(
         db,

@@ -24,11 +24,16 @@ async def _identity(db, id_, *, kind="human", domain="example.com"):
         INSERT INTO {{tables.id_identities}} (id, domain, kind, first_registered_at)
         VALUES ($1, $2, $3, $4)
         """,
-        id_, domain, kind, T0,
+        id_,
+        domain,
+        kind,
+        T0,
     )
 
 
-async def _certificate(db, certificate_id, id_, *, superseded_at=None, invitation_id=None, issuer_key_seq=1):
+async def _certificate(
+    db, certificate_id, id_, *, superseded_at=None, invitation_id=None, issuer_key_seq=1
+):
     await db.execute(
         """
         INSERT INTO {{tables.id_certificates}}
@@ -38,18 +43,29 @@ async def _certificate(db, certificate_id, id_, *, superseded_at=None, invitatio
         VALUES ($1, $2, 'example.com', 'namespace', 'example.com', 'human', 'did:key:z6Mk',
                 '{}', '{}', $3, $4, $5, $6)
         """,
-        certificate_id, id_, issuer_key_seq, invitation_id, T0, superseded_at,
+        certificate_id,
+        id_,
+        issuer_key_seq,
+        invitation_id,
+        T0,
+        superseded_at,
     )
 
 
-async def _epoch(db, seq, *, retired_at=None, domain="example.com", continuity="replaced"):
+async def _epoch(
+    db, seq, *, retired_at=None, domain="example.com", continuity="replaced"
+):
     await db.execute(
         """
         INSERT INTO {{tables.id_namespace_epochs}}
             (domain, seq, did_key, continuity, registered_at, retired_at)
         VALUES ($1, $2, 'did:key:z6Mk', $5, $3, $4)
         """,
-        domain, seq, T0, retired_at, continuity,
+        domain,
+        seq,
+        T0,
+        retired_at,
+        continuity,
     )
 
 

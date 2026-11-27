@@ -116,7 +116,10 @@ async def test_mounted_mcp_send_to_saved_contact(
                     address=bob.address,
                 )
                 await archive_messaging_actor(
-                    env.db, env.redis, team_id=bob.team_id, agent_id=bob.agent_id,
+                    env.db,
+                    env.redis,
+                    team_id=bob.team_id,
+                    agent_id=bob.agent_id,
                     registry_client=application_registry_client(env.app.state),
                 )
                 await controller_client.reassign_address(

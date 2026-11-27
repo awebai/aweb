@@ -39,7 +39,6 @@ committed or sent to reviewers.
 | `pull_seconds` | Optional evidence-transfer bound, default 600 |
 | `cleanup_seconds` | Optional cleanup allowance, default 300 |
 | `margin_seconds` | Optional completion margin, default 300 |
-| `lint_timeout_seconds` | Optional total local lint bound, default 600 |
 
 `state_root`, `ledger`, `token_file` and `snapshot_manifest` must be absolute
 and outside the selected source repository. Protect config and credential files
@@ -70,7 +69,8 @@ vm-gate snapshot --repo "$REPO" --sha "$SHA"
 
 No selector uses the source's ordinary `make candidate-gate` entry. Stage
 subsets use its existing selector. Train intent reproduces the coordinator's
-explicit five-stage command: checks, user-paths, unit, artifacts, integration.
+explicit six-stage command: static, checks, user-paths, unit, artifacts,
+integration.
 A train SHA must contain freshly refreshed real origin/main, and main must not
 move before or during the run. A branch qualification recreates a frozen local
 origin with its main at the selected SHA; the real main OID and both ancestry
@@ -79,12 +79,7 @@ and release tags. Focused commands run as supplied, with no inherited sizing
 or stage environment overrides.
 
 Before reading credentials, admission checks config, clean checkout, exact
-commit, source pins versus base manifest, bundle refs and shell syntax. It then
-runs the selected source's checks-list lint/format targets on a temporary exact
-checkout. Containers are disabled there; a failing check prints its output and
-refuses allocation. A formatter that changes bytes also refuses. The VM still
-runs the requested checks stage unchanged. Local logs and pass lines are in
-`local-checks.json` and summary.json, including on refusal.
+commit, source pins versus base manifest, bundle refs and shell syntax.
 
 Each admitted run reaps expired dispatcher resources before creating anything.
 A capacity refusal names the server type and provider code, with no retry or
@@ -152,13 +147,6 @@ which file failed or why. Raw archives stay local/operator-only.
 The UID-1000 candidate can write LOGS, including exit/supervisor receipts; these
 are operator observations, not an attestation against malicious candidate code.
 Root stop validates the live PID/start-time/UID/command before sending a signal.
-
-The complete native caller packet is `scripts/vm-gate/native_proof.py`, with
-`--source-sha` set to the reviewed commit and a fresh `--evidence` directory.
-It performs no allocation. Only the coordinator-authorized Linux VM run executes
-it: real GNU timeout, PID-bound operator-stop ordering, real gate Docker cleanup
-and absence before VM deletion, plus a memory receipt while an owned container
-is live. Local unit/process/filesystem controls do not claim that native proof.
 
 [errors.py](vm_gate/errors.py) is the single exit-code authority. Normal gate
 exits pass through; refusal and infrastructure errors have separate classes.
@@ -272,6 +260,59 @@ decrease. Raw counters are preserved without guessed percentages. The
 averages and cumulative stall time; before/after data supports diagnosis but
 does not on its own identify a physical host or prove noisy-neighbor causation.
 
+### A project's gate, with one receipt
+
+`vm-gate run --project aweb|ac|servers --repo PATH --sha S --intent train
+--machine M --receipt R` runs one project's full gate on the machine the operator config
+names, and writes one flat receipt on every outcome, refusals included, with
+every digest as `sha256:<hex>`. `--repo` is that project's local checkout. One
+suite has the whole machine: nothing is split and no budget is passed, so each
+gate sizes itself from the machine it runs on.
+
+- `aweb`: aweb's candidate gate at S, with S as the guest's main (branch
+  scope) because S lands only after this gate; admission refuses S unless real
+  main is in its history. `--files DIR` places the release command's built
+  files in the guest: the federation journey installs their server wheel in
+  both servers, and after the gate the guest rebuilds them from S. Green needs
+  the suite green, the rebuild equal to the files and both server containers
+  holding the wheel. aweb runs only in a guest.
+- `ac`: Cloud's gate from the local checkout, shipped as a bundle, with the
+  operator's `hermes_key_file` (0600, removed before collect). With `--image`
+  (the amd64 member) and `--aweb-source`, the commit must sit directly on real
+  main and the guest runs `make release-gate` on that member; the receipt's
+  `aweb_source_built` is the `aweb-built-head` line of Cloud's own
+  `inputs.tsv`, never the input copied. Without `--image` the head must have
+  real main in its history, and the guest runs `make gate GATE_STAGES=all`.
+  Either way green needs every stage PASSED in Cloud's own `summary.tsv`; a
+  missing row is red. `ac` also runs on a native host.
+- `servers`: the steps of one reviewed spec, `--steps SPEC`, in one guest.
+  The spec names each source as an author's git bundle with its `sha256`, the
+  ref that holds it and the commit; `--repo` and `--sha` are its servers bundle
+  and that commit. Admission refuses before boot unless every bundle has its
+  author's digest and holds its commit at its ref. A step names its checkout,
+  its user (`gateuser`; a root step is refused), its command, its expected exit
+  (a code, or `"nonzero"` for a red control), the lines it must and must not
+  print, structured checks on a line's JSON, the files it must leave, the files
+  it takes from an earlier step it needs, and the named artifacts it keeps:
+  `artifacts` must each match a regular file inside the step's checkout or
+  run directory, links resolved, or the step is red; `optional_artifacts` are
+  kept when present. A path starting `{run_dir}/` is under the step's run
+  directory, any other under its checkout, for files, inputs and artifacts
+  alike; JSON checks compare type as well as value.
+  The spec may name a registry image pinned by digest, which the guest starts
+  on loopback before the steps and removes after them. The guest gets the
+  reviewed spec's bytes and runs nothing unless their sha256 is the admitted
+  one. In the guest, `servers_run.py` checks each source out at its commit, timestamps every line
+  of each step's output as it arrives and keeps its raw exit apart from its
+  verdict; a step whose needs did not pass is recorded unrun. Each step's
+  raw exit is recorded before its evidence is read, so a failure collecting
+  it, or of the runner itself, leaves the exit and makes the receipt
+  infrastructure, not red. The receipt
+  carries the spec's digest, each source's author and shipped bundle digests
+  and the commit the guest checked out, and the runner's full record. Green
+  needs every source at its commit, every step passed and the registry
+  removed. `servers` runs only in a guest.
+
 ### Merak
 
 Select the dedicated KVM host with `--target merak`. The Mac operator config
@@ -282,6 +323,13 @@ the approved Merak toolchain manifest and `merak.package_delta` to its recorded
 OS package comparison. Each Merak receipt carries both file digests, the
 observed Python binary hash and the package comparison itself. Build the launcher from `scripts/vm-gate/merak`
 with a digest-pinned Debian base supplied as the `BASE` build argument.
+
+The guest's size is measured, not configured. When it admits a run, the host
+script reads its own CPU count and memory: the guest gets every CPU, and the
+host keeps an eighth of its memory (at least 2 GiB) plus QEMU's own 4 GiB. The
+admission record carries the guest size. Inside the guest each gate measures
+its own Docker engine (`vm_gate/budget.py`), so nothing names a machine or
+assumes a size.
 
 Place the verified disk at `~/.local/share/aweb-gates/base/<sha256>.raw` with
 mode 0444. Merak holds one slot from admission through cleanup. Each invocation
@@ -302,8 +350,12 @@ filesystem free space, peak allocated overlay bytes and the launcher's cgroup
 memory peak when readable. Use those figures with the native stage times and
 total elapsed time to assess capacity.
 
-A Merak host administrator installs the reviewed helper once with
-`sudo ./merak_egress.py install` from `scripts/vm-gate/vm_gate`. The installer
+A Merak host administrator installs the reviewed helper with
+`make merak-egress-install` from the repository root (`MERAK=<ssh host>`
+selects the host). It copies `merak_egress.py` to the host, runs
+`sudo ./merak_egress.py install` there and checks that the installed digest
+equals the file's. Any change to `merak_egress.py`, formatting included,
+needs this reinstall before the next Merak run. The installer
 checks the nftables policy in a fresh network namespace and validates the
 restricted sudo grant. The controller verifies the installed helper digest at
 admission. Each run creates its own IPv4 bridge and nftables table before

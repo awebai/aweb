@@ -340,7 +340,7 @@ or a stored record reproduces: the [A2A Agent Card digest](../a2a.md), custody
 request digests, blueprint payload digests and the stored hosted creation
 response. One case is an Agent Card with its `card_digest`.
 `cli/go/awid/canonical_json_vector_test.go` reproduces every case, and
-`cli/go/a2a/card_test.go` reproduces the card case through `CardDigest`.
+`cli/go/internal/a2a/card_test.go` reproduces the card case through `CardDigest`.
 
 ### `message-signing-v1.json`
 
@@ -752,7 +752,7 @@ producer kind the hook does not allow, a client actor that is not its signer, a
 team mismatch and a wrong signature. The `catalog` layer passes the envelope
 checks and is refused by the catalog reader. A digest construction case shows
 `request_sha256` taken before credential injection. The Go authority in
-`cli/go/hookevent` regenerates every case byte for byte.
+`cli/go/internal/hookevent` regenerates every case byte for byte.
 
 ### `hook-delivery-credential-v2.json`
 
@@ -801,7 +801,7 @@ event of another team with a broken link, a wrong event hash with its content
 gone, a wrong event hash with its content altered, wrong key evidence with a
 changed skeleton) and expects the earlier. The
 Python implementation in `naapp/logs` regenerates it byte for byte, and the Go
-verifier in `cli/go/logschain` passes it.
+verifier in `cli/go/internal/logschain` passes it.
 
 
 ### `logs-export-v1.json`
@@ -903,16 +903,6 @@ in `awid/tests/test_a2a_publication_route.py`. The digest-only fixture proves
 byte/digest parity; those tests prove verification and authority enforcement.
 Both are required.
 
-## Experimental extension fixtures
-
-### `mutation-hook-call-sites-v1.json`
-
-Machine-readable source path, enclosing function, and literal event for every
-current `fire_mutation_hook` call. Duplicate rows are significant: they preserve
-call-site multiplicity when one function emits the same event from multiple
-branches. The source-derived checker rejects added, removed, dynamic, or
-otherwise unsupported call shapes. See [`aw-hooks-sot.md`](../aw-hooks-sot.md).
-
 ## Consumer-local extension fixtures
 
 Two extension fixtures currently live under
@@ -979,7 +969,6 @@ reference duplication are mutation-tested failures.
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |
 | `message-display-binding-v1.json` | Go AWID `request_envelope_as_message_test.go`; TypeScript channel-core `request_envelope_as_message.test.ts` |
 | `message-signing-v1.json` | Python AWID and aweb conformance tests, including the pre-activation federation harness; Go shared `conformance_test.go` |
-| `mutation-hook-call-sites-v1.json` | Build guard `scripts/check-extension-docs.py`; server `test_message_event_contracts.py` verifies the canonical event vocabulary covers the recorded call sites |
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
@@ -988,7 +977,7 @@ reference duplication are mutation-tested failures.
 | `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts`; Go AWID `request_envelope_as_message_test.go` and TypeScript channel-core `request_envelope_as_message.test.ts`, which present each signed request as a message |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
-| `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |
+| `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`) |
 
 Package and reference enforcement is also explicit: the root `Makefile` runs the
 provenance baseline and mutations from `make test`; the aweb package-data test
@@ -1053,8 +1042,6 @@ passes and the lifecycle label above still describes what the bytes prove.
 The [P0 contract](../human-channels-contract-v1.md) fixes the public embedding
 ports and signature boundary. X-E2/X-GF encrypted re-share/federation annexes
 remain refused until exact-SHA Athena review; current native fixtures are unchanged.
-
-`human-channels-e2ee-spike.json` is an **unfrozen** X-E2 laboratory fixture, consumed by `cli/go/awid/human_channels_e2ee_spike_test.go`. It enables no profile.
 
 ## Human-channel presence verification
 

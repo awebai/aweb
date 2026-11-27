@@ -46,9 +46,7 @@ def proof_for(row: dict, kind: str, mutation_id: str = "") -> tuple[dict, str]:
         return row["postdeploy"], ""
     if kind == "rollback":
         return row["rollback"]["proof"], ""
-    negative = next(
-        item for item in row["negative_controls"] if item["mutation_id"] == mutation_id
-    )
+    negative = next(item for item in row["negative_controls"] if item["mutation_id"] == mutation_id)
     return negative["proof"], negative["expected_error_code"]
 
 
@@ -110,9 +108,7 @@ def evidence_index(value: dict, *, release: bool = False) -> dict:
         )
         receipts.append(receipt(value, row, positive))
         for negative in row["negative_controls"]:
-            receipts.append(
-                receipt(value, row, "negative", mutation_id=negative["mutation_id"])
-            )
+            receipts.append(receipt(value, row, "negative", mutation_id=negative["mutation_id"]))
         if release:
             receipts.append(receipt(value, row, "postdeploy"))
             if row["rollback"]["state"] == "required":
@@ -241,9 +237,7 @@ def test_current_incumbent_registration_has_four_identities_and_18_deferred() ->
         "materialize.public.claude-code.http-200": "materialize.public.claude-code.http-200",
         "materialize.public.pi.http-200": "materialize.public.pi.http-200",
     }
-    release_owned = {
-        row["id"] for row in current_rows if row["owner"] == "release-infrastructure"
-    }
+    release_owned = {row["id"] for row in current_rows if row["owner"] == "release-infrastructure"}
     assert release_owned == {
         predicate_id
         for predicate_id in aatk.library_prod_gate.current_incumbent_predicate_inventory()
@@ -254,9 +248,7 @@ def test_current_incumbent_registration_has_four_identities_and_18_deferred() ->
         "library-service",
         "release-infrastructure",
     }
-    deferred = [
-        row for row in current_rows if row["candidate_mapping"]["state"] == "deferred"
-    ]
+    deferred = [row for row in current_rows if row["candidate_mapping"]["state"] == "deferred"]
     assert len(deferred) == 18
     base = {
         "runtime.path-fidelity",
@@ -272,7 +264,9 @@ def test_current_incumbent_registration_has_four_identities_and_18_deferred() ->
         "materialize.response-contract.pi",
     }
     for row in deferred:
-        expected = base | ({"candidate-only.runtime-proof"} if row["id"] in response_contracts else set())
+        expected = base | (
+            {"candidate-only.runtime-proof"} if row["id"] in response_contracts else set()
+        )
         assert set(row["candidate_mapping"]["blocked_obligation_ids"]) == expected
 
 
@@ -280,10 +274,10 @@ def test_current_incumbent_semantic_descriptors_cover_both_domains() -> None:
     descriptors = aatk.source_semantic_descriptors()
     keys = {(row["domain"], row["id"]) for row in descriptors}
     current_ids = set(aatk.library_prod_gate.current_incumbent_predicate_inventory())
-    assert {predicate_id for domain, predicate_id in keys if domain == "current-incumbent"} == current_ids
     assert {
-        predicate_id for domain, predicate_id in keys if domain == "candidate-postdeploy"
-    } == {
+        predicate_id for domain, predicate_id in keys if domain == "current-incumbent"
+    } == current_ids
+    assert {predicate_id for domain, predicate_id in keys if domain == "candidate-postdeploy"} == {
         "materialize.profile-pin.claude-code",
         "materialize.profile-pin.pi",
         "materialize.public.claude-code.http-200",
@@ -327,9 +321,7 @@ def test_identical_mapping_rejects_source_semantic_mismatch(
 
 def test_identical_mapping_rejects_unknown_target() -> None:
     value = manifest()
-    row = coverage_row(
-        value, "current-incumbent", "materialize.public.claude-code.http-200"
-    )
+    row = coverage_row(value, "current-incumbent", "materialize.public.claude-code.http-200")
     row["candidate_mapping"]["candidate_predicate_id"] = "orphaned.candidate.target"
     row_index = value["capability_coverage"].index(row)
     assert_error(
@@ -342,9 +334,7 @@ def test_identical_mapping_rejects_unknown_target() -> None:
 
 def test_identical_mapping_rejects_duplicate_flattened_target() -> None:
     value = manifest()
-    first = coverage_row(
-        value, "current-incumbent", "materialize.profile-pin.claude-code"
-    )
+    first = coverage_row(value, "current-incumbent", "materialize.profile-pin.claude-code")
     second = coverage_row(value, "current-incumbent", "materialize.profile-pin.pi")
     second["candidate_mapping"]["candidate_predicate_id"] = first["candidate_mapping"][
         "candidate_predicate_id"
@@ -422,9 +412,9 @@ def test_semantic_descriptors_reject_inventory_mismatch(
 
 def test_capability_coverage_rejects_manifest_only_status_edit() -> None:
     value = manifest()
-    value["capability_coverage"][0]["obligations"][
-        "runtime.path-fidelity"
-    ] = "instrumented-capability"
+    value["capability_coverage"][0]["obligations"]["runtime.path-fidelity"] = (
+        "instrumented-capability"
+    )
     assert_error(
         "capability-source-mismatch",
         "manifest.capability_coverage",
@@ -568,9 +558,7 @@ def test_service_object_rejects_untyped_identity() -> None:
 def test_predicate_owner_rejects_untyped_value() -> None:
     value = manifest()
     value["predicates"][0]["owner"] = 123
-    assert_error(
-        "invalid-owner", "manifest.predicates[0].owner", aatk.validate_manifest, value
-    )
+    assert_error("invalid-owner", "manifest.predicates[0].owner", aatk.validate_manifest, value)
 
 
 def test_predicate_owner_must_equal_source_coverage_owner() -> None:
@@ -639,9 +627,7 @@ def test_candidate_absence_shape_rejects_untyped_value() -> None:
             "manifest.requirement_registry[0].status",
         ),
         (
-            lambda value: value["predicates"][0]["current_production"].__setitem__(
-                "state", {}
-            ),
+            lambda value: value["predicates"][0]["current_production"].__setitem__("state", {}),
             "current-state",
             "manifest.predicates[0].current_production",
         ),
@@ -687,9 +673,7 @@ def test_static_manifest_cannot_embed_a_runtime_receipt() -> None:
 def test_deleted_predicate_row_is_not_an_invisible_blank() -> None:
     value = manifest()
     deleted = value["predicates"].pop(0)["id"]
-    error = assert_error(
-        "missing-predicate", "manifest.predicates", aatk.validate_manifest, value
-    )
+    error = assert_error("missing-predicate", "manifest.predicates", aatk.validate_manifest, value)
     assert deleted in str(error)
 
 
@@ -697,9 +681,7 @@ def test_renamed_predicate_exposes_the_missing_source_id() -> None:
     value = manifest()
     renamed = value["predicates"][0]["id"]
     value["predicates"][0]["id"] = "orphan.predicate"
-    error = assert_error(
-        "missing-predicate", "manifest.predicates", aatk.validate_manifest, value
-    )
+    error = assert_error("missing-predicate", "manifest.predicates", aatk.validate_manifest, value)
     assert renamed in str(error)
 
 
@@ -708,9 +690,7 @@ def test_unknown_or_orphaned_predicate_row_is_rejected() -> None:
     orphan = copy.deepcopy(value["predicates"][0])
     orphan["id"] = "orphan.predicate"
     value["predicates"].append(orphan)
-    error = assert_error(
-        "unknown-predicate", "manifest.predicates", aatk.validate_manifest, value
-    )
+    error = assert_error("unknown-predicate", "manifest.predicates", aatk.validate_manifest, value)
     assert "orphan.predicate" in str(error)
 
 
@@ -762,7 +742,9 @@ def test_nonchecked_entrypoint_is_rejected() -> None:
 
 def test_positive_and_negative_must_remain_on_the_same_declared_path() -> None:
     value = manifest()
-    value["predicates"][0]["negative_controls"][0]["proof"]["path_fingerprint"][-1] = "unit.checker-only"
+    value["predicates"][0]["negative_controls"][0]["proof"]["path_fingerprint"][-1] = (
+        "unit.checker-only"
+    )
     assert_error(
         "unit-only-substitution",
         "manifest.predicates[0].negative_controls[0].proof.path_fingerprint",
@@ -1040,10 +1022,7 @@ def test_missing_positive_receipt_cannot_be_hidden_by_negatives() -> None:
     index["receipts"] = [
         item
         for item in index["receipts"]
-        if not (
-            item["predicate_id"] == predicate_id
-            and item["proof_kind"] == "current-production"
-        )
+        if not (item["predicate_id"] == predicate_id and item["proof_kind"] == "current-production")
     ]
     assert_error(
         "missing-receipt",
@@ -1063,10 +1042,7 @@ def test_release_close_requires_each_child_postdeploy_receipt() -> None:
     index["receipts"] = [
         item
         for item in index["receipts"]
-        if not (
-            item["predicate_id"] == predicate_id
-            and item["proof_kind"] == "postdeploy"
-        )
+        if not (item["predicate_id"] == predicate_id and item["proof_kind"] == "postdeploy")
     ]
     assert_error(
         "missing-receipt",
@@ -1087,10 +1063,7 @@ def test_release_close_requires_each_declared_rollback_receipt() -> None:
     index["receipts"] = [
         item
         for item in index["receipts"]
-        if not (
-            item["predicate_id"] == predicate_id
-            and item["proof_kind"] == "rollback"
-        )
+        if not (item["predicate_id"] == predicate_id and item["proof_kind"] == "rollback")
     ]
     assert_error(
         "missing-receipt",

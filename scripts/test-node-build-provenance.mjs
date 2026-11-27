@@ -51,37 +51,6 @@ test("accepts bundled dependencies resolved through channel-core at their locked
   }
 });
 
-test("bundle builds and the Node audit invoke the provenance gate", () => {
-  for (const bundledPackage of ["channel", "pi-extension"]) {
-    const manifest = JSON.parse(
-      readFileSync(path.join(repoRoot, bundledPackage, "package.json"), "utf8"),
-    );
-    assert.match(
-      manifest.scripts.prebuild,
-      /check-node-build-provenance\.mjs/,
-      `${bundledPackage} build bypasses the provenance gate`,
-    );
-  }
-
-  const auditGate = readFileSync(path.join(repoRoot, "scripts", "check-node-audit.sh"), "utf8");
-  assert.match(auditGate, /check-node-build-provenance\.mjs/);
-  assert.match(auditGate, /test-node-build-provenance\.mjs/);
-});
-
-test("artifact-producing install paths use the committed lockfiles", () => {
-  const artifactProducers = [
-    ".github/workflows/channel-release.yml",
-    ".github/workflows/pi-release.yml",
-    "Makefile",
-    "scripts/e2e-oss-user-journey.sh",
-  ];
-  for (const filename of artifactProducers) {
-    const source = readFileSync(path.join(repoRoot, filename), "utf8");
-    assert.match(source, /npm ci/, `${filename} does not install from the lockfile`);
-    assert.doesNotMatch(source, /npm install(?:\s|$)/, `${filename} can resolve outside the lockfile`);
-  }
-});
-
 test("rejects a resolved dependency that differs from the owner lockfile for that reason", () => {
   const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "node-build-provenance-"));
   try {

@@ -1,4 +1,4 @@
-.PHONY: test test-server lint compile run e2e e2e-up e2e-down api-serve api-stop \
+.PHONY: test test-server lint typecheck compile run e2e e2e-up e2e-down api-serve api-stop \
 	prod-status prod-deploy prod-wait prod-verify prod-rollback
 
 API_PORT ?= 8765
@@ -12,8 +12,10 @@ test:
 test-server:
 	uv run pytest -q
 
-lint:
+lint: typecheck
 	uv run ruff check .
+
+typecheck:
 	uv run mypy src
 
 e2e:

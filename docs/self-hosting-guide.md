@@ -439,7 +439,7 @@ For `aweb`:
   so a manifest on a private address is refused. Unset, no origin is internal.
   One network is one address family: a dual-stack internal name with an
   address outside that family is refused, and the install reports
-  `catalog_unavailable`.
+  `origin_refused`.
   The server refuses to start if either value is malformed or only one is set.
 
 For `awid`:

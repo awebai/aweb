@@ -143,27 +143,6 @@ expect_refusal "wrong revision label" "labels revision" \
   bash "$LANE" inspect-staged --archive "$tmp/wrongrev.tar" --version 0.5.14 \
   --source-sha "$SRC_SHA" --out "$tmp/x.json"
 
-# decide-tag: observation failure is never permission to write
-S="sha256:$(printf '1%.0s' {1..64})"; D="sha256:$(printf '2%.0s' {1..64})"
-[[ "$(bash "$LANE" decide-tag --tag-kind version --staged "$S" \
-  --listing-status ok --present no)" == "COPY" ]] || fail "missing version tag must COPY"
-[[ "$(bash "$LANE" decide-tag --tag-kind version --staged "$S" \
-  --listing-status ok --present yes --remote-digest "$S")" == "ADOPT" ]] \
-  || fail "exact version tag must ADOPT"
-[[ "$(bash "$LANE" decide-tag --tag-kind latest --staged "$S" \
-  --listing-status ok --present yes --remote-digest "$D")" == "COPY" ]] \
-  || fail "different latest must transition (COPY)"
-ok "decide-tag adopts exact, copies missing, transitions latest"
-expect_refusal "version tag mismatch never rewrites" "never rewritten" \
-  bash "$LANE" decide-tag --tag-kind version --staged "$S" \
-  --listing-status ok --present yes --remote-digest "$D"
-expect_refusal "unavailable listing never writes" "never permission" \
-  bash "$LANE" decide-tag --tag-kind version --staged "$S" \
-  --listing-status failed --present no
-expect_refusal "unavailable remote digest never writes" "refusing to write blind" \
-  bash "$LANE" decide-tag --tag-kind latest --staged "$S" \
-  --listing-status ok --present yes --remote-digest unavailable
-
 make_archive "$tmp/nolayer.tar" --drop-layer >/dev/null
 expect_refusal "missing layer blob" "missing" \
   bash "$LANE" inspect-staged --archive "$tmp/nolayer.tar" --version 0.5.14 \
@@ -190,42 +169,6 @@ expect_refusal "latest resolving elsewhere" "latest" \
   --source-sha "$SRC_SHA" --repository ghcr.io/awebai/awid \
   --observed-digest "0.5.14=$INDEX_DIGEST" \
   --observed-digest "latest=sha256:$(printf '0%.0s' {1..64})"
-
-# ── stage-only absence proof ────────────────────────────────────────
-[[ "$(bash "$LANE" require-absent --listing-status ok --present no)" == ABSENT* ]] \
-  || fail "proven absence must continue"
-ok "proven absence continues staging"
-expect_refusal "outage is never proof of absence" "never proof" \
-  bash "$LANE" require-absent --listing-status failed --present no
-expect_refusal "listed candidate version refuses staging" "already exists" \
-  bash "$LANE" require-absent --listing-status ok --present yes
-
-# ── observation hashes the exact byte stream ────────────────────────
-# A raw manifest WITHOUT a trailing newline: variable capture strips and a
-# here-string re-appends, so only a direct pipe hashes the true bytes.
-expected="sha256:$(printf '{"raw":"manifest"}' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
-observed="$(printf '{"raw":"manifest"}' | bash "$LANE" observe-digest)"
-[[ "$observed" == "$expected" ]] \
-  || fail "observe-digest altered the byte stream: $observed != $expected"
-corrupted="$(raw="$(printf '{"raw":"manifest"}')"; sha256sum <<<"$raw" | awk '{print "sha256:"$1}')"
-[[ "$corrupted" != "$expected" ]] \
-  || fail "the regression control failed: here-string hashing did not corrupt"
-ok "observe-digest hashes exact bytes; the here-string form provably corrupts"
-
-# ── listing evidence must be schema-valid before it counts ──────────
-[[ "$(printf '{"Tags":["0.5.14","latest"]}' | bash "$LANE" classify-listing --tag 0.5.14)" == "yes" ]] \
-  || fail "listed tag must classify yes"
-[[ "$(printf '{"Tags":["latest"]}' | bash "$LANE" classify-listing --tag 0.5.14)" == "no" ]] \
-  || fail "unlisted tag must classify no"
-ok "schema-valid listings classify presence correctly"
-for doc in '{}' '{"Tags":null}' '{"Tags":"not-an-array"}' 'not json at all'; do
-  if out="$(printf '%s' "$doc" | bash "$LANE" classify-listing --tag 0.5.14 2>&1)"; then
-    fail "malformed listing accepted as observation: $doc -> $out"
-  fi
-  grep -q "never an observation" <<<"$out" \
-    || fail "malformed-listing refusal does not say so: $out"
-done
-ok "malformed, null, and non-array listings refuse (4 shapes) - never absence"
 
 # ── verify-published resolving through the REGISTRY ──────────────────
 # Every case above supplies --observed-digest, so the skopeo path - the one

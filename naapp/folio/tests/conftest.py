@@ -28,7 +28,10 @@ def pytest_configure(config: pytest.Config) -> None:
     grant.write_text("02" * 32)
     grant.chmod(0o600)
     env = pytest.MonkeyPatch()
-    env.setenv("FOLIO_APP_KEY_FILES", json.dumps({"folio:emit-1": str(path), "folio:grant-read-1": str(grant)}))
+    env.setenv(
+        "FOLIO_APP_KEY_FILES",
+        json.dumps({"folio:emit-1": str(path), "folio:grant-read-1": str(grant)}),
+    )
     for name in ("FOLIO_APP_EMIT_KID", "FOLIO_APP_EMIT_KEY_SEED_HEX", "FOLIO_APP_EVENTS_ORIGIN"):
         env.delenv(name, raising=False)
     config.add_cleanup(directory.cleanup)

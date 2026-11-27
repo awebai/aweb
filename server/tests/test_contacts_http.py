@@ -40,7 +40,9 @@ class _ContactRegistry(_TLSRegistry):
         self.requests.append(request)
         path = request.split(b" ", 2)[1].decode()
         status = b"200 OK" if path in self.responses else b"404 Not Found"
-        body = json.dumps(self.responses.get(path, {"detail": "target.not_found"})).encode()
+        body = json.dumps(
+            self.responses.get(path, {"detail": "target.not_found"})
+        ).encode()
         writer.write(
             b"HTTP/1.1 "
             + status
@@ -111,7 +113,9 @@ async def test_contact_add_unregistered_cross_namespace_target(privacy_app, miss
     )
     del responses[missing_path]
     if missing == "log":
-        key_row = next(value for path, value in responses.items() if path.endswith("/key"))
+        key_row = next(
+            value for path, value in responses.items() if path.endswith("/key")
+        )
         key_row["status"] = "OK_DEGRADED"
     async with _ContactRegistry("registry.test", responses) as external:
         dns = _RecordedDNS("juan.aweb.ai", controller_key, external.origin)
@@ -131,21 +135,27 @@ async def test_contact_add_unregistered_cross_namespace_target(privacy_app, miss
             resolver=resolver,
             txt_resolver=dns,
         )
-        body = json.dumps({"contact_address": target, "label": "ho6-secrets-root"}).encode()
+        body = json.dumps(
+            {"contact_address": target, "label": "ho6-secrets-root"}
+        ).encode()
         headers = {
             **_signed_identity_headers(owner.sk, owner.did, owner_stable, body),
             "Content-Type": "application/json",
         }
         try:
-            response = await env.client.post("/v1/contacts", content=body, headers=headers)
+            response = await env.client.post(
+                "/v1/contacts", content=body, headers=headers
+            )
         finally:
             await resolver.aclose()
-        assert any(missing_path.encode() + b" " in request for request in external.requests), (
-            response.text
-        )
+        assert any(
+            missing_path.encode() + b" " in request for request in external.requests
+        ), response.text
     assert response.status_code == (503 if missing == "log" else 404), response.text
     expected_reason = (
-        "sender_identity_unverifiable" if missing == "log" else "recipient_identity_not_found"
+        "sender_identity_unverifiable"
+        if missing == "log"
+        else "recipient_identity_not_found"
     )
     assert response.json()["reason"] == expected_reason
     assert response.json()["retryable"] is (missing == "log")
@@ -165,7 +175,9 @@ async def test_contacts_routes_accept_equivalent_identity_owner_did(privacy_app)
     headers = _signed_identity_headers(bob.sk, bob.did, stable)
     listed = await env.client.get("/v1/contacts", headers=headers)
     assert listed.status_code == 200, listed.text
-    assert [c["contact_address"] for c in listed.json()["contacts"]] == ["acme.com/alice"]
+    assert [c["contact_address"] for c in listed.json()["contacts"]] == [
+        "acme.com/alice"
+    ]
     deleted = await env.client.delete(f"/v1/contacts/{contact_id}", headers=headers)
     assert deleted.status_code == 200, deleted.text
     assert (
@@ -177,7 +189,9 @@ async def test_contacts_routes_accept_equivalent_identity_owner_did(privacy_app)
 
 
 @pytest.mark.asyncio
-async def test_contacts_route_normalizes_hosted_handle_address(privacy_app, monkeypatch):
+async def test_contacts_route_normalizes_hosted_handle_address(
+    privacy_app, monkeypatch
+):
     env = privacy_app
     alice, target = env.actors["alice"], env.actors["carol"]
     stable = await register_global_identity(env, alice)
@@ -207,7 +221,9 @@ async def test_contacts_route_normalizes_hosted_handle_address(privacy_app, monk
     "published_reason", ["sender_identity_not_found", "recipient_identity_not_found"]
 )
 @pytest.mark.parametrize("contact", [False, True])
-async def test_shared_not_found_result_uses_current_lookup_role(published_reason, contact):
+async def test_shared_not_found_result_uses_current_lookup_role(
+    published_reason, contact
+):
     # Sender authorization and contact resolution share the same singleflight key.
     activation = FederationAuthorityActivation(
         core=None, work=None, resolver=None, txt_resolver=None
@@ -228,5 +244,7 @@ async def test_shared_not_found_result_uses_current_lookup_role(published_reason
                 result,
                 lookup=SENDER_LOOKUP,
             )
-    expected_reason = "recipient_identity_not_found" if contact else "sender_identity_not_found"
+    expected_reason = (
+        "recipient_identity_not_found" if contact else "sender_identity_not_found"
+    )
     assert raised.value.reason == expected_reason

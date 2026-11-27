@@ -58,7 +58,9 @@ def seen() -> list[bytes]:
 
 @pytest_asyncio.fixture
 async def http(seen):
-    async with AsyncClient(transport=ASGITransport(app=_app(seen)), base_url="http://testserver") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(seen)), base_url="http://testserver"
+    ) as client:
         yield client
 
 
@@ -70,7 +72,9 @@ async def test_a_body_at_the_limit_reaches_the_app_whole(http, seen):
 
 
 @pytest.mark.asyncio
-async def test_a_declared_length_over_the_limit_is_refused_before_the_app_runs(http, seen):
+async def test_a_declared_length_over_the_limit_is_refused_before_the_app_runs(
+    http, seen
+):
     response = await http.post("/unread", content=b"x" * (LIMIT + 1))
     assert response.status_code == 413
     assert response.json() == {"detail": "Request body too large"}
@@ -79,7 +83,9 @@ async def test_a_declared_length_over_the_limit_is_refused_before_the_app_runs(h
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["/echo", "/streamed"])
-async def test_an_undeclared_body_over_the_limit_is_refused_as_it_is_read(http, seen, path):
+async def test_an_undeclared_body_over_the_limit_is_refused_as_it_is_read(
+    http, seen, path
+):
     response = await http.post(path, content=_chunks(b"x" * LIMIT, b"x"))
     assert "content-length" not in response.request.headers
     assert response.status_code == 413
@@ -102,7 +108,9 @@ async def test_a_request_without_a_body_is_untouched(http, seen):
 @pytest.mark.asyncio
 async def test_a_malformed_declared_length_is_counted_as_it_is_read(seen):
     sent: list[dict] = []
-    messages = [{"type": "http.request", "body": b"x" * (LIMIT + 1), "more_body": False}]
+    messages = [
+        {"type": "http.request", "body": b"x" * (LIMIT + 1), "more_body": False}
+    ]
 
     async def receive():
         return messages.pop(0)
@@ -111,9 +119,17 @@ async def test_a_malformed_declared_length_is_counted_as_it_is_read(seen):
         sent.append(message)
 
     scope = {
-        "type": "http", "method": "POST", "path": "/echo", "raw_path": b"/echo", "query_string": b"",
-        "headers": [(b"content-length", b"many")], "http_version": "1.1", "scheme": "http",
-        "server": ("testserver", 80), "client": ("127.0.0.1", 1), "root_path": "",
+        "type": "http",
+        "method": "POST",
+        "path": "/echo",
+        "raw_path": b"/echo",
+        "query_string": b"",
+        "headers": [(b"content-length", b"many")],
+        "http_version": "1.1",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "client": ("127.0.0.1", 1),
+        "root_path": "",
     }
     await _app(seen)(scope, receive, send)
     assert sent[0]["status"] == 413
@@ -136,9 +152,17 @@ async def test_a_body_passing_the_limit_after_the_response_began_ends_the_reques
 
     limited = RequestBodyLimitMiddleware(answers_first, max_body_bytes=LIMIT)
     with pytest.raises(Exception) as raised:
-        await limited({"type": "http", "method": "POST", "path": "/", "headers": []}, receive, send)
+        await limited(
+            {"type": "http", "method": "POST", "path": "/", "headers": []},
+            receive,
+            send,
+        )
     assert getattr(raised.value, "status_code", None) == 413
-    assert [message["status"] for message in sent if message["type"] == "http.response.start"] == [200]
+    assert [
+        message["status"]
+        for message in sent
+        if message["type"] == "http.response.start"
+    ] == [200]
 
 
 @pytest.mark.asyncio
@@ -148,7 +172,9 @@ async def test_other_scopes_pass_through():
     async def app(scope, receive, send):
         reached.append(scope["type"])
 
-    await RequestBodyLimitMiddleware(app, max_body_bytes=LIMIT)({"type": "lifespan"}, None, None)
+    await RequestBodyLimitMiddleware(app, max_body_bytes=LIMIT)(
+        {"type": "lifespan"}, None, None
+    )
     assert reached == ["lifespan"]
 
 
@@ -163,27 +189,37 @@ def _refusals(caplog) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_a_declared_refusal_is_logged_without_the_body_or_query(http, seen, caplog):
+async def test_a_declared_refusal_is_logged_without_the_body_or_query(
+    http, seen, caplog
+):
     body = b"x" * (LIMIT + 1)
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         response = await http.post("/echo?token=secret", content=body)
     assert response.status_code == 413
     assert response.json() == {"detail": "Request body too large"}
     assert seen == []
-    assert _refusals(caplog) == [f"Request body too large: POST /echo declared {LIMIT + 1} bytes, limit {LIMIT}"]
+    assert _refusals(caplog) == [
+        f"Request body too large: POST /echo declared {LIMIT + 1} bytes, limit {LIMIT}"
+    ]
     assert "secret" not in caplog.text and "xxxx" not in caplog.text
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["/echo", "/streamed"])
-async def test_an_undeclared_refusal_is_logged_without_the_body_or_query(http, seen, caplog, path):
+async def test_an_undeclared_refusal_is_logged_without_the_body_or_query(
+    http, seen, caplog, path
+):
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        response = await http.post(f"{path}?token=secret", content=_chunks(b"x" * LIMIT, b"x"))
+        response = await http.post(
+            f"{path}?token=secret", content=_chunks(b"x" * LIMIT, b"x")
+        )
     assert "content-length" not in response.request.headers
     assert response.status_code == 413
     assert response.json() == {"detail": "Request body too large"}
     assert seen == []
-    assert _refusals(caplog) == [f"Request body too large: POST {path} received {LIMIT + 1} bytes, limit {LIMIT}"]
+    assert _refusals(caplog) == [
+        f"Request body too large: POST {path} received {LIMIT + 1} bytes, limit {LIMIT}"
+    ]
     assert "secret" not in caplog.text and "xxxx" not in caplog.text
 
 
@@ -212,10 +248,14 @@ async def test_a_host_redacts_the_logged_path_with_its_own_rule(seen, caplog):
         return path.split("?", 1)[0].replace("/echo", "/[Filtered]")
 
     app = _app(seen, logged_path=host_rule)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as http:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as http:
         with caplog.at_level(logging.WARNING, logger=LOGGER):
             declared = await http.post("/echo?token=secret", content=b"x" * (LIMIT + 1))
-            counted = await http.post("/echo?token=secret", content=_chunks(b"x" * LIMIT, b"x"))
+            counted = await http.post(
+                "/echo?token=secret", content=_chunks(b"x" * LIMIT, b"x")
+            )
     assert (declared.status_code, counted.status_code) == (413, 413)
     assert given == ["/echo", "/echo"]
     assert _refusals(caplog) == [
@@ -226,15 +266,21 @@ async def test_a_host_redacts_the_logged_path_with_its_own_rule(seen, caplog):
 
 
 @pytest.mark.asyncio
-async def test_a_host_rule_that_raises_still_refuses_with_413_and_logs_the_default_form(seen, caplog):
+async def test_a_host_rule_that_raises_still_refuses_with_413_and_logs_the_default_form(
+    seen, caplog
+):
     def broken_rule(path: str) -> str:
         raise RuntimeError("rule failed")
 
     app = _app(seen, logged_path=broken_rule)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as http:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as http:
         with caplog.at_level(logging.WARNING, logger=LOGGER):
             declared = await http.post("/echo?token=secret", content=b"x" * (LIMIT + 1))
-            counted = await http.post("/echo?token=secret", content=_chunks(b"x" * LIMIT, b"x"))
+            counted = await http.post(
+                "/echo?token=secret", content=_chunks(b"x" * LIMIT, b"x")
+            )
     assert (declared.status_code, counted.status_code) == (413, 413)
     assert declared.json() == counted.json() == {"detail": "Request body too large"}
     assert _refusals(caplog) == [
@@ -245,13 +291,25 @@ async def test_a_host_rule_that_raises_still_refuses_with_413_and_logs_the_defau
 
 
 @pytest.mark.asyncio
-async def test_the_logged_path_escapes_control_characters_so_a_line_cannot_be_forged(http, caplog):
+async def test_the_logged_path_escapes_control_characters_so_a_line_cannot_be_forged(
+    http, caplog
+):
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        response = await http.post("/echo%0D%0AINFO%20forged%09line%1B", content=b"x" * (LIMIT + 1))
+        response = await http.post(
+            "/echo%0D%0AINFO%20forged%09line%1B", content=b"x" * (LIMIT + 1)
+        )
     assert response.status_code == 413
     (line,) = _refusals(caplog)
-    assert "\n" not in line and "\r" not in line and "\t" not in line and "\x1b" not in line
-    assert line == f"Request body too large: POST /echo\\r\\nINFO forged\\tline\\x1b declared {LIMIT + 1} bytes, limit {LIMIT}"
+    assert (
+        "\n" not in line
+        and "\r" not in line
+        and "\t" not in line
+        and "\x1b" not in line
+    )
+    assert (
+        line
+        == f"Request body too large: POST /echo\\r\\nINFO forged\\tline\\x1b declared {LIMIT + 1} bytes, limit {LIMIT}"
+    )
 
 
 @pytest.mark.asyncio
@@ -260,5 +318,7 @@ async def test_the_logged_path_is_capped(http, caplog):
         response = await http.post("/" + "a" * 5000, content=b"x" * (LIMIT + 1))
     assert response.status_code == 413
     (line,) = _refusals(caplog)
-    shown = line.removeprefix("Request body too large: POST ").removesuffix(f" declared {LIMIT + 1} bytes, limit {LIMIT}")
+    shown = line.removeprefix("Request body too large: POST ").removesuffix(
+        f" declared {LIMIT + 1} bytes, limit {LIMIT}"
+    )
     assert shown == "/" + "a" * 255 + "…"

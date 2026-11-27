@@ -59,7 +59,9 @@ async def received_registry_client(activation, token, did_key, redis):
             origin_context=activation.resolver.origin_context,
         )
     except TimeoutError as exc:
-        logger.warning("Federation ID-tree registry host lookup timed out", exc_info=True)
+        logger.warning(
+            "Federation ID-tree registry host lookup timed out", exc_info=True
+        )
         raise FederationAuthorityError("sender_registry_unavailable") from exc
     domain = token.canonical_address.split("/", 1)[0]
 

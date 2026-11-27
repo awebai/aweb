@@ -1,6 +1,5 @@
 {
   "schema": "aweb.app-manifest.events.v1",
-  "gateway_source": "awebai/ac@7665d8638fac94b05db4101c6049fa4ea4c3b0e0",
   "cases": [
     {
       "name": "absent",
@@ -13,8 +12,7 @@
         },
         "tools": []
       },
-      "accepted": true,
-      "gateway_accepted": true
+      "accepted": true
     },
     {
       "name": "empty",
@@ -28,8 +26,7 @@
         "tools": [],
         "events": []
       },
-      "accepted": true,
-      "gateway_accepted": true
+      "accepted": true
     },
     {
       "name": "local-default",
@@ -47,8 +44,7 @@
           }
         ]
       },
-      "accepted": true,
-      "gateway_accepted": true
+      "accepted": true
     },
     {
       "name": "prefixed",
@@ -68,8 +64,7 @@
           }
         ]
       },
-      "accepted": true,
-      "gateway_accepted": true
+      "accepted": true
     },
     {
       "name": "intent-ambient",
@@ -88,8 +83,7 @@
           }
         ]
       },
-      "accepted": true,
-      "gateway_accepted": true
+      "accepted": true
     },
     {
       "name": "intent-wake",
@@ -108,8 +102,7 @@
           }
         ]
       },
-      "accepted": true,
-      "gateway_accepted": true
+      "accepted": true
     },
     {
       "name": "intent-steer",
@@ -128,8 +121,7 @@
           }
         ]
       },
-      "accepted": true,
-      "gateway_accepted": true
+      "accepted": true
     },
     {
       "name": "events-null",
@@ -143,8 +135,7 @@
         "tools": [],
         "events": null
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "events-false",
@@ -158,8 +149,7 @@
         "tools": [],
         "events": false
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "events-zero",
@@ -173,8 +163,7 @@
         "tools": [],
         "events": 0
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "events-empty-string",
@@ -188,8 +177,7 @@
         "tools": [],
         "events": ""
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "events-object",
@@ -203,8 +191,7 @@
         "tools": [],
         "events": {}
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "events-nonempty-object",
@@ -220,8 +207,7 @@
           "x": 1
         }
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "item-null",
@@ -237,8 +223,7 @@
           null
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "item-string",
@@ -254,8 +239,7 @@
           "x"
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "item-number",
@@ -271,8 +255,7 @@
           1
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "item-array",
@@ -288,8 +271,7 @@
           []
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "missing",
@@ -305,8 +287,7 @@
           {}
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "empty",
@@ -324,8 +305,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "null",
@@ -343,8 +323,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "wrong-prefix",
@@ -362,8 +341,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "nested",
@@ -381,8 +359,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "uppercase",
@@ -400,8 +377,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "overlong",
@@ -419,8 +395,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "extra",
@@ -439,8 +414,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "description-null",
@@ -459,8 +433,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "description-number",
@@ -479,8 +452,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "description-long",
@@ -499,8 +471,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "intent-invalid",
@@ -519,8 +490,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": false
+      "accepted": false
     },
     {
       "name": "type-number",
@@ -538,8 +508,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "intent-null",
@@ -558,8 +527,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "intent-empty",
@@ -578,8 +546,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "intent-false",
@@ -598,8 +565,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "intent-whitespace",
@@ -618,8 +584,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "intent-trimmed",
@@ -638,8 +603,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     },
     {
       "name": "type-max",
@@ -657,8 +621,7 @@
           }
         ]
       },
-      "accepted": true,
-      "gateway_accepted": true
+      "accepted": true
     },
     {
       "name": "description-unicode-max",
@@ -677,8 +640,7 @@
           }
         ]
       },
-      "accepted": true,
-      "gateway_accepted": true
+      "accepted": true
     },
     {
       "name": "count-max",
@@ -885,8 +847,7 @@
           }
         ]
       },
-      "accepted": true,
-      "gateway_accepted": true
+      "accepted": true
     },
     {
       "name": "count-over",
@@ -1096,8 +1057,7 @@
           }
         ]
       },
-      "accepted": false,
-      "gateway_accepted": true
+      "accepted": false
     }
   ]
 }

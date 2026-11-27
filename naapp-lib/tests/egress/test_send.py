@@ -35,6 +35,7 @@ from aweb_naapp.egress import (
     EgressNotSent,
     EgressOutcomeUnknown,
     EgressRefused,
+    EgressUnresolved,
     HeaderRules,
     InternalDestinations,
     parse_destination,
@@ -295,9 +296,22 @@ async def test_certificate_for_another_name_is_not_sent(network: Network) -> Non
     assert network.tls.seen == []
 
 
-async def test_unknown_name_is_not_sent(network: Network) -> None:
+async def test_unknown_name_is_not_sent_and_is_unresolved(network: Network) -> None:
     name = "missing.egress.test"
-    with pytest.raises(EgressNotSent):
+    with pytest.raises(EgressUnresolved):
+        await _send(
+            network,
+            "GET",
+            "",
+            url=network.url("/ok", name=name),
+            destination=network.internal(name),
+        )
+
+
+async def test_a_name_with_no_address_is_not_sent_and_is_unresolved(network: Network) -> None:
+    name = "empty.egress.test"
+    network.dns.records = {(name, "A"): []}
+    with pytest.raises(EgressUnresolved):
         await _send(
             network,
             "GET",
@@ -309,8 +323,9 @@ async def test_unknown_name_is_not_sent(network: Network) -> None:
 
 async def test_closed_port_is_not_sent(network: Network) -> None:
     destination = network.internal(port=9)
-    with pytest.raises(EgressNotSent):
+    with pytest.raises(EgressNotSent) as refused:
         await _send(network, "GET", "", url=f"https://{NAME}:9/ok", destination=destination)
+    assert not isinstance(refused.value, EgressUnresolved)
 
 
 async def test_no_answer_within_the_total_bound_is_outcome_unknown(network: Network) -> None:
@@ -331,11 +346,13 @@ async def test_resolution_counts_against_the_total_bound(network: Network) -> No
     assert asyncio.get_running_loop().time() - started < 1.3
 
 
-async def test_resolution_past_the_total_bound_is_not_sent(network: Network) -> None:
+async def test_resolution_past_the_total_bound_is_not_sent_and_is_unresolved(
+    network: Network,
+) -> None:
     network.dns.delay = 1.0
     egress = network.egress(bounds=Bounds(connect_timeout=2.0, total_timeout=0.5))
     started = asyncio.get_running_loop().time()
-    with pytest.raises(EgressNotSent):
+    with pytest.raises(EgressUnresolved):
         await _send(network, "GET", "/ok", egress=egress)
     assert asyncio.get_running_loop().time() - started < 0.8
     assert network.tls.seen == []

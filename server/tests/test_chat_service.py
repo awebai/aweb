@@ -227,7 +227,9 @@ async def test_ensure_session_isolates_reused_alias(aweb_cloud_db, replaced_inde
 
 
 @pytest.mark.asyncio
-async def test_legacy_session_does_not_adopt_a_new_local_key(pre_chat_coverage_db, chat_coverage_upgrade):
+async def test_legacy_session_does_not_adopt_a_new_local_key(
+    pre_chat_coverage_db, chat_coverage_upgrade
+):
     aweb_db = pre_chat_coverage_db.aweb_db
     alice, bob = await _setup_team_and_agents(aweb_db)
     # A new local key is a new identity; the retained actor ID grants no continuity.

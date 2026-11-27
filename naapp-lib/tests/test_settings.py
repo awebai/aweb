@@ -56,7 +56,9 @@ def test_shared_settings_need_the_app_specific_values(monkeypatch: pytest.Monkey
     assert missing == {"database_url", "public_origin", "app_id"}
 
 
-def test_the_did_aw_current_key_is_required_unless_the_app_observes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_did_aw_current_key_is_required_unless_the_app_observes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     assert _settings().did_aw_profile is DidAwProfile.REQUIRE
     monkeypatch.setenv("EXAMPLE_DID_AW_PROFILE", "observe")
     assert _settings().did_aw_profile is DidAwProfile.OBSERVE

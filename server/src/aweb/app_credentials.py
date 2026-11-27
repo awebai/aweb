@@ -146,12 +146,18 @@ async def verify_app_credential(
 
     auth = (request.headers.get("Authorization") or "").strip()
     if not auth.startswith(spec.prefix):
-        raise HTTPException(status_code=401, detail=f"Missing {label} Authorization header")
+        raise HTTPException(
+            status_code=401, detail=f"Missing {label} Authorization header"
+        )
     parts = auth[len(spec.prefix) :].strip().split()
     if len(parts) != 2:
-        raise HTTPException(status_code=401, detail=f"Malformed {label} Authorization header")
+        raise HTTPException(
+            status_code=401, detail=f"Malformed {label} Authorization header"
+        )
     did_key, signature_b64 = parts
-    if spec.one_encoding_signature and not _ONE_ENCODING_SIGNATURE.fullmatch(signature_b64):
+    if spec.one_encoding_signature and not _ONE_ENCODING_SIGNATURE.fullmatch(
+        signature_b64
+    ):
         raise HTTPException(status_code=401, detail=f"Invalid {label} signature")
 
     app_id = (request.headers.get("X-AWEB-App-ID") or "").strip().lower()
@@ -167,7 +173,9 @@ async def verify_app_credential(
             str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()
         )
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid {label} signed payload") from exc
+        raise HTTPException(
+            status_code=401, detail=f"Invalid {label} signed payload"
+        ) from exc
     try:
         if purpose == APP_REQUEST:
             from aweb.task_contracts import strict_json_bytes
@@ -176,7 +184,9 @@ async def verify_app_credential(
         else:
             payload = json.loads(canonical)
     except Exception as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid {label} signed payload") from exc
+        raise HTTPException(
+            status_code=401, detail=f"Invalid {label} signed payload"
+        ) from exc
     if not isinstance(payload, dict) or canonical_json_bytes(payload) != canonical:
         raise HTTPException(status_code=401, detail=f"Invalid {label} signed payload")
 
@@ -198,12 +208,16 @@ async def verify_app_credential(
             "installation_id",
             "installation_generation",
         }:
-            raise HTTPException(status_code=401, detail="Invalid app request signed payload")
+            raise HTTPException(
+                status_code=401, detail="Invalid app request signed payload"
+            )
         if (
             type(payload.get("installation_generation")) is not int
             or type(payload.get("v")) is not int
         ):
-            raise HTTPException(status_code=401, detail="Invalid app request signed payload")
+            raise HTTPException(
+                status_code=401, detail="Invalid app request signed payload"
+            )
     for field, expected_value in expected.items():
         if payload.get(field) != expected_value:
             raise HTTPException(
@@ -230,9 +244,13 @@ async def verify_app_credential(
         )
 
     try:
-        verify_did_key_signature(did_key=did_key, payload=canonical, signature_b64=signature_b64)
+        verify_did_key_signature(
+            did_key=did_key, payload=canonical, signature_b64=signature_b64
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid {label} signature") from exc
+        raise HTTPException(
+            status_code=401, detail=f"Invalid {label} signature"
+        ) from exc
 
     if purpose == APP_REQUEST:
         if (
@@ -257,6 +275,10 @@ async def verify_app_credential(
         kid=kid,
         did_key=did_key,
         digest=row["digest"],
-        installation_id=str(installation["installation_id"]) if purpose == APP_REQUEST else None,
-        installation_generation=installation["generation"] if purpose == APP_REQUEST else None,
+        installation_id=str(installation["installation_id"])
+        if purpose == APP_REQUEST
+        else None,
+        installation_generation=installation["generation"]
+        if purpose == APP_REQUEST
+        else None,
     )

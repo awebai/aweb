@@ -283,7 +283,10 @@ def _validate_request(request: LifecycleCascadeRequest) -> list[LifecycleError]:
                 message="Global archive requires target_agent_id.",
             )
         )
-    if request.operation == "archive_global_agent" and request.workspace_scope != "all_for_agent":
+    if (
+        request.operation == "archive_global_agent"
+        and request.workspace_scope != "all_for_agent"
+    ):
         errors.append(
             LifecycleError(
                 code="global_archive_requires_all_agent_workspaces",
@@ -291,9 +294,14 @@ def _validate_request(request: LifecycleCascadeRequest) -> list[LifecycleError]:
             )
         )
     required_archive_scope = request.require_identity_scope or (
-        normalize_identity_scope(request.require_lifetime) if request.require_lifetime else None
+        normalize_identity_scope(request.require_lifetime)
+        if request.require_lifetime
+        else None
     )
-    if request.operation == "archive_global_agent" and required_archive_scope != "global":
+    if (
+        request.operation == "archive_global_agent"
+        and required_archive_scope != "global"
+    ):
         errors.append(
             LifecycleError(
                 code="global_archive_requires_global_scope",
@@ -374,6 +382,7 @@ async def _load_target_workspaces(db, request: LifecycleCascadeRequest) -> list[
             w.alias,
             w.deleted_at,
             w.last_seen_at,
+            w.created_at,
             a.identity_scope AS agent_identity_scope
         FROM {{tables.workspaces}} w
         LEFT JOIN {{tables.agents}} a
@@ -465,7 +474,8 @@ def _precondition_errors(
         workspace_id = str(workspace["workspace_id"])
         bound_agent = workspace.get("agent_id")
         if request.target_agent_id and (
-            bound_agent is None or UUID(str(bound_agent)) != UUID(str(request.target_agent_id))
+            bound_agent is None
+            or UUID(str(bound_agent)) != UUID(str(request.target_agent_id))
         ):
             errors.append(
                 LifecycleError(
@@ -477,7 +487,9 @@ def _precondition_errors(
             continue
         identity_scope = str(workspace.get("agent_identity_scope") or "").strip()
         required_scope = request.require_identity_scope or (
-            normalize_identity_scope(request.require_lifetime) if request.require_lifetime else None
+            normalize_identity_scope(request.require_lifetime)
+            if request.require_lifetime
+            else None
         )
         if required_scope and not identity_scope:
             errors.append(
@@ -488,7 +500,10 @@ def _precondition_errors(
                 )
             )
             continue
-        if required_scope and normalize_identity_scope(identity_scope) != required_scope:
+        if (
+            required_scope
+            and normalize_identity_scope(identity_scope) != required_scope
+        ):
             code = (
                 "global_identity_not_cleanup_eligible"
                 if normalize_identity_scope(identity_scope) == "global"
@@ -524,10 +539,15 @@ def _agent_precondition_errors(
         request.require_identity_scope
         or ("local" if request.mark_local_agent_deleted else None)
         or (
-            normalize_identity_scope(request.require_lifetime) if request.require_lifetime else None
+            normalize_identity_scope(request.require_lifetime)
+            if request.require_lifetime
+            else None
         )
     )
-    if required is not None and normalize_identity_scope(agent["identity_scope"]) != required:
+    if (
+        required is not None
+        and normalize_identity_scope(agent["identity_scope"]) != required
+    ):
         return [
             LifecycleError(
                 code="lifecycle_identity_scope_precondition_failed",
@@ -597,7 +617,9 @@ async def _load_lifecycle_targets(
     """
     agent = await _load_target_agent(db, request)
     workspaces = await _load_target_workspaces(db, request)
-    errors = _agent_precondition_errors(request, agent) + _precondition_errors(request, workspaces)
+    errors = _agent_precondition_errors(request, agent) + _precondition_errors(
+        request, workspaces
+    )
     # Released embedding requests may omit the team. Resolve exactly one
     # canonical team before any native write; there is no unscoped erasure.
     team_id = (
@@ -652,8 +674,13 @@ async def _load_lifecycle_targets(
                 request=request_context,
                 failure_policy=GrantLivenessFailurePolicy.REQUIRE_KNOWN,
             )
-            for workspace_id, observation in activity.items():
-                if observation.is_newer_than(cutoff=request.stale_before):
+            for row in workspaces:
+                workspace_id = str(row["workspace_id"])
+                observation = activity.get(workspace_id)
+                if observation is not None and observation.is_newer_than(
+                    cutoff=request.stale_before,
+                    reserved_at=row["created_at"],
+                ):
                     errors.append(
                         LifecycleError(
                             code=WorkspaceActivityRefusal.STILL_ACTIVE,
@@ -697,7 +724,9 @@ def _workspace_agent_ids(workspaces: list[dict]) -> list[UUID]:
     return agent_ids
 
 
-def _target_agent_ids(request: LifecycleCascadeRequest, workspaces: list[dict]) -> list[UUID]:
+def _target_agent_ids(
+    request: LifecycleCascadeRequest, workspaces: list[dict]
+) -> list[UUID]:
     agent_ids = _workspace_agent_ids(workspaces)
     if request.target_agent_id:
         target_agent_id = UUID(str(request.target_agent_id))
@@ -846,7 +875,9 @@ def _workspace_changes(
             team_id=str(workspace["team_id"]),
             alias=str(workspace.get("alias") or ""),
             agent_id=(
-                str(workspace["agent_id"]) if workspace.get("agent_id") is not None else None
+                str(workspace["agent_id"])
+                if workspace.get("agent_id") is not None
+                else None
             ),
             action="soft_delete",
             status=status,
@@ -891,11 +922,15 @@ async def plan_lifecycle_cascade(
     agent_ids = _target_agent_ids(request, workspaces)
     removed_workspaces = targets.removed_workspaces
     claim_ids = list(
-        dict.fromkeys(workspace_ids + [str(row["workspace_id"]) for row in removed_workspaces])
+        dict.fromkeys(
+            workspace_ids + [str(row["workspace_id"]) for row in removed_workspaces]
+        )
     )
     claim_count = await _plan_claim_count(db, claim_ids)
     reservation_count = await _plan_reservation_count(db, agent_ids, targets.team_id)
-    chat_participant_count = await _plan_chat_participant_count(db, agent_ids, targets.team_id)
+    chat_participant_count = await _plan_chat_participant_count(
+        db, agent_ids, targets.team_id
+    )
 
     if precondition_errors:
         return _error_result(
@@ -973,7 +1008,9 @@ def _lifecycle_side_effects(
                 "chat_waiting_clear",
                 {
                     "team_id": team_id,
-                    "participants": [list(participant) for participant in chat_participants],
+                    "participants": [
+                        list(participant) for participant in chat_participants
+                    ],
                 },
             )
         )
@@ -1018,7 +1055,9 @@ async def _wake_chat_sessions(db, redis: Redis, session_ids: set[str]) -> None:
         [UUID(session_id) for session_id in session_ids],
     )
     if rows:
-        await send_agent_wakes(redis, {did_wake_key(row["did"]): {"chat"} for row in rows})
+        await send_agent_wakes(
+            redis, {did_wake_key(row["did"]): {"chat"} for row in rows}
+        )
 
 
 async def _deliver_lifecycle_side_effect(
@@ -1061,7 +1100,9 @@ async def _deliver_lifecycle_side_effect(
         status, cleared_count = await _clear_chat_waiting(redis, participants)
         if status != "cleared":
             raise RuntimeError(f"chat waiting cleanup returned {status}")
-        await _wake_chat_sessions(db, redis, {session_id for session_id, _ in participants})
+        await _wake_chat_sessions(
+            db, redis, {session_id for session_id, _ in participants}
+        )
         return 0, 0, int(cleared_count or 0), 0
     if effect_kind == "presence_clear":
         workspace_ids = [str(value) for value in payload.get("workspace_ids", [])]
@@ -1132,7 +1173,9 @@ async def replay_lifecycle_side_effects(
     failed_event_intents: list[LifecycleEventIntent] = []
     failed_effect_kinds: list[str] = []
 
-    lock_clause = "FOR UPDATE" if operation_uuid is not None else "FOR UPDATE SKIP LOCKED"
+    lock_clause = (
+        "FOR UPDATE" if operation_uuid is not None else "FOR UPDATE SKIP LOCKED"
+    )
     async with db.transaction() as tx:
         rows = await tx.fetch_all(
             f"""
@@ -1195,7 +1238,9 @@ async def replay_lifecycle_side_effects(
                     "workspace_task_unclaimed",
                     "team_task_unclaimed",
                 }:
-                    failed_event_intents.append(_event_intent_from_payload(effect_kind, payload))
+                    failed_event_intents.append(
+                        _event_intent_from_payload(effect_kind, payload)
+                    )
                 continue
 
             await tx.execute(
@@ -1345,7 +1390,9 @@ async def apply_local_workspace_cleanup(
             operation="delete_local_workspace",
             actor=actor,
             team_id=team_id,
-            target_agent_id=str(target.agent_id) if target.agent_id is not None else None,
+            target_agent_id=str(target.agent_id)
+            if target.agent_id is not None
+            else None,
             target_workspace_ids=(str(target.workspace_id),),
             workspace_scope="explicit",
             require_identity_scope="local",
@@ -1419,7 +1466,9 @@ async def _soft_delete_workspaces_on(
     return _WorkspaceCleanup(claim_count=claim_count, events=tuple(events))
 
 
-async def load_removed_claim_workspaces(db, *, agent_ids: list[UUID], team_id: str) -> list[dict]:
+async def load_removed_claim_workspaces(
+    db, *, agent_ids: list[UUID], team_id: str
+) -> list[dict]:
     """Find retained workspace bindings that still hold this agent set's claims."""
     rows = await db.fetch_all(
         """SELECT w.workspace_id,w.agent_id,w.team_id,w.alias
@@ -1443,7 +1492,11 @@ class _CommittedLifecycleEffects:
 
 
 async def _complete_lifecycle_effects(
-    db, redis: Redis | None, *, base: LifecycleCascadeResult, effects: _CommittedLifecycleEffects
+    db,
+    redis: Redis | None,
+    *,
+    base: LifecycleCascadeResult,
+    effects: _CommittedLifecycleEffects,
 ) -> LifecycleCascadeResult:
     """Replay committed effects, or defer replay until the caller's outer commit.
 
@@ -1472,9 +1525,13 @@ async def _complete_lifecycle_effects(
         team_event_count = 0
         failed_event_intents: tuple[LifecycleEventIntent, ...] = ()
         event_status: PostCommitStatus = "pending" if event_intents else "completed"
-        chat_waiting_status: PresenceCleanupStatus = "pending" if chat_participants else "not_run"
+        chat_waiting_status: PresenceCleanupStatus = (
+            "pending" if chat_participants else "not_run"
+        )
         chat_waiting_cleared_count = 0 if not chat_participants else None
-        presence_status: PresenceCleanupStatus = "pending" if presence_ids else "not_run"
+        presence_status: PresenceCleanupStatus = (
+            "pending" if presence_ids else "not_run"
+        )
         presence_cleared_count = 0 if not presence_ids else None
         post_commit_status: PostCommitStatus = "pending"
     else:
@@ -1655,16 +1712,22 @@ async def apply_lifecycle_cascade(
             task_unclaim_count += removed_cleanup.claim_count
             event_intents.extend(removed_cleanup.events)
 
-            reservation_release_count = await _release_reservations(tx, agent_ids, targets.team_id)
-            chat_participants, chat_waiting_session_clear_count = await _cleanup_chat_participants(
+            reservation_release_count = await _release_reservations(
                 tx, agent_ids, targets.team_id
             )
+            (
+                chat_participants,
+                chat_waiting_session_clear_count,
+            ) = await _cleanup_chat_participants(tx, agent_ids, targets.team_id)
             chat_participant_cleanup_count = len(chat_participants)
 
             if request.operation == "archive_global_agent":
                 identity_archived = (
                     await _archive_global_agents(
-                        tx, agent_ids=agent_ids, team_id=targets.team_id, deleted_at=deleted_at
+                        tx,
+                        agent_ids=agent_ids,
+                        team_id=targets.team_id,
+                        deleted_at=deleted_at,
                     )
                     > 0
                 )
@@ -1679,8 +1742,12 @@ async def apply_lifecycle_cascade(
                     disposition=disposition,
                     deleted_at=deleted_at,
                 )
-                identity_deleted = disposition_count > 0 and disposition == AgentDisposition.DELETED
-            await clear_agent_coordination_on(tx, agent_ids=agent_ids, team_id=targets.team_id)
+                identity_deleted = (
+                    disposition_count > 0 and disposition == AgentDisposition.DELETED
+                )
+            await clear_agent_coordination_on(
+                tx, agent_ids=agent_ids, team_id=targets.team_id
+            )
 
             workspace_changes = _workspace_changes(workspaces, status="completed")
             workspace_ids = [change.workspace_id for change in workspace_changes]
@@ -1690,7 +1757,9 @@ async def apply_lifecycle_cascade(
                 agent_ids,
                 targets.team_id,
             )
-            presence_ids = workspace_ids + [str(row["workspace_id"]) for row in presence_rows]
+            presence_ids = workspace_ids + [
+                str(row["workspace_id"]) for row in presence_rows
+            ]
             # Agent-keyed compatibility presence also disappears with coordination.
             presence_ids.extend(str(agent_id) for agent_id in agent_ids)
             presence_ids = list(dict.fromkeys(presence_ids))
@@ -1756,7 +1825,8 @@ async def apply_lifecycle_cascade(
         outbox_operation_id=str(operation_id) if effects else None,
         identity_deleted=identity_deleted,
         identity_archived=identity_archived,
-        identity_retired=disposition_count > 0 and disposition == AgentDisposition.RETIRED,
+        identity_retired=disposition_count > 0
+        and disposition == AgentDisposition.RETIRED,
     )
     return await _complete_lifecycle_effects(
         db,

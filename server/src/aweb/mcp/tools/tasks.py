@@ -20,7 +20,12 @@ from aweb.coordination.tasks_service import (
 )
 from aweb.mcp.mutations import current_mutation_callback
 from aweb.mcp.tools._common import require_team_context, team_identity
-from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from aweb.service_errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 
 # What the REST routes answer with 403, 404, 409 and 422.
 _REFUSALS = (ConflictError, ForbiddenError, NotFoundError, ValidationError)
@@ -28,11 +33,14 @@ _REFUSALS = (ConflictError, ForbiddenError, NotFoundError, ValidationError)
 
 def _invalid(exc: InvalidRequest) -> str:
     """The tool's answer to input the request model refuses, as the routes' 422."""
-    return json.dumps({
-        "error": "; ".join(
-            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}" for error in exc.errors()
-        )
-    })
+    return json.dumps(
+        {
+            "error": "; ".join(
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors()
+            )
+        }
+    )
 
 
 async def task_create(
@@ -50,7 +58,9 @@ async def task_create(
     """Create a task in the authenticated team."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     try:
         payload = CreateTaskRequest(
             title=title,
@@ -87,7 +97,9 @@ async def task_list(
     """List tasks in the authenticated team."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     try:
         tasks = await list_tasks(
             db_infra,
@@ -107,7 +119,9 @@ async def task_ready(db_infra, *, unclaimed_only: bool = True) -> str:
     """List ready tasks in the authenticated team."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     tasks = await list_ready_tasks(
         db_infra,
         team_id=auth.team_id,
@@ -120,7 +134,9 @@ async def task_get(db_infra, *, ref: str) -> str:
     """Get a task by ref or UUID."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     try:
         task = await get_task(db_infra, team_id=auth.team_id, ref=ref)
     except NotFoundError:
@@ -132,7 +148,9 @@ async def task_close(db_infra, *, ref: str) -> str:
     """Close a task by ref or UUID."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     try:
         task = await update_task(
             db_infra,
@@ -162,7 +180,9 @@ async def task_update(
     """Update a task in the authenticated team."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
 
     kwargs = {}
     if status:
@@ -218,7 +238,9 @@ async def task_comment_add(db_infra, *, ref: str, body: str) -> str:
     """Add a comment to a task."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     try:
         comment = await add_comment(
             db_infra,
@@ -238,7 +260,9 @@ async def task_comment_list(db_infra, *, ref: str) -> str:
     """List comments on a task."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     try:
         comments = await list_comments(db_infra, team_id=auth.team_id, ref=ref)
     except NotFoundError as exc:

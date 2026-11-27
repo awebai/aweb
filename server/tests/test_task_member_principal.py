@@ -47,7 +47,9 @@ async def _connected_subject(env, registry, *, projection: SubjectProjection):
                 certificate_id="task-global-bob",
             )
         )
-    assert (await _connect(env, (actor.sk, actor.did, "bob"), actor.certificate)).status_code == 200
+    assert (
+        await _connect(env, (actor.sk, actor.did, "bob"), actor.certificate)
+    ).status_code == 200
     return expected
 
 
@@ -60,7 +62,9 @@ async def _capture_verified_actor(env):
             "method": "GET",
             "path": "/v1/tasks",
             "app": env.app,
-            "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+            "headers": [
+                (key.lower().encode(), value.encode()) for key, value in headers.items()
+            ],
         }
     )
     return await get_team_identity(request, env.infra)
@@ -68,7 +72,9 @@ async def _capture_verified_actor(env):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("projection", list(SubjectProjection))
-async def test_task_assignment_uses_the_verified_member_principal(privacy_app, projection):
+async def test_task_assignment_uses_the_verified_member_principal(
+    privacy_app, projection
+):
     # docs/identity.md:566-585 makes registry-verified marker evidence the
     # condition for global principal projection. The local key remains valid.
     env = privacy_app
@@ -86,10 +92,14 @@ async def test_task_assignment_uses_the_verified_member_principal(privacy_app, p
 
 
 @pytest.mark.asyncio
-async def test_historical_unverified_claim_keeps_the_literal_local_principal(privacy_app):
+async def test_historical_unverified_claim_keeps_the_literal_local_principal(
+    privacy_app,
+):
     env = privacy_app
     async with registry_listener(env) as (registry, _):
-        principal = await _connected_subject(env, registry, projection=SubjectProjection.LOCAL)
+        principal = await _connected_subject(
+            env, registry, projection=SubjectProjection.LOCAL
+        )
         other = env.actors["carol"]
         unrelated = (await registry.register_did(other.did, other.sk)).did_aw
         # The current admission path cannot store this historical projection.
@@ -108,7 +118,9 @@ async def test_historical_unverified_claim_keeps_the_literal_local_principal(pri
 async def test_task_claim_uses_the_verified_local_principal(privacy_app):
     env = privacy_app
     async with registry_listener(env) as (registry, _):
-        principal = await _connected_subject(env, registry, projection=SubjectProjection.LOCAL)
+        principal = await _connected_subject(
+            env, registry, projection=SubjectProjection.LOCAL
+        )
         actor = await _capture_verified_actor(env)
         made = await _v2_request(
             env, "alice", "POST", "/v1/tasks", {"title": "Claim by exact actor"}
@@ -128,7 +140,9 @@ async def test_task_claim_uses_the_verified_local_principal(privacy_app):
 async def test_task_answer_uses_the_verified_local_principal(privacy_app):
     env = privacy_app
     async with registry_listener(env) as (registry, _):
-        principal = await _connected_subject(env, registry, projection=SubjectProjection.LOCAL)
+        principal = await _connected_subject(
+            env, registry, projection=SubjectProjection.LOCAL
+        )
         actor = await _capture_verified_actor(env)
         made = await _v2_request(
             env,

@@ -45,7 +45,9 @@ def main() -> int:
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
-    print(f"AWID site document links resolve in publication context ({len(mirrors)} checked)")
+    print(
+        f"AWID site document links resolve in publication context ({len(mirrors)} checked)"
+    )
     return 0
 
 

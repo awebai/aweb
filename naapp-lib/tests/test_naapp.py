@@ -57,7 +57,9 @@ def _site() -> naapp.SiteConfig:
         description="desc",
         nav_links=(naapp.NavLink("Reference", "/reference"),),
         footer_blurb="blurb",
-        footer_columns=(naapp.FooterColumn("aweb", (naapp.NavLink("aweb.ai", "https://aweb.ai"),)),),
+        footer_columns=(
+            naapp.FooterColumn("aweb", (naapp.NavLink("aweb.ai", "https://aweb.ai"),)),
+        ),
         footer_bottom="library is a Native Agentic App on the aweb.ai hub.",
     )
 
@@ -89,7 +91,7 @@ def _rendered_class_names() -> set[str]:
 
 
 def _css_class_names() -> set[str]:
-    return set(re.findall(r'\.([A-Za-z_][\w-]*)', naapp.aweb_css()))
+    return set(re.findall(r"\.([A-Za-z_][\w-]*)", naapp.aweb_css()))
 
 
 def test_css_is_sha_pinned() -> None:
@@ -126,7 +128,7 @@ def test_canonical_bytes_sorted_compact() -> None:
 
 def test_page_wraps_body_in_chrome() -> None:
     html = naapp.page(_site(), "    <section>hi</section>")
-    assert html.startswith("<!doctype html>\n<html lang=\"en\">")
+    assert html.startswith('<!doctype html>\n<html lang="en">')
     # css URL is fingerprinted with the content hash (CDN edge cache busting).
     assert f'<link rel="stylesheet" href="/css/aweb.{naapp.CSS_SHA256[:12]}.css">' in html
     assert '<header class="site-header">' in html
@@ -148,12 +150,17 @@ def test_head_has_seo_and_social_meta() -> None:
     # Explicit images override the coherent toolkit default.
     assert '<meta property="og:image" content="https://library.aweb.ai/og-card.png">' in html
     assert '<meta property="og:image:width" content="1200">' in html
-    assert 'content="https://library.aweb.ai/brand/field-v1/aweb-card.png"' in naapp.page(_site(), "    <section>hi</section>")
+    assert 'content="https://library.aweb.ai/brand/field-v1/aweb-card.png"' in naapp.page(
+        _site(), "    <section>hi</section>"
+    )
 
 
 def test_reference_documents_every_operation_dual() -> None:
     html = naapp.render_reference(
-        _MANIFEST, _site(), verb="library", example_path_values={"pack_ref": "aweb.engineering-pack"}
+        _MANIFEST,
+        _site(),
+        verb="library",
+        example_path_values={"pack_ref": "aweb.engineering-pack"},
     )
     for tool in _MANIFEST["tools"]:
         assert f"aw library {tool['name']}" in html
@@ -162,7 +169,12 @@ def test_reference_documents_every_operation_dual() -> None:
     assert "curl -s https://library.aweb.ai/v1/profile-packs/aweb.engineering-pack" in html
     # cert op: signed aw id request + the four headers + sorted envelope
     assert "aw id request --team-auth POST https://library.aweb.ai/v1/shelf/import" in html
-    for header in ("Authorization", "X-AWEB-Timestamp", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate"):
+    for header in (
+        "Authorization",
+        "X-AWEB-Timestamp",
+        "X-AWEB-Signed-Payload",
+        "X-AWID-Team-Certificate",
+    ):
         assert header in html
     assert html.index('"aud"') < html.index('"body_sha256"') < html.index('"v": 2')
     assert naapp.VECTOR_URL in html

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/canonicaljson"
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/canonicaljson"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 // TeamCertificate is a team membership proof signed by the team controller.

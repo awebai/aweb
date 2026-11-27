@@ -66,7 +66,6 @@ main implements of the design itself is marked in Parts A and B.
 | Property of main | Evidence |
 | --- | --- |
 | Core produces no hook event. Its mutation seam is the in-process `on_mutation` callback. Route call sites await it after the state change, outside its transaction, and log and swallow its exceptions. A route call can be missed if the process dies between commit and callback. Inbound federation is the one durable path: its event commits to `federation_mutation_outbox` with the delivery and is replayed until the callback returns. | `fire_mutation_hook` and `fire_mutation_callback` in `server/src/aweb/hooks.py`; `docs/aw-hooks-sot.md` §Callback shape; `replay_federation_mutation_outbox` in `server/src/aweb/federation/delivery.py` |
-| A source-derived inventory pins every `on_mutation` call site (`fire_mutation_hook` and `fire_mutation_callback`). A build check rejects added, removed or non-literal sites. | `docs/vectors/mutation-hook-call-sites-v1.json`; `HOOK_FIRING_FUNCTIONS` and `check` in `scripts/check-extension-docs.py` |
 | Several catalogued mutations are not transactional. A mail continuation and the MCP `send_mail` tool insert the message outside any transaction unless attachments are present. Ack, task comment and dependency add and remove are bare statements. | `store_mail` in `server/src/aweb/messaging/mail_storage.py`; `attachment_transaction` in `server/src/aweb/attachment_service.py`; `_send_mail_conversation_continuation` in `server/src/aweb/routes/messages.py`; `acknowledge_mail` in `server/src/aweb/messaging/mail_ack.py`; `send_mail` in `server/src/aweb/mcp/tools/mail.py`; `add_dependency`, `remove_dependency` and `add_comment` in `server/src/aweb/coordination/tasks_service.py` |
 | The REST `send_message` route commits the conversation it opens and that conversation's first message in one transaction. Task create and update are transactional, and the route fires its hook after the transaction. `connect` writes the team, agent and workspace rows in one transaction and fires no hook. | `send_message` in `server/src/aweb/routes/messages.py`; `create_task` and `update_task` in `server/src/aweb/coordination/tasks_service.py`; `create_task_route` and `update_task_route` in `server/src/aweb/coordination/routes/tasks.py`; `connect_agent` in `server/src/aweb/routes/connect.py` |
 | MCP task tools fire no mutation hook. MCP mail and chat do. | `server/src/aweb/mcp/tools/tasks.py`; `acknowledge_mail` in `server/src/aweb/messaging/mail_ack.py`, which the `check_mail` tool calls, and `send_chat` in `server/src/aweb/messaging/chat_send.py`, which the `send_chat` tool calls |
@@ -79,7 +78,7 @@ main implements of the design itself is marked in Parts A and B.
 | Membership authority is the team controller's signature. AWID records certificate register and revoke, has no outbox or push feed, and exposes pull reads. The hosted deployment holds a managed team's controller key. | `docs/awid-sot.md` §Who signs certificates, §Revocation and §Responsibilities; `register_certificate`, `revoke_certificate` and the `/{name}/revocations` read in `awid/src/awid_service/routes/teams.py` |
 | Core caches AWID revocations for authentication and read-time sender membership. It persists no membership-revocation effect. | `_get_revoked_certificates` in `server/src/aweb/team_auth_deps.py`; `sender_memberships` in `server/src/aweb/messaging/sender_membership.py` |
 | Core's `audit_log` table has no chain and is not part of this design. Identity grant revoke and the operator-audited routes write it in the effecting transaction. | `server/src/aweb/migrations/aweb/001_initial.sql` (`audit_log`); `revoke_identity_grant` in `server/src/aweb/routes/identity_grants.py`; `record_coordination_audit` in `server/src/aweb/audit.py` |
-| `aw` mints no `trace_id`. It sets `X-Request-ID` only on AWID registry and A2A calls. | `RegistryClient.newRequest` in `cli/go/awid/registry_client.go`; `Client.Call` in `cli/go/a2a/client.go` |
+| `aw` mints no `trace_id`. It sets `X-Request-ID` only on AWID registry and A2A calls. | `RegistryClient.newRequest` in `cli/go/awid/registry_client.go`; `Client.Call` in `cli/go/internal/a2a/client.go` |
 
 ## 2. Governing model
 
@@ -795,7 +794,7 @@ The two are deliberately separate:
   **Open (aweb-acgh.16.12, aweb-acgh.16.13, aweb-acgh.16.14):** the enqueue
   helper and its sites; `server/src/aweb/mutation_hooks.py` translates
   `on_mutation` to SSE wakes and enqueues no hook.
-- **Vector. Open (aweb-acgh.16.12).** A docs/vectors/post-mutation-hook-sites-v1.json lists
+- **Vector. Not planned (aweb-acgh.16.12).** A docs/vectors/post-mutation-hook-sites-v1.json lists
   `{source, function, mutation_type}` for each enqueue call. The existing
   checker gains a second scan: literal `mutation_type`, the call lexically
   inside a transaction block, and counts matching in both directions. The
@@ -968,7 +967,7 @@ Per team and chain epoch, under a row lock on the team's chain head:
   input**, and reports any receipt or checkpoint that the current chain
   contradicts. `aw audit verify --bundle` checks an export offline, with no
   server. **In flight (aweb-acgh.16.24):** the Go chain verifier
-  (`cli/go/logschain`) passes `logs-chain-v1.json`; the `aw logs` command is
+  (`cli/go/internal/logschain`) passes `logs-chain-v1.json`; the `aw logs` command is
   not on main.
 
 **What this does and does not protect against.** It detects in-transit loss

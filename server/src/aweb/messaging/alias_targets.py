@@ -45,7 +45,8 @@ def resolve_alias_target(
     alias_part = alias_part.strip()
     if not team_name or not alias_part:
         raise HTTPException(
-            status_code=422, detail=f"{field} team~alias must include both team and alias"
+            status_code=422,
+            detail=f"{field} team~alias must include both team and alias",
         )
 
     try:
@@ -75,7 +76,10 @@ def validate_alias_selector(raw_alias: str, *, field: str) -> str:
     alias_part = alias_part.strip()
     if not team_name or not alias_part:
         raise ValueError(f"{field} team~alias must include both team and alias")
-    if len(team_name) > MAX_ALIAS_PART_LENGTH or len(alias_part) > MAX_ALIAS_PART_LENGTH:
+    if (
+        len(team_name) > MAX_ALIAS_PART_LENGTH
+        or len(alias_part) > MAX_ALIAS_PART_LENGTH
+    ):
         raise ValueError(
             f"{field} team and alias must be at most {MAX_ALIAS_PART_LENGTH} characters"
         )
@@ -123,11 +127,16 @@ def derive_team_address(team_id: str | None, alias: str | None) -> str:
     return f"{namespace}/{alias}"
 
 
-async def get_agent_by_namespace_alias(db, *, namespace: str, alias: str) -> Mapping[str, Any] | None:
+async def get_agent_by_namespace_alias(
+    db, *, namespace: str, alias: str
+) -> Mapping[str, Any] | None:
     rows = [
         messaging_identity_projection(row)
-        for row in await current_member_projections(db, namespace=namespace, aliases=[alias])
-        if (not row["did_aw"] and not row["address"]) or row.verified_identity().get("did_aw")
+        for row in await current_member_projections(
+            db, namespace=namespace, aliases=[alias]
+        )
+        if (not row["did_aw"] and not row["address"])
+        or row.verified_identity().get("did_aw")
     ]
     if len(rows) > 1:
         if all(row.get("did_aw") for row in rows):

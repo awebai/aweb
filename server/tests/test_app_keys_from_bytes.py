@@ -51,7 +51,11 @@ from tests.test_app_install_bytes import _install as _install_over_http
 from tests.test_app_registry_http import _build_apps_app, _fake_team_identity
 
 ROOT = Path(__file__).resolve().parents[2]
-VECTOR = json.loads((ROOT / "test-vectors" / "app-manifests" / "app-manifest-v2-v1.json").read_text(encoding="utf-8"))
+VECTOR = json.loads(
+    (ROOT / "test-vectors" / "app-manifests" / "app-manifest-v2-v1.json").read_text(
+        encoding="utf-8"
+    )
+)
 V2_BASE = VECTOR["base_manifests"]["v2"]
 APP_ID = V2_BASE["app"]["id"]
 ORIGIN = V2_BASE["app"]["origin"]
@@ -60,7 +64,9 @@ EMIT_BODY = b'{"type":"fixture/workspace.changed","resource_ref":"w1","payload":
 
 
 def _canonical(document: dict[str, Any]) -> bytes:
-    return json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return json.dumps(
+        document, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
 
 
 def _digest(data: bytes) -> str:
@@ -79,7 +85,9 @@ def _key(kid: str, purposes: list[str]) -> tuple[bytes, dict[str, Any]]:
     return signing_key, {"kid": kid, "did_key": did_key, "purposes": purposes}
 
 
-async def _install_v2(db, manifest: bytes, *, team_id: str = TEAM_ID, version: str = "0.0.0"):
+async def _install_v2(
+    db, manifest: bytes, *, team_id: str = TEAM_ID, version: str = "0.0.0"
+):
     return await install_app(
         db,
         team_id=team_id,
@@ -94,7 +102,9 @@ async def _install_v2(db, manifest: bytes, *, team_id: str = TEAM_ID, version: s
     )
 
 
-async def _team_keys(db, team_id: str = TEAM_ID) -> list[tuple[str, str, list[str], bool]]:
+async def _team_keys(
+    db, team_id: str = TEAM_ID
+) -> list[tuple[str, str, list[str], bool]]:
     rows = await db.fetch_all(
         """
         SELECT key_id, did_key, purposes, revoked_at IS NOT NULL AS revoked
@@ -103,17 +113,36 @@ async def _team_keys(db, team_id: str = TEAM_ID) -> list[tuple[str, str, list[st
         team_id,
         APP_ID,
     )
-    return [(row["key_id"], row["did_key"], list(row["purposes"]), row["revoked"]) for row in rows]
+    return [
+        (row["key_id"], row["did_key"], list(row["purposes"]), row["revoked"])
+        for row in rows
+    ]
 
 
-def _signed_for_app(purpose: str, signing_key: bytes, entry: dict[str, Any], *, path: str, body: bytes, team_id: str = TEAM_ID):
+def _signed_for_app(
+    purpose: str,
+    signing_key: bytes,
+    entry: dict[str, Any],
+    *,
+    path: str,
+    body: bytes,
+    team_id: str = TEAM_ID,
+):
     spec = PURPOSES[purpose]
     timestamp = datetime.now(timezone.utc).isoformat()
     canonical = canonical_json_bytes(
         {
-            "v": 1, "auth": spec.auth, "aud": "http://test", "method": "POST", "path": path,
-            "team_id": team_id, "app_id": APP_ID, "kid": entry["kid"], "did_key": entry["did_key"],
-            "body_sha256": hashlib.sha256(body).hexdigest(), "timestamp": timestamp,
+            "v": 1,
+            "auth": spec.auth,
+            "aud": "http://test",
+            "method": "POST",
+            "path": path,
+            "team_id": team_id,
+            "app_id": APP_ID,
+            "kid": entry["kid"],
+            "did_key": entry["did_key"],
+            "body_sha256": hashlib.sha256(body).hexdigest(),
+            "timestamp": timestamp,
         }
     )
     return {
@@ -122,7 +151,9 @@ def _signed_for_app(purpose: str, signing_key: bytes, entry: dict[str, Any], *, 
         "X-AWEB-App-Key-ID": entry["kid"],
         "X-AWEB-Team-ID": team_id,
         "X-AWEB-Timestamp": timestamp,
-        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(canonical).decode().rstrip("="),
+        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(canonical)
+        .decode()
+        .rstrip("="),
         "Content-Type": "application/json",
     }
 
@@ -141,14 +172,22 @@ async def db(aweb_cloud_db):
 async def _install_event_key_version(db, entry: dict[str, Any], manifest_version: int):
     document = copy.deepcopy(VECTOR["base_manifests"][f"v{manifest_version}"])
     if manifest_version == 1:
-        document["event_emitters"] = [{"kid": entry["kid"], "did_key": entry["did_key"]}]
+        document["event_emitters"] = [
+            {"kid": entry["kid"], "did_key": entry["did_key"]}
+        ]
     else:
         document["app_keys"] = [entry]
     manifest = _canonical(document)
     await install_app(
-        db, team_id=TEAM_ID, app_id=APP_ID, origin=ORIGIN,
-        app_version=document["app"]["version"], manifest_version=manifest_version,
-        digest=_digest(manifest), granted_scopes=[], manifest=manifest,
+        db,
+        team_id=TEAM_ID,
+        app_id=APP_ID,
+        origin=ORIGIN,
+        app_version=document["app"]["version"],
+        manifest_version=manifest_version,
+        digest=_digest(manifest),
+        granted_scopes=[],
+        manifest=manifest,
     )
     return _digest(manifest)
 
@@ -160,7 +199,9 @@ def _key_table(manifest_version: int) -> str:
 async def _event_probe(db, signer, entry):
     path = f"/probe/{APP_EVENT}"
     return await _post(
-        _probe_app(db), path, EMIT_BODY,
+        _probe_app(db),
+        path,
+        EMIT_BODY,
         _signed_for_app(APP_EVENT, signer, entry, path=path, body=EMIT_BODY),
     )
 
@@ -168,14 +209,18 @@ async def _event_probe(db, signer, entry):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("old_version,new_version", [(1, 2), (2, 1)])
 @pytest.mark.parametrize("revoked", [False, True])
-async def test_event_key_history_survives_a_manifest_version_switch(db, old_version, new_version, revoked):
+async def test_event_key_history_survives_a_manifest_version_switch(
+    db, old_version, new_version, revoked
+):
     signer, entry = _key("event-history", [APP_EVENT])
     await _install_event_key_version(db, entry, old_version)
     if revoked:
         await db.execute(
             f"UPDATE {{{{tables.{_key_table(old_version)}}}}} SET revoked_at = NOW() "
             "WHERE team_id = $1 AND app_id = $2 AND key_id = $3",
-            TEAM_ID, APP_ID, entry["kid"],
+            TEAM_ID,
+            APP_ID,
+            entry["kid"],
         )
 
     digest = await _install_event_key_version(db, entry, new_version)
@@ -185,21 +230,28 @@ async def test_event_key_history_survives_a_manifest_version_switch(db, old_vers
     row = await db.fetch_one(
         f"SELECT revoked_at FROM {{{{tables.{_key_table(new_version)}}}}} "
         "WHERE team_id = $1 AND app_id = $2 AND digest = $3 AND key_id = $4",
-        TEAM_ID, APP_ID, digest, entry["kid"],
+        TEAM_ID,
+        APP_ID,
+        digest,
+        entry["kid"],
     )
     assert (row["revoked_at"] is not None) == revoked
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("old_version,new_version", [(1, 2), (2, 1)])
-async def test_event_verification_checks_revocation_in_the_other_representation(db, old_version, new_version):
+async def test_event_verification_checks_revocation_in_the_other_representation(
+    db, old_version, new_version
+):
     signer, entry = _key("event-history", [APP_EVENT])
     await _install_event_key_version(db, entry, old_version)
     await _install_event_key_version(db, entry, new_version)
     await db.execute(
         f"UPDATE {{{{tables.{_key_table(old_version)}}}}} SET revoked_at = NOW() "
         "WHERE team_id = $1 AND app_id = $2 AND key_id = $3",
-        TEAM_ID, APP_ID, entry["kid"],
+        TEAM_ID,
+        APP_ID,
+        entry["kid"],
     )
 
     response = await _event_probe(db, signer, entry)
@@ -212,7 +264,9 @@ async def test_event_verification_checks_revocation_in_the_other_representation(
         "WHERE team_id = $1 AND app_id = $2 AND key_id = $3 UNION ALL "
         "SELECT revoked_at FROM {{tables.team_app_keys}} "
         "WHERE team_id = $1 AND app_id = $2 AND key_id = $3",
-        TEAM_ID, APP_ID, entry["kid"],
+        TEAM_ID,
+        APP_ID,
+        entry["kid"],
     )
     assert len(rows) == 2
     assert rows[0]["revoked_at"] is not None
@@ -221,7 +275,9 @@ async def test_event_verification_checks_revocation_in_the_other_representation(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("old_version,new_version", [(1, 2), (2, 1)])
-async def test_a_key_id_cannot_change_identity_across_representations(db, old_version, new_version):
+async def test_a_key_id_cannot_change_identity_across_representations(
+    db, old_version, new_version
+):
     signer, entry = _key("event-history", [APP_EVENT])
     digest = await _install_event_key_version(db, entry, old_version)
     _, other = _key(entry["kid"], [APP_EVENT])
@@ -231,7 +287,8 @@ async def test_a_key_id_cannot_change_identity_across_representations(db, old_ve
 
     installed = await db.fetch_one(
         "SELECT digest FROM {{tables.team_app_installs}} WHERE team_id = $1 AND app_id = $2",
-        TEAM_ID, APP_ID,
+        TEAM_ID,
+        APP_ID,
     )
     assert installed["digest"] == digest
     assert (await _event_probe(db, signer, entry)).status_code == 200
@@ -239,7 +296,9 @@ async def test_a_key_id_cannot_change_identity_across_representations(db, old_ve
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("old_version,new_version", [(1, 2), (2, 1)])
-async def test_event_verification_refuses_a_preexisting_cross_table_identity_conflict(db, old_version, new_version):
+async def test_event_verification_refuses_a_preexisting_cross_table_identity_conflict(
+    db, old_version, new_version
+):
     signer, entry = _key("event-history", [APP_EVENT])
     await _install_event_key_version(db, entry, old_version)
     await _install_event_key_version(db, entry, new_version)
@@ -248,7 +307,10 @@ async def test_event_verification_refuses_a_preexisting_cross_table_identity_con
     await db.execute(
         f"UPDATE {{{{tables.{_key_table(old_version)}}}}} SET did_key = $4 "
         "WHERE team_id = $1 AND app_id = $2 AND key_id = $3",
-        TEAM_ID, APP_ID, entry["kid"], other["did_key"],
+        TEAM_ID,
+        APP_ID,
+        entry["kid"],
+        other["did_key"],
     )
 
     response = await _event_probe(db, signer, entry)
@@ -270,7 +332,9 @@ async def test_a_v2_install_registers_exactly_the_bytes_app_keys(db):
             (emit["kid"], emit["did_key"], [APP_EVENT], False),
         ]
     )
-    emit_rows = await db.fetch_all("SELECT 1 FROM {{tables.team_app_emit_keys}} WHERE team_id = $1", TEAM_ID)
+    emit_rows = await db.fetch_all(
+        "SELECT 1 FROM {{tables.team_app_emit_keys}} WHERE team_id = $1", TEAM_ID
+    )
     assert emit_rows == []
 
 
@@ -281,12 +345,24 @@ async def test_registered_keys_verify_for_their_declared_purposes_only(db):
     app = _probe_app(db)
 
     declared = await _post(
-        app, f"/probe/{APP_GRANT_READ}", b"{}",
-        _signed_for_app(APP_GRANT_READ, read_signer, read, path=f"/probe/{APP_GRANT_READ}", body=b"{}"),
+        app,
+        f"/probe/{APP_GRANT_READ}",
+        b"{}",
+        _signed_for_app(
+            APP_GRANT_READ,
+            read_signer,
+            read,
+            path=f"/probe/{APP_GRANT_READ}",
+            body=b"{}",
+        ),
     )
     undeclared = await _post(
-        app, f"/probe/{HOOK_RESOLVE}", b"{}",
-        _signed_for_app(HOOK_RESOLVE, read_signer, read, path=f"/probe/{HOOK_RESOLVE}", body=b"{}"),
+        app,
+        f"/probe/{HOOK_RESOLVE}",
+        b"{}",
+        _signed_for_app(
+            HOOK_RESOLVE, read_signer, read, path=f"/probe/{HOOK_RESOLVE}", body=b"{}"
+        ),
     )
 
     assert declared.status_code == 200, declared.text
@@ -299,11 +375,17 @@ async def test_an_unknown_purpose_label_is_stored_and_grants_nothing(db):
     await _install_v2(db, _v2_manifest([entry]))
     app = _probe_app(db)
 
-    assert await _team_keys(db) == [(entry["kid"], entry["did_key"], ["x-custom"], False)]
+    assert await _team_keys(db) == [
+        (entry["kid"], entry["did_key"], ["x-custom"], False)
+    ]
     for purpose in (APP_GRANT_READ, HOOK_RESOLVE):
         response = await _post(
-            app, f"/probe/{purpose}", b"{}",
-            _signed_for_app(purpose, signer, entry, path=f"/probe/{purpose}", body=b"{}"),
+            app,
+            f"/probe/{purpose}",
+            b"{}",
+            _signed_for_app(
+                purpose, signer, entry, path=f"/probe/{purpose}", body=b"{}"
+            ),
         )
         assert response.status_code == 403, (purpose, response.text)
 
@@ -316,12 +398,20 @@ async def test_a_v2_app_emits_with_an_app_keys_key_declaring_app_event(db):
     app = _probe_app(db)
 
     emitted = await _post(
-        app, f"/probe/{APP_EVENT}", EMIT_BODY,
-        _signed_for_app(APP_EVENT, emit_signer, emit, path=f"/probe/{APP_EVENT}", body=EMIT_BODY),
+        app,
+        f"/probe/{APP_EVENT}",
+        EMIT_BODY,
+        _signed_for_app(
+            APP_EVENT, emit_signer, emit, path=f"/probe/{APP_EVENT}", body=EMIT_BODY
+        ),
     )
     read_key_emits = await _post(
-        app, f"/probe/{APP_EVENT}", EMIT_BODY,
-        _signed_for_app(APP_EVENT, read_signer, read, path=f"/probe/{APP_EVENT}", body=EMIT_BODY),
+        app,
+        f"/probe/{APP_EVENT}",
+        EMIT_BODY,
+        _signed_for_app(
+            APP_EVENT, read_signer, read, path=f"/probe/{APP_EVENT}", body=EMIT_BODY
+        ),
     )
 
     assert emitted.status_code == 200, emitted.text
@@ -329,7 +419,9 @@ async def test_a_v2_app_emits_with_an_app_keys_key_declaring_app_event(db):
 
 
 @pytest.mark.asyncio
-async def test_a_kid_keeps_its_first_did_key_and_a_conflicting_install_writes_nothing(db):
+async def test_a_kid_keeps_its_first_did_key_and_a_conflicting_install_writes_nothing(
+    db,
+):
     _, first = _key("read-1", [APP_GRANT_READ])
     await _install_v2(db, _v2_manifest([first]))
     _, other = _key("read-1", [APP_GRANT_READ])
@@ -338,9 +430,13 @@ async def test_a_kid_keeps_its_first_did_key_and_a_conflicting_install_writes_no
     with pytest.raises(ConflictError):
         await _install_v2(db, conflicting, version="0.0.1")
 
-    assert await _team_keys(db) == [(first["kid"], first["did_key"], [APP_GRANT_READ], False)]
+    assert await _team_keys(db) == [
+        (first["kid"], first["did_key"], [APP_GRANT_READ], False)
+    ]
     install = await db.fetch_one(
-        "SELECT digest FROM {{tables.team_app_installs}} WHERE team_id = $1 AND app_id = $2", TEAM_ID, APP_ID
+        "SELECT digest FROM {{tables.team_app_installs}} WHERE team_id = $1 AND app_id = $2",
+        TEAM_ID,
+        APP_ID,
     )
     assert install["digest"] != _digest(conflicting)
 
@@ -351,12 +447,15 @@ async def test_a_revoked_key_stays_revoked_when_the_same_bytes_are_installed_aga
     manifest = _v2_manifest([entry])
     await _install_v2(db, manifest)
     await db.execute(
-        "UPDATE {{tables.team_app_keys}} SET revoked_at = NOW() WHERE team_id = $1 AND key_id = 'read-1'", TEAM_ID
+        "UPDATE {{tables.team_app_keys}} SET revoked_at = NOW() WHERE team_id = $1 AND key_id = 'read-1'",
+        TEAM_ID,
     )
 
     await _install_v2(db, manifest)
 
-    assert await _team_keys(db) == [(entry["kid"], entry["did_key"], [APP_GRANT_READ], True)]
+    assert await _team_keys(db) == [
+        (entry["kid"], entry["did_key"], [APP_GRANT_READ], True)
+    ]
 
 
 @pytest.mark.asyncio
@@ -364,19 +463,32 @@ async def test_a_revoked_key_stays_revoked_when_new_bytes_list_it_again(db):
     signer, entry = _key("read-1", [APP_GRANT_READ, HOOK_RESOLVE])
     await _install_v2(db, _v2_manifest([entry]))
     await db.execute(
-        "UPDATE {{tables.team_app_keys}} SET revoked_at = NOW() WHERE team_id = $1 AND key_id = 'read-1'", TEAM_ID
+        "UPDATE {{tables.team_app_keys}} SET revoked_at = NOW() WHERE team_id = $1 AND key_id = 'read-1'",
+        TEAM_ID,
     )
 
     await _install_v2(db, _v2_manifest([entry], version="0.0.1"), version="0.0.1")
 
     app = _probe_app(db)
     for purpose in (APP_GRANT_READ, HOOK_RESOLVE):
-        assert await get_active_app_key(
-            db, team_id=TEAM_ID, app_id=APP_ID, kid=entry["kid"], did_key=entry["did_key"], purpose=purpose
-        ) is None, purpose
+        assert (
+            await get_active_app_key(
+                db,
+                team_id=TEAM_ID,
+                app_id=APP_ID,
+                kid=entry["kid"],
+                did_key=entry["did_key"],
+                purpose=purpose,
+            )
+            is None
+        ), purpose
         response = await _post(
-            app, f"/probe/{purpose}", b"{}",
-            _signed_for_app(purpose, signer, entry, path=f"/probe/{purpose}", body=b"{}"),
+            app,
+            f"/probe/{purpose}",
+            b"{}",
+            _signed_for_app(
+                purpose, signer, entry, path=f"/probe/{purpose}", body=b"{}"
+            ),
         )
         assert response.status_code == 403, (purpose, response.text)
 
@@ -389,14 +501,26 @@ async def test_another_teams_keys_are_never_active_for_this_team(db):
     app = _probe_app(db)
 
     response = await _post(
-        app, f"/probe/{APP_GRANT_READ}", b"{}",
-        _signed_for_app(APP_GRANT_READ, signer, entry, path=f"/probe/{APP_GRANT_READ}", body=b"{}"),
+        app,
+        f"/probe/{APP_GRANT_READ}",
+        b"{}",
+        _signed_for_app(
+            APP_GRANT_READ, signer, entry, path=f"/probe/{APP_GRANT_READ}", body=b"{}"
+        ),
     )
 
     assert response.status_code == 403, response.text
-    assert await get_active_app_key(
-        db, team_id=TEAM_ID, app_id=APP_ID, kid=entry["kid"], did_key=entry["did_key"], purpose=APP_GRANT_READ
-    ) is None
+    assert (
+        await get_active_app_key(
+            db,
+            team_id=TEAM_ID,
+            app_id=APP_ID,
+            kid=entry["kid"],
+            did_key=entry["did_key"],
+            purpose=APP_GRANT_READ,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -409,7 +533,9 @@ async def test_reseed_recreates_app_key_rows_from_the_bytes(db):
     report = await reseed_app_registrations(db, origin=ORIGIN, manifest=manifest)
 
     assert report.reseeded == [TEAM_ID]
-    assert await _team_keys(db) == [(entry["kid"], entry["did_key"], [APP_GRANT_READ, HOOK_RESOLVE], False)]
+    assert await _team_keys(db) == [
+        (entry["kid"], entry["did_key"], [APP_GRANT_READ, HOOK_RESOLVE], False)
+    ]
 
 
 @pytest.mark.asyncio
@@ -418,7 +544,9 @@ async def test_reseed_reports_a_team_whose_app_key_id_holds_another_key(db):
     manifest = _v2_manifest([entry])
     await _install_v2(db, manifest)
     await db.execute(
-        "UPDATE {{tables.team_app_keys}} SET did_key = $2 WHERE team_id = $1", TEAM_ID, _make_app_keypair()[1]
+        "UPDATE {{tables.team_app_keys}} SET did_key = $2 WHERE team_id = $1",
+        TEAM_ID,
+        _make_app_keypair()[1],
     )
 
     report = await reseed_app_registrations(db, origin=ORIGIN, manifest=manifest)
@@ -453,7 +581,12 @@ def _apply(node: Any, tokens: list[str], op: str, value: Any) -> Any:
 def _case_bytes(case: dict[str, Any]) -> bytes:
     document = copy.deepcopy(VECTOR["base_manifests"][case["base"]])
     for mutation in case.get("mutations", []):
-        _apply(document, mutation["path"].split("/")[1:], mutation["op"], mutation.get("value"))
+        _apply(
+            document,
+            mutation["path"].split("/")[1:],
+            mutation["op"],
+            mutation.get("value"),
+        )
     return _canonical(document)
 
 
@@ -471,13 +604,18 @@ def _registered_keys(registration) -> list[tuple[str, str, tuple[str, ...]]]:
     return sorted(keys)
 
 
-VECTOR_INPUTS = [(case["name"], _case_bytes(case), case["expected"]) for case in VECTOR["cases"]] + [
-    (case["name"], case["bytes"].encode(), case["expected"]) for case in VECTOR["raw_cases"]
+VECTOR_INPUTS = [
+    (case["name"], _case_bytes(case), case["expected"]) for case in VECTOR["cases"]
+] + [
+    (case["name"], case["bytes"].encode(), case["expected"])
+    for case in VECTOR["raw_cases"]
 ]
 
 
 @pytest.mark.asyncio
-async def test_a_refused_manifest_is_a_422_whose_detail_carries_the_readers_code(db, monkeypatch, origin):
+async def test_a_refused_manifest_is_a_422_whose_detail_carries_the_readers_code(
+    db, monkeypatch, origin
+):
     monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
     _, entry = _key("bad", [APP_GRANT_READ])
     entry["did_key"] = "did:key:zNotAKey"
@@ -488,12 +626,20 @@ async def test_a_refused_manifest_is_a_422_whose_detail_carries_the_readers_code
     origin.publish(manifest)
     app = _build_apps_app(db)
     app.state.manifest_fetcher = origin.fetcher
+
     async def policy(tx, subject, *, action, app_id, verified_origin=None):
         return True
+
     app.state.install_admin_policy = policy
-    response = await _install_over_http(app, {
-        "app_id": APP_ID, "origin": origin.url, "digest": _digest(manifest), "granted_scopes": [],
-    })
+    response = await _install_over_http(
+        app,
+        {
+            "app_id": APP_ID,
+            "origin": origin.url,
+            "digest": _digest(manifest),
+            "granted_scopes": [],
+        },
+    )
 
     assert response.status_code == 422, response.text
     assert response.json()["detail"]["code"] == "app_keys_invalid"
@@ -504,7 +650,9 @@ def test_the_server_reserves_the_names_the_vector_reserves():
     assert set(VECTOR["reserved_names"]) <= set(reserved_app_ids())
 
 
-@pytest.mark.parametrize(("name", "data", "expected"), VECTOR_INPUTS, ids=[item[0] for item in VECTOR_INPUTS])
+@pytest.mark.parametrize(
+    ("name", "data", "expected"), VECTOR_INPUTS, ids=[item[0] for item in VECTOR_INPUTS]
+)
 def test_install_reads_bytes_exactly_as_the_shared_reader_does(name, data, expected):
     identity = _identity(data)
     if identity is None:
@@ -512,7 +660,9 @@ def test_install_reads_bytes_exactly_as_the_shared_reader_does(name, data, expec
         return
     app_id, origin = identity
     try:
-        registration = manifest_registration(data, app_id=app_id, origin=origin, digest=_digest(data))
+        registration = manifest_registration(
+            data, app_id=app_id, origin=origin, digest=_digest(data)
+        )
     except ConflictError as refused:
         # The install API rejects a reserved root ID before parsing the bytes.
         # Require the same refusal from the shared reader, not any conflict.
@@ -530,7 +680,9 @@ def test_install_reads_bytes_exactly_as_the_shared_reader_does(name, data, expec
         return
     assert expected["accepted"], name
     resolved = load_manifest(data, reserved_names=reserved_app_ids())
-    assert _registered_keys(registration) == sorted((kid, did, tuple(p)) for kid, did, p in resolved.app_keys)
+    assert _registered_keys(registration) == sorted(
+        (kid, did, tuple(p)) for kid, did, p in resolved.app_keys
+    )
     assert registration.manifest_version == resolved.manifest_version
     assert sorted(registration.requested_scopes) == sorted(set(resolved.install_scopes))
 
@@ -540,10 +692,16 @@ def test_install_reads_bytes_exactly_as_the_shared_reader_does(name, data, expec
     ("app_id", "origin"),
     [("folio", "https://folio.aweb.ai"), ("library", "https://library.aweb.ai")],
 )
-async def test_every_live_apps_committed_manifest_installs_through_the_reader(db, app_id, origin):
-    template = json.loads((ROOT / "naapp" / app_id / "src" / app_id / "aweb-app.json").read_bytes())
+async def test_every_live_apps_committed_manifest_installs_through_the_reader(
+    db, app_id, origin
+):
+    template = json.loads(
+        (ROOT / "naapp" / app_id / "src" / app_id / "aweb-app.json").read_bytes()
+    )
     manifest = fill_manifest(
-        template, app_id=app_id, origin=origin,
+        template,
+        app_id=app_id,
+        origin=origin,
         did_keys={kid: _make_app_keypair()[1] for kid in template_kids(template)},
     )
     document = json.loads(manifest)
@@ -563,19 +721,34 @@ async def test_every_live_apps_committed_manifest_installs_through_the_reader(db
 
     assert installed.digest == _digest(manifest)
     for emitter in document.get("event_emitters", []):
-        assert await get_active_app_emit_key(
-            db, team_id=TEAM_ID, app_id=app_id, kid=emitter["kid"], did_key=emitter["did_key"]
-        ) is not None
+        assert (
+            await get_active_app_emit_key(
+                db,
+                team_id=TEAM_ID,
+                app_id=app_id,
+                kid=emitter["kid"],
+                did_key=emitter["did_key"],
+            )
+            is not None
+        )
 
 
-BAD_DID = next(case for case in VECTOR["cases"] if case["name"] == "app_key_bad_did")["mutations"][0]["value"]
+BAD_DID = next(case for case in VECTOR["cases"] if case["name"] == "app_key_bad_did")[
+    "mutations"
+][0]["value"]
 # The encoding of the identity point, a small-order Ed25519 key anyone can sign as.
 SMALL_ORDER_DID = did_from_public_key(b"\x01" + b"\x00" * 31)
 
 
-@pytest.mark.parametrize("did_key", [BAD_DID, SMALL_ORDER_DID], ids=["app_key_bad_did", "small-order"])
-@pytest.mark.parametrize(("manifest_version", "code"), [(1, "manifest_invalid"), (2, "app_keys_invalid")])
-def test_registration_refuses_a_well_shaped_key_that_is_no_ed25519_key(did_key, manifest_version, code):
+@pytest.mark.parametrize(
+    "did_key", [BAD_DID, SMALL_ORDER_DID], ids=["app_key_bad_did", "small-order"]
+)
+@pytest.mark.parametrize(
+    ("manifest_version", "code"), [(1, "manifest_invalid"), (2, "app_keys_invalid")]
+)
+def test_registration_refuses_a_well_shaped_key_that_is_no_ed25519_key(
+    did_key, manifest_version, code
+):
     document = copy.deepcopy(VECTOR["base_manifests"][f"v{manifest_version}"])
     if manifest_version == 1:
         document["event_emitters"][0]["did_key"] = did_key
@@ -583,7 +756,9 @@ def test_registration_refuses_a_well_shaped_key_that_is_no_ed25519_key(did_key, 
         document["app_keys"][0]["did_key"] = did_key
     manifest = _canonical(document)
     with pytest.raises(ValidationError) as refused:
-        manifest_registration(manifest, app_id=APP_ID, origin=ORIGIN, digest=_digest(manifest))
+        manifest_registration(
+            manifest, app_id=APP_ID, origin=ORIGIN, digest=_digest(manifest)
+        )
     assert refused.value.detail["code"] == code
     assert isinstance(refused.value.__cause__, ManifestError)
     assert refused.value.__cause__.code == code

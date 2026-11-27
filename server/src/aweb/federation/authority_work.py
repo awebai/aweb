@@ -51,7 +51,11 @@ class AuthorityEvidenceScope:
 def authority_result_scope_payload(
     scope: AuthorityEvidenceScope, *, response_digest: str | None = None
 ) -> dict[str, Any]:
-    if scope.authority_generation < 1 or not scope.registry_origin or not scope.canonical_address:
+    if (
+        scope.authority_generation < 1
+        or not scope.registry_origin
+        or not scope.canonical_address
+    ):
         raise ValueError("invalid authority evidence scope")
     complete = scope.payload()
     if response_digest is None:
@@ -101,7 +105,11 @@ class AuthorityWorkRepository:
         owner_id: UUID,
         ttl_seconds: int,
     ) -> AuthorityLease:
-        if not scope_key or scope_key != scope_key.strip() or not 1 <= ttl_seconds <= 60:
+        if (
+            not scope_key
+            or scope_key != scope_key.strip()
+            or not 1 <= ttl_seconds <= 60
+        ):
             raise ValueError("invalid authority lease")
         try:
             async with self.db.transaction() as tx:
@@ -129,7 +137,9 @@ class AuthorityWorkRepository:
                             owner_id,
                             ttl_seconds,
                         )
-                        return AuthorityLease(scope_key, owner_id, row["fence"], row["expires_at"])
+                        return AuthorityLease(
+                            scope_key, owner_id, row["fence"], row["expires_at"]
+                        )
                     return AuthorityLease(
                         scope_key,
                         lease["owner_id"],
@@ -331,7 +341,9 @@ class AuthorityWorkRepository:
                 ) from exc
             if not live or time.monotonic() >= deadline:
                 return None
-            await asyncio.sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
+            await asyncio.sleep(
+                min(poll_seconds, max(0.0, deadline - time.monotonic()))
+            )
 
     async def acquire_permits(
         self,
@@ -346,7 +358,11 @@ class AuthorityWorkRepository:
         try:
             async with self.db.transaction() as tx:
                 for kind, key, limit in ordered:
-                    if kind not in {"global", "domain", "origin"} or not key or limit < 1:
+                    if (
+                        kind not in {"global", "domain", "origin"}
+                        or not key
+                        or limit < 1
+                    ):
                         raise ValueError("invalid authority permit scope")
                     await self._lock(tx, f"permit:{kind}:{key}")
                 for kind, key, limit in ordered:

@@ -51,7 +51,9 @@ def test_a_configured_limit_below_the_rotate_limit_refuses_to_start(monkeypatch)
 
 
 @pytest.mark.parametrize("value", ["", "0", "-1", "lots"])
-def test_a_limit_that_is_not_a_positive_number_of_bytes_refuses_to_start(monkeypatch, value):
+def test_a_limit_that_is_not_a_positive_number_of_bytes_refuses_to_start(
+    monkeypatch, value
+):
     monkeypatch.setenv("AWID_MAX_REQUEST_BODY_BYTES", value)
     with pytest.raises(ValueError, match="AWID_MAX_REQUEST_BODY_BYTES"):
         create_app()
@@ -59,14 +61,18 @@ def test_a_limit_that_is_not_a_positive_number_of_bytes_refuses_to_start(monkeyp
 
 @pytest.mark.asyncio
 async def test_a_body_within_the_limit_is_parsed(client):
-    response = await client.post(ADDRESSES, content=b"x" * 1024, headers={"content-type": "application/json"})
+    response = await client.post(
+        ADDRESSES, content=b"x" * 1024, headers={"content-type": "application/json"}
+    )
     assert response.status_code == 422, response.text
 
 
 @pytest.mark.asyncio
 async def test_a_declared_body_over_the_limit_is_refused_before_it_is_parsed(client):
     body = b"x" * (DEFAULT_MAX_REQUEST_BODY_BYTES + 1)
-    response = await client.post(ADDRESSES, content=body, headers={"content-type": "application/json"})
+    response = await client.post(
+        ADDRESSES, content=body, headers={"content-type": "application/json"}
+    )
     assert response.status_code == 413, response.text
     assert response.json() == {"detail": "Request body too large"}
 
@@ -74,7 +80,9 @@ async def test_a_declared_body_over_the_limit_is_refused_before_it_is_parsed(cli
 @pytest.mark.asyncio
 async def test_an_undeclared_body_over_the_limit_is_refused_before_it_is_parsed(client):
     body = _chunks(b"x" * DEFAULT_MAX_REQUEST_BODY_BYTES, b"x")
-    response = await client.post(ADDRESSES, content=body, headers={"content-type": "application/json"})
+    response = await client.post(
+        ADDRESSES, content=body, headers={"content-type": "application/json"}
+    )
     assert "content-length" not in response.request.headers
     assert response.status_code == 413, response.text
     assert response.json() == {"detail": "Request body too large"}

@@ -54,7 +54,9 @@ async def policy_rows_for_participant(
         did,
     )
     # All raw-claim matches must pass policy; none selects a recipient or route.
-    return [Recipient.from_member_projection(MemberProjection.from_row(row)) for row in rows]
+    return [
+        Recipient.from_member_projection(MemberProjection.from_row(row)) for row in rows
+    ]
 
 
 async def authorize_message_delivery(

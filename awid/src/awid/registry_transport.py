@@ -45,11 +45,14 @@ class RegistryOverrideTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request):
         try:
             origin = canonical_registry_origin(
-                str(request.url.copy_with(path="/", query=None)), context=self.origin_context,
+                str(request.url.copy_with(path="/", query=None)),
+                context=self.origin_context,
             )
             addresses = validate_resolved_addresses(
                 await SystemHostResolver().resolve_all(request.url.host),
-                allow_nonpublic_test=isolated_registry_test_enabled(origin, self.origin_context),
+                allow_nonpublic_test=isolated_registry_test_enabled(
+                    origin, self.origin_context
+                ),
             )
         except FederationAuthorityError as exc:
             raise httpx.ConnectError(

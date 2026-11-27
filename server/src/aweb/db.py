@@ -11,15 +11,14 @@ from .connection_scope import DatabaseManager
 from .migrations import apply_native_migrations
 from awid.db_config import build_database_config
 
+
 class DatabaseInfrastructure(Protocol):
     """Initialized native managers borrowed from a serving application."""
 
     @property
-    def is_initialized(self) -> bool:
-        ...
+    def is_initialized(self) -> bool: ...
 
-    def get_manager(self, name: str = "aweb") -> Any:
-        ...
+    def get_manager(self, name: str = "aweb") -> Any: ...
 
 
 class DatabaseInfra:

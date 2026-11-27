@@ -12,9 +12,7 @@ SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
 
 def next_version(prefix: str) -> str:
-    output = subprocess.check_output(
-        ["git", "tag", "--list", f"{prefix}*"], text=True
-    )
+    output = subprocess.check_output(["git", "tag", "--list", f"{prefix}*"], text=True)
     versions = []
     for tag in output.splitlines():
         value = tag.removeprefix(prefix)

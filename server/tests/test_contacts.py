@@ -71,10 +71,14 @@ async def test_add_duplicate_contact_raises(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     owner_did = "did:aw:owner-bob"
 
-    await add_contact(db_shim, owner_did=owner_did, contact_address="example.com/bob", label="")
+    await add_contact(
+        db_shim, owner_did=owner_did, contact_address="example.com/bob", label=""
+    )
 
     with pytest.raises(ConflictError, match="already exists"):
-        await add_contact(db_shim, owner_did=owner_did, contact_address="example.com/bob", label="")
+        await add_contact(
+            db_shim, owner_did=owner_did, contact_address="example.com/bob", label=""
+        )
 
 
 @pytest.mark.asyncio
@@ -82,7 +86,9 @@ async def test_remove_contact(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     owner_did = "did:aw:owner-carol"
 
-    result = await add_contact(db_shim, owner_did=owner_did, contact_address="example.com/carol", label="")
+    result = await add_contact(
+        db_shim, owner_did=owner_did, contact_address="example.com/carol", label=""
+    )
     contact_id = result["contact_id"]
 
     await remove_contact(db_shim, owner_did=owner_did, contact_id=contact_id)
@@ -96,15 +102,21 @@ async def test_get_contact_addresses(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     owner_did = "did:aw:owner-dave"
 
-    await add_contact(db_shim, owner_did=owner_did, contact_address="example.com", label="")
-    await add_contact(db_shim, owner_did=owner_did, contact_address="other.org/dave", label="")
+    await add_contact(
+        db_shim, owner_did=owner_did, contact_address="example.com", label=""
+    )
+    await add_contact(
+        db_shim, owner_did=owner_did, contact_address="other.org/dave", label=""
+    )
 
     addrs = await get_contact_addresses(db_shim, owner_did=owner_did)
     assert addrs == {"example.com", "other.org/dave"}
 
 
 @pytest.mark.asyncio
-async def test_existing_contacts_backfill_identity_active_and_remain_queryable(aweb_cloud_db):
+async def test_existing_contacts_backfill_identity_active_and_remain_queryable(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     owner_did = "did:aw:owner-existing"
 
@@ -132,7 +144,9 @@ async def test_existing_contacts_backfill_identity_active_and_remain_queryable(a
             "target_agent_name": None,
         }
     ]
-    assert await get_contact_addresses(db_shim, owner_did=owner_did) == {"example.com/existing"}
+    assert await get_contact_addresses(db_shim, owner_did=owner_did) == {
+        "example.com/existing"
+    }
 
 
 @pytest.mark.asyncio
@@ -198,18 +212,27 @@ async def test_handle_and_identity_contacts_coexist(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     owner_did = "did:aw:owner-mixed"
 
-    await add_contact(db_shim, owner_did=owner_did, contact_address="acme.com/alice", label="Alice")
-    await add_handle_contact(db_shim, owner_did=owner_did, handle_namespace="acme.com", label="Acme")
+    await add_contact(
+        db_shim, owner_did=owner_did, contact_address="acme.com/alice", label="Alice"
+    )
+    await add_handle_contact(
+        db_shim, owner_did=owner_did, handle_namespace="acme.com", label="Acme"
+    )
 
     contacts = await list_contacts(db_shim, owner_did=owner_did)
-    assert {(c["reference_type"], c["contact_address"], c["handle_namespace"]) for c in contacts} == {
+    assert {
+        (c["reference_type"], c["contact_address"], c["handle_namespace"])
+        for c in contacts
+    } == {
         ("identity", "acme.com/alice", None),
         ("handle", None, "acme.com"),
     }
 
 
 @pytest.mark.asyncio
-async def test_pending_contact_does_not_satisfy_contacts_policy_until_active(aweb_cloud_db):
+async def test_pending_contact_does_not_satisfy_contacts_policy_until_active(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     owner_did = "did:aw:owner-policy"
 
@@ -230,13 +253,18 @@ async def test_pending_contact_does_not_satisfy_contacts_policy_until_active(awe
         """,
         owner_did,
     )
-    assert await get_contact_addresses(db_shim, owner_did=owner_did) == {"acme.com/alice"}
+    assert await get_contact_addresses(db_shim, owner_did=owner_did) == {
+        "acme.com/alice"
+    }
 
 
 @pytest.mark.asyncio
-async def test_handle_contact_default_agent_resolution_uses_recent_activity(aweb_cloud_db):
-    assert "ORDER BY last_seen_at DESC NULLS LAST, a.created_at ASC" in inspect.getsource(
-        resolve_handle_contact_agent
+async def test_handle_contact_default_agent_resolution_uses_recent_activity(
+    aweb_cloud_db,
+):
+    assert (
+        "ORDER BY last_seen_at DESC NULLS LAST, a.created_at ASC"
+        in inspect.getsource(resolve_handle_contact_agent)
     )
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await aweb_cloud_db.aweb_db.execute(

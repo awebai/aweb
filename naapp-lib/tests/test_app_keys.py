@@ -38,22 +38,33 @@ def _did_key(seed_hex: str) -> str:
 
 def _manifest(**emitters: str) -> Manifest:
     """A v1 manifest whose event emitters are ``emitters`` (kid to did:key)."""
-    return load_manifest(canonical_bytes({
-        "manifest_version": 1,
-        "app": {"id": "example", "origin": "https://example.test"},
-        "tools": [],
-        "event_emitters": [{"kid": kid, "did_key": did} for kid, did in emitters.items()],
-    }))
+    return load_manifest(
+        canonical_bytes(
+            {
+                "manifest_version": 1,
+                "app": {"id": "example", "origin": "https://example.test"},
+                "tools": [],
+                "event_emitters": [{"kid": kid, "did_key": did} for kid, did in emitters.items()],
+            }
+        )
+    )
 
 
 def _v2_manifest(*keys: tuple[str, str, list[str]]) -> Manifest:
     """A v2 manifest declaring ``keys`` as (kid, did:key, purposes)."""
-    return load_manifest(canonical_bytes({
-        "manifest_version": 2,
-        "app": {"id": "example", "origin": "https://example.test"},
-        "tools": [],
-        "app_keys": [{"kid": kid, "did_key": did, "purposes": purposes} for kid, did, purposes in keys],
-    }))
+    return load_manifest(
+        canonical_bytes(
+            {
+                "manifest_version": 2,
+                "app": {"id": "example", "origin": "https://example.test"},
+                "tools": [],
+                "app_keys": [
+                    {"kid": kid, "did_key": did, "purposes": purposes}
+                    for kid, did, purposes in keys
+                ],
+            }
+        )
+    )
 
 
 def _key_file(tmp_path: Path, seed_hex: str, *, name: str = "app.key", mode: int = 0o600) -> Path:
@@ -206,7 +217,9 @@ def test_a_v2_key_declared_for_app_event_signs_app_events(tmp_path: Path) -> Non
     assert (key.kid, key.did_key) == (_KID, _did_key(seed))
 
 
-def test_a_v2_key_declared_only_for_another_purpose_is_not_the_app_event_key(tmp_path: Path) -> None:
+def test_a_v2_key_declared_only_for_another_purpose_is_not_the_app_event_key(
+    tmp_path: Path,
+) -> None:
     seed = secrets.token_hex(32)
     settings = _settings(app_key_files={_KID: _key_file(tmp_path, seed)})
     manifest = _v2_manifest((_KID, _did_key(seed), ["app-request"]))
@@ -217,10 +230,12 @@ def test_a_v2_key_declared_only_for_another_purpose_is_not_the_app_event_key(tmp
 
 def test_a_v2_key_is_chosen_by_the_purpose_each_kid_declares(tmp_path: Path) -> None:
     events, requests = secrets.token_hex(32), secrets.token_hex(32)
-    settings = _settings(app_key_files={
-        "example:events": _key_file(tmp_path, events, name="events.key"),
-        "example:requests": _key_file(tmp_path, requests, name="requests.key"),
-    })
+    settings = _settings(
+        app_key_files={
+            "example:events": _key_file(tmp_path, events, name="events.key"),
+            "example:requests": _key_file(tmp_path, requests, name="requests.key"),
+        }
+    )
     manifest = _v2_manifest(
         ("example:events", _did_key(events), [APP_EVENT, "app-usage"]),
         ("example:requests", _did_key(requests), ["app-request"]),
@@ -240,10 +255,16 @@ def test_the_released_seed_value_signs_only_app_events_whatever_its_kid_declares
 
 
 _VECTOR = json.loads(
-    (Path(__file__).resolve().parents[2] / "test-vectors" / "app-manifests" / "app-manifest-v2-v1.json")
-    .read_text(encoding="utf-8")
+    (
+        Path(__file__).resolve().parents[2]
+        / "test-vectors"
+        / "app-manifests"
+        / "app-manifest-v2-v1.json"
+    ).read_text(encoding="utf-8")
 )
-_BAD_DID = next(c for c in _VECTOR["cases"] if c["name"] == "app_key_bad_did")["mutations"][0]["value"]
+_BAD_DID = next(c for c in _VECTOR["cases"] if c["name"] == "app_key_bad_did")["mutations"][0][
+    "value"
+]
 
 
 # The shared vector's app_key_bad_did value, and the identity point: well-shaped
@@ -253,9 +274,14 @@ _BAD_DID = next(c for c in _VECTOR["cases"] if c["name"] == "app_key_bad_did")["
     [_BAD_DID, did_from_public_key(b"\x01" + b"\x00" * 31)],
     ids=["app_key_bad_did", "small-order"],
 )
-@pytest.mark.parametrize("build", [_manifest, lambda **keys: _v2_manifest(
-    *((kid, did, [APP_EVENT]) for kid, did in keys.items())
-)], ids=["v1", "v2"])
+@pytest.mark.parametrize(
+    "build",
+    [
+        _manifest,
+        lambda **keys: _v2_manifest(*((kid, did, [APP_EVENT]) for kid, did in keys.items())),
+    ],
+    ids=["v1", "v2"],
+)
 def test_a_declared_key_that_is_no_ed25519_key_never_loads(tmp_path: Path, declared, build) -> None:
     settings = _settings(app_key_files={_KID: _key_file(tmp_path, secrets.token_hex(32))})
     with pytest.raises(AppKeyError, match="not the public key the manifest declares"):

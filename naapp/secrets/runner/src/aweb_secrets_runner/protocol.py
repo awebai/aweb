@@ -183,7 +183,9 @@ def sign_request(
         }
     )
     header = (
-        encode64(payload) + "." + encode64(sign_bytes(key, b"aweb.secrets.runner-request/1\n" + payload))
+        encode64(payload)
+        + "."
+        + encode64(sign_bytes(key, b"aweb.secrets.runner-request/1\n" + payload))
     )
     if len(header) > 4096:
         raise Refused("runner_request_invalid")

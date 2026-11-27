@@ -23,7 +23,7 @@ def test_catalog_and_profile_lists_have_native_list_item_semantics() -> None:
 
         def handle_endtag(self, tag):
             if tag in self.stack:
-                self.stack = self.stack[:len(self.stack) - 1 - self.stack[::-1].index(tag)]
+                self.stack = self.stack[: len(self.stack) - 1 - self.stack[::-1].index(tag)]
 
     for html in (
         browse.render_catalog_page(public_origin=ORIGIN, blueprints=[_blueprint()]),
@@ -109,7 +109,7 @@ def test_blueprint_roster_is_one_listing_with_linked_roles_missions_and_counts()
     assert "Stand up a three-role team." in html
     # the roster is the only role listing — the duplicate profile-cards section is gone.
     assert 'class="browse-profile-card"' not in html
-    assert "<h2 class=\"browse-section-title\">Profiles</h2>" not in html
+    assert '<h2 class="browse-section-title">Profiles</h2>' not in html
 
 
 def test_blueprint_page_has_no_runtime_column_or_tool_stamp() -> None:
@@ -188,7 +188,10 @@ def test_profile_leads_with_mission_and_shows_how_it_works_specs() -> None:
 
 def test_profile_skills_link_to_skill_pages_and_instructions_render_verbatim() -> None:
     html = browse.render_profile_page(public_origin=ORIGIN, profile=_profile())
-    assert 'class="browse-skill-card" href="/blueprints/aweb.team/profiles/coordinator/skills/spawn-instance"' in html
+    assert (
+        'class="browse-skill-card" href="/blueprints/aweb.team/profiles/coordinator/skills/spawn-instance"'
+        in html
+    )
     assert "spawn-instance" in html
     # the sanitized instructions HTML is inserted verbatim in the markdown body.
     assert 'class="markdown-body"' in html

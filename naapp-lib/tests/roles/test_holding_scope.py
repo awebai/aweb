@@ -34,7 +34,9 @@ def test_each_installation_team_and_principal_has_its_own_scope() -> None:
     here = holding_scope(INSTALLATION, TEAM, "logs.reader", PRINCIPAL)
     assert here != holding_scope("other-installation", TEAM, "logs.reader", PRINCIPAL)
     assert here != holding_scope(INSTALLATION, "acme:example.org", "logs.reader", PRINCIPAL)
-    assert here != holding_scope(INSTALLATION, TEAM, "logs.reader", "did:aw:3Xr8nYo5lQ0sU2wZ6aB9cD4eF7")
+    assert here != holding_scope(
+        INSTALLATION, TEAM, "logs.reader", "did:aw:3Xr8nYo5lQ0sU2wZ6aB9cD4eF7"
+    )
 
 
 @pytest.mark.parametrize("role", ["logs", "Logs.Reader", "logs..reader"])

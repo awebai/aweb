@@ -23,7 +23,9 @@ __all__ = ["privacy_app"]
 
 
 _VECTORS = json.loads(
-    (Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json").read_text()
+    (
+        Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json"
+    ).read_text()
 )
 _CASE_NAME = "address-replacement-does-not-transfer-contact-trust"
 _CASES = [case for case in _VECTORS["operation_cases"] if case["name"] == _CASE_NAME]
@@ -32,7 +34,9 @@ assert len(_CASES) == 1, "S4 must consume the frozen operation case by name"
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", _CASES, ids=lambda case: case["name"])
-async def test_address_replacement_does_not_transfer_contact_trust(privacy_app, monkeypatch, case):
+async def test_address_replacement_does_not_transfer_contact_trust(
+    privacy_app, monkeypatch, case
+):
     env = privacy_app
     domain, name = "contact-replacement.test", "responsible-human"
     address = f"{domain}/{name}"
@@ -131,7 +135,8 @@ async def test_address_replacement_does_not_transfer_contact_trust(privacy_app, 
             refused = await _request(env, "bob", "POST", path, payload)
             observed = {
                 "address_preserved": reassigned.address_id == before.address_id,
-                "automatic_contact_rebind": saved["contact_did_aw"] == replacement["did_aw"],
+                "automatic_contact_rebind": saved["contact_did_aw"]
+                == replacement["did_aw"],
                 "explicit_contact_rebind_required": refused.is_error,
             }
             assert observed == case["expected"]

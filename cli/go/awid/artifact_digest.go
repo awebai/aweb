@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 // SignedArtifactDigest binds the exact bytes of a historical signed result.

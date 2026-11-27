@@ -23,24 +23,36 @@ def test_by_default_no_origin_is_internal_and_the_fetcher_stays_public():
     internal = get_app_internal_origins()
     assert internal.origins == frozenset()
     assert internal.cidr is None
-    assert ManifestFetcher().egress.addresses.internal_destinations is InternalDestinations.DISABLED
+    assert (
+        ManifestFetcher().egress.addresses.internal_destinations
+        is InternalDestinations.DISABLED
+    )
 
 
 def test_listed_origins_are_exact_canonical_origins_within_one_network(monkeypatch):
-    monkeypatch.setenv(ORIGINS, '["https://API.Secrets.example:443", "https://logs.example:8443/"]')
+    monkeypatch.setenv(
+        ORIGINS, '["https://API.Secrets.example:443", "https://logs.example:8443/"]'
+    )
     monkeypatch.setenv(CIDR, "10.96.0.0/12")
     internal = get_app_internal_origins()
-    assert internal.origins == frozenset({"https://api.secrets.example", "https://logs.example:8443"})
+    assert internal.origins == frozenset(
+        {"https://api.secrets.example", "https://logs.example:8443"}
+    )
     assert internal.cidr == ip_network("10.96.0.0/12")
     fetcher = ManifestFetcher()
     assert fetcher.internal == internal
-    assert fetcher.egress.addresses.internal_destinations is InternalDestinations.ALLOWED
+    assert (
+        fetcher.egress.addresses.internal_destinations is InternalDestinations.ALLOWED
+    )
 
 
-@pytest.mark.parametrize("origins, cidr", [
-    ('["https://api.secrets.example"]', None),
-    (None, "10.96.0.0/12"),
-])
+@pytest.mark.parametrize(
+    "origins, cidr",
+    [
+        ('["https://api.secrets.example"]', None),
+        (None, "10.96.0.0/12"),
+    ],
+)
 def test_origins_and_network_come_together(monkeypatch, origins, cidr):
     for name, value in ((ORIGINS, origins), (CIDR, cidr)):
         if value is not None:
@@ -49,15 +61,18 @@ def test_origins_and_network_come_together(monkeypatch, origins, cidr):
         get_app_internal_origins()
 
 
-@pytest.mark.parametrize("origins", [
-    "https://api.secrets.example",
-    "[]",
-    '["http://api.secrets.example"]',
-    '["https://api.secrets.example/catalog"]',
-    '["https://api.secrets.example?x=1"]',
-    '["https://user@api.secrets.example"]',
-    "[17]",
-])
+@pytest.mark.parametrize(
+    "origins",
+    [
+        "https://api.secrets.example",
+        "[]",
+        '["http://api.secrets.example"]',
+        '["https://api.secrets.example/catalog"]',
+        '["https://api.secrets.example?x=1"]',
+        '["https://user@api.secrets.example"]',
+        "[17]",
+    ],
+)
 def test_anything_but_a_list_of_exact_https_origins_is_refused(monkeypatch, origins):
     monkeypatch.setenv(ORIGINS, origins)
     monkeypatch.setenv(CIDR, "10.96.0.0/12")
@@ -65,7 +80,10 @@ def test_anything_but_a_list_of_exact_https_origins_is_refused(monkeypatch, orig
         get_app_internal_origins()
 
 
-@pytest.mark.parametrize("cidr", ["10.0.0.0/7", "10.96.0.1/12", "127.0.0.0/8", "169.254.0.0/16", "not-a-network"])
+@pytest.mark.parametrize(
+    "cidr",
+    ["10.0.0.0/7", "10.96.0.1/12", "127.0.0.0/8", "169.254.0.0/16", "not-a-network"],
+)
 def test_the_network_must_be_an_exact_permitted_internal_network(monkeypatch, cidr):
     monkeypatch.setenv(ORIGINS, '["https://api.secrets.example"]')
     monkeypatch.setenv(CIDR, cidr)

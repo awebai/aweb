@@ -30,7 +30,9 @@ def test_cross_team_document_isolation_and_body_named_team_is_ignored(
     team_a = _provision_team(aw_workspace_factory("team-a"), folio=folio, alias="alice")
     team_b = _provision_team(aw_workspace_factory("team-b"), folio=folio, alias="bob")
 
-    created = _create_document(folio, team_a, slug="team-a-secret", title="Secret", body="team A only")
+    created = _create_document(
+        folio, team_a, slug="team-a-secret", title="Secret", body="team A only"
+    )
     assert created["slug"] == "team-a-secret"
     assert created["latest"]["created_by_alias"] == "alice"
 
@@ -41,7 +43,9 @@ def test_cross_team_document_isolation_and_body_named_team_is_ignored(
     team_b_read = _aw_request(team_b, "GET", f"{folio.origin}/v1/documents/team-a-secret")
     _assert_aw_status(team_b_read, 404, context="team B reads team A document")
 
-    team_b_versions = _aw_request(team_b, "GET", f"{folio.origin}/v1/documents/team-a-secret/versions")
+    team_b_versions = _aw_request(
+        team_b, "GET", f"{folio.origin}/v1/documents/team-a-secret/versions"
+    )
     _assert_aw_status(team_b_versions, 404, context="team B lists team A versions")
 
     team_b_append = _aw_request(

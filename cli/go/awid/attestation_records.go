@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/awebai/aw/signaturewire"
+	"github.com/awebai/aw/internal/signaturewire"
 )
 
 // The team-key-signed AWID records behind principal attestation

@@ -97,7 +97,9 @@ async def test_private_pending_key_confirms_only_when_the_existing_registry_read
         pending = await observe_team_key(
             team_key_observation_probe, origin=origin, certificate=header
         )
-        assert pending == {"evidence": {"did_key": env.team_did, "state": "unconfirmed"}}, pending
+        assert pending == {
+            "evidence": {"did_key": env.team_did, "state": "unconfirmed"}
+        }, pending
 
         await writer.register_team_certificate(
             "example.test",
@@ -114,7 +116,9 @@ async def test_private_pending_key_confirms_only_when_the_existing_registry_read
         confirmed = await observe_team_key(
             team_key_observation_probe, origin=origin, certificate=header
         )
-        assert confirmed == {"evidence": {"did_key": env.team_did, "state": "confirmed"}}, confirmed
+        assert confirmed == {
+            "evidence": {"did_key": env.team_did, "state": "confirmed"}
+        }, confirmed
 
         # Deliberate response/artifact substitution: a valid self-signed blob
         # reuses the registered ID. The independent registry key must win.
@@ -136,5 +140,9 @@ async def test_private_pending_key_confirms_only_when_the_existing_registry_read
         assert "does not match the registry's" in refused["error"]
         assert "ask the team's owner" in refused["error"]
 
-    unknown = await observe_team_key(team_key_observation_probe, origin=origin, certificate=header)
-    assert unknown == {"evidence": {"did_key": env.team_did, "state": "unconfirmed"}}, unknown
+    unknown = await observe_team_key(
+        team_key_observation_probe, origin=origin, certificate=header
+    )
+    assert unknown == {"evidence": {"did_key": env.team_did, "state": "unconfirmed"}}, (
+        unknown
+    )

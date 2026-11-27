@@ -504,7 +504,7 @@ async def _present_by_wake(
     ]
     runner = await asyncio.create_subprocess_exec(
         "node",
-        str(REPO / "cli/go/wake/channel_core_runner_bundle.mjs"),
+        str(REPO / "cli/go/internal/wake/channel_core_runner_bundle.mjs"),
         cwd=command_dir,
         env=command_env,
         stdin=asyncio.subprocess.PIPE,
@@ -862,7 +862,14 @@ async def test_channel_core_addressless_human_mail(
     ],
 )
 async def test_cross_team_local_sender_to_global_grant(
-    privacy_app, runtime_packages, tmp_path, monkeypatch, plaintext, runtime, state, expected
+    privacy_app,
+    runtime_packages,
+    tmp_path,
+    monkeypatch,
+    plaintext,
+    runtime,
+    state,
+    expected,
 ):
     async with _local_sender_mail(
         privacy_app,
@@ -881,10 +888,14 @@ async def test_cross_team_local_sender_to_global_grant(
             def fail_sender_standing(request, response):
                 if request.method == "GET" and request.url.path == revocations:
                     failed_reads.append(request.url.path)
-                    return httpx.Response(503, json={"detail": "sender authority temporarily unavailable"})
+                    return httpx.Response(
+                        503, json={"detail": "sender authority temporarily unavailable"}
+                    )
                 return response
 
-            monkeypatch.setattr(privacy_app.registry.transport, "fault", fail_sender_standing)
+            monkeypatch.setattr(
+                privacy_app.registry.transport, "fault", fail_sender_standing
+            )
         shown = await _cli(
             binary,
             command_dir,

@@ -91,10 +91,6 @@ func init() {
 	registerTeamAdminCommand(teamHumanReplaceKeyCmd, teamAdminGroupOperations)
 }
 
-func localIdentityKeyReplacementAuthPayload(alias string, payload localIdentityKeyReplacementRequest, timestamp string) ([]byte, error) {
-	return awid.LocalIdentityKeyReplacementPayload(awid.LocalIdentityKeyReplacementPayloadInput{Alias: alias, Request: payload, Timestamp: timestamp})
-}
-
 func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 	alias := strings.TrimSpace(args[0])
 	if !isValidWorkspaceAlias(alias) {

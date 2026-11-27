@@ -9,12 +9,23 @@ from .errors import Infrastructure
 from .memory import load_samples, summarize_samples
 
 
+def budget_number(value):
+    """A budget.tsv value: an integer, a decimal (a fractional CPU share), or text."""
+    if value.isdigit():
+        return int(value)
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
 def collect_archive(archive, sha, destination):
     destination = Path(destination).resolve()
     destination.mkdir(parents=True, exist_ok=True, mode=0o700)
     stages = []
     targets = []
     summaries = []
+    budget = None
     links = []
     with tarfile.open(archive) as t:
         for item in t:
@@ -37,15 +48,25 @@ def collect_archive(archive, sha, destination):
             with target.open("wb") as output:
                 while chunk := source.read(1024 * 1024):
                     output.write(chunk)
-            if (
+            gate_run = (
                 len(rel.parts) == 3
                 and rel.parts[0] == "tmp"
-                and rel.parts[2] == "summary.tsv"
                 and (
                     rel.parts[1] == "aweb-candidate-gate-" + sha
                     or rel.parts[1].startswith("aweb-candidate-gate-" + sha + "-")
                 )
-            ):
+            )
+            if gate_run and rel.parts[2] == "budget.tsv":
+                budget = {}
+                for line in target.read_text().splitlines():
+                    name, _, value = line.partition("\t")
+                    if name == "lane_share":
+                        # One row per lane: name<TAB>lane<TAB>number.
+                        lane, _, number = value.partition("\t")
+                        budget.setdefault(name, {})[lane] = budget_number(number)
+                    else:
+                        budget[name] = budget_number(value)
+            if gate_run and rel.parts[2] == "summary.tsv":
                 summaries.append(item.name)
                 for line in target.read_text().splitlines():
                     fields = line.split("\t")
@@ -63,10 +84,14 @@ def collect_archive(archive, sha, destination):
                         "summary": item.name,
                     }
                     if target:
-                        targets.append({
-                            **row, "target": target, "log": fields[2],
-                            "detail": fields[4] if len(fields) > 4 else "",
-                        })
+                        targets.append(
+                            {
+                                **row,
+                                "target": target,
+                                "log": fields[2],
+                                "detail": fields[4] if len(fields) > 4 else "",
+                            }
+                        )
                     else:
                         stages.append(row)
     output = destination / "var/log/vm-gate/gate-output.log"
@@ -95,6 +120,7 @@ def collect_archive(archive, sha, destination):
     )
     return {
         "supervision": supervision,
+        "budget": budget,
         "stages": stages,
         "targets": targets,
         "gate_summaries": summaries,

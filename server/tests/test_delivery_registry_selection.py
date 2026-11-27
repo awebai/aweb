@@ -37,7 +37,9 @@ def _root(selected, shadow):
     root = FastAPI()
     root.state.awid_registry_client = shadow
     # The lower-layer configuration seam needs no R7 lifecycle or auth artifact.
-    root.state.native_resources = SimpleNamespace(api_app=native, registry_client=selected)
+    root.state.native_resources = SimpleNamespace(
+        api_app=native, registry_client=selected
+    )
     return root
 
 
@@ -57,7 +59,9 @@ def _runtime(kind, app):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["native", "mcp"])
-async def test_root_runtime_selects_exact_resource_over_both_shadow_slots(registry_clients, kind):
+async def test_root_runtime_selects_exact_resource_over_both_shadow_slots(
+    registry_clients, kind
+):
     selected = registry_clients("https://selected.example")
     shadow = registry_clients("https://shadow.example")
     assert _runtime(kind, _root(selected, shadow)).registry_client is selected
@@ -65,7 +69,9 @@ async def test_root_runtime_selects_exact_resource_over_both_shadow_slots(regist
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["native", "mcp"])
-async def test_missing_resource_client_never_falls_through_to_shadow(registry_clients, kind):
+async def test_missing_resource_client_never_falls_through_to_shadow(
+    registry_clients, kind
+):
     shadow = registry_clients("https://shadow.example")
     assert _runtime(kind, _root(None, shadow)).registry_client is None
 
@@ -83,7 +89,9 @@ async def test_unembedded_runtime_keeps_selected_client_and_optional_absence(
 
 
 @pytest.mark.asyncio
-async def test_explicit_mcp_foreign_client_wins_even_without_resource_client(registry_clients):
+async def test_explicit_mcp_foreign_client_wins_even_without_resource_client(
+    registry_clients,
+):
     explicit = registry_clients("https://foreign.example")
     root = _root(None, registry_clients("https://shadow.example"))
     auth = AuthContext(
@@ -93,7 +101,10 @@ async def test_explicit_mcp_foreign_client_wins_even_without_resource_client(reg
         did_key="",
         request=Request({"type": "http", "app": root, "headers": []}),
     )
-    assert mcp_messaging_runtime(auth, registry_client=explicit).registry_client is explicit
+    assert (
+        mcp_messaging_runtime(auth, registry_client=explicit).registry_client
+        is explicit
+    )
     assert (
         mcp_messaging_runtime(
             AuthContext(team_id=None, agent_id=None, alias=None, did_key="")
@@ -115,7 +126,9 @@ async def test_root_ingress_preserves_signature_and_missing_registry_refusals(
     _, public = generate_keypair()
     wrong_key, _ = generate_keypair()
     envelope = _envelope(did_from_public_key(public))
-    payload = FederatedDeliveryRequest(envelope=envelope, signature=_sign(envelope, wrong_key))
+    payload = FederatedDeliveryRequest(
+        envelope=envelope, signature=_sign(envelope, wrong_key)
+    )
     request = Request({"type": "http", "app": root, "headers": []})
     # Direct route boundary: invalid integrity must refuse before any database
     # access or admission. This is not successful federation authority evidence.
