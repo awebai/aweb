@@ -863,8 +863,8 @@ theorem Authorised.controller_eq {ask : AskRule} {s : State} {key key' : OrgKey}
 /-- In one act asked for by whoever controls an organisation's key: every new
 identity certificate and every new or removed team certificate is of that
 key's organisation, and every newly revoked identity has a certificate of it.
-Nothing is stated about invitations, grants, held keys or identities admitted
-again. -/
+Nothing is stated about invitations, grants, held keys, cut-offs or identities
+admitted again. -/
 theorem controller_stays_in_its_organisation {ask : AskRule} {s s' : State} {key : OrgKey}
     (hstep : Step ask s (.controller key) s') :
     (∀ c, c ∈ s'.certs → c ∉ s.certs → c.org = key.org) ∧

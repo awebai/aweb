@@ -100,7 +100,7 @@ One line for every sentence that says something about the model, apart from a th
 | 28 | The model does not show the holder no longer has the former private key | definition | `held` records only which keys are held, not copies |
 | 28 | Nor does the protocol | source | the source readings |
 | 35, 48, 49 | A warning | process | A label |
-| 25, 42 | Resting on the planned premise that `redeem`'s team (and, in a record the system can reach, `invite`'s) is not the admin team | definition, source | The proofs close the `redeem` case with `i.team ≠ .admin`; only `invite` creates an invitation, also with `i.team ≠ .admin`; both planned |
+| 25, 42 | Resting on the planned premise that `redeem`'s team is not the admin team | definition, source | The proofs close the `redeem` case with `i.team ≠ .admin`, a planned part |
 | 11a | Before and after the act | result | The hypothesis that the admin team's key is held after the act; a re-key removes it |
 | 21 | Admission asked for by an invitation's bearer; a native invitation is accepted with the team controller's own key, that controller's act | source, act | `cli/go/cmd/aw/id_team.go` line 1764 at 5c2ee7bad3; the security owner's note; `admit` asked by the team key's controller |
 | 50 | A grant is added only by its subject, so a grant from the team does not come back unless its subject gives it again | result | Row 19 |
@@ -134,7 +134,7 @@ One block per cell, in the table's order.
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule` (`Admin` needs `Valid`), `teamRule` |
 | A revoked member keeps authority | Proved in reachable records: not valid, not an admin, cannot act in a team, cannot send with its own key, no live grant | result | Rows 7, 20; `sendOwn` needs `CanAct` |
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | As above |
-| | Under every rule it can still revoke a grant on itself, revoke itself, leave a held team unless it is the admin team and no other admin remains, be the key `redeem` names | act, result | `revokeGrant`, `revokeSelf` have no validity premise; `leave` has none but `KeepsAnAdmin`; `redeem` needs `OneTeamIfLocal`, which a revoked identity meets because in reachable records it is registered (row 14) |
+| | Under every rule it can still revoke a grant on itself, revoke itself, by the planned `leave` leave a held team unless it is the admin team and no other admin remains, be the key `redeem` names | act, result | `revokeGrant`, `revokeSelf` have no validity premise; `leave` has none but `KeepsAnAdmin`; `redeem` needs `OneTeamIfLocal`, which a revoked identity meets because in reachable records it is registered (row 14) |
 | A revocation is undone | Proved for one act | result | `revocation_is_permanent` |
 | | Not proved for several acts | process | No theorem states it |
 | | A root-issued cut-off identity can be admitted again while the root key is not held | result | Row 31 |
@@ -146,7 +146,7 @@ One block per cell, in the table's order.
 | | A revoked identity cannot act in any team, in reachable records | result | Row 7 |
 | | Proved for one act: new identity and new or removed team certificates are of the key's organisation; a newly revoked identity has a certificate of it | result | `controller_stays_in_its_organisation` |
 | | With one certificate each, of no other | result | Same theorem's last conjunct; row 14 |
-| | Not stated for invitations, grants, held keys or re-admissions | result | The theorem's statement |
+| | Not stated for invitations, grants, held keys, cut-offs or re-admissions | result | The theorem's statement |
 | A message attributed to someone who did not send it | Proved for one act, for every message the act adds | result | Row 18 |
 | | That the subject gave the grant is proved for the act that adds it, not for every grant | result | Row 19; no theorem about every grant |
 | A grant holder does more than send | Proved for one act | result | Rows 17, 19 |
@@ -268,7 +268,7 @@ Each item pairs a sentence about the model with one about the real system.
 | `key_holder_keeps_an_admin` | A planned check | source | `KeepsAnAdmin` is one of the planned parts; the registry has no such check (the source readings) |
 | `key_holder_keeps_an_admin` | A revocation can still leave no admin | result | `revocation_can_leave_no_admin` |
 | `built_person_needs_a_person` | The model does not record which approvals an act carried | definition | `approvals` is an implicit argument of the constructor, not part of `State` |
-| `controller_stays_in_its_organisation` | Nothing stated about invitations, grants, held keys, re-admissions | result | The statement |
+| `controller_stays_in_its_organisation` | Nothing stated about invitations, grants, held keys, cut-offs, re-admissions | result | The statement |
 | `design_agent_admin_can_ask_for_person` | Construction note | construction | The proof |
 
 ## TrustWeb/Abilities.lean

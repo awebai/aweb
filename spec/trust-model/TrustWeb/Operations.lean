@@ -108,7 +108,8 @@ and is not an admin of `o`; an act under the team rule asked for by the holder
 of invitation secret 5 takes `s` to `s1`; an act 1 asks for takes `s1` to
 `s2`; and 1 is an admin of `o` in `s2`. In the construction the invitation is
 to team `n`, and 1's act is its own admission to the admin team, which the key
-holder signs because 1 holds a certificate of team `n`. -/
+holder signs because 1 holds a certificate of team `n` and is a valid agent of
+`o`, and the policy is empty. -/
 theorem invitation_then_own_request_makes_an_admin (assign : Assignment) (o n : Nat)
     (hassign : assign o .admitAdmin = .named n) :
     ∃ (s s1 s2 : State),
@@ -166,7 +167,8 @@ holds no team certificate of `o` there and is valid in no organisation, and 1
 is a valid agent of `o` in `s`; an act under the team rule asked for by the
 holder of invitation secret 5 takes `s` to `s1`; an act 1 asks for takes `s1`
 to `s2`; an act 7 asks for takes `s2` to `s3`; and 7 is an admin of `o` in
-`s3`. In the construction the invitation names 7 for team `n`, 1 registers 7
+`s3`. In the construction the invitation is to team `n` and its holder names 7 as
+the joiner, 1 registers 7
 as its own agent, and 7 asks for its own admission to the admin team. -/
 theorem outsider_becomes_admin_in_three_acts (assign : Assignment) (o n : Nat)
     (hassign : assign o .admitAdmin = .named n) :

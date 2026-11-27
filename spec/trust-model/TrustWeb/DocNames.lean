@@ -36,14 +36,14 @@ def modelTypes : List Name :=
   [`Kind, `Issuer, `Team, `OrgKey, `Party, `Cert, `Membership, `ActKind, `Approver,
    `Rule, `Grant, `Invite, `Message, `State, `Person, `Valid, `ChainToRoot,
    `AnswersFor, `Step, `Reachable, `CoreStep, `CoreReachable, `Enrolment,
-   `Assertion, `AdminTeamLocked, `DocNames]
+   `Assertion, `AdminTeamLocked, `Steps, `DocNames]
 
 /-- The model's inductive types: a leading-dot name must be a constructor of
 one of them. -/
 def inductives : List Name :=
   [`Kind, `Issuer, `Team, `OrgKey, `Party, `ActKind, `Approver, `Person, `Valid,
    `ChainToRoot, `AnswersFor, `Step, `Reachable, `CoreStep, `CoreReachable,
-   `Enrolment]
+   `Steps, `Enrolment]
 
 def resolvesInModel (env : Environment) (n : Name) : Bool :=
   n == `TrustWeb || env.contains (`TrustWeb ++ n) || modelTypes.any fun t => env.contains (`TrustWeb ++ t ++ n)
