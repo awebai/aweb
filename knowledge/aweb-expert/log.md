@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-contracts (task aweb-adzj.1).
+* **Creation**: lessons [a layered refusal hides a removed check unless the test pins the refusal code](/aweb-expert/lessons/a-layered-refusal-hides-a-removed-check.md) and ["no caller in aweb" does not make a packaged server or awid name unused](/aweb-expert/lessons/test-only-in-aweb-is-not-unused.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
