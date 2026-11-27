@@ -107,7 +107,7 @@ def test_a_dropped_first_batch_case_is_detected():
 
 def _mutations():
     def unknown_format(c):
-        c["format"] = "aweb.trust-web-cases/2"
+        c["format"] = "aweb.trust-web-cases/3"
 
     def unknown_top_field(c):
         c["extra"] = 1
