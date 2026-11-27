@@ -6,10 +6,10 @@ to review it.
 
 ## Start with the architecture
 
-Read [`oss-boundary.md`](oss-boundary.md) before deciding where a change
-belongs. [`README.md`](README.md) indexes the canonical architecture and
-engineering sources of truth. The rest of this guide covers repository layout,
-local development commands, migrations, and test guidance.
+Read [`docs/oss-boundary.md`](oss-boundary.md) before deciding where a change
+belongs. [`docs/README.md`](README.md) indexes the canonical architecture and
+engineering sources of truth. For repository layout, local development commands,
+migrations, and test guidance, see [`docs/contributing.md`](#working-inside-the-monorepo).
 
 Keep changes narrow and update the relevant source of truth when behavior or a
 public contract changes. Preserve the repository's `.aw/` state invariant: only
