@@ -287,7 +287,7 @@ gate sizes itself from the machine it runs on.
   missing row is red. `ac` also runs on a native host.
 - `aweb-cloud`: the pilot repository, on `ac`'s path with its own facts, kept
   with ac's in one table (`release.CLOUD_PROJECTS`). `--image` must name
-  `ghcr.io/awebai/aweb-cloud` (and ac's `ghcr.io/awebai/ac`). The guest runs
+  `ghcr.io/awebai/awebai-org` (and ac's `ghcr.io/awebai/ac`). The guest runs
   the pilot's own gate script, as its Makefile does, so its exit survives:
   `python3 scripts/gate.py --require-release` with `RELEASE_IMAGE`,
   `RELEASE_IMAGE_ARCHIVE` and `RELEASE_IMAGE_MEMBER` for a release, bare

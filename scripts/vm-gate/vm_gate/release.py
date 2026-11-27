@@ -354,7 +354,7 @@ CLOUD_PROJECTS = {
     # builds no aweb, so it cannot attest an --aweb-source pin.
     "aweb-cloud": CloudProject(
         "aweb-cloud",
-        repository="ghcr.io/awebai/aweb-cloud",
+        repository="ghcr.io/awebai/awebai-org",
         evidence_prefix="aweb-cloud-gate-",
         stages=("tool-image", "checks", "storage", "image"),
         every_row=True,

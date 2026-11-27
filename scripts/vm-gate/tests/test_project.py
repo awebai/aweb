@@ -20,7 +20,9 @@ MEMBER_DIGEST = "sha256:" + "b" * 64
 
 
 # The pilot's release image index, in its own repository.
-PILOT_INDEX = "ghcr.io/awebai/aweb-cloud@sha256:" + "c" * 64
+PILOT_INDEX = "ghcr.io/awebai/awebai-org@sha256:" + "c" * 64
+# The package an earlier product published; the pilot never ships there.
+OLD_PILOT_INDEX = "ghcr.io/awebai/aweb-cloud@sha256:" + "c" * 64
 PILOT_STAGES = ("tool-image", "checks", "storage", "image")
 
 # One real aweb-cloud receipt, written by project_job with only the machine
@@ -991,7 +993,10 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         self.without_hermes_key()
         code, receipt = self.invoke("aweb-cloud", "--image", INDEX)
         self.assertEqual(code, 2, receipt)
-        self.assertIn("ghcr.io/awebai/aweb-cloud", receipt["vm_gate"]["error"])
+        self.assertIn("ghcr.io/awebai/awebai-org", receipt["vm_gate"]["error"])
+        code, receipt = self.invoke("aweb-cloud", "--image", OLD_PILOT_INDEX)
+        self.assertEqual(code, 2, receipt)
+        self.assertIn("ghcr.io/awebai/awebai-org", receipt["vm_gate"]["error"])
         code, receipt = self.invoke(
             "ac", "--image", PILOT_INDEX, "--aweb-source", self.sha
         )

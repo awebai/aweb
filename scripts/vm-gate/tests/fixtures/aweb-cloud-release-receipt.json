@@ -1,32 +1,32 @@
 {
   "project": "aweb-cloud",
-  "sha": "f0ec517b753b3294b2bf4a860149a44c3b11ab60",
+  "sha": "ea4a4bca70f073797b9156349a6111bd4f85ffc8",
   "intent": "train",
   "machine": "merak",
   "command": "python3 scripts/gate.py --require-release",
   "suite_exit": 0,
-  "evidence": "/state-root/state/runs/vm-d02cb78a08a047509a5bbe6725ef91d5/evidence",
+  "evidence": "/state-root/state/runs/vm-f32a5a3ab78346e59197e8cd96f238fa/evidence",
   "vm_gate": {
     "exit": 0,
     "infrastructure": null,
     "error": null,
-    "summary": "/state-root/state/runs/vm-d02cb78a08a047509a5bbe6725ef91d5/summary.json"
+    "summary": "/state-root/state/runs/vm-f32a5a3ab78346e59197e8cd96f238fa/summary.json"
   },
   "machine_platform": "linux/amd64",
   "timeout_seconds": 9000,
   "real_main": {
-    "aweb-cloud": "f28417f0b80aaa07514df70434f8b2960121a778"
+    "aweb-cloud": "f4b2462cc64f1445fc73618d6261e56ed22d0d6f"
   },
-  "aweb_cloud_parent_of_c": "f28417f0b80aaa07514df70434f8b2960121a778",
+  "aweb_cloud_parent_of_c": "f4b2462cc64f1445fc73618d6261e56ed22d0d6f",
   "aweb_source": null,
-  "run_id": "vm-d02cb78a08a047509a5bbe6725ef91d5",
+  "run_id": "vm-f32a5a3ab78346e59197e8cd96f238fa",
   "image": {
     "index": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "member": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "config": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "member_architecture": "amd64"
   },
-  "launcher_sha": "86fa4d778c7c9c89149e711454c4c4e08ad58e3c",
+  "launcher_sha": "0f266dc2a934cc1f65f56b1dad4faf4c98217f06",
   "host_architecture": [
     "x86_64",
     "x86_64"
