@@ -28,13 +28,13 @@ def stage_makefile() -> str:
 
 @unittest.skipUnless(shutil.which("node"), "Node reads the manifests")
 class ChannelVersionStage(unittest.TestCase):
-    def run_stage(self, manifests: dict[Path, str | None]):
+    def run_stage(self, manifests: dict[Path, dict[str, object] | None]):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         (root / "Makefile").write_text(stage_makefile())
-        for path, version in manifests.items():
-            if version is not None:
+        for path, manifest in manifests.items():
+            if manifest is not None:
                 (root / path).parent.mkdir(parents=True, exist_ok=True)
-                (root / path).write_text(json.dumps({"version": version}))
+                (root / path).write_text(json.dumps(manifest))
         return subprocess.run(
             ["make", "--no-print-directory", "_candidate-channel-version"],
             cwd=root,
@@ -44,19 +44,37 @@ class ChannelVersionStage(unittest.TestCase):
         )
 
     def test_equal_versions_pass(self):
-        result = self.run_stage({PACKAGE: "1.8.3", PLUGIN: "1.8.3"})
+        result = self.run_stage(
+            {PACKAGE: {"version": "1.8.3"}, PLUGIN: {"version": "1.8.3"}}
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_unequal_versions_fail(self):
-        result = self.run_stage({PACKAGE: "1.8.3", PLUGIN: "1.8.2"})
+        result = self.run_stage(
+            {PACKAGE: {"version": "1.8.3"}, PLUGIN: {"version": "1.8.2"}}
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("channel package.json != plugin.json", result.stdout)
 
     def test_absent_manifests_fail(self):
-        cases: tuple[dict[Path, str | None], ...] = (
-            {PACKAGE: "1.8.3", PLUGIN: None},
-            {PACKAGE: None, PLUGIN: "1.8.3"},
+        cases: tuple[dict[Path, dict[str, object] | None], ...] = (
+            {PACKAGE: {"version": "1.8.3"}, PLUGIN: None},
+            {PACKAGE: None, PLUGIN: {"version": "1.8.3"}},
             {PACKAGE: None, PLUGIN: None},
+        )
+        for manifests in cases:
+            with self.subTest(manifests=manifests):
+                result = self.run_stage(manifests)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("has no readable version", result.stdout)
+
+    def test_present_manifests_without_a_version_string_fail(self):
+        cases: tuple[dict[Path, dict[str, object] | None], ...] = (
+            {PACKAGE: {}, PLUGIN: {}},
+            {PACKAGE: {"version": None}, PLUGIN: {"version": None}},
+            {PACKAGE: {"version": ""}, PLUGIN: {"version": ""}},
+            {PACKAGE: {"version": 1}, PLUGIN: {"version": 1}},
+            {PACKAGE: {"version": "1.8.3"}, PLUGIN: {}},
         )
         for manifests in cases:
             with self.subTest(manifests=manifests):
