@@ -29,15 +29,15 @@ class Settings:
     database_uses_transaction_pooler: bool = False
     database_pooler_max_connections: int = 10
     database_statement_cache_size: int | None = None
-    # The pool's ordinary bounds; None keeps pgdbm's defaults. Independent of
-    # transaction-pooler mode, which still caps the pool at its own bound.
-    database_min_connections: int | None = None
-    database_max_connections: int | None = None
     # Refuse to start unless every connection carries the search_path pin and the
     # pgdbm timeouts. A pooler that drops startup parameters needs them as role
     # defaults (ALTER ROLE ... SET ...).
     database_require_session_settings: bool = False
     database_session_check_timeout_seconds: float = 30.0
+    # The pool's ordinary bounds; None keeps pgdbm's defaults. Independent of
+    # transaction-pooler mode, which still caps the pool at its own bound.
+    database_min_connections: int | None = None
+    database_max_connections: int | None = None
 
 
 def get_settings() -> Settings:

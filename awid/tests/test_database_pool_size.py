@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
-from awid_service.config import get_settings
+from awid_service.config import Settings, get_settings
 from awid_service.db import database_config_from_settings
 
 POOL_ENV = (
@@ -90,6 +90,34 @@ def test_invalid_sizes_refuse_to_start(env, minimum, maximum, message):
         ValueError, match=message.replace("(", r"\(").replace(")", r"\)")
     ):
         get_settings()
+
+
+def test_settings_keep_their_existing_positions():
+    settings = Settings(
+        "0.0.0.0",
+        8010,
+        "info",
+        False,
+        "postgresql://awid@localhost/awid",
+        "redis://localhost:6379/0",
+        "awid",
+        "redis",
+        None,
+        True,
+        7,
+        0,
+        True,
+        12.5,
+    )
+    assert settings.database_uses_transaction_pooler is True
+    assert settings.database_pooler_max_connections == 7
+    assert settings.database_statement_cache_size == 0
+    assert settings.database_require_session_settings is True
+    assert settings.database_session_check_timeout_seconds == 12.5
+    assert (settings.database_min_connections, settings.database_max_connections) == (
+        None,
+        None,
+    )
 
 
 @pytest.mark.asyncio
