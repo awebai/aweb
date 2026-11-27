@@ -1064,6 +1064,9 @@ class ProjectJob(CloudFixture, unittest.TestCase):
 
     def test_aweb_cloud_judges_its_one_raw_summary(self):
         self.without_hermes_key()
+        three = "".join(
+            f"{stage}\tPASSED\t{stage}.log\t1\n" for stage in PILOT_STAGES[:3]
+        )
         four = "".join(f"{stage}\tPASSED\t{stage}.log\t1\n" for stage in PILOT_STAGES)
         for name, text, expected in (
             ("the four", four, 0),
@@ -1085,6 +1088,17 @@ class ProjectJob(CloudFixture, unittest.TestCase):
             ("a stage twice, both passed", four + "image\tPASSED\timage.log\t1\n", 1),
             ("a malformed row", four + "garbage\n", 1),
             ("an empty stage name", four + "\tPASSED\tx.log\t1\n", 1),
+            ("the last row truncated to two fields", three + "image\tPASSED", 1),
+            ("a row without its log", three + "image\tPASSED\t\t1\n", 1),
+            ("a row without its seconds", three + "image\tPASSED\timage.log\n", 1),
+            ("negative seconds", three + "image\tPASSED\timage.log\t-1\n", 1),
+            (
+                "seconds that are no number",
+                three + "image\tPASSED\timage.log\tsoon\n",
+                1,
+            ),
+            ("a fifth field", three + "image\tPASSED\timage.log\t1\textra\n", 1),
+            ("zero seconds", three + "image\tPASSED\timage.log\t0\n", 0),
         ):
             with self.subTest(name=name):
                 self.calls.clear()

@@ -7,6 +7,7 @@ image as a docker archive when it is a release, and a test-only Hermes key.
 
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -489,17 +490,30 @@ class ReleaseExecutor(Executor):
         return super().collect(server, timeout)
 
 
+def well_formed(fields):
+    """One summary row: a stage, a result, a log and nonnegative finite seconds."""
+    if len(fields) != 4 or not all(fields[:3]):
+        return False
+    try:
+        seconds = float(fields[3])
+    except ValueError:
+        return False
+    return math.isfinite(seconds) and seconds >= 0
+
+
 def exact_stage_verdicts(summary, cloud):
     """Verdicts from the one summary.tsv a gate wrote, its rows read raw.
 
-    A row is stage, result, log and seconds. A row without a stage and a result
-    reads MALFORMED, a stage written twice reads REPEATED, and a required stage
-    absent reads MISSING; none of these is PASSED, so each is red."""
+    A row is exactly stage, result, log and elapsed seconds, as the pilot's
+    gate writes it. A row that is not those four fields, with a stage, a result,
+    a log and a nonnegative number of seconds, reads MALFORMED; a stage written
+    twice reads REPEATED; a required stage absent reads MISSING. None of these
+    is PASSED, so each is red."""
     verdicts = {}
     if summary.is_file():
         for number, line in enumerate(summary.read_text().splitlines(), start=1):
             fields = line.split("\t")
-            if len(fields) < 2 or not fields[0] or not fields[1]:
+            if not well_formed(fields):
                 verdicts[f"line {number}"] = "MALFORMED"
             elif fields[0] in verdicts:
                 verdicts[fields[0]] = "REPEATED"
