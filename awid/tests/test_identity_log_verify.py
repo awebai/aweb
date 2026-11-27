@@ -135,26 +135,6 @@ def test_raw_wire_sequence_values_fail_closed(case: dict) -> None:
     assert raised.value.reason == "sender_did_log_invalid"
 
 
-@pytest.mark.parametrize(
-    "case",
-    _load("identity-log-raw-wire-v1.json")["cases"],
-    ids=lambda case: case["name"],
-)
-def test_raw_wire_sequence_values_fail_closed_on_the_registry_read_path(
-    case: dict,
-) -> None:
-    # ExternalRegistry parses the key resolution as JSON and verifies its
-    # log_head with verify_identity_head.
-    resolution = json.loads(case["resolution_json"])
-    with pytest.raises(FederationAuthorityError) as raised:
-        verify_identity_head(
-            did_aw=resolution["did_aw"],
-            current_did_key=resolution["current_did_key"],
-            entry=resolution["log_head"],
-        )
-    assert raised.value.reason == "sender_did_log_invalid"
-
-
 @pytest.mark.parametrize("malformed_entry", [1, None, []])
 def test_full_log_malformed_rows_are_typed(malformed_entry: object) -> None:
     vectors = _load("identity-log-v1.json")

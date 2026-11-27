@@ -466,7 +466,7 @@ ROOT_CONSUMERS = {
         '_VECTORS = _ROOT / "docs" / "vectors"',
     ),
     PurePosixPath("awid/tests/test_external_registry.py"): _consumer(
-        "identity-log-v1.json",
+        {"identity-log-raw-wire-v1.json", "identity-log-v1.json"},
         '_VECTORS = _ROOT / "docs" / "vectors"',
     ),
     PurePosixPath("awid/tests/test_identity_log_verify.py"): _consumer(
