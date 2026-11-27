@@ -1814,10 +1814,12 @@
         "aw",
         "--identity-home",
         "H",
+        "--team",
+        "T",
         "mail",
         "send",
         "--to",
-        "A",
+        "ALIAS",
         "--subject",
         "S",
         "--body-file",
@@ -1840,7 +1842,7 @@
           }
         }
       },
-      "notes": "each send to a recipient starts a new conversation"
+      "notes": "--team is always passed, so a bare alias is never looked up across the home's other teams; ALIAS is a member of T; a team the home does not hold refuses, and a grant home refuses a team other than its own; each send to a recipient starts a new conversation"
     },
     {
       "id": "mail_show_message",

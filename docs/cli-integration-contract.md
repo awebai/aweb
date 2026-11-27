@@ -360,8 +360,12 @@ The commands:
   {`id`, `kind`}, ending with `id`. It exits 0 whatever the outcome.
 
 ### 3.7 Messages
-- `aw --identity-home H mail send --to A --subject S --body-file F --json`.
-  Each send to a recipient starts a new conversation. Answer: `message_id`, `status`, `delivered_at`; optional `conversation_id`.
+- `aw --identity-home H --team T mail send --to ALIAS --subject S --body-file
+  F --json`, with ALIAS a member of T. `--team` is always passed: it selects
+  the sending membership, so a bare alias is never looked up across the home's
+  other teams. A team the home does not hold refuses; a grant home refuses an
+  explicit team other than its own. Each send to a recipient starts a new
+  conversation. Answer: `message_id`, `status`, `delivered_at`; optional `conversation_id`.
 - `aw --identity-home H mail show --message-id ID --json` and `mail show
   --conversation-id ID --limit N --json`. Answer: `messages` array, `has_more`
   bool, optional `next_cursor`. Each message: `message_id`, `subject`, `body`,
