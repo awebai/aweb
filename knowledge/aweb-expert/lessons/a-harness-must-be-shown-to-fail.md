@@ -30,6 +30,31 @@ which would have produced a confident wrong answer, none caught by inspection.
 - The harnesses most likely to lack all of this are the ones that are not tests:
   log greps, process counts, exit-code checks, read-backs, roster queries.
 
+# A test of a bound asserts the bound
+
+Added 2026-11-27. A test for "the helper pools hold 1 to 5 connections"
+counted the pool's connections in pg_stat_activity. It went red on the
+unfixed code, which opened 10 at once. But an idle pool opens only its
+minimum, so the test stayed green with both maxima loosened back to 20. The
+break-proof had covered the starting state (the minimum), not the property
+the change was for (the maximum). Review returned it.
+
+- For any bound (a pool size, a timeout, a rate, a retry count), assert the
+  configured bound from the component that enforces it, such as pgdbm's
+  `get_pool_stats()` `min_size` and `max_size`. Otherwise drive load past
+  the bound and assert that it holds. A snapshot below the bound cannot see
+  the bound.
+- Break-prove with the mutation that loosens exactly that bound, plus one
+  mutation per other bound. Proving red only on the starting state leaves
+  the claimed property untested.
+
+Evidence: OKF proposal from aweb-expert/aweb-expert-cleanup-oss, 2026-11-27;
+notes/limit-tests-assert-the-limit.md. Task aweb-adzx. Checked by the
+harvester: the source's test-pool-size branch at 29aaa58df asserts
+`get_pool_stats()` in `server/tests/test_testing_server.py` and
+`naapp-lib/tests/test_db.py`. The review return and the four mutations are
+source-reported.
+
 # Review standard
 
 Any verdict citing a harness carries one of two lines: "the fix was removed and
