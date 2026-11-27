@@ -21,6 +21,9 @@ an injectable clock.
   Check it locally at the point of locked use.
 - Never start a fresh window on receipt, cache hit or lock acquisition; that
   silently extends evidence the producer never renewed.
+- Freshness is not the only property the wait can break: when the evidence is
+  compared with a locked local record, that record can move too. See
+  [network evidence carries the basis it is compared with](/aweb-protocol-expert/lessons/evidence-carries-the-basis-it-is-compared-with.md).
 - The test must show the operation really waited on the database lock, advance
   the evidence clock during that wait, and check that it refuses afterwards. An
   already-expired input misses the ordering question, and sleeping without
