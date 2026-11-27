@@ -21,7 +21,7 @@ def backquote : Char := Char.ofNat 96
 and the build's own library name. -/
 def skipped : List String :=
   ["a", "b", "c", "g", "g'", "h", "h'", "i", "k", "m", "n", "o", "o'", "p", "pk",
-   "r", "s", "s'", "s1", "s2", "t", "x", "L", "ask", "who", "approvals", "assign",
+   "r", "s", "s'", "s1", "s2", "s3", "t", "x", "L", "ask", "who", "approvals", "assign",
    "key", "as", "Prop", "sorry", "axiom", "native_decide", "opaque",
    "implemented_by", "controller_asserted_person", "nearest_human",
    "rotate_team_key", "DocCheck"]
@@ -30,8 +30,8 @@ def skipped : List String :=
 def leanNames : List String :=
   ["propext", "Classical.choice", "Quot.sound", "List"]
 
-/-- The model's types, and this check's own namespace: a name may resolve under
-any of them. -/
+/-- The namespaces a name may resolve under: the model's types, the predicate
+`AdminTeamLocked`, and this check's own. -/
 def modelTypes : List Name :=
   [`Kind, `Issuer, `Team, `OrgKey, `Party, `Cert, `Membership, `ActKind, `Approver,
    `Rule, `Grant, `Invite, `Message, `State, `Person, `Valid, `ChainToRoot,

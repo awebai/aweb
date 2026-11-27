@@ -85,7 +85,7 @@ One line for every sentence that says something about the model, apart from a th
 | 20 | (true in every reachable record, 14) | result | Row 14 |
 | 21 | The joiner is whatever key the holder names | act | `redeem`'s `k` is any key meeting `OneTeamIfLocal` |
 | 21 | That the joiner holds that key is assumed | assumption | A3 |
-| 22, 35, 36, 41, 43, 44, 45, 46, 47, 48 | Construction notes | construction | The proofs |
+| 22, 35, 36, 41, 43, 44, 45, 46, 47, 48, 49 | Construction notes | construction | The proofs |
 | 22 | The statement does not say who issued whom | result | The statement |
 | 25 | Re-admissions change no team certificate | act | `readmitByRoot`, `readmitByParent` |
 | 26 | The three need not differ | result | The statement has no inequality |
@@ -94,9 +94,8 @@ One line for every sentence that says something about the model, apart from a th
 | 28 | The holder no longer holds the current root key | act | `replaceRoot` takes the root key out of `held` |
 | 28 | The model does not show the holder no longer has the former private key | definition | `held` records only which keys are held, not copies |
 | 28 | Nor does the protocol | source | the source readings |
-| 35, 48 | A warning | process | A label |
-| 35 | The identity is already a valid member of the organisation | result | Row 34: the identity, asking as `.id`, holds a certificate of an assigned team and is valid in the key's organisation; row 21: the invitation changes no identity certificate or revocation, so it was valid before |
-| 48 | The identity is already a valid member of the organisation | result | `invitation_route_starts_from_a_member` |
+| 35, 48, 49 | A warning | process | A label |
+| 6, 21 | Resting on the planned premise that `redeem`'s team is not the admin team | definition, source | `redeem`'s premise `i.team ≠ .admin`, one of the planned parts |
 | 38 | A valid person answering for itself (`nearest_human`) says nothing about an email check | result, source | `AnswersFor.self` needs only `Valid`; row 38; the verdict's name is the protocol's (`docs/id-certificates.md`) |
 | 40 | The rest of 38's three cases follows from 38 | result | Row 38 applies to any valid person |
 | 41 | In every record such a key exists | result | `exists_fresh_key` |
@@ -116,10 +115,10 @@ One block per cell, in the table's order.
 | | A key with no identity certificate can act in a team on its team certificate alone | definition | `InTeam`; `CanAct`'s first disjunct |
 | | And so give a grant | act | `mintGrant` needs `InTeam` and a session key no current grant uses; some key is always unused (`unused_session_key`) |
 | | In a team or not, it can send attributed to itself | act | `sendOwn` needs only `CanAct` |
-| | It can leave a team whose key is held | act, result | `leave` needs the certificate, the held key and `KeepsAnAdmin`, and no validity or registration; `KeepsAnAdmin` is vacuous outside the admin team, and a key with no identity certificate never holds an admin-team certificate in a reachable record (`admin_certificate_member_is_registered`, which rests on `new_admin_certificate_needs_valid_member` and `certificate_is_permanent`) |
+| | By the planned `leave`, it can leave a team whose key is held | act, result | `leave` needs the certificate, the held key and `KeepsAnAdmin`, and no validity or registration; `KeepsAnAdmin` is vacuous outside the admin team, and a key with no identity certificate never holds an admin-team certificate in a reachable record (`admin_certificate_member_is_registered`, which rests on `new_admin_certificate_needs_valid_member` and `certificate_is_permanent`) |
 | | A team certificate counts without the root having set the team's key | definition | `InTeam`, `GrantLive` and `admit` have no premise about the root or `rekeyTeam` |
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule` (`Admin` needs `Valid`), `teamRule` |
-| A revoked member keeps authority | Proved in reachable records: not valid, not an admin, cannot act in a team, cannot send with its own key, no live grant | result | Rows 7, 8, 20; `sendOwn` needs `CanAct` |
+| A revoked member keeps authority | Proved in reachable records: not valid, not an admin, cannot act in a team, cannot send with its own key, no live grant | result | Rows 7, 20; `sendOwn` needs `CanAct` |
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | As above |
 | | Under every rule it can still revoke a grant on itself, revoke itself, leave a held team unless it is the admin team and no other admin remains, be the key `redeem` names | act, result | `revokeGrant`, `revokeSelf` have no validity premise; `leave` has none but `KeepsAnAdmin`; `redeem` needs `OneTeamIfLocal`, which a revoked identity meets because in reachable records it is registered (row 14) |
 | A revocation is undone | Proved for one act | result | `revocation_is_permanent` |
@@ -138,9 +137,10 @@ One block per cell, in the table's order.
 | | That the subject gave the grant is proved for the act that adds it, not for every grant | result | Row 19; no theorem about every grant |
 | A grant holder does more than send | Proved for one act | result | Rows 17, 19 |
 | An invitation's holder becomes a person or an admin | Proved for one act, under every rule | result | Rows 21, 6 quantify over every `AskRule` |
-| | Not proved for several acts | process | No theorem states it |
-| | Under a team rule that gives admitting admins to a named team, it happens in two acts | result | Row 48 |
-| | If the joiner holds no team certificate of the organisation before the invitation is used, it must already be a valid member | result | `invitation_route_starts_from_a_member` and its hypothesis |
+| | Resting on the planned premise that `redeem`'s team is not the admin team | definition, source | `redeem`'s premise `i.team ≠ .admin`, one of the planned parts |
+| | Not proved for several acts under the built or the admin rule | process | No theorem states it |
+| | Under such a team rule, the identity an invitation's holder names can become an admin in three acts | result | Row 49 |
+| | And in two if it is already a valid member | result | Row 48 |
 | | As 35 shows for giving a key back | result | Row 35 |
 | An agent approves where a person is required | Proved for every approval | result | Rows 4, 23 |
 | Being issued an identity gives team membership | Proved for one act | result | `registering_gives_no_team` |
@@ -205,7 +205,7 @@ Each item pairs a sentence about the model with one about the real system.
 | The record keeps only who each message is attributed to | definition | `Message` |
 | No answer covers both "nobody" and "cannot be established" | definition | `AnswersFor` is a `Prop` with no reason |
 | The protocol tells them apart | source | the source readings |
-| Team certificates and invitations need no organisation to exist | act | No premise of `admit`, `redeem` or `invite` mentions `orgs` |
+| Named-team certificates and invitations need no organisation to exist | act | No premise of `admit`, `redeem` or `invite` mentions `orgs` |
 | Nobody holds a member's own key for it | assumption | A7 |
 
 ### Not done

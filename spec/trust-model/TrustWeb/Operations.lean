@@ -158,4 +158,86 @@ theorem invitation_then_own_request_makes_an_admin (assign : Assignment) (o n : 
     · intro r hr
       simp [s1, s, r3s, r2s, r1s, e] at hr
 
+/-- For every assignment, organisation `o` and named team `n` such that the
+assignment gives admitting an admin in `o` to team `n`, there are records `s`,
+`s1`, `s2`, `s3` such that `s` is reachable under the team rule, `o`'s admin
+team key is with a key holder in `s`, 7 has no identity certificate in `s`,
+holds no team certificate of `o` there and is valid in no organisation, and 1
+is a valid agent of `o` in `s`; an act under the team rule asked for by the
+holder of invitation secret 5 takes `s` to `s1`; an act 1 asks for takes `s1`
+to `s2`; an act 7 asks for takes `s2` to `s3`; and 7 is an admin of `o` in
+`s3`. In the construction the invitation names 7 for team `n`, 1 registers 7
+as its own agent, and 7 asks for its own admission to the admin team. -/
+theorem outsider_becomes_admin_in_three_acts (assign : Assignment) (o n : Nat)
+    (hassign : assign o .admitAdmin = .named n) :
+    ∃ (s s1 s2 s3 : State),
+      Reachable (teamRule assign) s ∧ OrgKey.team o .admin ∈ s.held ∧
+      ¬ Registered s 7 ∧ (∀ t, ¬ HasTeamCert s o t 7) ∧ (∀ o' kind, ¬ Valid s o' 7 kind) ∧
+      Valid s o 1 .agent ∧
+      Step (teamRule assign) s (.bearer 5) s1 ∧
+      Step (teamRule assign) s1 (.id 1) s2 ∧
+      Step (teamRule assign) s2 (.id 7) s3 ∧ Admin s3 o 7 := by
+  let c : Cert := ⟨o, 1, .agent, .root⟩
+  let c7 : Cert := ⟨o, 7, .agent, .member 1⟩
+  let i : Invite := ⟨5, o, .named n⟩
+  let e : State := ⟨[], [], [], [], [], [], [], [], [], []⟩
+  let r1s : State := { e with orgs := [o] }
+  let r2s : State := { r1s with certs := [c] }
+  let r3s : State := { r2s with invites := [i] }
+  let s : State := { r3s with held := [.team o .admin] }
+  let s1 : State :=
+    { s with members := ⟨i.org, i.team, 7⟩ :: s.members,
+             invites := s.invites.filter (fun x => decide (x ≠ i)) }
+  let s2 : State := { s1 with certs := c7 :: s1.certs }
+  let ma : Membership := ⟨o, .admin, 7⟩
+  let s3 : State := { s2 with members := ma :: s2.members }
+  have r1 : Reachable (teamRule assign) r1s :=
+    .step (.start []) (Step.createOrg (o := o) (by simp))
+  have r2 : Reachable (teamRule assign) r2s :=
+    .step r1 (Step.registerByRoot (c := c) (who := .controller (.root o)) (approvals := [])
+      rfl (by simp [r1s, c]) (by intro d hd; simp [r1s, e] at hd) (.inl ⟨by simp [r1s, e], rfl⟩))
+  have r3 : Reachable (teamRule assign) r3s :=
+    .step r2 (Step.invite (i := i) (who := .controller (.team o (.named n))) (approvals := [])
+      (by simp [i]) (.inl ⟨by simp [r2s, r1s, e], rfl⟩)
+      (by intro j hj; simp [r2s, r1s, e] at hj))
+  have rs : Reachable (teamRule assign) s :=
+    .step r3 (Step.entrust (key := .team o .admin) (by simp [r3s, r2s, r1s, e]))
+  have hv : Valid s o 1 .agent :=
+    .agentOfRoot (c := c) (by simp [s, r3s, r2s]) rfl rfl rfl rfl (by simp [s, r3s, r2s, r1s, e])
+  have hv1 : Valid s1 o 1 .agent :=
+    .agentOfRoot (c := c) (by simp [s1, s, r3s, r2s]) rfl rfl rfl rfl
+      (by simp [s1, s, r3s, r2s, r1s, e])
+  have hv2p : Valid s2 o 1 .agent :=
+    .agentOfRoot (c := c) (by simp [s2, s1, s, r3s, r2s]) rfl rfl rfl rfl
+      (by simp [s2, s1, s, r3s, r2s, r1s, e])
+  have hv2 : Valid s2 o 7 .agent :=
+    .agentOf (c := c7) (by simp [s2]) rfl rfl rfl rfl
+      (by simp [s2, s1, s, r3s, r2s, r1s, e]) hv2p
+  have hv3 : Valid s3 o 7 .agent :=
+    Valid.mono (s := s2) (t := s3) (fun _ h => h) (fun _ h => h) hv2
+  have nocert7 : ¬ Registered s 7 := by
+    intro ⟨d, hd, hds⟩
+    simp [s, r3s, r2s, c] at hd
+    subst hd
+    simp at hds
+  refine ⟨s, s1, s2, s3, rs, by simp [s], nocert7, ?_, ?_, hv, ?_, ?_, ?_,
+    ⟨by simp [s3, ma], .agent, hv3⟩⟩
+  · intro t h
+    simp [HasTeamCert, s, r3s, r2s, r1s, e] at h
+  · intro o' kind hv'
+    obtain ⟨d, hd, hds, _, _⟩ := hv'.cert
+    exact nocert7 ⟨d, hd, hds⟩
+  · exact Step.redeem (i := i) (k := 7) (by simp [s, r3s]) (by simp [i])
+      (.inr (by intro m hm; simp [s, r3s, r2s, r1s, e] at hm))
+  · refine Step.registerByParent (c := c7) (p := 1) (pk := .agent) rfl ?_ hv1 (.inr rfl)
+    intro d hd
+    simp [s1, s, r3s, r2s] at hd
+    subst hd
+    simp [c, c7]
+  · refine Step.admitAdmin (m := ma) (kind := .agent) (approvals := []) rfl hv2
+      (.inr ⟨by simp [s2, s1, s, ma], 7, rfl, ⟨?_, .agent, hv2⟩, ?_⟩)
+    · simp [hassign, OrgKey.org, s2, s1, s, i, ma]
+    · intro r hr
+      simp [s2, s1, s, r3s, r2s, r1s, e] at hr
+
 end TrustWeb
