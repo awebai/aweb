@@ -1362,21 +1362,31 @@ theorem only_entrust_puts_a_key_with_a_holder {ask : AskRule} {s s' : State} {wh
   | sendOwn _ => exact absurd hin hout
   | sendGrant _ _ => exact absurd hin hout
 
-/-- In every reachable record in which a key is with a key holder, there is a
-reachable record in which it is not, from which an act asked for by whoever
-controls the key puts it with a key holder. -/
-theorem held_key_was_entrusted {ask : AskRule} {s : State} (hr : Reachable ask s)
+/-- `Steps ask s s'`: a sequence of accepted acts under `ask` takes `s` to `s'`. -/
+inductive Steps (ask : AskRule) : State → State → Prop where
+  | refl (s : State) : Steps ask s s
+  | tail {s t u : State} {who : Party} : Steps ask s t → Step ask t who u → Steps ask s u
+
+/-- In every reachable record `s` in which a key is with a key holder, there is
+a reachable record `t` in which it is not, an act asked for by whoever controls
+the key that takes `t` to `t` with the key held, and a sequence of accepted acts
+from the record after that act to `s`. -/
+theorem held_key_reached_through_entrust {ask : AskRule} {s : State} (hr : Reachable ask s)
     {key : OrgKey} (hk : key ∈ s.held) :
     ∃ t, Reachable ask t ∧ key ∉ t.held ∧
-      Step ask t (.controller key) { t with held := key :: t.held } := by
+      Step ask t (.controller key) { t with held := key :: t.held } ∧
+      Steps ask { t with held := key :: t.held } s := by
   induction hr with
   | start _ => cases hk
   | step hr' hstep ih =>
       rename_i t t' _
       by_cases hold : key ∈ t.held
-      · exact ih hold
+      · obtain ⟨t0, r0, n0, e0, p0⟩ := ih hold
+        exact ⟨t0, r0, n0, e0, .tail p0 hstep⟩
       · obtain ⟨hw, he⟩ := only_entrust_puts_a_key_with_a_holder hstep hk hold
         subst hw
-        exact ⟨t, hr', hold, he ▸ hstep⟩
+        refine ⟨t, hr', hold, he ▸ hstep, ?_⟩
+        rw [← he]
+        exact .refl _
 
 end TrustWeb

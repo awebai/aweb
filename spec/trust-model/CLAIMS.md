@@ -42,12 +42,12 @@ One line for every sentence that says something about the model, apart from a th
 | "In one act" is about a single accepted act | process | Such theorems take one `Step` |
 | "In a record the system can reach": after any sequence of acts from a record with only a policy | definition | `Reachable`, `Reachable.start` |
 | One certificate each holds in every reachable record | result | Row 14 |
-| A row with no rule named holds for every `AskRule` | process | Such theorems quantify over `ask` |
+| A row with no rule named holds for every `AskRule` | process | Such theorems quantify over `ask`, or take no `ask` and state no rule |
 | As built is `builtRule`, Design is `adminRule` (row 52: the planned root replacement), a team rule is `teamRule`; a Design row claims nothing about `builtRule` | process | Reading convention |
 | Five parts of `Step` are planned, not built | source | The source readings: the built key holder has no command to take a key in or give one back; the registry has no last-admin check and does not know the admin team; the built leave command leaves the certificate standing; the registry's certificate route registers a certificate for any team with the same checks, so nothing in it excludes the admin team (`awid/src/awid_service/routes/teams.py`, the function register_certificate, lines 1219 to 1246, at 5c2ee7bad3); the same route checks the member's address ownership (the function _require_member_address_owned_by_did_aw, line 1235), not its validity in the organisation |
 | They are present under every rule, `builtRule` included; under `builtRule` `release` is never accepted | definition | `entrust`, `release`, `leave` are constructors of `Step`; `KeepsAnAdmin`, `rekeyTeam`'s premise on `keep`, `m.team ≠ .admin`, `i.team ≠ .admin` and `admitAdmin`'s `Valid` are premises of its constructors; `Step` takes any `ask`; `release` needs `key ∈ s.held`, so `Authorised`'s held branch, and `builtRule` never allows `.release` |
 | The Design rule, the planned root replacement and the evidence are planned too, named in their rows | source, definition | `adminRule`; `plannedReplaceRoot` is a definition, not a `Step` constructor; `Evidence.lean`'s module doc |
-| Every reachable record with a held key is reached through `entrust`, so every row whose reachable record or act has a held key rests on it, and a row about any record with a held key applies among reachable records only to ones reached through `entrust` | result | `held_key_was_entrusted`, `only_entrust_puts_a_key_with_a_holder` |
+| Every reachable record with a held key is reached through `entrust`, so every row whose reachable record or act has a held key rests on it, and a row about any record with a held key applies among reachable records only to ones reached through `entrust` | result | `held_key_reached_through_entrust`, `only_entrust_puts_a_key_with_a_holder` |
 | Every row whose act is `release` rests on the planned `release` | act | `release` is a planned part |
 | A row that rests on another planned premise says so | process | The labels on rows 6, 11a, 14, 21, 25 and 42, and the cells that cite them |
 
@@ -85,7 +85,7 @@ One line for every sentence that says something about the model, apart from a th
 | 11a | A revocation can still leave no admin: three cases | result | Rows 44, 47; `root_replacement_can_leave_no_admin` |
 | 15 | The model does not record which approvals an act carried; the act is accepted only with such approvals | definition | `approvals` is an implicit argument of the constructor, not part of `State` |
 | 16 | Construction note; so 2 holds | construction, result | The proof; row 2 holds for any act |
-| 16 | As built, an agent may ask where the policy has an anyPerson rule for adding a person; not stated as a theorem | definition | `builtRule`'s second disjunct |
+| 16 | As built, an agent valid in the organisation may ask where the policy has an anyPerson rule for adding a person; not stated as a theorem | definition | `builtRule`'s second disjunct |
 | 18 | This covers every message an act adds | result | The hypothesis is that the act changes `sent` |
 | 20 | (true in every reachable record, 14) | result | Row 14 |
 | 21 | The joiner is whatever key the holder names | act | `redeem`'s `k` is any key meeting `OneTeamIfLocal` |
