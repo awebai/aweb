@@ -97,6 +97,22 @@ def timestamped(command, cwd, env, log_path):
         return process.wait()
 
 
+# The first line of every step's log: the effective uid and HOME of the shell
+# that runs the step's command, printed by that shell before the command runs.
+CHILD = re.compile(r"VMGATE-CHILD uid=(?P<uid>\d+) home=(?P<home>\S*)")
+
+
+def as_child(command):
+    """The step's command behind a line naming the uid and HOME it actually runs with."""
+    return 'printf "VMGATE-CHILD uid=%s home=%s\\n" "$(id -u)" "$HOME"; ' + command
+
+
+def child_of(lines):
+    """The uid and HOME the step's own shell reported, from its first line only."""
+    found = CHILD.fullmatch(lines[0]) if lines else None
+    return (int(found["uid"]), found["home"]) if found else (None, None)
+
+
 def untimed(log_path):
     """The step's output without the timestamps, for its line checks."""
     return [
@@ -313,14 +329,13 @@ def run_step(step, results, paths, record, save):
             )
             return
         record["inputs"][item["to"]] = sha256(placed)
-    record["uid"] = os.getuid()
     record["cwd"] = step["cwd"]
     record["run_dir"] = str(run_dir)
     command = step["command"].replace("{run_dir}", str(run_dir))
     env = dict(os.environ, PYTHONUNBUFFERED="1")
     log = Path(paths["out"]) / f"{name}.log"
     record["log"] = str(log)
-    record["exit"] = timestamped(command, cwd, env, log)
+    record["exit"] = timestamped(as_child(command), cwd, env, log)
     # The raw exit is on disk before any evidence is read.
     save()
     try:
@@ -338,6 +353,7 @@ def evaluate(step, record, cwd, run_dir, paths):
     log = Path(record["log"])
     record["log_sha256"] = sha256(log)
     lines = untimed(log)
+    record["uid"], record["home"] = child_of(lines)
     for pattern in step.get("require", []):
         record["require"][pattern] = any(re.search(pattern, line) for line in lines)
     for pattern in step.get("forbid", []):
@@ -372,6 +388,13 @@ def evaluate(step, record, cwd, run_dir, paths):
         if digest is None
     ]
     failures += [f"required artifact missing: {relative}" for relative in missing]
+    expected_uid = paths["users"].get(step["user"])
+    if expected_uid is None:
+        failures.append(f"no expected uid for {step['user']}")
+    elif record["uid"] != expected_uid:
+        failures.append(
+            f"ran as uid {record['uid']}, not {step['user']}'s {expected_uid}"
+        )
     failures += [
         f"JSON check failed: {prefix}"
         for prefix, outcome in record["json"].items()
@@ -389,11 +412,25 @@ def main(argv=None):
     parser.add_argument("--bundles", default="/opt/vm-gate/bundles")
     parser.add_argument("--sources", default="/opt/vm-gate/sources")
     parser.add_argument("--runs", default="/opt/vm-gate/runs")
+    parser.add_argument(
+        "--users",
+        required=True,
+        help="each step user's expected uid, as user=uid[,user=uid]",
+    )
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     for directory in (args.sources, args.runs):
         Path(directory).mkdir(parents=True, exist_ok=True)
-    paths = {"out": args.out, "sources": args.sources, "runs": args.runs}
+    users = {}
+    for pair in args.users.split(","):
+        user, _, uid = pair.partition("=")
+        users[user] = int(uid)
+    paths = {
+        "out": args.out,
+        "sources": args.sources,
+        "runs": args.runs,
+        "users": users,
+    }
     result = {
         "sources": {},
         "registry": None,

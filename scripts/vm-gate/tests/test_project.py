@@ -571,6 +571,7 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         commit_sha=None,
         steps=None,
         registry=True,
+        root=None,
         **source,
     ):
         """A reviewed spec over a real servers bundle: one step, as D has it."""
@@ -608,6 +609,8 @@ class ProjectJob(CloudFixture, unittest.TestCase):
                 }
             ],
         }
+        if root is not None:
+            spec["root"] = root
         if registry:
             spec["registry"] = {
                 "name": "registry",
@@ -772,7 +775,11 @@ class ProjectJob(CloudFixture, unittest.TestCase):
                 "not its author's",
             ),
             (self.servers_spec(commit_sha="1" * 40), (), "in the bundle is"),
-            (self.servers_spec(registry=True, steps=root_step), (), "runs as gateuser"),
+            (
+                self.servers_spec(registry=True, steps=root_step),
+                (),
+                "only in a spec marked",
+            ),
             (
                 self.servers_spec(
                     steps=[
@@ -857,6 +864,113 @@ class ProjectJob(CloudFixture, unittest.TestCase):
             "--steps is the servers project's input", receipt["vm_gate"]["error"]
         )
         self.assertEqual(self.calls, [])
+
+    # servers: root steps, only in an operator-approved spec
+
+    def approve_root_specs(self, *digests):
+        config = json.loads(self.config.read_text())
+        config["servers_root_specs"] = list(digests)
+        self.config.write_text(json.dumps(config))
+
+    def root_steps(self, command="team/install-docker.sh"):
+        return [
+            {
+                "name": "ruleset",
+                "user": "root",
+                "cwd": "servers",
+                "command": command,
+                "expect_exit": 0,
+            }
+        ]
+
+    def test_an_approved_root_spec_runs_its_runner_as_root(self):
+        spec = self.servers_spec(steps=self.root_steps(), root=True, registry=False)
+        self.approve_root_specs(digest(spec.read_bytes()))
+        self.servers_evidence()
+        code, receipt = self.invoke_servers(spec)
+        self.assertEqual(code, 0, receipt)
+        self.assertIs(receipt["root"], True)
+        [call] = self.calls
+        self.assertIn("--users root=0", call["command"])
+        self.assertIs(call["executor_factory"].keywords["servers"]["root"], True)
+
+    def test_a_gateuser_spec_expects_uid_1000(self):
+        spec = self.servers_spec()
+        self.servers_evidence()
+        code, receipt = self.invoke_servers(spec)
+        self.assertEqual(code, 0, receipt)
+        self.assertIs(receipt["root"], False)
+        [call] = self.calls
+        self.assertIn("--users gateuser=1000", call["command"])
+        self.assertIs(call["executor_factory"].keywords["servers"]["root"], False)
+
+    def test_a_root_spec_is_refused_unless_the_operator_approved_those_exact_bytes(
+        self,
+    ):
+        approved = self.servers_spec(steps=self.root_steps(), root=True, registry=False)
+        self.approve_root_specs(digest(approved.read_bytes()))
+        cases = (
+            (
+                self.servers_spec(
+                    steps=self.root_steps("team/install-docker.sh --other"),
+                    root=True,
+                    registry=False,
+                ),
+                "not one the operator approved",
+            ),
+            (
+                self.servers_spec(
+                    steps=self.root_steps()
+                    + [
+                        {
+                            "name": "after",
+                            "user": "gateuser",
+                            "cwd": "servers",
+                            "command": "true",
+                            "expect_exit": 0,
+                        }
+                    ],
+                    root=True,
+                    registry=False,
+                ),
+                "every step of a root spec runs as root",
+            ),
+            (
+                self.servers_spec(steps=self.root_steps(), root="yes", registry=False),
+                "root is true or false",
+            ),
+        )
+        for spec, reason in cases:
+            with self.subTest(reason=reason):
+                code, receipt = self.invoke_servers(spec)
+                self.assertEqual(code, 2, receipt)
+                self.assertIn(reason, receipt["vm_gate"]["error"])
+        self.approve_root_specs()
+        code, receipt = self.invoke_servers(approved)
+        self.assertEqual(code, 2, receipt)
+        self.assertIn("not one the operator approved", receipt["vm_gate"]["error"])
+        self.assertEqual(self.calls, [])
+
+    def test_a_root_runner_asserts_uid_0_and_skips_runuser_while_a_gateuser_one_keeps_both(
+        self,
+    ):
+        def executor(root):
+            return project.servers.ServersExecutor(
+                {"compose_project": None},
+                self.root,
+                {"sha": "0" * 40},
+                "true",
+                None,
+                servers={"root": root, "spec_bytes": b"{}", "bundles": {}},
+            )
+
+        rooted, plain = executor(True), executor(False)
+        self.assertIn('test "$(id -u)" = 0', rooted.launch_program())
+        self.assertNotIn("host_contract", rooted.launch_program())
+        self.assertNotIn("runuser", rooted.runner_prefix())
+        self.assertIn('test "$(id -u)" = 1000', plain.launch_program())
+        self.assertIn("host_contract", plain.launch_program())
+        self.assertIn("runuser -u gateuser --", plain.runner_prefix())
 
 
 if __name__ == "__main__":

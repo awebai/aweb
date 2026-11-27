@@ -290,7 +290,7 @@ gate sizes itself from the machine it runs on.
   ref that holds it and the commit; `--repo` and `--sha` are its servers bundle
   and that commit. Admission refuses before boot unless every bundle has its
   author's digest and holds its commit at its ref. A step names its checkout,
-  its user (`gateuser`; a root step is refused), its command, its expected exit
+  its user (`gateuser`, or `root` in a root spec), its command, its expected exit
   (a code, or `"nonzero"` for a red control), the lines it must and must not
   print, structured checks on a line's JSON, the files it must leave, the files
   it takes from an earlier step it needs, and the named artifacts it keeps:
@@ -311,7 +311,16 @@ gate sizes itself from the machine it runs on.
   carries the spec's digest, each source's author and shipped bundle digests
   and the commit the guest checked out, and the runner's full record. Green
   needs every source at its commit, every step passed and the registry
-  removed. `servers` runs only in a guest.
+  removed. Each step's own shell reports, as its log's first line, the
+  uid and HOME it runs with; a uid other than its user's (1000 for the gate
+  user, 0 for root) is red. A spec marked `"root": true` runs every step as
+  the guest's root, and runs only when its sha256 is in the operator config's
+  `servers_root_specs`: the flag alone grants nothing, and any change to the
+  spec's bytes is refused before boot. Its runner runs as root from the
+  root-owned operator tree; its spec and bundles are root's, read-only, and
+  its checkouts and run directories are root's alone. The host contract still
+  holds as the gate user in prepare. Every other spec keeps the gate user's
+  UID-1000 path. `servers` runs only in a guest.
 
 ### Merak
 

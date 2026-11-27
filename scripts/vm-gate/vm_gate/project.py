@@ -257,11 +257,14 @@ def project_job(args, *, factory=None, out=None):
         if args.project == "aweb":
             record.update(files=prefixed(files), command="make candidate-gate")
         elif args.project == "servers":
-            spec = servers.admit(args.steps, repo, args.sha)
+            spec = servers.admit(
+                args.steps, repo, args.sha, config.get("servers_root_specs", [])
+            )
             record.update(
-                command=servers.command(spec["spec_sha256"]),
+                command=servers.command(spec["spec_sha256"], spec["root"]),
                 spec=str(Path(args.steps).resolve()),
                 spec_sha256=spec["spec_sha256"],
+                root=spec["root"],
                 sources=spec["sources"],
             )
         else:
@@ -429,7 +432,7 @@ def servers_runtime(config, launcher, directory, target, run_id, spec, factory):
         config=config,
         directory=directory,
         source=source,
-        command=servers.command(spec["spec_sha256"]),
+        command=servers.command(spec["spec_sha256"], spec["root"]),
         args=target,
         run_id=run_id,
         executor_factory=partial(servers.ServersExecutor, servers=spec),
