@@ -60,7 +60,7 @@ One line for every sentence that says something about the model, apart from a th
 |---|---|---|---|
 | 1 | (with 14) | result | Row 14 gives the condition in reachable records |
 | 2 | The statement does not say whose certificate it is, or that it is of that organisation | result | The statement's conclusion |
-| 2 | 15 adds, as built, that it is of that organisation | result | Row 15 |
+| 2 | Under every rule, the certificate is of that organisation | result | `Person.added_cert_org` |
 | 2 | It looks at certificates only, so admitting again is not covered | definition | `Person` reads only `certs`; re-admissions change no `certs` |
 | 2 | It is about who signs, not who asked | result | The conclusion says nothing about the asker |
 | 3 | A person certificate of an organisation issued by a person of it makes its subject a person | definition | `Person.byPerson` |
@@ -73,7 +73,7 @@ One line for every sentence that says something about the model, apart from a th
 | 7 | (true in every reachable record, 14) | result | Row 14 |
 | 7 | Sending with its own key requires being able to act | act | `sendOwn` |
 | 8 | Its team certificates are not looked at | result | The statement |
-| 9 | Whoever issued it; about the record, not an act | result | The statement quantifies over the issuer and has no `Step` |
+| 9 | Whoever issued it; about the record, not an act | result | The statement quantifies over the other identity and over `k`'s validity, whatever its issuer, and has no `Step` |
 | 10 | The asker is the key's controller alone | definition | `Authorised`'s first branch: no policy |
 | 11 | A rule naming the other as approver means the approvals include its own | definition | `Satisfies` for `.exactly` |
 | 11a | A planned check, present under every rule | source, definition | `KeepsAnAdmin` is one of the planned parts (the source readings); it is a premise of `Step` constructors, and `Step` takes any `ask` |
@@ -96,13 +96,17 @@ One line for every sentence that says something about the model, apart from a th
 | 28 | The model does not show the holder no longer has the former private key | definition | `held` records only which keys are held, not copies |
 | 28 | Nor does the protocol | source | the source readings |
 | 35, 48, 49 | A warning | process | A label |
+| 25, 42 | Resting on the planned premise that `redeem`'s team (and, in a record the system can reach, `invite`'s) is not the admin team | definition, source | The proofs close the `redeem` case with `i.team ≠ .admin`; only `invite` creates an invitation, also with `i.team ≠ .admin`; both planned |
+| 11a | Before and after the act | result | The hypothesis that the admin team's key is held after the act; a re-key removes it |
+| 21 | Admission asked for by an invitation's bearer; a native invitation is accepted with the team controller's own key, that controller's act | source, act | `cli/go/cmd/aw/id_team.go` line 1764 at 5c2ee7bad3; the security owner's note; `admit` asked by the team key's controller |
+| 50 | So a re-admission brings back no grant | result | `no_grant_returns_with_readmission`: re-admission takes the identity out of `cutOff` |
 | 6 | Resting on the planned premises that `admit`'s and `redeem`'s team is not the admin team | definition, source | `admit`'s premise `m.team ≠ .admin` and `redeem`'s premise `i.team ≠ .admin`, planned parts |
 | 21 | Resting on the planned premise that `redeem`'s team is not the admin team | definition, source | `redeem`'s premise `i.team ≠ .admin`, a planned part |
 | 38 | A valid person answering for itself (`nearest_human`) says nothing about an email check | result, source | `AnswersFor.self` needs only `Valid`; row 38; the verdict's name is the protocol's (`docs/id-certificates.md`) |
 | 40 | The rest of 38's three cases follows from 38 | result | Row 38 applies to any valid person |
 | 41 | In every record such a key exists | result | `exists_fresh_key` |
 | 42 | Locked means ...; then the organisation has no admin | definition, result | `AdminTeamLocked`; `AdminTeamLocked.no_admin` |
-| 43 | A re-key leaves the team certificates and grants as they are | act | `rekeyTeam` changes only `held` |
+| 43 | A re-key removes the team's certificates and the grants from it | act | `rekeyTeam` filters `members` and `grants` by the team |
 | 43 | 45 ends a membership and its grants | result | Row 45 |
 
 ### What must never happen
@@ -117,7 +121,7 @@ One block per cell, in the table's order.
 | | A key with no identity certificate can act in a team on its team certificate alone | definition | `InTeam`; `CanAct`'s first disjunct |
 | | And so give a grant | act | `mintGrant` needs `InTeam` and a session key no current grant uses; some key is always unused (`unused_session_key`) |
 | | In a team or not, it can send attributed to itself | act | `sendOwn` needs only `CanAct` |
-| | By the planned `leave`, it can leave a team whose key is held | act, result | `leave` needs the certificate, the held key and `KeepsAnAdmin`, and no validity or registration; `KeepsAnAdmin` is vacuous outside the admin team, and a key with no identity certificate never holds an admin-team certificate in a reachable record (`admin_certificate_member_is_registered`, which rests on `new_admin_certificate_needs_valid_member`, so on the planned premise of `admitAdmin`, and on `certificate_is_permanent`) |
+| | In a record the system can reach, by the planned `leave`, it can leave a team whose key is held | act, result | `leave` needs the certificate, the held key and `KeepsAnAdmin`, and no validity or registration; `KeepsAnAdmin` is vacuous outside the admin team, and a key with no identity certificate never holds an admin-team certificate in a reachable record (`admin_certificate_member_is_registered`, which rests on `new_admin_certificate_needs_valid_member`, so on the planned premises of `admitAdmin`, `admit` and `redeem`, and on `certificate_is_permanent`) |
 | | A team certificate counts without the root having set the team's key | definition | `InTeam`, `GrantLive` and `admit` have no premise about the root or `rekeyTeam` |
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule` (`Admin` needs `Valid`), `teamRule` |
 | A revoked member keeps authority | Proved in reachable records: not valid, not an admin, cannot act in a team, cannot send with its own key, no live grant | result | Rows 7, 20; `sendOwn` needs `CanAct` |
@@ -142,11 +146,11 @@ One block per cell, in the table's order.
 | | Resting on the planned premises that `admit`'s and `redeem`'s team is not the admin team | definition, source | Rows 6 and 21; `admit`'s and `redeem`'s premises, planned parts |
 | | Not proved for several acts under the built or the admin rule | process | No theorem states it |
 | | Under such a team rule, the identity an invitation's holder names can become an admin in three acts | result | Row 49 |
-| | And in two if it is already a valid member | result | Row 48 |
+| | And in two if it is already a valid member | result | Row 48 with `invitation_route_starts_from_a_member` |
 | | As 35 shows for giving a key back | result | Row 35 |
 | An agent approves where a person is required | Proved for every approval | result | Rows 4, 23 |
 | Being issued an identity gives team membership | Proved for one act | result | `registering_gives_no_team` |
-| An unregistered key in two teams | Proved in reachable records | result | Row 14 |
+| An unregistered key in two teams | Proved in reachable records, resting on the planned premise of `admitAdmin` | result | Row 14 and its label |
 | | It holds on the supported journey; the registry's own route does not enforce it | source | the source readings |
 | A key leaves its holder except ... | Proved for one act | result | Row 28 |
 | The last admin's team certificate | A planned check, proved for one act | result | Row 11a |
@@ -176,21 +180,26 @@ Each item pairs a sentence about the model with one about the real system.
 |---|---|---|
 | Nothing here is about time, crashes, retries or concurrent changes | assumption | A5 |
 | `replaceRoot` cuts off every unrevoked identity of the organisation at once | act | `replaceRoot` |
+| It ends the grants on them | act | `replaceRoot` filters `grants` |
+| Really the cut-off is derived at verification from replacement epochs; the open epoch's own key cuts nothing off | source | `awid/src/awid_service/routes/dns_namespaces.py` lines 705 to 712, `awid/src/awid/id_certificates.py` lines 855 and 856, at 5c2ee7bad3 |
+| `createOrg` is fresh creation; the registry returns an existing namespace without creating or replacing it | act, source | `createOrg`'s premise `o ∉ s.orgs`; `awid/src/awid_service/routes/dns_namespaces.py` lines 391 to 418 |
 | Really by time of registration, with a backdated option; dual-signed rotation and parent recovery exist | source | the source readings |
 | Re-admission puts the same certificate back in force | act | `readmitByRoot`, `readmitByParent` take the subject out of `revoked` and `cutOff` and change no certificate |
-| Really a new signed certificate, and the new root can admit anyone it keeps | source | the source readings |
+| Really a new signed certificate, through the one registration route that serves every supersession, and the new root can admit anyone it keeps; the route does not check "cut off" | source | `awid/src/awid_service/id_registration.py` at 5c2ee7bad3, line 95 |
 | `release` gives a key back whole | act | `release` changes only `held` |
 | Really a new key, signed by old and new | source | the source readings |
 | One certificate per identity | result | Row 14 |
-| Really an identity can be moved to another parent | source | the source readings |
+| Really one current certificate per identity, earlier revisions kept; naming the expected head supersedes it, which re-parents | source | `awid/src/awid_service/id_registration.py` at 5c2ee7bad3, lines 89 to 106 and 155 to 170 |
 | Creating and deleting teams is not modelled | definition | `OrgKey` and `Team` are fixed; no act creates a team |
 | A root replacement leaves the team keys where they were | act | `replaceRoot` filters only `.root o` from `held` |
 | The root re-keys a team by a separate act | act | `rekeyTeam` |
-| A re-key takes the team's key out of `held`, and changes nothing else | act | `rekeyTeam` filters only `held` |
+| A re-key takes the team's key out of `held` and ends every certificate of the team and every grant from it | act | `rekeyTeam` filters `held`, `members` and `grants` |
+| Since they no longer verify under the new key; here they are admitted again by separate acts | source | The protocol seat's E7.3 disposition; `admit`, `admitAdmin` |
 | Really the rotation also re-signs the member certificates it is given | source | awid `rotate_team_key` at 5c2ee7bad3 |
 | `controller key` is whoever controls that key now; the old one cannot be named | definition | `Party.controller` names a key, not a holder |
 | The operator is not modelled; whoever controls a key asks directly only while it is not held | definition | `Authorised`'s first branch needs `key ∉ s.held`; `entrust` needs `key ∉ s.held` |
-| Really the operator has narrower named commands | source | the source readings |
+| Really a generic allowlisted routine signer that checks the exact controller and refuses person issuance, beside named person commands | source | The security owner's note, via the protocol seat (mail 5ff1d5fb) |
+| `builtRule` is the public requester path; the operator is trusted and outside it | source | The protocol seat's E7.3 disposition (mail b3dd950b) |
 | Policy is given and checked only when a key holder holds the key | definition | No act changes `policy`; `Approved` is only in `Authorised`'s held branch |
 | Really servers and applications enforce approval | source | the source readings |
 | A team certificate is one record | definition | `Membership` has no id |
@@ -199,6 +208,7 @@ Each item pairs a sentence about the model with one about the real system.
 | Really ten scopes and expiry | source | the source readings |
 | `sendOwn` stands for an accepted send | act | `sendOwn` |
 | Really the server checks key, identity and recipient rules | source | the source readings |
+| An invitation is an ordinary invitation; a privileged admin admission is planned at the grantor (aweb-adyx.8) | source | The protocol seat's E7.3 disposition |
 | An invitation is used once, for one team | act | `redeem` removes it; `Invite` names one team |
 | Really several uses, expiry, a named answerer | source | the source readings |
 | A secret is new only among unused invitations; a session key only among current grants | act | `invite`'s and `mintGrant`'s freshness premises |
@@ -209,7 +219,7 @@ Each item pairs a sentence about the model with one about the real system.
 | The protocol tells them apart | source | the source readings |
 | Named-team certificates and invitations need no organisation to exist | act | No premise of `admit`, `redeem` or `invite` mentions `orgs` |
 | Nobody holds a member's own key for it | assumption | A7 |
-| Premises of built acts that the registry does not check: `Fresh`, re-admission's cut-off premise, `OneTeamIfLocal`, and an invitation's authority, unique secret and being unused | source | aweb 5c2ee7bad3 at the files and lines the item cites |
+| Premises of built acts that the registry does not check: `OneTeamIfLocal`, and an invitation's authority, unique secret and being unused | source | aweb 5c2ee7bad3 at the files and lines the item cites |
 | So one certificate each holds of the model, not of the registry | result, source | Row 14 rests on the `Fresh` premises; the registry gives superseding certificates |
 
 ### Not done
@@ -238,7 +248,7 @@ Each item pairs a sentence about the model with one about the real system.
 | `new_admin_needs_controller_or_asker` | So it is not an invitation's holder | result | `.bearer` is neither disjunct |
 | `revoked_has_no_authority`, `revoked_cannot_act`, `grant_ends_with_subject` | In reachable records only registered identities are revoked | result | `Reachable.revokedAreRegistered` |
 | `revoked_cannot_act` | Sending, acting in a team and a live grant need `CanAct` | act, definition | `sendOwn`, `InTeam`, `GrantLive` |
-| `grant_ends_with_subject` | The revoking acts leave the grants as they are | act | `revokeSelf`, `revokeChild`, `revokeByOrg`, `replaceRoot` change no `grants` |
+| `grant_ends_with_subject` | `revokeSelf`, `revokeChild` and `revokeByOrg` leave the grants as they are; `replaceRoot` removes the grants on the identities it cuts off | act | Their effects |
 | `person_survives_others` | About the record, not an act | result | The statement has no `Step` |
 | `orphaned_agent_cannot_act_in_team` | Its team certificates are not looked at | result | The statement |
 | `admin_can_remove_admin` | A rule naming `b` as approver means the approvals include `b`'s | definition | `Satisfies .exactly` |
@@ -295,4 +305,5 @@ Its doc comments are about the build, not the model.
 |---|---|---|---|
 | module doc | What the check is | process | `#doc_names_resolve` and its file list |
 | `skipped`, `leanNames`, `modelTypes`, `inductives` | What each list is for | process | Their use in `passes`, `resolvesInModel`, `isConstructorOfModel` |
+| `backquote`, `runs`, `passes`, `isPathOrCommand`, `quoted`, `failures` | Each reads its body | process | Their bodies |
 | `#doc_names_resolve` | Fails if a file cites an identifier that does not pass | process | Its body |

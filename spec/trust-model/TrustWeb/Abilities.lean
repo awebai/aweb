@@ -139,7 +139,7 @@ theorem no_admin_no_new_admin_certificate {s s' : State} {who : Party} {o : Org}
   | mintGrant _ _ => exact absurd hnew hold
   | revokeGrant _ => exact absurd hnew hold
   | release _ _ => exact absurd hnew hold
-  | rekeyTeam _ => exact absurd hnew hold
+  | rekeyTeam _ => exact absurd (List.mem_filter.mp hnew).1 hold
   | replaceRoot _ => exact absurd hnew hold
   | readmitByRoot _ _ _ _ => exact absurd hnew hold
   | readmitByParent _ _ _ _ => exact absurd hnew hold
@@ -325,7 +325,7 @@ theorem locked_admin_team_opens_only_by_root {s s' : State} {who : Party} {o : O
         · simp only [ne_eq, decide_eq_true_eq]; exact he
   | rekeyTeam hauth =>
       rename_i o' t approvals
-      refine ⟨List.mem_filter.mpr ⟨hheld, ?_⟩, hnone⟩
+      refine ⟨List.mem_filter.mpr ⟨hheld, ?_⟩, fun x hx => hnone x (List.mem_filter.mp hx).1⟩
       by_cases he : OrgKey.team o .admin = OrgKey.team o' t
       · cases he
         rcases hauth with ⟨_, hw⟩ | ⟨_, k, _, hask, _⟩
@@ -418,7 +418,7 @@ theorem takeover_leaves_outsiders_acting (ask : AskRule) :
       held := s5.held.filter (fun k => decide (k ≠ .root 0)) } 0 (.named 7) 9 :=
     ⟨by simp [HasTeamCert, s5, s4, m], .inr ⟨1, .agent, v'⟩⟩
   refine ⟨s5, _, g, r5, hstep, by simp [s5, s4, s3, s2, s1, e], ?_, hin, rfl,
-    ⟨by simp [s5], hin⟩⟩
+    ⟨by simp [s5, s4, s3, s2, s1, e, g, c9], hin⟩⟩
   intro k kind hv
   obtain ⟨c, hc, _, _, hco⟩ := hv.cert
   simp [s5, s4, s3] at hc
@@ -500,8 +500,14 @@ theorem domain_owner_recovers_an_admin {ask : AskRule} {s : State} {o : Org} {k 
         (·.subject)) ++ s.revoked,
       cutOff := ((s.certs.filter (fun c => decide (c.org = o ∧ c.subject ∉ s.revoked))).map
         (·.subject)) ++ s.cutOff,
-      held := s.held.filter (fun x => decide (x ≠ .root o)) }
-  let s2 : State := { s1 with held := s1.held.filter (fun x => decide (x ≠ .team o .admin)) }
+      held := s.held.filter (fun x => decide (x ≠ .root o)),
+      grants := s.grants.filter (fun g => decide (g.subject ∉
+        (s.certs.filter (fun c => decide (c.org = o ∧ c.subject ∉ s.revoked))).map
+          (·.subject))) }
+  let s2 : State :=
+    { s1 with held := s1.held.filter (fun x => decide (x ≠ .team o .admin)),
+              members := s1.members.filter (fun m => decide (¬ (m.org = o ∧ m.team = .admin))),
+              grants := s1.grants.filter (fun g => decide (¬ (g.org = o ∧ g.team = .admin))) }
   let c : Cert := ⟨o, k, .person, .root⟩
   let s3 : State := { s2 with certs := c :: s2.certs }
   let s4 : State := { s3 with members := ⟨o, .admin, k⟩ :: s3.members }
@@ -532,7 +538,10 @@ theorem root_can_end_team_membership {ask : AskRule} {s : State} {o : Org} {t : 
     {k : Key} (hroot : OrgKey.root o ∉ s.held) :
     ∃ s1 s2, Step ask s (.controller (.root o)) s1 ∧ Step ask s1 (.controller (.team o t)) s2 ∧
       ¬ HasTeamCert s2 o t k ∧ ∀ g, g ∈ s2.grants → ¬ (g.org = o ∧ g.team = t ∧ g.subject = k) := by
-  let s1 : State := { s with held := s.held.filter (fun x => decide (x ≠ .team o t)) }
+  let s1 : State :=
+    { s with held := s.held.filter (fun x => decide (x ≠ .team o t)),
+             members := s.members.filter (fun m => decide (¬ (m.org = o ∧ m.team = t))),
+             grants := s.grants.filter (fun g => decide (¬ (g.org = o ∧ g.team = t))) }
   have hteam : OrgKey.team o t ∉ s1.held := by simp [s1]
   refine ⟨s1, _, Step.rekeyTeam (approvals := []) (.inl ⟨hroot, rfl⟩),
     Step.remove (m := ⟨o, t, k⟩) (approvals := []) (.inl ⟨hteam, rfl⟩)
@@ -659,7 +668,7 @@ theorem new_admin_certificate_needs_valid_member {ask : AskRule} {s s' : State}
   | mintGrant _ _ => exact absurd hnew hold
   | revokeGrant _ => exact absurd hnew hold
   | release _ _ => exact absurd hnew hold
-  | rekeyTeam _ => exact absurd hnew hold
+  | rekeyTeam _ => exact absurd (List.mem_filter.mp hnew).1 hold
   | replaceRoot _ => exact absurd hnew hold
   | readmitByRoot _ _ _ _ => exact absurd hnew hold
   | readmitByParent _ _ _ _ => exact absurd hnew hold

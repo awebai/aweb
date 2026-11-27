@@ -199,7 +199,7 @@ theorem new_admin_needs_controller_or_asker {ask : AskRule} {s s' : State} {who 
   | mintGrant _ _ => exact absurd hnew hold
   | revokeGrant _ => exact absurd hnew hold
   | release _ _ => exact absurd hnew hold
-  | rekeyTeam _ => exact absurd hnew hold
+  | rekeyTeam _ => exact absurd (List.mem_filter.mp hnew).1 hold
   | replaceRoot _ => exact absurd hnew hold
   | readmitByRoot _ _ _ _ => exact absurd hnew hold
   | readmitByParent _ _ _ _ => exact absurd hnew hold
@@ -356,12 +356,13 @@ theorem root_can_end_admin {ask : AskRule} {s : State} {o : Org}
   exact revoked_not_valid (List.mem_cons_self) hv'
 
 /-- A planned check, under every rule, in one act. If the admin team's key of
-`o` is with a key holder, and `b` holds a certificate of `o`'s admin team
+`o` is with a key holder before and after an accepted act, and `b` holds a certificate of `o`'s admin team
 before an accepted act and not after, some identity other than `b` is an admin
 of `o` after it. A revocation can still leave the organisation with no admin
 (`revocation_can_leave_no_admin`). -/
 theorem key_holder_keeps_an_admin {ask : AskRule} {s s' : State} {who : Party} {o : Org}
     {b : Key} (hstep : Step ask s who s') (hheld : OrgKey.team o .admin ∈ s.held)
+    (hheld' : OrgKey.team o .admin ∈ s'.held)
     (hb : HasTeamCert s o .admin b) (hgone : ¬ HasTeamCert s' o .admin b) :
     ∃ k, k ≠ b ∧ Admin s' o k := by
   have stay : ∀ (m0 : Membership) (gs : List Grant), KeepsAnAdmin s m0 →
@@ -394,7 +395,12 @@ theorem key_holder_keeps_an_admin {ask : AskRule} {s s' : State} {who : Party} {
   | createOrg _ => exact absurd hb hgone
   | entrust _ => exact absurd hb hgone
   | release _ _ => exact absurd hb hgone
-  | rekeyTeam _ => exact absurd hb hgone
+  | @rekeyTeam o' t _ _ _ =>
+      by_cases he : o' = o ∧ t = .admin
+      · obtain ⟨rfl, rfl⟩ := he
+        have := (List.mem_filter.mp hheld').2
+        simp at this
+      · exact absurd (List.mem_filter.mpr ⟨hb, by simp only [decide_eq_true_eq]; exact fun ⟨a, b⟩ => he ⟨a.symm, b.symm⟩⟩) hgone
   | registerByRoot _ _ _ _ => exact absurd hb hgone
   | registerByParent _ _ _ _ => exact absurd hb hgone
   | revokeSelf _ => exact absurd hb hgone
@@ -441,7 +447,13 @@ theorem grant_ends_with_its_certificate {ask : AskRule} {s s' : State} {who : Pa
   | createOrg _ => exact absurd hb hgone
   | entrust _ => exact absurd hb hgone
   | release _ _ => exact absurd hb hgone
-  | rekeyTeam _ => exact absurd hb hgone
+  | @rekeyTeam o' t' _ _ _ =>
+      intro g hg ⟨h1, h3, _⟩
+      have h2 := (List.mem_filter.mp hg).2
+      by_cases he : o = o' ∧ t = t'
+      · obtain ⟨rfl, rfl⟩ := he
+        simp [h1, h3] at h2
+      · exact hgone (List.mem_filter.mpr ⟨hb, by simp only [decide_eq_true_eq]; exact fun ⟨a, b⟩ => he ⟨a, b⟩⟩)
   | registerByRoot _ _ _ _ => exact absurd hb hgone
   | registerByParent _ _ _ _ => exact absurd hb hgone
   | revokeSelf _ => exact absurd hb hgone
@@ -719,8 +731,8 @@ theorem new_grant_by_subject {ask : AskRule} {s s' : State} {who : Party} {g : G
   | invite _ _ _ => exact absurd hnew hold
   | redeem _ _ _ => exact absurd hnew hold
   | release _ _ => exact absurd hnew hold
-  | rekeyTeam _ => exact absurd hnew hold
-  | replaceRoot _ => exact absurd hnew hold
+  | rekeyTeam _ => exact absurd (List.mem_filter.mp hnew).1 hold
+  | replaceRoot _ => exact absurd (List.mem_filter.mp hnew).1 hold
   | readmitByRoot _ _ _ _ => exact absurd hnew hold
   | readmitByParent _ _ _ _ => exact absurd hnew hold
   | sendOwn _ => exact absurd hnew hold
@@ -734,8 +746,9 @@ theorem new_grant_by_subject {ask : AskRule} {s s' : State} {who : Party} {g : G
 /-- If only registered identities are revoked, and a grant's subject is
 revoked or lacks the team certificate the grant came from, the grant is not
 live. In every reachable record only registered identities are revoked
-(`Reachable.revokedAreRegistered`). The revoking acts leave the grants as they
-are (`revokeSelf`, `revokeChild`, `revokeByOrg`, `replaceRoot`). -/
+(`Reachable.revokedAreRegistered`). `revokeSelf`, `revokeChild` and
+`revokeByOrg` leave the grants as they are; `replaceRoot` removes the grants on
+the identities it cuts off. -/
 theorem grant_ends_with_subject {s : State} (hrr : RevokedAreRegistered s) {g : Grant}
     (h : g.subject ∈ s.revoked ∨ ¬ HasTeamCert s g.org g.team g.subject) : ¬ GrantLive s g := by
   intro ⟨_, hin⟩
@@ -876,9 +889,15 @@ theorem controller_stays_in_its_organisation {ask : AskRule} {s s' : State} {key
   | entrust _ =>
       exact ⟨fun _ h h' => absurd h h', fun _ h h' => absurd h h',
         fun _ h h' => absurd h h', fun _ h h' => absurd h h'⟩
-  | rekeyTeam _ =>
-      exact ⟨fun _ h h' => absurd h h', fun _ h h' => absurd h h',
-        fun _ h h' => absurd h h', fun _ h h' => absurd h h'⟩
+  | rekeyTeam hauth =>
+      have hk := hauth.controller_eq
+      subst hk
+      refine ⟨fun _ h h' => absurd h h', fun _ h h' => absurd (List.mem_filter.mp h).1 h', ?_,
+        fun _ h h' => absurd h h'⟩
+      intro m hm hgone
+      apply Classical.byContradiction
+      intro hne
+      exact hgone (List.mem_filter.mpr ⟨hm, by simp only [decide_eq_true_eq]; exact fun ⟨h, _⟩ => hne h⟩)
   | invite _ _ _ =>
       exact ⟨fun _ h h' => absurd h h', fun _ h h' => absurd h h',
         fun _ h h' => absurd h h', fun _ h h' => absurd h h'⟩
@@ -1244,7 +1263,7 @@ theorem Step.localInOneTeam {ask : AskRule} {s s' : State} {who : Party}
   | createOrg _ => exact h
   | entrust _ => exact h
   | release _ _ => exact h
-  | rekeyTeam _ => exact h
+  | rekeyTeam _ => exact sub _
   | revokeSelf _ => exact h
   | revokeChild _ _ _ => exact h
   | revokeByOrg _ _ => exact h
@@ -1318,5 +1337,92 @@ theorem Reachable.cutOffAreRevoked {ask : AskRule} {s : State} (hr : Reachable a
       | rekeyTeam _ => exact ih
       | sendOwn _ => exact ih
       | sendGrant _ _ => exact ih
+
+/-- If every cut-off identity is revoked, only registered identities are
+revoked, and no grant stands on a cut-off identity before an accepted act, no
+grant stands on a cut-off identity after it. -/
+theorem Step.noGrantOnCutOff {ask : AskRule} {s s' : State} {who : Party}
+    (hstep : Step ask s who s') (hc : ∀ k, k ∈ s.cutOff → k ∈ s.revoked)
+    (hrr : RevokedAreRegistered s) (h : ∀ g, g ∈ s.grants → g.subject ∉ s.cutOff) :
+    ∀ g, g ∈ s'.grants → g.subject ∉ s'.cutOff := by
+  have shrinkCut : ∀ j g, g ∈ s.grants → g.subject ∉ s.cutOff.filter (fun x => decide (x ≠ j)) :=
+    fun j g hg hm => h g hg (List.mem_filter.mp hm).1
+  have shrinkGrants : ∀ (p : Grant → Bool) g, g ∈ s.grants.filter p → g.subject ∉ s.cutOff :=
+    fun p g hg => h g (List.mem_filter.mp hg).1
+  cases hstep with
+  | createOrg _ => exact h
+  | entrust _ => exact h
+  | release _ _ => exact h
+  | registerByRoot _ _ _ _ => exact h
+  | registerByParent _ _ _ _ => exact h
+  | admit _ _ _ => exact h
+  | admitAdmin _ _ _ => exact h
+  | invite _ _ _ => exact h
+  | redeem _ _ _ => exact h
+  | sendOwn _ => exact h
+  | sendGrant _ _ => exact h
+  | readmitByRoot _ _ _ _ => exact shrinkCut _
+  | readmitByParent _ _ _ _ => exact shrinkCut _
+  | revokeSelf _ => exact shrinkCut _
+  | revokeChild _ _ _ => exact shrinkCut _
+  | revokeByOrg _ _ => exact shrinkCut _
+  | remove _ _ => exact shrinkGrants _
+  | leave _ _ _ => exact shrinkGrants _
+  | revokeGrant _ => exact shrinkGrants _
+  | rekeyTeam _ => exact shrinkGrants _
+  | replaceRoot _ =>
+      intro g hg hm
+      have hg' := List.mem_filter.mp hg
+      rcases List.mem_append.mp hm with hl | hl
+      · simp only [decide_eq_true_eq] at hg'
+        exact hg'.2 hl
+      · exact h g hg'.1 hl
+  | mintGrant hin _ =>
+      intro g hg hm
+      rcases List.mem_cons.mp hg with rfl | hg
+      · rcases hin.2 with hnr | ⟨o', kind, hv⟩
+        · exact hnr (hrr _ (hc _ hm))
+        · exact revoked_not_valid (hc _ hm) hv
+      · exact h g hg hm
+
+/-- In every reachable record, no grant stands on a cut-off identity. -/
+theorem Reachable.noGrantOnCutOff {ask : AskRule} {s : State} (hr : Reachable ask s) :
+    ∀ g, g ∈ s.grants → g.subject ∉ s.cutOff := by
+  induction hr with
+  | start _ => intro g hg; cases hg
+  | step hr' hstep ih =>
+      exact hstep.noGrantOnCutOff hr'.cutOffAreRevoked hr'.revokedAreRegistered ih
+
+/-- In a reachable record, if an accepted act takes `k` out of the cut-off
+identities, no grant on `k` stands after it. -/
+theorem no_grant_returns_with_readmission {ask : AskRule} {s s' : State} {who : Party}
+    {k : Key} (hr : Reachable ask s) (hstep : Step ask s who s') (hin : k ∈ s.cutOff)
+    (hout : k ∉ s'.cutOff) : ∀ g, g ∈ s'.grants → g.subject ≠ k := by
+  have none := hr.noGrantOnCutOff
+  intro g hg hk
+  subst hk
+  cases hstep with
+  | mintGrant _ _ => exact hout hin
+  | createOrg _ => exact hout hin
+  | entrust _ => exact hout hin
+  | release _ _ => exact hout hin
+  | rekeyTeam _ => exact hout hin
+  | registerByRoot _ _ _ _ => exact hout hin
+  | registerByParent _ _ _ _ => exact hout hin
+  | admit _ _ _ => exact hout hin
+  | admitAdmin _ _ _ => exact hout hin
+  | remove _ _ => exact hout hin
+  | leave _ _ _ => exact hout hin
+  | invite _ _ _ => exact hout hin
+  | redeem _ _ _ => exact hout hin
+  | revokeGrant _ => exact hout hin
+  | sendOwn _ => exact hout hin
+  | sendGrant _ _ => exact hout hin
+  | replaceRoot _ => exact hout (List.mem_append_right _ hin)
+  | readmitByRoot _ _ _ _ => exact none g hg hin
+  | readmitByParent _ _ _ _ => exact none g hg hin
+  | revokeSelf _ => exact none g hg hin
+  | revokeChild _ _ _ => exact none g hg hin
+  | revokeByOrg _ _ => exact none g hg hin
 
 end TrustWeb

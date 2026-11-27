@@ -278,7 +278,8 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
       o ∉ s.orgs →
       Step ask s (.dns o) { s with orgs := o :: s.orgs }
   /-- Asked for by `dns o`, if `o` exists: every unrevoked identity with a
-  certificate of `o` is revoked and cut off, and `o`'s root key is not held. -/
+  certificate of `o` is revoked and cut off, no grant on any of them stands,
+  and `o`'s root key is not held. -/
   | replaceRoot {s : State} {o : Org} :
       o ∈ s.orgs →
       Step ask s (.dns o)
@@ -287,7 +288,10 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
             (·.subject)) ++ s.revoked,
           cutOff := ((s.certs.filter (fun c => decide (c.org = o ∧ c.subject ∉ s.revoked))).map
             (·.subject)) ++ s.cutOff,
-          held := s.held.filter (fun k => decide (k ≠ .root o)) }
+          held := s.held.filter (fun k => decide (k ≠ .root o)),
+          grants := s.grants.filter (fun g => decide (g.subject ∉
+            (s.certs.filter (fun c => decide (c.org = o ∧ c.subject ∉ s.revoked))).map
+              (·.subject))) }
   /-- If `c` is registered and issued by the root, its subject is cut off, and
   `Authorised` holds for the root key of `c`'s organisation and registering
   `c`'s kind: the subject is neither revoked nor cut off. -/
@@ -311,10 +315,14 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
       key ∈ s.held → Authorised ask s key .release who approvals →
       Step ask s who { s with held := s.held.filter (fun k => decide (k ≠ key)) }
   /-- If `Authorised` holds for `o`'s root key and a re-key: the key of team
-  `t` of `o` is not held. -/
+  `t` of `o` is not held, and no certificate of that team stands, nor any grant
+  from it. -/
   | rekeyTeam {s : State} {o : Org} {t : Team} {who : Party} {approvals : List Key} :
       Authorised ask s (.root o) .rekey who approvals →
-      Step ask s who { s with held := s.held.filter (fun k => decide (k ≠ .team o t)) }
+      Step ask s who
+        { s with held := s.held.filter (fun k => decide (k ≠ .team o t)),
+                 members := s.members.filter (fun m => decide (¬ (m.org = o ∧ m.team = t))),
+                 grants := s.grants.filter (fun g => decide (¬ (g.org = o ∧ g.team = t))) }
   /-- Asked for by `controller key`, if `key` is not held: `key` is held. -/
   | entrust {s : State} {key : OrgKey} :
       key ∉ s.held →
