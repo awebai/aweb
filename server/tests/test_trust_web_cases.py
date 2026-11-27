@@ -1,6 +1,6 @@
 """The trust-web model's cases, run against the real AWID registry and aweb server.
 
-docs/vectors/trust-web-cases-v1.json holds the cases (format
+The cases are the corpus trust_web_cases.py loads (format
 ``aweb.trust-web-cases/1``, docs/vectors/README.md). Every implemented case
 runs here: setup is replayed as model acts through signed public routes, the
 act is sent, and the decision and the committed evidence read back are
@@ -24,8 +24,10 @@ from trust_web_cases import (
     compare,
     load_corpus,
     run_case,
-    stack_factory,  # noqa: F401  (fixture)
 )
+from trust_web_cases import stack_factory as stack_factory
+
+__all__ = ["stack_factory"]
 
 
 def _valid() -> dict:
