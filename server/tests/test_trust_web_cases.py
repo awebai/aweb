@@ -11,6 +11,8 @@ comparison, pinned to its filed disagreement; design cases are never sent.
 from __future__ import annotations
 
 import copy
+import dataclasses
+import json
 
 import pytest
 
@@ -18,7 +20,11 @@ from trust_web_cases import (
     CORPUS,
     DISAGREEMENTS,
     CaseFormatError,
+    NotRunnable,
+    compare,
     load_corpus,
+    run_case,
+    stack_factory,  # noqa: F401  (fixture)
 )
 
 
@@ -133,3 +139,83 @@ def test_every_disagreement_names_a_runnable_case_and_a_task():
     for case_id, disagreement in DISAGREEMENTS.items():
         assert case_id in runnable
         assert disagreement.task.startswith("aweb-")
+
+
+# ---------------------------------------------------------------------------
+# The cases, against the real registry and server
+# ---------------------------------------------------------------------------
+
+CASES = {case.id: case for case in load_corpus(CORPUS)}
+RUNNABLE = sorted(case_id for case_id, case in CASES.items() if case.runnable)
+DESIGN = sorted(case_id for case_id, case in CASES.items() if not case.runnable)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case_id", RUNNABLE)
+async def test_the_code_decides_the_case_as_the_model_does(stack_factory, case_id):
+    case = CASES[case_id]
+    async with stack_factory() as stack:
+        run = await run_case(stack, case)
+    mismatches = compare(case, run)
+    disagreement = DISAGREEMENTS.get(case_id)
+    if disagreement is None:
+        assert mismatches == [], "\n".join(mismatches)
+        return
+    assert tuple(mismatches) == disagreement.mismatches, "\n".join(mismatches)
+    pytest.xfail(f"disagreement {disagreement.task}: " + "; ".join(mismatches))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case_id", DESIGN)
+async def test_a_design_case_is_never_sent(stack_factory, case_id):
+    async with stack_factory() as stack:
+        before = (
+            len(stack.registry.transport.calls),
+            len(stack.server.transport.calls),
+        )
+        with pytest.raises(NotRunnable, match="design"):
+            await run_case(stack, CASES[case_id])
+        after = (len(stack.registry.transport.calls), len(stack.server.transport.calls))
+    assert after == before
+
+
+def _expecting(case, **changes):
+    return dataclasses.replace(case, **changes)
+
+
+@pytest.mark.asyncio
+async def test_the_comparator_fails_on_a_deliberately_wrong_expectation(stack_factory):
+    """One real allowed run and one real refused run, compared with their own
+    cases and with expectations changed one fact at a time."""
+    allowed = CASES["register-agent-by-agent-parent"]
+    refused = CASES["register-person-by-agent-parent-refused"]
+    async with stack_factory() as stack:
+        allowed_run = await run_case(stack, allowed)
+    async with stack_factory() as stack:
+        refused_run = await run_case(stack, refused)
+    assert compare(allowed, allowed_run) == []
+    assert compare(refused, refused_run) == []
+
+    as_refused = _expecting(
+        allowed, result="refused", premise="registerByParent.MayIssue"
+    )
+    assert compare(as_refused, allowed_run)[0] == (
+        "decision: expected refused (registerByParent.MayIssue), code allowed"
+    )
+    as_allowed = _expecting(refused, result="allowed", premise=None)
+    assert compare(as_allowed, refused_run)[0] == (
+        "decision: expected allowed, code refused with "
+        + refused_run.refusal.describe()
+    )
+    other_premise = _expecting(refused, premise="registerByParent.Valid")
+    [premise_mismatch] = compare(other_premise, refused_run)
+    assert premise_mismatch.startswith(
+        "reason: premise registerByParent.Valid expects "
+    ), premise_mismatch
+    [cert] = allowed.observe
+    wrong_kind = dataclasses.replace(cert, expected={**cert.expected, "kind": "person"})
+    assert compare(_expecting(allowed, observe=(wrong_kind,)), allowed_run) == [
+        f"observe {cert.label()}: expected after "
+        f"{json.dumps(wrong_kind.expected, sort_keys=True)}, read "
+        f"{json.dumps(cert.expected, sort_keys=True)}"
+    ]
