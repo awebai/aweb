@@ -5,25 +5,19 @@ import TrustWeb.Properties
 
 Records the system reaches in which something works, acts that go through
 when their conditions hold, and limits: `policy_requires_person`,
-`locked_without_admin`, `takeover_can_leave_admin_team_locked`,
+`no_admin_no_new_admin_certificate`, `takeover_can_leave_admin_team_locked`,
 `takeover_leaves_outsiders_acting` and `revocation_can_leave_no_admin`. Each
 theorem's doc comment says what it states.
 -/
 
 namespace TrustWeb
 
-/-- **A record with no key holder in which a person, its agents and an outsider
-act.** Under
-any rule, there is a record the system reaches in which:
-
-* no key is with a key holder;
-* 1 is a valid person of organisation 0, and 2 and 3 are valid agents of it;
-* 1 answers for 2 and for 3;
-* 9 is a valid agent of organisation 1, can act in team 7 of organisation 0,
-  and is not valid in organisation 0.
-
-In the construction 1 issues 2 and 2 issues 3, each with its own key; the
-statement does not say who issued whom. -/
+/-- Under any rule, there is a record the system reaches in which: no key is
+with a key holder; 1 is a valid person of organisation 0, and 2 and 3 are
+valid agents of it; 1 answers for 2 and for 3; and 9 is a valid agent of
+organisation 1, can act in team 7 of organisation 0, and is not valid in
+organisation 0. In the construction 1 issues 2 and 2 issues 3, each with its
+own key; the statement does not say who issued whom. -/
 theorem runs_without_key_holder (ask : AskRule) :
     ∃ s, Reachable ask s ∧ s.held = [] ∧
       Valid s 0 1 .person ∧ Valid s 0 2 .agent ∧ Valid s 0 3 .agent ∧
@@ -91,10 +85,9 @@ theorem runs_without_key_holder (ask : AskRule) :
   simp [s7, s6] at hd
   rcases hd with rfl | rfl | rfl | rfl <;> simp [c1, c2, c3, c9] at hds hdo
 
-/-- **A rule asking for any person's approval refuses approvals with no valid
-person.** If `o`'s policy has a
-rule asking for any person's approval of a kind of act, and no approver is a
-valid person of `o`, the approvals are not approved for that act. -/
+/-- If `o`'s policy has a rule asking for any person's approval of a kind of
+act, and no approver is a valid person of `o`, the approvals are not approved
+for that act. -/
 theorem policy_requires_person {s : State} {o : Org} {act : ActKind} {r : Rule}
     (hr : r ∈ s.policy) (ho : r.org = o) (ha : r.act = act) (hp : r.approver = .anyPerson)
     {approvals : List Key} (hnone : ∀ k, k ∈ approvals → ¬ Valid s o k .person) :
@@ -104,9 +97,8 @@ theorem policy_requires_person {s : State} {o : Org} {act : ActKind} {r : Rule}
   rw [hp] at h
   exact agents_cannot_approve_as_person hnone h
 
-/-- **One valid person's approval satisfies rules that ask for any person.** If `p` is a valid person of `o`
-and every rule of `o` for a kind of act asks for any person, `p`'s approval
-alone is approved for that act. -/
+/-- If `p` is a valid person of `o` and every rule of `o` for a kind of act
+asks for any person, `p`'s approval alone is approved for that act. -/
 theorem person_approval_satisfies {s : State} {o : Org} {act : ActKind} {p : Key}
     (hv : Valid s o p .person)
     (hrules : ∀ r, r ∈ s.policy → r.org = o → r.act = act → r.approver = .anyPerson) :
@@ -115,11 +107,12 @@ theorem person_approval_satisfies {s : State} {o : Org} {act : ActKind} {p : Key
   rw [hrules r hr ho ha]
   exact ⟨p, List.mem_cons_self, hv⟩
 
-/-- **Design. With a valid person's approval, an admin's admission to a named
-team goes through.** If a named team's key is with a key holder, `a` is an admin, `p` is
-a valid person, `k` is registered or holds no team certificate, and every rule
-for admitting asks for any person, there is an accepted act under the admin
-rule that `a` asks for, after which `k` holds a certificate of that team. -/
+/-- Design. If a named team `n` of `o` has its key with a key holder, `a` is
+an admin of `o`, `p` is a valid person of `o`, `k` is registered or holds no
+team certificate, and every rule of `o` for admitting asks for any person,
+there is an accepted act under the admin rule that `a` asks for, after which
+`k` holds a certificate of team `n` of `o`. The statement does not require
+`a`, `p` and `k` to differ. -/
 theorem approved_act_goes_through {s : State} {o : Org} {n : Nat} {a p k : Key}
     (hheld : OrgKey.team o (.named n) ∈ s.held) (ha : Admin s o a)
     (hv : Valid s o p .person) (hk : OneTeamIfLocal s k)
@@ -129,12 +122,11 @@ theorem approved_act_goes_through {s : State} {o : Org} {n : Nat} {a p k : Key}
     (.inr ⟨hheld, a, rfl, ha, person_approval_satisfies hv hrules⟩) hk, ?_⟩
   exact List.mem_cons_self
 
-/-- **Design, in one act. Where the admin team's key is with a key holder and
-the organisation has no admin, no accepted act adds an admin-team
-certificate of it.** It says nothing about re-admission, which leaves the
-team certificates as they are (`readmitByRoot`, `readmitByParent`). Over three acts an admin-team certificate
-of it can be added (`locked_organisation_unlocks_by_readmission`). -/
-theorem locked_without_admin {s s' : State} {who : Party} {o : Org}
+/-- Design, in one act. If the admin team's key of `o` is with a key holder
+and `o` has no admin, no accepted act under the admin rule adds a team
+certificate of `o`'s admin team. Re-admissions (`readmitByRoot`,
+`readmitByParent`) change no team certificate. -/
+theorem no_admin_no_new_admin_certificate {s s' : State} {who : Party} {o : Org}
     (hheld : OrgKey.team o .admin ∈ s.held) (hnone : ∀ k, ¬ Admin s o k)
     (hstep : Step adminRule s who s') {m : Membership}
     (hnew : m ∈ s'.members) (hold : m ∉ s.members) (hteam : m.team = .admin) : m.org ≠ o := by
@@ -176,16 +168,15 @@ theorem locked_without_admin {s s' : State} {who : Party} {o : Org}
           exact hnone a ha
       · exact absurd h hold
 
-/-- **Design. An organisation with no admin, its admin team's key held, can
-gain an admin-team certificate after the root's acts.** There is a record `L` the system reaches under the admin rule
-in which the admin team's key of organisation 0 is with a key holder and 0
-has no admin; from `L`, two acts asked by whoever controls 0's root key and
-then one act asked by identity 1 are accepted, and afterwards 2 holds an
-admin-team certificate of 0 that it did not hold in `L`. In the construction
-a root replacement cut off agents 1 and 2, the new root admits both again,
-and 1, which still holds its admin-team certificate, is an admin again and
-has 2 admitted through the key holder. -/
-theorem locked_organisation_unlocks_by_readmission :
+/-- Design. There is a record `L` the system reaches under the admin rule in
+which the admin team's key of organisation 0 is with a key holder and 0 has no
+admin; from `L`, two acts asked for by whoever controls 0's root key and then
+one act asked for by identity 1 are accepted, and afterwards 2 holds an
+admin-team certificate of 0 that it did not hold in `L`. In the construction a
+root replacement cut off agents 1 and 2, the new root admits both again, and
+1, which still holds its admin-team certificate, is an admin again and has 2
+admitted through the key holder. -/
+theorem no_admin_organisation_gains_admin_certificate :
     ∃ L R1 R2 R3, Reachable adminRule L ∧ OrgKey.team 0 .admin ∈ L.held ∧
       (∀ k, ¬ Admin L 0 k) ∧
       Step adminRule L (.controller (.root 0)) R1 ∧
@@ -256,11 +247,10 @@ theorem locked_organisation_unlocks_by_readmission :
       (.inr ⟨by simp [R2, R1, L, s5, m2], 1, rfl, a1, ?_⟩)
     intro r hr; simp [R2, R1, L, s5, s4, s3, s2, s1, e] at hr
 
-/-- **Design. With no person, an agent admin can admit to a named team.** There is a
-record the system reaches under the admin rule in which nobody is a person of
-organisation 0, and 1 is an admin and a valid agent of it; an act that 1 asks
-for is accepted, after which 2 holds a certificate of team 7 of 0 that it did
-not hold before. -/
+/-- Design. There is a record the system reaches under the admin rule in which
+nobody is a person of organisation 0, 2 holds no certificate of team 7 of 0,
+and 1 is an admin and a valid agent of 0; an act that 1 asks for is accepted,
+after which 2 holds a certificate of team 7 of 0. -/
 theorem agent_only_org_runs :
     ∃ s s', Reachable adminRule s ∧ (∀ k, ¬ Person s 0 k) ∧ Admin s 0 1 ∧
       Valid s 0 1 .agent ∧ Step adminRule s (.id 1) s' ∧
@@ -309,40 +299,84 @@ and no team certificate of `o`'s admin team stands. -/
 def AdminTeamLocked (s : State) (o : Org) : Prop :=
   OrgKey.team o .admin ∈ s.held ∧ ∀ m, m ∈ s.members → m.org = o → m.team ≠ .admin
 
-/-- A locked admin team leaves its organisation with no admin. -/
+/-- If `o`'s admin team is locked, no identity is an admin of `o`. -/
 theorem AdminTeamLocked.no_admin {s : State} {o : Org} (h : AdminTeamLocked s o) (k : Key) :
     ¬ Admin s o k := by
   intro ⟨hm, _⟩
   exact h.2 _ hm rfl rfl
 
-/-- **Replacing the root can leave the admin team locked.** Under any rule
-there is a record the system reaches and an act asked for by organisation
-0's domain owner, after which the record is reachable, 0's root key is not
-with a key holder, no identity is valid in 0, and 0's admin team is locked.
--/
-theorem takeover_can_leave_admin_team_locked (ask : AskRule) :
-    ∃ s s', Reachable ask s ∧ Step ask s (.dns 0) s' ∧ Reachable ask s' ∧
-      OrgKey.root 0 ∉ s'.held ∧ (∀ k kind, ¬ Valid s' 0 k kind) ∧ AdminTeamLocked s' 0 := by
-  let e : State := ⟨[], [], [], [], [], [], [], [], [], []⟩
-  let s1 : State := { e with orgs := [0] }
-  let s2 : State := { s1 with held := [.team 0 .admin] }
-  have r1 : Reachable ask s1 := .step (.start []) (Step.createOrg (o := 0) (by simp))
-  have r2 : Reachable ask s2 := .step r1 (Step.entrust (key := .team 0 .admin) (by simp [s1, e]))
-  have hstep : Step ask s2 (.dns 0) _ := Step.replaceRoot (o := 0) (by simp [s2, s1])
-  refine ⟨s2, _, r2, hstep, .step r2 hstep, ?_, ?_, ?_⟩
-  · simp [s2]
-  · intro k kind hv
-    obtain ⟨c, hc, _⟩ := hv.cert
-    simp [s2, s1, e] at hc
-  · refine ⟨by simp [s2], ?_⟩
-    intro m hm
-    simp [s2, s1, e] at hm
+/-- Design, in one act. If `o`'s admin team is locked before an accepted act
+under the admin rule and the asker is not whoever controls `o`'s root key, it
+is locked after it. -/
+theorem locked_admin_team_opens_only_by_root {s s' : State} {who : Party} {o : Org}
+    (hstep : Step adminRule s who s') (hl : AdminTeamLocked s o)
+    (hwho : who ≠ .controller (.root o)) : AdminTeamLocked s' o := by
+  have noAdmin := hl.no_admin
+  obtain ⟨hheld, hnone⟩ := hl
+  cases hstep with
+  | createOrg _ => exact ⟨hheld, hnone⟩
+  | replaceRoot _ => exact ⟨List.mem_filter.mpr ⟨hheld, by simp⟩, hnone⟩
+  | readmitByRoot _ _ _ _ => exact ⟨hheld, hnone⟩
+  | readmitByParent _ _ _ _ => exact ⟨hheld, hnone⟩
+  | release hk hauth =>
+      rename_i key approvals
+      refine ⟨List.mem_filter.mpr ⟨hheld, ?_⟩, hnone⟩
+      rcases hauth with ⟨hn, _⟩ | ⟨_, k, _, hask, _⟩
+      · exact absurd hk hn
+      · by_cases he : OrgKey.team o .admin = key
+        · subst he
+          exact absurd hask (noAdmin k)
+        · simp only [ne_eq, decide_eq_true_eq]; exact he
+  | rekeyTeam hauth =>
+      rename_i o' t approvals
+      refine ⟨List.mem_filter.mpr ⟨hheld, ?_⟩, hnone⟩
+      by_cases he : OrgKey.team o .admin = OrgKey.team o' t
+      · cases he
+        rcases hauth with ⟨_, hw⟩ | ⟨_, k, _, hask, _⟩
+        · exact absurd hw hwho
+        · exact absurd hask (noAdmin k)
+      · simp only [ne_eq, decide_eq_true_eq]; exact he
+  | entrust _ => exact ⟨List.mem_cons_of_mem _ hheld, hnone⟩
+  | registerByRoot _ _ _ _ => exact ⟨hheld, hnone⟩
+  | registerByParent _ _ _ _ => exact ⟨hheld, hnone⟩
+  | revokeSelf _ => exact ⟨hheld, hnone⟩
+  | revokeChild _ _ _ => exact ⟨hheld, hnone⟩
+  | revokeByOrg _ _ => exact ⟨hheld, hnone⟩
+  | admit hne _ _ =>
+      refine ⟨hheld, ?_⟩
+      intro x hx hxo
+      rcases List.mem_cons.mp hx with rfl | hx
+      · exact hne
+      · exact hnone x hx hxo
+  | admitAdmin ht _ hauth =>
+      refine ⟨hheld, ?_⟩
+      intro x hx hxo
+      rcases List.mem_cons.mp hx with rfl | hx
+      · exfalso
+        rcases hauth with ⟨hn, _⟩ | ⟨_, k, _, hask, _⟩
+        · rw [ht, hxo] at hn; exact hn hheld
+        · have : Admin s o k := by simpa [adminRule, OrgKey.org, hxo] using hask
+          exact noAdmin k this
+      · exact hnone x hx hxo
+  | remove _ _ => exact ⟨hheld, fun x hx => hnone x (List.mem_filter.mp hx).1⟩
+  | leave _ _ _ => exact ⟨hheld, fun x hx => hnone x (List.mem_filter.mp hx).1⟩
+  | invite _ _ _ => exact ⟨hheld, hnone⟩
+  | redeem _ hne _ =>
+      refine ⟨hheld, ?_⟩
+      intro x hx hxo
+      rcases List.mem_cons.mp hx with rfl | hx
+      · exact hne
+      · exact hnone x hx hxo
+  | mintGrant _ _ => exact ⟨hheld, hnone⟩
+  | revokeGrant _ => exact ⟨hheld, hnone⟩
+  | sendOwn _ => exact ⟨hheld, hnone⟩
+  | sendGrant _ _ => exact ⟨hheld, hnone⟩
 
-/-- **Replacing the root leaves outsiders acting in the organisation's
-teams.** Under any rule there is a record the system reaches, an act asked
-for by organisation 0's domain owner, and a grant `g`, such that after the act
-0's root key is not with a key holder, no identity is valid in 0, identity 9
-can act in team 7 of 0, `g`'s subject is 9, and `g` is live. -/
+/-- Under any rule there is a record the system reaches, an act asked for by
+organisation 0's domain owner, and a grant `g`, such that after the act 0's
+root key is not with a key holder, no identity is valid in 0, identity 9 can
+act in team 7 of 0, `g`'s subject is 9, and `g` is live. In the construction 9
+is an agent of organisation 1. -/
 theorem takeover_leaves_outsiders_acting (ask : AskRule) :
     ∃ (s s' : State) (g : Grant), Reachable ask s ∧ Step ask s (.dns 0) s' ∧
       OrgKey.root 0 ∉ s'.held ∧ (∀ k kind, ¬ Valid s' 0 k kind) ∧
@@ -395,10 +429,10 @@ theorem takeover_leaves_outsiders_acting (ask : AskRule) :
   subst hc
   simp [c9] at hco
 
-/-- **A revocation can leave an organisation with no admin.** Under any rule
-there is a record the system reaches in which the admin team's key of 0 is
-with a key holder and 1 is an admin of 0, and an accepted act 1 asks for
-after which 0 has no admin. In the construction the act is 1 revoking itself. -/
+/-- Under any rule there is a record the system reaches in which the admin
+team's key of 0 is with a key holder and 1 is an admin of 0, and an accepted
+act 1 asks for after which 0 has no admin. In the construction the act is 1
+revoking itself. -/
 theorem revocation_can_leave_no_admin (ask : AskRule) :
     ∃ s s', Reachable ask s ∧ OrgKey.team 0 .admin ∈ s.held ∧ Admin s 0 1 ∧
       Step ask s (.id 1) s' ∧ ∀ k, ¬ Admin s' 0 k := by
@@ -429,7 +463,7 @@ theorem revocation_can_leave_no_admin (ask : AskRule) :
   subst hm
   exact revoked_not_valid List.mem_cons_self hv
 
-/-- Some key has no certificate and is not revoked. -/
+/-- In every record some key has no certificate and is not revoked. -/
 theorem exists_fresh_key (s : State) : ∃ k, Fresh s k ∧ k ∉ s.revoked := by
   let n := (s.certs.map (·.subject) ++ s.revoked).foldr max 0 + 1
   have big : ∀ x, x ∈ s.certs.map (·.subject) ++ s.revoked → x < n := by
@@ -452,14 +486,13 @@ theorem exists_fresh_key (s : State) : ∃ k, Fresh s k ∧ k ∉ s.revoked := b
   · intro hr
     exact Nat.lt_irrefl _ (big n (List.mem_append_right _ hr))
 
-/-- **An organisation gets an admin back from its domain alone.** If `o`
-exists and `k` has no certificate and is not revoked, then under any rule
-there are four accepted acts: `o`'s domain owner replaces the root; whoever
-controls the new root key re-keys the admin team; it registers `k` as a
-person under the root; and whoever controls the admin team's new key admits
-`k` to it. Afterwards `k` is an admin of `o`. This holds in any record, a
-locked admin team's included, and such a `k` always exists
-(`exists_fresh_key`). -/
+/-- If `o` exists and `k` has no certificate and is not revoked, then under
+any rule there are four accepted acts, asked for in turn by `o`'s domain
+owner, by whoever controls `o`'s root key, by whoever controls it again, and
+by whoever controls `o`'s admin team's key, after which `k` is an admin of
+`o`. In the construction the four acts are a root replacement, a re-key of the
+admin team, a registration of `k` as a person under the root, and an admission
+of `k` to the admin team. -/
 theorem domain_owner_recovers_an_admin {ask : AskRule} {s : State} {o : Org} {k : Key}
     (ho : o ∈ s.orgs) (hk : Fresh s k) (hkr : k ∉ s.revoked) :
     ∃ s1 s2 s3 s4, Step ask s (.dns o) s1 ∧ Step ask s1 (.controller (.root o)) s2 ∧
@@ -494,11 +527,11 @@ theorem domain_owner_recovers_an_admin {ask : AskRule} {s : State} {o : Org} {k 
       (.inl ⟨hteam3, rfl⟩), List.mem_cons_self, .person, ?_⟩
   exact Valid.mono (s := s3) (t := s4) (fun _ h => h) (fun _ h => h) hv3
 
-/-- **The root can end any team membership in two acts.** If `o`'s root key
-is not with a key holder, then for any team `t` of `o` and any key `k` there
-are two accepted acts: whoever controls the root key re-keys `t`, and whoever
-controls `t`'s new key removes `k`'s certificate of `t`. Afterwards `k` holds
-no certificate of `t`, and no grant on `k` from `t` stands. -/
+/-- If `o`'s root key is not with a key holder, then for any team `t` of `o`
+and any key `k` there are two accepted acts, asked for by whoever controls
+`o`'s root key and then by whoever controls `t`'s key, after which `k` holds
+no certificate of `t` and no grant on `k` from team `t` of `o` stands. In the
+construction the acts are a re-key of `t` and a removal of `k`'s certificate. -/
 theorem root_can_end_team_membership {ask : AskRule} {s : State} {o : Org} {t : Team}
     {k : Key} (hroot : OrgKey.root o ∉ s.held) :
     ∃ s1 s2, Step ask s (.controller (.root o)) s1 ∧ Step ask s1 (.controller (.team o t)) s2 ∧

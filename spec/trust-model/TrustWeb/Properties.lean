@@ -17,19 +17,20 @@ theorem Person.mono {s t : State} {o : Org} (h : ∀ c, c ∈ s.certs → c ∈ 
   | byRoot hc ho hk hi hs => exact .byRoot (h _ hc) ho hk hi hs
   | byPerson hc ho hk hi hs _ ih => exact .byPerson (h _ hc) ho hk hi hs ih
 
-/-- Being a person depends only on the certificates. -/
+/-- If `k` is a person of `o` in one record, it is a person of `o` in any
+record with the same certificates. -/
 theorem Person.of_certs_eq {s t : State} {o : Org} {k : Key} (hp : Person s o k)
     (h : s.certs = t.certs) : Person t o k :=
   hp.mono (by intro c hc; rw [← h]; exact hc)
 
-/-- A person holds a person certificate of their organisation. -/
+/-- A person of `o` holds a person certificate of `o`. -/
 theorem Person.cert {s : State} {o : Org} {k : Key} (hp : Person s o k) :
     ∃ c, c ∈ s.certs ∧ c.subject = k ∧ c.kind = .person ∧ c.org = o := by
   cases hp with
   | byRoot hc ho hk _ hs => exact ⟨_, hc, hs, hk, ho⟩
   | byPerson hc ho hk _ hs _ => exact ⟨_, hc, hs, hk, ho⟩
 
-/-- A valid member holds a certificate of its kind and organisation. -/
+/-- A valid member of `o` holds a certificate of `o` of its kind. -/
 theorem Valid.cert {s : State} {o : Org} {k : Key} {kind : Kind} (hv : Valid s o k kind) :
     ∃ c, c ∈ s.certs ∧ c.subject = k ∧ c.kind = kind ∧ c.org = o := by
   cases hv with
@@ -37,7 +38,8 @@ theorem Valid.cert {s : State} {o : Org} {k : Key} {kind : Kind} (hv : Valid s o
   | agentOfRoot hc ho hk _ hs _ => exact ⟨_, hc, hs, hk, ho⟩
   | agentOf hc ho hk _ hs _ _ => exact ⟨_, hc, hs, hk, ho⟩
 
-/-- Registering an agent certificate makes nobody a person. -/
+/-- If adding an agent certificate to the record makes `k` a person of `o`,
+`k` was a person of `o` before. -/
 theorem Person.of_cons_agent {s : State} {o : Org} {c : Cert} (hc : c.kind = .agent) {k : Key}
     (hp : Person { s with certs := c :: s.certs } o k) : Person s o k := by
   induction hp with
@@ -56,7 +58,9 @@ theorem not_mem_filter_ne {m : Membership} {l : List Membership} :
   have := (List.mem_filter.mp h).2
   simp at this
 
-/-- More certificates and no more revocations keep a valid member valid. -/
+/-- If a second record has every certificate of the first and revokes only
+identities the first revokes, every valid member of the first is valid in the
+second, in the same organisation and of the same kind. -/
 theorem Valid.mono {s t : State} (hc : ∀ c, c ∈ s.certs → c ∈ t.certs)
     (hr : ∀ k, k ∈ t.revoked → k ∈ s.revoked) {o : Org} {k : Key} {kind : Kind}
     (hv : Valid s o k kind) : Valid t o k kind := by
@@ -69,8 +73,8 @@ theorem Valid.mono {s t : State} (hc : ∀ c, c ∈ s.certs → c ∈ t.certs)
 
 /-! ## Persons and agents -/
 
-/-- **A member has one kind.** If every identity has one certificate, no
-identity is valid as an agent in one organisation and as a person in any. -/
+/-- If every identity has one certificate, no identity is valid as an agent in
+one organisation and as a person in any. -/
 theorem one_kind {s : State} (h1 : OneCertEach s) {o o' : Org} {k : Key}
     (ha : Valid s o k .agent) (hp : Valid s o' k .person) : False := by
   obtain ⟨c, hc, hcs, hck, _⟩ := ha.cert
@@ -79,13 +83,12 @@ theorem one_kind {s : State} (h1 : OneCertEach s) {o o' : Org} {k : Key}
   subst this
   rw [hck] at hdk; cases hdk
 
-/-- **In one act, a new person needs a certificate issued by the root or by
-a valid person.** If after an accepted act `k` holds a chain of person
+/-- In one act. If after an accepted act `k` holds a chain of person
 certificates in `o` and did not before, the act added one certificate to the
 record, a person certificate, whose issuer is the root or a member that was a
 valid person of the certificate's organisation before the act. The statement
 does not say the certificate is `k`'s. It looks at certificates only, not at
-revocation. It is about who signs, not about who asked. -/
+revocation. -/
 theorem new_person_is_vouched_for {ask : AskRule} {s s' : State} {who : Party} {o : Org} {k : Key}
     (hstep : Step ask s who s') (hnew : Person s' o k) (hold : ¬ Person s o k) :
     ∃ c, s'.certs = c :: s.certs ∧ c.kind = .person ∧
@@ -125,10 +128,9 @@ theorem new_person_is_vouched_for {ask : AskRule} {s s' : State} {who : Party} {
           · exact ⟨c, rfl, hkind, .inr ⟨p, hi, hv⟩⟩
           · rw [hkind] at h; cases h
 
-/-- **Certificates that are neither root-issued nor issued by someone already
-a person make nobody a person.** If every added certificate is not issued by
-the root, and its issuer is not a person of the certificate's organisation in
-the record, then whoever is a person once they are added was one before. -/
+/-- If no certificate in a list is issued by the root, and none is issued by a
+member that is a person of the certificate's organisation in the record, then
+whoever is a person once the list is added to the record was one before. -/
 theorem no_person_from_outside {s : State} {o : Org} {extra : List Cert}
     (hextra : ∀ c, c ∈ extra →
       c.issuer ≠ .root ∧ ∀ p, c.issuer = .member p → ¬ Person s c.org p)
@@ -143,9 +145,8 @@ theorem no_person_from_outside {s : State} {o : Org} {extra : List Cert}
       · exact absurd (ho ▸ ih) ((hextra _ he).2 _ hi)
       · exact .byPerson hm ho hk hi hs ih
 
-/-- **Approvals with no valid person do not satisfy a rule asking for any
-person.** If no approver is a valid
-person of `o`, the approvals do not satisfy a rule asking for any person. -/
+/-- If no approver is a valid person of `o`, the approvals do not satisfy a
+rule of `o` asking for any person. -/
 theorem agents_cannot_approve_as_person {s : State} {o : Org} {approvals : List Key}
     (h : ∀ k, k ∈ approvals → ¬ Valid s o k .person) :
     ¬ Satisfies s o approvals .anyPerson := by
@@ -160,10 +161,10 @@ theorem Person.chainToRoot {s : State} {o : Org} {k : Key} (hp : Person s o k) :
   | byRoot hc ho _ hi hs => exact .root hc ho hi hs
   | byPerson hc ho _ hi hs _ ih => exact .link hc ho hi hs ih
 
-/-- **Every valid member has certificates leading to its organisation's
-root.** Leading means registered certificates of the organisation, each issued
-by the next, up to one issued by the root; kind, revocation and the issuers'
-validity are not part of it. -/
+/-- If `k` is a valid member of `o`, of either kind, certificates lead from
+`k` to `o`'s root. Leading means registered certificates of `o`, each issued
+by the next, up to one issued by the root (`ChainToRoot`); kind, revocation
+and the issuers' validity are not part of it. -/
 theorem valid_has_chain_to_root {s : State} {o : Org} {k : Key} {kind : Kind}
     (hv : Valid s o k kind) : ChainToRoot s o k := by
   induction hv with
@@ -171,16 +172,16 @@ theorem valid_has_chain_to_root {s : State} {o : Org} {k : Key} {kind : Kind}
   | agentOfRoot hc ho _ hi hs _ => exact .root hc ho hi hs
   | agentOf hc ho _ hi hs _ _ ih => exact .link hc ho hi hs ih
 
-/-- **Every admin has certificates leading to its organisation's root.** -/
+/-- If `k` is an admin of `o`, certificates lead from `k` to `o`'s root. -/
 theorem admin_has_chain_to_root {s : State} {o : Org} {k : Key}
     (ha : Admin s o k) : ChainToRoot s o k := by
   obtain ⟨_, _, hv⟩ := ha
   exact valid_has_chain_to_root hv
 
-/-- **In one act, only whoever controls the admin team's key, or an identity
-the rule lets ask, adds an admin-team certificate.** If an accepted act adds a
-team certificate of an admin team, the asker is one of these two; so it is not
-an invitation's holder. -/
+/-- In one act. If an accepted act adds a team certificate of an admin team,
+the asker is whoever controls that admin team's key, or an identity the rule
+lets ask for admitting an admin in that organisation. So it is not an
+invitation's holder. -/
 theorem new_admin_needs_controller_or_asker {ask : AskRule} {s s' : State} {who : Party}
     {m : Membership}
     (hstep : Step ask s who s') (hnew : m ∈ s'.members) (hold : m ∉ s.members)
@@ -223,7 +224,7 @@ theorem new_admin_needs_controller_or_asker {ask : AskRule} {s s' : State} {who 
 
 /-! ## Revoking and removing -/
 
-/-- **A revoked identity is not a valid member of any organisation.** -/
+/-- A revoked identity is not valid in any organisation, of either kind. -/
 theorem revoked_not_valid {s : State} {o : Org} {k : Key} {kind : Kind}
     (hr : k ∈ s.revoked) : ¬ Valid s o k kind := by
   intro hv
@@ -232,9 +233,10 @@ theorem revoked_not_valid {s : State} {o : Org} {k : Key} {kind : Kind}
   | agentOfRoot _ _ _ _ _ hn => exact hn hr
   | agentOf _ _ _ _ _ hn _ => exact hn hr
 
-/-- **A revoked identity is not an admin and cannot act in a team.** If only
-registered identities are revoked (true in every reachable record) and `k` is
-revoked, `k` is not an admin of any organisation and cannot act in any team. -/
+/-- If only registered identities are revoked and `k` is revoked, `k` is not
+an admin of any organisation and cannot act in any team. In every reachable
+record only registered identities are revoked
+(`Reachable.revokedAreRegistered`). -/
 theorem revoked_has_no_authority {s : State} (hrr : RevokedAreRegistered s) {k : Key}
     (hr : k ∈ s.revoked) : (∀ o, ¬ Admin s o k) ∧ (∀ o t, ¬ InTeam s o t k) := by
   refine ⟨?_, ?_⟩
@@ -245,10 +247,11 @@ theorem revoked_has_no_authority {s : State} (hrr : RevokedAreRegistered s) {k :
     · exact hnr (hrr k hr)
     · exact revoked_not_valid hr hv
 
-/-- **A revoked identity cannot act.** If only registered identities are
-revoked (true in every reachable record) and `k` is revoked, `k` is not among
-the identities that can act. Sending with its own key needs that, and so does
-acting in a team, which a live grant needs. -/
+/-- If only registered identities are revoked and `k` is revoked, `k` cannot
+act (`CanAct`). Sending with its own key needs that (`sendOwn`), and so does
+acting in a team (`InTeam`), which a live grant needs (`GrantLive`). In every
+reachable record only registered identities are revoked
+(`Reachable.revokedAreRegistered`). -/
 theorem revoked_cannot_act {s : State} (hrr : RevokedAreRegistered s) {k : Key}
     (hr : k ∈ s.revoked) : ¬ CanAct s k := by
   intro h
@@ -256,9 +259,9 @@ theorem revoked_cannot_act {s : State} (hrr : RevokedAreRegistered s) {k : Key}
   · exact hnr (hrr k hr)
   · exact revoked_not_valid hr hv
 
-/-- **An agent needs a valid parent.** If every identity has one certificate
-and the member that issued an agent certificate is not valid in any
-organisation, the certificate's subject is not valid in any organisation. -/
+/-- If every identity has one certificate and the member that issued a
+registered agent certificate is not valid in any organisation, the
+certificate's subject is not valid in any organisation. -/
 theorem agent_needs_valid_parent {s : State} (h1 : OneCertEach s) {c : Cert} {p : Key}
     (hc : c ∈ s.certs) (hkind : c.kind = .agent) (hiss : c.issuer = .member p)
     (hparent : ∀ o pk, ¬ Valid s o p pk) (o : Org) (kind : Kind) :
@@ -281,18 +284,16 @@ theorem agent_needs_valid_parent {s : State} (h1 : OneCertEach s) {c : Cert} {p 
       cases hdi
       exact hparent _ _ hpv
 
-/-- **While a member is revoked, the agents it issued are not valid.** If every identity has
-one certificate and the member that issued an agent certificate is revoked,
-the certificate's subject is not valid in any organisation. -/
+/-- If every identity has one certificate and the member that issued a
+registered agent certificate is revoked, the certificate's subject is not
+valid in any organisation. -/
 theorem revoking_parent_ends_agent {s : State} (h1 : OneCertEach s) {c : Cert} {p : Key}
     (hc : c ∈ s.certs) (hkind : c.kind = .agent) (hiss : c.issuer = .member p)
     (hr : p ∈ s.revoked) (o : Org) (kind : Kind) : ¬ Valid s o c.subject kind :=
   agent_needs_valid_parent h1 hc hkind hiss (fun _ _ => revoked_not_valid hr) o kind
 
-/-- **A person stays valid when another identity, its issuer included, is
-revoked.** If `k` is a valid person of
-`o`, adding any other identity to the revoked leaves `k` a valid person of
-`o`. This is about the record, not about an act. -/
+/-- If `k` is a valid person of `o`, adding any other identity to the revoked
+leaves `k` a valid person of `o`. This is about the record, not about an act. -/
 theorem person_survives_others {s : State} {o : Org} {k j : Key}
     (hv : Valid s o k .person) (hne : k ≠ j) :
     Valid { s with revoked := j :: s.revoked } o k .person := by
@@ -304,10 +305,9 @@ theorem person_survives_others {s : State} {o : Org} {k j : Key}
       · exact hne h
       · exact hn h
 
-/-- **An agent whose issuer is revoked cannot act in any team.** If every
-identity has one certificate and the member that issued an agent certificate
-is revoked, its subject cannot act in any team. Its team certificates are not
-looked at. -/
+/-- If every identity has one certificate and the member that issued a
+registered agent certificate is revoked, the certificate's subject cannot act
+in any team. Its team certificates are not looked at. -/
 theorem orphaned_agent_cannot_act_in_team {s : State} (h1 : OneCertEach s) {c : Cert} {p : Key}
     (hc : c ∈ s.certs) (hkind : c.kind = .agent) (hiss : c.issuer = .member p)
     (hr : p ∈ s.revoked) (o : Org) (t : Team) : ¬ InTeam s o t c.subject := by
@@ -316,9 +316,9 @@ theorem orphaned_agent_cannot_act_in_team {s : State} (h1 : OneCertEach s) {c : 
   · exact hnr ⟨c, hc, rfl⟩
   · exact revoking_parent_ends_agent h1 hc hkind hiss hr o' kind hv
 
-/-- **When the admin team's key is not with a key holder, whoever controls it
-can make any identity not an admin in one act.** For any identity `b`, there is an accepted act that
-whoever controls the key asks for, after which `b` is not an admin. -/
+/-- If the admin team's key of `o` is not with a key holder, then for any
+identity `b` there is an accepted act that whoever controls that key asks for,
+after which `b` is not an admin of `o`. -/
 theorem controller_can_remove_admin {ask : AskRule} {s : State} {o : Org}
     (hfree : OrgKey.team o .admin ∉ s.held) (b : Key) :
     ∃ s', Step ask s (.controller (.team o .admin)) s' ∧ ¬ Admin s' o b := by
@@ -327,13 +327,11 @@ theorem controller_can_remove_admin {ask : AskRule} {s : State} {o : Org}
   intro ⟨hm, _⟩
   exact not_mem_filter_ne hm
 
-/-- **Design. Through a key holder, an admin can make any other identity not an
-admin in one act.** If the
-admin team's key is with a key holder, `a` is an admin, the approvals satisfy
-the policy for a removal, and `b` is not `a`, there is an accepted act under
-the admin rule that `a` asks for, after which `b` is not an admin. Where the
-policy has a rule for a removal in this organisation naming `b` as its
-approver, those approvals include `b`'s. -/
+/-- Design. If the admin team's key of `o` is with a key holder, `a` is an
+admin of `o`, the approvals satisfy `o`'s policy for a removal, and `b` is not
+`a`, there is an accepted act under the admin rule that `a` asks for, after
+which `b` is not an admin of `o`. Where the policy has a rule for a removal in
+`o` naming `b` as its approver, those approvals include `b`'s (`Satisfies`). -/
 theorem admin_can_remove_admin {s : State} {o : Org}
     (hheld : OrgKey.team o .admin ∈ s.held) {a : Key}
     (ha : Admin s o a) {approvals : List Key} (happ : Approved s o .remove approvals)
@@ -343,9 +341,9 @@ theorem admin_can_remove_admin {s : State} {o : Org}
   intro ⟨hm, _⟩
   exact not_mem_filter_ne hm
 
-/-- **When the root key is not with a key holder, whoever controls it can make
-any admin not an admin in one act.** If `b` is an admin, there is an accepted act that whoever controls
-the root key asks for, after which `b` is not an admin. -/
+/-- If `o`'s root key is not with a key holder and `b` is an admin of `o`,
+there is an accepted act that whoever controls the root key asks for, after
+which `b` is not an admin of `o`. -/
 theorem root_can_end_admin {ask : AskRule} {s : State} {o : Org}
     (hfree : OrgKey.root o ∉ s.held) {b : Key} (hb : Admin s o b) :
     ∃ s', Step ask s (.controller (.root o)) s' ∧ ¬ Admin s' o b := by
@@ -357,12 +355,11 @@ theorem root_can_end_admin {ask : AskRule} {s : State} {o : Org}
   intro ⟨_, _, hv'⟩
   exact revoked_not_valid (List.mem_cons_self) hv'
 
-/-- **A planned check, under every rule, in one act. If an admin-team certificate goes while the
-admin team's key is with a key holder, another admin remains afterwards.** If
-the key is with a key holder, and `b` holds an admin-team certificate before an
-accepted act and not after, some identity other than `b` is an admin after it.
-This is about a team certificate going. A revocation can still leave the
-organisation with no admin (`revocation_can_leave_no_admin`). -/
+/-- A planned check, under every rule, in one act. If the admin team's key of
+`o` is with a key holder, and `b` holds a certificate of `o`'s admin team
+before an accepted act and not after, some identity other than `b` is an admin
+of `o` after it. A revocation can still leave the organisation with no admin
+(`revocation_can_leave_no_admin`). -/
 theorem key_holder_keeps_an_admin {ask : AskRule} {s s' : State} {who : Party} {o : Org}
     {b : Key} (hstep : Step ask s who s') (hheld : OrgKey.team o .admin ∈ s.held)
     (hb : HasTeamCert s o .admin b) (hgone : ¬ HasTeamCert s' o .admin b) :
@@ -411,9 +408,9 @@ theorem key_holder_keeps_an_admin {ask : AskRule} {s s' : State} {who : Party} {
   | sendOwn _ => exact absurd hb hgone
   | sendGrant _ _ => exact absurd hb hgone
 
-/-- **In one act, a grant ends with the team certificate it came from.** If
-`k` holds a certificate of team `t` before an accepted act and not after, no
-grant on `k` from team `t` remains after it. -/
+/-- In one act. If `k` holds a certificate of team `t` of `o` before an
+accepted act and not after, no grant on `k` from team `t` of `o` remains after
+it. -/
 theorem grant_ends_with_its_certificate {ask : AskRule} {s s' : State} {who : Party}
     {o : Org} {t : Team} {k : Key} (hstep : Step ask s who s')
     (hb : HasTeamCert s o t k) (hgone : ¬ HasTeamCert s' o t k) :
@@ -460,9 +457,8 @@ theorem grant_ends_with_its_certificate {ask : AskRule} {s s' : State} {who : Pa
 
 /-! ## Approval -/
 
-/-- **An organisation with no policy requires no approval.** If no rule of
-the policy is for `o`, every kind of act is approved for `o` with no
-approvals. -/
+/-- If no rule of the policy is for `o`, every kind of act is approved for `o`
+with no approvals. -/
 theorem no_policy_no_approval {s : State} {o : Org}
     (h : ∀ r, r ∈ s.policy → r.org ≠ o) (act : ActKind) : Approved s o act [] := by
   intro r hr ho _
@@ -470,8 +466,8 @@ theorem no_policy_no_approval {s : State} {o : Org}
 
 /-! ## Who may ask for a person, as built and as designed -/
 
-/-- If someone is a person once one certificate is added, and was not before,
-the added certificate is a person certificate of that organisation. -/
+/-- If `k` is a person of `o` once one certificate is added, and was not
+before, the added certificate is of `o`. -/
 theorem Person.added_cert_org {s : State} {o : Org} {c : Cert} {k : Key}
     (hp : Person { s with certs := c :: s.certs } o k) (hold : ¬ Person s o k) :
     c.org = o := by
@@ -489,16 +485,15 @@ theorem Person.added_cert_org {s : State} {o : Org} {c : Cert} {k : Key}
         · exact absurd (.byPerson hd ho hk hi hs hpp) hold
         · exact ih hpp
 
-/-- **As built, in one act: a new person needs a person, or the root key used
-directly.** If an accepted act under the built rule makes someone hold a chain
-of person certificates in organisation `o` who did not before, the act
-registered one person certificate of `o`, and one of three things holds:
-whoever controls `o`'s root key asked directly, the key not being with a key
-holder; or a valid person of `o` asked; or the root key is with a key holder, a
-valid member of `o` asked, and approvals exist that satisfy `o`'s policy for
-adding a person and include a valid person of `o`. The model does not record
-which approvals an act carried; the act's premise is that such approvals were
-given. -/
+/-- As built, in one act. If an accepted act under the built rule makes
+someone hold a chain of person certificates in organisation `o` who did not
+before, the act added one person certificate of `o`, and one of three things
+holds: whoever controls `o`'s root key asked directly, the key not being with
+a key holder; or a valid person of `o` asked; or the root key is with a key
+holder, a valid member of `o` asked, and approvals exist that satisfy `o`'s
+policy for adding a person and include a valid person of `o`. The model does
+not record which approvals an act carried; the act's premise is that such
+approvals exist. -/
 theorem built_person_needs_a_person {s s' : State} {who : Party} {o : Org} {k : Key}
     (hstep : Step builtRule s who s') (hnew : Person s' o k) (hold : ¬ Person s o k) :
     ∃ c, s'.certs = c :: s.certs ∧ c.kind = .person ∧ c.org = o ∧
@@ -554,12 +549,11 @@ theorem built_person_needs_a_person {s s' : State} {who : Party} {o : Org} {k : 
           · exact ⟨c, rfl, hkind, rfl, .inr (.inl ⟨p, rfl, hv⟩)⟩
           · rw [hkind] at h; cases h
 
-/-- **Under the planned rule, an agent can ask for a person.** There is a record the
-system reaches under the admin rule, and an agent `a` valid in organisation 0,
-such that an act `a` asks for is accepted and afterwards `k` holds a chain of
-person certificates in 0 that it did not hold before. In the construction the
-root key is with a key holder, `a` is an admin, and the root is the new
-certificate's issuer. -/
+/-- Design. There is a record the system reaches under the admin rule, and an
+agent `a` valid in organisation 0, such that an act `a` asks for is accepted
+and afterwards some `k` holds a chain of person certificates in 0 that it did
+not hold before. In the construction the root key is with a key holder, `a` is
+an admin, and the root is the new certificate's issuer. -/
 theorem design_agent_admin_can_ask_for_person :
     ∃ (s s' : State) (a k : Key), Reachable adminRule s ∧
       Valid s 0 a .agent ∧ Step adminRule s (.id a) s' ∧ Person s' 0 k ∧ ¬ Person s 0 k := by
@@ -619,10 +613,10 @@ theorem Authorised.not_dns {ask : AskRule} {s : State} {key : OrgKey} {act : Act
   intro h
   rcases h with ⟨_, h⟩ | ⟨_, _, h, _⟩ <;> cases h
 
-/-- **In one act, a grant holder can only send.** If an act asked for by
-whoever holds session key `x` is accepted, there is a grant with session key
-`x` that is live and may send, and the record after the act is the record
-before with one message attributed to the grant's subject added. -/
+/-- In one act. If an act asked for by whoever holds session key `x` is
+accepted, there is a grant with session key `x` that is live and may send, and
+the record after the act is the record before with one message attributed to
+the grant's subject added. -/
 theorem session_only_sends {ask : AskRule} {s s' : State} {x : Key}
     (hstep : Step ask s (.session x) s') :
     ∃ g, g.session = x ∧ GrantLive s g ∧ g.maySend = true ∧
@@ -641,11 +635,10 @@ theorem session_only_sends {ask : AskRule} {s s' : State} {x : Key}
   | rekeyTeam h => exact absurd h Authorised.not_session
   | readmitByRoot _ _ _ h => exact absurd h Authorised.not_session
 
-/-- **In one act, an invitation's secret lets its holder join the team the
-invitation names.** If an act asked for by whoever holds secret `t` is
-accepted, the identity certificates, revocations, grants and held keys are as
-before, and each team certificate it adds is not of an admin team and is for
-the organisation and team of an unused invitation with that secret. -/
+/-- In one act. If an act asked for by whoever holds secret `t` is accepted,
+the identity certificates, revocations, grants and held keys are as before,
+and each team certificate it adds is not of an admin team and is for the
+organisation and team of an unused invitation with that secret. -/
 theorem bearer_only_joins {ask : AskRule} {s s' : State} {t : Nat}
     (hstep : Step ask s (.bearer t) s') :
     s'.certs = s.certs ∧ s'.revoked = s.revoked ∧ s'.grants = s.grants ∧ s'.held = s.held ∧
@@ -669,11 +662,10 @@ theorem bearer_only_joins {ask : AskRule} {s s' : State} {t : Nat}
   | rekeyTeam h => exact absurd h Authorised.not_bearer
   | readmitByRoot _ _ _ h => exact absurd h Authorised.not_bearer
 
-/-- **In one act, a message is attributed to an identity only if that
-identity, able to act, sent it, or a live grant on it that may send did.** If
-an accepted act changes the messages, it added one message `m`, and either the
-asker is `m`'s sender as an identity and can act, or the asker holds the
-session key of a grant on `m`'s sender that is live and may send. -/
+/-- In one act. If an accepted act changes the messages, it added one message
+`m`, and either the asker is `m`'s sender as an identity and can act, or the
+asker holds the session key of a grant on `m`'s sender that is live and may
+send. -/
 theorem message_from_owner_or_live_grant {ask : AskRule} {s s' : State} {who : Party}
     (hstep : Step ask s who s') (hchg : s'.sent ≠ s.sent) :
     ∃ m, s'.sent = m :: s.sent ∧
@@ -707,7 +699,8 @@ theorem message_from_owner_or_live_grant {ask : AskRule} {s s' : State} {who : P
       rename_i g
       exact ⟨⟨g.subject⟩, rfl, .inr ⟨g, rfl, hlive, rfl, hsend⟩⟩
 
-/-- **In one act, only the identity itself gives a grant on itself.** -/
+/-- In one act. If an accepted act adds a grant, the asker is its subject, as
+an identity. -/
 theorem new_grant_by_subject {ask : AskRule} {s s' : State} {who : Party} {g : Grant}
     (hstep : Step ask s who s') (hnew : g ∈ s'.grants) (hold : g ∉ s.grants) :
     who = .id g.subject := by
@@ -738,11 +731,11 @@ theorem new_grant_by_subject {ask : AskRule} {s s' : State} {who : Party} {g : G
       · rfl
       · exact absurd h hold
 
-/-- **A grant is not live while its subject is revoked or lacks the team
-certificate.** The revoking acts leave the grants as they are. If only
-registered identities are revoked (true in every reachable record), and the
-grant's subject is revoked
-or lacks the team certificate the grant came from, the grant is not live. -/
+/-- If only registered identities are revoked, and a grant's subject is
+revoked or lacks the team certificate the grant came from, the grant is not
+live. In every reachable record only registered identities are revoked
+(`Reachable.revokedAreRegistered`). The revoking acts leave the grants as they
+are (`revokeSelf`, `revokeChild`, `revokeByOrg`). -/
 theorem grant_ends_with_subject {s : State} (hrr : RevokedAreRegistered s) {g : Grant}
     (h : g.subject ∈ s.revoked ∨ ¬ HasTeamCert s g.org g.team g.subject) : ¬ GrantLive s g := by
   intro ⟨_, hin⟩
@@ -752,8 +745,8 @@ theorem grant_ends_with_subject {s : State} (hrr : RevokedAreRegistered s) {g : 
 
 /-! ## Further results about one act -/
 
-/-- **In one act, a revocation is not undone.** If `k` is revoked and not
-cut off by a root replacement before an accepted act, it is the same after. -/
+/-- In one act. If `k` is revoked and not cut off before an accepted act, it
+is revoked and not cut off after it. -/
 theorem revocation_is_permanent {ask : AskRule} {s s' : State} {who : Party} {k : Key}
     (hstep : Step ask s who s') (hk : k ∈ s.revoked) (hc : k ∉ s.cutOff) :
     k ∈ s'.revoked ∧ k ∉ s'.cutOff := by
@@ -798,8 +791,8 @@ theorem revocation_is_permanent {ask : AskRule} {s s' : State} {who : Party} {k 
   | sendOwn _ => exact ⟨hk, hc⟩
   | sendGrant _ _ => exact ⟨hk, hc⟩
 
-/-- **In one act, an identity certificate is not removed.** Every
-certificate in the record before an accepted act is in it after. -/
+/-- In one act. Every identity certificate in the record before an accepted
+act is in it after. -/
 theorem certificate_is_permanent {ask : AskRule} {s s' : State} {who : Party} {c : Cert}
     (hstep : Step ask s who s') (hc : c ∈ s.certs) : c ∈ s'.certs := by
   cases hstep with
@@ -826,9 +819,8 @@ theorem certificate_is_permanent {ask : AskRule} {s s' : State} {who : Party} {c
   | sendOwn _ => exact hc
   | sendGrant _ _ => exact hc
 
-/-- **In one act, being issued an identity gives no team.** If an accepted
-act changes the identity certificates, it leaves the team certificates as
-they were. -/
+/-- In one act. If an accepted act changes the identity certificates, it
+leaves the team certificates as they were. -/
 theorem registering_gives_no_team {ask : AskRule} {s s' : State} {who : Party}
     (hstep : Step ask s who s') (hreg : s'.certs ≠ s.certs) : s'.members = s.members := by
   cases hstep with
@@ -862,11 +854,11 @@ theorem Authorised.controller_eq {ask : AskRule} {s : State} {key key' : OrgKey}
   · cases h; rfl
   · cases h
 
-/-- **In one act, whoever controls one organisation's key adds or removes
-nothing in another organisation, for four kinds of thing.** Every new identity
-certificate and every new or removed team certificate is of that key's
-organisation, and every newly revoked identity has a certificate of it. Nothing is stated about
-invitations, grants, held keys or identities admitted again. -/
+/-- In one act asked for by whoever controls an organisation's key: every new
+identity certificate and every new or removed team certificate is of that
+key's organisation, and every newly revoked identity has a certificate of it.
+Nothing is stated about invitations, grants, held keys or identities admitted
+again. -/
 theorem controller_stays_in_its_organisation {ask : AskRule} {s s' : State} {key : OrgKey}
     (hstep : Step ask s (.controller key) s') :
     (∀ c, c ∈ s'.certs → c ∉ s.certs → c.org = key.org) ∧
@@ -945,9 +937,9 @@ theorem controller_stays_in_its_organisation {ask : AskRule} {s s' : State} {key
 
 /-! ## DNS, and leaving a key holder -/
 
-/-- **Whoever controls the domain can always take the root key back.** If
-`o` exists, there is an accepted act that `o`'s domain owner asks for, after
-which `o`'s root key is not with a key holder and no identity is valid in `o`. -/
+/-- If `o` exists, there is an accepted act that `o`'s domain owner asks for,
+after which `o`'s root key is not with a key holder and no identity is valid
+in `o`. -/
 theorem dns_owner_can_always_take_over {ask : AskRule} {s : State} {o : Org} (ho : o ∈ s.orgs) :
     ∃ s', Step ask s (.dns o) s' ∧ OrgKey.root o ∉ s'.held ∧ ∀ k kind, ¬ Valid s' o k kind := by
   refine ⟨_, Step.replaceRoot ho, ?_, ?_⟩
@@ -962,11 +954,10 @@ theorem dns_owner_can_always_take_over {ask : AskRule} {s : State} {o : Org} (ho
     · refine List.mem_append_left _ (List.mem_map.mpr ⟨c, List.mem_filter.mpr ⟨hc, ?_⟩, hcs⟩)
       simp [hco, hcs, hr]
 
-/-- **While the root key is not with a key holder, whoever controls it can
-admit again a root-issued identity a root replacement cut off.** If `c` is a registered certificate issued by the root, its subject is
-cut off, and the root key is not with a key holder, there is an accepted act
-that whoever controls the root key asks for, after which `c`'s subject is
-valid in `c`'s organisation with `c`'s kind. -/
+/-- If `c` is a registered certificate issued by the root, its subject is cut
+off, and the root key of `c`'s organisation is not with a key holder, there is
+an accepted act that whoever controls that root key asks for, after which
+`c`'s subject is valid in `c`'s organisation with `c`'s kind. -/
 theorem replaced_organisation_can_readmit {ask : AskRule} {s : State} {c : Cert}
     (hc : c ∈ s.certs) (hi : c.issuer = .root) (hcut : c.subject ∈ s.cutOff)
     (hfree : OrgKey.root c.org ∉ s.held) :
@@ -980,12 +971,11 @@ theorem replaced_organisation_can_readmit {ask : AskRule} {s : State} {c : Cert}
   | person => exact .person (.byRoot hc rfl hk hi rfl) hn
   | agent => exact .agentOfRoot hc rfl hk hi rfl hn
 
-/-- **In one act, a key leaves its holder in only three ways.** If a key is
-with a key holder before an accepted act and not after, the asker is the
-domain owner of the key's organisation; or an identity the rule lets ask for
-giving a key back; or the key is a team key of that organisation, and the
-asker is whoever controls its root key or an identity the rule lets ask for a
-re-key. -/
+/-- In one act. If a key is with a key holder before an accepted act and not
+after, the asker is the domain owner of the key's organisation; or an identity
+the rule lets ask for giving a key back; or the key is a team key of that
+organisation, and the asker is whoever controls its root key or an identity
+the rule lets ask for a re-key. -/
 theorem key_leaves_holder_only_three_ways {ask : AskRule} {s s' : State} {who : Party}
     {key : OrgKey} (hstep : Step ask s who s') (hin : key ∈ s.held) (hout : key ∉ s'.held) :
     who = .dns key.org ∨ (∃ k, who = .id k ∧ ask s key.org .release k) ∨
@@ -1040,11 +1030,10 @@ theorem key_leaves_holder_only_three_ways {ask : AskRule} {s s' : State} {who : 
       · exact absurd hheld hn
       · exact .inr (.inl ⟨k, hw, hask⟩)
 
-/-- **As built, in one act, a key leaves its holder only at the domain
-owner's request, or by a re-key from the root.** Under the built rule, if a
-key is with a key holder before an accepted act and not after, the asker is
-the domain owner of the key's organisation, or the key is a team key of that
-organisation and the asker is whoever controls its root key. -/
+/-- As built, in one act. Under the built rule, if a key is with a key holder
+before an accepted act and not after, the asker is the domain owner of the
+key's organisation, or the key is a team key of that organisation and the
+asker is whoever controls its root key. -/
 theorem built_key_leaves_only_by_dns_or_root {s s' : State} {who : Party} {key : OrgKey}
     (hstep : Step builtRule s who s') (hin : key ∈ s.held) (hout : key ∉ s'.held) :
     who = .dns key.org ∨ ∃ t, key = .team key.org t ∧ who = .controller (.root key.org) := by
@@ -1055,11 +1044,9 @@ theorem built_key_leaves_only_by_dns_or_root {s s' : State} {who : Party} {key :
   · exact .inr ⟨t, ht, hw⟩
   · cases hask.1
 
-/-- **In one act, a key that leaves its holder at the domain owner's request
-is the root key, and the organisation is left with no valid identity.** If an
-act asked for by `o`'s domain owner is accepted, and a key is with a key holder
-before it and not after, the key is `o`'s root key and no identity is valid in
-`o` after the act. The construction is an independent reader's. -/
+/-- In one act. If an act asked for by `o`'s domain owner is accepted, and a
+key is with a key holder before it and not after, the key is `o`'s root key
+and no identity is valid in `o` after the act. -/
 theorem dns_takes_out_only_the_root {ask : AskRule} {s s' : State} {o : Org}
     {key : OrgKey} (hstep : Step ask s (.dns o) s') (hin : key ∈ s.held) (hout : key ∉ s'.held) :
     key = .root o ∧ ∀ k kind, ¬ Valid s' o k kind := by
@@ -1087,11 +1074,11 @@ theorem dns_takes_out_only_the_root {ask : AskRule} {s s' : State} {o : Org}
         · refine List.mem_append_left _ (List.mem_map.mpr ⟨c, List.mem_filter.mpr ⟨hc, ?_⟩, hcs⟩)
           simp [hco, hcs, hr]
 
-/-- **Design. An admin can have a held key given back.** If the key is with a key
-holder, `a` is an admin of its organisation, and the approvals satisfy the
-policy for giving a key back, there is an accepted act under the admin rule
-that `a` asks for, after which the key is not with a key holder and the
-identity certificates, revocations and team certificates are as before. -/
+/-- Design. If a key is with a key holder, `a` is an admin of its
+organisation, and the approvals satisfy that organisation's policy for giving
+a key back, there is an accepted act under the admin rule that `a` asks for,
+after which the key is not with a key holder and the identity certificates,
+revocations and team certificates are as before. -/
 theorem organisation_can_take_key_back {s : State} {key : OrgKey} {a : Key}
     (hheld : key ∈ s.held) (ha : Admin s key.org a) {approvals : List Key}
     (happ : Approved s key.org .release approvals) :
@@ -1105,16 +1092,15 @@ theorem organisation_can_take_key_back {s : State} {key : OrgKey} {a : Key}
 
 /-! ## Who answers -/
 
-/-- **Whoever answers for a member is a valid person** of the member's
-organisation. -/
+/-- If `h` answers for `a` in `o`, `h` is a valid person of `o`. -/
 theorem answerer_is_valid_person {s : State} {o : Org} {a h : Key}
     (ha : AnswersFor s o a h) : Valid s o h .person := by
   induction ha with
   | self hv => exact hv
   | up _ _ _ _ _ _ _ ih => exact ih
 
-/-- **At most one person answers for a member**, if every identity has one
-certificate. -/
+/-- If every identity has one certificate and `h` and `h'` both answer for `a`
+in `o`, `h` is `h'`. -/
 theorem answerer_unique {s : State} (h1 : OneCertEach s) {o : Org} {a h h' : Key}
     (ha : AnswersFor s o a h) (ha' : AnswersFor s o a h') : h = h' := by
   induction ha generalizing h' with
@@ -1142,7 +1128,8 @@ theorem answerer_unique {s : State} (h1 : OneCertEach s) {o : Org} {a h h' : Key
 
 /-! ## Holds in every reachable record -/
 
-/-- **Accepted acts keep one certificate per identity.** -/
+/-- If every identity has at most one certificate before an accepted act, the
+same holds after it. -/
 theorem Step.oneCertEach {ask : AskRule} {s s' : State} {who : Party}
     (hstep : Step ask s who s') (h1 : OneCertEach s) : OneCertEach s' := by
   have key : ∀ c : Cert, Fresh s c.subject → OneCertEach { s with certs := c :: s.certs } := by
@@ -1176,7 +1163,8 @@ theorem Step.oneCertEach {ask : AskRule} {s s' : State} {who : Party}
   | sendOwn _ => exact h1
   | sendGrant _ _ => exact h1
 
-/-- **Accepted acts revoke only registered identities.** -/
+/-- If only registered identities are revoked before an accepted act, the same
+holds after it. -/
 theorem Step.revokedAreRegistered {ask : AskRule} {s s' : State} {who : Party}
     (hstep : Step ask s who s') (h : RevokedAreRegistered s) : RevokedAreRegistered s' := by
   have grow : ∀ c : Cert, RevokedAreRegistered { s with certs := c :: s.certs } := by
@@ -1218,7 +1206,8 @@ theorem Step.revokedAreRegistered {ask : AskRule} {s s' : State} {who : Party}
   | sendOwn _ => exact h
   | sendGrant _ _ => exact h
 
-/-- **Accepted acts keep an unregistered identity in one team.** -/
+/-- If every unregistered identity holds at most one team certificate before
+an accepted act, the same holds after it. -/
 theorem Step.localInOneTeam {ask : AskRule} {s s' : State} {who : Party}
     (hstep : Step ask s who s') (h : LocalInOneTeam s) : LocalInOneTeam s' := by
   have reg : ∀ c : Cert, LocalInOneTeam { s with certs := c :: s.certs } := by
@@ -1267,28 +1256,28 @@ theorem Step.localInOneTeam {ask : AskRule} {s s' : State} {who : Party}
   | sendOwn _ => exact h
   | sendGrant _ _ => exact h
 
-/-- **Every reachable record has one certificate per identity.** So the
-theorems above that ask for it hold in every record the system can reach. -/
+/-- In every reachable record every identity has at most one certificate. -/
 theorem Reachable.oneCertEach {ask : AskRule} {s : State} (hr : Reachable ask s) : OneCertEach s := by
   induction hr with
   | start _ => intro c hc; cases hc
   | step _ hstep ih => exact hstep.oneCertEach ih
 
-/-- **In every reachable record, only registered identities are revoked.** -/
+/-- In every reachable record only registered identities are revoked. -/
 theorem Reachable.revokedAreRegistered {ask : AskRule} {s : State} (hr : Reachable ask s) :
     RevokedAreRegistered s := by
   induction hr with
   | start _ => intro k hk; cases hk
   | step _ hstep ih => exact hstep.revokedAreRegistered ih
 
-/-- **In every reachable record, an unregistered identity is in at most one team.** -/
+/-- In every reachable record every unregistered identity holds at most one
+team certificate. -/
 theorem Reachable.localInOneTeam {ask : AskRule} {s : State} (hr : Reachable ask s) :
     LocalInOneTeam s := by
   induction hr with
   | start _ => intro m hm; cases hm
   | step _ hstep ih => exact hstep.localInOneTeam ih
 
-/-- **In every reachable record, every cut-off identity is revoked.** -/
+/-- In every reachable record every cut-off identity is revoked. -/
 theorem Reachable.cutOffAreRevoked {ask : AskRule} {s : State} (hr : Reachable ask s) :
     ∀ k, k ∈ s.cutOff → k ∈ s.revoked := by
   induction hr with

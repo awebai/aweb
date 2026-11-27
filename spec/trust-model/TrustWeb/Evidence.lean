@@ -58,11 +58,11 @@ def HostedEmailEnrolled (s : State) (as : List Assertion) (o : Org) (k : Key) : 
 def EnrolmentUnspecified (s : State) (as : List Assertion) (o : Org) (k : Key) : Prop :=
   Valid s o k .person ∧ ∀ a, a ∈ as → a.org = o → a.subject ≠ k
 
-/-- **The same chain, three kinds of evidence.** If `k` is a valid person of
-`o`, then in that same record: with the controller's assertion alone, `k` is a
-controller-asserted person and not email-enrolled; with the hosted service's
-email assertion alone, `k` is email-enrolled and not a controller-asserted
-person; with no assertion, its enrolment is unspecified and it is neither. -/
+/-- If `k` is a valid person of `o`, then in that same record: with the
+controller's assertion alone, `k` is a controller-asserted person and not
+email-enrolled; with the hosted service's email assertion alone, `k` is
+email-enrolled and not a controller-asserted person; with no assertion, its
+enrolment is unspecified and it is neither. -/
 theorem enrolment_evidence_is_beside_the_chain {s : State} {o : Org} {k : Key}
     (hv : Valid s o k .person) :
     (ControllerAssertedPerson s [⟨o, k, .controller⟩] o k ∧
@@ -75,16 +75,16 @@ theorem enrolment_evidence_is_beside_the_chain {s : State} {o : Org} {k : Key}
     ⟨⟨hv, by simp⟩, fun h => by simpa using h.2⟩,
     ⟨⟨hv, fun a ha => by simp at ha⟩, fun h => by simpa using h.2, fun h => by simpa using h.2⟩⟩
 
-/-- **A controller-asserted person answers for itself.** If `k` is a
-controller-asserted person of `o`, `k` answers for itself, as every valid
-person does. -/
+/-- If `k` is a controller-asserted person of `o`, `k` answers for itself in
+`o`. -/
 theorem controller_asserted_person_answers_for_itself {s : State} {as : List Assertion}
     {o : Org} {k : Key} (h : ControllerAssertedPerson s as o k) : AnswersFor s o k k :=
   .self h.1
 
-/-- **The case is not vacuous.** Under any rule there is a record the system
-reaches with a valid person in which the three kinds of evidence are as in
-`enrolment_evidence_is_beside_the_chain`. -/
+/-- Under any rule there is a record the system reaches in which 1 is a valid
+person of 0; with the controller's assertion alone 1 is a controller-asserted
+person of 0, with the hosted service's email assertion alone it is
+email-enrolled, and with no assertion its enrolment is unspecified. -/
 theorem enrolment_case_is_reachable (ask : AskRule) :
     ∃ s, Reachable ask s ∧ Valid s 0 1 .person ∧
       ControllerAssertedPerson s [⟨0, 1, .controller⟩] 0 1 ∧

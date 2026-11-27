@@ -20,16 +20,16 @@ who holds a certificate of the team the operation is assigned to may ask. -/
 def teamRule (assign : Assignment) : AskRule :=
   fun s o act k => ⟨o, assign o act, k⟩ ∈ s.members ∧ ∃ kind, Valid s o k kind
 
-/-- **The admin rule is the team rule with everything assigned to the admin team.** -/
+/-- The admin rule is the team rule with every kind of act of every
+organisation assigned to the admin team. -/
 theorem adminRule_is_teamRule : adminRule = teamRule (fun _ _ => .admin) := rfl
 
-/-- **Whatever the assignment, a valid member of the assigned team can have a
-held key given back, with approvals the policy approves.** If the key is with a key holder, `a` holds a certificate
-of the team that giving a key back is assigned to and is valid in the key's
-organisation, and the approvals satisfy the policy for giving a key back,
-there is an accepted act under the team rule that `a` asks for, after which
-the key is not with a key holder and the identity certificates, revocations
-and team certificates are as before. -/
+/-- Any assignment. If a key is with a key holder, `a` holds a certificate of
+the team that giving a key back is assigned to in the key's organisation and
+is valid in that organisation, and the approvals satisfy its policy for giving
+a key back, there is an accepted act under the team rule that `a` asks for,
+after which the key is not with a key holder and the identity certificates,
+revocations and team certificates are as before. -/
 theorem assigned_team_can_take_key_back {assign : Assignment} {s : State} {key : OrgKey}
     {a : Key} {kind : Kind} (hheld : key ∈ s.held)
     (hteam : HasTeamCert s key.org (assign key.org .release) a) (hv : Valid s key.org a kind)
@@ -42,15 +42,13 @@ theorem assigned_team_can_take_key_back {assign : Assignment} {s : State} {key :
   have := (List.mem_filter.mp hmem).2
   simp at this
 
-/-- **Whatever the assignment, in one act, a key leaves a key holder only at
-the domain owner's request, by a valid member of an assigned team, or by a
-re-key from the root.** If a key is with a key holder before an accepted act
-under the team rule and not after, the asker is the domain owner of the key's
-organisation; or an identity that holds a certificate of the team giving a key
-back is assigned to and is valid in that organisation; or the key is a team
-key of that organisation, and the asker is whoever controls its root key or an
-identity that holds a certificate of the team re-keying is assigned to and is
-valid in it. -/
+/-- Any assignment, in one act. If a key is with a key holder before an
+accepted act under the team rule and not after, the asker is the domain owner
+of the key's organisation; or an identity that holds a certificate of the team
+giving a key back is assigned to and is valid in that organisation; or the key
+is a team key of that organisation, and the asker is whoever controls its root
+key or an identity that holds a certificate of the team re-keying is assigned
+to and is valid in it. -/
 theorem only_assigned_team_takes_key_back {assign : Assignment} {s s' : State} {who : Party}
     {key : OrgKey} (hstep : Step (teamRule assign) s who s')
     (hin : key ∈ s.held) (hout : key ∉ s'.held) :
@@ -68,18 +66,15 @@ theorem only_assigned_team_takes_key_back {assign : Assignment} {s s' : State} {
   · exact .inr (.inr ⟨t, ht, .inl hw⟩)
   · exact .inr (.inr ⟨t, ht, .inr ⟨k, hw, hask.1, hask.2⟩⟩)
 
-/-- **A warning the model gives, shown by one example.** The admin team is
-protected: `admit`, `invite` and `redeem` exclude it. Any other
-team is not: in the example below, an invitation to a named team that an
-operation is assigned to lets a valid member of the organisation gain the
-operation. That this holds for every assignment and team is not proved.
-
-Stated: there is an assignment and records `s`, `s1`, `s2` such that 1 holds
-no team certificate of organisation 0 in `s` and 0's root key is with a key
-holder; an act asked for by the holder of invitation secret 5 takes `s` to
-`s1`; an act 1 asks for takes `s1` to `s2`; and in `s2` the root key is not
-with a key holder. In the construction, giving the root key back is assigned
-to team 1, 1 is an agent of 0, and the invitation is to team 1. -/
+/-- There is an assignment and records `s`, `s1`, `s2` such that 1 holds no
+team certificate of organisation 0 in `s` and 0's root key is with a key
+holder; an act under the team rule asked for by the holder of invitation
+secret 5 takes `s` to `s1`; an act 1 asks for takes `s1` to `s2`; and in `s2`
+the root key is not with a key holder. In the construction, giving the root
+key back is assigned to team 1, 1 is an agent of 0, and the invitation is to
+team 1. `admit`, `invite` and `redeem` exclude the admin team; no premise
+excludes a team an act is assigned to. That the route exists for every
+assignment and team is not proved. -/
 theorem invitation_reaches_an_assigned_team :
     ∃ (assign : Assignment) (s s1 s2 : State),
       (∀ t, ¬ HasTeamCert s 0 t 1) ∧ OrgKey.root 0 ∈ s.held ∧

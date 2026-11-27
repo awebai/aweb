@@ -47,7 +47,7 @@ inductive CoreReachable (ask : AskRule) : State → Prop where
   | step {s s' : State} {who : Party} :
       CoreReachable ask s → CoreStep ask s who s' → CoreReachable ask s'
 
-/-- **The core is a part of the full model.** Every act of the core is an act of the model. -/
+/-- Every act of the core is an act of the model. -/
 theorem CoreStep.toStep {ask : AskRule} {s s' : State} {who : Party}
     (h : CoreStep ask s who s') : Step ask s who s' := by
   cases h with
@@ -65,8 +65,8 @@ theorem CoreReachable.toReachable {ask : AskRule} {s : State}
   | start p => exact .start p
   | step _ hstep ih => exact .step ih hstep.toStep
 
-/-- **In the core every member is directly under its organisation's root.**
-Nobody is created by another member, and the only team is the admin team. -/
+/-- In every record the core reaches, every identity certificate is issued by
+the root and every team certificate is of an admin team. -/
 theorem core_is_flat {ask : AskRule} {s : State} (h : CoreReachable ask s) :
     (∀ c, c ∈ s.certs → c.issuer = .root) ∧ (∀ m, m ∈ s.members → m.team = .admin) := by
   induction h with
@@ -97,12 +97,13 @@ theorem core_is_flat {ask : AskRule} {s : State} (h : CoreReachable ask s) :
 
 /-! ## The five, in the core -/
 
-/-- **1. An agent does not pass as a person.** In every record the core
-reaches, no identity is valid as an agent and as a person; and in one core
-act that makes someone newly hold a chain of person certificates, the act
-added one person certificate, issued by the root or by a valid person. That agents
-cannot give a person's approval is `agents_cannot_approve_as_person`, which
-holds in any record. -/
+/-- In every record the core reaches, no identity is valid as an agent in one
+organisation and as a person in any; and in one core act that makes `k` newly
+hold a chain of person certificates in `o`, the act added one person
+certificate, issued by the root or by a member that was a valid person of the
+certificate's organisation before the act. That approvals with no valid person do not satisfy
+a rule asking for any person is `agents_cannot_approve_as_person`, which holds
+in any record. -/
 theorem core_one (ask : AskRule) :
     (∀ {s : State}, CoreReachable ask s → ∀ {o o' : Org} {k : Key},
         Valid s o k .agent → Valid s o' k .person → False) ∧
@@ -113,11 +114,11 @@ theorem core_one (ask : AskRule) :
   ⟨fun hr _ _ _ ha hp => one_kind hr.toReachable.oneCertEach ha hp,
    fun hstep hnew hold => new_person_is_vouched_for hstep.toStep hnew hold⟩
 
-/-- **2. Where its key is not with a key holder, whoever controls it ends an
-admin in one act.** In the core: when the
-admin team's key is not with a key holder, whoever controls it can end any
-admin by one act; when the root key is not with a key holder, whoever
-controls it can end any admin by one act. -/
+/-- In the core: if the admin team's key of `o` is not with a key holder, then
+for any identity `b` there is a core act that whoever controls that key asks
+for, after which `b` is not an admin of `o`; and if `o`'s root key is not with
+a key holder, then for any admin `b` of `o` there is a core act that whoever
+controls the root key asks for, after which `b` is not an admin of `o`. -/
 theorem core_two (ask : AskRule) {s : State} {o : Org} :
     (OrgKey.team o .admin ∉ s.held → ∀ b : Key,
         ∃ s', CoreStep ask s (.controller (.team o .admin)) s' ∧ ¬ Admin s' o b) ∧
@@ -138,9 +139,10 @@ theorem core_two (ask : AskRule) {s : State} {o : Org} :
     intro ⟨_, _, hv'⟩
     exact revoked_not_valid (List.mem_cons_self) hv'
 
-/-- **2, the design.** In the core under the admin rule: when the admin
-team's key is with a key holder, an admin with approvals that satisfy the
-policy for a removal can end any other admin by one act. -/
+/-- In the core under the admin rule: if the admin team's key of `o` is with a
+key holder, `a` is an admin of `o`, the approvals satisfy `o`'s policy for a
+removal, and `b` is not `a`, there is a core act that `a` asks for, after
+which `b` is not an admin of `o`. -/
 theorem core_two_design {s : State} {o : Org}
     (hheld : OrgKey.team o .admin ∈ s.held) {a : Key} (ha : Admin s o a)
     {approvals : List Key} (happ : Approved s o .remove approvals) {b : Key} (hne : a ≠ b) :
@@ -150,12 +152,11 @@ theorem core_two_design {s : State} {o : Org}
   intro ⟨hm, _⟩
   exact not_mem_filter_ne hm
 
-/-- **3, the part the core carries: admins have a chain back to a root.**
-Every admin has certificates leading to its organisation's root; and in one
-core act, a new admin-team certificate is added only when whoever controls
-the admin team's key asks, or an identity the rule lets ask. Whether that
-identity has a chain depends on the rule: the rules in this model require a
-valid member, a rule that let anyone ask would not. -/
+/-- Every admin of `o` has certificates leading to `o`'s root; and in one core
+act that adds a certificate of an admin team, the asker is whoever controls
+that admin team's key, or an identity the rule lets ask for admitting an admin
+in that organisation. The three rules let only valid members ask (`builtRule`,
+`adminRule`, `teamRule`); a rule that let anyone ask would not. -/
 theorem core_three (ask : AskRule) :
     (∀ {s : State} {o : Org} {k : Key}, Admin s o k → ChainToRoot s o k) ∧
     (∀ {s s' : State} {who : Party} {m : Membership},
@@ -164,9 +165,8 @@ theorem core_three (ask : AskRule) :
   ⟨fun ha => admin_has_chain_to_root ha,
    fun hstep hnew hold hteam => new_admin_needs_controller_or_asker hstep.toStep hnew hold hteam⟩
 
-/-- **4. A revoked member is not valid, not an admin, and cannot act in a
-team.** In every record the core reaches. Whether it can ask a key holder
-depends on the rule, as in 3. -/
+/-- In every record the core reaches, a revoked identity is not valid in any
+organisation, is not an admin of any, and cannot act in any team. -/
 theorem core_four {ask : AskRule} {s : State} (hr : CoreReachable ask s) {k : Key}
     (hrev : k ∈ s.revoked) :
     (∀ o kind, ¬ Valid s o k kind) ∧ (∀ o, ¬ Admin s o k) ∧ (∀ o t, ¬ InTeam s o t k) :=
@@ -174,9 +174,8 @@ theorem core_four {ask : AskRule} {s : State} (hr : CoreReachable ask s) {k : Ke
    (revoked_has_no_authority hr.toReachable.revokedAreRegistered hrev).1,
    (revoked_has_no_authority hr.toReachable.revokedAreRegistered hrev).2⟩
 
-/-- **5. An organisation with no policy requires no approval.** If no rule of
-the policy is for `o`, every kind of act is approved for `o` with no
-approvals. -/
+/-- If no rule of the policy is for `o`, every kind of act is approved for `o`
+with no approvals. -/
 theorem core_five {s : State} {o : Org}
     (h : ∀ r, r ∈ s.policy → r.org ≠ o) (act : ActKind) : Approved s o act [] :=
   no_policy_no_approval h act

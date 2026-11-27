@@ -368,8 +368,9 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
   /-- Whoever controls the domain in DNS names a new root key and proves it
   holds it. Every identity of the organisation that was current is cut off.
   The new root key is not with a key holder. Team certificates, invitations
-  and the teams' keys are not touched: a cut-off member simply cannot use its
-  team certificate. Nothing can refuse this. -/
+  and the teams' keys are not touched. In a reachable record a cut-off member
+  cannot act in a team (`revoked_has_no_authority`,
+  `Reachable.cutOffAreRevoked`). Nothing can refuse this. -/
   | replaceRoot {s : State} {o : Org} :
       o ∈ s.orgs →
       Step ask s (.dns o)
