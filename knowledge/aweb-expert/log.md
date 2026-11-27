@@ -1,5 +1,12 @@
 # Knowledge log
 
+## 2026-11-26
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-cleanup-oss (dead-code removal).
+* **Creation**: decision [the documented Go packages are released API](/aweb-expert/decisions/the-documented-go-packages-are-released-api.md).
+* **Creation**: lesson [forced checkpoints stall writes on a shared PostgreSQL](/aweb-expert/lessons/forced-checkpoints-stall-writes-on-a-shared-postgres.md).
+* **Update**: [a test result belongs to the bytes that ran](/aweb-expert/lessons/a-test-result-belongs-to-the-bytes-that-ran.md) gains the pre-commit formatter trap and verifying the pushed SHA on a clean checkout.
+* **Update**: [focused proof includes the contract guards](/aweb-expert/lessons/focused-proof-includes-the-contract-guards.md) gains the product-table write ceilings as a guard for test changes, and the one-write refusal-test shape.
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
