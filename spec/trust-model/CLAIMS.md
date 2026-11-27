@@ -34,7 +34,7 @@ A sentence about the model that is not on this list should not be in the README 
 | Sentence | Kind | What makes it true |
 |---|---|---|
 | With no warning, no proof is left open; `sorry` builds with a warning | process | Lean's behaviour |
-| An `axiom` or `native_decide` builds with no warning; the sources contain none of `axiom`, `native_decide`, `opaque`, `implemented_by` | process | A grep of the sources (each reading ran it) |
+| An `axiom` or `native_decide` builds with no warning; the sources use none of `axiom`, `native_decide`, `opaque`, `implemented_by` | process | A grep of the sources (each reading ran it); the words occur only as strings in `DocNames.lean`'s skipped list |
 | `#print axioms` shows only `propext`, `Classical.choice`, `Quot.sound` | process | `#print axioms` on every theorem (each reading ran it) |
 | Pinned to Lean 4.36.0; no package beyond Lean | process | `lean-toolchain`; `lake-manifest.json` lists no packages |
 | The build fails if a cited Lean name does not exist | process | `TrustWeb/DocNames.lean`, built as the `DocCheck` library in `lakefile.toml`, with `README.md` and `CLAIMS.md` as its inputs, so it reruns when either changes |

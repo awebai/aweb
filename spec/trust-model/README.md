@@ -20,7 +20,7 @@ Install Lean with [elan](https://github.com/leanprover/elan). In this directory 
 lake build
 ```
 
-If it builds with no warning, no proof is left open: a proof left open with `sorry` builds with a warning. An added `axiom` or `native_decide` would build with no warning, so two more checks complete it: the sources contain no `axiom`, `native_decide`, `opaque` or `implemented_by`, and `#print axioms` on each theorem shows only Lean's three standard axioms, `propext`, `Classical.choice` and `Quot.sound`. The toolchain is pinned to Lean 4.36.0, and no package beyond Lean itself is used. The build also fails if a Lean name cited between backquotes in this file, in `CLAIMS.md` or in a doc comment does not exist (`TrustWeb/DocNames.lean`).
+If it builds with no warning, no proof is left open: a proof left open with `sorry` builds with a warning. An added `axiom` or `native_decide` would build with no warning, so two more checks complete it: the sources use no `axiom`, `native_decide`, `opaque` or `implemented_by` (the words appear only as strings in `TrustWeb/DocNames.lean`'s list of skipped names), and `#print axioms` on each theorem shows only Lean's three standard axioms, `propext`, `Classical.choice` and `Quot.sound`. The toolchain is pinned to Lean 4.36.0, and no package beyond Lean itself is used. The build also fails if a Lean name cited between backquotes in this file, in `CLAIMS.md` or in a doc comment does not exist (`TrustWeb/DocNames.lean`).
 
 ## What is here
 
