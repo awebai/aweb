@@ -2216,7 +2216,7 @@ describe("channel-core dispatchAgentEvent", () => {
       meta: { type: "mail", from: "acme.com/alice", message_id: "mail-1" },
     });
     expect(mail.endsWith(
-      "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.",
+      "Answer in the conversation: aw mail reply <message_id> --body-file <file>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject> --body-file <file>.",
     )).toBe(true);
     const chat = formatAwakeningForAgent({
       kind: "chat",

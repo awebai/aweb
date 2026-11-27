@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -96,7 +97,7 @@ func TestAwMailThreadsListsEachThreadWithItsTitle(t *testing.T) {
 		"Last activity: 2026-10-30T09:00:00Z\n",
 		"Conversation ID: 22222222-2222-4222-8222-222222222222",
 		"aw mail threads --cursor cursor-2",
-		"Answer in the conversation: aw mail reply <message_id>.",
+		mailThreadTeaching,
 		"Continue a thread: aw mail send --conversation-id <conversation_id> --body-file <file>",
 	} {
 		if !strings.Contains(text, want) {
@@ -187,8 +188,32 @@ func TestMailHelpTeachesReplyInTheConversation(t *testing.T) {
 			t.Fatalf("help does not teach the thread model:\n%s", cmd)
 		}
 	}
-	if mailThreadTeaching != "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>." {
-		t.Fatalf("teaching wording changed: %q", mailThreadTeaching)
+}
+
+// The channel wakes, the skills and the mail guide carry the same teaching as
+// the aw help, word for word; the guide may set commands in code spans.
+func TestMailThreadTeachingMatchesEveryCopy(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "..")
+	for _, copy := range []struct {
+		path     string
+		markdown bool
+	}{
+		{"channel-core/src/channel.ts", false},
+		{"skills/aweb-messaging/SKILL.md", false},
+		{"packages/codex-plugin/skills/aweb-messaging/SKILL.md", false},
+		{"docs/mail-and-chat.md", true},
+	} {
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(copy.path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		if copy.markdown {
+			text = strings.ReplaceAll(text, "`", "")
+		}
+		if !strings.Contains(text, mailThreadTeaching) {
+			t.Errorf("%s does not carry the mail thread teaching %q", copy.path, mailThreadTeaching)
+		}
 	}
 }
 

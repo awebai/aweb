@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Mail wakes, `aw mail` help, the skills and the mail guide now teach the
+  same reply rule, with the body in a file: "Answer in the conversation: aw
+  mail reply <message_id> --body-file <file>. Start a new thread only for a new
+  topic: aw mail send --to <recipient> --subject <subject> --body-file
+  <file>." The Claude Code channel already said this; it now takes the
+  wording from channel-core, and a test checks every copy against the `aw`
+  help.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under
