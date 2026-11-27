@@ -53,6 +53,13 @@ class Executor:
         compose = "COMPOSE_PROJECT_NAME=" + Q(project) + " " if project else ""
         return f"env -i {compose}HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator "
 
+    def launch_owner(self):
+        """Who owns the launch script and the log directory its completion records go to."""
+        return "gateuser"
+
+    def logs_mode(self):
+        return "-m 0750"
+
     def runner_cwd(self):
         """Where the gate's supervisor starts: Python loads its modules from here first."""
         return f"{REMOTE}/source"
@@ -82,7 +89,7 @@ id gateuser >/dev/null 2>&1 || useradd --uid 1000 --create-home --shell /bin/bas
 usermod -aG docker gateuser
 test "$(id -u gateuser)" = 1000
 install -d -m 0755 -o root -g root {REMOTE}
-install -d -m 0750 -o gateuser -g gateuser {LOGS}
+install -d {self.logs_mode()} -o {self.launch_owner()} -g {self.launch_owner()} {LOGS}
 install -d -m 0755 -o root -g root {REMOTE}/operator
 """
 
@@ -185,8 +192,10 @@ exit "$status"
             (self.directory / "launch.sh", "launch.sh"),
         ]:
             owner = (
-                "gateuser:gateuser"
-                if target in {"source.json", "expected-host.json", "launch.sh"}
+                f"{self.launch_owner()}:{self.launch_owner()}"
+                if target == "launch.sh"
+                else "gateuser:gateuser"
+                if target in {"source.json", "expected-host.json"}
                 else "root:root"
             )
             self.upload(

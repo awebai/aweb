@@ -175,15 +175,7 @@ class RootLaunchPath(unittest.TestCase):
             "install -d -m 0700 -o root -g root /opt/vm-gate/root-run", commands
         )
         self.assertIn(
-            "chown root:root /opt/vm-gate/launch.sh && chmod 0700 /opt/vm-gate/launch.sh",
-            commands,
-        )
-        self.assertIn(
             f"echo {digest}  /opt/vm-gate/launch.sh | sha256sum -c -", commands
-        )
-        self.assertIn(
-            "chown -R root:root /var/log/vm-gate && chmod 0755 /var/log/vm-gate",
-            commands,
         )
         self.assertIn(
             "-m 0700 -o root -g root /opt/vm-gate/sources /opt/vm-gate/runs", commands
@@ -237,6 +229,89 @@ class RootLaunchPath(unittest.TestCase):
                 )
                 self.assertIn(user, launch)
                 self.assertEqual("runuser" in launch, not root)
+
+
+class PrepareTransport(RecordingTransport):
+    """A guest for the whole base prepare: the host contract holds, the UID-0 control refuses."""
+
+    def run(self, command, *, timeout, check):
+        if "vm_gate.host_contract" in command and "HOME=/root" in command:
+            self.commands.append(command)
+            return SimpleNamespace(returncode=78, stdout="", stderr="UID 0 refused\n")
+        return super().run(command, timeout=timeout, check=check)
+
+    def prove_mismatch(self, *, timeout):
+        return SimpleNamespace(returncode=255, stdout="", stderr="host key mismatch\n")
+
+
+class RootPathFromTheStart(unittest.TestCase):
+    """Through the base prepare itself: a root spec's privileged paths are never the gate user's."""
+
+    def prepared(self, root):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        directory = Path(tmp.name)
+        for name in (
+            "source.json",
+            "ledger-before.tsv",
+            "ledger-logs-before.tar.gz",
+            "source.bundle",
+        ):
+            (directory / name).write_text(name)
+        executor = ServersExecutor(
+            {
+                "ledger": "/var/lib/gate/ledger.tsv",
+                "owner": "fixture",
+                "manifest": {"observed": {}},
+            },
+            directory,
+            {
+                "sha": SHA,
+                "bundle": str(directory / "source.bundle"),
+                "frozen_main": SHA,
+            },
+            "python3 servers_run.py",
+            None,
+            servers={"root": root, "spec_bytes": b"{}", "bundles": {}},
+        )
+        executor.transport = PrepareTransport()
+        (directory / "launch.sh").write_text(executor.launch_program())
+        executor.prepare({}, 600)
+        return executor.transport.commands
+
+    def test_a_root_spec_never_gives_the_gate_user_its_logs_or_launcher(self):
+        commands = self.prepared(True)
+        text = "\n".join(commands)
+        self.assertIn("install -d -m 0755 -o root -g root /var/log/vm-gate", text)
+        self.assertNotIn("-o gateuser -g gateuser /var/log/vm-gate", text)
+        launch = [
+            c
+            for c in commands
+            if c.startswith("chown")
+            and c.rstrip().endswith("/opt/vm-gate/launch.sh")
+            or "/opt/vm-gate/launch.sh &&" in c
+            and c.startswith("chown")
+        ]
+        self.assertTrue(launch, commands)
+        self.assertTrue(
+            all("root:root" in c and "gateuser" not in c for c in launch), launch
+        )
+        # The gate user's host contract still runs, after the uploads.
+        self.assertTrue(
+            any(
+                "runuser -u gateuser" in c and "vm_gate.host_contract" in c
+                for c in commands
+            )
+        )
+        self.assertIn("sha256sum -c -", text)
+
+    def test_the_gate_user_path_still_gives_it_its_logs_and_launcher(self):
+        text = "\n".join(self.prepared(False))
+        self.assertIn(
+            "install -d -m 0750 -o gateuser -g gateuser /var/log/vm-gate", text
+        )
+        self.assertIn("chown gateuser:gateuser /opt/vm-gate/launch.sh", text)
+        self.assertNotIn("root-run", text)
 
 
 if __name__ == "__main__":

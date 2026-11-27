@@ -251,6 +251,13 @@ class ServersExecutor(Executor):
     def runner_cwd(self):
         return ROOT_RUN if self.servers["root"] else super().runner_cwd()
 
+    def launch_owner(self):
+        """A root spec's launcher and completion records are root's from the moment they exist."""
+        return "root" if self.servers["root"] else super().launch_owner()
+
+    def logs_mode(self):
+        return "-m 0755" if self.servers["root"] else super().logs_mode()
+
     def launch_program(self):
         """A root spec's launch: it runs as root from root's own directory.
 
@@ -299,18 +306,16 @@ exit "$status"
             self.upload(local, f"{GUEST_BUNDLES}/{name}.bundle", mode="0444")
 
     def protect_root_path(self):
-        """What a root run executes, loads and writes its completion to is root's alone.
+        """A root run's working directory is root's alone, and its launcher is the one the controller wrote.
 
-        Prepare left the launch script and the log directory with the gate
-        user, and nothing runs as the gate user after it in a root spec."""
+        The launch script and the log directory are root's from their creation
+        (launch_owner), never the gate user's; this checks the script's bytes."""
         launch = hashlib.sha256(
             (Path(self.directory) / "launch.sh").read_bytes()
         ).hexdigest()
         self.run(
             f"install -d -m 0700 -o root -g root {ROOT_RUN} && "
-            f"chown root:root {REMOTE}/launch.sh && chmod 0700 {REMOTE}/launch.sh && "
-            f"echo {launch}  {REMOTE}/launch.sh | sha256sum -c - && "
-            f"chown -R root:root {LOGS} && chmod 0755 {LOGS}",
+            f"echo {launch}  {REMOTE}/launch.sh | sha256sum -c -",
             "servers-root-path",
         )
 
