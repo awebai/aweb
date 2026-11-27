@@ -195,8 +195,15 @@ global.
 
 Current surfaces:
 
-- `aw init` is the everyday bootstrap path; `aw team admin create NAME` is the
-  advanced explicit team-creation and local-orchestration wrapper.
+- `aw init` is the everyday bootstrap path. `aw team admin create NAME` is the
+  explicit team-founding command: it creates the team and enrolls this
+  workspace's first agent, through the local stack, a customer-controlled
+  namespace (`--byot --namespace DOMAIN`), an existing identity in the
+  workspace, a setup key (`AWEB_API_KEY`), or hosted onboarding.
+- `aw team admin create NAME --org ORG` is separate: it creates a hosted team
+  under the signed-in person's organization authority and returns an
+  invitation. It creates no local identity; the invitation is accepted
+  separately.
 - `aw id team create --namespace DOMAIN --name NAME` is the controller/admin
   primitive for creating the AWID team record and remains controller-only.
 - `aw team admin create` accepts `--first-agent-local` (default) and

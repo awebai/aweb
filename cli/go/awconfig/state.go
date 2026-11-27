@@ -45,6 +45,10 @@ func DefaultKnownAgentsPath() (string, error) {
 	return PathInUserState("known_agents.yaml")
 }
 
+func DefaultRunConfigPath() (string, error) {
+	return PathInUserState("run.json")
+}
+
 func DefaultLogsDir() (string, error) {
 	return PathInUserState("logs")
 }

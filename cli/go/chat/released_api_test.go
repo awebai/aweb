@@ -16,6 +16,8 @@ var (
 	_ string                                                                                  = SendResult{}.Status
 	_ bool                                                                                    = SendOptions{}.EncryptE2EE
 	_ bool                                                                                    = ExtendWaitOptions{}.EncryptE2EE
+	_ func([]string) error                                                                    = SaveDeliveredIDs
+	_ func([]awid.ChatMessage) []awid.ChatMessage                                             = FilterDeliveredMessages
 )
 
 func TestReleasedEncryptE2EERequiresEncryption(t *testing.T) {
