@@ -37,7 +37,7 @@ def channel_core_build(server_js_runtime):
         return
     build = subprocess.run(
         ["npm", "run", "build"],
-        cwd=REPO / "channel-core",
+        cwd=REPO / "packages" / "channel-core",
         capture_output=True,
         text=True,
     )

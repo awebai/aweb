@@ -39,7 +39,7 @@ test('a new raw verifier refuses; a shared public helper call passes',()=>{
  assert.deepEqual(checkPrimitiveUses(observed("import { idEd25519Verify } from './identity/id_certificates.js'; idEd25519Verify(k,p,s);"),[]),[]);
 });
 test('only the named shared verifier and point predicate use raw primitives',()=>{
- for(const [file,symbol] of [['channel-core/src/identity/signature_wire.ts','verifyBytes'],['channel-core/src/identity/signature_wire.ts','primeSubgroupPoint']]) {
+ for(const [file,symbol] of [['packages/channel-core/src/identity/signature_wire.ts','verifyBytes'],['packages/channel-core/src/identity/signature_wire.ts','primeSubgroupPoint']]) {
   assert.deepEqual(checkPrimitiveUses(observed(`import * as ed from '@noble/ed25519'; function ${symbol}(){ed.ExtendedPoint.fromHex(k);}`,file),[]),[]);
   assert.ok(checkPrimitiveUses(observed("import * as ed from '@noble/ed25519'; function bypass(){ed.verify(s,p,k);}",file),[]).length);
  }

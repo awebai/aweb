@@ -38,7 +38,7 @@ function realFileDependencyTarget(packageRoot, specifier) {
 }
 
 function discoverBundledPackages(root) {
-  const coreRoot = realpathSync(path.join(root, "channel-core"));
+  const coreRoot = realpathSync(path.join(root, "packages/channel-core"));
   const bundledPackages = [];
   const pending = [root];
   while (pending.length > 0) {
@@ -104,7 +104,7 @@ function checkDependency(
   const resolvedRoot = packageRootForEntry(resolvedEntry, dependency);
   const dependencyRoot = path.join(coreRoot, "node_modules");
   if (!isInside(dependencyRoot, resolvedRoot)) {
-    fail(`${bundledPackage}: ${dependency} resolves outside channel-core/node_modules at ${resolvedRoot}`);
+    fail(`${bundledPackage}: ${dependency} resolves outside packages/channel-core/node_modules at ${resolvedRoot}`);
   }
 
   const lockPath = path.relative(coreRoot, resolvedRoot).split(path.sep).join("/");
@@ -142,7 +142,7 @@ function checkBundle(root, bundledPackage) {
   const bundlePackage = readJSON(bundleManifest);
   const linkedCore = bundlePackage.dependencies?.[channelCorePackageName]
     || bundlePackage.devDependencies?.[channelCorePackageName];
-  const coreRoot = realpathSync(path.join(root, "channel-core"));
+  const coreRoot = realpathSync(path.join(root, "packages/channel-core"));
   if (realFileDependencyTarget(bundleRoot, linkedCore) !== coreRoot) {
     fail(`${bundledPackage}: package.json must file-link ${channelCorePackageName} to ${coreRoot}`);
   }
@@ -169,7 +169,7 @@ function checkBundle(root, bundledPackage) {
 
   const coreLock = readJSON(path.join(coreRoot, "package-lock.json"));
   const rootRecord = coreLock.packages?.[""];
-  if (!rootRecord) fail(`${bundledPackage}: channel-core/package-lock.json has no root package`);
+  if (!rootRecord) fail(`${bundledPackage}: packages/channel-core/package-lock.json has no root package`);
   const visited = new Set();
   for (const [dependency, optional] of dependencyEdges(rootRecord)) {
     checkDependency(
@@ -191,7 +191,7 @@ try {
     : discoverBundledPackages(root);
   if (bundledPackages.length === 0) fail("no channel-core bundles found");
   for (const bundledPackage of bundledPackages) checkBundle(root, bundledPackage);
-  console.log("Node bundle inputs match channel-core/package-lock.json.");
+  console.log("Node bundle inputs match packages/channel-core/package-lock.json.");
 } catch (error) {
   console.error(`FAIL: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);

@@ -9,9 +9,9 @@ RUN go build -p=2 -o /out/aw ./cmd/aw
 
 FROM node:22-bookworm-slim AS channel
 WORKDIR /src
-COPY channel-core/package.json channel-core/package-lock.json ./
+COPY packages/channel-core/package.json packages/channel-core/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY channel-core/ ./
+COPY packages/channel-core/ ./
 RUN npm run build && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM docker:28-cli AS docker-cli

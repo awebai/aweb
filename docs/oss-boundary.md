@@ -16,7 +16,7 @@ interoperable behavior shared by aweb-compatible systems. That includes:
 - the `aw` CLI and Go libraries in `cli/go/`;
 - the AWID identity and team registry in `awid/`;
 - channel/event protocol code and maintained runtime integrations in
-  `channel-core/`, `channel/`, and `pi-extension/`;
+  `packages/channel-core/`, `packages/channel/`, and `packages/pi-extension/`;
 - public protocol contracts, conformance fixtures, generated references, and
   self-hosting guidance;
 - reusable skills and resource-pack assets that operate only on public

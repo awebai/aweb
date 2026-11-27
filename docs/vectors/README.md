@@ -252,7 +252,7 @@ separator escape, and key order with non-ASCII keys. The reference is Python
 reproduces every case. Go `cli/go/awid/canonical_json_vector_test.go`
 reproduces every case with `CanonicalJSONValue`, `StrictCanonicalJSON` and the
 ID-certificate canonical form, and the string cases with the message envelope.
-TypeScript `channel-core/test/canonical_json_vector.test.ts` reproduces every
+TypeScript `packages/channel-core/test/canonical_json_vector.test.ts` reproduces every
 case with `canonicalJSONValue`. The file is ASCII: every other character is
 written as an escape, and expected bytes are hex.
 
@@ -267,7 +267,7 @@ code point the U+E000-U+FFFF key comes first. `code_point_key_order_cases`
 holds such keys (against U+E000, against U+FFFF, pairs of keys outside the
 plane, nested objects); the three tests assert every case. Go sorts the UTF-8
 bytes of the keys, Python compares `str` values, and TypeScript compares code
-points with `compareByCodePoint` (`channel-core/src/identity/canonical.ts`).
+points with `compareByCodePoint` (`packages/channel-core/src/identity/canonical.ts`).
 
 #### Numbers
 
@@ -1023,7 +1023,7 @@ TypeScript trust/pin-store consumers run through the normal channel-core test
 suite after its declared npm dependencies are installed:
 
 ```bash
-cd channel-core
+cd packages/channel-core
 npm test
 ```
 

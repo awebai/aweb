@@ -377,9 +377,9 @@ The component that delivered the wake that started the turn knows which chat
 it delivered, so it attributes:
 
 - **Claude Code and Pi.** channel-core's dispatcher delivers chat wakes for
-  both (`channel/src/index.ts:246-272`; Pi runs the same loop in-process).
+  both (`packages/channel/src/index.ts:246-272`; Pi runs the same loop in-process).
   Just before it presents a chat message of session S, it calls the loop's
-  `onChatPresented(S, {encrypted})` (`channel-core/src/channel.ts`, the chat
+  `onChatPresented(S, {encrypted})` (`packages/channel-core/src/channel.ts`, the chat
   dispatch), and the emitter attributes the next turn to S; the turn after it
   is unattributed again. If any presented message of S was encrypted, that
   turn sends no summaries. A turn started by local input, mail or an app event
@@ -463,7 +463,7 @@ valid or unattributed event, and an absent route stops publishing.
   written asynchronously and may lag the conversation
   (code.claude.com/docs/en/hooks). The aweb channel plugin is a stdio MCP
   server that already loads the agent's identity and signs requests; it owns
-  the session's emitter (`channel/src/activity.ts`). Verified on Claude Code
+  the session's emitter (`packages/channel/src/activity.ts`). Verified on Claude Code
   2.1.300, headless, with the packaged plugin.
   - The plugin ships `hooks/hooks.json`. `UserPromptSubmit` is
     `turn_started`, `PreToolUse` is `tool`, `PostToolUse` and
@@ -499,7 +499,7 @@ valid or unattributed event, and an absent route stops publishing.
     for at most 2 s, and removes its socket.
   - The existing opt-in `aw notify` PostToolUse hook
     (`cli/go/cmd/aw/claude_hooks.go:14,129`) is unrelated and unchanged.
-- **Pi: the extension's lifecycle handlers** (`pi-extension/src/activity.ts`).
+- **Pi: the extension's lifecycle handlers** (`packages/pi-extension/src/activity.ts`).
   An agent run is the activity turn: `agent_start` is `turn_started` and
   `agent_end` is `turn_ended`. Pi's `turn_start`/`turn_end` fire once per model
   call inside a run, so they are not turn boundaries; the extension uses them
@@ -567,7 +567,7 @@ constraint,
 | Consumer | Effect |
 |---|---|
 | Released `aw` CLI chat waits | None: they never send `include=agent_activity`, so their stream is unchanged. |
-| channel-core (channel plugin 1.7.x, Pi 0.3.x) | None: they read only `/v1/events/stream`, which is unchanged. Unknown event names there are dropped anyway (`channel-core/src/api/events.ts:297`). |
+| channel-core (channel plugin 1.7.x, Pi 0.3.x) | None: they read only `/v1/events/stream`, which is unchanged. Unknown event names there are dropped anyway (`packages/channel-core/src/api/events.ts:297`). |
 | Older emitters | They send nothing, and the dashboard shows what it shows today. |
 | Newer emitters against an older server | 404, so publishing stops for that process and one line is logged. No retry storm. |
 | Already-issued grants | Usable as they are; the route reuses `chat.send`. |

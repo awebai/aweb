@@ -18,9 +18,9 @@
 # pack-inspect also accepts --profile <channel|pi|skills> --source-root
 # <repo root>: package-specific contract checks against the unpacked tgz
 # bytes (channel: package-dist markers + sentinel via
-# channel/scripts/check-package-dist.mjs, plus the .mcp.json mcpServers
+# packages/channel/scripts/check-package-dist.mjs, plus the .mcp.json mcpServers
 # wrapper with the exact aweb-channel server name; pi:
-# pi-extension/scripts/check-package-dist.mjs markers - including the
+# packages/pi-extension/scripts/check-package-dist.mjs markers - including the
 # authenticated trust boundary and the bundled channel-core deadline,
 # byte-inactivity watchdog, and settled-backoff listener cleanup - with no
 # bundled skills; skills: plugin version equals the package version, Pi skills
@@ -89,7 +89,7 @@ profile_inspect() {
   case "$PROFILE" in
     channel)
       [[ ! -d "$unpack/package/skills" ]] || fail "channel tgz must not bundle skills"
-      node "$SOURCE_ROOT/channel/scripts/check-package-dist.mjs" \
+      node "$SOURCE_ROOT/packages/channel/scripts/check-package-dist.mjs" \
         --dist "$unpack/package/dist/index.js" \
         || fail "channel package-dist contract (markers/sentinel/version) failed"
       python3 - "$unpack/package/.mcp.json" <<'PYMCP'
@@ -119,7 +119,7 @@ if plugin.get("version") != pkg["version"]:
 PYPLUGIN
       ;;
     pi)
-      node "$SOURCE_ROOT/pi-extension/scripts/check-package-dist.mjs" \
+      node "$SOURCE_ROOT/packages/pi-extension/scripts/check-package-dist.mjs" \
         --dist "$unpack/package/dist/index.js" \
         || fail "pi package-dist contract (bundled channel-core markers) failed"
       [[ ! -d "$unpack/package/skills" ]] || fail "pi tgz must not bundle skills"

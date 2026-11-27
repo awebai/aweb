@@ -436,7 +436,7 @@ def runtime_packages(server_js_runtime):
     if REPO != SOURCE_REPO:
         assert server_js_runtime == REPO
         return
-    for package in ("channel", "pi-extension"):
+    for package in ("packages/channel", "packages/pi-extension"):
         build = subprocess.run(
             ["npm", "run", "build"], cwd=REPO / package, capture_output=True, text=True
         )
@@ -543,7 +543,7 @@ async def _present_by_channel(
     stderr = (tmp_path / "channel.stderr").open("wb")
     plugin = await asyncio.create_subprocess_exec(
         "node",
-        str(REPO / "channel/dist/index.js"),
+        str(REPO / "packages/channel/dist/index.js"),
         cwd=command_dir,
         env=command_env,
         stdin=asyncio.subprocess.PIPE,
@@ -596,7 +596,7 @@ async def _present_by_pi(
     session = await asyncio.create_subprocess_exec(
         "node",
         str(Path(__file__).with_name("pi_extension_host.mjs")),
-        str(REPO / "pi-extension/dist/index.js"),
+        str(REPO / "packages/pi-extension/dist/index.js"),
         command_dir,
         cwd=command_dir,
         env=command_env,

@@ -12,7 +12,7 @@ function fixture(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const path of ['skills/shipped.json', 'scripts/skill-packaging.mjs',
     'packages/claude-ai-skills/build-zips.sh', 'packages/claude-skills/package.json',
-    'packages/codex-plugin/sync-skills.sh', 'pi-extension/package.json']) {
+    'packages/codex-plugin/sync-skills.sh', 'packages/pi-extension/package.json']) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     cpSync(join(source, path), join(root, path));
   }
@@ -62,10 +62,10 @@ test('one shipping-list addition reaches ZIPs, Claude, Codex and Pi sync', t => 
   writeFileSync(join(root, 'skills/shipped.json'), JSON.stringify(names));
   build(root);
   assert.equal(check(root, dist).status, 0);
-  for (const cwd of ['packages/claude-skills', 'packages/codex-plugin', 'pi-extension']) {
+  for (const cwd of ['packages/claude-skills', 'packages/codex-plugin', 'packages/pi-extension']) {
     if (cwd === 'packages/codex-plugin') execFileSync('bash', ['sync-skills.sh'], { cwd: join(root, cwd) });
     else execFileSync('npm', ['run', 'sync-skills'], { cwd: join(root, cwd) });
-    const destination = cwd === 'pi-extension' ? 'packages/claude-skills' : cwd;
+    const destination = cwd === 'packages/pi-extension' ? 'packages/claude-skills' : cwd;
     assert.equal(readFileSync(join(root, destination, 'skills', added, 'SKILL.md'), 'utf8'), `# ${added}\n`);
     // Force the Pi wrapper to recreate the optional package instead of passing on a stale copy.
     rmSync(join(root, destination, 'skills'), { recursive: true });

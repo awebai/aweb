@@ -5,11 +5,11 @@
 # whole point of the gate, and getting it wrong produces a green light about the
 # wrong artifact:
 #
-#   `npm audit` in channel/ reports on THREE production dependencies. The
+#   `npm audit` in packages/channel/ reports on THREE production dependencies. The
 #   runtime code it actually ships comes from @awebai/channel-core, which is a
 #   `file:../channel-core` DEV dependency, so channel-core's production
 #   dependencies are outside channel's audit scope entirely — while esbuild
-#   inlines that very code into channel/dist/index.js. A vulnerable js-yaml in
+#   inlines that very code into packages/channel/dist/index.js. A vulnerable js-yaml in
 #   channel-core was therefore invisible to `npm audit` in channel, which
 #   reported "found 0 vulnerabilities" the whole time.
 #
@@ -58,10 +58,10 @@ run_audits() {
   advisory_found=0
   node "$ROOT/scripts/check-node-build-provenance.mjs" || provenance_ok=0
   # Authoritative: these production dependencies are what get bundled/shipped.
-  audit_package "channel-core" "AUTHORITATIVE - deps here are inlined into both bundles" || advisory_found=1
+  audit_package "packages/channel-core" "AUTHORITATIVE - deps here are inlined into both bundles" || advisory_found=1
   # Weak by construction (see header), but a regression here is still real.
-  audit_package "channel" "weak: runtime deps arrive via a file: link, not audited here" || advisory_found=1
-  audit_package "pi-extension" "weak: same file: link structure as channel" || advisory_found=1
+  audit_package "packages/channel" "weak: runtime deps arrive via a file: link, not audited here" || advisory_found=1
+  audit_package "packages/pi-extension" "weak: same file: link structure as channel" || advisory_found=1
   [ "$provenance_ok" -eq 1 ] && [ "$advisory_found" -eq 0 ]
 }
 
@@ -127,7 +127,7 @@ fi
 if [ "$provenance_ok" -eq 0 ]; then
   printf '\nFAIL: the build-provenance check did not pass. This is NOT an advisory\n'
   printf 'finding. It usually means the workspace dependencies are not installed:\n'
-  printf '  (cd channel-core && npm ci) && (cd channel && npm ci) && (cd pi-extension && npm ci)\n'
+  printf '  (cd packages/channel-core && npm ci) && (cd packages/channel && npm ci) && (cd packages/pi-extension && npm ci)\n'
 fi
 if [ "$advisory_found" -eq 1 ]; then
   printf '\nFAIL: a Node production dependency has an advisory at or above %s.\n' "$AUDIT_LEVEL"

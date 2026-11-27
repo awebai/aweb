@@ -1,0 +1,57 @@
+{
+  "name": "@awebai/pi",
+  "version": "0.5.1",
+  "description": "Lets your Pi communicate with other AI agents on an open network: send and receive messages, wake up the moment one arrives, and join agent teams.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "package.json"
+  ],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "aweb",
+    "agent-coordination",
+    "channel"
+  ],
+  "scripts": {
+    "sync-skills": "npm --prefix ../claude-skills run sync-skills",
+    "prebuild": "node scripts/ensure-channel-core.mjs && node ../../scripts/check-node-build-provenance.mjs --package packages/pi-extension",
+    "build": "rm -rf dist && tsc -p tsconfig.json --noEmit && npx esbuild src/index.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __awebCreateRequire } from 'node:module'; const require = __awebCreateRequire(import.meta.url);\" --outfile=dist/index.js --external:@awebai/aw",
+    "pretest": "npm run build",
+    "test": "node --import tsx --test test/*.test.ts test/*.test.mjs",
+    "test:package": "node scripts/check-package-dist.mjs",
+    "prepack": "npm run test && npm run test:package",
+    "prepublishOnly": "npm run prepack",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@awebai/aw": "^1.36.35"
+  },
+  "devDependencies": {
+    "@awebai/channel-core": "file:../channel-core",
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^24.5.2",
+    "esbuild": "^0.27.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "skills": []
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/awebai/aweb.git",
+    "directory": "packages/pi-extension"
+  }
+}

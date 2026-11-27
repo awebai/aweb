@@ -8,7 +8,7 @@ aweb skills from [`skills/shipped.json`](../../skills/shipped.json): `aweb-coord
 it uses them. Creating the first task is the opt-in; installing this package
 does not choose the team's tracker.
 
-Distinct from [`@awebai/claude-channel`](https://github.com/awebai/aweb/tree/main/channel),
+Distinct from [`@awebai/claude-channel`](https://github.com/awebai/aweb/tree/main/packages/channel),
 which ships the real-time channel runtime and is started with
 `--dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace`
 in any permission mode. This package has **no runtime**, no

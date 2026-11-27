@@ -12,10 +12,10 @@ FILES_TO_SCAN = [
     *REPO_ROOT.glob("docs/**/*.md"),
     *REPO_ROOT.glob("skills/**/*.md"),
     *REPO_ROOT.glob("packages/codex-plugin/skills/**/*.md"),
-    REPO_ROOT / "channel" / "README.md",
+    REPO_ROOT / "packages" / "channel" / "README.md",
     REPO_ROOT / "docs" / "channel.md",
-    REPO_ROOT / "pi-extension" / "README.md",
-    REPO_ROOT / "pi-extension" / "src" / "index.ts",
+    REPO_ROOT / "packages" / "pi-extension" / "README.md",
+    REPO_ROOT / "packages" / "pi-extension" / "src" / "index.ts",
 ]
 
 FORBIDDEN_PATTERNS = [

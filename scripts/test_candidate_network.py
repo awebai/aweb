@@ -368,7 +368,7 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "http://127.0.0.1:49151")
 
     def test_channel_does_not_reserve_ports_and_selects_both_service_names(self):
-        source = (ROOT / "channel/test/integration.test.ts").read_text()
+        source = (ROOT / "packages/channel/test/integration.test.ts").read_text()
         allocation = source[
             source.index("  const directNetwork =") : source.index(
                 "  const projectSeed ="

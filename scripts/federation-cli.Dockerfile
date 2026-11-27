@@ -14,10 +14,10 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/id-tree-verifier /tmp/cross-registr
 
 FROM node:22-alpine AS channel-build
 WORKDIR /journey/channel-core
-COPY channel-core/package.json channel-core/package-lock.json ./
+COPY packages/channel-core/package.json packages/channel-core/package-lock.json ./
 RUN npm ci
-COPY channel-core/tsconfig.json ./
-COPY channel-core/src ./src
+COPY packages/channel-core/tsconfig.json ./
+COPY packages/channel-core/src ./src
 RUN npm run build
 
 FROM ${RUNTIME_IMAGE}
@@ -33,7 +33,7 @@ COPY --chmod=0644 scripts/cross-registry-human-journey.py /usr/local/bin/cross-r
 COPY --chmod=0644 scripts/cross-registry-offline-verifier.py /usr/local/bin/cross-registry-offline-verifier.py
 COPY --from=channel-build /journey/channel-core/dist /journey/channel-core/dist
 COPY --from=channel-build /journey/channel-core/node_modules /journey/channel-core/node_modules
-COPY --chmod=0644 channel-core/package.json /journey/channel-core/package.json
+COPY --chmod=0644 packages/channel-core/package.json /journey/channel-core/package.json
 COPY --chmod=0644 scripts/cross-registry-inbound-verifier.mjs /journey/scripts/cross-registry-inbound-verifier.mjs
 RUN chmod 0755 /journey/scripts
 ENTRYPOINT ["/usr/local/bin/aw"]

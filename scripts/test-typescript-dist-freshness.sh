@@ -10,14 +10,14 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/aweb-dist-freshness.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 mkdir -p "$TMP/channel-core" "$TMP/channel" "$TMP/pi-extension"
-cp -R "$ROOT/channel-core/src" "$TMP/channel-core/src"
-cp -R "$ROOT/channel/src" "$TMP/channel/src"
-cp -R "$ROOT/pi-extension/src" "$TMP/pi-extension/src"
+cp -R "$ROOT/packages/channel-core/src" "$TMP/channel-core/src"
+cp -R "$ROOT/packages/channel/src" "$TMP/channel/src"
+cp -R "$ROOT/packages/pi-extension/src" "$TMP/pi-extension/src"
 
 build_channel() {
   mkdir -p "$TMP/channel/dist"
-  NODE_PATH="$ROOT/channel/node_modules:$ROOT/channel-core/node_modules" \
-    "$ROOT/channel/node_modules/.bin/esbuild" "$TMP/channel/src/index.ts" \
+  NODE_PATH="$ROOT/packages/channel/node_modules:$ROOT/packages/channel-core/node_modules" \
+    "$ROOT/packages/channel/node_modules/.bin/esbuild" "$TMP/channel/src/index.ts" \
       --bundle --platform=node --format=esm \
       --outfile="$TMP/channel/dist/index.js" \
       --alias:@awebai/channel-core="$TMP/channel-core/src/index.ts" \
@@ -26,8 +26,8 @@ build_channel() {
 
 build_pi_extension() {
   mkdir -p "$TMP/pi-extension/dist"
-  NODE_PATH="$ROOT/pi-extension/node_modules:$ROOT/channel-core/node_modules" \
-    "$ROOT/pi-extension/node_modules/.bin/esbuild" "$TMP/pi-extension/src/index.ts" \
+  NODE_PATH="$ROOT/packages/pi-extension/node_modules:$ROOT/packages/channel-core/node_modules" \
+    "$ROOT/packages/pi-extension/node_modules/.bin/esbuild" "$TMP/pi-extension/src/index.ts" \
       --bundle --platform=node --format=esm --external:@awebai/aw \
       --outfile="$TMP/pi-extension/dist/index.js" \
       --alias:@awebai/channel-core="$TMP/channel-core/src/index.ts" \
@@ -56,10 +56,10 @@ expect_checker_failure() {
 # Positive direction: both adapters built from the clean copied source pass the
 # same checkers used by package builds and the freshness gate.
 build_channel
-node "$ROOT/channel/scripts/check-package-dist.mjs" \
+node "$ROOT/packages/channel/scripts/check-package-dist.mjs" \
   --dist "$TMP/channel/dist/index.js" >/dev/null
 build_pi_extension
-node "$ROOT/pi-extension/scripts/check-package-dist.mjs" \
+node "$ROOT/packages/pi-extension/scripts/check-package-dist.mjs" \
   --dist "$TMP/pi-extension/dist/index.js" >/dev/null
 
 # Negative direction, channel: remove the real genesis-to-did:aw binding check,
@@ -80,13 +80,13 @@ path.write_text(text.replace(guard, ""), encoding="utf-8")
 PY
 build_channel
 expect_checker_failure "channel genesis binding" "did:aw not derived from genesis key" \
-  node "$ROOT/channel/scripts/check-package-dist.mjs" \
+  node "$ROOT/packages/channel/scripts/check-package-dist.mjs" \
     --dist "$TMP/channel/dist/index.js"
 
 # Restore the isolated core source, then seed the prior identity-first ordering
 # for Pi and require its checker to reject the rebuilt bundle.
 rm -rf "$TMP/channel-core/src"
-cp -R "$ROOT/channel-core/src" "$TMP/channel-core/src"
+cp -R "$ROOT/packages/channel-core/src" "$TMP/channel-core/src"
 python3 - "$TMP/channel-core/src/config.ts" <<'PY'
 import sys
 from pathlib import Path
@@ -102,7 +102,7 @@ PY
 build_pi_extension
 expect_checker_failure "pi-extension certificate-first resolution" \
   "missing certificate-first stable_id resolution" \
-  node "$ROOT/pi-extension/scripts/check-package-dist.mjs" \
+  node "$ROOT/packages/pi-extension/scripts/check-package-dist.mjs" \
     --dist "$TMP/pi-extension/dist/index.js"
 
 # Restore the isolated core source before each Pi mutation. The release profile
@@ -110,7 +110,7 @@ expect_checker_failure "pi-extension certificate-first resolution" \
 # watchdog, and the settled-backoff abort-listener cleanup rather than merely
 # trusting that the source checkout had them.
 rm -rf "$TMP/channel-core/src"
-cp -R "$ROOT/channel-core/src" "$TMP/channel-core/src"
+cp -R "$ROOT/packages/channel-core/src" "$TMP/channel-core/src"
 python3 - "$TMP/channel-core/src/api/events.ts" <<'PY'
 import sys
 from pathlib import Path
@@ -131,11 +131,11 @@ PY
 build_pi_extension
 expect_checker_failure "pi-extension local stream deadline" \
   "local event-stream deadline" \
-  node "$ROOT/pi-extension/scripts/check-package-dist.mjs" \
+  node "$ROOT/packages/pi-extension/scripts/check-package-dist.mjs" \
     --dist "$TMP/pi-extension/dist/index.js"
 
 rm -rf "$TMP/channel-core/src"
-cp -R "$ROOT/channel-core/src" "$TMP/channel-core/src"
+cp -R "$ROOT/packages/channel-core/src" "$TMP/channel-core/src"
 python3 - "$TMP/channel-core/src/api/events.ts" <<'PY'
 import sys
 from pathlib import Path
@@ -157,11 +157,11 @@ PY
 build_pi_extension
 expect_checker_failure "pi-extension event-stream inactivity watchdog" \
   "event-stream byte-inactivity watchdog" \
-  node "$ROOT/pi-extension/scripts/check-package-dist.mjs" \
+  node "$ROOT/packages/pi-extension/scripts/check-package-dist.mjs" \
     --dist "$TMP/pi-extension/dist/index.js"
 
 rm -rf "$TMP/channel-core/src"
-cp -R "$ROOT/channel-core/src" "$TMP/channel-core/src"
+cp -R "$ROOT/packages/channel-core/src" "$TMP/channel-core/src"
 python3 - "$TMP/channel-core/src/api/events.ts" <<'PY'
 import sys
 from pathlib import Path
@@ -182,7 +182,7 @@ PY
 build_pi_extension
 expect_checker_failure "pi-extension settled backoff cleanup" \
   "settled backoff abort-listener cleanup" \
-  node "$ROOT/pi-extension/scripts/check-package-dist.mjs" \
+  node "$ROOT/packages/pi-extension/scripts/check-package-dist.mjs" \
     --dist "$TMP/pi-extension/dist/index.js"
 
 echo "self-test passed: clean TypeScript builds pass and guarded source regressions fail"

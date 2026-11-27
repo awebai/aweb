@@ -28,7 +28,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-TOP_LEVEL='docs|cli|channel|channel-core|pi-extension|server|scripts|examples'
+TOP_LEVEL='docs|cli|packages|server|scripts|examples'
 
 # Referenced correctly but legitimately absent from the tree. Every entry needs
 # a reason; an unexplained allowlist rots the same way the documentation did.
@@ -98,17 +98,17 @@ self_test() {
   local tmp status
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' RETURN
-  mkdir -p "$tmp/docs" "$tmp/channel/src"
-  : > "$tmp/channel/src/index.ts"
+  mkdir -p "$tmp/docs" "$tmp/packages/channel/src"
+  : > "$tmp/packages/channel/src/index.ts"
 
-  printf 'Live reference: `channel/src/index.ts`\n' > "$tmp/docs/ok.md"
+  printf 'Live reference: `packages/channel/src/index.ts`\n' > "$tmp/docs/ok.md"
   if ! scan_docs "$tmp" "$tmp/docs" >/dev/null; then
     echo "SELF-TEST FAIL: a reference to an existing path was reported missing"
     return 1
   fi
 
   # channel/src/identity was deleted by default-aajc.6; referencing it must fail.
-  printf 'Stale reference: `channel/src/identity/trust.ts`\n' > "$tmp/docs/stale.md"
+  printf 'Stale reference: `packages/channel/src/identity/trust.ts`\n' > "$tmp/docs/stale.md"
   scan_docs "$tmp" "$tmp/docs" >/dev/null
   status=$?
   if [ "$status" -eq 0 ]; then

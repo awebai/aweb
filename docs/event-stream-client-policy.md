@@ -9,7 +9,7 @@ chat and control signals for as long as it runs. This page states one policy
 for how such a client connects, reconnects and reports its state. Three
 clients implement the stream today, each with its own rules:
 
-- `channel-core/src/api/events.ts` (the Claude Code plugin and the Pi
+- `packages/channel-core/src/api/events.ts` (the Claude Code plugin and the Pi
   extension);
 - `cli/go/internal/wake/stream.go` (the `aw wake` broker, one stream per identity; the
   channel-core child it runs for each instance does not open the stream, it

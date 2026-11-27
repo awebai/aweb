@@ -2,7 +2,7 @@
 // Run beside a built channel-core; no substitute DNS, registry or verifier.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { IdStatusClient, readReceivedIdChain, verifySignedPayload } from "../channel-core/dist/index.js";
+import { IdStatusClient, readReceivedIdChain, verifySignedPayload } from "../packages/channel-core/dist/index.js";
 const input = JSON.parse(readFileSync(0, "utf8"));
 assert.ok(input.messages.length > 0, "no received messages");
 const status = new IdStatusClient();

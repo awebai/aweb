@@ -32,8 +32,8 @@ MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
     "awid-v": "awid/pyproject.toml",
-    "channel-v": "channel/package.json",
-    "pi-v": "pi-extension/package.json",
+    "channel-v": "packages/channel/package.json",
+    "pi-v": "packages/pi-extension/package.json",
     "skills-v": "packages/claude-skills/package.json",
 }
 # The PyPI package each PyPI lane publishes. The aweb package depends on the
@@ -46,8 +46,8 @@ PYPI_PACKAGES = {
 # format: the lowercase sha256, two spaces, the file's basename.
 LOCKED_FILE = re.compile(r"([0-9a-f]{64})  ([^\s/]+)")
 NPM_LANES = {
-    "channel-v": ("channel", "@awebai/claude-channel", "channel"),
-    "pi-v": ("pi-extension", "@awebai/pi", "pi"),
+    "channel-v": ("packages/channel", "@awebai/claude-channel", "channel"),
+    "pi-v": ("packages/pi-extension", "@awebai/pi", "pi"),
     "skills-v": ("packages/claude-skills", "@awebai/claude-skills", "skills"),
 }
 
@@ -231,9 +231,14 @@ def build_npm_lane(root: Path, prefix: str) -> tuple[str, str, str]:
     directory, package, profile = NPM_LANES[prefix]
     if prefix in {"channel-v", "pi-v"}:
         run(
-            root / "channel-core", "npm", "ci", "--no-audit", "--no-fund", capture=False
+            root / "packages/channel-core",
+            "npm",
+            "ci",
+            "--no-audit",
+            "--no-fund",
+            capture=False,
         )
-        run(root / "channel-core", "npm", "run", "build", capture=False)
+        run(root / "packages/channel-core", "npm", "run", "build", capture=False)
     if prefix in {"channel-v", "pi-v"}:
         run(root / directory, "npm", "ci", "--no-audit", "--no-fund", capture=False)
         run(root / directory, "npm", "run", "build", capture=False)
@@ -245,7 +250,7 @@ def build_npm_lane(root: Path, prefix: str) -> tuple[str, str, str]:
 
 def require_pi_aw_floor(root: Path, timeout_seconds: float = 180) -> str:
     manifest = json.loads(
-        (root / "pi-extension/package.json").read_text(encoding="utf-8")
+        (root / "packages/pi-extension/package.json").read_text(encoding="utf-8")
     )
     declared = (manifest.get("dependencies") or {}).get("@awebai/aw")
     matched = re.fullmatch(rf"\^({SEMVER})", declared or "")

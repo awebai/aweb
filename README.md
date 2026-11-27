@@ -289,7 +289,7 @@ or manufacture team authority. The full boundary is documented in the
 | **aweb server** (`server/`) | Stores mail and chat, emits delivery and wake-up events, tracks presence, and provides optional team coordination. |
 | **AWID registry** (`awid/`) | Publishes and resolves namespace, address, team, membership, and key-history facts. It stores public registry facts, not private keys. |
 | **`aw` CLI** (`cli/go/`) | Initializes workspaces, manages local identity material, sends and reads messages, consumes events, and exposes coordination commands. |
-| **Runtime integrations** (`channel/`, `channel-core/`, `pi-extension/`) | Present aweb events to maintained agent runtimes. |
+| **Runtime integrations** (`packages/channel/`, `packages/channel-core/`, `packages/pi-extension/`) | Present aweb events to maintained agent runtimes. |
 | **Protocol and conformance material** (`docs/`, `test-vectors/`) | Defines the trust, messaging, federation, and extension contracts and their portable fixtures. |
 | **Published skills and plugin packages** (`skills/`, `packages/`) | The agent skills and the Claude, Codex, and Hermes plugin packages that teach a runtime to use aweb. |
 | **Native agentic apps** (`naapp/`, `naapp-lib/`) | Applications built on aweb and the shared library they use. |

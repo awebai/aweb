@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const defaultRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const require=createRequire(path.join(defaultRoot,'channel-core/package.json'));
+const require=createRequire(path.join(defaultRoot,'packages/channel-core/package.json'));
 const ts=require('typescript'); // The existing channel-core lockfile pins the parser.
 const extensions=/\.(?:[cm]?[jt]s|[jt]sx)$/;
 
@@ -155,7 +155,7 @@ export function checkPrimitiveUses(observed,exemptions) {
  }
  for(const entry of observed)for(const [callee,count] of Object.entries(entry.calls)) {
   if(!rawUse(callee))continue;
-  const codec=entry.file==='channel-core/src/identity/signature_wire.ts';
+  const codec=entry.file==='packages/channel-core/src/identity/signature_wire.ts';
   const name=normalized(callee);
   if(codec && ['verifyBytes','signBytes','publicKeyFromSeed','primeSubgroupPoint','canonicalPoint'].includes(entry.symbol))continue;
   if(codec && entry.symbol==='<module>' && ['@noble/ed25519.etc.sha512Sync','@noble/ed25519.etc.concatBytes'].includes(name))continue;

@@ -35,13 +35,13 @@ test("accepts bundled dependencies resolved through channel-core at their locked
   assert.equal(result.status, 0, output(result));
 
   const ownerLock = JSON.parse(
-    readFileSync(path.join(repoRoot, "channel-core", "package-lock.json"), "utf8"),
+    readFileSync(path.join(repoRoot, "packages", "channel-core", "package-lock.json"), "utf8"),
   );
   const expectedVersion = ownerLock.packages["node_modules/js-yaml"].version;
   const expectedTransitiveVersion = ownerLock.packages["node_modules/tldts-core"].version;
-  const coreRoot = realpathSync(path.join(repoRoot, "channel-core"));
+  const coreRoot = realpathSync(path.join(repoRoot, "packages", "channel-core"));
   const checkerOutput = output(result);
-  for (const bundledPackage of ["channel", "pi-extension"]) {
+  for (const bundledPackage of ["packages/channel", "packages/pi-extension"]) {
     assert.ok(checkerOutput.includes(`${bundledPackage}: @awebai/channel-core -> ${coreRoot}`));
     assert.ok(checkerOutput.includes(`${bundledPackage}: js-yaml@${expectedVersion} `));
     assert.ok(
@@ -54,8 +54,8 @@ test("accepts bundled dependencies resolved through channel-core at their locked
 test("rejects a resolved dependency that differs from the owner lockfile for that reason", () => {
   const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "node-build-provenance-"));
   try {
-    const sourceCore = path.join(repoRoot, "channel-core");
-    const fixtureCore = path.join(fixtureRoot, "channel-core");
+    const sourceCore = path.join(repoRoot, "packages", "channel-core");
+    const fixtureCore = path.join(fixtureRoot, "packages", "channel-core");
     mkdirSync(path.join(fixtureCore, "node_modules"), { recursive: true });
     cpSync(path.join(sourceCore, "package.json"), path.join(fixtureCore, "package.json"));
 
@@ -84,18 +84,18 @@ test("rejects a resolved dependency that differs from the owner lockfile for tha
     const fixtureBundle = path.join(fixtureRoot, "packages", "review-future");
     mkdirSync(path.join(fixtureBundle, "node_modules", "@awebai"), { recursive: true });
     const bundleManifest = JSON.parse(
-      readFileSync(path.join(repoRoot, "channel", "package.json"), "utf8"),
+      readFileSync(path.join(repoRoot, "packages", "channel", "package.json"), "utf8"),
     );
-    bundleManifest.devDependencies["@awebai/channel-core"] = "file:../../channel-core";
+    bundleManifest.devDependencies["@awebai/channel-core"] = "file:../channel-core";
     writeFileSync(
       path.join(fixtureBundle, "package.json"),
       `${JSON.stringify(bundleManifest, null, 2)}\n`,
     );
     const bundleLock = JSON.parse(
-      readFileSync(path.join(repoRoot, "channel", "package-lock.json"), "utf8"),
+      readFileSync(path.join(repoRoot, "packages", "channel", "package-lock.json"), "utf8"),
     );
-    bundleLock.packages[""].devDependencies["@awebai/channel-core"] = "file:../../channel-core";
-    bundleLock.packages["node_modules/@awebai/channel-core"].resolved = "../../channel-core";
+    bundleLock.packages[""].devDependencies["@awebai/channel-core"] = "file:../channel-core";
+    bundleLock.packages["node_modules/@awebai/channel-core"].resolved = "../channel-core";
     writeFileSync(
       path.join(fixtureBundle, "package-lock.json"),
       `${JSON.stringify(bundleLock, null, 2)}\n`,

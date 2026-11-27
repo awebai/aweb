@@ -6,8 +6,8 @@ extension surface. Server implementation and tests:
 - `server/src/aweb/app_events.py`
 - `server/src/aweb/routes/events.py`
 - `server/tests/test_app_events_http.py`
-- `channel-core/src/channel.ts`
-- `channel-core/test/channel_core_dispatch.test.ts`
+- `packages/channel-core/src/channel.ts`
+- `packages/channel-core/test/channel_core_dispatch.test.ts`
 
 The storage schema is `server/src/aweb/migrations/aweb/009_app_events.sql`.
 Credential byte parity is pinned by

@@ -298,7 +298,7 @@ expect_refusal "readback requires an earlier publish/adopt" "post-action" \
 node - "$ROOT" <<'NODE'
 const fs = require('fs');
 const root = process.argv[2];
-for (const dir of ['channel', 'packages/claude-skills']) {
+for (const dir of ['packages/channel', 'packages/claude-skills']) {
   const pkg = JSON.parse(fs.readFileSync(`${root}/${dir}/package.json`));
   const plugin = JSON.parse(fs.readFileSync(`${root}/${dir}/.claude-plugin/plugin.json`));
   if (pkg.version !== plugin.version) {
@@ -306,7 +306,7 @@ for (const dir of ['channel', 'packages/claude-skills']) {
   }
 }
 NODE
-ok "committed channel/skills plugin versions equal package versions"
+ok "committed packages/channel/skills plugin versions equal package versions"
 
 python3 - "$ROOT" <<'PYSKILLS'
 import json

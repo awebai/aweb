@@ -22,8 +22,8 @@ MANIFESTS = {
     "server-v": "server/pyproject.toml",
     "awid-service-v": "awid/pyproject.toml",
     "awid-v": "awid/pyproject.toml",
-    "channel-v": "channel/package.json",
-    "pi-v": "pi-extension/package.json",
+    "channel-v": "packages/channel/package.json",
+    "pi-v": "packages/pi-extension/package.json",
     "skills-v": "packages/claude-skills/package.json",
 }
 

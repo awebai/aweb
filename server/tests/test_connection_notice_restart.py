@@ -161,12 +161,12 @@ async def _runtime(name, root, binary, env):
             str(oats),
         ]
     elif name == "channel":
-        command = ["node", str(REPO / "channel/dist/index.js")]
+        command = ["node", str(REPO / "packages/channel/dist/index.js")]
     else:
         host = (
             "pi_extension_host.mjs" if name == "pi" else "channel_core_session_host.mjs"
         )
-        package = "pi-extension" if name == "pi" else "channel-core"
+        package = "packages/pi-extension" if name == "pi" else "packages/channel-core"
         command = [
             "node",
             str(Path(__file__).with_name(host)),

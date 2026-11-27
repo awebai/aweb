@@ -3365,14 +3365,14 @@ fi
 # Env overrides:
 #   AMY_REPRODUCER_MODE       baseline | intermediate (default) | post
 #   AMY_BASELINE_AW_BIN       path to a pre-aalg-fix aw binary (required for baseline mode)
-#   AMY_CHANNEL_DIST_PATH     path to channel/dist/index.js (default: $REPO_ROOT/channel/dist/index.js)
+#   AMY_CHANNEL_DIST_PATH     path to packages/channel/dist/index.js (default: $REPO_ROOT/packages/channel/dist/index.js)
 #   AMY_CAPTURE_SECONDS       channel-capture window (default: 25)
 phase_amy_symptom_reproducer() {
   echo "=== Phase 23: Amy-symptom reproducer (aako-pattern + cross-namespace + channel capture) ==="
 
   local mode="${AMY_REPRODUCER_MODE:-intermediate}"
   local capture_seconds="${AMY_CAPTURE_SECONDS:-25}"
-  local channel_dist="${AMY_CHANNEL_DIST_PATH:-$REPO_ROOT/channel/dist/index.js}"
+  local channel_dist="${AMY_CHANNEL_DIST_PATH:-$REPO_ROOT/packages/channel/dist/index.js}"
   local sender_bin="$CLI_DIR/aw"
   case "$mode" in
     baseline)
@@ -3394,8 +3394,8 @@ phase_amy_symptom_reproducer() {
 
   if [[ ! -f "$channel_dist" ]]; then
     echo "  Building channel dist (one-time)..."
-    (cd "$REPO_ROOT/channel" && npm ci --silent && npm run build --silent) >/dev/null 2>&1 || {
-      echo "  FAIL: channel dist build failed at $REPO_ROOT/channel"
+    (cd "$REPO_ROOT/packages/channel" && npm ci --silent && npm run build --silent) >/dev/null 2>&1 || {
+      echo "  FAIL: channel dist build failed at $REPO_ROOT/packages/channel"
       fail=$((fail + 1))
       return 0
     }

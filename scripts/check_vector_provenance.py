@@ -80,9 +80,11 @@ ROOT_CONSUMERS = {
         "signature-point-encoding-v2.json",
         '"docs", "vectors", "signature-point-encoding-v2.json"',
     ),
-    PurePosixPath("channel-core/test/point_encoding_components.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/point_encoding_components.test.ts"
+    ): _consumer(
         "signature-point-encoding-v2.json",
-        '"../../docs/vectors/signature-point-encoding-v2.json"',
+        '"../../../docs/vectors/signature-point-encoding-v2.json"',
     ),
     PurePosixPath("awid/tests/test_signature_primitive_vectors.py"): _consumer(
         {
@@ -96,9 +98,11 @@ ROOT_CONSUMERS = {
         "signature-primitives-v1.json",
         '"docs", "vectors", "signature-primitives-v1.json"',
     ),
-    PurePosixPath("channel-core/test/signature_primitive_vectors.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/signature_primitive_vectors.test.ts"
+    ): _consumer(
         {"signature-primitives-v1.json", "message-signing-v1.json"},
-        '"../../docs/vectors/signature-primitives-v1.json"',
+        '"../../../docs/vectors/signature-primitives-v1.json"',
     ),
     PurePosixPath(
         "naapp/secrets/runner/tests/test_shared_wire_primitives.py"
@@ -817,77 +821,93 @@ ROOT_CONSUMERS = {
         "pin-store-raw-wire-v1.json",
         'readRootVector(t, "pin-store-raw-wire-v1.json")',
     ),
-    PurePosixPath("channel-core/test/received_sender_trust.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/received_sender_trust.test.ts"
+    ): _consumer(
         "identity-log-v1.json",
-        'new URL("../../docs/vectors/identity-log-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/identity-log-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/log_rollback.test.ts"): _consumer(
+    PurePosixPath("packages/channel-core/test/log_rollback.test.ts"): _consumer(
         "identity-log-v1.json",
-        'join(testDir, "..", "..", "docs", "vectors", "identity-log-v1.json")',
+        'join(testDir, "..", "..", "..", "docs", "vectors", "identity-log-v1.json")',
     ),
-    PurePosixPath("channel-core/test/encrypted_dispatch.test.ts"): _consumer(
+    PurePosixPath("packages/channel-core/test/encrypted_dispatch.test.ts"): _consumer(
         "e2ee-v2-cross-language.json",
-        'new URL("../../docs/vectors/e2ee-v2-cross-language.json", import.meta.url)',
+        'new URL("../../../docs/vectors/e2ee-v2-cross-language.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/activity_vector.test.ts"): _consumer(
+    PurePosixPath("packages/channel-core/test/activity_vector.test.ts"): _consumer(
         "agent-activity-v1.json",
-        'new URL("../../docs/vectors/agent-activity-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/agent-activity-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/id_certificates_codec.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/id_certificates_codec.test.ts"
+    ): _consumer(
         "id-certificates-v1.json",
-        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/id_certificates_disposition.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/id_certificates_disposition.test.ts"
+    ): _consumer(
         "id-certificates-v1.json",
-        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/id_certificates_verify.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/id_certificates_verify.test.ts"
+    ): _consumer(
         "id-certificates-v1.json",
-        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/id_certificates_verify_probes.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/id_certificates_verify_probes.test.ts"
+    ): _consumer(
         "id-certificates-v1.json",
-        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/id_signature_non_narrowing.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/id_signature_non_narrowing.test.ts"
+    ): _consumer(
         "id-certificates-v1.json",
-        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/received_id_chain.test.ts"): _consumer(
+    PurePosixPath("packages/channel-core/test/received_id_chain.test.ts"): _consumer(
         "id-certificates-v1.json",
-        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/received_id_chain_dispatch.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/received_id_chain_dispatch.test.ts"
+    ): _consumer(
         "id-certificates-v1.json",
-        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/id_status_delegation.test.ts"): _consumer(
+    PurePosixPath("packages/channel-core/test/id_status_delegation.test.ts"): _consumer(
         "id-certificates-v1.json",
-        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/id_key_response_id_tree.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/id_key_response_id_tree.test.ts"
+    ): _consumer(
         "id-certificates-v1.json",
-        'new URL("../../docs/vectors/id-certificates-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/id-certificates-v1.json", import.meta.url)',
     ),
-    PurePosixPath("channel-core/test/pin_store_raw_wire.test.ts"): _consumer(
+    PurePosixPath("packages/channel-core/test/pin_store_raw_wire.test.ts"): _consumer(
         "pin-store-raw-wire-v1.json",
-        'join(testDir, "..", "..", "docs", "vectors", "pin-store-raw-wire-v1.json")',
+        'join(testDir, "..", "..", "..", "docs", "vectors", "pin-store-raw-wire-v1.json")',
     ),
-    PurePosixPath("channel-core/test/request_auth_v2.test.ts"): _consumer(
+    PurePosixPath("packages/channel-core/test/request_auth_v2.test.ts"): _consumer(
         "team-auth-envelope-v2.json",
-        'join(import.meta.dirname, "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+        'join(import.meta.dirname, "..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
     ),
-    PurePosixPath("channel-core/test/registry.test.ts"): _consumer(
+    PurePosixPath("packages/channel-core/test/registry.test.ts"): _consumer(
         {
             "dns-txt-v1.json",
             "identity-log-negative-v1.json",
             "identity-log-raw-wire-v1.json",
             "identity-log-v1.json",
         },
-        'join(testDir, "..", "..", "docs", "vectors", "dns-txt-v1.json")',
-        'join(testDir, "..", "..", "docs", "vectors", "identity-log-v1.json")',
-        'join(testDir, "..", "..", "docs", "vectors", "identity-log-raw-wire-v1.json")',
-        'join(testDir, "..", "..", "docs", "vectors", "identity-log-negative-v1.json")',
+        'join(testDir, "..", "..", "..", "docs", "vectors", "dns-txt-v1.json")',
+        'join(testDir, "..", "..", "..", "docs", "vectors", "identity-log-v1.json")',
+        'join(testDir, "..", "..", "..", "docs", "vectors", "identity-log-raw-wire-v1.json")',
+        'join(testDir, "..", "..", "..", "docs", "vectors", "identity-log-negative-v1.json")',
     ),
     PurePosixPath("awid/tests/test_canonical_json_vectors.py"): _consumer(
         "canonical-json-v1.json",
@@ -897,9 +917,11 @@ ROOT_CONSUMERS = {
         "canonical-json-v1.json",
         'filepath.Join("..", "..", "..", "docs", "vectors", "canonical-json-v1.json")',
     ),
-    PurePosixPath("channel-core/test/canonical_json_vector.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/canonical_json_vector.test.ts"
+    ): _consumer(
         "canonical-json-v1.json",
-        'new URL("../../docs/vectors/canonical-json-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/canonical-json-v1.json", import.meta.url)',
     ),
     PurePosixPath("cli/go/awid/request_envelope_as_message_test.go"): _consumer(
         {
@@ -913,13 +935,15 @@ ROOT_CONSUMERS = {
         "team-auth-envelope-v2.json",
         'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
     ),
-    PurePosixPath("channel-core/test/request_envelope_as_message.test.ts"): _consumer(
+    PurePosixPath(
+        "packages/channel-core/test/request_envelope_as_message.test.ts"
+    ): _consumer(
         {
             "message-display-binding-v1.json",
             "team-auth-envelope-v2.json",
         },
-        'new URL("../../docs/vectors/team-auth-envelope-v2.json", import.meta.url)',
-        'new URL("../../docs/vectors/message-display-binding-v1.json", import.meta.url)',
+        'new URL("../../../docs/vectors/team-auth-envelope-v2.json", import.meta.url)',
+        'new URL("../../../docs/vectors/message-display-binding-v1.json", import.meta.url)',
     ),
     PurePosixPath("scripts/generate_federation_error_reference.py"): _consumer(
         "federation-authority-state-v1.json",

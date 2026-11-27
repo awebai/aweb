@@ -214,7 +214,7 @@ test-identity-primitives:
 	python3 -m unittest discover -s scripts -p "test_check_identity_python_inventory.py" -v
 	cd cli/go && GOTOOLCHAIN=local go run ./internal/identityinventory ../..
 	cd cli/go && GOTOOLCHAIN=local go test ./internal/identityinventory
-	cd channel-core && npm ci --ignore-scripts --no-audit --no-fund
+	cd packages/channel-core && npm ci --ignore-scripts --no-audit --no-fund
 	node scripts/check_identity_ts_inventory.mjs
 	node --test scripts/test_check_identity_ts_inventory.mjs
 
@@ -467,16 +467,16 @@ test-cli-auth-v2:
 # host adapters to channel-core. Install all three before any Node test target
 # so both `make test` and focused Node targets work from a clean checkout.
 test-node-deps:
-	cd channel-core && npm ci --no-audit --no-fund
-	cd channel && npm ci --no-audit --no-fund
-	cd pi-extension && npm ci --no-audit --no-fund
+	cd packages/channel-core && npm ci --no-audit --no-fund
+	cd packages/channel && npm ci --no-audit --no-fund
+	cd packages/pi-extension && npm ci --no-audit --no-fund
 
 # Local server fixtures consume these Node artifacts before their first test.
 .PHONY: prepare-server-node
 prepare-server-node: test-node-deps
-	cd channel-core && npm run build
-	cd channel && npm run build
-	cd pi-extension && npm run build
+	cd packages/channel-core && npm run build
+	cd packages/channel && npm run build
+	cd packages/pi-extension && npm run build
 
 test-channel test-channel-core test-pi-extension test-wake-channel-core-bundle: test-node-deps
 
@@ -487,21 +487,21 @@ test-wake-channel-core-bundle:
 	bash scripts/check-wake-channel-core-bundle.sh --self-test
 
 test-channel:
-	cd channel && $(TEST_EGRESS_RUNNER) npm test
+	cd packages/channel && $(TEST_EGRESS_RUNNER) npm test
 
-# channel/package.json excludes test/integration.test.ts from `npm test`, so
+# packages/channel/package.json excludes test/integration.test.ts from `npm test`, so
 # `make test` never ran the one test that drives Channel against a REAL aweb
 # server. It was green by absence: the first time it ran it failed on a stale
 # assertion that contradicted shipped acknowledgement behaviour. It needs Docker
 # and Postgres, so it belongs with the other real-stack journeys rather than in
 # `make test` - but it belongs somewhere, and this is somewhere.
 test-channel-integration:
-	cd channel && npm run test:integration
+	cd packages/channel && npm run test:integration
 
 # channel-core holds the identity, trust, pinstore and signature-decode logic
 # that channel and pi-extension are both built from, so its suite gates them.
 test-channel-core:
-	cd channel-core && $(TEST_EGRESS_RUNNER) npm test
+	cd packages/channel-core && $(TEST_EGRESS_RUNNER) npm test
 
 # The multi-process DeliveryStore guard spawns 16 real subprocesses, enough to
 # blow unrelated timing deadlines elsewhere on a shared machine (default-aadj),
@@ -509,10 +509,10 @@ test-channel-core:
 # off `make test`, which agents run constantly and interrupt freely, and runs
 # from the release path instead.
 test-channel-core-process-guard:
-	cd channel-core && npm run test:process-guard
+	cd packages/channel-core && npm run test:process-guard
 
 test-pi-extension:
-	cd pi-extension && $(TEST_EGRESS_RUNNER) npm test
+	cd packages/pi-extension && $(TEST_EGRESS_RUNNER) npm test
 
 prepare-oats-test-root:
 	@if [ "$(abspath $(OATS_TEST_ROOT))" = "$(abspath $(OATS_PINNED_ROOT))" ]; then \
@@ -535,7 +535,7 @@ check-oats-pi-launch-order: prepare-oats-test-root
 # Pi runtime even with --no-launch. Use only tools built/locked by this checkout;
 # ambient developer installs must not decide whether the release test passes.
 test-oats: check-oats-launch-environment-contract check-oats-pi-launch-order build test-node-deps
-	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
+	PATH="$(CURDIR)/cli/go:$(CURDIR)/packages/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
 
 test-oats-proof-helpers: prepare-oats-test-root
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
@@ -729,21 +729,21 @@ _candidate-channel-version:
 		(echo "channel package.json != plugin.json"; exit 1)
 
 _candidate-node-deps:
-	cd channel-core && npm ci --no-audit --no-fund
-	cd channel && npm ci --no-audit --no-fund
-	cd pi-extension && npm ci --no-audit --no-fund
+	cd packages/channel-core && npm ci --no-audit --no-fund
+	cd packages/channel && npm ci --no-audit --no-fund
+	cd packages/pi-extension && npm ci --no-audit --no-fund
 
 _candidate-unit-channel:
-	cd channel && $(TEST_EGRESS_RUNNER) npm test
+	cd packages/channel && $(TEST_EGRESS_RUNNER) npm test
 
 _candidate-unit-channel-core:
-	cd channel-core && $(TEST_EGRESS_RUNNER) npm test
+	cd packages/channel-core && $(TEST_EGRESS_RUNNER) npm test
 
 _candidate-unit-pi:
-	cd pi-extension && $(TEST_EGRESS_RUNNER) npm test
+	cd packages/pi-extension && $(TEST_EGRESS_RUNNER) npm test
 
 _candidate-oats: check-oats-launch-environment-contract check-oats-pi-launch-order
-	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
+	PATH="$(CURDIR)/cli/go:$(CURDIR)/packages/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
 
 _candidate-oats-proof-helpers:
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
@@ -768,13 +768,13 @@ _candidate-artifact-awid-image:
 
 _candidate-artifact-channel:
 	@mkdir -p /tmp/aweb-candidate-gate
-	cd channel && npm run build
-	cd channel && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
+	cd packages/channel && npm run build
+	cd packages/channel && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
 
 _candidate-artifact-pi:
 	@mkdir -p /tmp/aweb-candidate-gate
-	cd pi-extension && npm run build
-	cd pi-extension && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
+	cd packages/pi-extension && npm run build
+	cd packages/pi-extension && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
 
 _candidate-artifact-skills: sync-doc-copies
 	@mkdir -p /tmp/aweb-candidate-gate
@@ -817,8 +817,8 @@ clean:
 	rm -rf server/.ruff_cache/
 	rm -f  cli/go/aw
 	chmod -R u+w cli/go/.cache/ 2>/dev/null; rm -rf cli/go/.cache/
-	rm -rf channel/dist/
-	rm -rf channel/node_modules/
+	rm -rf packages/channel/dist/
+	rm -rf packages/channel/node_modules/
 	find . -type d -name __pycache__ -not -path '*/.venv/*' -not -path '*/node_modules/*' -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name playwright-report -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name test-results -exec rm -rf {} + 2>/dev/null || true

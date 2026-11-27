@@ -15,10 +15,10 @@ scan_roots = [
     "docs",
     "skills",
     ".claude/skills",
-    "channel/skills",
+    "packages/channel/skills",
     "packages/claude-skills/skills",
     "packages/codex-plugin/skills",
-    "pi-extension/skills",
+    "packages/pi-extension/skills",
     "cli/go/cmd/aw",
 ]
 
