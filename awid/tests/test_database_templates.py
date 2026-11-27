@@ -1,6 +1,7 @@
 import pytest
+from pgdbm.testing import AsyncTestDatabase
 
-from awid_service.testing_templates import _migration_digest
+from awid_service.testing_templates import _migration_digest, migrated_test_database
 
 
 def test_template_digest_tracks_migration_names_and_content(tmp_path):
@@ -22,6 +23,32 @@ def test_template_digest_tracks_migration_names_and_content(tmp_path):
     assert _migration_digest(modules) not in {original, edited, renamed}
     second.unlink()
     assert _migration_digest(modules) == renamed
+
+
+@pytest.mark.asyncio
+async def test_template_name_over_63_bytes_is_refused_before_database_creation(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TEST_DB_HOST", "unused.invalid")
+    monkeypatch.setenv("TEST_DB_PORT", "15432")
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "serial")
+    (tmp_path / "001_first.sql").write_text("SELECT 1;\n")
+
+    async def unexpected_create(self, *, suffix):
+        pytest.fail("an oversized template name reached database creation")
+
+    async def unexpected_migrate(pool):
+        pytest.fail("an oversized template name reached migration")
+
+    monkeypatch.setattr(AsyncTestDatabase, "create_test_database", unexpected_create)
+    # With pgdbm's default prefix and eight-hex token, this suffix makes 64 bytes.
+    with pytest.raises(
+        ValueError, match=r"template name is 64 bytes; PostgreSQL allows 63"
+    ):
+        async with migrated_test_database(
+            "x" * 14, (("example", tmp_path),), unexpected_migrate
+        ):
+            pytest.fail("an oversized template was returned")
 
 
 @pytest.mark.asyncio

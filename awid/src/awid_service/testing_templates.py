@@ -86,9 +86,19 @@ async def migrated_test_database(
     config = selected_test_database_config()
     worker = os.environ.get("PYTEST_XDIST_WORKER", "serial")
     digest = _migration_digest(modules)
+    suffix = f"{shape}_{worker}_{digest}"
+    # pgdbm 0.5.0 inserts an eight-hex token and an underscore before the suffix.
+    name_bytes = (
+        len(config.test_db_prefix.encode("utf-8")) + 9 + len(suffix.encode("utf-8"))
+    )
+    if name_bytes > 63:
+        raise ValueError(
+            f"Database template name is {name_bytes} bytes; PostgreSQL allows 63"
+        )
+
     database = AsyncTestDatabase(config)
     try:
-        name = await database.create_test_database(suffix=f"{shape}_{worker}_{digest}")
+        name = await database.create_test_database(suffix=suffix)
         async with _pool(database) as pool:
             await migrate(pool)
         yield MigratedTestDatabase(name, config)
