@@ -940,7 +940,8 @@ exactly these fields:
   A refused setup act fails the case.
 - `who`, `act`, `args`: one constructor of the model's `Step`, its party and
   its arguments, in the model's names. Keys, organisations and sessions are
-  symbols that the runner binds to fresh real keys and domains per case.
+  symbols that the runner binds to fresh real keys and domains per case. A
+  team is `"admin"` or `{"named": n}`, as the model's `Team` is.
 - `expect`: `{"result": "allowed"}`, or `{"result": "refused", "premise":
   "<act>.<premise>"}` naming the one premise of that act that fails. Until the
   model names every premise, only definition names are used (`MayIssue`,

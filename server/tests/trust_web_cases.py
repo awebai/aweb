@@ -444,8 +444,9 @@ def _signer(key: SigningKey) -> Callable[[bytes], tuple[str, bytes]]:
     )
 
 
-def _team_name(team: dict) -> str:
-    if team == "admin" or team == {"admin": None}:
+def _team_name(team: str | dict) -> str:
+    """The registry name of a model team: ``"admin"`` or ``{"named": n}``."""
+    if team == "admin":
         return "admin"
     return f"t{team['named']}"
 
