@@ -352,7 +352,23 @@ Each item pairs a sentence about the model with one about the real system.
 | 65 | "Whoever asks" | result | The theorem quantifies over `who` |
 | 68 | Resting on the planned premises of `admit` and `redeem` | result | It uses `new_admin_needs_controller_or_asker`, row 6 |
 | README | These results do not say a persuaded person's approval can be refused, nor where a newly made key is first held | definition | No result above has such a conclusion; `AReachable.start` takes `init` |
-| README | Row 68 does not bound a chain of acts | result | Both theorems take one `Step` |
+| README | Row 68 joins the layer to one act; rows 69 to 73 bound a chain | result | Row 68's theorems take one `Step`; rows 70 and 71 take an `Attack` |
+
+## TrustWeb/SphereAdmins.lean and the README's chain section
+
+| Where | Sentence | Kind | What makes it true |
+|---|---|---|---|
+| README, `Attack` | Only the attacker acts, with any secret it holds and no approval beyond the model's premises | definition | `Attack.act` takes the attacker's held secret and a `Step`; `Step`'s approvals are existential |
+| README | Which can only overstate it | definition | An `Attack` act has no premise beyond `Step`'s and the held secret |
+| README, `Attack` | Persuadable spheres give secrets to the spheres they talk to | definition | `Attack.leak` |
+| README | What a persuaded agent could do with its keys, the attacker can do once they reach it | definition | Every act needs only `who.secret` held by the attacker; leaks move secrets one at a time along `Flows` |
+| README, `CanReach` | Its meaning | definition | Its body |
+| 70 | Resting on the planned premises of `admit` and `redeem` | result | It uses `new_admin_needs_controller_or_asker`, row 6 |
+| 72 | The Design rule is planned | source | `adminRule`, row 72 names it |
+| 73 | Construction note | construction | The proof |
+| README | Row 70 says the attacker never gains an admin's key; an attack that begins with one within its reach is outside it | result | Its premises are about the world when the attack begins |
+| README | It does not bound what honest spheres do | definition | Only the attacker acts in `Attack` |
+| README | Row 73's starting world is any record; row 48 reaches one of that kind | result, construction | `named_team_admission_lets_attacker_become_admin` builds its record without `Reachable`; `invitation_then_own_request_makes_an_admin` |
 
 ## TrustWeb/DocNames.lean
 

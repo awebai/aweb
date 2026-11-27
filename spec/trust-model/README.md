@@ -137,7 +137,21 @@ The layer's limits. In `WStep` an approval is not tied to a sphere, so approvals
 | 67 | Planned, id-specific invitations. Every act of `NamedStep` is an act of `Step`, and in one act of `NamedStep` asked for by an invitation's holder, every team certificate added is for the key the invitation names. As built, by contrast, under any rule, for every key there is a record and an act asked for by an invitation's holder that adds a team certificate for that key | `NamedStep.toStep`, `named_invitation_joins_only_its_identity`, `invitation_holder_names_any_key` |
 | 68 | Under the Design rule (`adminRule`) and resting on the planned premises that `admit`'s and `redeem`'s team is not the admin team: if a sphere holds the secret of the party asking for an act that adds a certificate of an admin team, the sphere holds that team's key or an admin's identity key. World 2: if an agent's sphere asks for it, some initial holder of the admin team's key or of an admin's identity key was an agent's sphere | `new_admin_needs_a_held_key`, `world2_agent_sphere_adds_no_admin` |
 
-These results do not say a persuaded person's approval can be refused, nor where a newly made key is first held. Row 68 joins the layer to an act of the model; it does not bound a chain of acts.
+These results do not say a persuaded person's approval can be refused, nor where a newly made key is first held. Row 68 joins the layer to one act of the model; rows 69 to 73 bound a chain.
+
+### An attacker's chain of acts
+
+`SphereAdmins.lean` follows one sphere, the attacker, through any number of acts (`Attack`). Only the attacker acts, with any secret it holds and with no approval beyond the model's own premises, which can only overstate it. Persuadable spheres give secrets to the spheres they talk to, so what a persuaded agent could do with its keys, the attacker can do once they reach it. A secret reaches the attacker (`CanReach`) if it flows to it from a sphere that held it when the attack began.
+
+| # | In plain words | Lean name |
+|---|---|---|
+| 69 | In every world an attack reaches, a secret a sphere holds flowed to it from a sphere that held it when the attack began. A secret does not reach the attacker if every sphere holding it then is neither the attacker nor persuadable | `Attack.held_secret_flowed`, `not_canReach` |
+| 70 | Any chain of acts, resting on the planned premises that `admit`'s and `redeem`'s team is not the admin team. Suppose the rule lets only members of an organisation's admin team ask for admitting an admin of it, and neither the admin team's key nor the identity key of any member of the admin team reaches the attacker when the attack begins. Then in every world the attack reaches, no admin team member's identity key reaches the attacker; the attacker does not hold the admin team's key; and no admin's approval is available to it | `attack_reaches_no_admin_key`, `attacker_holds_no_admin_key` |
+| 71 | World 2, the same setting: it is enough that every sphere holding the admin team's key or an admin team member's identity key when the attack begins is neither the attacker nor an agent's | `world2_attacker_holds_no_admin_key` |
+| 72 | The Design rule (`adminRule`) lets only admin team members ask for admitting an admin, and so does the team rule when admitting admins is assigned to the admin team | `adminRule_admits_only_by_admins`, `teamRule_admits_only_by_admins` |
+| 73 | The boundary. Under the team rule with admitting admins assigned to another team, for any talk and any persuadable spheres, there is a world in which no sphere holds the admin team's key, the admin team has no member, and the attacker holds only one identity's key, and an attack from it reaches a world in which that identity is an admin. (In the construction the identity is a valid agent and a member of the assigned team, the admin team's key is with a key holder, the policy is empty, and the identity asks for its own admission) | `named_team_admission_lets_attacker_become_admin` |
+
+Row 70 says the attacker never gains an admin's key; an attack that begins with one within the attacker's reach is outside it. It does not bound what honest spheres do: an honest admin may still admit the attacker's identity. Row 73's starting world is any record, not one shown reachable; row 48 reaches a record of that kind.
 
 
 ## What must never happen
