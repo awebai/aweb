@@ -238,7 +238,7 @@ chat send, which fires `chat.message_sent` with one context for both.
 `check_mail` and `POST /v1/messages/{message_id}/ack` call one acknowledgement,
 which fires `message.acknowledged` with one context for both. MCP
 has no tool that deletes a task, changes its dependencies or answers it, and
-none for reservations or agent status; those events come from the routes only.
+none for reservations; those events come from the routes only.
 
 `mark_chat_read` and its `chat_read` alias publish the same chat-session
 `read_receipt` wake signal as `POST /v1/chat/sessions/{session_id}/read` when
