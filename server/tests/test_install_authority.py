@@ -16,6 +16,7 @@ from test_certificate_generation import _registered_team, _context
 from aweb.internal_auth import ProxyVerificationConfig
 from aweb.install_authority import (
     CertificateInstallAdminSubject,
+    InternalInstallAdminSubject,
     require_install_admin,
 )
 from aweb.internal_auth import build_internal_auth_header_value
@@ -180,6 +181,32 @@ def proxy_headers(principal_type="u"):
             actor_id=ACTOR,
         ),
     }
+
+
+@pytest.mark.parametrize("principal_type", ["u", "k"])
+async def test_verified_internal_subject_reaches_host_policy(
+    db, monkeypatch, principal_type
+):
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
+    policy = Policy()
+    await db.execute(
+        "INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, PRINCIPAL
+    )
+    req = request(headers=proxy_headers(principal_type), policy=policy)
+    if principal_type == "u":
+        await require(db, req)
+    else:
+        with pytest.raises(HTTPException) as exc:
+            await require(db, req)
+        assert exc.value.detail["code"] == "admin_required"
+    subject, _, _ = policy.seen[-1]
+    assert subject == InternalInstallAdminSubject(
+        team_id=TEAM,
+        principal_type=principal_type,
+        principal_id=PRINCIPAL,
+        actor_id=ACTOR,
+    )
 
 
 @pytest.mark.parametrize("state", ["retired", "removed", "other-team"])

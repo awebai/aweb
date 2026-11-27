@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, overload
 
 from fastapi import HTTPException, Request
 from pgdbm.core import TransactionManager
@@ -145,6 +145,16 @@ async def require_install_admission(
     )
 
 
+@overload
+def policy_verdict(returned: object = None, *, raised: Exception) -> Exception: ...
+
+
+@overload
+def policy_verdict(
+    returned: object = None, *, raised: None = None
+) -> Exception | None: ...
+
+
 def policy_verdict(
     returned: object = None, *, raised: Exception | None = None
 ) -> Exception | None:
@@ -173,10 +183,10 @@ async def _check_policy(policy, tx, subject, **context) -> None:
     try:
         permitted = await policy(tx, subject, **context)
     except Exception as exc:  # noqa: BLE001 - a host policy's failure is its answer
-        refusal = policy_verdict(raised=exc)
-        if refusal is exc:
+        failure = policy_verdict(raised=exc)
+        if failure is exc:
             raise
-        raise refusal from exc
+        raise failure from exc
     refusal = policy_verdict(permitted)
     if refusal is not None:
         raise refusal
@@ -238,11 +248,14 @@ async def _install_subject(
         rule.send(internal)
     except StopIteration as done:
         subject = done.value
+    else:
+        raise RuntimeError("install_subject_rule asks for one fact")
     if isinstance(subject, HTTPException):
         raise subject
-    if isinstance(subject, InternalInstallAdminSubject):
-        # A forwarded actor that names an agent must be an active member, read
-        # in the mutation's transaction; one that names no agent is the
-        # proxy's team-level principal, whose authority the policy decides.
+    if internal is not None:
+        # The subject is the verified internal caller. A forwarded actor that
+        # names an agent must be an active member, read in the mutation's
+        # transaction; one that names no agent is the proxy's team-level
+        # principal, whose authority the policy decides.
         await resolve_internal_actor(tx, internal)
     return subject
