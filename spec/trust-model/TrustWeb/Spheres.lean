@@ -13,32 +13,32 @@ namespace TrustWeb
 abbrev Sphere := Nat
 
 /-- A record of the model, which spheres hold which secrets, and which spheres
-have made which secrets. -/
+have got which secrets from acts. -/
 structure World where
   record : State
   holds : Sphere → Secret → Prop
-  made : Sphere → Secret → Prop
+  received : Sphere → Secret → Prop
 
 /-- `WStep ask Talk Persuadable w w'`: either an act of the model, asked for
 by a party whose secret sphere `z` holds, takes the record from `w`'s to
-`w'`'s, and `z` holds and has made every secret the act makes; or a sphere
+`w'`'s, and `z` holds and has got every secret the act gives; or a sphere
 `z` that holds a secret `x`, is persuadable, and talks to `z'`, gives `x` to
 `z'` and the record stays as it is. -/
 inductive WStep (ask : AskRule) (Talk : Sphere → Sphere → Prop)
     (Persuadable : Sphere → Prop) : World → World → Prop where
   | act {w : World} {s' : State} {who : Party} {z : Sphere} {approvals : List Key}
-      {made : List Secret} :
-      w.holds z who.secret → StepVia ask w.record who approvals made s' →
+      {received : List Secret} :
+      w.holds z who.secret → StepVia ask w.record who approvals received s' →
       WStep ask Talk Persuadable w
-        ⟨s', fun y v => w.holds y v ∨ (y = z ∧ v ∈ made),
-          fun y v => w.made y v ∨ (y = z ∧ v ∈ made)⟩
+        ⟨s', fun y v => w.holds y v ∨ (y = z ∧ v ∈ received),
+          fun y v => w.received y v ∨ (y = z ∧ v ∈ received)⟩
   | leak {w : World} {z z' : Sphere} {x : Secret} :
       w.holds z x → Persuadable z → Talk z z' →
       WStep ask Talk Persuadable w
-        ⟨w.record, fun y v => w.holds y v ∨ (y = z' ∧ v = x), w.made⟩
+        ⟨w.record, fun y v => w.holds y v ∨ (y = z' ∧ v = x), w.received⟩
 
 /-- The worlds reached by such steps from a record with nothing in it but a
-policy, the placement `init`, and no secret made. -/
+policy, the placement `init`, and no secret got from an act. -/
 inductive WReachable (ask : AskRule) (Talk : Sphere → Sphere → Prop)
     (Persuadable : Sphere → Prop) (init : Sphere → Secret → Prop) : World → Prop where
   | start (policy : List Rule) :
@@ -98,12 +98,12 @@ theorem WStep.record_change {ask : AskRule} {Talk : Sphere → Sphere → Prop}
   | act hz hs => exact ⟨_, _, hz, hs.toStep⟩
   | leak _ _ _ => exact absurd rfl hchg
 
-/-- In every reachable world, a secret a sphere has made is an organisation
+/-- In every reachable world, a secret a sphere got from an act is an organisation
 key, an invitation secret or a session key. -/
-theorem WReachable.made_makeable {ask : AskRule} {Talk : Sphere → Sphere → Prop}
+theorem WReachable.given_givable {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {P : Sphere → Prop} {init : Sphere → Secret → Prop} {w : World}
-    (hr : WReachable ask Talk P init w) {z : Sphere} {x : Secret} (hm : w.made z x) :
-    x.Makeable := by
+    (hr : WReachable ask Talk P init w) {z : Sphere} {x : Secret} (hm : w.received z x) :
+    x.Givable := by
   induction hr generalizing z x with
   | start _ => exact hm.elim
   | step _ hstep ih =>
@@ -111,15 +111,15 @@ theorem WReachable.made_makeable {ask : AskRule} {Talk : Sphere → Sphere → P
       | act _ hs =>
           rcases hm with hm | ⟨_, hx⟩
           · exact ih hm
-          · exact hs.made_makeable hx
+          · exact hs.given_givable hx
       | leak _ _ _ => exact ih hm
 
 /-- In every reachable world, if sphere `z` holds secret `x`, some sphere held
-`x` in the initial placement or made it, and `x` flows from it to `z`. -/
+`x` in the initial placement or got it from an act, and `x` flows from it to `z`. -/
 theorem held_secret_flowed {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {P : Sphere → Prop} {init : Sphere → Secret → Prop} {w : World}
     (hr : WReachable ask Talk P init w) {z : Sphere} {x : Secret} (hz : w.holds z x) :
-    ∃ z0, (init z0 x ∨ w.made z0 x) ∧ Flows Talk P z0 z := by
+    ∃ z0, (init z0 x ∨ w.received z0 x) ∧ Flows Talk P z0 z := by
   induction hr generalizing z x with
   | start _ => exact ⟨z, .inl hz, .refl z⟩
   | step _ hstep ih =>
@@ -136,15 +136,15 @@ theorem held_secret_flowed {ask : AskRule} {Talk : Sphere → Sphere → Prop}
             exact ⟨z0, h0, .step hf hp ht⟩
 
 /-- In every reachable world, if sphere `z` holds secret `x` and `x` is not a
-secret an act makes, some sphere held `x` in the initial placement and `x`
+secret an act gives, some sphere held `x` in the initial placement and `x`
 flows from it to `z`. -/
-theorem held_unmade_secret_flowed {ask : AskRule} {Talk : Sphere → Sphere → Prop}
+theorem held_placed_secret_flowed {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {P : Sphere → Prop} {init : Sphere → Secret → Prop} {w : World}
-    (hr : WReachable ask Talk P init w) {z : Sphere} {x : Secret} (hx : ¬ x.Makeable)
+    (hr : WReachable ask Talk P init w) {z : Sphere} {x : Secret} (hx : ¬ x.Givable)
     (hz : w.holds z x) : ∃ z0, init z0 x ∧ Flows Talk P z0 z := by
   obtain ⟨z0, h0 | h0, hf⟩ := held_secret_flowed hr hz
   · exact ⟨z0, h0, hf⟩
-  · exact absurd (hr.made_makeable h0) hx
+  · exact absurd (hr.given_givable h0) hx
 
 /-- If a secret flows from `a` to a different sphere `b`, `a` is persuadable. -/
 theorem Flows.source_persuadable {Talk : Sphere → Sphere → Prop} {P : Sphere → Prop}
@@ -157,50 +157,50 @@ theorem Flows.source_persuadable {Talk : Sphere → Sphere → Prop} {P : Sphere
       · exact ih h
 
 /-- In every reachable world, if sphere `z` holds secret `x`, some sphere `z0`
-held `x` in the initial placement or made it, and `z0` is `z` or is
+held `x` in the initial placement or got it from an act, and `z0` is `z` or is
 persuadable. -/
 theorem held_secret_came_from_persuadable {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {P : Sphere → Prop} {init : Sphere → Secret → Prop} {w : World}
     (hr : WReachable ask Talk P init w) {z : Sphere} {x : Secret} (hz : w.holds z x) :
-    ∃ z0, (init z0 x ∨ w.made z0 x) ∧ (z0 = z ∨ P z0) := by
+    ∃ z0, (init z0 x ∨ w.received z0 x) ∧ (z0 = z ∨ P z0) := by
   obtain ⟨z0, h0, hf⟩ := held_secret_flowed hr hz
   by_cases h : z0 = z
   · exact ⟨z0, h0, .inl h⟩
   · exact ⟨z0, h0, .inr (hf.source_persuadable h)⟩
 
 /-- World 1. In every reachable world in which no sphere is persuadable, a
-sphere holds a secret only if it held it in the initial placement or made
-it. -/
+sphere holds a secret only if it held it in the initial placement or got
+it from an act. -/
 theorem world1_secrets_stay {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {occ : Sphere → Occupant} {init : Sphere → Secret → Prop} {w : World}
     (hr : WReachable ask Talk (noneSwayed occ) init w) {z : Sphere} {x : Secret}
-    (hz : w.holds z x) : init z x ∨ w.made z x := by
+    (hz : w.holds z x) : init z x ∨ w.received z x := by
   obtain ⟨z0, h0, h | h⟩ := held_secret_came_from_persuadable hr hz
   · exact h ▸ h0
   · exact h.elim
 
 /-- World 2. In every reachable world in which the spheres agents occupy are
 persuadable, if no sphere an agent occupies held secret `x` in the initial
-placement or made it, a sphere holds `x` only if it held it in the initial
-placement or made it. -/
+placement or got it from an act, a sphere holds `x` only if it held it in the initial
+placement or got it from an act. -/
 theorem world2_non_agent_secret_stays {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {occ : Sphere → Occupant} {init : Sphere → Secret → Prop} {w : World}
     (hr : WReachable ask Talk (agentsSwayed occ) init w) {x : Secret}
-    (hx : ∀ z0, init z0 x ∨ w.made z0 x → occ z0 ≠ .agent) {z : Sphere} (hz : w.holds z x) :
-    init z x ∨ w.made z x := by
+    (hx : ∀ z0, init z0 x ∨ w.received z0 x → occ z0 ≠ .agent) {z : Sphere} (hz : w.holds z x) :
+    init z x ∨ w.received z x := by
   obtain ⟨z0, h0, h | h⟩ := held_secret_came_from_persuadable hr hz
   · exact h ▸ h0
   · exact absurd h (hx z0 h0)
 
 /-- World 3. In every reachable world in which the spheres agents and persons
 occupy are persuadable, if no sphere an agent or a person occupies held secret
-`x` in the initial placement or made it, a sphere holds `x` only if it held it
-in the initial placement or made it. -/
+`x` in the initial placement or got it from an act, a sphere holds `x` only if it held it
+in the initial placement or got it from an act. -/
 theorem world3_other_secret_stays {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {occ : Sphere → Occupant} {init : Sphere → Secret → Prop} {w : World}
     (hr : WReachable ask Talk (agentsAndPersonsSwayed occ) init w) {x : Secret}
-    (hx : ∀ z0, init z0 x ∨ w.made z0 x → occ z0 ≠ .agent ∧ occ z0 ≠ .person) {z : Sphere}
-    (hz : w.holds z x) : init z x ∨ w.made z x := by
+    (hx : ∀ z0, init z0 x ∨ w.received z0 x → occ z0 ≠ .agent ∧ occ z0 ≠ .person) {z : Sphere}
+    (hz : w.holds z x) : init z x ∨ w.received z x := by
   obtain ⟨z0, h0, h | h | h⟩ := held_secret_came_from_persuadable hr hz
   · exact h ▸ h0
   · exact absurd h (hx z0 h0).1
@@ -235,6 +235,6 @@ theorem world1_key_stays_put (ask : AskRule) (occ : Sphere → Occupant) {w : Wo
   intro h
   rcases world1_secrets_stay hr h with h | h
   · exact absurd h.1 (by decide)
-  · exact hr.made_makeable h
+  · exact hr.given_givable h
 
 end TrustWeb

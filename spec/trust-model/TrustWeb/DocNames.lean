@@ -27,7 +27,7 @@ def skipped : List String :=
   ["a", "b", "c", "g", "g'", "h", "h'", "i", "k", "m", "n", "o", "o'", "p", "pk",
    "r", "s", "s'", "s1", "s2", "s3", "t", "x", "L", "ask", "who", "approvals", "assign",
    "key", "keep", "as", "w", "w'", "z", "z'", "z0", "init", "Talk",
-   "Persuadable", "occ", "P", "y", "v", "Adv", "joiner", "approvals", "w0", "a", "made", "Prop", "sorry", "axiom", "native_decide", "opaque",
+   "Persuadable", "occ", "P", "y", "v", "Adv", "joiner", "approvals", "w0", "a", "received", "happ", "Prop", "sorry", "axiom", "native_decide", "opaque",
    "implemented_by", "controller_asserted_person", "nearest_human",
    "rotate_team_key", "DocCheck"]
 

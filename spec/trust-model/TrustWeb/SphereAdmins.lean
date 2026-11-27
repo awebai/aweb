@@ -12,21 +12,21 @@ namespace TrustWeb
 /-- `Attack ask Talk P a w0 w`: world `w` is reached from `w0` by acts that
 sphere `a` asks for, with any secret it holds, and by persuadable spheres
 giving secrets to spheres they talk to. No other sphere acts, an act needs no
-approval beyond the model's own premises, and `a` holds and has made every
-secret its acts make. -/
+approval beyond the model's own premises, and `a` holds and has got every
+secret its acts give. -/
 inductive Attack (ask : AskRule) (Talk : Sphere → Sphere → Prop) (P : Sphere → Prop)
     (a : Sphere) (w0 : World) : World → Prop where
   | start : Attack ask Talk P a w0 w0
-  | act {w : World} {s' : State} {who : Party} {approvals : List Key} {made : List Secret} :
+  | act {w : World} {s' : State} {who : Party} {approvals : List Key} {received : List Secret} :
       Attack ask Talk P a w0 w → w.holds a who.secret →
-      StepVia ask w.record who approvals made s' →
+      StepVia ask w.record who approvals received s' →
       Attack ask Talk P a w0
-        ⟨s', fun y v => w.holds y v ∨ (y = a ∧ v ∈ made),
-          fun y v => w.made y v ∨ (y = a ∧ v ∈ made)⟩
+        ⟨s', fun y v => w.holds y v ∨ (y = a ∧ v ∈ received),
+          fun y v => w.received y v ∨ (y = a ∧ v ∈ received)⟩
   | leak {w : World} {z z' : Sphere} {x : Secret} :
       Attack ask Talk P a w0 w → w.holds z x → P z → Talk z z' →
       Attack ask Talk P a w0
-        ⟨w.record, fun y v => w.holds y v ∨ (y = z' ∧ v = x), w.made⟩
+        ⟨w.record, fun y v => w.holds y v ∨ (y = z' ∧ v = x), w.received⟩
 
 /-- `CanReach Talk P w0 a x`: some sphere holds `x` in `w0`, and `x` flows
 from it to `a`. -/
@@ -40,13 +40,13 @@ makes and flows to `z` from `a`. -/
 theorem Attack.held_secret_flowed {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {P : Sphere → Prop} {a : Sphere} {w0 w : World} (hw : Attack ask Talk P a w0 w)
     {z : Sphere} {x : Secret} (hz : w.holds z x) :
-    CanReach Talk P w0 z x ∨ (x.Makeable ∧ Flows Talk P a z) := by
+    CanReach Talk P w0 z x ∨ (x.Givable ∧ Flows Talk P a z) := by
   induction hw generalizing z x with
   | start => exact .inl ⟨z, hz, .refl z⟩
   | act _ _ hs ih =>
       rcases hz with hz | ⟨rfl, hx⟩
       · exact ih hz
-      · exact .inr ⟨hs.made_makeable hx, .refl _⟩
+      · exact .inr ⟨hs.given_givable hx, .refl _⟩
   | leak _ hzx hp ht ih =>
       rcases hz with hz | ⟨rfl, rfl⟩
       · exact ih hz
@@ -55,11 +55,11 @@ theorem Attack.held_secret_flowed {ask : AskRule} {Talk : Sphere → Sphere → 
         · exact .inr ⟨hm, .step hf hp ht⟩
 
 /-- In every world an attack reaches, if sphere `z` holds secret `x` and `x`
-is not a secret an act makes, `x` flows to `z` from a sphere that held it in
+is not a secret an act gives, `x` flows to `z` from a sphere that held it in
 `w0`. -/
-theorem Attack.held_unmade_secret_flowed {ask : AskRule} {Talk : Sphere → Sphere → Prop}
+theorem Attack.held_placed_secret_flowed {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {P : Sphere → Prop} {a : Sphere} {w0 w : World} (hw : Attack ask Talk P a w0 w)
-    {z : Sphere} {x : Secret} (hx : ¬ x.Makeable) (hz : w.holds z x) :
+    {z : Sphere} {x : Secret} (hx : ¬ x.Givable) (hz : w.holds z x) :
     CanReach Talk P w0 z x :=
   (hw.held_secret_flowed hz).resolve_right (fun h => hx h.1)
 
@@ -72,15 +72,15 @@ theorem not_canReach {Talk : Sphere → Sphere → Prop} {P : Sphere → Prop} {
   exact (h z0 h0).2 (hf.source_persuadable (h z0 h0).1)
 
 /-- Any chain of acts. Suppose the rule lets only members of `o`'s admin team
-ask for admitting an admin of `o` or for a re-key in `o`, and neither `o`'s
-domain credential, nor `o`'s root key, nor the admin team's key, nor the
-identity key of a member of the admin team in `w0` reaches sphere `a`. Then
-in every world an attack by `a` reaches, a sphere holds `o`'s root key or the
-admin team's key only if it reaches that sphere from `w0`, and the identity
-key of no member of `o`'s admin team reaches `a`. -/
+ask for admitting an admin of `o`, for a re-key in `o`, or for having a key of
+`o` given back, and neither `o`'s domain credential, nor `o`'s root key, nor
+the admin team's key, nor the identity key of a member of the admin team in
+`w0` reaches sphere `a`. Then in every world an attack by `a` reaches, a
+sphere holds `o`'s root key or the admin team's key only if it reaches that
+sphere from `w0`, and every member of `o`'s admin team was one in `w0`. -/
 theorem attack_keeps_admin_keys_away {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {P : Sphere → Prop} {a : Sphere} {w0 : World} {o : Org}
-    (hrule : ∀ s k, ask s o .admitAdmin k ∨ ask s o .rekey k →
+    (hrule : ∀ s k, ask s o .admitAdmin k ∨ ask s o .rekey k ∨ ask s o .release k →
       (⟨o, .admin, k⟩ : Membership) ∈ s.members)
     (hdns : ¬ CanReach Talk P w0 a (.dns o))
     (hroot : ¬ CanReach Talk P w0 a (.orgKey (.root o)))
@@ -91,30 +91,37 @@ theorem attack_keeps_admin_keys_away {ask : AskRule} {Talk : Sphere → Sphere �
     (∀ z, w.holds z (.orgKey (.root o)) → CanReach Talk P w0 z (.orgKey (.root o))) ∧
     (∀ z, w.holds z (.orgKey (.team o .admin)) →
       CanReach Talk P w0 z (.orgKey (.team o .admin))) ∧
-    ∀ k, (⟨o, .admin, k⟩ : Membership) ∈ w.record.members → ¬ CanReach Talk P w0 a (.idKey k) := by
+    ∀ k, (⟨o, .admin, k⟩ : Membership) ∈ w.record.members →
+      (⟨o, .admin, k⟩ : Membership) ∈ w0.record.members := by
   induction hw with
-  | start => exact ⟨fun z h => ⟨z, h, .refl z⟩, fun z h => ⟨z, h, .refl z⟩, hadm⟩
-  | @act w s' who approvals made hw' hz hs ih =>
+  | start => exact ⟨fun z h => ⟨z, h, .refl z⟩, fun z h => ⟨z, h, .refl z⟩, fun _ h => h⟩
+  | @act w s' who approvals received hw' hz hs ih =>
       obtain ⟨ihr, iht, iha⟩ := ih
+      have noAdmin : ∀ b, (⟨o, .admin, b⟩ : Membership) ∈ w.record.members →
+          ¬ w.holds a (.idKey b) := fun b hb h =>
+        hadm b (iha b hb) (hw'.held_placed_secret_flowed (x := .idKey b) (fun h => h) h)
       refine ⟨fun z h => ?_, fun z h => ?_, fun k hk => ?_⟩
       · rcases h with h | ⟨rfl, hx⟩
         · exact ihr z h
-        · obtain rfl := hs.made_root hx
-          exact absurd (hw'.held_unmade_secret_flowed (x := .dns o) (fun h => h) hz) hdns
+        · rcases hs.given_root hx with rfl | (⟨_, rfl⟩ | ⟨_, b, rfl, hask, _⟩)
+          · exact absurd (hw'.held_placed_secret_flowed (x := .dns o) (fun h => h) hz) hdns
+          · exact absurd (ihr _ hz) hroot
+          · exact (noAdmin b (hrule _ _ (.inr (.inr hask))) hz).elim
       · rcases h with h | ⟨rfl, hx⟩
         · exact iht z h
-        · rcases hs.made_team hx with ⟨_, rfl⟩ | ⟨_, b, rfl, hask, _⟩
+        · rcases hs.given_team hx with (⟨_, rfl⟩ | ⟨_, b, rfl, hask, _⟩) |
+            (⟨_, rfl⟩ | ⟨_, b, rfl, hask, _⟩)
           · exact absurd (ihr _ hz) hroot
-          · exact absurd (hw'.held_unmade_secret_flowed (x := .idKey b) (fun h => h) hz)
-              (iha b (hrule _ _ (.inr hask)))
+          · exact (noAdmin b (hrule _ _ (.inr (.inl hask))) hz).elim
+          · exact absurd (iht _ hz) hkey
+          · exact (noAdmin b (hrule _ _ (.inr (.inr hask))) hz).elim
       · by_cases hold : (⟨o, .admin, k⟩ : Membership) ∈ w.record.members
         · exact iha k hold
         · rcases new_admin_needs_controller_or_asker hs.toStep hk hold rfl with h | ⟨b, h, hask⟩
           · subst h
             exact absurd (iht _ hz) hkey
           · subst h
-            exact absurd (hw'.held_unmade_secret_flowed (x := .idKey b) (fun h => h) hz)
-              (iha b (hrule _ _ (.inl hask)))
+            exact (noAdmin b (hrule _ _ (.inl hask)) hz).elim
   | leak _ hzx hp ht ih =>
       obtain ⟨ihr, iht, iha⟩ := ih
       refine ⟨fun z h => ?_, fun z h => ?_, iha⟩
@@ -131,7 +138,7 @@ theorem attack_keeps_admin_keys_away {ask : AskRule} {Talk : Sphere → Sphere �
 reaches, the identity key of no member of `o`'s admin team reaches `a`. -/
 theorem attack_reaches_no_admin_key {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {P : Sphere → Prop} {a : Sphere} {w0 : World} {o : Org}
-    (hrule : ∀ s k, ask s o .admitAdmin k ∨ ask s o .rekey k →
+    (hrule : ∀ s k, ask s o .admitAdmin k ∨ ask s o .rekey k ∨ ask s o .release k →
       (⟨o, .admin, k⟩ : Membership) ∈ s.members)
     (hdns : ¬ CanReach Talk P w0 a (.dns o))
     (hroot : ¬ CanReach Talk P w0 a (.orgKey (.root o)))
@@ -140,75 +147,78 @@ theorem attack_reaches_no_admin_key {ask : AskRule} {Talk : Sphere → Sphere �
       ¬ CanReach Talk P w0 a (.idKey k))
     {w : World} (hw : Attack ask Talk P a w0 w) :
     ∀ k, (⟨o, .admin, k⟩ : Membership) ∈ w.record.members → ¬ CanReach Talk P w0 a (.idKey k) :=
-  (attack_keeps_admin_keys_away hrule hdns hroot hkey hadm hw).2.2
+  fun k hk => hadm k ((attack_keeps_admin_keys_away hrule hdns hroot hkey hadm hw).2.2 k hk)
 
-/-- Any chain of acts, in the same setting: in every world an attack by `a`
-reaches, `a` holds neither `o`'s root key, nor the admin team's key, nor the
-identity key of an admin of `o`, and no persuadable sphere that talks to `a`
-holds an admin's identity key. -/
+/-- Any chain of acts, in the same setting, and with no secret that lets a
+member of the admin team in `w0` approve reaching `a`: in every world an
+attack by `a` reaches, `a` holds neither `o`'s root key nor the admin team's
+key, and no admin of `o`'s approval is available to `a`. -/
 theorem attacker_holds_no_admin_key {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {P : Sphere → Prop} {a : Sphere} {w0 : World} {o : Org}
-    (hrule : ∀ s k, ask s o .admitAdmin k ∨ ask s o .rekey k →
+    (hrule : ∀ s k, ask s o .admitAdmin k ∨ ask s o .rekey k ∨ ask s o .release k →
       (⟨o, .admin, k⟩ : Membership) ∈ s.members)
     (hdns : ¬ CanReach Talk P w0 a (.dns o))
     (hroot : ¬ CanReach Talk P w0 a (.orgKey (.root o)))
     (hkey : ¬ CanReach Talk P w0 a (.orgKey (.team o .admin)))
-    (hadm : ∀ k, (⟨o, .admin, k⟩ : Membership) ∈ w0.record.members →
-      ¬ CanReach Talk P w0 a (.idKey k))
+    (happ : ∀ k, (⟨o, .admin, k⟩ : Membership) ∈ w0.record.members →
+      ∀ x, x.ApprovesAs k → ¬ CanReach Talk P w0 a x)
     {w : World} (hw : Attack ask Talk P a w0 w) :
     ¬ w.holds a (.orgKey (.root o)) ∧ ¬ w.holds a (.orgKey (.team o .admin)) ∧
       ∀ k, Admin w.record o k → ¬ Available Talk P w a k := by
-  obtain ⟨hr, ht, ha⟩ := attack_keeps_admin_keys_away hrule hdns hroot hkey hadm hw
+  obtain ⟨hr, ht, ha⟩ := attack_keeps_admin_keys_away hrule hdns hroot hkey
+    (fun k hk => happ k hk _ (.inl rfl)) hw
   refine ⟨fun h => hroot (hr a h), fun h => hkey (ht a h), fun k hk hav => ?_⟩
-  have hnot := ha k hk.1
-  rcases hav with h | ⟨z', h, hp, htalk⟩
-  · exact hnot (hw.held_unmade_secret_flowed (x := .idKey k) (fun h => h) h)
-  · obtain ⟨z0, h0, hf⟩ := hw.held_unmade_secret_flowed (x := .idKey k) (fun h => h) h
-    exact hnot ⟨z0, h0, .step hf hp htalk⟩
+  obtain ⟨x, hx, h | ⟨z', h, hp, htalk⟩⟩ := hav
+  · exact happ k (ha k hk.1) x hx (hw.held_placed_secret_flowed hx.not_givable h)
+  · obtain ⟨z0, h0, hf⟩ := hw.held_placed_secret_flowed hx.not_givable h
+    exact happ k (ha k hk.1) x hx ⟨z0, h0, .step hf hp htalk⟩
 
 /-- World 2, any chain of acts. Suppose the rule lets only members of `o`'s
-admin team ask for admitting an admin of `o` or for a re-key in `o`, and every
-sphere that holds in `w0` `o`'s domain credential, `o`'s root key, the admin
-team's key, or the identity key of a member of the admin team, is neither `a`
-nor an agent's. Then in every world an attack by `a` reaches, with agents'
-spheres persuadable, `a` holds neither `o`'s root key, nor the admin team's
-key, nor the identity key of an admin of `o`, and no agent's sphere that
-talks to `a` holds an admin's identity key. -/
+admin team ask for admitting an admin of `o`, for a re-key in `o`, or for
+having a key of `o` given back, and every sphere that holds in `w0` `o`'s
+domain credential, `o`'s root key, the admin team's key, or a secret that
+lets a member of the admin team approve, is neither `a` nor an agent's. Then
+in every world an attack by `a` reaches, with agents' spheres persuadable,
+`a` holds neither `o`'s root key nor the admin team's key, and no admin of
+`o`'s approval is available to `a`. -/
 theorem world2_attacker_holds_no_admin_key {ask : AskRule} {Talk : Sphere → Sphere → Prop}
     {occ : Sphere → Occupant} {a : Sphere} {w0 : World} {o : Org}
-    (hrule : ∀ s k, ask s o .admitAdmin k ∨ ask s o .rekey k →
+    (hrule : ∀ s k, ask s o .admitAdmin k ∨ ask s o .rekey k ∨ ask s o .release k →
       (⟨o, .admin, k⟩ : Membership) ∈ s.members)
     (hdns : ∀ z0, w0.holds z0 (.dns o) → z0 ≠ a ∧ occ z0 ≠ .agent)
     (hroot : ∀ z0, w0.holds z0 (.orgKey (.root o)) → z0 ≠ a ∧ occ z0 ≠ .agent)
     (hkey : ∀ z0, w0.holds z0 (.orgKey (.team o .admin)) → z0 ≠ a ∧ occ z0 ≠ .agent)
-    (hadm : ∀ k, (⟨o, .admin, k⟩ : Membership) ∈ w0.record.members →
-      ∀ z0, w0.holds z0 (.idKey k) → z0 ≠ a ∧ occ z0 ≠ .agent)
+    (happ : ∀ k, (⟨o, .admin, k⟩ : Membership) ∈ w0.record.members →
+      ∀ x, x.ApprovesAs k → ∀ z0, w0.holds z0 x → z0 ≠ a ∧ occ z0 ≠ .agent)
     {w : World} (hw : Attack ask Talk (agentsSwayed occ) a w0 w) :
     ¬ w.holds a (.orgKey (.root o)) ∧ ¬ w.holds a (.orgKey (.team o .admin)) ∧
       ∀ k, Admin w.record o k → ¬ Available Talk (agentsSwayed occ) w a k :=
   attacker_holds_no_admin_key hrule (not_canReach hdns) (not_canReach hroot)
-    (not_canReach hkey) (fun k hk => not_canReach (hadm k hk)) hw
+    (not_canReach hkey) (fun k hk x hx => not_canReach (happ k hk x hx)) hw
 
 /-- The admin rule lets only members of `o`'s admin team ask for admitting an
-admin of `o` or for a re-key in `o`; so does the team rule when both are
-assigned to the admin team. -/
+admin of `o`, for a re-key in `o`, or for having a key of `o` given back; so
+does the team rule when all three are assigned to the admin team. -/
 theorem adminRule_admits_only_by_admins (o : Org) :
-    ∀ s k, adminRule s o .admitAdmin k ∨ adminRule s o .rekey k →
+    ∀ s k, adminRule s o .admitAdmin k ∨ adminRule s o .rekey k ∨ adminRule s o .release k →
       (⟨o, .admin, k⟩ : Membership) ∈ s.members :=
-  fun _ _ h => h.elim (·.1) (·.1)
+  fun _ _ h => h.elim (·.1) (fun h => h.elim (·.1) (·.1))
 
 theorem teamRule_admits_only_by_admins {assign : Assignment} {o : Org}
-    (hadmit : assign o .admitAdmin = .admin) (hrekey : assign o .rekey = .admin) :
-    ∀ s k, teamRule assign s o .admitAdmin k ∨ teamRule assign s o .rekey k →
+    (hadmit : assign o .admitAdmin = .admin) (hrekey : assign o .rekey = .admin)
+    (hrelease : assign o .release = .admin) :
+    ∀ s k, teamRule assign s o .admitAdmin k ∨ teamRule assign s o .rekey k ∨
+        teamRule assign s o .release k →
       (⟨o, .admin, k⟩ : Membership) ∈ s.members :=
-  fun _ _ h => h.elim (fun h => hadmit ▸ h.1) (fun h => hrekey ▸ h.1)
+  fun _ _ h => h.elim (fun h => hadmit ▸ h.1)
+    (fun h => h.elim (fun h => hrekey ▸ h.1) (fun h => hrelease ▸ h.1))
 
 /-- Under the admin rule, for any talk and any persuadable spheres: there is a
 world in which the key of `o`'s admin team is with a key holder, the admin
 team has no member, and sphere 0 holds only `o`'s root key and identity 1's
 key, and an attack by sphere 0 from it reaches a world in which 1 is an admin
 of `o`. In the construction 1 is a valid agent of `o`, the policy is empty,
-sphere 0 re-keys the admin team through the root key, which makes the team's
+sphere 0 re-keys the admin team through the root key, which gives the team's
 key and puts it in sphere 0, and then admits 1 to the admin team through that
 key. -/
 theorem root_holder_rekeys_then_admits_admin (o : Org) (Talk : Sphere → Sphere → Prop)

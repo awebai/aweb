@@ -1,21 +1,24 @@
 import TrustWeb.Operations
 
 /-!
-# Trust spheres: secrets, and the acts that make them
+# Trust spheres: secrets, and the acts that give them
 
 The secrets a sphere can hold, and the model's acts with the approvals each is
-accepted with and the secrets each makes, proved to agree with `Step`.
+accepted with and the secrets each gives the sphere that asks, proved to agree
+with `Step`.
 -/
 
 namespace TrustWeb
 
-/-- A secret: what lets its holder ask as one party. -/
+/-- A secret: what lets its holder ask as one party, or, for `approval k`, the
+credential `k` enrolled to approve with. -/
 inductive Secret where
   | dns (o : Org)
   | orgKey (key : OrgKey)
   | idKey (k : Key)
   | session (k : Key)
   | invite (token : Nat)
+  | approval (k : Key)
   deriving DecidableEq, Repr
 
 /-- The secret a party asks with. -/
@@ -26,22 +29,33 @@ def Party.secret : Party → Secret
   | .session k => .session k
   | .bearer t => .invite t
 
-/-- The secrets an act can make: organisation keys, invitation secrets and
-session keys. A domain's DNS credential and an identity key are never made by
-an act. -/
-def Secret.Makeable : Secret → Prop
+/-- The secrets an act can give: organisation keys, invitation secrets and
+session keys. A domain's DNS credential, an identity key and an approval
+credential are never given by an act. -/
+def Secret.Givable : Secret → Prop
   | .orgKey _ => True
   | .invite _ => True
   | .session _ => True
   | .dns _ => False
   | .idKey _ => False
+  | .approval _ => False
 
-/-- `StepVia ask s who approvals made s'`: the acts of `Step`, each with the
-approvals it is accepted with and the secrets it makes. An act with no
-`Authorised` premise carries no approvals. Creating an organisation and
-replacing its root make the root key, a re-key makes the team's key, an
-invitation makes its secret, and a grant makes its session key; no other act
-makes a secret. -/
+/-- `x.ApprovesAs k`: `x` is `k`'s identity key or the credential `k` enrolled
+to approve with. -/
+def Secret.ApprovesAs (x : Secret) (k : Key) : Prop :=
+  x = .idKey k ∨ x = .approval k
+
+/-- A secret that lets its holder approve is never given by an act. -/
+theorem Secret.ApprovesAs.not_givable {x : Secret} {k : Key} (h : x.ApprovesAs k) :
+    ¬ x.Givable := by
+  rcases h with rfl | rfl <;> exact id
+
+/-- `StepVia ask s who approvals received s'`: the acts of `Step`, each with the
+approvals it is accepted with and the secrets it gives the sphere that asks.
+An act with no `Authorised` premise carries no approvals. Creating an
+organisation and replacing its root give the root key they make, a re-key the
+team's key it makes, an invitation its secret, a grant its session key, and
+giving a key back the key; no other act gives a secret. -/
 inductive StepVia (ask : AskRule) : State → Party → List Key → List Secret → State → Prop where
   | createOrg {s : State} {o : Org} :
       o ∉ s.orgs →
@@ -68,7 +82,8 @@ inductive StepVia (ask : AskRule) : State → Party → List Key → List Secret
                  cutOff := s.cutOff.filter (fun k => decide (k ≠ c.subject)) }
   | release {s : State} {key : OrgKey} {who : Party} {approvals : List Key} :
       key ∈ s.held → Authorised ask s key .release who approvals →
-      StepVia ask s who approvals [] { s with held := s.held.filter (fun k => decide (k ≠ key)) }
+      StepVia ask s who approvals [.orgKey key]
+        { s with held := s.held.filter (fun k => decide (k ≠ key)) }
   | rekeyTeam {s : State} {o : Org} {t : Team} {keep : List Key} {who : Party}
       {approvals : List Key} :
       Authorised ask s (.root o) .rekey who approvals →
@@ -146,7 +161,7 @@ inductive StepVia (ask : AskRule) : State → Party → List Key → List Secret
 
 /-- Every act of `StepVia` is an act of `Step`. -/
 theorem StepVia.toStep {ask : AskRule} {s s' : State} {who : Party} {approvals : List Key}
-    {made : List Secret} (h : StepVia ask s who approvals made s') : Step ask s who s' := by
+    {received : List Secret} (h : StepVia ask s who approvals received s') : Step ask s who s' := by
   cases h with
   | createOrg h0 => exact .createOrg h0
   | replaceRoot h0 => exact .replaceRoot h0
@@ -171,10 +186,10 @@ theorem StepVia.toStep {ask : AskRule} {s s' : State} {who : Party} {approvals :
   | sendOwn h0 => exact .sendOwn h0
   | sendGrant h0 h1 => exact .sendGrant h0 h1
 
-/-- Every act of `Step` is an act of `StepVia` with some approvals and made
+/-- Every act of `Step` is an act of `StepVia` with some approvals and received
 secrets. -/
 theorem Step.toVia {ask : AskRule} {s s' : State} {who : Party}
-    (h : Step ask s who s') : ∃ approvals made, StepVia ask s who approvals made s' := by
+    (h : Step ask s who s') : ∃ approvals received, StepVia ask s who approvals received s' := by
   cases h with
   | createOrg h0 => exact ⟨_, _, .createOrg h0⟩
   | replaceRoot h0 => exact ⟨_, _, .replaceRoot h0⟩
@@ -199,30 +214,39 @@ theorem Step.toVia {ask : AskRule} {s s' : State} {who : Party}
   | sendOwn h0 => exact ⟨_, _, .sendOwn h0⟩
   | sendGrant h0 h1 => exact ⟨_, _, .sendGrant h0 h1⟩
 
-/-- An act makes only organisation keys, invitation secrets and session keys. -/
-theorem StepVia.made_makeable {ask : AskRule} {s s' : State} {who : Party}
-    {approvals : List Key} {made : List Secret} (h : StepVia ask s who approvals made s')
-    {x : Secret} (hx : x ∈ made) : x.Makeable := by
+/-- An act gives only organisation keys, invitation secrets and session keys. -/
+theorem StepVia.given_givable {ask : AskRule} {s s' : State} {who : Party}
+    {approvals : List Key} {received : List Secret} (h : StepVia ask s who approvals received s')
+    {x : Secret} (hx : x ∈ received) : x.Givable := by
   cases h <;> simp at hx <;> subst hx <;> trivial
 
-/-- An act that makes organisation `o`'s root key is asked for by `o`'s
-domain. -/
-theorem StepVia.made_root {ask : AskRule} {s s' : State} {who : Party}
-    {approvals : List Key} {made : List Secret} (h : StepVia ask s who approvals made s')
-    {o : Org} (hx : .orgKey (.root o) ∈ made) : who = .dns o := by
-  cases h <;> simp at hx <;> subst hx <;> rfl
+/-- An act that gives organisation `o`'s root key is asked for by `o`'s
+domain, or is one for which `Authorised` holds for that key and giving it
+back. -/
+theorem StepVia.given_root {ask : AskRule} {s s' : State} {who : Party}
+    {approvals : List Key} {received : List Secret} (h : StepVia ask s who approvals received s')
+    {o : Org} (hx : .orgKey (.root o) ∈ received) :
+    who = .dns o ∨ Authorised ask s (.root o) .release who approvals := by
+  cases h with
+  | createOrg _ => simp at hx; subst hx; exact .inl rfl
+  | replaceRoot _ => simp at hx; subst hx; exact .inl rfl
+  | release _ h1 => simp at hx; subst hx; exact .inr h1
+  | _ => simp at hx
 
-/-- An act that makes the key of team `t` of organisation `o` is one for
-which `Authorised` holds for `o`'s root key and a re-key. -/
-theorem StepVia.made_team {ask : AskRule} {s s' : State} {who : Party}
-    {approvals : List Key} {made : List Secret} (h : StepVia ask s who approvals made s')
-    {o : Org} {t : Team} (hx : .orgKey (.team o t) ∈ made) :
-    Authorised ask s (.root o) .rekey who approvals := by
+/-- An act that gives the key of team `t` of organisation `o` is one for
+which `Authorised` holds for `o`'s root key and a re-key, or for that team's
+key and giving it back. -/
+theorem StepVia.given_team {ask : AskRule} {s s' : State} {who : Party}
+    {approvals : List Key} {received : List Secret} (h : StepVia ask s who approvals received s')
+    {o : Org} {t : Team} (hx : .orgKey (.team o t) ∈ received) :
+    Authorised ask s (.root o) .rekey who approvals ∨
+      Authorised ask s (.team o t) .release who approvals := by
   cases h with
   | rekeyTeam h0 _ =>
       simp at hx
       obtain ⟨rfl, rfl⟩ := hx
-      exact h0
+      exact .inl h0
+  | release _ h1 => simp at hx; subst hx; exact .inr h1
   | _ => simp at hx
 
 end TrustWeb
