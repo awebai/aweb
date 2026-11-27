@@ -42,20 +42,31 @@ theorem assigned_team_can_take_key_back {assign : Assignment} {s : State} {key :
   have := (List.mem_filter.mp hmem).2
   simp at this
 
-/-- **Whatever the assignment, in one act, only the domain's owner or a valid
-member of the assigned team takes a key out of a key holder.** If a key is with a key holder before an accepted act under
-the team rule and not after, the asker is the domain owner of the key's
-organisation, or an identity that holds a certificate of the assigned team
-and is valid in that organisation. -/
+/-- **Whatever the assignment, in one act, a key leaves a key holder only at
+the domain owner's request, by a valid member of an assigned team, or by a
+re-key from the root.** If a key is with a key holder before an accepted act
+under the team rule and not after, the asker is the domain owner of the key's
+organisation; or an identity that holds a certificate of the team giving a key
+back is assigned to and is valid in that organisation; or the key is a team
+key of that organisation, and the asker is whoever controls its root key or an
+identity that holds a certificate of the team re-keying is assigned to and is
+valid in it. -/
 theorem only_assigned_team_takes_key_back {assign : Assignment} {s s' : State} {who : Party}
     {key : OrgKey} (hstep : Step (teamRule assign) s who s')
     (hin : key ∈ s.held) (hout : key ∉ s'.held) :
     who = .dns key.org ∨
-      ∃ k, who = .id k ∧ HasTeamCert s key.org (assign key.org .release) k ∧
-        ∃ kind, Valid s key.org k kind := by
-  rcases key_leaves_holder_only_two_ways hstep hin hout with h | ⟨k, hw, hask⟩
+      (∃ k, who = .id k ∧ HasTeamCert s key.org (assign key.org .release) k ∧
+        ∃ kind, Valid s key.org k kind) ∨
+      ∃ t, key = .team key.org t ∧
+        (who = .controller (.root key.org) ∨
+          ∃ k, who = .id k ∧ HasTeamCert s key.org (assign key.org .rekey) k ∧
+            ∃ kind, Valid s key.org k kind) := by
+  rcases key_leaves_holder_only_three_ways hstep hin hout with
+    h | ⟨k, hw, hask⟩ | ⟨t, ht, hw | ⟨k, hw, hask⟩⟩
   · exact .inl h
-  · exact .inr ⟨k, hw, hask.1, hask.2⟩
+  · exact .inr (.inl ⟨k, hw, hask.1, hask.2⟩)
+  · exact .inr (.inr ⟨t, ht, .inl hw⟩)
+  · exact .inr (.inr ⟨t, ht, .inr ⟨k, hw, hask.1, hask.2⟩⟩)
 
 /-- **A warning the model gives, shown by one example.** The admin team is
 protected: `admit`, `invite` and `redeem` exclude it. Any other

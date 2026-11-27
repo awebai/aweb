@@ -83,8 +83,9 @@ inductive Team where
 
 /-- An organisation's keys: its root key, and one key per team. The acts
 that go through `Authorised` name the root key for registering, re-admitting
-and revoking under the organisation, a team's key for admitting to, removing
-from and inviting to that team, and either key for having it given back.
+and revoking under the organisation and for re-keying a team, a team's key
+for admitting to, removing from and inviting to that team, and either key for
+having it given back.
 `leave` and `redeem` change a team's certificates without `Authorised`. -/
 inductive OrgKey where
   | root (o : Org)
@@ -98,8 +99,9 @@ grant's session key; or whoever holds an invitation's secret.
 `controller key` means whoever controls that key **now**. After the domain's
 owner replaces a root, `controller (.root o)` is whoever controls the new root
 key. The model cannot name whoever controlled the old one, and says nothing
-about them. A team's key is not replaced by a root replacement: whoever
-controlled it before still does. -/
+about them. A root replacement does not replace a team's key; a re-key
+(`rekeyTeam`) does, and then `controller (.team o t)` is whoever controls the
+new team key. -/
 inductive Party where
   | dns (o : Org)
   | controller (key : OrgKey)
@@ -134,6 +136,7 @@ inductive ActKind where
   | admitAdmin
   | remove
   | release
+  | rekey
   deriving DecidableEq, Repr
 
 /-- Whose approval a rule asks for: any person of the organisation, or one named member. -/
@@ -394,6 +397,14 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
   | release {s : State} {key : OrgKey} {who : Party} {approvals : List Key} :
       key ∈ s.held → Authorised ask s key .release who approvals →
       Step ask s who { s with held := s.held.filter (fun k => decide (k ≠ key)) }
+  /-- The organisation's root replaces a team's key with a new one, which no
+  key holder holds. The root key signs; no team key, member or admin signs.
+  The old key, even where its holder keeps a copy, is no longer the team's
+  key. Team certificates, grants and invitations are not touched: admitting
+  and removing are separate acts. -/
+  | rekeyTeam {s : State} {o : Org} {t : Team} {who : Party} {approvals : List Key} :
+      Authorised ask s (.root o) .rekey who approvals →
+      Step ask s who { s with held := s.held.filter (fun k => decide (k ≠ .team o t)) }
   /-- Whoever controls a key puts it in a key holder. -/
   | entrust {s : State} {key : OrgKey} :
       key ∉ s.held →

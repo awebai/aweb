@@ -5,10 +5,9 @@ import TrustWeb.Properties
 
 Records the system reaches in which something works, acts that go through
 when their conditions hold, and limits: `policy_requires_person`,
-`locked_without_admin`, `locked_admin_team_stays_locked`,
-`takeover_can_leave_admin_team_locked`, `takeover_leaves_outsiders_acting`
-and `revocation_can_leave_no_admin`. Each theorem's doc comment says what it
-states.
+`locked_without_admin`, `takeover_can_leave_admin_team_locked`,
+`takeover_leaves_outsiders_acting` and `revocation_can_leave_no_admin`. Each
+theorem's doc comment says what it states.
 -/
 
 namespace TrustWeb
@@ -152,6 +151,7 @@ theorem locked_without_admin {s s' : State} {who : Party} {o : Org}
   | mintGrant _ _ => exact absurd hnew hold
   | revokeGrant _ => exact absurd hnew hold
   | release _ _ => exact absurd hnew hold
+  | rekeyTeam _ => exact absurd hnew hold
   | replaceRoot _ => exact absurd hnew hold
   | readmitByRoot _ _ _ _ => exact absurd hnew hold
   | readmitByParent _ _ _ _ => exact absurd hnew hold
@@ -315,81 +315,6 @@ theorem AdminTeamLocked.no_admin {s : State} {o : Org} (h : AdminTeamLocked s o)
   intro ⟨hm, _⟩
   exact h.2 _ hm rfl rfl
 
-/-- **A locked admin team stays locked in one act, under a rule that lets only
-admins ask for admitting an admin or for giving a key back.** If, for `o`,
-the rule allows an identity to ask for admitting an admin or for giving a
-key back only when it is an admin of `o`, and the admin team of `o` is locked
-before an accepted act, it is locked after it, whoever asked, the domain's
-owner included. So by induction it stays locked over any sequence of acts. -/
-theorem locked_admin_team_stays_locked {ask : AskRule} {o : Org}
-    (hadm : ∀ s k, ask s o .admitAdmin k → Admin s o k)
-    (hrel : ∀ s k, ask s o .release k → Admin s o k)
-    {s s' : State} {who : Party} (hstep : Step ask s who s') (h : AdminTeamLocked s o) :
-    AdminTeamLocked s' o := by
-  obtain ⟨hheld, hmem⟩ := h
-  have sub : ∀ (p : Membership → Bool), ∀ m, m ∈ s.members.filter p → m.org = o → m.team ≠ .admin :=
-    fun p m hm => hmem m (List.mem_filter.mp hm).1
-  cases hstep with
-  | createOrg _ => exact ⟨hheld, hmem⟩
-  | replaceRoot _ =>
-      refine ⟨List.mem_filter.mpr ⟨hheld, by simp⟩, hmem⟩
-  | readmitByRoot _ _ _ _ => exact ⟨hheld, hmem⟩
-  | readmitByParent _ _ _ _ => exact ⟨hheld, hmem⟩
-  | release hk hauth =>
-      rename_i key approvals
-      refine ⟨?_, hmem⟩
-      by_cases hkey : key = .team o .admin
-      · subst hkey
-        rcases hauth with ⟨hn, _⟩ | ⟨_, a, _, hask, _⟩
-        · exact absurd hk hn
-        · exact absurd (hrel _ _ hask) (fun ha => AdminTeamLocked.no_admin ⟨hheld, hmem⟩ a ha)
-      · exact List.mem_filter.mpr ⟨hheld, by simpa using fun h => hkey h.symm⟩
-  | entrust _ => exact ⟨List.mem_cons_of_mem _ hheld, hmem⟩
-  | registerByRoot _ _ _ _ => exact ⟨hheld, hmem⟩
-  | registerByParent _ _ _ _ => exact ⟨hheld, hmem⟩
-  | revokeSelf _ => exact ⟨hheld, hmem⟩
-  | revokeChild _ _ _ => exact ⟨hheld, hmem⟩
-  | revokeByOrg _ _ => exact ⟨hheld, hmem⟩
-  | admit hne _ _ =>
-      refine ⟨hheld, ?_⟩
-      intro m hm ho
-      rcases List.mem_cons.mp hm with rfl | hm
-      · exact hne
-      · exact hmem m hm ho
-  | admitAdmin ht _ hauth =>
-      rename_i m _ _ _
-      refine ⟨hheld, ?_⟩
-      intro m' hm' ho
-      rcases List.mem_cons.mp hm' with rfl | hm'
-      · rw [ht, ho] at hauth
-        rcases hauth with ⟨hn, _⟩ | ⟨_, a, _, hask, _⟩
-        · exact absurd hheld hn
-        · exact absurd (hadm _ _ hask) (fun ha => AdminTeamLocked.no_admin ⟨hheld, hmem⟩ a ha)
-      · exact hmem m' hm' ho
-  | remove _ _ => exact ⟨hheld, sub _⟩
-  | leave _ _ _ => exact ⟨hheld, sub _⟩
-  | invite _ _ _ => exact ⟨hheld, hmem⟩
-  | redeem _ hne _ =>
-      refine ⟨hheld, ?_⟩
-      intro m hm ho
-      rcases List.mem_cons.mp hm with rfl | hm
-      · exact hne
-      · exact hmem m hm ho
-  | mintGrant _ _ => exact ⟨hheld, hmem⟩
-  | revokeGrant _ => exact ⟨hheld, hmem⟩
-  | sendOwn _ => exact ⟨hheld, hmem⟩
-  | sendGrant _ _ => exact ⟨hheld, hmem⟩
-
-/-- **The built rule and the admin rule let only admins ask for admitting an
-admin or for giving a key back.** The built rule lets nobody ask for
-either. -/
-theorem built_and_admin_rules_let_only_admins_ask {o : Org} :
-    ((∀ s k, builtRule s o .admitAdmin k → Admin s o k) ∧
-      (∀ s k, builtRule s o .release k → Admin s o k)) ∧
-    ((∀ s k, adminRule s o .admitAdmin k → Admin s o k) ∧
-      (∀ s k, adminRule s o .release k → Admin s o k)) :=
-  ⟨⟨fun _ _ h => (by cases h.1), fun _ _ h => (by cases h.1)⟩, ⟨fun _ _ h => h, fun _ _ h => h⟩⟩
-
 /-- **Replacing the root can leave the admin team locked.** Under any rule
 there is a record the system reaches and an act asked for by organisation
 0's domain owner, after which the record is reachable, 0's root key is not
@@ -503,5 +428,90 @@ theorem revocation_can_leave_no_admin (ask : AskRule) :
   simp [s4, s3, ma] at hm
   subst hm
   exact revoked_not_valid List.mem_cons_self hv
+
+/-- Some key has no certificate and is not revoked. -/
+theorem exists_fresh_key (s : State) : ∃ k, Fresh s k ∧ k ∉ s.revoked := by
+  let n := (s.certs.map (·.subject) ++ s.revoked).foldr max 0 + 1
+  have big : ∀ x, x ∈ s.certs.map (·.subject) ++ s.revoked → x < n := by
+    intro x hx
+    have : ∀ (l : List Key) (y : Key), y ∈ l → y ≤ l.foldr max 0 := by
+      intro l
+      induction l with
+      | nil => intro y hy; cases hy
+      | cons a l ih =>
+          intro y hy
+          rcases List.mem_cons.mp hy with rfl | hy
+          · exact Nat.le_max_left _ _
+          · exact Nat.le_trans (ih y hy) (Nat.le_max_right _ _)
+    exact Nat.lt_succ_of_le (this _ x hx)
+  refine ⟨n, ?_, ?_⟩
+  · intro c hc hs
+    have := big c.subject (List.mem_append_left _ (List.mem_map.mpr ⟨c, hc, rfl⟩))
+    rw [hs] at this
+    exact Nat.lt_irrefl _ this
+  · intro hr
+    exact Nat.lt_irrefl _ (big n (List.mem_append_right _ hr))
+
+/-- **An organisation gets an admin back from its domain alone.** If `o`
+exists and `k` has no certificate and is not revoked, then under any rule
+there are four accepted acts: `o`'s domain owner replaces the root; whoever
+controls the new root key re-keys the admin team; it registers `k` as a
+person under the root; and whoever controls the admin team's new key admits
+`k` to it. Afterwards `k` is an admin of `o`. This holds in any record, a
+locked admin team's included, and such a `k` always exists
+(`exists_fresh_key`). -/
+theorem domain_owner_recovers_an_admin {ask : AskRule} {s : State} {o : Org} {k : Key}
+    (ho : o ∈ s.orgs) (hk : Fresh s k) (hkr : k ∉ s.revoked) :
+    ∃ s1 s2 s3 s4, Step ask s (.dns o) s1 ∧ Step ask s1 (.controller (.root o)) s2 ∧
+      Step ask s2 (.controller (.root o)) s3 ∧ Step ask s3 (.controller (.team o .admin)) s4 ∧
+      Admin s4 o k := by
+  let s1 : State :=
+    { s with
+      revoked := ((s.certs.filter (fun c => decide (c.org = o ∧ c.subject ∉ s.revoked))).map
+        (·.subject)) ++ s.revoked,
+      cutOff := ((s.certs.filter (fun c => decide (c.org = o ∧ c.subject ∉ s.revoked))).map
+        (·.subject)) ++ s.cutOff,
+      held := s.held.filter (fun x => decide (x ≠ .root o)) }
+  let s2 : State := { s1 with held := s1.held.filter (fun x => decide (x ≠ .team o .admin)) }
+  let c : Cert := ⟨o, k, .person, .root⟩
+  let s3 : State := { s2 with certs := c :: s2.certs }
+  let s4 : State := { s3 with members := ⟨o, .admin, k⟩ :: s3.members }
+  have hroot1 : OrgKey.root o ∉ s1.held := by simp [s1]
+  have hroot2 : OrgKey.root o ∉ s2.held := fun h => hroot1 (List.mem_filter.mp h).1
+  have hteam3 : OrgKey.team o .admin ∉ s3.held := by simp [s3, s2]
+  have hrev3 : k ∉ s3.revoked := by
+    intro h
+    simp only [s3, s2, s1, List.mem_append, List.mem_map, List.mem_filter] at h
+    rcases h with ⟨d, ⟨hd, _⟩, hds⟩ | h
+    · exact hk d hd hds
+    · exact hkr h
+  have hv3 : Valid s3 o k .person :=
+    .person (.byRoot (c := c) List.mem_cons_self rfl rfl rfl rfl) hrev3
+  refine ⟨s1, s2, s3, s4, Step.replaceRoot ho,
+    Step.rekeyTeam (t := .admin) (approvals := []) (.inl ⟨hroot1, rfl⟩),
+    Step.registerByRoot (c := c) (approvals := []) rfl ho hk (.inl ⟨hroot2, rfl⟩),
+    Step.admitAdmin (m := ⟨o, .admin, k⟩) (kind := .person) (approvals := []) rfl hv3
+      (.inl ⟨hteam3, rfl⟩), List.mem_cons_self, .person, ?_⟩
+  exact Valid.mono (s := s3) (t := s4) (fun _ h => h) (fun _ h => h) hv3
+
+/-- **The root can end any team membership in two acts.** If `o`'s root key
+is not with a key holder, then for any team `t` of `o` and any key `k` there
+are two accepted acts: whoever controls the root key re-keys `t`, and whoever
+controls `t`'s new key removes `k`'s certificate of `t`. Afterwards `k` holds
+no certificate of `t`, and no grant on `k` from `t` stands. -/
+theorem root_can_end_team_membership {ask : AskRule} {s : State} {o : Org} {t : Team}
+    {k : Key} (hroot : OrgKey.root o ∉ s.held) :
+    ∃ s1 s2, Step ask s (.controller (.root o)) s1 ∧ Step ask s1 (.controller (.team o t)) s2 ∧
+      ¬ HasTeamCert s2 o t k ∧ ∀ g, g ∈ s2.grants → ¬ (g.org = o ∧ g.team = t ∧ g.subject = k) := by
+  let s1 : State := { s with held := s.held.filter (fun x => decide (x ≠ .team o t)) }
+  have hteam : OrgKey.team o t ∉ s1.held := by simp [s1]
+  refine ⟨s1, _, Step.rekeyTeam (approvals := []) (.inl ⟨hroot, rfl⟩),
+    Step.remove (m := ⟨o, t, k⟩) (approvals := []) (.inl ⟨hteam, rfl⟩)
+      (fun h => absurd h hteam), ?_, ?_⟩
+  · exact not_mem_filter_ne
+  · intro g hg hc
+    have := (List.mem_filter.mp hg).2
+    simp only [decide_eq_true_eq] at this
+    exact this hc
 
 end TrustWeb

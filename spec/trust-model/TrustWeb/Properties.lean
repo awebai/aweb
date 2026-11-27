@@ -105,6 +105,7 @@ theorem new_person_is_vouched_for {ask : AskRule} {s s' : State} {who : Party} {
   | mintGrant _ _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | revokeGrant _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | release _ _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
+  | rekeyTeam _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | replaceRoot _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | readmitByRoot _ _ _ _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | readmitByParent _ _ _ _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
@@ -197,6 +198,7 @@ theorem new_admin_needs_controller_or_asker {ask : AskRule} {s s' : State} {who 
   | mintGrant _ _ => exact absurd hnew hold
   | revokeGrant _ => exact absurd hnew hold
   | release _ _ => exact absurd hnew hold
+  | rekeyTeam _ => exact absurd hnew hold
   | replaceRoot _ => exact absurd hnew hold
   | readmitByRoot _ _ _ _ => exact absurd hnew hold
   | readmitByParent _ _ _ _ => exact absurd hnew hold
@@ -395,6 +397,7 @@ theorem key_holder_keeps_an_admin {ask : AskRule} {s s' : State} {who : Party} {
   | createOrg _ => exact absurd hb hgone
   | entrust _ => exact absurd hb hgone
   | release _ _ => exact absurd hb hgone
+  | rekeyTeam _ => exact absurd hb hgone
   | registerByRoot _ _ _ _ => exact absurd hb hgone
   | registerByParent _ _ _ _ => exact absurd hb hgone
   | revokeSelf _ => exact absurd hb hgone
@@ -441,6 +444,7 @@ theorem grant_ends_with_its_certificate {ask : AskRule} {s s' : State} {who : Pa
   | createOrg _ => exact absurd hb hgone
   | entrust _ => exact absurd hb hgone
   | release _ _ => exact absurd hb hgone
+  | rekeyTeam _ => exact absurd hb hgone
   | registerByRoot _ _ _ _ => exact absurd hb hgone
   | registerByParent _ _ _ _ => exact absurd hb hgone
   | revokeSelf _ => exact absurd hb hgone
@@ -517,6 +521,7 @@ theorem built_person_needs_a_person {s s' : State} {who : Party} {o : Org} {k : 
   | mintGrant _ _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | revokeGrant _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | release _ _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
+  | rekeyTeam _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | replaceRoot _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | readmitByRoot _ _ _ _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
   | readmitByParent _ _ _ _ => exact absurd (hnew.of_certs_eq (t := s) rfl) hold
@@ -633,6 +638,7 @@ theorem session_only_sends {ask : AskRule} {s s' : State} {x : Key}
   | remove h _ => exact absurd h Authorised.not_session
   | invite _ h _ => exact absurd h Authorised.not_session
   | release _ h => exact absurd h Authorised.not_session
+  | rekeyTeam h => exact absurd h Authorised.not_session
   | readmitByRoot _ _ _ h => exact absurd h Authorised.not_session
 
 /-- **In one act, an invitation's secret lets its holder join the team the
@@ -660,6 +666,7 @@ theorem bearer_only_joins {ask : AskRule} {s s' : State} {t : Nat}
   | remove h _ => exact absurd h Authorised.not_bearer
   | invite _ h _ => exact absurd h Authorised.not_bearer
   | release _ h => exact absurd h Authorised.not_bearer
+  | rekeyTeam h => exact absurd h Authorised.not_bearer
   | readmitByRoot _ _ _ h => exact absurd h Authorised.not_bearer
 
 /-- **In one act, a message is attributed to an identity only if that
@@ -689,6 +696,7 @@ theorem message_from_owner_or_live_grant {ask : AskRule} {s s' : State} {who : P
   | mintGrant _ _ => exact absurd rfl hchg
   | revokeGrant _ => exact absurd rfl hchg
   | release _ _ => exact absurd rfl hchg
+  | rekeyTeam _ => exact absurd rfl hchg
   | replaceRoot _ => exact absurd rfl hchg
   | readmitByRoot _ _ _ _ => exact absurd rfl hchg
   | readmitByParent _ _ _ _ => exact absurd rfl hchg
@@ -718,6 +726,7 @@ theorem new_grant_by_subject {ask : AskRule} {s s' : State} {who : Party} {g : G
   | invite _ _ _ => exact absurd hnew hold
   | redeem _ _ _ => exact absurd hnew hold
   | release _ _ => exact absurd hnew hold
+  | rekeyTeam _ => exact absurd hnew hold
   | replaceRoot _ => exact absurd hnew hold
   | readmitByRoot _ _ _ _ => exact absurd hnew hold
   | readmitByParent _ _ _ _ => exact absurd hnew hold
@@ -775,6 +784,7 @@ theorem revocation_is_permanent {ask : AskRule} {s s' : State} {who : Party} {k 
   | createOrg _ => exact ⟨hk, hc⟩
   | entrust _ => exact ⟨hk, hc⟩
   | release _ _ => exact ⟨hk, hc⟩
+  | rekeyTeam _ => exact ⟨hk, hc⟩
   | registerByRoot _ _ _ _ => exact ⟨hk, hc⟩
   | registerByParent _ _ _ _ => exact ⟨hk, hc⟩
   | admit _ _ _ => exact ⟨hk, hc⟩
@@ -809,6 +819,7 @@ theorem certificate_is_permanent {ask : AskRule} {s s' : State} {who : Party} {c
   | mintGrant _ _ => exact hc
   | revokeGrant _ => exact hc
   | release _ _ => exact hc
+  | rekeyTeam _ => exact hc
   | replaceRoot _ => exact hc
   | readmitByRoot _ _ _ _ => exact hc
   | readmitByParent _ _ _ _ => exact hc
@@ -837,6 +848,7 @@ theorem registering_gives_no_team {ask : AskRule} {s s' : State} {who : Party}
   | mintGrant _ _ => exact absurd rfl hreg
   | revokeGrant _ => exact absurd rfl hreg
   | release _ _ => exact absurd rfl hreg
+  | rekeyTeam _ => exact absurd rfl hreg
   | replaceRoot _ => exact absurd rfl hreg
   | readmitByRoot _ _ _ _ => exact absurd rfl hreg
   | readmitByParent _ _ _ _ => exact absurd rfl hreg
@@ -870,6 +882,9 @@ theorem controller_stays_in_its_organisation {ask : AskRule} {s s' : State} {key
       exact ⟨fun _ h h' => absurd h h', fun _ h h' => absurd h h',
         fun _ h h' => absurd h h', fun _ h h' => absurd (List.mem_filter.mp h).1 h'⟩
   | entrust _ =>
+      exact ⟨fun _ h h' => absurd h h', fun _ h h' => absurd h h',
+        fun _ h h' => absurd h h', fun _ h h' => absurd h h'⟩
+  | rekeyTeam _ =>
       exact ⟨fun _ h h' => absurd h h', fun _ h h' => absurd h h',
         fun _ h h' => absurd h h', fun _ h h' => absurd h h'⟩
   | invite _ _ _ =>
@@ -965,14 +980,28 @@ theorem replaced_organisation_can_readmit {ask : AskRule} {s : State} {c : Cert}
   | person => exact .person (.byRoot hc rfl hk hi rfl) hn
   | agent => exact .agentOfRoot hc rfl hk hi rfl hn
 
-/-- **In one act, a key leaves its holder in only two ways.** If a key is with
-a key holder before an accepted act and not after, the asker is the domain
-owner of the key's organisation, or an identity the rule lets ask for giving a
-key back. -/
-theorem key_leaves_holder_only_two_ways {ask : AskRule} {s s' : State} {who : Party}
+/-- **In one act, a key leaves its holder in only three ways.** If a key is
+with a key holder before an accepted act and not after, the asker is the
+domain owner of the key's organisation; or an identity the rule lets ask for
+giving a key back; or the key is a team key of that organisation, and the
+asker is whoever controls its root key or an identity the rule lets ask for a
+re-key. -/
+theorem key_leaves_holder_only_three_ways {ask : AskRule} {s s' : State} {who : Party}
     {key : OrgKey} (hstep : Step ask s who s') (hin : key ∈ s.held) (hout : key ∉ s'.held) :
-    who = .dns key.org ∨ ∃ k, who = .id k ∧ ask s key.org .release k := by
+    who = .dns key.org ∨ (∃ k, who = .id k ∧ ask s key.org .release k) ∨
+      ∃ t, key = .team key.org t ∧
+        (who = .controller (.root key.org) ∨ ∃ k, who = .id k ∧ ask s key.org .rekey k) := by
   cases hstep with
+  | rekeyTeam hauth =>
+      rename_i o t _
+      have hk : key = .team o t := by
+        apply Decidable.byContradiction
+        intro hne
+        exact hout (List.mem_filter.mpr ⟨hin, by simpa using hne⟩)
+      subst hk
+      rcases hauth with ⟨_, hw⟩ | ⟨_, k, hw, hask, _⟩
+      · exact .inr (.inr ⟨t, rfl, .inl hw⟩)
+      · exact .inr (.inr ⟨t, rfl, .inr ⟨k, hw, hask⟩⟩)
   | createOrg _ => exact absurd hin hout
   | entrust _ => exact absurd (List.mem_cons_of_mem _ hin) hout
   | registerByRoot _ _ _ _ => exact absurd hin hout
@@ -1009,17 +1038,21 @@ theorem key_leaves_holder_only_two_ways {ask : AskRule} {s s' : State} {who : Pa
       subst hk
       rcases hauth with ⟨hn, _⟩ | ⟨_, k, hw, hask, _⟩
       · exact absurd hheld hn
-      · exact .inr ⟨k, hw, hask⟩
+      · exact .inr (.inl ⟨k, hw, hask⟩)
 
 /-- **As built, in one act, a key leaves its holder only at the domain
-owner's request.** Under the built rule, if a key is with a key holder before
-an accepted act and not after, the asker is the domain owner of the key's
-organisation. -/
-theorem built_key_leaves_only_by_dns {s s' : State} {who : Party} {key : OrgKey}
+owner's request, or by a re-key from the root.** Under the built rule, if a
+key is with a key holder before an accepted act and not after, the asker is
+the domain owner of the key's organisation, or the key is a team key of that
+organisation and the asker is whoever controls its root key. -/
+theorem built_key_leaves_only_by_dns_or_root {s s' : State} {who : Party} {key : OrgKey}
     (hstep : Step builtRule s who s') (hin : key ∈ s.held) (hout : key ∉ s'.held) :
-    who = .dns key.org := by
-  rcases key_leaves_holder_only_two_ways hstep hin hout with h | ⟨_, _, hask⟩
-  · exact h
+    who = .dns key.org ∨ ∃ t, key = .team key.org t ∧ who = .controller (.root key.org) := by
+  rcases key_leaves_holder_only_three_ways hstep hin hout with
+    h | ⟨_, _, hask⟩ | ⟨t, ht, hw | ⟨_, _, hask⟩⟩
+  · exact .inl h
+  · cases hask.1
+  · exact .inr ⟨t, ht, hw⟩
   · cases hask.1
 
 /-- **In one act, a key that leaves its holder at the domain owner's request
@@ -1039,6 +1072,7 @@ theorem dns_takes_out_only_the_root {ask : AskRule} {s s' : State} {o : Org}
   | remove h _ => exact absurd h Authorised.not_dns
   | invite _ h _ => exact absurd h Authorised.not_dns
   | release _ h => exact absurd h Authorised.not_dns
+  | rekeyTeam h => exact absurd h Authorised.not_dns
   | readmitByRoot _ _ _ h => exact absurd h Authorised.not_dns
   | replaceRoot ho =>
       refine ⟨?_, ?_⟩
@@ -1135,6 +1169,7 @@ theorem Step.oneCertEach {ask : AskRule} {s s' : State} {who : Party}
   | mintGrant _ _ => exact h1
   | revokeGrant _ => exact h1
   | release _ _ => exact h1
+  | rekeyTeam _ => exact h1
   | replaceRoot _ => exact h1
   | readmitByRoot _ _ _ _ => exact h1
   | readmitByParent _ _ _ _ => exact h1
@@ -1171,6 +1206,7 @@ theorem Step.revokedAreRegistered {ask : AskRule} {s s' : State} {who : Party}
   | mintGrant _ _ => exact h
   | revokeGrant _ => exact h
   | release _ _ => exact h
+  | rekeyTeam _ => exact h
   | replaceRoot _ =>
       intro k hk
       rcases List.mem_append.mp hk with hk | hk
@@ -1219,6 +1255,7 @@ theorem Step.localInOneTeam {ask : AskRule} {s s' : State} {who : Party}
   | createOrg _ => exact h
   | entrust _ => exact h
   | release _ _ => exact h
+  | rekeyTeam _ => exact h
   | revokeSelf _ => exact h
   | revokeChild _ _ _ => exact h
   | revokeByOrg _ _ => exact h
@@ -1289,6 +1326,7 @@ theorem Reachable.cutOffAreRevoked {ask : AskRule} {s : State} (hr : Reachable a
       | mintGrant _ _ => exact ih
       | revokeGrant _ => exact ih
       | release _ _ => exact ih
+      | rekeyTeam _ => exact ih
       | sendOwn _ => exact ih
       | sendGrant _ _ => exact ih
 

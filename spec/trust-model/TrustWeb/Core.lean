@@ -3,7 +3,7 @@ import TrustWeb.Properties
 /-!
 # The core: six acts and five properties
 
-`CoreStep` keeps six of the model's 21 acts, each exactly as in `Step`, and
+`CoreStep` keeps six of the model's 22 acts, each exactly as in `Step`, and
 `CoreStep.toStep` proves that each is an act of the model. Five properties
 are proved as `core_one`, `core_two` with `core_two_design`, `core_three`,
 `core_four` and `core_five`; each theorem's doc comment says what it states.
