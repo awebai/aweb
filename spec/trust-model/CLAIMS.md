@@ -255,6 +255,7 @@ Each item pairs a sentence about the model with one about the real system.
 | Where | Sentence | Kind | What makes it true |
 |---|---|---|---|
 | module doc | What the file holds | process | File contents |
+| `Steps` | A sequence of accepted acts under `ask` takes `s` to `s'` | definition | Its constructors |
 | `new_person_is_vouched_for` | The statement does not say the certificate is `k`'s; it looks at certificates only | result | The statement |
 | `valid_has_chain_to_root` | Leading means ...; kind, revocation, issuers' validity not part of it | definition | `ChainToRoot` |
 | `new_admin_needs_controller_or_asker` | So it is not an invitation's holder | result | `.bearer` is neither disjunct |
