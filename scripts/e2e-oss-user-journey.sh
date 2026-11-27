@@ -963,7 +963,7 @@ echo "=== Phase 4: Alice joins team ==="
 capture_success alice_invite_out "alice_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
-  --global \
+  --member-global \
   --json
 
 ALICE_INVITE_TOKEN="$(echo "$alice_invite_out" | jq_field token)"
@@ -1060,7 +1060,7 @@ assert_not_empty "bob did_aw" "$BOB_DID_AW"
 capture_success bob_invite_out "bob_invite_out" run_aw_in "$ALICE_DIR" id team invite \
   --team devteam \
   --namespace test.local \
-  --global \
+  --member-global \
   --json
 
 BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
@@ -2129,7 +2129,7 @@ assert_eq "partner bob address" "partner.local/bob" "$PARTNER_BOB_ADDRESS"
 capture_success partner_bob_invite_out "partner_bob_invite_out" run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
-  --global \
+  --member-global \
   --json
 PARTNER_BOB_INVITE_TOKEN="$(echo "$partner_bob_invite_out" | jq_field token)"
 assert_not_empty "partner bob invite token" "$PARTNER_BOB_INVITE_TOKEN"
@@ -2147,7 +2147,7 @@ assert_eq "partner bob init exit" "0" "$partner_bob_init_exit"
 capture_success partner_alice_invite_out "partner_alice_invite_out" run_aw_in "$PARTNER_CONTROLLER_DIR" id team invite \
   --team main \
   --namespace partner.local \
-  --global \
+  --member-global \
   --json
 PARTNER_ALICE_INVITE_TOKEN="$(echo "$partner_alice_invite_out" | jq_field token)"
 assert_not_empty "partner alice invite token" "$PARTNER_ALICE_INVITE_TOKEN"
