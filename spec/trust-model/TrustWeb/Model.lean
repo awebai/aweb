@@ -380,7 +380,8 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
             (·.subject)) ++ s.cutOff,
           held := s.held.filter (fun k => decide (k ≠ .root o)) }
   /-- The organisation admits again an identity directly under it that a root
-  replacement cut off. The root key signs; the identity keeps its key (A3). -/
+  replacement cut off. The root key signs; the same certificate, with the same subject and so the
+  same key, is back in force. -/
   | readmitByRoot {s : State} {c : Cert} {who : Party} {approvals : List Key} :
       c ∈ s.certs → c.issuer = .root → c.subject ∈ s.cutOff →
       Authorised ask s (.root c.org) (.registerOf c.kind) who approvals →
@@ -457,8 +458,9 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
       Step ask s who
         { s with members := s.members.filter (fun x => decide (x ≠ m)),
                  grants := s.grants.filter (fun g => decide (¬ (g.org = m.org ∧ g.team = m.team ∧ g.subject = m.member))) }
-  /-- A member leaves a team whose key a key holder holds, by asking it. The
-  last admin cannot leave. No ask rule and no policy is consulted, and the
+  /-- A member leaves a team whose key a key holder holds, by asking it. No
+  holder of an admin-team certificate leaves while no other admin remains
+  (`KeepsAnAdmin`). No ask rule and no policy is consulted, and the
   member need not be registered or valid. -/
   | leave {s : State} {m : Membership} :
       m ∈ s.members → .team m.org m.team ∈ s.held → KeepsAnAdmin s m →

@@ -3,7 +3,7 @@
 One line for every sentence that says something about the model, apart from a theorem's own restatement. That covers the README's prose, every cell of "What must never happen", every reading inside a result row, every module, definition, field and constructor doc comment, and every reading inside a theorem's doc comment. Each line gives where the sentence is, the sentence in short, and what makes it true.
 
 - **Restatements.** A row of the README's result tables, and a theorem's doc comment, first restate the theorem's statement. A restatement is checked against the statement and is not listed here. What follows it in the row or the doc comment is listed: a reading, with what makes it true, or a construction note ("In the construction ..."), which describes the proof's witnesses.
-- **Names.** Every identifier between backquotes here, in the README and in the doc comments, inside an expression too, is checked by the build (`TrustWeb/DocNames.lean`): a leading-dot name must be a constructor of one of the model's inductive types, any other name must resolve in the `TrustWeb` namespace or be one of four listed Lean names, and file paths, shell commands, variables and the protocol's own names are skipped.
+- **Names.** The build's name check, as the README's "How to check it yourself" describes it, reads this file too.
 - **Kinds of line.**
   - A *definition* or *act* line names the definition or `Step` constructor that the sentence reads off.
   - A *result* line names the theorem or row.
@@ -20,7 +20,7 @@ A sentence about the model that is not on this list should not be in the README 
 | Sentence | Kind | What makes it true |
 |---|---|---|
 | Experimental formal model ... comparison against running implementations is pending | process | No checker or emitter exists (see "Not done") |
-| Eight independent readings ... are worked in | process | PR 263's history |
+| Independent readings ... are worked in, one round at a time | process | PR 263's history |
 | Every sentence ..., apart from a theorem's own restatement, has a line in `CLAIMS.md` | process | This file |
 | This is a formal model of who may do what in aweb ... | process | The files listed under "What is here" |
 | Every result in it is proved and checked by Lean | result | `lake build` with no warning; no `sorry`, `axiom`, `native_decide`, `opaque` or `implemented_by` in the sources |
@@ -37,7 +37,7 @@ A sentence about the model that is not on this list should not be in the README 
 | An `axiom` or `native_decide` builds with no warning; the sources use none of `axiom`, `native_decide`, `opaque`, `implemented_by` | process | A grep of the sources (each reading ran it); the words occur only as strings in `DocNames.lean`'s skipped list |
 | `#print axioms` shows only `propext`, `Classical.choice`, `Quot.sound` | process | `#print axioms` on every theorem (each reading ran it) |
 | Pinned to Lean 4.36.0; no package beyond Lean | process | `lean-toolchain`; `lake-manifest.json` lists no packages |
-| The build checks every cited identifier: leading-dot names against the model's constructors, others in the `TrustWeb` namespace or four listed Lean names | process | `TrustWeb/DocNames.lean`, built as the `DocCheck` library in `lakefile.toml`, with `README.md` and `CLAIMS.md` as its inputs, so it reruns when either changes |
+| The build runs a name check: what it reads and skips, and the three ways an identifier passes; it finds a misspelled or removed name, not a wrong one | process | `TrustWeb/DocNames.lean`: the `#doc_names_resolve` file list, `isPathOrCommand`, `skipped`, `passes`, `resolvesInModel`, `isConstructorOfModel`; built as the `DocCheck` library in `lakefile.toml`, with `README.md` and `CLAIMS.md` as its inputs, so it reruns when either changes |
 
 ### What is here
 
@@ -158,7 +158,7 @@ One block per cell, in the table's order.
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule` (`Admin` needs `Valid`), `teamRule` |
 | A revoked member keeps authority | Proved in reachable records: not valid, not an admin, cannot act in a team, cannot send with its own key, no live grant | result | Rows 7, 8, 20; `sendOwn` needs `CanAct` |
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | As above |
-| | Under every rule it can still revoke a grant on itself, revoke itself, leave a held team, be the key `redeem` names | act, result | `revokeGrant`, `revokeSelf`, `leave` have no validity premise; `redeem` needs `OneTeamIfLocal`, which a revoked identity meets because in reachable records it is registered (row 14) |
+| | Under every rule it can still revoke a grant on itself, revoke itself, leave a held team unless it is the admin team and no other admin remains, be the key `redeem` names | act, result | `revokeGrant`, `revokeSelf` have no validity premise; `leave` has none but `KeepsAnAdmin`; `redeem` needs `OneTeamIfLocal`, which a revoked identity meets because in reachable records it is registered (row 14) |
 | A revocation is undone | Proved for one act | result | `revocation_is_permanent` |
 | | Not proved for several acts | process | No theorem states it |
 | | A root-issued cut-off identity can be admitted again while the root key is not held | result | Row 31 |
@@ -379,7 +379,7 @@ These are method and process. They make no claim about the model beyond what is 
 | `replaceRoot` | Team certificates, invitations and team keys are not touched | act | It changes only `revoked`, `cutOff`, `held` (root only) |
 | `replaceRoot` | In a reachable record a cut-off member cannot act in a team | result | `revoked_has_no_authority` with `Reachable.cutOffAreRevoked` and `Reachable.revokedAreRegistered` |
 | `replaceRoot` | Nothing can refuse this | act | Its only premise is `o ∈ s.orgs` |
-| `readmitByRoot` | The root key signs; the identity keeps its key | act, assumption | `Authorised ... (.root c.org)`; A3 |
+| `readmitByRoot` | The root key signs; the identity keeps its key | act | `Authorised ... (.root c.org)`; the act puts the same certificate, with the same subject, back in force |
 | `readmitByParent` | A valid member re-admits one it issued | act | Premises |
 | `release` | Nothing else changes | act | It changes only `held` |
 | `rekeyTeam` | Replaces a team's key; no key holder holds the new one | act | It filters `.team o t` from `held` |
@@ -396,7 +396,7 @@ These are method and process. They make no claim about the model beyond what is 
 | `remove` | The removed member need not take part; the policy may name it | act | Premises; `Approved` with an `.exactly` rule |
 | `remove` | A key holder does not remove the last admin | act | `KeepsAnAdmin` premise when held |
 | `remove` | Grants from this certificate end with it | act | `grants` filter |
-| `leave` | Held team; last admin cannot leave; no rule or policy; need not be registered or valid | act | Premises |
+| `leave` | Held team; no holder of an admin-team certificate leaves while no other admin remains; no rule or policy; need not be registered or valid | act | Premises, `KeepsAnAdmin` among them |
 | `invite` | Same authority as admitting | act | `Authorised ... .admit` |
 | `redeem` | Team not admin; unregistered key holds no team certificate; who holds the secret not checked | act, assumption | Premises; A3 |
 | `mintGrant`, `revokeGrant`, `sendOwn`, `sendGrant` | Their askers and effects | act | Constructors |
@@ -450,6 +450,8 @@ These are method and process. They make no claim about the model beyond what is 
 | Where | Sentence | Kind | What makes it true |
 |---|---|---|---|
 | module doc | Six of the 22 acts, each exactly as in `Step` | definition | `CoreStep`; compare with `Step` |
+| `CoreStep` | The six acts of the core, each exactly as in `Step` | definition | Its constructors |
+| `CoreReachable` | The records the core can reach | definition | Its constructors mirror `Reachable` over `CoreStep`; `CoreReachable.toReachable` |
 | module doc | `CoreStep.toStep` proves each is an act of the model | result | `CoreStep.toStep` |
 | module doc | Some parts, `core_five` among them, are about any record | result | `core_five` and `core_three`'s first conjunct take no core hypothesis |
 | module doc | An experiment, not a proposal | process | The author's intent |
