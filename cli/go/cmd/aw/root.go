@@ -46,11 +46,15 @@ var versionCmd = &cobra.Command{
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// No-op: version command doesn't require command initialization side-effects.
 	},
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if jsonFlag {
+			return printJSON(currentVersionAnswer())
+		}
 		fmt.Fprint(commandStdout, versionReport())
 		if automaticUpdateCheckEnabled() {
 			checkLatestVersion(os.Stderr, "")
 		}
+		return nil
 	},
 }
 
@@ -71,6 +75,25 @@ func versionReport() string {
 		fmt.Fprintf(&b, "  built:  %s\n", date)
 	}
 	return b.String()
+}
+
+// versionAnswer is aw version's JSON answer. An unstamped value is empty.
+type versionAnswer struct {
+	Version    string `json:"version"`
+	Commit     string `json:"commit"`
+	CommitRepo string `json:"commit_repo"`
+	Built      string `json:"built"`
+}
+
+func currentVersionAnswer() versionAnswer {
+	answer := versionAnswer{Version: version, CommitRepo: commitRepo}
+	if commit != "none" {
+		answer.Commit = commit
+	}
+	if date != "unknown" {
+		answer.Built = date
+	}
+	return answer
 }
 
 func init() {

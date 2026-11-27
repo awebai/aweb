@@ -50,6 +50,9 @@ func rootPreparationForCommand(command *cobra.Command) (rootPreparationMode, err
 	if _, independent := offlineCommands[command]; independent {
 		return rootPreparationOffline, nil
 	}
+	if answersOfflineAsJSON(command, jsonFlag) {
+		return rootPreparationOffline, nil
+	}
 	if isIdentityHomeNeutralCommand(command) {
 		return rootPreparationNeutral, nil
 	}

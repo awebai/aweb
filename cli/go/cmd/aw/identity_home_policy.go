@@ -25,7 +25,17 @@ func namesOfflineCommand(args []string) bool {
 		return false
 	}
 	_, ok := offlineCommands[cmd]
-	return ok
+	return ok || answersOfflineAsJSON(cmd, argsContainJSONFlag(args))
+}
+
+// offlineJSONCommands answer under --json before any identity exists: the
+// framework reads aw's JSON version from the binary it will run, with no
+// identity, update check or network. Their text output keeps root preparation.
+var offlineJSONCommands = map[*cobra.Command]struct{}{versionCmd: {}}
+
+func answersOfflineAsJSON(cmd *cobra.Command, asJSON bool) bool {
+	_, ok := offlineJSONCommands[cmd]
+	return ok && asJSON
 }
 
 func isIdentityHomeNeutralCommand(cmd *cobra.Command) bool {

@@ -4,6 +4,14 @@ Use `--json` and the process exit status. Human error sentences remain useful
 for operators, but machine consumers should read codes rather than classify
 sentences. The acting identity follows [identity selection](cli-identity-selection.md).
 
+## Version
+
+`aw version --json` answers before any identity exists: it selects no
+identity home, makes no update check and no network request, so a caller can
+ask the exact binary it will run before anything else. It returns `version`,
+`commit`, `commit_repo` and `built`, all strings; a value the build was not
+stamped with is an empty string. Text `aw version` is unchanged.
+
 ## Recorded initialization and membership
 
 `aw id status --team T --json` reads the selected home's recorded state without

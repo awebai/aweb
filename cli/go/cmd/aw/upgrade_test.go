@@ -63,7 +63,9 @@ func TestVersionCommandUpdateCheck(t *testing.T) {
 			stderr := captureStderr(t, func() {
 				stdout = captureStdout(t, func() {
 					start := time.Now()
-					versionCmd.Run(versionCmd, nil)
+					if err := versionCmd.RunE(versionCmd, nil); err != nil {
+						t.Errorf("version: %v", err)
+					}
 					elapsed = time.Since(start)
 				})
 			})
@@ -79,7 +81,12 @@ func TestVersionCommandUpdateCheck(t *testing.T) {
 			}
 			// The version report is the command's output; the upgrade hint is
 			// advice on stderr, so it never mixes into a parsed version.
-			if !strings.HasPrefix(stdout, "aw 1.0.0\n") {
+			if tc.json {
+				var answer versionAnswer
+				if err := json.Unmarshal([]byte(stdout), &answer); err != nil || answer.Version != "1.0.0" {
+					t.Errorf("version --json answer=%q err=%v", stdout, err)
+				}
+			} else if !strings.HasPrefix(stdout, "aw 1.0.0\n") {
 				t.Errorf("missing version output: %q", stdout)
 			}
 			if gotHint := strings.Contains(stderr, "Upgrade available"); gotHint != tc.wantCall {
