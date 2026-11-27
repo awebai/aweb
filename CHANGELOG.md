@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The in-process test helpers `aweb.testing.running_server` and
+  `awid_service.testing.running_registry` open small database pools (1 to 5
+  connections, where they held 10 to 20) named `aweb_testing_running_server`
+  and `awid_testing_running_registry` in `pg_stat_activity`. Suites sharing
+  one Postgres no longer run it out of connections.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under
