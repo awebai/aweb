@@ -20,7 +20,7 @@ import (
 
 // mailThreadTeaching is the one wording every mail surface uses to teach
 // the thread model: a thread is a conversation, continued by reply.
-const mailThreadTeaching = "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>."
+const mailThreadTeaching = "Answer in the conversation: aw mail reply <message_id> --body-file <file>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject> --body-file <file>."
 
 // mailTitleFixedText refuses a subject on a continuation: a conversation's
 // title is its first message's subject.
