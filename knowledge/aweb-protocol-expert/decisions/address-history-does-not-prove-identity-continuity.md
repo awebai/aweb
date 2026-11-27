@@ -37,7 +37,7 @@ a contact was made.
 - An evidence allowlist or classification-only command: withdrawn as
   unnecessary (YAGNI).
 
-`docs/contacts-only-deployment.md` states the outcome; this records the
+[The identity and messaging contract's contact compatibility section](https://github.com/awebai/aweb/blob/main/docs/identity-messaging-contract.md#receiver-wide-replay-and-contact-compatibility) states the outcome; this records the
 registry fact and the rejected alternatives.
 
 # Provenance
