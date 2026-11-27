@@ -242,4 +242,29 @@ theorem outsider_becomes_admin_in_three_acts (assign : Assignment) (o n : Nat)
     · intro r hr
       simp [s2, s1, s, r3s, r2s, r1s, e] at hr
 
+/-- Under the built rule, if a key is with a key holder, `Authorised` does not
+hold for it and giving a key back. -/
+theorem built_never_authorises_release {s : State} {key : OrgKey} {who : Party}
+    {approvals : List Key} (hheld : key ∈ s.held) :
+    ¬ Authorised builtRule s key .release who approvals := by
+  rintro (⟨hn, _⟩ | ⟨_, _, _, hask, _⟩)
+  · exact hn hheld
+  · cases hask.1
+
+/-- Under the built rule, for no approvals is a key with a key holder and
+`Authorised` holding for it and giving a key back. -/
+theorem no_release_premises_as_built {s : State} {key : OrgKey} {who : Party} :
+    ¬ ∃ approvals, key ∈ s.held ∧ Authorised builtRule s key .release who approvals :=
+  fun ⟨_, hheld, ha⟩ => built_never_authorises_release hheld ha
+
+/-- For every assignment, the team rule is not the built rule. -/
+theorem no_teamRule_is_builtRule (assign : Assignment) : teamRule assign ≠ builtRule := by
+  intro h
+  let c : Cert := ⟨0, 1, .person, .root⟩
+  let s : State := ⟨[0], [c], [], [], [⟨0, assign 0 .release, 1⟩], [], [], [], [], []⟩
+  have hv : Valid s 0 1 .person := .person (.byRoot (c := c) (by simp [s]) rfl rfl rfl rfl) (by simp [s])
+  have ht : teamRule assign s 0 .release 1 := ⟨by simp [s], .person, hv⟩
+  rw [h] at ht
+  cases ht.1
+
 end TrustWeb

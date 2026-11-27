@@ -44,9 +44,10 @@ One line for every sentence that says something about the model, apart from a th
 | One certificate each holds in every reachable record | result | Row 14 |
 | A row with no rule named holds for every `AskRule` | process | Such theorems quantify over `ask`, or take no `ask` and state no rule |
 | As built is `builtRule`, Design is `adminRule` (row 52: the planned root replacement), a team rule is `teamRule`; a Design row claims nothing about `builtRule` | process | Reading convention |
+| A row under a team rule claims nothing about `builtRule` | result | `no_teamRule_is_builtRule` |
 | Five parts of `Step` are planned, not built | source | The source readings: the built key holder has no command to take a key in or give one back; the registry has no last-admin check and does not know the admin team; the built leave command leaves the certificate standing; the registry's certificate route registers a certificate for any team with the same checks, so nothing in it excludes the admin team (`awid/src/awid_service/routes/teams.py`, the function register_certificate, lines 1219 to 1246, at 5c2ee7bad3); the same route checks the member's address ownership (the function _require_member_address_owned_by_did_aw, line 1235), not its validity in the organisation |
 | They are present under every rule, `builtRule` included; under `builtRule` `release` is never accepted | definition | `entrust`, `release`, `leave` are constructors of `Step`; `KeepsAnAdmin`, `rekeyTeam`'s premise on `keep`, `m.team ≠ .admin`, `i.team ≠ .admin` and `admitAdmin`'s `Valid` are premises of its constructors; `Step` takes any `ask`; `release` needs `key ∈ s.held`, so `Authorised`'s held branch, and `builtRule` never allows `.release` |
-| The Design rule, the planned root replacement and the evidence are planned too, named in their rows | source, definition | `adminRule`; `plannedReplaceRoot` is a definition, not a `Step` constructor; `Evidence.lean`'s module doc |
+| The Design rule, the team rule, the planned root replacement and the evidence are planned too, named in their rows | source, definition | `adminRule`; `plannedReplaceRoot` is a definition, not a `Step` constructor; `Evidence.lean`'s module doc |
 | Every reachable record with a held key is reached through `entrust`, so every row whose reachable record or act has a held key rests on it, and a row about any record with a held key applies among reachable records only to ones reached through `entrust` | result | `held_key_reached_through_entrust`, `only_entrust_puts_a_key_with_a_holder` |
 | Every row whose act is `release` rests on the planned `release` | act | `release` is a planned part |
 | A row that rests on another planned premise says so | process | The labels on rows 6, 11a, 14, 21, 25 and 42, and the cells that cite them |
@@ -101,6 +102,8 @@ One line for every sentence that says something about the model, apart from a th
 | 28 | Nor does the protocol | source | the source readings |
 | 35, 48, 49 | A warning | process | A label |
 | 25, 42 | Resting on the planned premise that `redeem`'s team is not the admin team | definition, source | The proofs close the `redeem` case with `i.team ≠ .admin`, a planned part |
+| 28, 34 | Giving a key back is the planned `release` | act | `release` is a planned part |
+| 50 | Resting, for the admin team through a held root key, on the planned keep-an-admin premise | act, source | `rekeyTeam`'s premise on `keep`, a planned part |
 | 11a | Before and after the act | result | The hypothesis that the admin team's key is held after the act; a re-key removes it |
 | 21 | Admission asked for by an invitation's bearer; a native invitation is accepted with the team controller's own key, that controller's act | source, act | `cli/go/cmd/aw/id_team.go` line 1764 at 5c2ee7bad3; the security owner's note; `admit` asked by the team key's controller |
 | 50 | A grant is added only by its subject, so a grant from the team does not come back unless its subject gives it again | result | Row 19 |
@@ -195,8 +198,10 @@ Each item pairs a sentence about the model with one about the real system.
 | Neither a dual-signed root rotation nor a parent's recovery of a child organisation is modelled | definition | No `Step` constructor does either |
 | Re-admission puts the same certificate back in force | act | `readmitByRoot`, `readmitByParent` take the subject out of `revoked` and `cutOff` and change no certificate |
 | Really a new signed certificate, through the one registration route that serves every supersession, and the new root can admit anyone it keeps; the route does not check "cut off" | source | `awid/src/awid_service/id_registration.py` at 5c2ee7bad3, line 95 |
-| `release` gives a key back whole | act | `release` changes only `held` |
-| Really a new key, signed by old and new | source | the source readings |
+| Having a key given back is planned, and under `builtRule` its premises are never met | result, source | `no_release_premises_as_built`, `built_never_authorises_release`; `release` is a planned part |
+| The built key holder has no command to give a key back | source | the source readings |
+| In the model the key comes back whole | act | `release` changes only `held` |
+| The protocol documents describe leaving a key holder by a new key that the old and the new both sign | source | the source readings |
 | One certificate per identity | result | Row 14 |
 | Really one current certificate per identity, earlier revisions kept; naming the expected head supersedes it, which re-parents | source | `awid/src/awid_service/id_registration.py` at 5c2ee7bad3, lines 89 to 106 and 155 to 170 |
 | Creating and deleting teams is not modelled | definition | `OrgKey` and `Team` are fixed; no act creates a team |
