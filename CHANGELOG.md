@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- awid-service reads `AWID_DATABASE_MIN_CONNECTIONS` and
+  `AWID_DATABASE_MAX_CONNECTIONS` to size its database pool, apart from
+  transaction-pooler mode. Unset, the pool keeps pgdbm's defaults (10 and 20).
+  A test fixture that starts an AWID can now hold a small pool without
+  turning off the statement cache.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under

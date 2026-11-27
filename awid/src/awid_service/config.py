@@ -29,6 +29,10 @@ class Settings:
     database_uses_transaction_pooler: bool = False
     database_pooler_max_connections: int = 10
     database_statement_cache_size: int | None = None
+    # The pool's ordinary bounds; None keeps pgdbm's defaults. Independent of
+    # transaction-pooler mode, which still caps the pool at its own bound.
+    database_min_connections: int | None = None
+    database_max_connections: int | None = None
     # Refuse to start unless every connection carries the search_path pin and the
     # pgdbm timeouts. A pooler that drops startup parameters needs them as role
     # defaults (ALTER ROLE ... SET ...).
@@ -59,6 +63,17 @@ def get_settings() -> Settings:
     if pooler_max_connections < 1:
         raise ValueError(
             f"AWID_DATABASE_POOLER_MAX_CONNECTIONS must be at least 1, got {pooler_max_connections}"
+        )
+    min_connections = _env_int_at_least("AWID_DATABASE_MIN_CONNECTIONS", 0)
+    max_connections = _env_int_at_least("AWID_DATABASE_MAX_CONNECTIONS", 1)
+    if (
+        min_connections is not None
+        and max_connections is not None
+        and min_connections > max_connections
+    ):
+        raise ValueError(
+            f"AWID_DATABASE_MIN_CONNECTIONS ({min_connections}) exceeds "
+            f"AWID_DATABASE_MAX_CONNECTIONS ({max_connections})"
         )
     session_check_timeout = float(
         os.getenv("AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS", "30")
@@ -92,8 +107,24 @@ def get_settings() -> Settings:
         ),
         database_pooler_max_connections=pooler_max_connections,
         database_statement_cache_size=statement_cache_size,
+        database_min_connections=min_connections,
+        database_max_connections=max_connections,
         database_require_session_settings=_env_bool(
             "AWID_DATABASE_REQUIRE_SESSION_SETTINGS"
         ),
         database_session_check_timeout_seconds=session_check_timeout,
     )
+
+
+def _env_int_at_least(name: str, minimum: int) -> int | None:
+    """An optional integer setting; unset or blank is None."""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from None
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}, got {value}")
+    return value
