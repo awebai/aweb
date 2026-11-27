@@ -60,10 +60,11 @@ theorem only_assigned_team_takes_key_back {assign : Assignment} {s s' : State} {
   · exact .inl h
   · exact .inr ⟨k, hw, hask.1, hask.2⟩
 
-/-- **A warning the model gives.** The admin team is protected: no ordinary
-admission and no invitation leads into it. Any other team is not. If an
-operation is assigned to a named team, an invitation to that team is enough
-for a valid member of the organisation to gain the operation.
+/-- **A warning the model gives, shown by one example.** The admin team is
+protected: no ordinary admission and no invitation leads into it. Any other
+team is not: in the example below, an invitation to a named team that an
+operation is assigned to lets a valid member of the organisation gain the
+operation. That this holds for every assignment and team is not proved.
 
 Stated: there is an assignment and records `s`, `s1`, `s2` such that 1 holds
 no team certificate of organisation 0 in `s` and 0's root key is with a key

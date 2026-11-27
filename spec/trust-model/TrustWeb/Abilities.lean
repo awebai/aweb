@@ -7,7 +7,8 @@ The other results say what never happens. These say what can happen, and
 where it stops: records the system reaches in which something works, acts
 that go through when their conditions hold, and two limits beside the
 abilities they bound (a policy that asks for a person refuses approvals with
-none, and an organisation with no admin cannot add one in one act).
+none, and under the admin rule an organisation with no admin, whose admin
+team's key is with a key holder, cannot add one in one act).
 -/
 
 namespace TrustWeb

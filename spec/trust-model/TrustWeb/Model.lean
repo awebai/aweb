@@ -19,7 +19,8 @@ key holder and the four things listed below. That rule is a parameter, `AskRule`
 here; `Operations.lean` adds a third, `teamRule`, the general form of the
 second.
 
-* `builtRule`: what the self-hosted key holder does today.
+* `builtRule`: what the self-hosted key holder does today. Under it a held
+  key only adds or re-admits a person; nothing else can be signed with it.
 * `adminRule`: the planned design, in which an organisation's members are
   people and agents alike: an admin asks.
 
@@ -89,9 +90,10 @@ planned things.
   teams or grants.
 * **Sending with your own key** stands for a send the server accepted. Really
   it checks the key is current, the identity valid, and the recipient's rules.
-* **The key holder's operator** is modelled as whoever controls the key
-  directly. Really the operator acts through the holder's named commands,
-  which are narrower.
+* **The key holder's operator** is not modelled. Whoever controls a key uses
+  it directly only while it is not with a key holder; while it is held, only
+  those the rule lets ask use it. Really the operator acts through the
+  holder's named commands, which are narrower.
 * **Registered** stands for three real things: a local key with no public
   identity, a public identity with a registered key, and enrolment in the
   identity tree. The one-team rule is about the first. It holds on the

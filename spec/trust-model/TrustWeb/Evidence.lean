@@ -22,8 +22,9 @@ has no field for how the person was enrolled, so the chain alone cannot tell
 the routes apart.
 
 * **A10. Assertions.** An assertion in the list was signed by the party it
-  names (the organisation's controller, or the hosted service after an email
-  check) and is about that enrolment. The model does not check it.
+  names (the domain's authorised controller, or the hosted service after an
+  email check) and is bound to that exact enrolment. The model does not
+  check it.
 -/
 
 namespace TrustWeb
@@ -43,8 +44,9 @@ structure Assertion where
   enrolment : Enrolment
   deriving DecidableEq, Repr
 
-/-- `controller_asserted_person`: `k` is a valid person of `o`, and its own
-domain's controller asserted its enrolment. -/
+/-- `controller_asserted_person`: `k` is a valid person of `o`, whoever issued
+its certificate, and its own domain's authorised controller asserted its
+enrolment, in an assertion bound to that exact enrolment (A10). -/
 def ControllerAssertedPerson (s : State) (as : List Assertion) (o : Org) (k : Key) : Prop :=
   Valid s o k .person ∧ ⟨o, k, .controller⟩ ∈ as
 

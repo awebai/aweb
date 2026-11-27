@@ -9,9 +9,10 @@ with its limits:
 
 1. An agent does not pass as a person.
 2. Removing an admin needs nobody's cooperation where the admin team's key or
-   the root key is not with a key holder. Through a key holder it needs
-   another admin: where both keys are with a key holder and there is one
-   admin, no core act removes that admin without it.
+   the root key is not with a key holder (`core_two`). Through a key holder,
+   under the admin rule, an admin can remove another admin
+   (`core_two_design`). Nothing is proved about removing the only admin
+   when both keys are with a key holder.
 3. Every admin has a chain of signed statements back to a root.
 4. A revoked member is not valid, not an admin, and cannot act in a team.
 5. An organisation with no policy requires no approval.
