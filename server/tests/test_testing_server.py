@@ -67,10 +67,15 @@ async def _own_connections(db) -> dict[str, int]:
 async def test_each_helper_holds_a_small_pool_under_its_own_name(stack) -> None:
     """Many suites share one Postgres: each helper's pool stays small and says
     whose it is in pg_stat_activity."""
-    server = await _own_connections(stack.server.db.get_manager("aweb"))
-    registry = await _own_connections(stack.registry.db)
-    assert 1 <= server.get("aweb_testing_running_server", 0) <= 5, server
-    assert 1 <= registry.get("awid_testing_running_registry", 0) <= 5, registry
+    server_db = stack.server.db.get_manager("aweb")
+    registry_db = stack.registry.db
+    for db in (server_db, registry_db):
+        stats = await db.get_pool_stats()
+        assert (stats["min_size"], stats["max_size"]) == (1, 5), stats
+    server = await _own_connections(server_db)
+    registry = await _own_connections(registry_db)
+    assert server.get("aweb_testing_running_server", 0) >= 1, server
+    assert registry.get("awid_testing_running_registry", 0) >= 1, registry
 
 
 class _FailingRedis:
