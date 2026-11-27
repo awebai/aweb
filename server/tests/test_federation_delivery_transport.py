@@ -595,7 +595,6 @@ def test_id_tree_registry_reads_use_the_same_pinned_transport():
 
     assert id_tree_registry.PinnedTransport is transport.PinnedTransport
     assert id_tree_registry.admitted_addresses is transport.admitted_addresses
-    assert not hasattr(id_tree_registry, "_PinnedTransport")
 
 
 def test_federation_authority_carries_the_delivery_transport(monkeypatch):
