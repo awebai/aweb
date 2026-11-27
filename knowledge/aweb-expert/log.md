@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-gate-dispatch (servers rehearsal receipts in vm-gate).
+* **Creation**: lesson [a receipt is green only on positive evidence, judged in the right order](/aweb-expert/lessons/a-receipt-is-green-only-on-positive-evidence.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
