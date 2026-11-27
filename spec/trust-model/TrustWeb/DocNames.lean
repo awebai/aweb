@@ -27,15 +27,15 @@ def isNameToken (s : String) : Bool :=
   match s.toList with
   | [] => false
   | c :: _ => (c.isAlpha || c == '_') && s.toList.all isNameChar &&
-      !(s.endsWith ".lean") && !(s.endsWith ".md")
+      !([".lean", ".md", ".toml", ".json"].any fun (e : String) => s.endsWith e)
 
-/-- Texts between backquotes that are not Lean names: variables, keywords and
-the protocol's names. -/
+/-- Texts between backquotes that are not Lean names: variables, keywords,
+the protocol's names and the build's own library name. -/
 def skipped : List String :=
   ["a", "b", "c", "g", "h", "h'", "k", "m", "n", "o", "p", "s", "s'", "s1", "s2",
    "t", "x", "L", "ask", "who", "approvals", "assign", "key", "Prop",
    "sorry", "axiom", "native_decide", "opaque", "implemented_by",
-   "controller_asserted_person", "nearest_human", "rotate_team_key"]
+   "controller_asserted_person", "nearest_human", "rotate_team_key", "DocCheck"]
 
 /-- Where an unqualified name is looked up. -/
 def namespaces : List Name :=
