@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-root-tidy (readers pinned to history; candidate-gate/ placement).
+* **Creation**: lesson [a path move's in-repo check asks which revision each reader reads](/aweb-expert/lessons/a-path-move-check-asks-which-revision-each-reader-reads.md).
+* **Creation**: decision [candidate-gate/ stays at the repository root](/aweb-expert/decisions/candidate-gate-stays-at-the-repository-root.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
