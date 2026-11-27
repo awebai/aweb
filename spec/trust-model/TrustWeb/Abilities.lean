@@ -417,7 +417,7 @@ theorem takeover_leaves_outsiders_acting (ask : AskRule) :
       held := s5.held.filter (fun k => decide (k ≠ .root 0)) } 0 (.named 7) 9 :=
     ⟨by simp [HasTeamCert, s5, s4, m], .inr ⟨1, .agent, v'⟩⟩
   refine ⟨s5, _, g, r5, hstep, by simp [s5, s4, s3, s2, s1, e], ?_, hin, rfl,
-    ⟨by simp [s5, s4, s3, s2, s1, e, g, c9], hin⟩⟩
+    ⟨by simp [s5], hin⟩⟩
   intro k kind hv
   obtain ⟨c, hc, _, _, hco⟩ := hv.cert
   simp [s5, s4, s3] at hc
