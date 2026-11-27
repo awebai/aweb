@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `aw mail send` accepts `--new-conversation` again, as a hidden flag that
+  changes nothing: a send to a recipient already starts a new thread. Released
+  OATS aweb providers v1.25.0 to v1.42.1 send it in their delivery probe, which
+  failed with an unknown flag since aw 1.36.53. Combining it with
+  `--conversation-id` is refused, as it was before.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under

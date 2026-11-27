@@ -46,6 +46,11 @@ var (
 	mailSendE2EE            bool
 	mailSendLegacyPlaintext bool
 	mailSendPlaintext       bool
+	// mailSendNewConversation is the hidden --new-conversation flag. A send to
+	// a recipient always starts a new thread, so it changes nothing; it is
+	// accepted because released OATS aweb providers v1.25.0 to v1.42.1 send it
+	// in their delivery probe (aweb-adzr).
+	mailSendNewConversation bool
 )
 
 func applyMailRecipientTarget(req *awid.SendMessageRequest, kind, value string) {
@@ -136,6 +141,9 @@ var mailSendCmd = &cobra.Command{
 	Args: func(cmd *cobra.Command, args []string) error {
 		recipient := strings.TrimSpace(mailSendTo+mailSendToDID+mailSendToAddress) != ""
 		if strings.TrimSpace(mailSendConversationID) != "" {
+			if mailSendNewConversation {
+				return usageError("--new-conversation and --conversation-id cannot be combined")
+			}
 			if recipient {
 				return usageError("--conversation-id cannot be combined with recipient flags")
 			}
@@ -1037,6 +1045,8 @@ func init() {
 	mailSendCmd.Flags().BoolVar(&mailSendE2EE, "e2ee", false, "Send E2E encrypted mail; fails closed if encryption keys are missing")
 	mailSendCmd.Flags().BoolVar(&mailSendLegacyPlaintext, "legacy-plaintext", false, "Deprecated alias for --plaintext")
 	_ = mailSendCmd.Flags().MarkHidden("legacy-plaintext")
+	mailSendCmd.Flags().BoolVar(&mailSendNewConversation, "new-conversation", false, "Accepted for released OATS providers; a send to a recipient always starts a new thread")
+	_ = mailSendCmd.Flags().MarkHidden("new-conversation")
 
 	mailInboxCmd.Flags().BoolVar(&mailInboxCountOnly, "count-only", false, "Count all unread mail without acknowledging or displaying messages")
 	mailInboxCmd.Flags().BoolVar(&mailInboxShowAll, "show-all", false, "Show all messages including already-read")

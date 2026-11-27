@@ -38,6 +38,7 @@ func TestAwMailSendToStartsANewThread(t *testing.T) {
 		name, flag, target                             string
 		mismatch, conflict, transport, noSubject, cont bool
 		subjectOnCont, text                            bool
+		releasedNewConversationFlag                    bool
 		status                                         int
 	}{
 		{name: "alias", flag: "--to", target: "alice"},
@@ -55,6 +56,8 @@ func TestAwMailSendToStartsANewThread(t *testing.T) {
 		{name: "continuation", flag: "--conversation-id", target: old, cont: true},
 		{name: "continuation_with_subject", flag: "--conversation-id", target: old, cont: true, subjectOnCont: true},
 		{name: "alias_text", flag: "--to", target: "alice", text: true},
+		// Released OATS providers v1.25-v1.42 probe delivery with this argv.
+		{name: "released_provider_new_conversation", flag: "--to", target: "alice", releasedNewConversationFlag: true},
 		{name: "continuation_text", flag: "--conversation-id", target: old, cont: true, text: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,7 +120,11 @@ func TestAwMailSendToStartsANewThread(t *testing.T) {
 			}))
 			home := t.TempDir()
 			writeSelectionFixtureForTest(t, home, testSelectionFixture{AwebURL: server.URL, TeamID: "devteam:test.local", Alias: "gsk", WorkspaceID: "workspace-1", DID: self, Address: "test.local/gsk", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: priv, CreatedAt: "2026-05-02T00:00:00Z"})
-			args := []string{"mail", "send", tc.flag, tc.target, "--body", "nonce"}
+			args := []string{"mail", "send"}
+			if tc.releasedNewConversationFlag {
+				args = append(args, "--new-conversation")
+			}
+			args = append(args, tc.flag, tc.target, "--body", "nonce")
 			if !tc.text {
 				args = append(args, "--json")
 			}
@@ -238,4 +245,34 @@ func TestAwMailSendToStartsANewThread(t *testing.T) {
 func sentConversationIDForTest(body map[string]any) string {
 	id, _ := body["conversation_id"].(string)
 	return id
+}
+
+func TestAwMailSendRefusesNewConversationWithConversationID(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, bin)
+	_, priv, _ := ed25519.GenerateKey(nil)
+	self := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	var mu sync.Mutex
+	calls := 0
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		http.NotFound(w, r)
+	}))
+	home := t.TempDir()
+	writeSelectionFixtureForTest(t, home, testSelectionFixture{AwebURL: server.URL, TeamID: "devteam:test.local", Alias: "gsk", WorkspaceID: "workspace-1", DID: self, Address: "test.local/gsk", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: priv, CreatedAt: "2026-05-02T00:00:00Z"})
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--new-conversation", "--conversation-id", "11111111-1111-4111-8111-111111111111", "--body", "nonce", "--json")
+	run.Dir = home
+	run.Env = append(testCommandEnv(home), "AWEB_URL="+server.URL, "AWEB_IDENTITY_HOME=", "AW_NO_UPDATE_CHECK=1")
+	var stderr bytes.Buffer
+	run.Stderr = &stderr
+	err := run.Run()
+	mu.Lock()
+	defer mu.Unlock()
+	if exitCode(err) != 2 || calls != 0 || !strings.Contains(stderr.String(), "--new-conversation and --conversation-id cannot be combined") {
+		t.Fatalf("want a usage refusal with no requests: exit=%d calls=%d stderr=%s", exitCode(err), calls, &stderr)
+	}
 }
