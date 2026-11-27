@@ -142,7 +142,8 @@ theorem no_person_from_outside {s : State} {o : Org} {extra : List Cert}
       · exact absurd (ho ▸ ih) ((hextra _ he).2 _ hi)
       · exact .byPerson hm ho hk hi hs ih
 
-/-- **Agents cannot give a person's approval.** If no approver is a valid
+/-- **Approvals with no valid person do not satisfy a rule asking for any
+person.** If no approver is a valid
 person of `o`, the approvals do not satisfy a rule asking for any person. -/
 theorem agents_cannot_approve_as_person {s : State} {o : Org} {approvals : List Key}
     (h : ∀ k, k ∈ approvals → ¬ Valid s o k .person) :
@@ -278,7 +279,7 @@ theorem agent_needs_valid_parent {s : State} (h1 : OneCertEach s) {c : Cert} {p 
       cases hdi
       exact hparent _ _ hpv
 
-/-- **Revoking a member ends the agents it issued.** If every identity has
+/-- **While a member is revoked, the agents it issued are not valid.** If every identity has
 one certificate and the member that issued an agent certificate is revoked,
 the certificate's subject is not valid in any organisation. -/
 theorem revoking_parent_ends_agent {s : State} (h1 : OneCertEach s) {c : Cert} {p : Key}
@@ -286,7 +287,8 @@ theorem revoking_parent_ends_agent {s : State} (h1 : OneCertEach s) {c : Cert} {
     (hr : p ∈ s.revoked) (o : Org) (kind : Kind) : ¬ Valid s o c.subject kind :=
   agent_needs_valid_parent h1 hc hkind hiss (fun _ _ => revoked_not_valid hr) o kind
 
-/-- **A person outlasts whoever invited them.** If `k` is a valid person of
+/-- **A person stays valid when another identity, its issuer included, is
+revoked.** If `k` is a valid person of
 `o`, adding any other identity to the revoked leaves `k` a valid person of
 `o`. This is about the record, not about an act. -/
 theorem person_survives_others {s : State} {o : Org} {k j : Key}
@@ -313,7 +315,7 @@ theorem orphaned_agent_cannot_act_in_team {s : State} (h1 : OneCertEach s) {c : 
   · exact revoking_parent_ends_agent h1 hc hkind hiss hr o' kind hv
 
 /-- **When the admin team's key is not with a key holder, whoever controls it
-can end any admin.** For any identity `b`, there is an accepted act that
+can make any identity not an admin in one act.** For any identity `b`, there is an accepted act that
 whoever controls the key asks for, after which `b` is not an admin. -/
 theorem controller_can_remove_admin {ask : AskRule} {s : State} {o : Org}
     (hfree : OrgKey.team o .admin ∉ s.held) (b : Key) :
@@ -323,7 +325,8 @@ theorem controller_can_remove_admin {ask : AskRule} {s : State} {o : Org}
   intro ⟨hm, _⟩
   exact not_mem_filter_ne hm
 
-/-- **Design. Through a key holder, an admin can end any other admin.** If the
+/-- **Design. Through a key holder, an admin can make any other identity not an
+admin in one act.** If the
 admin team's key is with a key holder, `a` is an admin, the approvals satisfy
 the policy for a removal, and `b` is not `a`, there is an accepted act under
 the admin rule that `a` asks for, after which `b` is not an admin. Where the
@@ -338,8 +341,8 @@ theorem admin_can_remove_admin {s : State} {o : Org}
   intro ⟨hm, _⟩
   exact not_mem_filter_ne hm
 
-/-- **When the root key is not with a key holder, whoever controls it can end
-any admin.** If `b` is an admin, there is an accepted act that whoever controls
+/-- **When the root key is not with a key holder, whoever controls it can make
+any admin not an admin in one act.** If `b` is an admin, there is an accepted act that whoever controls
 the root key asks for, after which `b` is not an admin. -/
 theorem root_can_end_admin {ask : AskRule} {s : State} {o : Org}
     (hfree : OrgKey.root o ∉ s.held) {b : Key} (hb : Admin s o b) :
@@ -357,7 +360,7 @@ admin team's key is with a key holder, another admin remains afterwards.** If
 the key is with a key holder, and `b` holds an admin-team certificate before an
 accepted act and not after, some identity other than `b` is an admin after it.
 This is about a team certificate going. A revocation can still leave the
-organisation with no admin. -/
+organisation with no admin (`revocation_can_leave_no_admin`). -/
 theorem key_holder_keeps_an_admin {ask : AskRule} {s s' : State} {who : Party} {o : Org}
     {b : Key} (hstep : Step ask s who s') (hheld : OrgKey.team o .admin ∈ s.held)
     (hb : HasTeamCert s o .admin b) (hgone : ¬ HasTeamCert s' o .admin b) :
@@ -726,8 +729,10 @@ theorem new_grant_by_subject {ask : AskRule} {s s' : State} {who : Party} {g : G
       · rfl
       · exact absurd h hold
 
-/-- **A grant ends with its subject.** If only registered identities are
-revoked (true in every reachable record), and the grant's subject is revoked
+/-- **A grant is not live while its subject is revoked or lacks the team
+certificate.** The revoking acts leave the grants as they are. If only
+registered identities are revoked (true in every reachable record), and the
+grant's subject is revoked
 or lacks the team certificate the grant came from, the grant is not live. -/
 theorem grant_ends_with_subject {s : State} (hrr : RevokedAreRegistered s) {g : Grant}
     (h : g.subject ∈ s.revoked ∨ ¬ HasTeamCert s g.org g.team g.subject) : ¬ GrantLive s g := by
@@ -925,7 +930,7 @@ theorem controller_stays_in_its_organisation {ask : AskRule} {s s' : State} {key
 
 /-! ## DNS, and leaving a key holder -/
 
-/-- **Whoever controls the domain can always take the organisation back.** If
+/-- **Whoever controls the domain can always take the root key back.** If
 `o` exists, there is an accepted act that `o`'s domain owner asks for, after
 which `o`'s root key is not with a key holder and no identity is valid in `o`. -/
 theorem dns_owner_can_always_take_over {ask : AskRule} {s : State} {o : Org} (ho : o ∈ s.orgs) :
@@ -942,8 +947,8 @@ theorem dns_owner_can_always_take_over {ask : AskRule} {s : State} {o : Org} (ho
     · refine List.mem_append_left _ (List.mem_map.mpr ⟨c, List.mem_filter.mpr ⟨hc, ?_⟩, hcs⟩)
       simp [hco, hcs, hr]
 
-/-- **The organisation can admit again an identity a root replacement cut
-off.** If `c` is a registered certificate issued by the root, its subject is
+/-- **While the root key is not with a key holder, whoever controls it can
+admit again a root-issued identity a root replacement cut off.** If `c` is a registered certificate issued by the root, its subject is
 cut off, and the root key is not with a key holder, there is an accepted act
 that whoever controls the root key asks for, after which `c`'s subject is
 valid in `c`'s organisation with `c`'s kind. -/
@@ -1048,7 +1053,7 @@ theorem dns_takes_out_only_the_root {ask : AskRule} {s s' : State} {o : Org}
         · refine List.mem_append_left _ (List.mem_map.mpr ⟨c, List.mem_filter.mpr ⟨hc, ?_⟩, hcs⟩)
           simp [hco, hcs, hr]
 
-/-- **Design. An organisation can take a key back.** If the key is with a key
+/-- **Design. An admin can have a held key given back.** If the key is with a key
 holder, `a` is an admin of its organisation, and the approvals satisfy the
 policy for giving a key back, there is an accepted act under the admin rule
 that `a` asks for, after which the key is not with a key holder and the

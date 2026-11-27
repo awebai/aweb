@@ -23,8 +23,8 @@ def teamRule (assign : Assignment) : AskRule :=
 /-- **The admin rule is the team rule with everything assigned to the admin team.** -/
 theorem adminRule_is_teamRule : adminRule = teamRule (fun _ _ => .admin) := rfl
 
-/-- **Whatever the assignment, a key is given back when a member of the
-assigned team asks.** If the key is with a key holder, `a` holds a certificate
+/-- **Whatever the assignment, a valid member of the assigned team can have a
+held key given back, with approvals the policy approves.** If the key is with a key holder, `a` holds a certificate
 of the team that giving a key back is assigned to and is valid in the key's
 organisation, and the approvals satisfy the policy for giving a key back,
 there is an accepted act under the team rule that `a` asks for, after which
@@ -42,8 +42,8 @@ theorem assigned_team_can_take_key_back {assign : Assignment} {s : State} {key :
   have := (List.mem_filter.mp hmem).2
   simp at this
 
-/-- **Whatever the assignment, in one act, a member of another team cannot
-take a key back.** If a key is with a key holder before an accepted act under
+/-- **Whatever the assignment, in one act, only the domain's owner or a valid
+member of the assigned team takes a key out of a key holder.** If a key is with a key holder before an accepted act under
 the team rule and not after, the asker is the domain owner of the key's
 organisation, or an identity that holds a certificate of the assigned team
 and is valid in that organisation. -/
@@ -58,7 +58,7 @@ theorem only_assigned_team_takes_key_back {assign : Assignment} {s s' : State} {
   · exact .inr ⟨k, hw, hask.1, hask.2⟩
 
 /-- **A warning the model gives, shown by one example.** The admin team is
-protected: no ordinary admission and no invitation leads into it. Any other
+protected: `admit`, `invite` and `redeem` exclude it. Any other
 team is not: in the example below, an invitation to a named team that an
 operation is assigned to lets a valid member of the organisation gain the
 operation. That this holds for every assignment and team is not proved.

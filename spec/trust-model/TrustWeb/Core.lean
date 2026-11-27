@@ -113,7 +113,8 @@ theorem core_one (ask : AskRule) :
   ⟨fun hr _ _ _ ha hp => one_kind hr.toReachable.oneCertEach ha hp,
    fun hstep hnew hold => new_person_is_vouched_for hstep.toStep hnew hold⟩
 
-/-- **2. Removing an admin needs nobody's cooperation.** In the core: when the
+/-- **2. Where its key is not with a key holder, whoever controls it ends an
+admin in one act.** In the core: when the
 admin team's key is not with a key holder, whoever controls it can end any
 admin by one act; when the root key is not with a key holder, whoever
 controls it can end any admin by one act. -/

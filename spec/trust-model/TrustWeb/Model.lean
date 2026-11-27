@@ -468,7 +468,7 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
       Step ask s (.bearer i.token)
         { s with members := ⟨i.org, i.team, k⟩ :: s.members,
                  invites := s.invites.filter (fun x => decide (x ≠ i)) }
-  /-- A team member gives a grant on itself to a fresh session key. -/
+  /-- A team member gives a grant on itself to a session key no current grant uses. -/
   | mintGrant {s : State} {g : Grant} :
       InTeam s g.org g.team g.subject → (∀ g', g' ∈ s.grants → g'.session ≠ g.session) →
       Step ask s (.id g.subject) { s with grants := g :: s.grants }
