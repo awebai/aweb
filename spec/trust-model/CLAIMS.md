@@ -44,8 +44,8 @@ One line for every sentence that says something about the model, apart from a th
 | One certificate each holds in every reachable record | result | Row 14 |
 | A row with no rule named holds for every `AskRule` | process | Such theorems quantify over `ask` |
 | As built is `builtRule`, Design is `adminRule`, a team rule is `teamRule`; a Design row claims nothing about `builtRule` | process | Reading convention |
-| Four parts are planned, not built | source | The source readings: the built key holder has no command to take a key in or give one back; the registry has no last-admin check and does not know the admin team; the built leave command leaves the certificate standing |
-| They are present under every rule, `builtRule` included; under `builtRule` `release` is never accepted | definition | `entrust`, `release`, `leave` are constructors of `Step`; `KeepsAnAdmin` and `i.team ≠ .admin` are premises of its constructors; `Step` takes any `ask`; `release` needs `key ∈ s.held`, so `Authorised`'s held branch, and `builtRule` never allows `.release` |
+| Four parts are planned, not built | source | The source readings: the built key holder has no command to take a key in or give one back; the registry has no last-admin check and does not know the admin team; the built leave command leaves the certificate standing; the registry's certificate route registers a certificate for any team with the same checks, so nothing in it excludes the admin team (`awid/src/awid_service/routes/teams.py`, `register_certificate`, lines 1219 to 1246, at 5c2ee7bad3) |
+| They are present under every rule, `builtRule` included; under `builtRule` `release` is never accepted | definition | `entrust`, `release`, `leave` are constructors of `Step`; `KeepsAnAdmin`, `m.team ≠ .admin` and `i.team ≠ .admin` are premises of its constructors; `Step` takes any `ask`; `release` needs `key ∈ s.held`, so `Authorised`'s held branch, and `builtRule` never allows `.release` |
 
 ### Evidence of how a person was enrolled
 
@@ -95,7 +95,8 @@ One line for every sentence that says something about the model, apart from a th
 | 28 | The model does not show the holder no longer has the former private key | definition | `held` records only which keys are held, not copies |
 | 28 | Nor does the protocol | source | the source readings |
 | 35, 48, 49 | A warning | process | A label |
-| 6, 21 | Resting on the planned premise that `redeem`'s team is not the admin team | definition, source | `redeem`'s premise `i.team ≠ .admin`, one of the planned parts |
+| 6 | Resting on the planned premises that `admit`'s and `redeem`'s team is not the admin team | definition, source | `admit`'s premise `m.team ≠ .admin` and `redeem`'s premise `i.team ≠ .admin`, planned parts |
+| 21 | Resting on the planned premise that `redeem`'s team is not the admin team | definition, source | `redeem`'s premise `i.team ≠ .admin`, a planned part |
 | 38 | A valid person answering for itself (`nearest_human`) says nothing about an email check | result, source | `AnswersFor.self` needs only `Valid`; row 38; the verdict's name is the protocol's (`docs/id-certificates.md`) |
 | 40 | The rest of 38's three cases follows from 38 | result | Row 38 applies to any valid person |
 | 41 | In every record such a key exists | result | `exists_fresh_key` |
@@ -137,7 +138,7 @@ One block per cell, in the table's order.
 | | That the subject gave the grant is proved for the act that adds it, not for every grant | result | Row 19; no theorem about every grant |
 | A grant holder does more than send | Proved for one act | result | Rows 17, 19 |
 | An invitation's holder becomes a person or an admin | Proved for one act, under every rule | result | Rows 21, 6 quantify over every `AskRule` |
-| | Resting on the planned premise that `redeem`'s team is not the admin team | definition, source | `redeem`'s premise `i.team ≠ .admin`, one of the planned parts |
+| | Resting on the planned premises that `admit`'s and `redeem`'s team is not the admin team | definition, source | Rows 6 and 21; `admit`'s and `redeem`'s premises, planned parts |
 | | Not proved for several acts under the built or the admin rule | process | No theorem states it |
 | | Under such a team rule, the identity an invitation's holder names can become an admin in three acts | result | Row 49 |
 | | And in two if it is already a valid member | result | Row 48 |
@@ -263,7 +264,7 @@ Each item pairs a sentence about the model with one about the real system.
 | `Assignment`, `teamRule` | Their bodies, read literally | definition | Bodies |
 | `invitation_reaches_an_assigned_team` | `admit`, `invite`, `redeem` exclude the admin team; no premise excludes an assigned team | act | Their premises |
 | `invitation_reaches_an_assigned_team` | Not proved for every assignment and team | result | The statement is one example |
-| `invitation_reaches_an_assigned_team`, `invitation_then_own_request_makes_an_admin` | Construction notes | construction | The proofs |
+| `invitation_reaches_an_assigned_team`, `invitation_then_own_request_makes_an_admin`, `outsider_becomes_admin_in_three_acts` | Construction notes | construction | The proofs |
 
 ## TrustWeb/Core.lean
 
