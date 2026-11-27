@@ -1,8 +1,8 @@
 /-!
 # The trust web: the model
 
-What exists, what is currently true, and the acts that change it. The proofs
-are in `Properties.lean`.
+What exists, what is currently true, and the acts that change it. The
+results are proved in the other files.
 
 Sources, all in this repository: `docs/id-certificates.md` (sections 1 to 3
 and 6), `docs/teams.md`, `docs/human-approval-architecture.md`,
@@ -81,9 +81,11 @@ inductive Team where
   | named (n : Nat)
   deriving DecidableEq, Repr
 
-/-- An organisation's keys: its root key, and one key per team. The root key
-signs identity certificates and revocations. A team's key signs that team's
-certificates. -/
+/-- An organisation's keys: its root key, and one key per team. The acts
+that go through `Authorised` name the root key for registering, re-admitting
+and revoking under the organisation, a team's key for admitting to, removing
+from and inviting to that team, and either key for having it given back.
+`leave` and `redeem` change a team's certificates without `Authorised`. -/
 inductive OrgKey where
   | root (o : Org)
   | team (o : Org) (t : Team)
@@ -147,8 +149,10 @@ structure Rule where
   approver : Approver
   deriving DecidableEq, Repr
 
-/-- A grant: `subject` lets whoever holds the fresh key `session` act as it,
-on the server of team `team` of `org`. -/
+/-- A grant: `subject` lets whoever holds the key `session` send messages
+attributed to it, if `maySend` (`sendGrant`), on the server of team `team` of
+`org`. When the grant is given, no current grant uses `session`
+(`mintGrant`). -/
 structure Grant where
   session : Key
   subject : Key
@@ -175,11 +179,14 @@ structure State where
   orgs : List Org
   /-- The registered identity certificates. -/
   certs : List Cert
-  /-- The identities that are not current: revoked, or cut off by a root replacement. -/
+  /-- The identities that are not current. `replaceRoot` adds the identities it
+  cuts off both here and to `cutOff`; in every reachable record every cut-off
+  identity is here (`Reachable.cutOffAreRevoked`). -/
   revoked : List Key
   /-- Identities cut off by a root replacement: `replaceRoot` adds them, and a
-  re-admission or a revocation of one takes it out. One in it can be admitted
-  again (`readmitByRoot`, `readmitByParent`). -/
+  re-admission or a revocation of one takes it out. The re-admission acts
+  (`readmitByRoot`, `readmitByParent`) take an identity in it, under their
+  other premises. -/
   cutOff : List Key
   /-- The team certificates that stand. -/
   members : List Membership
@@ -254,9 +261,10 @@ def HasTeamCert (s : State) (o : Org) (t : Team) (k : Key) : Prop :=
   ⟨o, t, k⟩ ∈ s.members
 
 /-- `CanAct s k`: `k` is not a registered identity, or it is one and is valid
-now in some organisation (with one certificate each, its own). Where only
-registered identities are revoked, as in every reachable record, a revoked or
-cut-off identity cannot act (`revoked_cannot_act`). -/
+now in some organisation (with one certificate each, its own). In every
+reachable record a revoked identity cannot act (`revoked_cannot_act` with
+`Reachable.revokedAreRegistered`), and so neither can a cut-off one
+(`Reachable.cutOffAreRevoked`). -/
 def CanAct (s : State) (k : Key) : Prop :=
   ¬ Registered s k ∨ ∃ o' kind, Valid s o' k kind
 
@@ -453,7 +461,8 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
       Step ask s who { s with invites := i :: s.invites }
   /-- Whoever holds an invitation's secret joins its team as `k`, a key the
   joiner holds (A3). Also checked: the team is not an admin team, and an
-  unregistered `k` is in no other team. Who holds the secret is not checked. -/
+  unregistered `k` holds no team certificate (`OneTeamIfLocal`). Who holds the
+  secret is not checked. -/
   | redeem {s : State} {i : Invite} {k : Key} :
       i ∈ s.invites → i.team ≠ .admin → OneTeamIfLocal s k →
       Step ask s (.bearer i.token)

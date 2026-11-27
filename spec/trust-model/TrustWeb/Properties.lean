@@ -352,7 +352,7 @@ theorem root_can_end_admin {ask : AskRule} {s : State} {o : Org}
   intro ⟨_, _, hv'⟩
   exact revoked_not_valid (List.mem_cons_self) hv'
 
-/-- **Design check, in one act. If an admin-team certificate goes while the
+/-- **A planned check, under every rule, in one act. If an admin-team certificate goes while the
 admin team's key is with a key holder, another admin remains afterwards.** If
 the key is with a key holder, and `b` holds an admin-team certificate before an
 accepted act and not after, some identity other than `b` is an admin after it.
@@ -1245,5 +1245,46 @@ theorem Reachable.localInOneTeam {ask : AskRule} {s : State} (hr : Reachable ask
   induction hr with
   | start _ => intro m hm; cases hm
   | step _ hstep ih => exact hstep.localInOneTeam ih
+
+/-- **In every reachable record, every cut-off identity is revoked.** -/
+theorem Reachable.cutOffAreRevoked {ask : AskRule} {s : State} (hr : Reachable ask s) :
+    ∀ k, k ∈ s.cutOff → k ∈ s.revoked := by
+  induction hr with
+  | start _ => intro k hk; cases hk
+  | step _ hstep ih =>
+      rename_i t t' _ _
+      have flt : ∀ j k, k ∈ t.cutOff.filter (fun x => decide (x ≠ j)) →
+          k ∈ t.revoked.filter (fun x => decide (x ≠ j)) := by
+        intro j k hk
+        have h := List.mem_filter.mp hk
+        exact List.mem_filter.mpr ⟨ih k h.1, h.2⟩
+      have rev : ∀ j k, k ∈ t.cutOff.filter (fun x => decide (x ≠ j)) → k ∈ j :: t.revoked :=
+        fun j k hk => List.mem_cons_of_mem _ (ih k (List.mem_filter.mp hk).1)
+      cases hstep with
+      | readmitByRoot _ _ _ _ => exact flt _
+      | readmitByParent _ _ _ _ => exact flt _
+      | revokeSelf _ => exact rev _
+      | revokeChild _ _ _ => exact rev _
+      | revokeByOrg _ _ => exact rev _
+      | replaceRoot _ =>
+          intro k hk
+          rcases List.mem_append.mp hk with h | h
+          · exact List.mem_append_left _ h
+          · exact List.mem_append_right _ (ih k h)
+      | createOrg _ => exact ih
+      | entrust _ => exact ih
+      | registerByRoot _ _ _ _ => exact ih
+      | registerByParent _ _ _ _ => exact ih
+      | admit _ _ _ => exact ih
+      | admitAdmin _ _ _ => exact ih
+      | remove _ _ => exact ih
+      | leave _ _ _ => exact ih
+      | invite _ _ _ => exact ih
+      | redeem _ _ _ => exact ih
+      | mintGrant _ _ => exact ih
+      | revokeGrant _ => exact ih
+      | release _ _ => exact ih
+      | sendOwn _ => exact ih
+      | sendGrant _ _ => exact ih
 
 end TrustWeb
