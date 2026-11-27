@@ -75,6 +75,21 @@ def test_the_committed_corpus_conforms_to_the_format():
     assert all(case.source == "seed" for case in cases)
 
 
+def test_a_version_1_document_keeps_its_meaning():
+    corpus = _valid()
+    corpus["format"] = "aweb.trust-web-cases/1"
+    for case in corpus["cases"]:
+        case.pop("propagation", None)
+    assert {case.propagation for case in load_corpus(corpus)} == {"immediate"}
+
+
+def test_version_1_has_no_propagation_field():
+    corpus = _valid()
+    corpus["format"] = "aweb.trust-web-cases/1"
+    with pytest.raises(CaseFormatError, match="fields"):
+        load_corpus(corpus)
+
+
 def _present_cases(corpus: dict) -> set[str]:
     return {case.id for case in load_corpus(corpus)}
 
@@ -188,6 +203,9 @@ def _mutations():
     def observation_of_wrong_type(c):
         _case(c, "revoke-self")["observe"][0]["is"] = "yes"
 
+    def unknown_propagation(c):
+        _case(c, "remove-member-ends-its-grant")["propagation"] = "later"
+
     def neighbour_not_a_symbol(c):
         _case(c, "register-person-by-agent-parent-refused")["neighbour"] = 7
 
@@ -222,6 +240,7 @@ def _mutations():
         "root-act-with-member-issuer": (root_act_with_member_issuer, "root"),
         "observation-of-wrong-type": (observation_of_wrong_type, "boolean"),
         "neighbour-not-a-symbol": (neighbour_not_a_symbol, "symbol"),
+        "unknown-propagation": (unknown_propagation, "propagation"),
     }
 
 
@@ -352,3 +371,20 @@ async def test_the_comparator_fails_on_a_deliberately_wrong_expectation(stack_fa
         f"{json.dumps(wrong_kind.expected, sort_keys=True)}, read "
         f"{json.dumps(cert.expected, sort_keys=True)}"
     ]
+
+
+@pytest.mark.asyncio
+async def test_without_propagation_a_removed_members_grant_stays_usable(stack_factory):
+    """The cached lane is unchanged: with no invalidation, the server keeps
+    honouring the grant inside its documented revocation window
+    (docs/aweb-sot.md:448-466), and no revocations read happened on the
+    observation's request. Only the after-propagation step closes it."""
+    case = dataclasses.replace(
+        CASES["remove-member-ends-its-grant"], propagation="immediate"
+    )
+    async with stack_factory() as stack:
+        run = await run_case(stack, case)
+    assert run.refusal is None
+    [live] = [o for o in case.observe if o.predicate == "grantLive"]
+    assert (run.before[live.label()], run.after[live.label()]) == (True, True)
+    assert run.revocation_reads[live.label()] == 0

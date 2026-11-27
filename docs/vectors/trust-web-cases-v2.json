@@ -1,5 +1,5 @@
 {
-  "format": "aweb.trust-web-cases/1",
+  "format": "aweb.trust-web-cases/2",
   "status": "experimental",
   "description": "Cases of the experimental trust-web model (spec/trust-model) run against the real AWID registry and aweb server by server/tests/test_trust_web_cases.py. Seed cases are hand-written to qualify the runner; they reference the model's definitions at the named commit and make no claim that an emitter ran.",
   "model": {
@@ -1187,6 +1187,7 @@
         "result": "refused",
         "premise": "mintGrant.InTeam"
       },
+      "propagation": "immediate",
       "neighbour": "mint-grant",
       "observe": [
         {
@@ -1357,6 +1358,7 @@
       "expect": {
         "result": "allowed"
       },
+      "propagation": "after",
       "observe": [
         {
           "hasTeamCert": {

@@ -53,6 +53,7 @@ from nacl.signing import SigningKey
 import pytest_asyncio
 from redis.asyncio import Redis
 
+from aweb.application_state import application_registry_client
 from aweb.testing import running_server
 from test_messages_http import (
     _encode_certificate,
@@ -61,10 +62,17 @@ from test_messages_http import (
 )
 
 CORPUS_PATH = (
-    Path(__file__).resolve().parents[2] / "docs/vectors/trust-web-cases-v1.json"
+    Path(__file__).resolve().parents[2] / "docs/vectors/trust-web-cases-v2.json"
 )
 CORPUS = json.loads(CORPUS_PATH.read_text())
-FORMAT = "aweb.trust-web-cases/1"
+FORMAT_V1 = "aweb.trust-web-cases/1"
+# /2 is /1 plus one optional case field, "propagation".
+FORMAT_V2 = "aweb.trust-web-cases/2"
+FORMATS = (FORMAT_V1, FORMAT_V2)
+# "immediate": the code must decide at once, with no cache invalidated.
+# "after": the code must agree once each accepted team-certificate revocation
+# has propagated to the server's cached revocation list.
+PROPAGATIONS = ("immediate", "after")
 
 # ---------------------------------------------------------------------------
 # The format
@@ -297,6 +305,7 @@ class Case:
     premise: str | None
     neighbour: str | None
     observe: tuple[Observation, ...]
+    propagation: str = "immediate"
 
     @property
     def runnable(self) -> bool:
@@ -341,11 +350,19 @@ def _observation(value: Any, where: str) -> Observation:
     return Observation(predicate, value[predicate], value["is"])
 
 
-def _case(value: Any) -> Case:
+def _case(value: Any, format: str) -> Case:
     where = f"case {value.get('id')!r}" if type(value) is dict else "case"
     expect = value.get("expect") if type(value) is dict else None
     refused = type(expect) is dict and expect.get("result") == "refused"
-    _fields(value, REFUSAL_FIELDS if refused else CASE_FIELDS, where)
+    expected = REFUSAL_FIELDS if refused else CASE_FIELDS
+    if format == FORMAT_V2 and type(value) is dict and "propagation" in value:
+        expected = expected | {"propagation"}
+    _fields(value, expected, where)
+    propagation = value.get("propagation", "immediate")
+    if propagation not in PROPAGATIONS:
+        _refuse(
+            where, f"propagation {propagation!r} is not one of {list(PROPAGATIONS)}"
+        )
     _symbol(value["id"], f"{where} id")
     if value["source"] not in {"seed", "emitted"}:
         _refuse(where, f"source {value['source']!r} is unknown")
@@ -395,6 +412,7 @@ def _case(value: Any) -> Case:
         premise=premise,
         neighbour=value.get("neighbour"),
         observe=observe,
+        propagation=propagation,
     )
 
 
@@ -419,9 +437,9 @@ def _model(value: Any, emitted: bool) -> None:
 
 
 def load_corpus(corpus: Any) -> list[Case]:
-    """Every case of an aweb.trust-web-cases/1 document, or CaseFormatError."""
-    if type(corpus) is not dict or corpus.get("format") != FORMAT:
-        raise CaseFormatError(f"format is not {FORMAT}")
+    """Every case of an aweb.trust-web-cases/1 or /2 document, or CaseFormatError."""
+    if type(corpus) is not dict or corpus.get("format") not in FORMATS:
+        raise CaseFormatError(f"format is not one of {list(FORMATS)}")
     _fields(corpus, TOP_FIELDS, "document")
     if corpus["status"] != "experimental":
         raise CaseFormatError("document status must be experimental")
@@ -429,7 +447,7 @@ def load_corpus(corpus: Any) -> list[Case]:
         raise CaseFormatError("document description must be a string")
     if type(corpus["cases"]) is not list:
         raise CaseFormatError("cases must be a list")
-    cases = [_case(value) for value in corpus["cases"]]
+    cases = [_case(value, corpus["format"]) for value in corpus["cases"]]
     _model(corpus["model"], emitted=any(case.source == "emitted" for case in cases))
     by_id: dict[str, Case] = {}
     for case in cases:
@@ -556,6 +574,9 @@ class Run:
     refusal: Refusal | None
     before: dict[str, Any]
     after: dict[str, Any]
+    # For each observation read through the server after the act: how many
+    # reads of its team's revocation list that observation's own request made.
+    revocation_reads: dict[str, int] = field(default_factory=dict)
 
 
 def _now() -> str:
@@ -617,6 +638,11 @@ class World:
     did_aws: dict[str, tuple[str, str]] = field(default_factory=dict)
     memberships: dict[tuple[str, str], _Membership] = field(default_factory=dict)
     sessions: dict[str, dict] = field(default_factory=dict)
+    # Teams whose accepted revocation was propagated by invalidating the
+    # server's cached list, and whose re-read no observation has shown yet.
+    awaiting_reread: set[str] = field(default_factory=set)
+    propagate: bool = False
+    last_revocation_reads: int = 0
     session_keys: dict[str, SigningKey] = field(default_factory=dict)
     grants: dict[str, _Grant] = field(default_factory=dict)
 
@@ -881,6 +907,46 @@ class World:
             team_controller_signing_key=bytes(self.party_key(step.who)),
             certificate_id=membership.certificate_id,
         )
+        if self.propagate:
+            await self._propagate(membership.team_id)
+
+    async def _propagate(self, team_id: str) -> None:
+        """Arrange the state after the accepted revocation has propagated:
+        drop the server's cached revocation reads for the team, through its
+        registry client's public invalidation (awid/src/awid/registry.py,
+        RegistryClient.invalidate_team_certificate_cache). It also drops the
+        team's cached key and certificate generations. This is a fixture
+        step: the server's next read of the team must go to AWID, which the
+        observation that follows has to show."""
+        name, domain = team_id.split(":", 1)
+        client = application_registry_client(self.stack.server.app.state)
+        await client.invalidate_team_certificate_cache(domain, name)
+        self.awaiting_reread.add(team_id)
+
+    def _revocation_reads(self, team_id: str, since: int) -> int:
+        name, domain = team_id.split(":", 1)
+        path = f"/v1/namespaces/{domain}/teams/{name}/revocations"
+        return sum(
+            1
+            for request in self.stack.registry.transport.calls[since:]
+            if request.url.path == path
+        )
+
+    async def _through_server(self, team_id: str, read):
+        """Run one server request for an observation of ``team_id`` and count
+        the team's revocation reads it made. After a propagation, the first
+        such observation must show the server read the team from AWID."""
+        since = len(self.stack.registry.transport.calls)
+        value = await read()
+        self.last_revocation_reads = self._revocation_reads(team_id, since)
+        if team_id in self.awaiting_reread:
+            if self.last_revocation_reads == 0:
+                raise Unavailable(
+                    f"after-propagation case unarranged: the observation's request "
+                    f"made no revocations read for {team_id}"
+                )
+            self.awaiting_reread.discard(team_id)
+        return value
 
     async def _server(self, method: str, path: str, headers: dict, body: bytes) -> dict:
         async with self.stack.server.client() as client:
@@ -1039,10 +1105,14 @@ class World:
         team_id = self.team_id(bound["org"], bound["team"])
         if (team_id, bound["subject"]) not in self.memberships:
             raise NotRunnable(f"{bound['subject']} holds no certificate of {team_id}")
-        async with self.stack.server.client() as client:
-            response = await client.get(
-                path, headers=self.team_headers(bound["subject"], team_id, b"")
-            )
+
+        async def read():
+            async with self.stack.server.client() as client:
+                return await client.get(
+                    path, headers=self.team_headers(bound["subject"], team_id, b"")
+                )
+
+        response = await self._through_server(team_id, read)
         if response.status_code != 200:
             raise Unavailable(
                 f"grant {session} as read by {bound['subject']}: "
@@ -1121,8 +1191,12 @@ class World:
             "X-AWEB-Timestamp": timestamp,
             "X-AWEB-Signed-Payload": _b64url(payload),
         }
-        async with self.stack.server.client() as client:
-            response = await client.get(path, headers=headers)
+
+        async def read():
+            async with self.stack.server.client() as client:
+                return await client.get(path, headers=headers)
+
+        response = await self._through_server(grant.team_id, read)
         if response.status_code == 200:
             return True
         detail = response.json().get("detail") if response.status_code == 403 else None
@@ -1160,7 +1234,7 @@ async def run_case(stack: Stack, case: Case) -> Run:
     """Replay ``case``'s setup, read its observations, send its act, read them again."""
     if not case.runnable:
         raise NotRunnable(f"case {case.id} is a design case and is never sent")
-    world = World(stack)
+    world = World(stack, propagate=case.propagation == "after")
     for index, step in enumerate(case.setup):
         await world.ensure_teams(step)
         refusal = await world.perform(step)
@@ -1176,8 +1250,19 @@ async def run_case(stack: Stack, case: Case) -> Run:
         await world.did_aw(cert["subject"], cert["org"])
     before = {o.label(): await world.observe(o) for o in case.observe}
     refusal = await world.perform(case.step)
-    after = {o.label(): await world.observe(o) for o in case.observe}
-    return Run(refusal=refusal, before=before, after=after)
+    after: dict[str, Any] = {}
+    reads: dict[str, int] = {}
+    for observation in case.observe:
+        world.last_revocation_reads = 0
+        after[observation.label()] = await world.observe(observation)
+        if observation.predicate in SERVER_OBSERVATIONS:
+            reads[observation.label()] = world.last_revocation_reads
+    return Run(refusal=refusal, before=before, after=after, revocation_reads=reads)
+
+
+# The observations read through the aweb server, and so through its cached
+# view of team revocations.
+SERVER_OBSERVATIONS = ("grant", "grantLive")
 
 
 # ---------------------------------------------------------------------------

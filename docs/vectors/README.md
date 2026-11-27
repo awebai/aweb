@@ -905,7 +905,7 @@ Both are required.
 
 ## Experimental model cases
 
-### `trust-web-cases-v1.json` — experimental
+### `trust-web-cases-v2.json` — experimental
 
 Cases of the experimental trust-web model in `spec/trust-model` (a Lean 4
 model of selected trust rules). The model's author owns its decisions, the
@@ -915,7 +915,9 @@ compares the code's decision and the evidence it commits with the case. The
 file proves nothing about a rule unless a case pins that rule and the runner
 reads it from committed evidence.
 
-**Format `aweb.trust-web-cases/1`.** The document is `format`, `status`
+**Formats `aweb.trust-web-cases/1` and `/2`.** `/2` is `/1` plus one optional case
+field, `propagation`, described below; a `/1` document keeps its meaning and has
+every case immediate. The document is `format`, `status`
 (always `experimental`), `description`, `model` and `cases`. `model` names the
 model's `path`, the `commit` its definitions were read at, and the `emitter`
 invocation that produced the cases, or `null` when there is none. Each case has
@@ -950,6 +952,18 @@ exactly these fields:
   the same act that differs from the refusal in what makes that premise hold:
   the actor, or one setup fact. Every other premise and wire prerequisite stays
   the same, so the refusal is single-fault.
+- `propagation` (`/2` only, optional): `immediate`, the default, or `after`. The
+  model has no propagation, so its verdict is the same for both. `immediate`
+  claims the code decides at once with no cache invalidated: a fresh read.
+  `after` claims the code agrees once each accepted team-certificate revocation
+  has reached the server's cached revocation list. For an `after` case the
+  runner, right after each accepted `remove`, calls the server registry
+  client's public `invalidate_team_certificate_cache`. That is a fixture step
+  arranging the post-window state; it also drops the team's cached key and
+  certificate generations. The first observation of that team read through the
+  server must show, on its own request, a read of the team's revocations from
+  AWID, or the case fails as unarranged. An `immediate` case that fails while
+  its `after` twin passes is a cache finding, not a model disagreement.
 - `observe`: predicates over the model's record (`cert`, `revoked`, `valid`,
   `canAct`, `hasTeamCert`, `inTeam`, `grant`, `grantLive`), each with the value
   it must have after the act (`is`). The runner reads each predicate before and
@@ -1058,7 +1072,7 @@ reference duplication are mutation-tested failures.
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
-| `trust-web-cases-v1.json` | Python aweb `trust_web_cases.py`, run by `test_trust_web_cases.py` against a real AWID and aweb server |
+| `trust-web-cases-v2.json` | Python aweb `trust_web_cases.py`, run by `test_trust_web_cases.py` against a real AWID and aweb server |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
 | `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
 | `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts`; Go AWID `request_envelope_as_message_test.go` and TypeScript channel-core `request_envelope_as_message.test.ts`, which present each signed request as a message |
