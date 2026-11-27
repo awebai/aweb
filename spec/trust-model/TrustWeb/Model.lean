@@ -133,7 +133,6 @@ structure State where
   /-- The messages sent. -/
   sent : List Message
 
-/-! ## What a verifier concludes -/
 
 /-- A person may issue either kind of member; an agent may issue only agents. -/
 def MayIssue (issuer child : Kind) : Prop :=
@@ -202,7 +201,6 @@ def InTeam (s : State) (o : Org) (t : Team) (k : Key) : Prop :=
 def Admin (s : State) (o : Org) (k : Key) : Prop :=
   ⟨o, .admin, k⟩ ∈ s.members ∧ ∃ kind, Valid s o k kind
 
-/-! ## Approval -/
 
 /-- Approvals satisfy `.anyPerson` if one of them is a valid person of `o`,
 and `.exactly k` if `k` is one of them and is valid in `o`. -/
@@ -255,7 +253,6 @@ def ActKind.registerOf : Kind → ActKind
 def GrantLive (s : State) (g : Grant) : Prop :=
   g ∈ s.grants ∧ InTeam s g.org g.team g.subject
 
-/-! ## The acts -/
 
 /-- `k` is registered, or holds no team certificate. -/
 def OneTeamIfLocal (s : State) (k : Key) : Prop :=
@@ -313,7 +310,8 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
   /-- If `Authorised` holds for `o`'s root key and a re-key, and, when `o`'s
   root key is held and `t` is the admin team, some identity in `keep` is an admin
   of `o`: the key of team `t` of `o` is not held, the certificates of that team
-  that stand are those of the members in `keep`, and no grant from it stands. -/
+  that stand are those that stood before and are of members in `keep`, and no
+  grant from it stands. -/
   | rekeyTeam {s : State} {o : Org} {t : Team} {keep : List Key} {who : Party}
       {approvals : List Key} :
       Authorised ask s (.root o) .rekey who approvals →

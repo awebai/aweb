@@ -9,7 +9,6 @@ the lemmas they use.
 
 namespace TrustWeb
 
-/-! ## Helping facts -/
 
 theorem Person.mono {s t : State} {o : Org} (h : ∀ c, c ∈ s.certs → c ∈ t.certs) {k : Key}
     (hp : Person s o k) : Person t o k := by
@@ -71,7 +70,6 @@ theorem Valid.mono {s t : State} (hc : ∀ c, c ∈ s.certs → c ∈ t.certs)
   | agentOf hm ho hk hi hs hn _ ih =>
       exact .agentOf (hc _ hm) ho hk hi hs (fun h => hn (hr _ h)) ih
 
-/-! ## Persons and agents -/
 
 /-- If every identity has one certificate, no identity is valid as an agent in
 one organisation and as a person in any. -/
@@ -153,7 +151,6 @@ theorem agents_cannot_approve_as_person {s : State} {o : Org} {approvals : List 
   intro ⟨k, hk, hv⟩
   exact h k hk hv
 
-/-! ## Chains to the root -/
 
 theorem Person.chainToRoot {s : State} {o : Org} {k : Key} (hp : Person s o k) :
     ChainToRoot s o k := by
@@ -222,7 +219,6 @@ theorem new_admin_needs_controller_or_asker {ask : AskRule} {s s' : State} {who 
         · exact .inr ⟨a, ha, hask⟩
       · exact absurd h hold
 
-/-! ## Revoking and removing -/
 
 /-- A revoked identity is not valid in any organisation, of either kind. -/
 theorem revoked_not_valid {s : State} {o : Org} {k : Key} {kind : Kind}
@@ -469,7 +465,6 @@ theorem grant_ends_with_its_certificate {ask : AskRule} {s s' : State} {who : Pa
   | sendOwn _ => exact absurd hb hgone
   | sendGrant _ _ => exact absurd hb hgone
 
-/-! ## Approval -/
 
 /-- If no rule of the policy is for `o`, every kind of act is approved for `o`
 with no approvals. -/
@@ -478,7 +473,6 @@ theorem no_policy_no_approval {s : State} {o : Org}
   intro r hr ho _
   exact absurd ho (h r hr)
 
-/-! ## Who may ask for a person, as built and as designed -/
 
 /-- If `k` is a person of `o` once one certificate is added, and was not
 before, the added certificate is of `o`. -/
@@ -610,7 +604,6 @@ theorem design_agent_admin_can_ask_for_person :
     subst this
     simp [agentCert] at hds
 
-/-! ## Grants and invitations -/
 
 theorem Authorised.not_session {ask : AskRule} {s : State} {key : OrgKey} {act : ActKind}
     {x : Key} {approvals : List Key} : ¬ Authorised ask s key act (.session x) approvals := by
@@ -757,7 +750,6 @@ theorem grant_ends_with_subject {s : State} (hrr : RevokedAreRegistered s) {g : 
   · exact (revoked_has_no_authority hrr hr).2 _ _ hin
   · exact hc hin.1
 
-/-! ## Further results about one act -/
 
 /-- In one act. If `k` is revoked and not cut off before an accepted act, it
 is revoked and not cut off after it. -/
@@ -956,7 +948,6 @@ theorem controller_stays_in_its_organisation {ask : AskRule} {s s' : State} {key
         subst this
         rfl
 
-/-! ## DNS, and leaving a key holder -/
 
 /-- If `o` exists, there is an accepted act that `o`'s domain owner asks for,
 after which `o`'s root key is not with a key holder and no identity is valid
@@ -1110,7 +1101,6 @@ theorem organisation_can_take_key_back {s : State} {key : OrgKey} {a : Key}
   have := (List.mem_filter.mp hmem).2
   simp at this
 
-/-! ## Who answers -/
 
 /-- If `h` answers for `a` in `o`, `h` is a valid person of `o`. -/
 theorem answerer_is_valid_person {s : State} {o : Org} {a h : Key}
@@ -1146,7 +1136,6 @@ theorem answerer_unique {s : State} (h1 : OneCertEach s) {o : Org} {a h h' : Key
           cases hdi
           exact ih hrest
 
-/-! ## Holds in every reachable record -/
 
 /-- If every identity has at most one certificate before an accepted act, the
 same holds after it. -/
