@@ -75,29 +75,136 @@ class CaseFormatError(ValueError):
     """The case file is not a valid aweb.trust-web-cases/1 document."""
 
 
+def _refuse(where: str, message: str) -> None:
+    raise CaseFormatError(f"{where}: {message}")
+
+
+def _fields(value: Any, expected: set[str], where: str) -> None:
+    if type(value) is not dict or set(value) != expected:
+        got = sorted(value) if type(value) is dict else type(value).__name__
+        _refuse(where, f"fields {got} are not {sorted(expected)}")
+
+
+def _symbol(value: Any, where: str) -> None:
+    if type(value) is not str or not value:
+        _refuse(where, f"{value!r} is not a symbol (a non-empty string)")
+
+
+def _kind(value: Any, where: str) -> None:
+    if value not in ("person", "agent"):
+        _refuse(where, f"kind {value!r} is not person or agent")
+
+
+def _team(value: Any, where: str) -> None:
+    """The model's Team: "admin" or {"named": n}."""
+    if value == "admin":
+        return
+    _fields(value, {"named"}, where)
+    if type(value["named"]) is not int or value["named"] < 0:
+        _refuse(where, f"team number {value['named']!r} is not a natural number")
+
+
+def _issuer(value: Any, where: str) -> None:
+    if value == "root":
+        return
+    _fields(value, {"member"}, where)
+    _symbol(value["member"], f"{where} member")
+
+
+def _record(spec: dict[str, Callable[[Any, str], None]]):
+    def check(value: Any, where: str) -> None:
+        _fields(value, set(spec), where)
+        for name, field_check in spec.items():
+            field_check(value[name], f"{where} {name}")
+
+    return check
+
+
+def _bool(value: Any, where: str) -> None:
+    if type(value) is not bool:
+        _refuse(where, f"{value!r} is not a boolean")
+
+
+_cert = _record({"org": _symbol, "subject": _symbol, "kind": _kind, "issuer": _issuer})
+_membership = _record({"org": _symbol, "team": _team, "member": _symbol})
+_grant = _record(
+    {
+        "session": _symbol,
+        "subject": _symbol,
+        "org": _symbol,
+        "team": _team,
+        "maySend": _bool,
+    }
+)
+_invite = _record({"token": _symbol, "org": _symbol, "team": _team})
+_team_of = _record({"org": _symbol, "team": _team})
+
+
+def _org_key(value: Any, where: str) -> None:
+    """The model's OrgKey: {"root": org} or {"team": {"org", "team"}}."""
+    if type(value) is not dict or len(value) != 1:
+        _refuse(where, f"{value!r} is not an organisation key")
+    [(form, inner)] = value.items()
+    if form == "root":
+        _symbol(inner, f"{where} root")
+    elif form == "team":
+        _team_of(inner, f"{where} team")
+    else:
+        _refuse(where, f"{form!r} is not an organisation key")
+
+
+PARTY_FORMS: dict[str, Callable[[Any, str], None]] = {
+    "dns": _symbol,
+    "controller": _org_key,
+    "id": _symbol,
+    "session": _symbol,
+    "bearer": _symbol,
+}
+
 # Every constructor of the model's Step (TrustWeb/Model.lean) and its arguments.
-ACT_ARGS = {
-    "createOrg": {"org"},
-    "replaceRoot": {"org"},
-    "readmitByRoot": {"subject"},
-    "readmitByParent": {"subject"},
-    "release": {"key"},
-    "entrust": {"key"},
-    "registerByRoot": {"cert"},
-    "registerByParent": {"cert"},
-    "revokeSelf": {"subject"},
-    "revokeChild": {"subject"},
-    "revokeByOrg": {"subject"},
-    "admit": {"membership"},
-    "admitAdmin": {"membership"},
-    "remove": {"membership"},
-    "leave": {"membership"},
-    "invite": {"invite"},
-    "redeem": {"invite", "member"},
-    "mintGrant": {"grant"},
-    "revokeGrant": {"grant"},
-    "sendOwn": set(),
-    "sendGrant": {"session"},
+ACT_ARGS: dict[str, dict[str, Callable[[Any, str], None]]] = {
+    "createOrg": {"org": _symbol},
+    "replaceRoot": {"org": _symbol},
+    "readmitByRoot": {"subject": _symbol},
+    "readmitByParent": {"subject": _symbol},
+    "release": {"key": _org_key},
+    "entrust": {"key": _org_key},
+    "registerByRoot": {"cert": _cert},
+    "registerByParent": {"cert": _cert},
+    "revokeSelf": {"subject": _symbol},
+    "revokeChild": {"subject": _symbol},
+    "revokeByOrg": {"subject": _symbol},
+    "admit": {"membership": _membership},
+    "admitAdmin": {"membership": _membership},
+    "remove": {"membership": _membership},
+    "leave": {"membership": _membership},
+    "invite": {"invite": _invite},
+    "redeem": {"invite": _invite, "member": _symbol},
+    "mintGrant": {"grant": _grant},
+    "revokeGrant": {"grant": _grant},
+    "sendOwn": {},
+    "sendGrant": {"session": _symbol},
+}
+
+
+def _issued_by(args: dict) -> dict | None:
+    issuer = args["cert"]["issuer"]
+    return None if issuer == "root" else {"id": issuer["member"]}
+
+
+# Where a constructor builds its party from its arguments, the party a case
+# names must be exactly that one: anything else is a different act.
+FIXED_PARTY: dict[str, Callable[[dict], dict | None]] = {
+    "createOrg": lambda args: {"dns": args["org"]},
+    "replaceRoot": lambda args: {"dns": args["org"]},
+    "entrust": lambda args: {"controller": args["key"]},
+    "registerByParent": _issued_by,
+    "revokeSelf": lambda args: {"id": args["subject"]},
+    "leave": lambda args: {"id": args["membership"]["member"]},
+    "redeem": lambda args: {"bearer": args["invite"]["token"]},
+    "mintGrant": lambda args: {"id": args["grant"]["subject"]},
+    "revokeGrant": lambda args: {"id": args["grant"]["subject"]},
+    "sendGrant": lambda args: {"session": args["session"]},
 }
 
 # The premises a refusal may name, per constructor. Until the model names every
@@ -121,15 +228,24 @@ PREMISES = {
     "sendOwn": {"CanAct"},
 }
 
-OBSERVATION_ARGS = {
-    "cert": {"subject"},
-    "revoked": {"key"},
-    "valid": {"org", "key", "kind"},
-    "canAct": {"key"},
-    "hasTeamCert": {"org", "team", "key"},
-    "inTeam": {"org", "team", "key"},
-    "grant": {"session"},
-    "grantLive": {"session"},
+
+def _cert_value(value: Any, where: str) -> None:
+    if value is not None:
+        _record({"org": _symbol, "kind": _kind, "issuer": _issuer})(value, where)
+
+
+# Each predicate over the model's record: its arguments, and the type of 'is'.
+OBSERVATIONS: dict[
+    str, tuple[Callable[[Any, str], None], Callable[[Any, str], None]]
+] = {
+    "cert": (_record({"subject": _symbol}), _cert_value),
+    "revoked": (_record({"key": _symbol}), _bool),
+    "valid": (_record({"org": _symbol, "key": _symbol, "kind": _kind}), _bool),
+    "canAct": (_record({"key": _symbol}), _bool),
+    "hasTeamCert": (_record({"org": _symbol, "team": _team, "key": _symbol}), _bool),
+    "inTeam": (_record({"org": _symbol, "team": _team, "key": _symbol}), _bool),
+    "grant": (_record({"session": _symbol}), _bool),
+    "grantLive": (_record({"session": _symbol}), _bool),
 }
 
 TOP_FIELDS = {"format", "status", "description", "model", "cases"}
@@ -147,7 +263,6 @@ CASE_FIELDS = {
     "observe",
 }
 REFUSAL_FIELDS = CASE_FIELDS | {"neighbour"}
-PARTIES = {"dns", "controller", "id", "session", "bearer"}
 RULES = {"any", "built", "admin", "team"}
 # Only results that hold for every rule, or for the rule as built, can be run.
 RUNNABLE_RULES = {"any", "built"}
@@ -188,30 +303,41 @@ class Case:
         return self.status == "implemented"
 
 
-def _fields(value: Any, expected: set[str], where: str) -> None:
-    if type(value) is not dict or set(value) != expected:
-        got = sorted(value) if type(value) is dict else type(value).__name__
-        raise CaseFormatError(f"{where}: fields {got} are not {sorted(expected)}")
+def _party(value: Any, where: str) -> None:
+    if type(value) is not dict or len(value) != 1 or set(value) - set(PARTY_FORMS):
+        _refuse(where, f"party {value!r} is not one of {sorted(PARTY_FORMS)}")
+    [(form, inner)] = value.items()
+    PARTY_FORMS[form](inner, f"{where} party {form}")
 
 
 def _step(value: Any, where: str) -> Step:
     _fields(value, {"who", "act", "args"}, where)
     who, act, args = value["who"], value["act"], value["args"]
-    if type(who) is not dict or len(who) != 1 or set(who) - PARTIES:
-        raise CaseFormatError(f"{where}: party {who!r} is not one of {sorted(PARTIES)}")
+    _party(who, where)
     if act not in ACT_ARGS:
-        raise CaseFormatError(f"{where}: act {act!r} is not a model act")
-    _fields(args, ACT_ARGS[act], f"{where} args of {act}")
+        _refuse(where, f"act {act!r} is not a model act")
+    _record(ACT_ARGS[act])(args, f"{where} args of {act}")
+    if act == "registerByRoot" and args["cert"]["issuer"] != "root":
+        _refuse(where, "registerByRoot registers a certificate issued by the root")
+    if act == "registerByParent" and args["cert"]["issuer"] == "root":
+        _refuse(where, "registerByParent registers a certificate issued by a member")
+    fixed = FIXED_PARTY.get(act)
+    if fixed is not None and who != fixed(args):
+        _refuse(
+            where, f"party {who!r} is not the party {act} is asked by, {fixed(args)!r}"
+        )
     return Step(who=who, act=act, args=args)
 
 
 def _observation(value: Any, where: str) -> Observation:
     if type(value) is not dict or "is" not in value or len(value) != 2:
-        raise CaseFormatError(f"{where}: an observation is one predicate and 'is'")
+        _refuse(where, "an observation is one predicate and 'is'")
     [predicate] = [key for key in value if key != "is"]
-    if predicate not in OBSERVATION_ARGS:
-        raise CaseFormatError(f"{where}: observation {predicate!r} is not known")
-    _fields(value[predicate], OBSERVATION_ARGS[predicate], f"{where} {predicate}")
+    if predicate not in OBSERVATIONS:
+        _refuse(where, f"observation {predicate!r} is not known")
+    check_args, check_value = OBSERVATIONS[predicate]
+    check_args(value[predicate], f"{where} observation {predicate}")
+    check_value(value["is"], f"{where} observation {predicate} is")
     return Observation(predicate, value[predicate], value["is"])
 
 
@@ -220,21 +346,21 @@ def _case(value: Any) -> Case:
     expect = value.get("expect") if type(value) is dict else None
     refused = type(expect) is dict and expect.get("result") == "refused"
     _fields(value, REFUSAL_FIELDS if refused else CASE_FIELDS, where)
-    if type(value["id"]) is not str or not value["id"]:
-        raise CaseFormatError(f"{where}: id must be a non-empty string")
+    _symbol(value["id"], f"{where} id")
     if value["source"] not in {"seed", "emitted"}:
-        raise CaseFormatError(f"{where}: source {value['source']!r} is unknown")
+        _refuse(where, f"source {value['source']!r} is unknown")
     if value["status"] not in {"implemented", "design"}:
-        raise CaseFormatError(f"{where}: status {value['status']!r} is unknown")
+        _refuse(where, f"status {value['status']!r} is unknown")
     if value["rule"] not in RULES:
-        raise CaseFormatError(f"{where}: rule {value['rule']!r} is unknown")
+        _refuse(where, f"rule {value['rule']!r} is unknown")
     if value["status"] == "implemented" and value["rule"] not in RUNNABLE_RULES:
-        raise CaseFormatError(
-            f"{where}: an implemented case's rule must be any or built, not {value['rule']!r}"
+        _refuse(
+            where,
+            f"an implemented case's rule must be any or built, not {value['rule']!r}",
         )
     step = _step({k: value[k] for k in ("who", "act", "args")}, where)
     if type(value["setup"]) is not list:
-        raise CaseFormatError(f"{where}: setup must be a list of acts")
+        _refuse(where, "setup must be a list of acts")
     setup = tuple(
         _step(item, f"{where} setup[{index}]")
         for index, item in enumerate(value["setup"])
@@ -244,16 +370,16 @@ def _case(value: Any) -> Case:
         _fields(expect, {"result", "premise"}, f"{where} expect")
         constructor, _, name = str(expect["premise"]).partition(".")
         if constructor != step.act or name not in PREMISES.get(step.act, set()):
-            raise CaseFormatError(
-                f"{where}: premise {expect['premise']!r} is not a nameable premise of {step.act}"
+            _refuse(
+                where,
+                f"premise {expect['premise']!r} is not a nameable premise of {step.act}",
             )
         premise = expect["premise"]
+        _symbol(value["neighbour"], f"{where} neighbour")
     elif expect != {"result": "allowed"}:
-        raise CaseFormatError(
-            f"{where}: result {expect!r} is neither allowed nor refused"
-        )
+        _refuse(where, f"result {expect!r} is neither allowed nor refused")
     if type(value["observe"]) is not list or not value["observe"]:
-        raise CaseFormatError(f"{where}: a case needs at least one observation")
+        _refuse(where, "a case needs at least one observation")
     observe = tuple(
         _observation(item, f"{where} observe[{index}]")
         for index, item in enumerate(value["observe"])
@@ -272,6 +398,26 @@ def _case(value: Any) -> Case:
     )
 
 
+def _model(value: Any, emitted: bool) -> None:
+    _fields(value, MODEL_FIELDS, "model")
+    _symbol(value["path"], "model path")
+    commit = value["commit"]
+    if (
+        type(commit) is not str
+        or len(commit) != 40
+        or set(commit) - set("0123456789abcdef")
+    ):
+        _refuse("model commit", f"{commit!r} is not a full commit id")
+    emitter = value["emitter"]
+    if emitter is not None:
+        _symbol(emitter, "model emitter")
+    elif emitted:
+        _refuse(
+            "model emitter",
+            "emitted cases need the emitter invocation that produced them",
+        )
+
+
 def load_corpus(corpus: Any) -> list[Case]:
     """Every case of an aweb.trust-web-cases/1 document, or CaseFormatError."""
     if type(corpus) is not dict or corpus.get("format") != FORMAT:
@@ -279,10 +425,12 @@ def load_corpus(corpus: Any) -> list[Case]:
     _fields(corpus, TOP_FIELDS, "document")
     if corpus["status"] != "experimental":
         raise CaseFormatError("document status must be experimental")
-    _fields(corpus["model"], MODEL_FIELDS, "model")
+    if type(corpus["description"]) is not str:
+        raise CaseFormatError("document description must be a string")
     if type(corpus["cases"]) is not list:
         raise CaseFormatError("cases must be a list")
     cases = [_case(value) for value in corpus["cases"]]
+    _model(corpus["model"], emitted=any(case.source == "emitted" for case in cases))
     by_id: dict[str, Case] = {}
     for case in cases:
         if case.id in by_id:
@@ -437,6 +585,8 @@ class _Identity:
     org: str
     did_aw: str
     chain: list[dict]
+    # The member that issued it, or None when the root did.
+    issuer: str | None
 
 
 @dataclass
@@ -448,10 +598,10 @@ class _Membership:
 
 @dataclass
 class _Grant:
-    session: SigningKey
     grant_id: str
     team_id: str
-    subject: str
+    # The model's grant this real grant was minted for.
+    binding: dict
 
 
 @dataclass
@@ -466,6 +616,8 @@ class World:
     identities: dict[str, _Identity] = field(default_factory=dict)
     did_aws: dict[str, tuple[str, str]] = field(default_factory=dict)
     memberships: dict[tuple[str, str], _Membership] = field(default_factory=dict)
+    sessions: dict[str, dict] = field(default_factory=dict)
+    session_keys: dict[str, SigningKey] = field(default_factory=dict)
     grants: dict[str, _Grant] = field(default_factory=dict)
 
     # -- symbols ----------------------------------------------------------
@@ -475,6 +627,9 @@ class World:
 
     def did_key(self, symbol: str) -> str:
         return did_key_from_signing_key(bytes(self.key(symbol)))
+
+    def session_key(self, session: str) -> SigningKey:
+        return self.session_keys.setdefault(session, SigningKey.generate())
 
     def domain(self, org: str) -> str:
         return self.domains.setdefault(org, f"{org}-{uuid4().hex[:10]}.trust-web.test")
@@ -530,6 +685,15 @@ class World:
         membership = step.args.get("membership") or step.args.get("grant")
         if membership is not None:
             await self.ensure_team(membership["org"], membership["team"])
+        grant = step.args.get("grant")
+        if grant is not None:
+            # A session names one model grant, so it can be observed before
+            # the grant exists.
+            bound = self.sessions.setdefault(grant["session"], grant)
+            if bound != grant:
+                raise NotRunnable(
+                    f"session {grant['session']} names two grants: {bound!r} and {grant!r}"
+                )
 
     def membership(self, org: str, team: dict, member: str) -> _Membership:
         team_id = self.team_id(org, team)
@@ -630,7 +794,10 @@ class World:
             invitation_id=None,
         )
         self.identities[subject] = _Identity(
-            org=cert["org"], did_aw=did_aw, chain=chain
+            org=cert["org"],
+            did_aw=did_aw,
+            chain=chain,
+            issuer=None if issuer == "root" else issuer["member"],
         )
 
     async def _act_registerByRoot(self, step: Step) -> None:
@@ -657,18 +824,29 @@ class World:
         )
 
     _act_revokeSelf = _revoke
-    _act_revokeChild = _revoke
     _act_revokeByOrg = _revoke
+
+    async def _act_revokeChild(self, step: Step) -> None:
+        issuer = self.identities[step.args["subject"]].issuer
+        if step.who != {"id": issuer}:
+            # revokeChild is asked by the subject's issuer; another party's
+            # revocation is a refusal whose premise the model has not named.
+            raise NotRunnable(
+                f"revokeChild of {step.args['subject']} is asked by {issuer!r}, not {step.who!r}"
+            )
+        await self._revoke(step)
 
     async def _act_admit(self, step: Step) -> None:
         m = step.args["membership"]
         membership = self.membership(m["org"], m["team"], m["member"])
         signer = self.party_key(step.who)
-        signer_did = did_key_from_signing_key(bytes(signer))
-        # A local member: a did:key with no did:aw, in this one team.
+        # The certificate is always the team's own, signed by its key; only the
+        # party asking for its registration is the case's. A local member: a
+        # did:key with no did:aw, in this one team.
+        team_key = self.team_keys[membership.team_id]
         certificate = _make_certificate(
-            bytes(signer),
-            signer_did,
+            bytes(team_key),
+            did_key_from_signing_key(bytes(team_key)),
             self.did_key(m["member"]),
             certificate_id=membership.certificate_id,
             team_id=membership.team_id,
@@ -713,15 +891,14 @@ class World:
 
     async def _act_mintGrant(self, step: Step) -> None:
         g = step.args["grant"]
-        if g["subject"] != step.who.get("id") or g["maySend"] is not True:
-            raise NotRunnable(
-                "the runner mints only a sending grant, asked by its subject"
-            )
+        if g["maySend"] is not True:
+            raise NotRunnable("the runner mints only a sending grant")
         team_id = self.team_id(g["org"], g["team"])
-        session = SigningKey.generate()
         body = json.dumps(
             {
-                "grant_did_key": did_key_from_signing_key(bytes(session)),
+                "grant_did_key": did_key_from_signing_key(
+                    bytes(self.session_key(g["session"]))
+                ),
                 "scopes": GRANT_SCOPES,
                 "ttl_seconds": GRANT_TTL_SECONDS,
             }
@@ -733,19 +910,24 @@ class World:
             body,
         )
         self.grants[g["session"]] = _Grant(
-            session=session,
-            grant_id=minted["grant_id"],
-            team_id=team_id,
-            subject=g["subject"],
+            grant_id=minted["grant_id"], team_id=team_id, binding=g
         )
 
     async def _act_revokeGrant(self, step: Step) -> None:
         g = step.args["grant"]
-        grant = self.grants[g["session"]]
+        grant = self.grants.get(g["session"])
+        if grant is None:
+            raise NotRunnable(f"session {g['session']} was never answered with a grant")
+        if grant.binding != g:
+            raise NotRunnable(
+                f"revokeGrant names {g!r}, but session {g['session']} holds {grant.binding!r}"
+            )
+        # The party is the grant's subject (the format checks it), which signs
+        # with its own team certificate.
         await self._server(
             "POST",
             f"/v1/identity-grants/{grant.grant_id}/revoke",
-            self.team_headers(grant.subject, grant.team_id, b""),
+            self.team_headers(step.who["id"], grant.team_id, b""),
             b"",
         )
 
@@ -848,16 +1030,75 @@ class World:
         )
         return status is not None and status["status"] == "active"
 
+    async def _subject_read(self, session: str, path: str) -> dict:
+        """A read of ``session``'s grant by its subject, signed with the
+        subject's own team certificate."""
+        bound = self.sessions.get(session)
+        if bound is None:
+            raise NotRunnable(f"session {session} names no grant in the case")
+        team_id = self.team_id(bound["org"], bound["team"])
+        if (team_id, bound["subject"]) not in self.memberships:
+            raise NotRunnable(f"{bound['subject']} holds no certificate of {team_id}")
+        async with self.stack.server.client() as client:
+            response = await client.get(
+                path, headers=self.team_headers(bound["subject"], team_id, b"")
+            )
+        if response.status_code != 200:
+            raise Unavailable(
+                f"grant {session} as read by {bound['subject']}: "
+                f"{response.status_code} {response.text}"
+            )
+        return response.json()
+
+    async def _read_grant(self, args: dict) -> bool:
+        """Whether the grant stands in the server's record, as its subject reads it.
+
+        A minted grant is read by its exact status: standing is unrevoked and
+        effectively active, gone is revoked with a revocation time. Before any
+        grant was minted for the session, its subject's own list must hold no
+        unrevoked grant for the session's key.
+        """
+        session = args["session"]
+        grant = self.grants.get(session)
+        if grant is None:
+            listed = await self._subject_read(session, "/v1/identity-grants")
+            key = did_key_from_signing_key(bytes(self.session_key(session)))
+            unrevoked = [
+                g
+                for g in listed["grants"]
+                if g["grant_did_key"] == key and g["revoked_at"] is None
+            ]
+            if unrevoked:
+                raise Unavailable(
+                    f"session {session} has a grant the runner was not given"
+                )
+            return False
+        status = await self._subject_read(
+            session, f"/v1/identity-grants/{grant.grant_id}/status"
+        )
+        if status["revoked_at"] is None and status["effective_status"] == "active":
+            return True
+        if status["revoked_at"] is not None and status["effective_status"] == "revoked":
+            return False
+        raise Unavailable(
+            f"grant {session}: revoked_at {status['revoked_at']!r}, "
+            f"effective_status {status['effective_status']!r}"
+        )
+
     async def _read_grantLive(self, args: dict) -> bool:
         """Whether the server lets the grant's session key act now: a read the
         grant's scopes allow, signed with that key, changing nothing.
 
-        A session the server never answered with a grant id has no grant:
-        grant authentication names the grant by that id, so nothing can act
-        with it."""
+        This goes through the server's ordinary request path, so it sees team
+        revocations only as the server's cached revocation list does. Only the
+        refusals that state the grant's own end count as not live; any other
+        refusal, and a session never answered with a grant, cannot be read.
+        """
         grant = self.grants.get(args["session"])
         if grant is None:
-            return False
+            raise Unavailable(
+                f"session {args['session']} has no grant to use: the runner cannot try it"
+            )
         path = "/v1/messages/inbox"
         timestamp = datetime.now(timezone.utc).isoformat()
         payload = canonical_json_bytes(
@@ -872,9 +1113,10 @@ class World:
                 "aud": self.stack.server.url,
             }
         )
-        did_key = did_key_from_signing_key(bytes(grant.session))
+        session = self.session_key(args["session"])
+        did_key = did_key_from_signing_key(bytes(session))
         headers = {
-            "Authorization": f"AWEB-Grant DIDKey {did_key} {sign_message(bytes(grant.session), payload)}",
+            "Authorization": f"AWEB-Grant DIDKey {did_key} {sign_message(bytes(session), payload)}",
             "X-AWEB-Grant-ID": grant.grant_id,
             "X-AWEB-Timestamp": timestamp,
             "X-AWEB-Signed-Payload": _b64url(payload),
@@ -883,13 +1125,18 @@ class World:
             response = await client.get(path, headers=headers)
         if response.status_code == 200:
             return True
-        if response.status_code in (401, 403):
+        detail = response.json().get("detail") if response.status_code == 403 else None
+        if isinstance(detail, str) and detail.startswith(GRANT_ENDED):
             return False
         raise Unavailable(
             f"grant {args['session']}: {response.status_code} {response.text}"
         )
 
 
+# The grant-use refusals that state the grant has ended: revoked itself, or
+# its issuing certificate revoked or superseded
+# (server/src/aweb/identity_grant_auth.py:236-259).
+GRANT_ENDED = ("grant revoked", "grant issuing certificate revoked.")
 GRANT_SCOPES = ["mail.read", "mail.send"]
 GRANT_TTL_SECONDS = 3600
 

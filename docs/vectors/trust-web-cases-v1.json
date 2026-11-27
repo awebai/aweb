@@ -1101,7 +1101,7 @@
       },
       "observe": [
         {
-          "grantLive": {
+          "grant": {
             "session": "s1"
           },
           "is": true
@@ -1190,7 +1190,7 @@
       "neighbour": "mint-grant",
       "observe": [
         {
-          "grantLive": {
+          "grant": {
             "session": "s1"
           },
           "is": false
@@ -1272,7 +1272,7 @@
       },
       "observe": [
         {
-          "grantLive": {
+          "grant": {
             "session": "s1"
           },
           "is": false
