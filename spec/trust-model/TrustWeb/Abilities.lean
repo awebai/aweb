@@ -635,4 +635,90 @@ theorem issuer_revocation_can_leave_no_admin (ask : AskRule) :
     exact revoking_parent_ends_agent h1 (c := c2) (p := 1) (by simp [s6]) rfl rfl
       (by simp [s6]) 0 kind hv
 
+/-- In one act. If an act asked for by an invitation's holder adds a team
+certificate, it is not of an admin team. -/
+theorem bearer_adds_no_admin_certificate {ask : AskRule} {s s' : State} {t : Nat}
+    {m : Membership} (hstep : Step ask s (.bearer t) s') (hnew : m ∈ s'.members)
+    (hold : m ∉ s.members) : m.team ≠ .admin :=
+  ((bearer_only_joins hstep).2.2.2.2 m hnew hold).1
+
+/-- In one act. If an accepted act adds a certificate of an admin team, its
+member is valid in its organisation before the act. -/
+theorem new_admin_certificate_needs_valid_member {ask : AskRule} {s s' : State}
+    {who : Party} {m : Membership} (hstep : Step ask s who s') (hnew : m ∈ s'.members)
+    (hold : m ∉ s.members) (hteam : m.team = .admin) : ∃ kind, Valid s m.org m.member kind := by
+  cases hstep with
+  | createOrg _ => exact absurd hnew hold
+  | entrust _ => exact absurd hnew hold
+  | registerByRoot _ _ _ _ => exact absurd hnew hold
+  | registerByParent _ _ _ _ => exact absurd hnew hold
+  | revokeSelf _ => exact absurd hnew hold
+  | revokeChild _ _ _ => exact absurd hnew hold
+  | revokeByOrg _ _ => exact absurd hnew hold
+  | invite _ _ _ => exact absurd hnew hold
+  | mintGrant _ _ => exact absurd hnew hold
+  | revokeGrant _ => exact absurd hnew hold
+  | release _ _ => exact absurd hnew hold
+  | rekeyTeam _ => exact absurd hnew hold
+  | replaceRoot _ => exact absurd hnew hold
+  | readmitByRoot _ _ _ _ => exact absurd hnew hold
+  | readmitByParent _ _ _ _ => exact absurd hnew hold
+  | sendOwn _ => exact absurd hnew hold
+  | sendGrant _ _ => exact absurd hnew hold
+  | remove _ _ => exact absurd (List.mem_filter.mp hnew).1 hold
+  | leave _ _ _ => exact absurd (List.mem_filter.mp hnew).1 hold
+  | admit hne _ _ =>
+      rcases List.mem_cons.mp hnew with rfl | h
+      · exact absurd hteam hne
+      · exact absurd h hold
+  | redeem _ hne _ =>
+      rcases List.mem_cons.mp hnew with rfl | h
+      · exact absurd hteam hne
+      · exact absurd h hold
+  | admitAdmin _ hv _ =>
+      rcases List.mem_cons.mp hnew with rfl | h
+      · exact ⟨_, hv⟩
+      · exact absurd h hold
+
+/-- If `k` holds no team certificate of `o` in `s`, an act asked for by an
+invitation's holder takes `s` to `s1`, an act `k` asks for takes `s1` to `s2`,
+and `k` is an admin of `o` in `s2`, then `k` is valid in `o` in `s`. -/
+theorem invitation_route_starts_from_a_member {ask : AskRule} {s s1 s2 : State}
+    {t : Nat} {o : Org} {k : Key} (hnone : ∀ tm, ¬ HasTeamCert s o tm k)
+    (h1 : Step ask s (.bearer t) s1) (h2 : Step ask s1 (.id k) s2) (hadm : Admin s2 o k) :
+    ∃ kind, Valid s o k kind := by
+  obtain ⟨hm2, _⟩ := hadm
+  have hnot1 : (⟨o, .admin, k⟩ : Membership) ∉ s1.members := by
+    intro hm1
+    by_cases hm0 : (⟨o, .admin, k⟩ : Membership) ∈ s.members
+    · exact hnone .admin hm0
+    · exact bearer_adds_no_admin_certificate h1 hm1 hm0 rfl
+  obtain ⟨kind, hv⟩ := new_admin_certificate_needs_valid_member h2 hm2 hnot1 rfl
+  obtain ⟨hc, hr, _⟩ := bearer_only_joins h1
+  exact ⟨kind, Valid.mono (by intro c h; rw [hc] at h; exact h)
+    (by intro j h; rw [hr]; exact h) hv⟩
+
+/-- In every reachable record the member of every admin-team certificate is
+registered. -/
+theorem admin_certificate_member_is_registered {ask : AskRule} {s : State}
+    (hr : Reachable ask s) : ∀ m, m ∈ s.members → m.team = .admin → Registered s m.member := by
+  induction hr with
+  | start _ => intro m hm; cases hm
+  | step _ hstep ih =>
+      rename_i t t' _ _
+      intro m hm hteam
+      by_cases hold : m ∈ t.members
+      · obtain ⟨c, hc, hcs⟩ := ih m hold hteam
+        exact ⟨c, certificate_is_permanent hstep hc, hcs⟩
+      · obtain ⟨kind, hv⟩ := new_admin_certificate_needs_valid_member hstep hm hold hteam
+        obtain ⟨c, hc, hcs, _, _⟩ := hv.cert
+        exact ⟨c, certificate_is_permanent hstep hc, hcs⟩
+
+/-- In every record some session key is used by no grant. -/
+theorem unused_session_key (s : State) : ∃ x : Key, ∀ g, g ∈ s.grants → g.session ≠ x := by
+  let t : State := { s with certs := s.grants.map (fun g => ⟨0, g.session, .person, .root⟩) }
+  obtain ⟨x, hx, _⟩ := exists_fresh_key t
+  refine ⟨x, fun g hg => ?_⟩
+  exact hx ⟨0, g.session, .person, .root⟩ (List.mem_map.mpr ⟨g, hg, rfl⟩)
+
 end TrustWeb

@@ -68,7 +68,7 @@ One line for every sentence that says something about the model, apart from a th
 | 5 | What leading means, and what it says nothing about | definition | `ChainToRoot` |
 | 5 | Nothing about a key with no identity certificate acting in a team | result | The statements are about valid members and admins |
 | 6 | So it is not an invitation's holder, in that act | result | `.bearer` is neither disjunct |
-| 6 | Over several acts it can fail under a team rule (48) | result | Row 48 |
+| 6 | An invitation can still lead to an admin a step later, under a team rule | result | Row 48 |
 | 7 | (true in every reachable record, 14) | result | Row 14 |
 | 7 | Sending with its own key requires being able to act | act | `sendOwn` |
 | 8 | Its team certificates are not looked at | result | The statement |
@@ -94,6 +94,8 @@ One line for every sentence that says something about the model, apart from a th
 | 28 | The model does not show the holder no longer has the former private key | definition | `held` records only which keys are held, not copies |
 | 28 | Nor does the protocol | source | the source readings |
 | 35, 48 | A warning | process | A label |
+| 35 | The identity is already a valid member of the organisation | result | Row 34: the identity, asking as `.id`, holds a certificate of an assigned team and is valid in the key's organisation; row 21: the invitation changes no identity certificate or revocation, so it was valid before |
+| 48 | The identity is already a valid member of the organisation | result | `invitation_route_starts_from_a_member` |
 | 38 | A valid person answering for itself (`nearest_human`) says nothing about an email check | result, source | `AnswersFor.self` needs only `Valid`; row 38; the verdict's name is the protocol's (`docs/id-certificates.md`) |
 | 40 | The rest of 38's three cases follows from 38 | result | Row 38 applies to any valid person |
 | 41 | In every record such a key exists | result | `exists_fresh_key` |
@@ -111,9 +113,9 @@ One block per cell, in the table's order.
 | No chain back to a root | Not true of what is built | result | The lines below |
 | | Proved for valid members and admins (5) | result | Row 5 |
 | | A key with no identity certificate can act in a team on its team certificate alone | definition | `InTeam`; `CanAct`'s first disjunct |
-| | And so give a grant | act | `mintGrant` needs `InTeam` and a session key no current grant uses; some key is always unused, since `grants` is a finite list |
+| | And so give a grant | act | `mintGrant` needs `InTeam` and a session key no current grant uses; some key is always unused (`unused_session_key`) |
 | | In a team or not, it can send attributed to itself | act | `sendOwn` needs only `CanAct` |
-| | It can leave a team whose key is held | act, result | `leave` needs the certificate, the held key and `KeepsAnAdmin`, and no validity or registration; `KeepsAnAdmin` is vacuous outside the admin team, and a key with no identity certificate never holds an admin-team certificate in a reachable record (`admitAdmin` needs `Valid`; `admit` and `redeem` exclude the admin team) |
+| | It can leave a team whose key is held | act, result | `leave` needs the certificate, the held key and `KeepsAnAdmin`, and no validity or registration; `KeepsAnAdmin` is vacuous outside the admin team, and a key with no identity certificate never holds an admin-team certificate in a reachable record (`admin_certificate_member_is_registered`, which rests on `new_admin_certificate_needs_valid_member` and `certificate_is_permanent`) |
 | | A team certificate counts without the root having set the team's key | definition | `InTeam`, `GrantLive` and `admit` have no premise about the root or `rekeyTeam` |
 | | The three rules require a valid member to ask; a rule letting anyone ask would not | definition | `builtRule`, `adminRule` (`Admin` needs `Valid`), `teamRule` |
 | A revoked member keeps authority | Proved in reachable records: not valid, not an admin, cannot act in a team, cannot send with its own key, no live grant | result | Rows 7, 8, 20; `sendOwn` needs `CanAct` |
@@ -137,6 +139,7 @@ One block per cell, in the table's order.
 | An invitation's holder becomes a person or an admin | Proved for one act, under every rule | result | Rows 21, 6 quantify over every `AskRule` |
 | | Not proved for several acts | process | No theorem states it |
 | | Under a team rule that gives admitting admins to a named team, it happens in two acts | result | Row 48 |
+| | The joiner must already be a valid member | result | `invitation_route_starts_from_a_member` |
 | | As 35 shows for giving a key back | result | Row 35 |
 | An agent approves where a person is required | Proved for every approval | result | Rows 4, 23 |
 | Being issued an identity gives team membership | Proved for one act | result | `registering_gives_no_team` |

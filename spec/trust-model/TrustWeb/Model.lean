@@ -18,7 +18,7 @@ inductive Kind where
   | agent
   deriving DecidableEq, Repr
 
-/-- Who issued an identity certificate: the organisation's root, or one of its members. -/
+/-- Who issued an identity certificate: the organisation's root, or the key `k`. -/
 inductive Issuer where
   | root
   | member (k : Key)
@@ -116,7 +116,7 @@ structure State where
   orgs : List Org
   /-- The registered identity certificates. -/
   certs : List Cert
-  /-- The identities that are revoked or cut off. -/
+  /-- The revoked identities. -/
   revoked : List Key
   /-- The identities that are cut off. -/
   cutOff : List Key
