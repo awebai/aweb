@@ -1056,6 +1056,86 @@ class ProjectJob(CloudFixture, unittest.TestCase):
         self.assertEqual(form(receipt), form(fixture))
         self.assertEqual(fixture["project"], "aweb-cloud")
 
+    def pilot_summary(self, text, *, directory=None):
+        """The pilot's summary.tsv exactly as its gate writes it, raw."""
+        self.pilot_evidence(stages={})
+        self.evidence[
+            f"tmp/{directory or 'aweb-cloud-gate-' + self.cloud_sha}/summary.tsv"
+        ] = text
+
+    def test_aweb_cloud_judges_its_one_raw_summary(self):
+        self.without_hermes_key()
+        four = "".join(f"{stage}\tPASSED\t{stage}.log\t1\n" for stage in PILOT_STAGES)
+        for name, text, expected in (
+            ("the four", four, 0),
+            (
+                "a further stage passed",
+                four + "decisions\tPASSED\tdecisions.log\t3\n",
+                0,
+            ),
+            (
+                "a further stage not run",
+                four + "decisions\tNOT RUN\tdecisions.log\t0\n",
+                1,
+            ),
+            (
+                "a stage failed, then passed",
+                "checks\tFAILED\tchecks.log\t1\n" + four,
+                1,
+            ),
+            ("a stage twice, both passed", four + "image\tPASSED\timage.log\t1\n", 1),
+            ("a malformed row", four + "garbage\n", 1),
+            ("an empty stage name", four + "\tPASSED\tx.log\t1\n", 1),
+        ):
+            with self.subTest(name=name):
+                self.calls.clear()
+                self.pilot_summary(text)
+                code, receipt = self.invoke_pilot_release()
+                self.assertEqual(code, expected, (name, receipt["stages"]))
+
+    def test_aweb_cloud_reads_only_its_exact_directory(self):
+        self.without_hermes_key()
+        half = lambda stages: "".join(
+            f"{stage}\tPASSED\t{stage}.log\t1\n" for stage in stages
+        )
+        self.pilot_summary(half(PILOT_STAGES[:2]))
+        # A second directory whose rows would complete the four must not count.
+        self.evidence[f"tmp/aweb-cloud-gate-{self.cloud_sha}-other/summary.tsv"] = half(
+            PILOT_STAGES[2:]
+        )
+        code, receipt = self.invoke_pilot_release()
+        self.assertEqual(code, 1, receipt)
+        self.assertEqual(receipt["stages"]["storage"], "MISSING")
+
+    def test_aweb_cloud_keeps_the_pilots_own_exit(self):
+        self.without_hermes_key()
+        for suite, expected, classification in (
+            ("0", 0, None),
+            ("1", 1, None),
+            ("2", 2, "refused"),
+            ("70", 70, "infrastructure"),
+        ):
+            with self.subTest(suite=suite):
+                self.calls.clear()
+                self.pilot_evidence(suite=suite)
+                code, receipt = self.invoke_pilot_release()
+                self.assertEqual(code, expected, receipt)
+                self.assertEqual(receipt["suite_exit"], int(suite))
+                self.assertEqual(receipt["suite_classification"], classification)
+        # The guest runs the pilot's gate itself, so make cannot fold its exit into 2.
+        [call] = self.calls
+        self.assertIn("python3 scripts/gate.py --require-release", call["command"])
+        self.assertNotIn("make release-gate", call["command"])
+
+    def test_an_aweb_source_pin_nothing_can_attest_is_refused_before_boot(self):
+        self.without_hermes_key()
+        code, receipt = self.invoke_pilot_release("--aweb-source", self.sha)
+        self.assertEqual(code, 2, receipt)
+        self.assertIn("builds no aweb", receipt["vm_gate"]["error"])
+        code, receipt = self.invoke("aweb-cloud", "--aweb-source", self.sha)
+        self.assertEqual(code, 2, receipt)
+        self.assertEqual(self.calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()
