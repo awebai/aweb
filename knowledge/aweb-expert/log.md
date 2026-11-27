@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-26
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-aw-contract (task aweb-adze.7).
+* **Creation**: decision [a pure verdict keeps the caller's lazy fact reads](/aweb-expert/decisions/a-pure-verdict-keeps-the-callers-lazy-fact-reads.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
