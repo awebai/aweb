@@ -645,12 +645,19 @@ class World:
         await self._register(step, self.identities[parent].chain)
 
     async def _revoke(self, step: Step) -> None:
-        subject = self.identities[step.args["subject"]]
+        symbol = step.args["subject"]
+        subject = self.identities[symbol]
+        # AWID revokes only the head the request names: the subject's current
+        # certificate, read from the registry's own status.
+        status = await self._status(symbol)
+        entry = self._entry(status, subject.did_aw)
+        if entry is None:
+            raise Unavailable(f"no current certificate to revoke for {symbol}")
         await self.stack.client.revoke_id_certificate(
             self.domain(subject.org),
             subject.did_aw,
             signer=_signer(self.party_key(step.who)),
-            expected_head=None,
+            expected_head=entry["current_certificate_id"],
         )
 
     _act_revokeSelf = _revoke
@@ -957,10 +964,30 @@ TEAM_CONTROLLER_ONLY = WireRefusal(
 
 # Reviewed: each entry cites where its route refuses for that premise.
 REFUSALS: dict[str, WireRefusal] = {
+    "registerByRoot.Authorised": WireRefusal(
+        422,
+        code="issuer_key_not_current",
+        source="awid/src/awid_service/id_registration.py:197-201",
+    ),
     "registerByParent.MayIssue": WireRefusal(
         422,
         code="human_issuer_is_agent",
-        source="awid/tests/test_id_certificate_registration.py:1709-1734",
+        source="awid/src/awid_service/id_registration.py:220-221",
+    ),
+    "registerByParent.Valid": WireRefusal(
+        422,
+        code="parent_revoked",
+        source="awid/src/awid_service/id_registration.py:222-223",
+    ),
+    "revokeChild.Valid": WireRefusal(
+        403,
+        code="revocation_forbidden",
+        source="awid/src/awid_service/id_revocation.py:86-98",
+    ),
+    "mintGrant.InTeam": WireRefusal(
+        401,
+        code="certificate_revoked",
+        source="server/src/aweb/team_auth.py:40-47",
     ),
     "admit.Authorised": TEAM_CONTROLLER_ONLY,
     "remove.Authorised": TEAM_CONTROLLER_ONLY,

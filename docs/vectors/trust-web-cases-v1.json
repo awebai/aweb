@@ -430,6 +430,91 @@
       ]
     },
     {
+      "id": "register-agent-by-orphaned-agent-parent-refused",
+      "source": "seed",
+      "status": "implemented",
+      "rule": "any",
+      "setup": [
+        {
+          "who": {
+            "dns": "o1"
+          },
+          "act": "createOrg",
+          "args": {
+            "org": "o1"
+          }
+        },
+        {
+          "who": {
+            "controller": {
+              "root": "o1"
+            }
+          },
+          "act": "registerByRoot",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "alice",
+              "kind": "person",
+              "issuer": "root"
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "alice"
+          },
+          "act": "registerByParent",
+          "args": {
+            "cert": {
+              "org": "o1",
+              "subject": "bot1",
+              "kind": "agent",
+              "issuer": {
+                "member": "alice"
+              }
+            }
+          }
+        },
+        {
+          "who": {
+            "id": "alice"
+          },
+          "act": "revokeSelf",
+          "args": {
+            "subject": "alice"
+          }
+        }
+      ],
+      "who": {
+        "id": "bot1"
+      },
+      "act": "registerByParent",
+      "args": {
+        "cert": {
+          "org": "o1",
+          "subject": "bot2",
+          "kind": "agent",
+          "issuer": {
+            "member": "bot1"
+          }
+        }
+      },
+      "expect": {
+        "result": "refused",
+        "premise": "registerByParent.Valid"
+      },
+      "neighbour": "register-agent-by-agent-parent",
+      "observe": [
+        {
+          "cert": {
+            "subject": "bot2"
+          },
+          "is": null
+        }
+      ]
+    },
+    {
       "id": "revoke-self",
       "source": "seed",
       "status": "implemented",
