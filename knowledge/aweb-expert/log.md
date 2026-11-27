@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-26
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-gate-dispatch.
+* **Creation**: lessons [one producer-written fixture for a format that crosses two tools](/aweb-expert/lessons/one-producer-fixture-for-a-cross-tool-format.md) and [environment tests clear the gate lane's exports](/aweb-expert/lessons/environment-tests-clear-the-gate-lane-exports.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
