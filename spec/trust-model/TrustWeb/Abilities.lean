@@ -3,13 +3,7 @@ import TrustWeb.Properties
 /-!
 # What must be possible
 
-Records the system reaches in which something works, acts that go through
-when their conditions hold, and limits: `policy_requires_person`,
-`no_admin_no_new_admin_certificate`, `locked_admin_team_opens_only_by_root`,
-`takeover_leaves_outsiders_acting`, `revocation_can_leave_no_admin`,
-`root_controller_ends_access_in_another_organisation` and
-`issuer_revocation_can_leave_no_admin`. Each theorem's doc comment says what
-it states.
+Results that something can happen, and limits on what can.
 -/
 
 namespace TrustWeb

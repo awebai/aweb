@@ -3,20 +3,16 @@ import TrustWeb.Properties
 /-!
 # Each operation belongs to a team
 
-An `Assignment` names, for each organisation and kind of act, one of its
-teams. Under `teamRule` a valid member of the organisation that holds a
-certificate of the assigned team may ask. `adminRule` is the team rule with
-every act assigned to the admin team (`adminRule_is_teamRule`). How an
-assignment is chosen or changed is not modelled: it is a parameter.
+The team rule, and the results about it.
 -/
 
 namespace TrustWeb
 
-/-- Which team of an organisation may ask for each kind of operation. -/
+/-- For each organisation and kind of act, a team. -/
 abbrev Assignment := Org → ActKind → Team
 
-/-- The rule that follows an assignment: a valid member of the organisation
-who holds a certificate of the team the operation is assigned to may ask. -/
+/-- The identity holds a certificate of the team the act is assigned to, and is
+valid in the organisation, of some kind. -/
 def teamRule (assign : Assignment) : AskRule :=
   fun s o act k => ⟨o, assign o act, k⟩ ∈ s.members ∧ ∃ kind, Valid s o k kind
 

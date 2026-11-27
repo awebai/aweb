@@ -1,64 +1,15 @@
 /-!
 # The trust web: the model
 
-What exists, what is currently true, and the acts that change it. The
-results are proved in the other files.
-
-Sources, all in this repository: `docs/id-certificates.md` (sections 1 to 3
-and 6), `docs/teams.md`, `docs/human-approval-architecture.md`,
-`docs/trust-model.md`, `docs/identity.md` ("Session grants"), the server's
-grant code and the key holder. The protocol's word for a person is "human".
-
-Experimental. Read against the source, not yet run against the code. See
-the README for what has been checked.
-
-## What is built and what is design
-
-Who may ask a key holder is a parameter, `AskRule`. Two values are here,
-`builtRule` (as built) and `adminRule` (planned);
-`Operations.lean` adds a third, `teamRule` (planned). A result stated for
-any `AskRule` holds for each of them.
-
-Four more parts are planned, not built. They are acts and checks under every
-rule, `builtRule` included:
-
-* `entrust` and `release`. The built key holder makes its keys inside itself
-  and has no command to take a key in or give one back.
-* `KeepsAnAdmin`, a premise of `leave`, and of `remove` when the team's key
-  is with a key holder. The registry has no such check.
-* `leave`. The built command drops the member's own copy and does not end
-  the certificate.
-* The premise `i.team ≠ .admin` of `invite` and `redeem`. The registry does
-  not know which team is the admin team.
-
-## Assumptions (taken as given, not proved)
-
-* **A1. Signatures.** A signature cannot be forged. A statement signed by a
-  key exists only because whoever holds that key signed it.
-* **A2. Enrolment.** The root issues a person certificate only to a human
-  being who took part themselves. How an organisation checks that is its own
-  process.
-* **A3. The subject's key.** Whoever is registered, or joins a team, proved
-  they hold the key.
-* **A4. One current record.** Everyone sees the same record at once. In the
-  real system a verifier may go on accepting for a bounded time after a
-  revocation.
-* **A5. One act at a time.** Each act happens whole, and acts do not overlap.
-* **A6. Approvals.** An approval is given by the identity it names, for the
-  exact act, and cannot be reused.
-* **A7. Keys.** An identity keeps one key, and only its owner uses it.
-* **A8. The key holder.** A key holder that holds an organisation's key uses
-  it only as `Step` says. Nobody outside can check this.
-* **A9. The server.** The server that keeps the grants attributes a message to
-  an identity only as `Step` says. Only that server can check a grant.
+What exists, the current record (`State`), and the acts that change it (`Step`).
 -/
 
 namespace TrustWeb
 
-/-- A key. Whoever holds it can sign as it. An identity is its key (A7). -/
+/-- A key; identities are keys. -/
 abbrev Key := Nat
 
-/-- An organisation: a domain. -/
+/-- An organisation. -/
 abbrev Org := Nat
 
 /-- The two kinds of member. -/
@@ -79,27 +30,15 @@ inductive Team where
   | named (n : Nat)
   deriving DecidableEq, Repr
 
-/-- An organisation's keys: its root key, and one key per team. The acts
-that go through `Authorised` name the root key for registering, re-admitting
-and revoking under the organisation and for re-keying a team, a team's key
-for admitting to, removing from and inviting to that team, and either key for
-having it given back.
-`leave` and `redeem` change a team's certificates without `Authorised`. -/
+/-- An organisation's keys: its root key, and one key per team. -/
 inductive OrgKey where
   | root (o : Org)
   | team (o : Org) (t : Team)
   deriving DecidableEq, Repr
 
-/-- Who can ask for an act: whoever controls an organisation's domain in DNS;
-whoever controls one of its keys directly; an identity; whoever holds a
-grant's session key; or whoever holds an invitation's secret.
-
-`controller key` means whoever controls that key **now**. After the domain's
-owner replaces a root, `controller (.root o)` is whoever controls the new root
-key. The model cannot name whoever controlled the old one, and says nothing
-about them. A root replacement does not replace a team's key; a re-key
-(`rekeyTeam`) does, and then `controller (.team o t)` is whoever controls the
-new team key. -/
+/-- Who asks for an act: `dns o`, whoever controls `o`'s domain; `controller
+key`, whoever controls `key`; `id k`, the identity `k`; `session k`, whoever
+holds session key `k`; `bearer token`, whoever holds an invitation's secret. -/
 inductive Party where
   | dns (o : Org)
   | controller (key : OrgKey)
@@ -117,15 +56,14 @@ structure Cert where
   issuer : Issuer
   deriving DecidableEq, Repr
 
-/-- A team certificate: `member` is in `team` of `org`. The member can be an
-outsider, with an identity in another organisation or none registered. -/
+/-- A team certificate: `member` is in `team` of `org`. -/
 structure Membership where
   org : Org
   team : Team
   member : Key
   deriving DecidableEq, Repr
 
-/-- The acts an organisation's keys are used for. -/
+/-- The kinds of act that `Authorised` and `AskRule` take. -/
 inductive ActKind where
   | registerPerson
   | registerAgent
@@ -150,10 +88,8 @@ structure Rule where
   approver : Approver
   deriving DecidableEq, Repr
 
-/-- A grant: `subject` lets whoever holds the key `session` send messages
-attributed to it, if `maySend` (`sendGrant`), on the server of team `team` of
-`org`. When the grant is given, no current grant uses `session`
-(`mintGrant`). -/
+/-- A grant on `subject`, with session key `session`, from team `team` of
+`org`; `maySend` says whether it may send. -/
 structure Grant where
   session : Key
   subject : Key
@@ -162,14 +98,14 @@ structure Grant where
   maySend : Bool
   deriving DecidableEq, Repr
 
-/-- An invitation: whoever holds the secret `token` may join team `team` of `org`. -/
+/-- An invitation with secret `token` to team `team` of `org`. -/
 structure Invite where
   token : Nat
   org : Org
   team : Team
   deriving DecidableEq, Repr
 
-/-- A message, as the server attributes it. -/
+/-- A message, with the identity it is attributed to. -/
 structure Message where
   sender : Key
   deriving DecidableEq, Repr
@@ -180,14 +116,9 @@ structure State where
   orgs : List Org
   /-- The registered identity certificates. -/
   certs : List Cert
-  /-- The identities that are not current. `replaceRoot` adds the identities it
-  cuts off both here and to `cutOff`; in every reachable record every cut-off
-  identity is here (`Reachable.cutOffAreRevoked`). -/
+  /-- The identities that are revoked or cut off. -/
   revoked : List Key
-  /-- Identities cut off by a root replacement: `replaceRoot` adds them, and a
-  re-admission or a revocation of one takes it out. The re-admission acts
-  (`readmitByRoot`, `readmitByParent`) take an identity in it, under their
-  other premises. -/
+  /-- The identities that are cut off. -/
   cutOff : List Key
   /-- The team certificates that stand. -/
   members : List Membership
@@ -195,7 +126,7 @@ structure State where
   policy : List Rule
   /-- The organisation keys that a key holder holds. -/
   held : List OrgKey
-  /-- The grants that stand, at the server that keeps them. -/
+  /-- The grants that stand. -/
   grants : List Grant
   /-- The invitations not yet used. -/
   invites : List Invite
@@ -204,12 +135,12 @@ structure State where
 
 /-! ## What a verifier concludes -/
 
-/-- Rule R1. A person can issue people and agents. An agent can issue only agents. -/
+/-- A person may issue either kind of member; an agent may issue only agents. -/
 def MayIssue (issuer child : Kind) : Prop :=
   issuer = .person ∨ child = .agent
 
-/-- `Person s o k`: in organisation `o`, `k` holds a person certificate issued
-by the root or by a person. Revocation is not looked at here; `Valid` does that. -/
+/-- `Person s o k`: `k` holds a person certificate of `o` issued by the root,
+or by a member that is itself a person of `o`. -/
 inductive Person (s : State) (o : Org) : Key → Prop where
   | byRoot {c : Cert} {k : Key} :
       c ∈ s.certs → c.org = o → c.kind = .person → c.issuer = .root → c.subject = k →
@@ -218,11 +149,9 @@ inductive Person (s : State) (o : Org) : Key → Prop where
       c ∈ s.certs → c.org = o → c.kind = .person → c.issuer = .member p → c.subject = k →
       Person s o p → Person s o k
 
-/-- `Valid s o k kind`: `k` is now a member of organisation `o`, of this kind.
-
-* A person is valid if their chain holds and they are not revoked. Their issuer
-  was checked when they were registered; its later revocation does not undo them.
-* An agent is valid if it is not revoked and its issuer is the root or is valid now. -/
+/-- `Valid s o k kind`: for a person, `k` is a person of `o` and not revoked;
+for an agent, `k` holds an agent certificate of `o`, is not revoked, and its
+issuer is the root or a member valid in `o`. -/
 inductive Valid (s : State) (o : Org) : Key → Kind → Prop where
   | person {k : Key} :
       Person s o k → k ∉ s.revoked → Valid s o k .person
@@ -233,7 +162,8 @@ inductive Valid (s : State) (o : Org) : Key → Kind → Prop where
       c ∈ s.certs → c.org = o → c.kind = .agent → c.issuer = .member p → c.subject = k →
       k ∉ s.revoked → Valid s o p pk → Valid s o k .agent
 
-/-- `ChainToRoot s o k`: certificates lead from `k` up to the root of `o`. -/
+/-- `ChainToRoot s o k`: `k` holds a certificate of `o` issued by the root, or
+by a member with a chain to `o`'s root. -/
 inductive ChainToRoot (s : State) (o : Org) : Key → Prop where
   | root {c : Cert} {k : Key} :
       c ∈ s.certs → c.org = o → c.issuer = .root → c.subject = k → ChainToRoot s o k
@@ -241,19 +171,16 @@ inductive ChainToRoot (s : State) (o : Org) : Key → Prop where
       c ∈ s.certs → c.org = o → c.issuer = .member p → c.subject = k →
       ChainToRoot s o p → ChainToRoot s o k
 
-/-- `AnswersFor s o a h`: person `h` answers for `a`. A valid person answers
-for itself (`self`). A person answers for `a` if `a` holds an agent
-certificate of `o` issued by a member the person answers for, and `a` is not
-revoked (`up`). So every agent on the way is unrevoked, and the person is a
-valid person of `o` (`answerer_is_valid_person`). With one certificate each,
-at most one person answers (`answerer_unique`). -/
+/-- `AnswersFor s o a h`: `a` is `h` and a valid person of `o` (`self`), or
+`a` is not revoked and holds an agent certificate of `o` issued by a member
+that `h` answers for (`up`). -/
 inductive AnswersFor (s : State) (o : Org) : Key → Key → Prop where
   | self {h : Key} : Valid s o h .person → AnswersFor s o h h
   | up {c : Cert} {a p h : Key} :
       c ∈ s.certs → c.org = o → c.kind = .agent → c.issuer = .member p → c.subject = a →
       a ∉ s.revoked → AnswersFor s o p h → AnswersFor s o a h
 
-/-- `k` has an identity certificate, revoked or not. -/
+/-- `k` has an identity certificate. -/
 def Registered (s : State) (k : Key) : Prop :=
   ∃ c, c ∈ s.certs ∧ c.subject = k
 
@@ -261,33 +188,30 @@ def Registered (s : State) (k : Key) : Prop :=
 def HasTeamCert (s : State) (o : Org) (t : Team) (k : Key) : Prop :=
   ⟨o, t, k⟩ ∈ s.members
 
-/-- `CanAct s k`: `k` is not a registered identity, or it is one and is valid
-now in some organisation (with one certificate each, its own). In every
-reachable record a revoked identity cannot act (`revoked_cannot_act` with
-`Reachable.revokedAreRegistered`), and so neither can a cut-off one
-(`Reachable.cutOffAreRevoked`). -/
+/-- `CanAct s k`: `k` has no identity certificate, or is valid in some
+organisation, of some kind. -/
 def CanAct (s : State) (k : Key) : Prop :=
   ¬ Registered s k ∨ ∃ o' kind, Valid s o' k kind
 
-/-- `InTeam s o t k`: `k` can act in team `t` of `o`. It holds the team
-certificate and can act. An unregistered member has only its team
-certificate: no certificate leads from it to a root. -/
+/-- `InTeam s o t k`: `k` holds a certificate of team `t` of `o` and can act. -/
 def InTeam (s : State) (o : Org) (t : Team) (k : Key) : Prop :=
   HasTeamCert s o t k ∧ CanAct s k
 
-/-- `Admin s o k`: `k` is in the admin team of `o` and is a valid member of `o`,
-of either kind. An outsider is never an admin. -/
+/-- `Admin s o k`: `k` holds a certificate of `o`'s admin team and is valid in
+`o`, of some kind. -/
 def Admin (s : State) (o : Org) (k : Key) : Prop :=
   ⟨o, .admin, k⟩ ∈ s.members ∧ ∃ kind, Valid s o k kind
 
 /-! ## Approval -/
 
-/-- The approvals given satisfy what a rule asks for. -/
+/-- Approvals satisfy `.anyPerson` if one of them is a valid person of `o`,
+and `.exactly k` if `k` is one of them and is valid in `o`. -/
 def Satisfies (s : State) (o : Org) (approvals : List Key) : Approver → Prop
   | .anyPerson => ∃ k, k ∈ approvals ∧ Valid s o k .person
   | .exactly k => k ∈ approvals ∧ ∃ kind, Valid s o k kind
 
-/-- The approvals given satisfy every rule the organisation has for this kind of act. -/
+/-- The approvals satisfy every rule of the policy for `o` and this kind of
+act. -/
 def Approved (s : State) (o : Org) (act : ActKind) (approvals : List Key) : Prop :=
   ∀ r, r ∈ s.policy → r.org = o → r.act = act → Satisfies s o approvals r.approver
 
@@ -296,34 +220,27 @@ def OrgKey.org : OrgKey → Org
   | .root o => o
   | .team o _ => o
 
-/-- A rule for who may ask a key holder: in this record, for this
-organisation and this kind of act, may identity `k` ask? -/
+/-- A rule for who may ask a key holder: given the record, the organisation,
+the kind of act and an identity, whether that identity may ask. -/
 abbrev AskRule := State → Org → ActKind → Key → Prop
 
-/-- As built. Only adding a person may be asked for (`act = .registerPerson`).
-A valid person of the organisation may ask, whatever the policy. Any valid
-member of it, agent included, may ask when the policy has a rule for adding a
-person in it that asks any person's approval; `Approved` then requires a
-valid person among the approvals. A named approver (`.exactly`) does not let
-an agent ask. Through `Authorised`, a held key then signs only
-`registerByRoot` and `readmitByRoot` of a person; `leave` and `redeem` do not
-go through `Authorised`. -/
+/-- As built: the act is adding a person, and either the identity is a valid
+person of the organisation, or the policy has a rule for adding a person in it
+that asks any person's approval and the identity is valid in it. -/
 def builtRule : AskRule :=
   fun s o act k => act = .registerPerson ∧
     (Valid s o k .person ∨
       ((∃ r, r ∈ s.policy ∧ r.org = o ∧ r.act = .registerPerson ∧ r.approver = .anyPerson) ∧
         ∃ kind, Valid s o k kind))
 
-/-- The design. An admin of the organisation may ask for any of these acts. -/
+/-- Planned: the identity is an admin of the organisation. -/
 def adminRule : AskRule :=
   fun s o _ k => Admin s o k
 
-/-- `Authorised ask s key act who approvals`: `key` signs this act when `who` asks.
-
-* If nobody holds the key for the organisation, whoever controls it signs
-  directly. No policy applies: nothing stands between them and the key.
-* If a key holder holds it, an identity the rule `ask` allows asks, with the
-  approvals the organisation's policy names (A8). -/
+/-- `Authorised ask s key act who approvals`: either `key` is not held and
+`who` controls it, or `key` is held, `who` is an identity that `ask` lets ask
+for `act` in `key`'s organisation, and the approvals are approved for `act`
+there. -/
 def Authorised (ask : AskRule) (s : State) (key : OrgKey) (act : ActKind) (who : Party)
     (approvals : List Key) : Prop :=
   (key ∉ s.held ∧ who = .controller key) ∨
@@ -334,10 +251,7 @@ def ActKind.registerOf : Kind → ActKind
   | .person => .registerPerson
   | .agent => .registerAgent
 
-/-- `GrantLive s g`: the grant stands and its subject can still act in the
-team it was issued from. A grant is tied to the team certificate it came
-from: removing that certificate removes the grant (see `remove`, `leave`), so
-a later certificate for the same member does not bring it back. -/
+/-- `GrantLive s g`: `g` stands and its subject can act in its team. -/
 def GrantLive (s : State) (g : Grant) : Prop :=
   g ∈ s.grants ∧ InTeam s g.org g.team g.subject
 
@@ -356,18 +270,15 @@ def KeepsAnAdmin (s : State) (m : Membership) : Prop :=
 def Fresh (s : State) (k : Key) : Prop :=
   ∀ c, c ∈ s.certs → c.subject ≠ k
 
-/-- `Step ask s who s'`: under the rule `ask`, `who` asks for one act, it is accepted, and the record
-changes from `s` to `s'`. Each constructor's premises are what is checked. -/
+/-- `Step ask s who s'`: under the rule `ask`, `who` asks for an act that is
+accepted and takes `s` to `s'`. -/
 inductive Step (ask : AskRule) : State → Party → State → Prop where
-  /-- Create an organisation, asked for by whoever controls its domain in DNS. -/
+  /-- Asked for by `dns o`, if `o` does not exist: `o` exists. -/
   | createOrg {s : State} {o : Org} :
       o ∉ s.orgs →
       Step ask s (.dns o) { s with orgs := o :: s.orgs }
-  /-- Whoever controls the domain in DNS replaces the root key. Every identity of the organisation that was current is cut off.
-  The new root key is not with a key holder. Team certificates, invitations
-  and the teams' keys are not touched. In a reachable record a cut-off member
-  cannot act in a team (`revoked_has_no_authority`,
-  `Reachable.cutOffAreRevoked`). Nothing can refuse this. -/
+  /-- Asked for by `dns o`, if `o` exists: every unrevoked identity with a
+  certificate of `o` is revoked and cut off, and `o`'s root key is not held. -/
   | replaceRoot {s : State} {o : Org} :
       o ∈ s.orgs →
       Step ask s (.dns o)
@@ -377,133 +288,143 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
           cutOff := ((s.certs.filter (fun c => decide (c.org = o ∧ c.subject ∉ s.revoked))).map
             (·.subject)) ++ s.cutOff,
           held := s.held.filter (fun k => decide (k ≠ .root o)) }
-  /-- The organisation admits again an identity directly under it that a root
-  replacement cut off. The root key signs; the same certificate, with the same subject and so the
-  same key, is back in force. -/
+  /-- If `c` is registered and issued by the root, its subject is cut off, and
+  `Authorised` holds for the root key of `c`'s organisation and registering
+  `c`'s kind: the subject is neither revoked nor cut off. -/
   | readmitByRoot {s : State} {c : Cert} {who : Party} {approvals : List Key} :
       c ∈ s.certs → c.issuer = .root → c.subject ∈ s.cutOff →
       Authorised ask s (.root c.org) (.registerOf c.kind) who approvals →
       Step ask s who
         { s with revoked := s.revoked.filter (fun k => decide (k ≠ c.subject)),
                  cutOff := s.cutOff.filter (fun k => decide (k ≠ c.subject)) }
-  /-- A valid member admits again an identity it issued that a root replacement cut off. -/
+  /-- Asked for by `id p`, if `c` is registered and issued by `p`, its subject
+  is cut off, and `p` is valid in `c`'s organisation: the subject is neither
+  revoked nor cut off. -/
   | readmitByParent {s : State} {c : Cert} {p : Key} {pk : Kind} :
       c ∈ s.certs → c.issuer = .member p → c.subject ∈ s.cutOff → Valid s c.org p pk →
       Step ask s (.id p)
         { s with revoked := s.revoked.filter (fun k => decide (k ≠ c.subject)),
                  cutOff := s.cutOff.filter (fun k => decide (k ≠ c.subject)) }
-  /-- A key holder gives a key back to the organisation. Nothing else changes. -/
+  /-- If `key` is held and `Authorised` holds for it and giving a key back:
+  `key` is not held. -/
   | release {s : State} {key : OrgKey} {who : Party} {approvals : List Key} :
       key ∈ s.held → Authorised ask s key .release who approvals →
       Step ask s who { s with held := s.held.filter (fun k => decide (k ≠ key)) }
-  /-- The organisation's root replaces a team's key with a new one, which no
-  key holder holds. The root key signs; no team key, member or admin signs.
-  The old key, even where its holder keeps a copy, is no longer the team's
-  key. Team certificates, grants and invitations are not touched: admitting
-  and removing are separate acts. -/
+  /-- If `Authorised` holds for `o`'s root key and a re-key: the key of team
+  `t` of `o` is not held. -/
   | rekeyTeam {s : State} {o : Org} {t : Team} {who : Party} {approvals : List Key} :
       Authorised ask s (.root o) .rekey who approvals →
       Step ask s who { s with held := s.held.filter (fun k => decide (k ≠ .team o t)) }
-  /-- Whoever controls a key puts it in a key holder. -/
+  /-- Asked for by `controller key`, if `key` is not held: `key` is held. -/
   | entrust {s : State} {key : OrgKey} :
       key ∉ s.held →
       Step ask s (.controller key) { s with held := key :: s.held }
-  /-- Register a new identity directly under the organisation, of either kind.
-  The root key signs (A2 for a person). -/
+  /-- If `c` is issued by the root, its organisation exists, its subject has
+  no certificate, and `Authorised` holds for the root key and registering
+  `c`'s kind: `c` is registered. -/
   | registerByRoot {s : State} {c : Cert} {who : Party} {approvals : List Key} :
       c.issuer = .root → c.org ∈ s.orgs → Fresh s c.subject →
       Authorised ask s (.root c.org) (.registerOf c.kind) who approvals →
       Step ask s who { s with certs := c :: s.certs }
-  /-- A valid member registers a new identity under itself, within R1. Its own key signs. -/
+  /-- Asked for by `id p`, if `c` is issued by `p`, its subject has no
+  certificate, `p` is valid in `c`'s organisation, and `p`'s kind may issue
+  `c`'s: `c` is registered. -/
   | registerByParent {s : State} {c : Cert} {p : Key} {pk : Kind} :
       c.issuer = .member p → Fresh s c.subject → Valid s c.org p pk → MayIssue pk c.kind →
       Step ask s (.id p) { s with certs := c :: s.certs }
-  /-- An identity revokes itself. Its own key signs; it need not be valid. -/
+  /-- Asked for by `c`'s subject, if `c` is registered: the subject is revoked
+  and not cut off. -/
   | revokeSelf {s : State} {c : Cert} :
       c ∈ s.certs →
       Step ask s (.id c.subject)
         { s with revoked := c.subject :: s.revoked,
                  cutOff := s.cutOff.filter (fun k => decide (k ≠ c.subject)) }
-  /-- A valid member revokes an identity it issued. Its own key signs. -/
+  /-- Asked for by `id p`, if `c` is registered and issued by `p`, and `p` is
+  valid in `c`'s organisation: `c`'s subject is revoked and not cut off. -/
   | revokeChild {s : State} {c : Cert} {p : Key} {pk : Kind} :
       c ∈ s.certs → c.issuer = .member p → Valid s c.org p pk →
       Step ask s (.id p)
         { s with revoked := c.subject :: s.revoked,
                  cutOff := s.cutOff.filter (fun k => decide (k ≠ c.subject)) }
-  /-- The organisation revokes one of its identities. The root key signs. -/
+  /-- If `c` is registered and `Authorised` holds for the root key of `c`'s
+  organisation and revoking: `c`'s subject is revoked and not cut off. -/
   | revokeByOrg {s : State} {c : Cert} {who : Party} {approvals : List Key} :
       c ∈ s.certs → Authorised ask s (.root c.org) .revoke who approvals →
       Step ask s who
         { s with revoked := c.subject :: s.revoked,
                  cutOff := s.cutOff.filter (fun k => decide (k ≠ c.subject)) }
-  /-- Admit a member to a named team. The member can be an outsider. The team's key signs. -/
+  /-- If `m` is not of an admin team, `Authorised` holds for its team's key
+  and admitting, and `OneTeamIfLocal` holds for its member: `m` stands. -/
   | admit {s : State} {m : Membership} {who : Party} {approvals : List Key} :
       m.team ≠ .admin → Authorised ask s (.team m.org m.team) .admit who approvals →
       OneTeamIfLocal s m.member →
       Step ask s who { s with members := m :: s.members }
-  /-- Admit a valid member of the organisation to its admin team. The admin team's key signs. -/
+  /-- If `m` is of an admin team, its member is valid in its organisation, and
+  `Authorised` holds for that team's key and admitting an admin: `m` stands. -/
   | admitAdmin {s : State} {m : Membership} {kind : Kind} {who : Party} {approvals : List Key} :
       m.team = .admin → Valid s m.org m.member kind →
       Authorised ask s (.team m.org m.team) .admitAdmin who approvals →
       Step ask s who { s with members := m :: s.members }
-  /-- Remove a member from a team, the admin team included. The team's key signs.
-  The removed member need not take part, though the policy may name it as an
-  approver. A key holder does not remove the last admin.
-  Grants given from this team certificate end with it. -/
+  /-- If `Authorised` holds for `m`'s team's key and removing, and
+  `KeepsAnAdmin` holds when that key is held: `m` no longer stands, nor any
+  grant on its member from its team. -/
   | remove {s : State} {m : Membership} {who : Party} {approvals : List Key} :
       Authorised ask s (.team m.org m.team) .remove who approvals →
       (.team m.org m.team ∈ s.held → KeepsAnAdmin s m) →
       Step ask s who
         { s with members := s.members.filter (fun x => decide (x ≠ m)),
                  grants := s.grants.filter (fun g => decide (¬ (g.org = m.org ∧ g.team = m.team ∧ g.subject = m.member))) }
-  /-- A member leaves a team whose key a key holder holds, by asking it. No ask rule and no policy is consulted, and the
-  member need not be registered or valid. -/
+  /-- Asked for by `m`'s member, if `m` stands, its team's key is held, and
+  `KeepsAnAdmin` holds: `m` no longer stands, nor any grant on its member from
+  its team. -/
   | leave {s : State} {m : Membership} :
       m ∈ s.members → .team m.org m.team ∈ s.held → KeepsAnAdmin s m →
       Step ask s (.id m.member)
         { s with members := s.members.filter (fun x => decide (x ≠ m)),
                  grants := s.grants.filter (fun g => decide (¬ (g.org = m.org ∧ g.team = m.team ∧ g.subject = m.member))) }
-  /-- Issue an invitation to a named team. It needs the same authority as admitting. -/
+  /-- If the invitation is not to an admin team, `Authorised` holds for its
+  team's key and admitting, and no unused invitation has its secret: the
+  invitation is unused. -/
   | invite {s : State} {i : Invite} {who : Party} {approvals : List Key} :
       i.team ≠ .admin → Authorised ask s (.team i.org i.team) .admit who approvals →
       (∀ j, j ∈ s.invites → j.token ≠ i.token) →
       Step ask s who { s with invites := i :: s.invites }
-  /-- Whoever holds an invitation's secret joins its team as `k`, a key the
-  joiner holds (A3). Also checked: the team is not an admin team, and an
-  unregistered `k` holds no team certificate (`OneTeamIfLocal`). Who holds the
-  secret is not checked. -/
+  /-- Asked for by the holder of `i`'s secret, if `i` is unused and not to an
+  admin team and `OneTeamIfLocal` holds for `k`: `k` holds a certificate of
+  `i`'s team, and `i` is used. -/
   | redeem {s : State} {i : Invite} {k : Key} :
       i ∈ s.invites → i.team ≠ .admin → OneTeamIfLocal s k →
       Step ask s (.bearer i.token)
         { s with members := ⟨i.org, i.team, k⟩ :: s.members,
                  invites := s.invites.filter (fun x => decide (x ≠ i)) }
-  /-- A team member gives a grant on itself to a session key no current grant uses. -/
+  /-- Asked for by `g`'s subject, if it can act in `g`'s team and no current
+  grant uses `g`'s session key: `g` stands. -/
   | mintGrant {s : State} {g : Grant} :
       InTeam s g.org g.team g.subject → (∀ g', g' ∈ s.grants → g'.session ≠ g.session) →
       Step ask s (.id g.subject) { s with grants := g :: s.grants }
-  /-- An identity revokes a grant on itself. -/
+  /-- Asked for by `g`'s subject, if `g` stands: `g` no longer stands. -/
   | revokeGrant {s : State} {g : Grant} :
       g ∈ s.grants →
       Step ask s (.id g.subject) { s with grants := s.grants.filter (fun x => decide (x ≠ g)) }
-  /-- An identity that can act sends a message with its own key. -/
+  /-- Asked for by `id k`, if `k` can act: a message attributed to `k` is
+  sent. -/
   | sendOwn {s : State} {k : Key} :
       CanAct s k →
       Step ask s (.id k) { s with sent := ⟨k⟩ :: s.sent }
-  /-- The holder of a live grant's session key sends a message. The server
-  attributes it to the grant's subject. -/
+  /-- Asked for by the holder of `g`'s session key, if `g` is live and may
+  send: a message attributed to `g`'s subject is sent. -/
   | sendGrant {s : State} {g : Grant} :
       GrantLive s g → g.maySend = true →
       Step ask s (.session g.session) { s with sent := ⟨g.subject⟩ :: s.sent }
 
-/-- The records that can be reached by accepted acts, starting with nothing but a policy. -/
+/-- The records reached by accepted acts from a record with nothing in it but
+a policy. -/
 inductive Reachable (ask : AskRule) : State → Prop where
   | start (policy : List Rule) : Reachable ask ⟨[], [], [], [], [], policy, [], [], [], []⟩
   | step {s s' : State} {who : Party} :
       Reachable ask s → Step ask s who s' → Reachable ask s'
 
-/-- Every identity has at most one certificate, so its organisation, kind and
-issuer are fixed. The protocol's rule R2 fixes organisation and kind; the fixed issuer is
-this model's restriction. -/
+/-- Every identity has at most one certificate. -/
 def OneCertEach (s : State) : Prop :=
   ∀ c, c ∈ s.certs → ∀ d, d ∈ s.certs → c.subject = d.subject → c = d
 

@@ -6,22 +6,8 @@ import TrustWeb.Core
 /-!
 # Every name the prose cites exists in the model
 
-`lake build` reads `README.md`, `CLAIMS.md` and the model's Lean files, and
-checks every text between backquotes, except file paths and shell commands
-(a text with a slash, a hyphen, a line break or a leading hash, a name ending
-in .lean, .md, .toml or .json, or the text lake build). It splits the text into identifiers and checks each one:
-
-* an identifier with a leading dot, such as .release, must be a constructor
-  of one of the model's inductive types other than its structures;
-* an identifier that starts with a variable, such as c.org, must have the
-  rest resolve in the model, as a field or a declaration;
-* any other identifier must be the `TrustWeb` namespace itself, resolve in it
-  directly or under one of the model's types or this check's own namespace,
-  or be one of the few Lean names listed below.
-
-An identifier with no letter, and the listed variables, keywords and
-protocol names, are not checked. The build fails
-on any identifier that does not pass.
+The build's check of the names that the README, `CLAIMS.md` and the model's
+doc comments cite.
 -/
 
 namespace TrustWeb.DocNames

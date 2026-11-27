@@ -3,8 +3,8 @@ import TrustWeb.Model
 /-!
 # The trust web: what is proved
 
-Each result has a doc comment above it that restates it; the lemmas with
-none are helpers.
+Results about one act, about reachable records and about the definitions, with
+the lemmas they use.
 -/
 
 namespace TrustWeb

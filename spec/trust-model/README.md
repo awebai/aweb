@@ -2,15 +2,7 @@
 
 **Experimental formal model of selected aweb trust rules. Proofs are checked by Lean. Comparison against running implementations is pending.**
 
-Independent readings of the plain sentences against the Lean statements are worked in, one round at a time. Every sentence here and in the Lean doc comments that says something about the model, apart from a theorem's own restatement in a row or its doc comment, has a line in `CLAIMS.md` naming what makes it true.
-
-This is a formal model of who may do what in aweb: organisations, their members, teams, admins, keys, grants and invitations. It is written in Lean 4, and every result in it is proved and checked by Lean. It is licensed under this repository's licence (MIT).
-
-**Read this before relying on anything here.**
-
-- A row is proved only for what its statement says. Each row below states its conditions.
-- Lean guarantees that the results follow from the definitions. It does not guarantee that the definitions match the real system. That has been checked by reading the source, twice, and several definitions were corrected afterwards and not yet rechecked.
-- The model is not yet run against the real code. Until it is, treat it as a precise description to be tested, not as a guarantee about the software.
+This is a formal model, in Lean 4, of who may do what in aweb: organisations, their members, teams, admins, keys, grants and invitations. Lean checks that each result below follows from the definitions; whether the definitions match aweb was checked by reading the source, and the model is not yet run against the code. A row is proved only for what its statement says.
 
 ## How to check it yourself
 
@@ -20,59 +12,11 @@ Install Lean with [elan](https://github.com/leanprover/elan). In this directory 
 lake build
 ```
 
-If it builds with no warning, no proof is left open: a proof left open with `sorry` builds with a warning. An added `axiom` or `native_decide` would build with no warning, so two more checks complete it: the sources use no `axiom`, `native_decide`, `opaque` or `implemented_by` (the words appear only as strings in `TrustWeb/DocNames.lean`'s list of skipped names), and `#print axioms` on each theorem shows only Lean's three standard axioms, `propext`, `Classical.choice` and `Quot.sound`. The toolchain is pinned to Lean 4.36.0, and no package beyond Lean itself is used. The build also runs a name check (`TrustWeb/DocNames.lean`) over this file, `CLAIMS.md` and the six model files; the check's own doc comments are not read. It splits each text between backquotes into identifiers. It skips a whole text that contains a slash, a hyphen or a line break, starts with a hash, ends in `.lean`, `.md`, `.toml` or `.json`, or is `lake build`, and it skips an identifier with no letter and identifiers on a listed set of variables, keywords and the protocol's own names. A leading-dot identifier must be a constructor of one of the model's inductive types other than its structures. An identifier whose first part is a listed variable, such as `c.org`, must have its rest exist somewhere in the model, not necessarily as a field of that variable's type. Any other identifier must exist in the model: `TrustWeb` itself, a declaration in `TrustWeb`, a declaration under one of the model's types or the check's own namespace, or one of four listed Lean names. So the check finds a misspelled or removed name; it does not check that a name is the one meant.
-
-## What is here
-
-- `TrustWeb/Model.lean`: what exists, the record (`State`), the 22 acts (`Step`), and assumptions 1 to 9.
-- `TrustWeb/Properties.lean`: the results below not listed under another file.
-- `TrustWeb/Abilities.lean`: results 22 to 26, 36 and 41 to 47.
-- `TrustWeb/Operations.lean`: the team rule, and results 32 to 35 and 48.
-- `TrustWeb/Core.lean`: an experiment: six of the acts (`CoreStep`), and the theorems `core_one` to `core_five` and `core_two_design`.
-- `TrustWeb/Evidence.lean`: planned evidence of how a person was enrolled, results 38 to 40, and assumption 10.
-- `CLAIMS.md`: each sentence about the model, with the definition or result behind it.
-- `TrustWeb/DocNames.lean`: the build's check of the names the prose cites. `lakefile.toml` builds it as its own library, with `README.md` and `CLAIMS.md` as inputs.
-
-## Who may ask a key holder
-
-Who may ask a key holder is a parameter of the model, `AskRule`: any rule of that type. The model names three, the last a family with one rule per assignment.
-
-- **As built** (`builtRule`): only adding a person may be asked for. A valid person of the organisation may ask, whatever the policy. Any valid member of it, agent included, may ask when its policy has a rule for adding a person that asks any person's approval; a valid person must then be among the approvals (`Approved`). A rule naming one approver does not let an agent ask. So a held key signs, through `Authorised`, only a person's registration or re-admission directly under the root (`registerByRoot`, `readmitByRoot`), and is never given back: `release` needs the key held, and `builtRule` never allows `.release`.
-- **Planned** (`adminRule`): an admin of the organisation (`Admin`), person or agent.
-- **Planned, general form** (`teamRule`): a valid member of the organisation that holds a certificate of the team the act is assigned to. The admin rule is the team rule with every act assigned to the admin team (32).
-
-The acts with `Authorised` among their premises are the re-admission by the root, having a key given back, re-keying a team, registering under the root, revoking by the organisation, admitting to a team, admitting an admin, removing from a team, and issuing an invitation. Two acts change team certificates without it. `leave` removes a team certificate of a team whose key is held, with no ask rule and no policy, and the member need not be registered or valid. `redeem` adds a team certificate on an unused invitation, with no `Authorised`.
-
-A result proved for any `AskRule` holds for all three. A row marked **Design** is proved for the admin rule and claims nothing about the built rule; row 30's statement is false as built, by 29.
-
-Four more parts of the model are planned and not built. They are present under every rule, so the as-built results (15, 29) are proved over acts that include them. The reasons they are not built come from the source.
-
-- `entrust` and `release`: putting a key into a key holder and having it given back. The built holder makes its own keys and has no such commands. Under the built rule, `release` is never accepted: it needs the key held, and `builtRule` never allows `.release`.
-- `KeepsAnAdmin`, a premise of `leave`, and of `remove` when the team's key is held. The registry has no such check.
-- `leave`. The built command drops the member's own copy and leaves the certificate standing.
-- The premise of `invite` and `redeem` that the team is not the admin team. The registry does not know which team that is.
-
-## The model in plain words
-
-- **An organisation** (`Org`) is a domain. Whoever controls it in DNS creates it (`createOrg`) and, once it exists, can always name a new root key (`replaceRoot`, 27). It has a root key and one key per team (`OrgKey`).
-- **A member** holds an identity certificate (`Cert`) naming the organisation, the kind (person or agent) and the issuer: the root or a member. In a record the system can reach, each identity has at most one (14).
-- **Who may issue whom** (`MayIssue`): a member registering under itself (`registerByParent`) may issue a person only if it is a person. The root (`registerByRoot`) issues either kind.
-- **A valid person** (`Valid`, `Person`) holds a person certificate issued by the root or by a person, and is not revoked. Another identity's revocation, its issuer's included, does not change that (9).
-- **A valid agent** (`Valid`) is not revoked, and its issuer is the root or is valid now.
-- **Who answers** (`AnswersFor`): a valid person answers for itself, and a person answers for an unrevoked agent whose issuer it answers for. The one who answers is a valid person, and with one certificate each there is at most one (13).
-- **A team certificate** (`Membership`) names a member of a team. No premise of `admit` or `redeem` asks the member to have an identity certificate or to be of the organisation; `admitAdmin` asks it to be a valid member of the organisation.
-- **Acting in a team** (`InTeam`, `CanAct`) needs the team certificate and, for a key that has an identity certificate, being valid now in some organisation.
-- **An admin** (`Admin`) holds a certificate of the organisation's admin team and is a valid member of that organisation, person or agent.
-- **Policy** (`Rule`, `Approved`). Each rule names an organisation, a kind of act and whose approval it asks: any valid person of the organisation, or one named member valid in it. Approvals are approved for an act when they satisfy every rule for it.
-- **Who can make an organisation's key sign** (`Authorised`), in the nine acts that go through it. If no key holder holds the key, whoever controls it, with no policy. If a key holder holds it, an identity the rule lets ask, with approvals the policy approves. `leave` and `redeem` change team certificates without it.
-- **A grant** (`Grant`). A member that can act in a team gives a grant on itself to a session key no current grant uses (`mintGrant`). While the grant stands and its subject can act in that team (`GrantLive`), whoever holds the session key can send a message attributed to the subject, if the grant may send (`sendGrant`).
-- **An invitation** (`Invite`). Issuing it needs the same `Authorised` as admitting to its team (`invite`). Whoever holds its secret joins its team once, as a key it names that has an identity certificate or holds no team certificate (`redeem`, `OneTeamIfLocal`). Neither is for an admin team.
-
-**The acts (22, `Step`):** create an organisation; replace its root key from DNS; re-key a team from the root; admit again an identity the replacement cut off, by the organisation or by the member that issued it; put a key in a key holder; have a key given back; register an identity under the organisation; register an identity under a member; revoke an identity, by itself, by its issuer, or by the organisation; admit a member to a team; admit an admin; remove a member from a team; leave a team; issue an invitation; use an invitation; give a grant; revoke a grant; send a message with your own key; send a message with a grant.
+If it builds with no warning, no proof is left open: a proof left open with `sorry` builds with a warning. An added `axiom` or `native_decide` would build with no warning, so two more checks complete it: the sources use no `axiom`, `native_decide`, `opaque` or `implemented_by` (the words appear only as strings in `TrustWeb/DocNames.lean`'s list of skipped names), and `#print axioms` on each theorem shows only Lean's three standard axioms, `propext`, `Classical.choice` and `Quot.sound`. The toolchain is pinned to Lean 4.36.0, and no package beyond Lean itself is used. The build also runs a name check (`TrustWeb/DocNames.lean`) over this file, `CLAIMS.md` and the six model files; the check's own doc comments are not read. It splits each text between backquotes into identifiers. It skips a whole text that contains a slash, a hyphen or a line break, starts with a hash, ends in `.lean`, `.md`, `.toml` or `.json`, or is `lake build`, and it skips an identifier with no letter and identifiers on a listed set of variables, keywords, the protocol's own names and the build's own library name. A leading-dot identifier must be a constructor of one of the model's inductive types other than its structures. An identifier whose first part is a listed variable, such as `c.org`, must have its rest exist somewhere in the model, not necessarily as a field of that variable's type. Any other identifier must exist in the model: `TrustWeb` itself, a declaration in `TrustWeb`, a declaration under one of the model's types or the check's own namespace, or one of four listed Lean names. So the check finds a misspelled or removed name; it does not check that a name is the one meant.
 
 ## What is proved
 
-How to read these rows. Each row first gives its theorem's conditions and conclusion, in the order the theorem states them; anything after that is a reading of it, and says what the statement leaves out. **"In one act"** means the result is about a single accepted act; it is not a claim about any sequence of acts. **"In a record the system can reach"** means the result needs facts that hold after any sequence of accepted acts from a record with nothing in it but a policy (`Reachable`). **"One certificate each"** means the condition that every identity has at most one certificate, which holds in every record the system can reach (14). **Design** means the result is proved for the admin rule and claims nothing about the built rule. A row with no rule named holds under every rule.
+How to read these rows. Each row first restates its theorem's conditions and conclusion, in the order the theorem states them; anything after that is a reading of it or a note on the proof's construction. **"In one act"** means the result is about a single accepted act; it is not a claim about any sequence of acts. **"In a record the system can reach"** means after any sequence of accepted acts from a record with nothing in it but a policy (`Reachable`). **"One certificate each"** means that every identity has at most one certificate, which holds in every record the system can reach (14). A row with no rule named holds for every `AskRule`. **As built** means under `builtRule`, **Design** under `adminRule`, and a team rule is `teamRule`; a Design row claims nothing about `builtRule`. Four parts of the model are planned, not built, and present under every rule, `builtRule` included: the acts `entrust`, `release` and `leave`, the premise `KeepsAnAdmin`, and the premise of `invite` and `redeem` that the team is not the admin team.
 
 ### Identities, admins, revocation
 
@@ -83,7 +27,7 @@ How to read these rows. Each row first gives its theorem's conditions and conclu
 | 3 | If every certificate in a list is not issued by the root, and its issuer is not a person of the certificate's organisation in the record, then adding the list to the record makes nobody a person who was not one. (A person certificate of an organisation issued by a person of it does make its subject a person, by the definition of `Person`; what is checked is the rule about issuers, not the registry's admission) | `no_person_from_outside` |
 | 4 | If no approver is a valid person of the organisation, the approvals do not satisfy a rule asking for any person | `agents_cannot_approve_as_person` |
 | 5 | If an identity is a valid member of an organisation, of either kind, certificates lead from it to the organisation's root; the same if it is an admin. Leading means registered certificates of that organisation, each issued by the next, up to one issued by the root. It says nothing about the kinds, about revocation or about whether the issuers are valid, and nothing about a key with no identity certificate acting in a team | `valid_has_chain_to_root`, `admin_has_chain_to_root` |
-| 6 | In one act: if an accepted act adds a team certificate of an admin team, the asker is whoever controls that admin team's key, or an identity the rule lets ask for admitting an admin in that organisation. So it is not an invitation's holder, in that act. Nothing is proved about several acts | `new_admin_needs_controller_or_asker` |
+| 6 | In one act: if an accepted act adds a team certificate of an admin team, the asker is whoever controls that admin team's key, or an identity the rule lets ask for admitting an admin in that organisation. So it is not an invitation's holder, in that act. Over several acts it can fail under a team rule (48) | `new_admin_needs_controller_or_asker` |
 | 7 | If an identity is revoked, it is not valid in any organisation, of either kind. If, besides, only registered identities are revoked (true in every record the system can reach, 14), it is not an admin of any organisation, cannot act in any team, and is not among the identities that can act, which sending with its own key requires | `revoked_not_valid`, `revoked_has_no_authority`, `revoked_cannot_act` |
 | 8 | If every identity has one certificate each, an agent certificate is registered, and the member that issued it is revoked, then its subject is not valid in any organisation, of either kind, and cannot act in any team. Its team certificates are not looked at | `revoking_parent_ends_agent`, `orphaned_agent_cannot_act_in_team` |
 | 9 | If an identity is a valid person of an organisation, adding any other identity to the revoked leaves it a valid person of that organisation, whoever issued it. This is about the record, not about an act | `person_survives_others` |
@@ -129,7 +73,6 @@ How to read these rows. Each row first gives its theorem's conditions and conclu
 
 ## What must be possible
 
-Rows 25, 42, 43, 44, 46 and 47 state limits, and so does the first half of 23.
 
 | # | In plain words | Lean name |
 |---|---|---|
@@ -147,11 +90,10 @@ Rows 25, 42, 43, 44, 46 and 47 state limits, and so does the first half of 23.
 | 46 | Any rule: there is a record the system can reach, an act asked for by whoever controls one organisation's root key, and a grant of another organisation, such that before the act an identity can act in a named team of the other organisation and the grant is live, and after it the identity cannot act in that team and the grant is not live. (In the construction the identity is an agent of the first organisation, and the act revokes it) | `root_controller_ends_access_in_another_organisation` |
 | 47 | Any rule: there is a record the system can reach in which an organisation's admin team's key is with a key holder and an identity is its only admin, and an act asked for by another identity, after which the admin is not revoked and the organisation has no admin. (In the construction the admin is an agent issued by the person that asks, and the act is that person revoking itself) | `issuer_revocation_can_leave_no_admin` |
 
-Not in the model: an agent whose key a hosting service holds (assumption 7); moving an agent to another parent (no act removes a certificate, `certificate_is_permanent`, and an identity has at most one, 14); an organisation changing its domain (an organisation is its domain, `Org`). A person of several organisations can be stated, and in records the system can reach there is none: it would need two certificates (14).
-
 ## Evidence of how a person was enrolled (planned)
 
-The planned outcome `controller_asserted_person` is described in `Evidence.lean` and `docs/id-certificates.md`. In the model the evidence is a list of assertions outside the record: `State` has no field for it. Assumption 10 is about who signs an assertion.
+The evidence is a list of assertions outside the record: the definitions in `Evidence.lean` take it as `as : List Assertion`, and `State` has no field for it.
+
 
 | # | In plain words | Lean name |
 |---|---|---|
@@ -193,8 +135,8 @@ The planned outcome `controller_asserted_person` is described in `Evidence.lean`
 5. **One act at a time.** Each act happens whole, and acts do not overlap.
 6. **Approvals.** An approval comes from the identity it names, for the exact act, and cannot be reused.
 7. **Keys.** An identity keeps one key and only its owner uses it.
-8. **The key holder.** A key holder uses an organisation's key only as the acts say (`Step`). Nobody outside can check this.
-9. **The server.** The server that keeps the grants attributes a message to an identity only as the acts say. Only that server can check a grant.
+8. **The key holder.** A key holder uses an organisation's key only as the acts say (`Step`).
+9. **The server.** The server that keeps the grants attributes a message to an identity only as the acts say.
 10. **Enrolment assertions** (planned, `Evidence.lean`). An assertion about how a person was enrolled was signed by the party it names (for the controller, the domain's authorised controller), and is bound to that exact enrolment.
 
 ## Where the model does less than the real system
@@ -220,15 +162,6 @@ Each item says what the real system does that the model leaves out.
 - **No answer to "who answers"** (`AnswersFor`) covers both "nobody" and "cannot be established". The protocol tells them apart.
 - **Team certificates and invitations need no organisation to exist.** No premise of `admit`, `redeem` or `invite` asks for it.
 - **Nobody holds a member's own key for it** (7). A hosting service that holds a person's or an agent's key is not in the model.
-
-## Working on the model
-
-Change a definition, build, and Lean lists the results that no longer hold.
-
-- **Change what a definition says, not its shape.** Making a rule always true leaves every proof's wording valid, so each failure is a proof that used the fact. Removing a premise from an act breaks every proof that lists that act's premises, and most of those errors mean nothing.
-- **Read the error.** "Too many variable names", "alternative is not needed" or a wrong number of arguments is a proof naming something that moved. An error that shows a goal Lean could not close is a proof that needed the fact.
-- **A result is shown false only by an example.** Write the record in which it fails, as `design_agent_admin_can_ask_for_person` does. Until then it is unproved, not false.
-- **Write each row and each theorem's doc comment from the statement, conditions first.** Give every other sentence about the model a line in `CLAIMS.md`, or leave it out.
 
 ## Not done
 

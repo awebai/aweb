@@ -3,57 +3,39 @@ import TrustWeb.Abilities
 /-!
 # Evidence of how a person was enrolled (planned)
 
-A planned outcome of the protocol (`docs/id-certificates.md`),
-`controller_asserted_person`, says that a verified person has enrolment
-evidence from its own domain's controller: it records who vouched for the
-person. It carries no email verification, no fresh human gesture and no
-permission. It is reported beside the shared verdict, which does not change,
-and it does not change the outcome for agents below the person.
-
-Here the evidence is a list of assertions, kept outside the record (`State`
-has no field for it). So no act's premise and no verdict of the model
-(`Valid`, `Person`, `AnswersFor`) depends on it. The results below hold the
-record, and so the person's chain, fixed and vary the assertions.
-
-Both routes that register a person directly under the root (the domain's
-controller using the root key, or a hosted service holding it) are the same
-act here, `registerByRoot` of a person, and `Cert` has no field for how the
-person was enrolled.
-
-* **A10. Assertions.** An assertion in the list was signed by the party it
-  names (the domain's authorised controller, or the hosted service after an
-  email check) and is bound to that exact enrolment.
+Planned evidence of how a person was enrolled, kept as a list of assertions
+outside the record.
 -/
 
 namespace TrustWeb
 
-/-- Who vouched for a person's enrolment. -/
+/-- How a person's enrolment was asserted. -/
 inductive Enrolment where
-  /-- The organisation's domain controller asserted the enrolment. -/
+  /-- By the organisation's domain controller. -/
   | controller
-  /-- A hosted service asserted it after checking an email address. -/
+  /-- By a hosted service, for an email enrolment. -/
   | hostedEmail
   deriving DecidableEq, Repr
 
-/-- An authenticated assertion that `subject` of `org` was enrolled this way (A10). -/
+/-- An assertion that `subject` of `org` was enrolled this way. -/
 structure Assertion where
   org : Org
   subject : Key
   enrolment : Enrolment
   deriving DecidableEq, Repr
 
-/-- `controller_asserted_person`: `k` is a valid person of `o`, whoever issued
-its certificate, and its own domain's authorised controller asserted its
-enrolment, in an assertion bound to that exact enrolment (A10). -/
+/-- `k` is a valid person of `o`, and the list has the controller's assertion
+for `k` in `o`. -/
 def ControllerAssertedPerson (s : State) (as : List Assertion) (o : Org) (k : Key) : Prop :=
   Valid s o k .person ∧ ⟨o, k, .controller⟩ ∈ as
 
-/-- `k` is a valid person of `o`, and a hosted service asserted an email
-enrolment for it. This is separate evidence. -/
+/-- `k` is a valid person of `o`, and the list has the hosted service's email
+assertion for `k` in `o`. -/
 def HostedEmailEnrolled (s : State) (as : List Assertion) (o : Org) (k : Key) : Prop :=
   Valid s o k .person ∧ ⟨o, k, .hostedEmail⟩ ∈ as
 
-/-- `k` is a valid person of `o`, and no assertion is about its enrolment. -/
+/-- `k` is a valid person of `o`, and no assertion in the list is about `k` in
+`o`. -/
 def EnrolmentUnspecified (s : State) (as : List Assertion) (o : Org) (k : Key) : Prop :=
   Valid s o k .person ∧ ∀ a, a ∈ as → a.org = o → a.subject ≠ k
 
