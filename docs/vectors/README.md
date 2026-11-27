@@ -312,12 +312,12 @@ numbers (`seq`, `from_seq`, `issuer_key_seq`, `current_key_seq`) and sizes
 implementation. Timestamps are strings. Hook event envelopes, owner acts and
 logs-chain entries go through `strictjson` (Go) and
 `aweb_naapp.hooks.strictjson` (Python), which refuse floats and integers
-beyond 2^53-1 when reading and when writing. Three commands sign JSON a
+beyond 2^53-1 when reading and when writing. Two commands sign JSON a
 caller supplies, and read it with `UseNumber`, so a number in it is signed as
-the text the caller typed: `aw id sign` (the payload), `aw id request
---team-auth --sign` (the additional signed fields) and `aw agent status`
-(the status document). A caller who needs such a signature to verify in
-another language keeps those numbers within the contract.
+the text the caller typed: `aw id sign` (the payload) and `aw id request
+--team-auth --sign` (the additional signed fields). A caller who needs such a
+signature to verify in another language keeps those numbers within the
+contract.
 
 #### Unpaired surrogates
 
