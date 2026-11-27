@@ -51,8 +51,6 @@ rule, `builtRule` included:
   it only as `Step` says. Nobody outside can check this.
 * **A9. The server.** The server that keeps the grants attributes a message to
   an identity only as `Step` says. Only that server can check a grant.
-
-Where the model does less than the real system is listed in the README.
 -/
 
 namespace TrustWeb
@@ -349,8 +347,8 @@ def GrantLive (s : State) (g : Grant) : Prop :=
 def OneTeamIfLocal (s : State) (k : Key) : Prop :=
   Registered s k ∨ ∀ m, m ∈ s.members → m.member ≠ k
 
-/-- Removing this team certificate leaves the organisation an admin: either it
-is not an admin team certificate, or another admin remains. -/
+/-- If `m` is a certificate of an admin team, some identity other than
+`m.member` is an admin of `m.org`. -/
 def KeepsAnAdmin (s : State) (m : Membership) : Prop :=
   m.team = .admin → ∃ k, k ≠ m.member ∧ Admin s m.org k
 
@@ -458,9 +456,7 @@ inductive Step (ask : AskRule) : State → Party → State → Prop where
       Step ask s who
         { s with members := s.members.filter (fun x => decide (x ≠ m)),
                  grants := s.grants.filter (fun g => decide (¬ (g.org = m.org ∧ g.team = m.team ∧ g.subject = m.member))) }
-  /-- A member leaves a team whose key a key holder holds, by asking it. No
-  holder of an admin-team certificate leaves while no other admin remains
-  (`KeepsAnAdmin`). No ask rule and no policy is consulted, and the
+  /-- A member leaves a team whose key a key holder holds, by asking it. No ask rule and no policy is consulted, and the
   member need not be registered or valid. -/
   | leave {s : State} {m : Membership} :
       m ∈ s.members → .team m.org m.team ∈ s.held → KeepsAnAdmin s m →

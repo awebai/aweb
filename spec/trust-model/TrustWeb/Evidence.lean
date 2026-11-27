@@ -22,8 +22,7 @@ person was enrolled.
 
 * **A10. Assertions.** An assertion in the list was signed by the party it
   names (the domain's authorised controller, or the hosted service after an
-  email check) and is bound to that exact enrolment. The model does not
-  check it.
+  email check) and is bound to that exact enrolment.
 -/
 
 namespace TrustWeb

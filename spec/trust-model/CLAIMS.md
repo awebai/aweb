@@ -10,6 +10,7 @@ One line for every sentence that says something about the model, apart from a th
   - A *source* line is about the real system or the protocol, not the model, and names where it was read.
   - A *process* line is about how the model was made or is checked.
   - An *assumption* line is taken as given, not proved.
+  - A *construction* line is a construction note: it describes the witnesses a proof uses, which the statement does not fix.
 
 A sentence about the model that is not on this list should not be in the README or in a doc comment.
 
@@ -23,7 +24,7 @@ A sentence about the model that is not on this list should not be in the README 
 | Independent readings ... are worked in, one round at a time | process | PR 263's history |
 | Every sentence ..., apart from a theorem's own restatement, has a line in `CLAIMS.md` | process | This file |
 | This is a formal model of who may do what in aweb ... | process | The files listed under "What is here" |
-| Every result in it is proved and checked by Lean | result | `lake build` with no warning; no `sorry`, `axiom`, `native_decide`, `opaque` or `implemented_by` in the sources |
+| Every result in it is proved and checked by Lean | process | `lake build` with no warning; no `sorry`, `axiom`, `native_decide`, `opaque` or `implemented_by` in the sources |
 | A row is proved only for what its statement says | process | Reading convention |
 | Lean guarantees the results follow from the definitions, not that the definitions match the real system | process | What a proof checker checks |
 | Checked by reading the source, twice; several definitions corrected afterwards and not yet rechecked | process | The two source readings; the list under "Not done" |
@@ -37,7 +38,7 @@ A sentence about the model that is not on this list should not be in the README 
 | An `axiom` or `native_decide` builds with no warning; the sources use none of `axiom`, `native_decide`, `opaque`, `implemented_by` | process | A grep of the sources (each reading ran it); the words occur only as strings in `DocNames.lean`'s skipped list |
 | `#print axioms` shows only `propext`, `Classical.choice`, `Quot.sound` | process | `#print axioms` on every theorem (each reading ran it) |
 | Pinned to Lean 4.36.0; no package beyond Lean | process | `lean-toolchain`; `lake-manifest.json` lists no packages |
-| The build runs a name check: what it reads and skips, and the three ways an identifier passes; it finds a misspelled or removed name, not a wrong one | process | `TrustWeb/DocNames.lean`: the `#doc_names_resolve` file list, `isPathOrCommand`, `skipped`, `passes`, `resolvesInModel`, `isConstructorOfModel`; built as the `DocCheck` library in `lakefile.toml`, with `README.md` and `CLAIMS.md` as its inputs, so it reruns when either changes |
+| The build runs a name check: what it reads and skips, and how an identifier passes; it finds a misspelled or removed name, not a wrong one | process | `TrustWeb/DocNames.lean`: the `#doc_names_resolve` file list, `isPathOrCommand`, `skipped`, `passes`, `resolvesInModel`, `isConstructorOfModel`; built as the `DocCheck` library in `lakefile.toml`, with `README.md` and `CLAIMS.md` as its inputs, so it reruns when either changes |
 
 ### What is here
 
@@ -258,7 +259,7 @@ Each item pairs a sentence about the model with one about the real system.
 | Nothing here is about time, crashes, retries or concurrent changes | assumption | A5 |
 | `replaceRoot` cuts off every unrevoked identity of the organisation at once | act | `replaceRoot` |
 | Really by time of registration, with a backdated option; dual-signed rotation and parent recovery exist | source | the source readings (sources listed in `Model.lean`) |
-| Re-admission puts the same certificate back, and only its original issuer can do it | act | `readmitByRoot`, `readmitByParent` |
+| Re-admission puts the same certificate back in force | act | `readmitByRoot`, `readmitByParent` take the subject out of `revoked` and `cutOff` and change no certificate |
 | Really a new signed certificate, and the new root can admit anyone it keeps | source | the source readings (sources listed in `Model.lean`) |
 | `release` gives a key back whole | act | `release` changes only `held` |
 | Really a new key, signed by old and new | source | the source readings (sources listed in `Model.lean`) |
@@ -269,7 +270,6 @@ Each item pairs a sentence about the model with one about the real system.
 | The root re-keys a team by a separate act | act | `rekeyTeam` |
 | A re-key only changes which key is the team's | act | `rekeyTeam` changes only `held` |
 | Really the rotation also re-signs the member certificates it is given | source | awid `rotate_team_key` at 5c2ee7bad3 |
-| Here that is done by separate acts, `remove` and `admit` | act | `remove` removes a team certificate and `admit` adds one; `rekeyTeam` changes neither |
 | `controller key` is whoever controls that key now; the old one cannot be named | definition | `Party.controller` names a key, not a holder |
 | The operator is not modelled; whoever controls a key asks directly only while it is not held | definition | `Authorised`'s first branch needs `key ∉ s.held`; `entrust` needs `key ∉ s.held` |
 | Really the operator has narrower named commands | source | the source readings (sources listed in `Model.lean`) |
@@ -369,7 +369,7 @@ These are method and process. They make no claim about the model beyond what is 
 | `GrantLive` | Stands and its subject can act in the team | definition | Body |
 | `GrantLive` | Removing the certificate removes the grant, so a later certificate does not bring it back | act | `remove` and `leave` filter `grants` |
 | `OneTeamIfLocal` | `k` is registered, or holds no team certificate | definition | Body |
-| `KeepsAnAdmin` | Its meaning | definition | Body |
+| `KeepsAnAdmin` | For an admin-team certificate, another identity is an admin | definition | Body |
 | `Step` | `Step ask s who s'`: under `ask`, `who` asks for one act, accepted, from `s` to `s'` | definition | Its signature and constructors |
 | `Step` | Each constructor's premises are what is checked | definition | Naming |
 | `createOrg` | Asked for by whoever controls the domain in DNS | act | Its asker is `.dns o` |
@@ -396,7 +396,7 @@ These are method and process. They make no claim about the model beyond what is 
 | `remove` | The removed member need not take part; the policy may name it | act | Premises; `Approved` with an `.exactly` rule |
 | `remove` | A key holder does not remove the last admin | act | `KeepsAnAdmin` premise when held |
 | `remove` | Grants from this certificate end with it | act | `grants` filter |
-| `leave` | Held team; no holder of an admin-team certificate leaves while no other admin remains; no rule or policy; need not be registered or valid | act | Premises, `KeepsAnAdmin` among them |
+| `leave` | Held team, by asking the key holder; no rule or policy; need not be registered or valid | act | Premises |
 | `invite` | Same authority as admitting | act | `Authorised ... .admit` |
 | `redeem` | Team not admin; unregistered key holds no team certificate; who holds the secret not checked | act, assumption | Premises; A3 |
 | `mintGrant`, `revokeGrant`, `sendOwn`, `sendGrant` | Their askers and effects | act | Constructors |
@@ -430,6 +430,7 @@ These are method and process. They make no claim about the model beyond what is 
 |---|---|---|---|
 | module doc | Records reached, acts that go through, and the limits it names | process | File contents; the names are checked by `DocNames.lean` |
 | `approved_act_goes_through` | `a`, `p`, `k` need not differ | result | The statement |
+| `runs_without_key_holder` | The statement does not say who issued whom | result | The statement |
 | `no_admin_no_new_admin_certificate` | Re-admissions change no team certificate | act | `readmitByRoot`, `readmitByParent` |
 | `AdminTeamLocked` | Its meaning | definition | Body |
 | several | Construction notes | construction | The proofs |
@@ -444,6 +445,7 @@ These are method and process. They make no claim about the model beyond what is 
 | module doc | How an assignment is chosen is not modelled | definition | `assign` is a parameter |
 | `invitation_reaches_an_assigned_team` | `admit`, `invite`, `redeem` exclude the admin team; no premise excludes an assigned team | act | Their premises |
 | `invitation_reaches_an_assigned_team` | Not proved for every assignment and team | result | The statement is one example |
+| `invitation_reaches_an_assigned_team`, `invitation_then_own_request_makes_an_admin` | Construction notes | construction | The proofs |
 
 ## TrustWeb/Core.lean
 
@@ -477,6 +479,6 @@ Its doc comments are about the build, not the model.
 
 | Where | Sentence | Kind | What makes it true |
 |---|---|---|---|
-| module doc | What the build reads, what it skips, and the three ways an identifier passes | process | `isPathOrCommand`, `runs`, `passes`, `failures` |
+| module doc | What the build reads, what it skips, and how an identifier passes | process | `isPathOrCommand`, `runs`, `passes`, `failures` |
 | `skipped`, `leanNames`, `modelTypes`, `inductives` | What each list is for | process | Their use in `passes`, `resolvesInModel`, `isConstructorOfModel` |
 | `#doc_names_resolve` | Fails if a file cites an identifier that does not pass | process | Its body |

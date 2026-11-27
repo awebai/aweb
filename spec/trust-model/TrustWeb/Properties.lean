@@ -4,7 +4,7 @@ import TrustWeb.Model
 # The trust web: what is proved
 
 Each result has a doc comment above it that restates it; the lemmas with
-none are helpers. `lake build` checks them all.
+none are helpers.
 -/
 
 namespace TrustWeb

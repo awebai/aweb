@@ -8,8 +8,8 @@ import TrustWeb.Core
 
 `lake build` reads `README.md`, `CLAIMS.md` and the model's Lean files, and
 checks every text between backquotes, except file paths and shell commands
-(a text with a slash, a hyphen, a line break or a leading hash, a file name,
-or the text lake build). It splits the text into identifiers and checks each one:
+(a text with a slash, a hyphen, a line break or a leading hash, a name ending
+in .lean, .md, .toml or .json, or the text lake build). It splits the text into identifiers and checks each one:
 
 * an identifier with a leading dot, such as .release, must be a constructor
   of one of the model's inductive types;
@@ -19,7 +19,8 @@ or the text lake build). It splits the text into identifiers and checks each one
   directly or under one of the model's types or this check's own namespace,
   or be one of the few Lean names listed below.
 
-Variables, keywords and the protocol's own names are skipped. The build fails
+An identifier with no letter, and the listed variables, keywords and
+protocol names, are not checked. The build fails
 on any identifier that does not pass.
 -/
 
