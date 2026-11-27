@@ -150,11 +150,13 @@ def test_private_custodial_transition_guard_scans_root_readme() -> None:
 
 
 def test_private_custodial_transition_guard_scans_all_tracked_markdown() -> None:
-    path = REPO_ROOT / "CONTRIBUTING.md"
+    path = REPO_ROOT / ".github" / "CONTRIBUTING.md"
     text = path.read_text(encoding="utf-8") + (
         "\nRemoved transition inventory: Hosted custody implementation contract\n"
     )
 
     offenders = _private_custodial_transition_reference_offenders({path: text})
 
-    assert offenders == ["CONTRIBUTING.md: 'Hosted custody implementation contract'"]
+    assert offenders == [
+        ".github/CONTRIBUTING.md: 'Hosted custody implementation contract'"
+    ]

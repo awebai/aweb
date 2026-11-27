@@ -4,7 +4,7 @@ contact_links:
     url: https://github.com/awebai/aweb/blob/main/docs/README.md
     about: Tutorials, contracts, and references. Check here first.
   - name: Security report
-    url: https://github.com/awebai/aweb/blob/main/SECURITY.md
+    url: https://github.com/awebai/aweb/blob/main/.github/SECURITY.md
     about: Report vulnerabilities privately, not as an issue.
   - name: Hosted service support
     url: mailto:hello@aweb.ai
