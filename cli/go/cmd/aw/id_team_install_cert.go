@@ -17,13 +17,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// installCertificateCodes are the codes install-cert refuses with. Only
-// registry_unavailable is worth retrying unchanged.
-var installCertificateCodes = []string{
-	"certificate_invalid", "member_mismatch", "team_key_not_current", "certificate_bad_signature",
-	"certificate_revoked", "certificate_unregistered", "certificate_conflict", "registry_unavailable",
-}
-
 var (
 	teamInstallCertPath     string
 	teamInstallCertRegistry string
@@ -190,7 +183,8 @@ func membershipRecorded(workingDir, identityHome string, cert *awid.TeamCertific
 
 // installTeamCertificateFile installs c's certificate when it is a current,
 // registered certificate of its team for the identity in c.Home, and refuses
-// with one of installCertificateCodes before writing anything otherwise.
+// with a coded error before writing anything otherwise. Only
+// registry_unavailable is worth retrying unchanged.
 func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (map[string]any, error) {
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(c.Home, "identity.yaml"))
 	if err != nil {

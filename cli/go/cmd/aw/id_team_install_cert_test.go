@@ -317,22 +317,19 @@ func TestACertificateThatIsNotThisHomesCurrentMembershipIsRefusedAndNothingInsta
 		path := tc.prepare(t, registry, home, didKey)
 		contents := homeContents(t, home)
 		_, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, path))
-		if code := errorCodeOf(err); code != tc.code {
+		code := errorCodeOf(err)
+		if code != tc.code {
 			t.Errorf("%s: code %q, err %v", name, code, err)
+		}
+		// Every code a refusal carries is one --help tells the reader about.
+		if !strings.Contains(teamInstallCertCmd.Long, code) {
+			t.Errorf("%s: --help does not name %s", name, code)
 		}
 		if (tc.code == "certificate_revoked" || name == "a status aw does not know") && (err == nil || !strings.Contains(err.Error(), "ask the team's owner")) {
 			t.Errorf("%s: missing next action: %v", name, err)
 		}
 		if !maps.Equal(contents, homeContents(t, home)) {
 			t.Errorf("%s: the refusal changed the home", name)
-		}
-	}
-}
-
-func TestInstallCertRefusalCodesAreDocumented(t *testing.T) {
-	for _, code := range installCertificateCodes {
-		if !strings.Contains(teamInstallCertCmd.Long, code) {
-			t.Errorf("--help does not name %s", code)
 		}
 	}
 }
