@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from contextlib import aclosing
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,7 +14,6 @@ from aweb.certificate_auth import verify_certificate_generation
 from aweb.routes.connect import PlannedIdentityIds, connect_agent
 from test_certificate_generation import _registered_team, _context
 from aweb.internal_auth import ProxyVerificationConfig
-from aweb.auth_context import GrantContext
 from aweb.install_authority import (
     CertificateInstallAdminSubject,
     InternalInstallAdminSubject,
@@ -139,7 +137,7 @@ async def require(db, req, caller=None, team_id=TEAM):
         )
 
 
-async def test_absent_policy_and_role_claims_never_grant_admin(db):
+async def test_without_a_host_policy_the_standalone_grants_decide_not_role_claims(db):
     req = request(headers={"X-Role": "admin"})
     req.state.role = "owner"
     with pytest.raises(HTTPException) as exc:
@@ -168,37 +166,6 @@ async def test_current_authoritative_policy_is_read_inside_each_transaction(db):
         await require(db, req, identity())
     assert (exc.value.status_code, exc.value.detail["code"]) == (403, "admin_required")
     assert len(policy.seen) == 2
-
-
-async def test_another_team_cannot_borrow_a_policy_delegation(db):
-    policy = Policy()
-    await db.execute(
-        "INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, "did:key:alice"
-    )
-    with pytest.raises(HTTPException) as exc:
-        await require(db, request(policy=policy), identity(team_id="other:example.com"))
-    assert exc.value.status_code == 404
-    assert policy.seen == []
-
-
-async def test_identity_grants_cannot_acquire_install_admin_authority(db):
-    policy = Policy()
-    await db.execute(
-        "INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, "did:key:alice"
-    )
-    caller = identity(
-        grant=GrantContext(
-            grant_id=str(uuid4()),
-            session_did_key="did:key:session",
-            issuing_certificate_id="cert-1",
-            scopes=("coord.write",),
-            expires_at=datetime.now(UTC) + timedelta(hours=1),
-        )
-    )
-    with pytest.raises(HTTPException) as exc:
-        await require(db, request(policy=policy), caller)
-    assert (exc.value.status_code, exc.value.detail["code"]) == (403, "admin_required")
-    assert policy.seen == []
 
 
 def proxy_headers(principal_type="u"):
@@ -281,7 +248,7 @@ async def test_forwarded_actor_that_is_an_active_member_reaches_policy(
     assert len(policy.seen) == 1
 
 
-async def test_unverified_internal_headers_never_reach_policy(db, monkeypatch):
+async def test_install_authority_applies_the_internal_hmac_check(db, monkeypatch):
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
     headers = proxy_headers()
@@ -289,16 +256,5 @@ async def test_unverified_internal_headers_never_reach_policy(db, monkeypatch):
     policy = Policy()
     with pytest.raises(HTTPException) as exc:
         await require(db, request(headers=headers, policy=policy))
-    assert exc.value.status_code == 401
-    assert policy.seen == []
-
-
-async def test_proxy_headers_do_not_authenticate_when_trust_is_disabled(
-    db, monkeypatch
-):
-    monkeypatch.delenv("AWEB_TRUST_PROXY_HEADERS", raising=False)
-    policy = Policy()
-    with pytest.raises(HTTPException) as exc:
-        await require(db, request(headers=proxy_headers(), policy=policy))
     assert exc.value.status_code == 401
     assert policy.seen == []

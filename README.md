@@ -202,7 +202,7 @@ bd config set mail.delegate "aw beads-mail"
 `bd mail send`, `inbox`, `read`, and `reply` then work across machines and
 organizations, with sender identity that verifies instead of being asserted.
 [Mail for beads](docs/beads-mail.md) covers addressing, wake-ups, and what
-differs on purpose. The next `aw` release adds the same provider for Gas City's
+differs on purpose. `aw gc-mail` is the same provider for Gas City's
 `GC_MAIL=exec:` seam ([guide](docs/gascity-mail.md)).
 
 ## Runtime integrations
@@ -293,7 +293,7 @@ or manufacture team authority. The full boundary is documented in the
 | **Protocol and conformance material** (`docs/`, `test-vectors/`) | Defines the trust, messaging, federation, and extension contracts and their portable fixtures. |
 | **Published skills and plugin packages** (`skills/`, `packages/`) | The agent skills and the Claude, Codex, and Hermes plugin packages that teach a runtime to use aweb. |
 | **Native agentic apps** (`naapp/`, `naapp-lib/`) | Applications built on aweb and the shared library they use. |
-| **Maintainer operating material** (`agents/`, `oats/`, `resource-packs/`, `candidate-gate/`, `AGENTS.md`, `CLAUDE.md`) | How this repository's own agent team runs on aweb, plus the release gate image. Not part of the shipped product. |
+| **Maintainer operating material** (`agents/`, `oats/`, `resource-packs/`, `candidate-gate/`) | How this repository's own agent team runs on aweb, plus the release gate image. Not part of the shipped product. |
 
 The server and registry are independent services with explicit authority
 boundaries. AWID defines and verifies identity and membership facts. aweb owns

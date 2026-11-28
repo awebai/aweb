@@ -600,8 +600,16 @@ async def running_registry(
 ) -> AsyncIterator[Registry]:
     """AWID, with its migrations applied, on the empty database at ``database_url``.
     Its health reports the ``redis`` it is given, and fails without one."""
+    # Many suites share one Postgres: keep the pool small, and name it so
+    # pg_stat_activity shows whose connections these are.
     pool = await AsyncDatabaseManager.create_shared_pool(
-        DatabaseConfig(connection_string=database_url, schema=None)
+        DatabaseConfig(
+            connection_string=database_url,
+            schema=None,
+            min_connections=1,
+            max_connections=5,
+            server_settings={"application_name": "awid_testing_running_registry"},
+        )
     )
     infra = AwidDatabaseInfra(schema="awid")
     registry = None

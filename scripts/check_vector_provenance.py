@@ -115,6 +115,10 @@ ROOT_CONSUMERS = {
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',
     ),
+    PurePosixPath("server/tests/trust_web_cases.py"): _consumer(
+        "trust-web-cases-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs/vectors/trust-web-cases-v1.json"',
+    ),
     PurePosixPath("server/tests/test_human_chat_policy.py"): _consumer(
         "id-certificates-v1.json",
         'Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json"',
