@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-27
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-contracts (tasks aweb-adzj.1 and aweb-adze.6).
+* **Creation**: lesson [a fake must reproduce the failure's shape](/aweb-expert/lessons/a-fake-reproduces-the-failure-shape.md).
+* **Update**: [focused proof includes the contract guards](/aweb-expert/lessons/focused-proof-includes-the-contract-guards.md) gains that a test's name and path are a contract surface cited by the federation harness manifest and the vector-provenance check.
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
