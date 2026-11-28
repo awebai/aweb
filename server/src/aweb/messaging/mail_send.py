@@ -20,7 +20,7 @@ from aweb.messaging.mail_storage import (
 from dataclasses import dataclass
 from aweb.messaging.recipient import Recipient
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, TypedDict, NoReturn
+from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
 import asyncpg
@@ -114,6 +114,15 @@ from aweb.messaging.participants import messaging_participant_by_alias
 from aweb.messaging.recipient_bindings import (
     signed_recipient_matches,
     RecipientSelectorField,
+)
+from aweb.messaging.mail_target_decision import (
+    MailSelectors,
+    MailTargetFact,
+    MailTargetFacts,
+    MailTargetRefusal,
+    MailTargetRefusalCode,
+    NeedFact,
+    decide_mail_target,
 )
 from aweb.messaging.recipient_lookup import resolve_recipient_by_did
 from aweb.messaging.kinds import (
@@ -1383,8 +1392,8 @@ async def _resolve_message_alias(
     )
 
 
-def _raise_bare_did_first_contact_unsupported() -> NoReturn:
-    raise DeliveryRefusal(
+def _bare_did_first_contact_unsupported() -> DeliveryRefusal:
+    return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         detail="Bare did:aw first-contact is unsupported; use to_address=domain/name or continue an existing conversation",
     )
@@ -1406,16 +1415,6 @@ def _recipient_conversation_address(
         )
         or None
     )
-
-
-def _recipient_identity_matches(
-    left: Mapping[str, Any] | None, right: Mapping[str, Any] | None
-) -> bool:
-    if left is None or right is None:
-        return False
-    left_did = str(left.get("did_aw") or left.get("did_key") or "").strip()
-    right_did = str(right.get("did_aw") or right.get("did_key") or "").strip()
-    return bool(left_did and right_did and left_did == right_did)
 
 
 @dataclass(frozen=True, init=False)
@@ -1662,199 +1661,102 @@ async def _resolve_new_mail_target(
     recipient_binding: RecipientIdentityBinding | None,
 ) -> MailTarget:
     """Resolve the explicit recipient selectors and require their agreement."""
-    registry_client = runtime.registry_client
-    recipient: Mapping[str, Any] | None = None
-    bound_recipient: Mapping[str, Any] | None
-    recipient_did: str | None = None
-    to_agent_id: str | None = payload.to_agent_id
-    to_alias: str | None = None
+    selectors = MailSelectors(
+        to_stable_id=payload.to_stable_id,
+        to_did=payload.to_did,
+        to_address=payload.to_address,
+        to_agent_id=payload.to_agent_id,
+        to_alias=payload.to_alias,
+    )
+    facts = MailTargetFacts()
+    while True:
+        step = decide_mail_target(selectors, facts)
+        if isinstance(step, NeedFact):
+            facts = facts.with_fact(
+                step.fact,
+                await _read_mail_target_fact(
+                    db,
+                    step,
+                    auth=auth,
+                    payload=payload,
+                    runtime=runtime,
+                    source=source,
+                    recipient_binding=recipient_binding,
+                ),
+            )
+            continue
+        if isinstance(step, MailTargetRefusal):
+            raise _mail_target_refusal(step)
+        return MailTarget(
+            recipient=step.recipient,
+            recipient_did=step.recipient_did,
+            to_agent_id=step.to_agent_id,
+            to_alias=step.to_alias,
+        )
 
-    if payload.to_address is None and payload.to_stable_id is not None:
-        recipient_did = payload.to_stable_id.strip()
-        recipient = await resolve_recipient_by_did(
-            db, recipient_did, sender_team_id=auth.team_id
+
+async def _read_mail_target_fact(
+    db,
+    need: NeedFact,
+    *,
+    auth: MessagingAuth,
+    payload: SendMessageRequest,
+    runtime: MessagingRuntime,
+    source: str,
+    recipient_binding: RecipientIdentityBinding | None,
+) -> Mapping[str, Any] | None:
+    """Read the recipient one selector names, as the mail target rule asks."""
+    if need.fact is MailTargetFact.SELECTED_MEMBER:
+        return await get_agent_by_id(db, agent_id=need.value, team_id=auth.team_id)
+    if need.selector is RecipientSelectorField.ALIAS:
+        return await _resolve_message_alias(
+            db, auth, need.value, registry_client=runtime.registry_client
         )
-        if recipient is not None:
-            recipient = identity_recipient(recipient)
-        if recipient is None:
-            if recipient_did.startswith("did:aw:"):
-                _raise_bare_did_first_contact_unsupported()
-            raise recipient_not_found()
-        if payload.to_did is not None and payload.to_did.strip():
-            bound_recipient = await resolve_recipient_by_did(
-                db, payload.to_did.strip(), sender_team_id=auth.team_id
-            )
-            if not _recipient_identity_matches(bound_recipient, recipient):
-                raise recipient_selector_mismatch(
-                    supplied=RecipientSelectorField.DID,
-                    resolved=RecipientSelectorField.STABLE_ID,
-                )
-        if payload.to_alias is not None and payload.to_alias.strip():
-            bound_recipient = await _resolve_message_alias(
-                db, auth, payload.to_alias.strip(), registry_client=registry_client
-            )
-            if not _recipient_identity_matches(bound_recipient, recipient):
-                raise recipient_selector_mismatch(
-                    supplied=RecipientSelectorField.ALIAS,
-                    resolved=RecipientSelectorField.STABLE_ID,
-                )
-        to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
-        to_alias = recipient.get("alias")
-    elif payload.to_address is None and payload.to_did is not None:
-        requested_recipient_did = payload.to_did.strip()
-        recipient = await resolve_recipient_by_did(
-            db, requested_recipient_did, sender_team_id=auth.team_id
+    if need.fact is MailTargetFact.DID_BINDING:
+        return await resolve_recipient_by_did(
+            db, need.value, sender_team_id=auth.team_id
         )
-        if recipient is not None:
-            recipient = identity_recipient(recipient)
-        if recipient is None:
-            if requested_recipient_did.startswith("did:aw:"):
-                _raise_bare_did_first_contact_unsupported()
-            raise recipient_not_found()
-        if payload.to_alias is not None and payload.to_alias.strip():
-            bound_recipient = await _resolve_message_alias(
-                db, auth, payload.to_alias.strip(), registry_client=registry_client
-            )
-            if not _recipient_identity_matches(bound_recipient, recipient):
-                raise recipient_selector_mismatch(
-                    supplied=RecipientSelectorField.ALIAS,
-                    resolved=RecipientSelectorField.DID,
-                )
-        recipient_did = (
-            recipient.get("did_aw")
-            or recipient.get("did_key")
-            or requested_recipient_did
-        ).strip()
-        to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
-        to_alias = recipient.get("alias")
-    elif payload.to_address is not None:
-        address = payload.to_address.strip()
-        if "/" not in address:
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                detail="to_address must be domain/name. Use a domain/name address and retry.",
-            )
-        recipient = await resolve_address_recipient(
+    if need.selector in (RecipientSelectorField.STABLE_ID, RecipientSelectorField.DID):
+        recipient = await resolve_recipient_by_did(
+            db, need.value, sender_team_id=auth.team_id
+        )
+        return identity_recipient(recipient) if recipient is not None else None
+    if need.selector is RecipientSelectorField.ADDRESS:
+        return await resolve_address_recipient(
             db,
             auth,
             runtime,
-            address=address,
+            address=need.value,
             source=source,
             kind=MessageKind.MAIL,
             binding=recipient_binding,
             signed_payload=payload.signed_payload,
             signature=payload.signature,
         )
-        recipient_did = str(
-            recipient.get("did_aw") or recipient.get("did_key") or ""
-        ).strip()
-        if payload.to_alias is not None and payload.to_alias.strip():
-            if recipient.get("external"):
-                if payload.to_alias.strip() != recipient["alias"]:
-                    raise recipient_selector_mismatch(
-                        supplied=RecipientSelectorField.ALIAS,
-                        resolved=RecipientSelectorField.ADDRESS,
-                    )
-            else:
-                bound_recipient = await _resolve_message_alias(
-                    db, auth, payload.to_alias.strip(), registry_client=registry_client
-                )
-                if not _recipient_identity_matches(bound_recipient, recipient):
-                    raise recipient_selector_mismatch(
-                        supplied=RecipientSelectorField.ALIAS,
-                        resolved=RecipientSelectorField.ADDRESS,
-                    )
-        if payload.to_stable_id is not None and payload.to_stable_id.strip():
-            if (
-                payload.to_stable_id.strip()
-                != str(recipient.get("did_aw") or "").strip()
-            ):
-                raise recipient_selector_mismatch(
-                    supplied=RecipientSelectorField.STABLE_ID,
-                    resolved=RecipientSelectorField.ADDRESS,
-                )
-        if payload.to_did is not None and payload.to_did.strip():
-            candidate_dids = {
-                str(recipient.get("did_aw") or "").strip(),
-                str(recipient.get("did_key") or "").strip(),
-            }
-            if payload.to_did.strip() not in candidate_dids:
-                raise recipient_selector_mismatch(
-                    supplied=RecipientSelectorField.DID,
-                    resolved=RecipientSelectorField.ADDRESS,
-                )
-        to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
-        to_alias = recipient.get("alias") or address
-    elif to_agent_id is not None:
-        recipient = (
-            await get_agent_by_id(
-                db,
-                team_id=auth.team_id,
-                agent_id=to_agent_id,
-            )
-            if auth.team_id
-            else await get_agent_by_id(db, agent_id=to_agent_id)
-        )
-        if recipient is None:
-            raise recipient_not_found()
-        if payload.to_alias is not None and payload.to_alias.strip():
-            bound_recipient = await _resolve_message_alias(
-                db, auth, payload.to_alias.strip(), registry_client=registry_client
-            )
-            if not _recipient_identity_matches(bound_recipient, recipient):
-                raise recipient_selector_mismatch(
-                    supplied=RecipientSelectorField.ALIAS,
-                    resolved=RecipientSelectorField.AGENT_ID,
-                )
-        recipient_did = (
-            recipient.get("did_aw") or recipient.get("did_key") or ""
-        ).strip()
-        to_alias = recipient.get("alias")
-    elif payload.to_alias is not None:
-        recipient = await _resolve_message_alias(
-            db, auth, payload.to_alias, registry_client=registry_client
-        )
-        if recipient is None:
-            raise recipient_not_found()
-        recipient_did = (
-            recipient.get("did_aw") or recipient.get("did_key") or ""
-        ).strip()
-        to_agent_id = str(recipient["agent_id"])
-        to_alias = recipient["alias"]
-    else:
-        raise DeliveryRefusal(
+    if auth.team_id:
+        return await get_agent_by_id(db, team_id=auth.team_id, agent_id=need.value)
+    return await get_agent_by_id(db, agent_id=need.value)
+
+
+def _mail_target_refusal(refusal: MailTargetRefusal) -> Exception:
+    """The error a send gets for the mail target rule's refusal."""
+    if refusal.code is MailTargetRefusalCode.NO_SELECTOR:
+        return DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="Must provide to_did, to_address, to_agent_id, or to_alias. Choose a recipient and retry.",
         )
-
-    if payload.to_agent_id and any(
-        value is not None
-        for value in (payload.to_address, payload.to_did, payload.to_stable_id)
-    ):
-        selected_member = await get_agent_by_id(
-            db, agent_id=payload.to_agent_id, team_id=auth.team_id
+    if refusal.code is MailTargetRefusalCode.ADDRESS_NOT_DOMAIN_NAME:
+        return DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="to_address must be domain/name. Use a domain/name address and retry.",
         )
-        if recipient.get("external") or not _recipient_identity_matches(
-            selected_member, recipient
-        ):
-            field = (
-                RecipientSelectorField.ADDRESS
-                if payload.to_address is not None
-                else (
-                    RecipientSelectorField.STABLE_ID
-                    if payload.to_stable_id is not None
-                    else RecipientSelectorField.DID
-                )
-            )
-            raise recipient_selector_mismatch(
-                supplied=RecipientSelectorField.AGENT_ID, resolved=field
-            )
-
-    return MailTarget(
-        recipient=recipient,
-        recipient_did=recipient_did or "",
-        to_agent_id=to_agent_id,
-        to_alias=to_alias,
+    if refusal.code is MailTargetRefusalCode.BARE_DID_FIRST_CONTACT:
+        return _bare_did_first_contact_unsupported()
+    if refusal.code is MailTargetRefusalCode.RECIPIENT_NOT_FOUND:
+        return recipient_not_found()
+    assert refusal.supplied is not None and refusal.resolved is not None
+    return recipient_selector_mismatch(
+        supplied=refusal.supplied, resolved=refusal.resolved
     )
 
 

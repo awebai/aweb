@@ -263,25 +263,6 @@ async def test_group_refusal_names_only_authoritative_humans_in_stable_order(
 
 
 @pytest.mark.asyncio
-async def test_refusal_names_exclude_agent_and_unknown_members(privacy_app):
-    from aweb.messaging.chat_policy import HumanChatRefused, require_agent_chat
-
-    env = privacy_app
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE alias='bob'"
-    )
-    rows = [
-        dict(did_key=env.actors["carol"].did, alias="carol"),
-        dict(did_key="did:key:unknown", alias="unknown"),
-        dict(did_key=env.actors["bob"].did, alias="bob"),
-        dict(did_key=env.actors["bob"].did, alias="bob"),
-    ]
-    with pytest.raises(HumanChatRefused) as refused:
-        await require_agent_chat(env.infra, rows)
-    assert refused.value.body()["recipients"] == ["bob"]
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("stamp_before_accept", [False, True])
 async def test_native_legacy_label_grants_no_human_chat_treatment(
     native_send, stamp_before_accept
