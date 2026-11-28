@@ -67,19 +67,36 @@ about a person and is renewed for as long as it holds.
 
 | Format | Registration grade under the shared check | Basis for P? | Why |
 |---|---|---|---|
-| `packed` with an `x5c` chain (basic or AttCA) | `certified_hardware` when the chain verifies to an MDS root for the attested AAGUID, the model has an applicable L1+ certification and no withdrawal, and the credential is single-device | **Yes** | Its privacy is established by checks that already exist. `_packed` refuses a subject serial number, requires OU "Authenticator Attestation" and refuses CA certificates (`registration.py:132-163`). Enterprise attestation is refused, not downgraded (`registration.py:118-119`). Batch attestation shares one attestation key across many devices (WebAuthn L3 §14.4.1), so the retained chain identifies a model and batch, not a device. |
+| `packed` with an `x5c` chain, **batch profile** (below) | `certified_hardware` when the chain verifies to an MDS root for the attested AAGUID, the model has an applicable L1+ certification and no withdrawal, and the credential is single-device | **Yes** | The batch profile is positive evidence that the attestation key is shared across a batch. Basic (batch) attestation shares one attestation key across many devices (WebAuthn L3 §6.5.3, §14.4.1), so the chain identifies a model and batch, not a device. The existing `_packed` checks add to that: no subject serial number, OU "Authenticator Attestation", no CA leaf (`registration.py:132-163`), and enterprise attestation refused (`registration.py:118-119`). |
+| `packed` with an `x5c` chain, any other or unresolved profile (AttCA, AnonCA, mixed) | `certified_hardware` is possible under the shared check, which accepts MDS entries listing `basic_full` or `attca` (`registration.py:170-173`) | **No: profile not established** | WebAuthn gives Basic, AttCA and AnonCA the same `packed`+`x5c` shape (§6.5.3). The field checks above do not exclude a device-specific attestation key or identifier. B's grade stays as signed; only P is withheld. |
 | `packed` self-attestation (no `x5c`) | `passkey_uv` at most | No | Nothing ties the key to a certified model. |
 | `none` | `passkey_uv` at most | No | There is no attestation. |
 | `fido-u2f` | `passkey_uv` at most | No | U2F carries the all-zero AAGUID. The snapshot lookup by AAGUID cannot match it (`registration.py:309`, `metadata.py:228-237`). CTAP1 devices also cannot set UV, which registration requires (`registration.py:84-85`). In practice it can never reach the hardware grade. |
 | `tpm` | `certified_hardware` is possible under the shared check | **No: privacy not established** | A TPM's attestation identity key (AIK) and its certificate can be reused across credentials on one device. The certificate's SAN names the TPM manufacturer and model. An issuer that hosts several organisations' issuance (decision 1) could then link one person's separate IDs. That would break the rule that nothing links a person's separate IDs (`docs/protocol.md:41-50`; `docs/human-approval-architecture.md:303-306`). At be53c0a no test, vector or document establishes TPM privacy. The implementer confirmed the format is untested in the repository, including in its introducing commit e5d1a3c. Refused until a reviewed privacy analysis exists. |
 | `apple` | `passkey_uv` in practice | **No: privacy not established** | Apple's anonymous attestation issues a certificate for each credential. That certificate is unique to the credential and has no MDS model entry to check. Synced Apple passkeys also report backup eligibility, which excludes them (`registration.py:310`). At be53c0a no test or document covers the format (confirmed by the implementer, as for `tpm`). Refused until reviewed. |
 
+**Batch profile, v1** (`aweb-attestation-batch-v1`). The issuer's private
+assessment (§4.2) shows all of the following:
+
+- format `packed` with an `x5c` chain that verified to a root listed for the
+  attested AAGUID;
+- the MDS entry for that AAGUID lists `attestationTypes` **exactly**
+  `["basic_full"]`. This is the vendor's MDS declaration that the model uses
+  batch attestation only. An entry that also lists `attca`, `anonca` or
+  anything else is mixed, and mixed is not eligible;
+- the leaf passes `_packed` and carries the AAGUID extension matching the
+  authenticator data (`registration.py:114-129`).
+
+The evidence is the vendor's declaration in the pinned, signed MDS. Nothing
+else can prove from the certificate alone that a key is shared. That is the
+stated limit.
+
 The rule for P is therefore: **the basis credential's grade in B is
-`certified_hardware`, and the issuer's own retained assessment (§5) records
-format `packed` with a verified `x5c` chain.** This is not a second hardware
-definition. It is the existing grade, restricted to the one format whose
-privacy has been established. Adding `tpm` or `apple` later is an additive
-policy version, after a reviewed privacy analysis.
+`certified_hardware`, and the issuer's own assessment establishes the batch
+profile.** This is not a second hardware definition. It is the existing grade,
+restricted to the one profile whose privacy has been established. A credential
+outside the profile is never retained (§6). Adding a profile or format later is
+an additive policy version, after a reviewed privacy analysis.
 
 B's grade is left unchanged. A `tpm` credential that the shared check grades
 `certified_hardware` keeps that grade for approval requirements. It does not
@@ -150,9 +167,17 @@ operator's existing expiry alert must name that consequence.
 each retained basis credential (§5) with `Snapshot.model(aaguid, now=…,
 attestation_chain=…, authenticator_version=…)`, the same function registration
 uses (`metadata.py:88-136`). It also requires the retained root to still be
-listed for that AAGUID. A credential that no longer qualifies gets no new P.
-Its current P runs out at its `valid_until`. The issuer cannot recall a P
-already signed. The exposure window is bounded by that lifetime (§4).
+listed for that AAGUID, and the entry to still satisfy the batch profile. A
+credential that no longer qualifies gets no new P. Its current P runs out at
+its `valid_until`. The issuer cannot recall a P already signed. The exposure
+window is bounded by that lifetime (§4.1).
+
+**Known future withdrawals.** `Snapshot.model` skips status reports whose
+`effectiveDate` is still in the future (`metadata.py:101-108`). Such a
+report is already known when the issuer signs, so it caps P's `valid_until`
+(§4.1). P never extends past a withdrawal date the issuer already holds. The
+remaining exposure is a withdrawal that FIDO publishes after P is signed. That
+exposure is bounded by the 31-day cap and the snapshot cutoff.
 
 ## 4. What the issuer signs, and where
 
@@ -177,32 +202,80 @@ prefix ending in one newline, and an issuer signature
 | `grade_policy` | The B entry's `grade_policy` (for example `fido-mds-l1-single-device-uv-v1`) |
 | `assessed_under` | `sha256:` digest of the snapshot under which the issuer last confirmed the credential's eligibility. At first issuance it equals the snapshot in B. Later it names the renewal snapshot. |
 | `issued_at` | The issuer's clock time |
-| `valid_until` | `min(assessed_under.valid_until, issued_at + 31 days)` |
+| `valid_until` | The earliest of: the `assessed_under` snapshot's `valid_until`; the earliest `effectiveDate`, after `issued_at`, of any withdrawal report in that snapshot that applies to this AAGUID, or to a certificate in its retained chain (§3); and `issued_at + 31 days` |
 
 `P` = issuer signature over `UTF8("aweb.human-personhood/1\n") + canonical_json(P_body)`.
 The issuer selection and key are those that sign B for this person, and they
 are checked the same way (approval-service@be53c0a `README.md:30-37,148-153`).
+
+A verifier can enforce `issued_at < valid_until <= issued_at + 31 days` from the
+signed body. The snapshot and withdrawal cutoffs are **issuer-attested**. The
+`assessed_under` digest names the snapshot but supplies no independent cutoff,
+because the verifier does not hold the model.
 
 P has no negative or partial form. Leaving out a `basis` value, or adding a
 value that is not `certified_hardware`, makes P unsupported in v1.
 
 ### 4.2 When the issuer signs P
 
-The issuer signs P only when all of the following hold:
+The issuer signs P only when all of the following hold.
 
-- the issuer itself ran `check_registration` on the credential's raw
-  registration, with its own challenge and its own snapshot, and graded it
-  `certified_hardware` (the existing precondition for signing that grade in B,
-  `docs/protocol.md:439-446`);
-- its retained assessment records `packed` with an `x5c` chain (§2);
-- the credential is in the person's current B, and B binds the person's
-  current certificate and identity key;
-- re-evaluation against a current installed snapshot succeeds (§3).
+1. **Its own assessment.** The issuer ran the shared registration verifier on
+   the credential's raw registration, with its own challenge and its own
+   snapshot, and the result was `certified_hardware`. This is the existing
+   precondition for signing that grade in B (`docs/protocol.md:439-446`). The
+   same pass establishes the batch profile (§2).
+2. **The exact basis completed its own proof.** The enrollment that B records
+   is **committed**: the issuer signed an E that references this B and its
+   confirmation receipt (`docs/protocol.md:511-533`). And **the basis
+   credential itself** made the accepted UV assertion in that receipt,
+   meaning an `enrollment_confirmation` or `enroll_existing_person`
+   confirmation that the issuer built with its own nonce over this `H_B`. A
+   pending B is not enough. Neither is a credential that is merely listed in
+   a B whose confirmation another credential signed. A hardware key enrolled
+   beside a passkey that did the confirming becomes a basis only after it
+   completes its own issuer-built confirmation.
+3. **Continuity.** The credential is in the person's current B, and B binds
+   the person's current certificate and identity key. After an identity-key
+   change, the basis carries over only through an authenticated continuity
+   transition that the issuer recorded in E, with a receipt from a credential
+   current before the change (`docs/protocol.md:535-556`). A bare rotation with
+   no such evidence goes through the existing recovery or enrollment rule
+   (§7) before any credential is a basis again.
+4. **A current assessment.** Re-evaluation against the issuer's currently
+   installed snapshot succeeds (§3).
+
+The issuer records the observation from steps 1 and 2 once, privately: the
+committed `H_B`, `H_E` and confirmation receipt digest for the basis. Each
+renewal, and each later continuity transition, reuses that observation rather
+than repeating the person's ceremony.
+
+**Ordering.** Signing is a compare-and-sign. The issuer reads the installed
+snapshot digest and the person's current `H_B` under one lock. It signs, then
+commits P only if both are unchanged. Installing a new snapshot, or changing
+the person's binding, takes the same lock. An in-flight renewal that started
+under a superseded snapshot or binding is discarded and redone. It is never
+published.
 
 The issuer re-signs P after it installs each new snapshot, and before the
-current P expires. Re-signing needs no ceremony from the person: the
-credential was already proved at enrollment, and possession is shown by
-receipts (§5.2).
+current P expires.
+
+### 4.2a The private assessment result (shared-code addition)
+
+The shared verifier's `RegisteredCredential` carries the grade and snapshot.
+It carries no format, AAGUID, firmware, verified chain or root
+(`registration.py:59-77,307-321`). P needs these from **the same verified
+pass**, so there is still no second verifier. This is a real API addition to
+approval-service:
+
+- `check_registration` also returns a private `AttestationAssessment`: format,
+  AAGUID, firmware version, the **verified** chain (DER, leaf to root, as
+  `_hardware` built it), the matched root, the MDS `attestationTypes` and the
+  derived profile (`aweb-attestation-batch-v1` or none).
+- It is excluded from `repr`, from `binding_entry()` and from every serialized
+  or public result. The B entry stays byte-identical.
+- The issuer keeps it only for batch-profile credentials (§6). The service
+  discards it, as it discards raw material today.
 
 ### 4.3 Where P lives
 
@@ -242,8 +315,9 @@ The status is `person` only if every check below passes. Otherwise it is
 5. A presented B verifies, `H_B(B)` equals `binding`, and B lists `credential`
    with grade `certified_hardware` and the same `grade_policy`. If B is absent,
    the reason is `missing_binding`. If it does not match, `binding_mismatch`.
-6. The evaluation time is inside `[issued_at, valid_until)`. If not,
-   `not_yet_valid` or `expired`.
+6. `issued_at < valid_until <= issued_at + 31 days`, otherwise the body is
+   `malformed`. The evaluation time is inside `[issued_at, valid_until)`. If
+   not, `not_yet_valid` or `expired`.
 7. For a current reading, the certificate and identity key are current under
    fresh public status, using the existing 60-second rule
    (`docs/human-approval-architecture.md:91-94`). If not, the reason is
@@ -253,16 +327,28 @@ All three of the following read `unknown` with reason `missing_statement`:
 an ID certificate of `kind=human` with no P, a valid B with only `passkey_uv`
 credentials, and a valid B with a `certified_hardware` credential but no P.
 
-### 5.2 Proof, reported separately
+### 5.2 Enrollment proof, reported separately
 
-As in §8.2 of the approval protocol, the verifier separately reports
-`proof_binds_credential`. It is true only when a presented receipt carries a
-valid UV assertion by the credential that P names, verified against B's public
-key and the awsign origin and RP. It is false when such a check fails, and
-null when no receipt is presented. This is what lets a relying party check
-more than the issuer's word. The attestation itself stays the issuer's
-assessment, as for B's grade today (`docs/protocol.md:426-436,467-473`). Two
-independent assessments back it: the issuer's own check, and awsign's
+The verifier separately reports `enrollment_proof`. This is optional public
+evidence that the named credential really signed. Only **public identity
+receipts** count: the `enrollment_confirmation` or `enroll_existing_person`
+confirmation receipt, or a continuity-transition receipt
+(`docs/protocol.md:476-483,511-556`). Application receipts and their resources
+stay private and are never used.
+
+`enrollment_proof` is `true` only when a presented receipt checks fully. Its
+raw UV assertion verifies under the public key that B lists for P's
+`credential`, with the awsign origin and RP. Its challenge is `H(R)` of the
+carried request. Its act is that confirmation or transition purpose. Its
+`act.target` commits this P's `binding` (`H_B`) and names this exact subject,
+certificate and identity key. The value is `false` when such a check fails,
+and null when no receipt is presented.
+
+A checked receipt shows that the credential was used **at its named event**.
+It does not show that the key was used for this presentation or at the
+evaluation time. The wording says so (§5.3). The attestation itself stays the
+issuer's assessment, as for B's grade today (`docs/protocol.md:426-436,467-473`).
+Two independent assessments back it: the issuer's own check, and awsign's
 refusal of any grade beyond its own (`registration.py:42-56`).
 
 ### 5.3 Result shape and default wording
@@ -276,16 +362,16 @@ Each human link gets one result, added beside the existing fields in
 | `personhood.reason` | `checked`, `missing_statement`, `missing_binding`, `malformed`, `unsupported_version`, `signature_invalid`, `binding_mismatch`, `not_yet_valid`, `expired`, `not_current`, `trust_input_unavailable` |
 | `personhood.issuer` | The checked issuer namespace, or null |
 | `personhood.basis` / `credential` / `assessed_under` / `valid_until` | From a checked P, or null |
-| `personhood.proof_binds_credential` | `true`, `false` or null |
+| `personhood.enrollment_proof` | `true`, `false` or null, plus the receipt's event when it is true |
 | `personhood.as_of` | The evaluation time, and whether this is a current or a historical reading |
 
 The default `aw verify` line for each human link:
 
 | Condition | Text |
 |---|---|
-| `person`, proof true | `personhood: <issuer> states a person, backed by certified hardware until <date>; key use proven` |
-| `person`, proof null | `personhood: <issuer> states a person, backed by certified hardware until <date>; key use not shown` |
-| `person`, proof false | `personhood: <issuer> states a person, backed by certified hardware until <date>; key use proof invalid: <reason>` |
+| `person`, proof true | `personhood: <issuer> states a person, backed by certified hardware until <date>; key used at <event>` |
+| `person`, proof null | `personhood: <issuer> states a person, backed by certified hardware until <date>; enrollment proof not presented` |
+| `person`, proof false | `personhood: <issuer> states a person, backed by certified hardware until <date>; enrollment proof invalid: <reason>` |
 | `unknown`, missing statement | `personhood unknown` |
 | `unknown`, any other reason | `personhood unknown: <reason words>` |
 
@@ -318,7 +404,7 @@ the relying party's own record (`docs/protocol.md:403-406`).
 | Item | Where it lives | Why |
 |---|---|---|
 | Raw attestation object | Never retained. The issuer checks it and drops it, the same rule awsign applies (`docs/deployment.md:120-125`). | Not needed after the check. |
-| AAGUID, format, firmware version, verified `x5c` chain (DER) of a P-basis credential | **Issuer only**: private, encrypted at rest, keyed by (namespace, person, credential). Deleted when the credential leaves B or the ID is revoked. Never logged, exported, or put in P, B, E or the registry. | Needed to re-evaluate against later snapshots (§3). Only `packed` chains are retained. They identify a model and batch, never a device (§2). |
+| The `AttestationAssessment` (§4.2a) of a batch-profile basis credential: format, AAGUID, firmware, verified chain, root, profile | **Issuer only**: private, encrypted at rest, keyed by (namespace, person, credential). Deleted when the credential leaves B or the ID is revoked. Never logged, exported, or put in P, B, E or the registry. | Needed to re-evaluate against later snapshots and certificate-scoped withdrawals (§3). Retained only for the batch profile, which identifies a model and batch, never a device (§2). Other profiles are discarded at assessment. |
 | Credential public key, selector, grade, enrollment snapshot digest | Public in B, as today | Existing |
 | Person ID, certificate digest, identity key, `H_B`, selector, basis, grade policy, `assessed_under`, dates | Public in P | The minimum needed to check P |
 | Which model or vendor the person uses | Never public | P names no model, and `assessed_under` is the same for everyone |
@@ -328,7 +414,7 @@ Further rules:
 - **No verifier contact.** P verifies offline against public Trust. There is
   no status endpoint, so the issuer never learns who checks a person.
 - **No cross-ID link.** Each of a person's IDs has fresh credentials and its
-  own B and P (`docs/protocol.md:41-50`). Retained `packed` chains are batch
+  own B and P (`docs/protocol.md:41-50`). Retained batch-profile chains are batch
   certificates, so the issuer's private store can tell "same model and batch"
   but not "same device". This is also the reason `tpm` is refused (§2).
 - **Presence is information.** Presenting P shows that this ID has certified
@@ -340,7 +426,7 @@ Further rules:
 |---|---|---|
 | Identity-key rotation (enrolled keys unchanged) | The old P binds the old identity key and certificate, so a current reading gives `not_current`. The issuer re-signs B (an existing duty) and then P. No ceremony is needed. | approval-service@be53c0a `README.md:30-37,153-157` |
 | Namespace-controller rotation | P signed by the superseded key no longer verifies for current readings. The issuer re-signs at the next renewal. Historical readings use as-of Trust. | `README.md:30-37` |
-| Basis credential lost, replaced or withdrawn | Replacing or withdrawing an enrolled key changes the identity key (`docs/protocol.md:94-99`). The old P becomes not current. A new P needs a `certified_hardware` `packed` credential in the new B. If only passkeys remain, personhood is unknown from then on. The retained reference is deleted. | §4.2 |
+| Basis credential lost, replaced or withdrawn | Replacing or withdrawing an enrolled key changes the identity key (`docs/protocol.md:94-99`). The old P becomes not current. A new P needs a batch-profile `certified_hardware` credential in the new B that completed its own proof (§4.2). If only passkeys remain, personhood is unknown from then on. The retained reference is deleted. | §4.2 |
 | A second hardware credential is still enrolled | The issuer issues the new P on that credential. P names it, and a basis never moves silently. | §4.1 |
 | Re-enrollment at another origin or RP | New B, new assessment, new P. Nothing carries over. | `docs/protocol.md:121-126` |
 | Recovery or recreation after losing every key | A new creation event after an explicit break. P starts over and never inherits the old basis. | `docs/deployment.md:160-167`; `docs/protocol.md:100-106` |
@@ -462,8 +548,9 @@ mail sent by the person's agents.
 | New | Why it is not a reuse |
 |---|---|
 | Statement P and its domain `aweb.human-personhood/1` | B and E cannot express a claim that expires when eligibility lapses (§10.3) |
-| Issuer's private retained assessment and its re-evaluation job | Nothing retains it today. The key holder persists only the selector, public key, grade, snapshot digest and policy id (key-holder@16752b74 `enrollment.py:783-801`). awsign clears raw registration at activation. Public verifiers cannot see the AAGUID. Only the issuer can honour a withdrawal. |
-| The P basis restricted to `packed` | `tpm` and `apple` privacy are not established (§2) |
+| `AttestationAssessment`, a private result of the same `check_registration` pass (§4.2a) | `RegisteredCredential` exposes no format, AAGUID, chain or root. This is an API addition, not a second verifier. |
+| Issuer's private retained assessment, its committed-basis observation, and its re-evaluation job | Nothing retains it today. The key holder persists only the selector, public key, grade, snapshot digest and policy id (key-holder@16752b74 `enrollment.py:783-801`). awsign clears raw registration at activation. Public verifiers cannot see the AAGUID. Only the issuer can honour a withdrawal. |
+| The P basis restricted to the batch profile (`aweb-attestation-batch-v1`) | `tpm`, `apple`, AttCA, AnonCA and mixed profiles have no established privacy (§2) |
 | The verifier's `personhood` result and wording | No existing field reports the issuer's personhood claim |
 | The issuer's own pin installation | Required independence: the issuer never uses awsign's snapshot (`registration.py:228-234`) |
 
@@ -495,6 +582,25 @@ matter, and each test is paired with a valid neighbouring case:
   approval-service `README.md:83-86`), stop the renewal of P only for the
   affected credentials.
 - A `tpm` registration graded `certified_hardware` in B produces no P.
+- A valid batch-profile `packed` fixture grounds P and is retained. A correctly
+  signed `packed` chain whose MDS entry lists `["basic_full", "attca"]`, or only
+  `attca`, keeps its B grade but grounds no P, and nothing is retained.
+- Issuance shortcuts: a pending B with no committed E produces no P. In a
+  mixed roster confirmed only by the passkey, the hardware credential produces
+  no P until it completes its own confirmation. A committed basis carried
+  through a recorded continuity transition keeps producing P. A bare identity
+  rotation with no continuity evidence produces no P.
+- A snapshot carrying a withdrawal with a future `effectiveDate` for the basis
+  model caps `valid_until` at that date. An unaffected model's renewal in the
+  same snapshot is not capped.
+- A renewal that started under snapshot N, racing the installation of
+  snapshot N+1, is discarded and redone under N+1. A renewal with no race
+  commits.
+- A body with `valid_until > issued_at + 31 days` reads `malformed`.
+- `enrollment_proof`: a confirmation receipt by P's credential over P's
+  `H_B` gives true. The same receipt beside a P for another `H_B`, a receipt
+  by another credential in B, and an application receipt each give false or
+  are not accepted.
 - An expired pin stops every renewal, and the operator check exits nonzero.
 - Status that cannot be read gives `trust_input_unavailable`, never
   `signature_invalid`.
