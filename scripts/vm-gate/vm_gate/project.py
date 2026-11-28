@@ -1,7 +1,7 @@
 """One project's full gate for its release command, with one flat receipt.
 
-`vm-gate run --project aweb|ac --repo PATH --sha S --intent train --machine M
---receipt R` runs one suite on one machine:
+`vm-gate run --project aweb|ac|aweb-cloud|servers --repo PATH --sha S --intent train
+--machine M --receipt R` runs one suite on one machine:
 
 - aweb: aweb's candidate gate at S, a fast-forward of aweb's main, from the
   local checkout, with S as the guest's main (branch scope), since S lands
@@ -17,6 +17,15 @@
   aweb-built-head line of its own inputs.tsv (git rev-parse HEAD of the tree
   its journeys built), never the input copied. Either way green needs every
   stage PASSED in Cloud's own summary.tsv; a missing row is red.
+- aweb-cloud: the pilot, on ac's path with its own facts (release.CLOUD_PROJECTS):
+  `make release-gate RELEASE_IMAGE=<index>` with its RELEASE_IMAGE_* names, or
+  bare `make gate`; no Hermes key; --aweb-source optional. Green needs every
+  row of its summary.tsv PASSED and its four stages present.
+- servers: the steps of one reviewed spec (--steps) in one guest, each with its
+  own checkout of an author's bundle, its user, its expected exit and the
+  evidence it must show (servers.py, servers_run.py). --repo and --sha are the
+  spec's servers bundle and its commit. Green needs every source checked out at
+  its commit, every step's verdict passed and the registry removed.
 
 Every outcome, refusals included, writes the receipt. Every digest in it is
 sha256:<hex>.
@@ -30,7 +39,7 @@ from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
-from . import release
+from . import release, servers
 from .config import load, select_manifest, select_target
 from .errors import Infrastructure, Refused
 from .executor import LOGS, Executor
@@ -38,7 +47,7 @@ from .release import GUEST_FILES, Q
 from .signals import handling
 from .source import git, prepare
 
-PROJECTS = ("aweb", "ac")
+PROJECTS = ("aweb", "ac", "aweb-cloud", "servers")
 SHA = re.compile(r"[0-9a-f]{40}")
 GREEN, RED, REFUSED, INFRASTRUCTURE = 0, 1, 2, 70
 
@@ -53,21 +62,50 @@ def admit(args):
     if args.intent != "train":
         raise Refused("a project receipt is a full gate: pass --intent train")
     if args.stages or args.command or args.target or args.type:
-        raise Refused("--project runs the full gate on --machine: drop --stages, --command, --target and --type")
+        raise Refused(
+            "--project runs the full gate on --machine: drop --stages, --command, --target and --type"
+        )
     if not args.machine:
         raise Refused("--project needs --machine")
     if not SHA.fullmatch(args.sha):
         raise Refused("--sha must be a full lowercase commit SHA")
-    if args.project == "aweb":
+    if args.project != "servers" and args.steps:
+        raise Refused("--steps is the servers project's input")
+    if args.project == "servers":
+        if args.files or args.image or args.aweb_source:
+            raise Refused(
+                "--files, --image and --aweb-source are aweb's and Cloud's inputs, not servers'"
+            )
+        if not args.steps:
+            raise Refused("--project servers needs --steps, the reviewed spec")
+    elif args.project == "aweb":
         if args.image or args.aweb_source:
             raise Refused("--image and --aweb-source are Cloud's inputs, not aweb's")
     else:
+        cloud = release.CLOUD_PROJECTS[args.project]
         if args.files:
-            raise Refused("--files is aweb's input: Cloud installs aweb from PyPI per its lock")
+            raise Refused(
+                "--files is aweb's input: Cloud installs aweb from PyPI per its lock"
+            )
         if args.image and not release.IMAGE.fullmatch(args.image):
             raise Refused("--image must be <repository>@sha256:<index>")
-        if args.image and not args.aweb_source:
-            raise Refused("--image needs --aweb-source, the aweb commit the journeys build")
+        if (
+            args.image
+            and release.IMAGE.fullmatch(args.image)["repository"] != cloud.repository
+        ):
+            raise Refused(f"--image for {args.project} must name {cloud.repository}")
+        if args.aweb_source and not cloud.attests_aweb_source:
+            raise Refused(
+                f"{args.project}'s gate builds no aweb, so it cannot attest --aweb-source"
+            )
+        if args.aweb_source and not args.image:
+            raise Refused(
+                "--aweb-source pins a release's aweb; a train gate builds none to attest"
+            )
+        if args.image and cloud.aweb_source_required and not args.aweb_source:
+            raise Refused(
+                "--image needs --aweb-source, the aweb commit the journeys build"
+            )
         if args.aweb_source and not SHA.fullmatch(args.aweb_source):
             raise Refused("--aweb-source must be a full lowercase commit SHA")
 
@@ -110,7 +148,10 @@ class FilesExecutor(Executor):
 
     def prepare(self, server, timeout):
         super().prepare(server, timeout)
-        self.run(f"install -d -m 0755 -o root -g root {GUEST_FILES}", "release-files-directory")
+        self.run(
+            f"install -d -m 0755 -o root -g root {GUEST_FILES}",
+            "release-files-directory",
+        )
         for path in self.files:
             self.upload(path, GUEST_FILES + "/" + Path(path).name, mode="0444")
 
@@ -125,23 +166,31 @@ def at_most_one(paths, what):
 def installed_wheels(evidence, sha):
     """What each server container held, as the journey read it inside the container."""
     path = at_most_one(
-        sorted((Path(evidence) / "tmp").glob(f"aweb-candidate-gate-{sha}-*/release-wheels.json")),
+        sorted(
+            (Path(evidence) / "tmp").glob(
+                f"aweb-candidate-gate-{sha}-*/release-wheels.json"
+            )
+        ),
         "release wheel records",
     )
     return json.loads(path.read_text()) if path else None
 
 
-def cloud_inputs(evidence, sha):
+def cloud_inputs(evidence, sha, cloud=release.CLOUD_PROJECTS["ac"]):
     """Cloud's gate's own record: the HEAD of the aweb tree its journeys built, and the locked tag.
 
     Only the aweb-built-head line counts as built; the lock-source line is the input."""
     path = at_most_one(
-        sorted((Path(evidence) / "tmp").glob(f"ac-candidate-gate-{sha}*/inputs.tsv")),
+        sorted(
+            (Path(evidence) / "tmp").glob(f"{cloud.evidence_prefix}{sha}*/inputs.tsv")
+        ),
         "Cloud gate input records",
     )
     if path is None:
         return None, None
-    rows = dict(line.split("\t", 1) for line in path.read_text().splitlines() if "\t" in line)
+    rows = dict(
+        line.split("\t", 1) for line in path.read_text().splitlines() if "\t" in line
+    )
     return rows.get("aweb-built-head"), rows.get("aweb-lock-tag")
 
 
@@ -151,6 +200,14 @@ def exit_code(record):
     if classification == "refused":
         return REFUSED
     if classification is not None or record.get("suite_exit") is None:
+        return INFRASTRUCTURE
+    # A servers runner exits 1 when it or its collector fails; that is not a failed rehearsal.
+    if record["project"] == "servers" and servers.infrastructure(record):
+        return INFRASTRUCTURE
+    # A gate that reports its own refusal or infrastructure fault keeps it.
+    if record.get("suite_classification") == "refused":
+        return REFUSED
+    if record.get("suite_classification") == "infrastructure":
         return INFRASTRUCTURE
     if record["suite_exit"] != 0:
         return RED
@@ -165,11 +222,18 @@ def exit_code(record):
                 return RED
             if server.get("container_wheel_sha256") != record["files"][name]:
                 return RED
-    if record["project"] == "ac":
-        if record.get("aweb_source") and record.get("aweb_source_built") != record["aweb_source"]:
+    if record["project"] == "servers" and not servers.green(record):
+        return RED
+    if record["project"] in release.CLOUD_PROJECTS:
+        if (
+            record.get("aweb_source")
+            and record.get("aweb_source_built") != record["aweb_source"]
+        ):
             return RED
         stages = record.get("stages")
-        if stages is not None and any(verdict != "PASSED" for verdict in stages.values()):
+        if stages is not None and any(
+            verdict != "PASSED" for verdict in stages.values()
+        ):
             return RED
     return GREEN
 
@@ -202,10 +266,14 @@ def project_job(args, *, factory=None, out=None):
         machine = config[args.machine]
         timeout = machine.get("release_timeout_seconds")
         if type(timeout) is not int or timeout <= 0:
-            raise Refused(f"operator config needs {args.machine}.release_timeout_seconds")
+            raise Refused(
+                f"operator config needs {args.machine}.release_timeout_seconds"
+            )
         if backend == "native":
-            if args.project == "aweb":
-                raise Refused(f"aweb's release gate runs in a guest; {args.machine} is native")
+            if args.project in ("aweb", "aweb-cloud", "servers"):
+                raise Refused(
+                    f"{args.project}'s gate runs in a guest; {args.machine} is native"
+                )
             if not machine.get("root"):
                 raise Refused(f"operator config needs {args.machine}.root for its jobs")
         files = release.built_files(args.files)
@@ -213,10 +281,30 @@ def project_job(args, *, factory=None, out=None):
         target = key = None
         if args.project == "aweb":
             record.update(files=prefixed(files), command="make candidate-gate")
+        elif args.project == "servers":
+            spec = servers.admit(
+                args.steps, repo, args.sha, config.get("servers_root_specs", [])
+            )
+            record.update(
+                command=servers.command(spec["spec_sha256"], spec["root"]),
+                spec=str(Path(args.steps).resolve()),
+                spec_sha256=spec["spec_sha256"],
+                root=spec["root"],
+                sources=spec["sources"],
+            )
         else:
-            key = release.hermes_key(config.get("hermes_key_file"))
-            record.update(release.cloud_main(repo, args.sha, gate=not args.image))
-            record["command"] = "make release-gate" if args.image else "make gate GATE_STAGES=all"
+            cloud = release.CLOUD_PROJECTS[args.project]
+            key = (
+                release.hermes_key(config.get("hermes_key_file"))
+                if cloud.hermes
+                else None
+            )
+            record.update(
+                release.cloud_main(repo, args.sha, gate=not args.image, name=cloud.name)
+            )
+            record["command"] = (
+                cloud.release_command(args.image) if args.image else cloud.gate_command
+            )
             record["aweb_source"] = args.aweb_source
         run_id = "vm-" + uuid.uuid4().hex
         record["run_id"] = run_id
@@ -225,7 +313,9 @@ def project_job(args, *, factory=None, out=None):
         if backend != "native":
             target = SimpleNamespace(
                 target=backend,
-                type=machine.get("server_type", "ccx43") if backend == "hetzner" else None,
+                type=machine.get("server_type", "ccx43")
+                if backend == "hetzner"
+                else None,
                 stages=None,
                 timeout=timeout,
                 intent=args.intent,
@@ -259,18 +349,36 @@ def project_job(args, *, factory=None, out=None):
                 command=aweb_script(args.sha, files),
                 args=target,
                 run_id=run_id,
-                executor_factory=partial(FilesExecutor, files=[Path(args.files) / name for name in files]),
+                executor_factory=partial(
+                    FilesExecutor, files=[Path(args.files) / name for name in files]
+                ),
+            )
+        elif args.project == "servers":
+            runtime = servers_runtime(
+                config, launcher, directory, target, run_id, spec, factory
             )
         else:
             runtime, image = cloud_runtime(
-                args, config, backend, machine, target, directory, run_id, key, launcher, timeout, factory
+                args,
+                config,
+                backend,
+                machine,
+                target,
+                directory,
+                run_id,
+                key,
+                launcher,
+                timeout,
+                factory,
             )
             if image:
                 # Every digest in the receipt is the bare sha256:<hex>: the
                 # index's digest, not the reference it was named by.
                 record["image"] = {
                     "index": release.IMAGE.fullmatch(image["image"])["index"],
-                    **{k: image[k] for k in ("member", "config", "member_architecture")},
+                    **{
+                        k: image[k] for k in ("member", "config", "member_architecture")
+                    },
                 }
         with handling():
             result = runtime.run()
@@ -285,29 +393,54 @@ def project_job(args, *, factory=None, out=None):
         )
         record["launcher_sha"] = git(launcher, "rev-parse", "HEAD").stdout.strip()
         architecture = evidence / "var/log/vm-gate/release/host-architecture"
-        record["host_architecture"] = architecture.read_text().split() if architecture.exists() else None
-        suite = release.suite_record(evidence, "aweb" if args.project == "aweb" else "cloud")
-        record["suite_exit"] = suite["exit"]
+        record["host_architecture"] = (
+            architecture.read_text().split() if architecture.exists() else None
+        )
+        if args.project == "servers":
+            record["result"], record["suite_exit"] = servers.result(evidence)
+            record["result_error"] = servers.infrastructure(record)
+            if record["result"]:
+                for name, guest in record["result"]["sources"].items():
+                    if name in record["sources"]:
+                        record["sources"][name].update(guest)
+        else:
+            record["suite_exit"] = release.suite_record(
+                evidence, "aweb" if args.project == "aweb" else "cloud"
+            )["exit"]
         if args.project == "aweb":
             rebuilt = evidence / "var/log/vm-gate/release/aweb/rebuilt.json"
             # The builder leaves its own markers (.gitignore) beside the files;
             # only the shipped names are compared, and a missing one is red.
             record["rebuilt_files"] = (
-                {name: digest for name, digest in json.loads(rebuilt.read_text()).items() if name in files}
+                {
+                    name: digest
+                    for name, digest in json.loads(rebuilt.read_text()).items()
+                    if name in files
+                }
                 if rebuilt.exists()
                 else None
             )
             record["ledger_rows_imported"] = result.get("ledger_rows_imported")
-            if files and suite["exit"] == 0:
+            if files and record["suite_exit"] == 0:
                 record["installed_wheels"] = installed_wheels(evidence, args.sha)
-        else:
-            if args.image and suite["exit"] == 0:
-                record["aweb_source_built"], record["aweb_source_tag"] = cloud_inputs(evidence, args.sha)
+        elif args.project in release.CLOUD_PROJECTS:
+            cloud = release.CLOUD_PROJECTS[args.project]
+            if cloud.native_exits:
+                record["suite_classification"] = {
+                    2: "refused",
+                    70: "infrastructure",
+                }.get(record["suite_exit"])
+            if args.image and args.aweb_source and record["suite_exit"] == 0:
+                record["aweb_source_built"], record["aweb_source_tag"] = cloud_inputs(
+                    evidence, args.sha, cloud
+                )
             # Both Cloud gates are green only when their own summary shows every
             # stage PASSED; a missing row reads MISSING and is red.
-            record["stages"] = release.cloud_stage_verdicts(evidence, args.sha)
+            record["stages"] = release.cloud_stage_verdicts(evidence, args.sha, cloud)
     except (Refused, Infrastructure) as exc:
-        record["vm_gate"].update(infrastructure=exc.classification, error=str(exc), exit=int(exc.exit_code))
+        record["vm_gate"].update(
+            infrastructure=exc.classification, error=str(exc), exit=int(exc.exit_code)
+        )
     code = exit_code(record)
     record["exit"] = code
     Path(args.receipt).write_text(json.dumps(record, indent=2) + "\n")
@@ -321,7 +454,42 @@ def release_runtime_factory():
     return Runtime
 
 
-def cloud_runtime(args, config, backend, machine, target, directory, run_id, key, launcher, timeout, factory):
+def servers_runtime(config, launcher, directory, target, run_id, spec, factory):
+    """The spec's guest: the launcher's own aweb tree as the guest source, the bundles beside it."""
+    aweb_repo = Path(config.get("repo") or launcher).resolve()
+    source = prepare(
+        aweb_repo,
+        git(aweb_repo, "rev-parse", "HEAD").stdout.strip(),
+        directory,
+        observed=config["manifest"]["observed"],
+        intent="branch",
+        lock_root=config["state_root"],
+    )
+    config["repo"] = str(aweb_repo)
+    return (factory or release_runtime_factory())(
+        config=config,
+        directory=directory,
+        source=source,
+        command=servers.command(spec["spec_sha256"], spec["root"]),
+        args=target,
+        run_id=run_id,
+        executor_factory=partial(servers.ServersExecutor, servers=spec),
+    )
+
+
+def cloud_runtime(
+    args,
+    config,
+    backend,
+    machine,
+    target,
+    directory,
+    run_id,
+    key,
+    launcher,
+    timeout,
+    factory,
+):
     """Cloud's suite alone: its bundle, its image when a release, and the Hermes key."""
     aweb_repo = Path(config.get("repo") or launcher).resolve()
     source_sha = args.aweb_source or git(aweb_repo, "rev-parse", "HEAD").stdout.strip()
@@ -336,14 +504,23 @@ def cloud_runtime(args, config, backend, machine, target, directory, run_id, key
     else:
         observed = config["manifest"]["observed"]
     source = prepare(
-        aweb_repo, source_sha, directory, observed=observed, intent="branch", lock_root=config["state_root"]
+        aweb_repo,
+        source_sha,
+        directory,
+        observed=observed,
+        intent="branch",
+        lock_root=config["state_root"],
     )
     config["repo"] = str(aweb_repo)
     repo = Path(args.repo).resolve()
     bundle = directory / "cloud.bundle"
     gate_only = not args.image
-    real_main = git(repo, "rev-parse", "refs/remotes/origin/main^{commit}").stdout.strip()
-    bundle_sha256 = release.cloud_bundle(repo, args.sha, bundle, main=real_main if gate_only else None)
+    real_main = git(
+        repo, "rev-parse", "refs/remotes/origin/main^{commit}"
+    ).stdout.strip()
+    bundle_sha256 = release.cloud_bundle(
+        repo, args.sha, bundle, main=real_main if gate_only else None
+    )
     archive = None if gate_only else directory / "cloud-image.tar"
     # Cloud's gate proves the index and its amd64 member separately: the guest
     # gets the index as its release image and runs the member resolved here.
@@ -357,6 +534,7 @@ def cloud_runtime(args, config, backend, machine, target, directory, run_id, key
         member=image and image["member"],
         lock_source_sha=args.aweb_source,
         cloud_target="gate" if gate_only else "release-gate",
+        cloud=release.CLOUD_PROJECTS[args.project],
     )
     inputs = {"bundle": bundle, "archive": archive, "hermes_key": key}
     if backend == "native":

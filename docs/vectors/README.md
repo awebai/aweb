@@ -27,7 +27,6 @@ The other tracked vector directories have disjoint, explicit purposes:
 | `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
 | `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json` | The byte-enforced package copy of `hook-catalog-v1.json`, shipped in the naapp-lib wheel so an installed app loads the catalog (`aweb_naapp.hooks.catalog.packaged_catalog`) with no repository checkout. |
 | `naapp-lib/tests/vectors/` | External cryptographic known-answer fixtures: `hpke-rfc9180-base-x25519.json` pins RFC 9180 upstream test-vector data for `test_crypto_hpke.py`; it is not an aweb public protocol vector. |
-| `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
 | `naapp/library/tests/vectors/` | Library blueprint input/output goldens. |
 | `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix, and the transition-to-hook-action table checked against `hook-catalog-v1.json`. Each file is consumed by a test in `naapp/secrets/tests/`. |
 | `test-vectors/` | Repository-level policy, blueprint, app-manifest, and packaging fixtures governed by their own indexes. |
@@ -123,12 +122,6 @@ show-and-confirm approval. No typed fingerprint entry is required. All earlier
 signed bytes remain unchanged. These lifecycle cases are acceptance inputs
 for the owning S2/S3/S4
 checkpoints, rather than evidence those paths have already been implemented.
-
-### `member-attribution-v1.json` — superseded, historical only
-
-The [old member attribution proposal](../drafts/member-attribution.md) is superseded
-by the identity tree. Its frozen bytes remain evidence, not a new email/SMTP
-implementation contract. No new consumer should implement this record.
 
 ### `awid-controller-request-v2.json`
 

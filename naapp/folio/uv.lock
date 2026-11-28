@@ -263,7 +263,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiosmtpd", specifier = ">=1.4.6" },
-    { name = "aweb", marker = "extra == 'server'", editable = "../../server" },
+    { name = "aweb", marker = "extra == 'server'", specifier = ">=1.27.35" },
     { name = "aweb-naapp", extras = ["hooks", "runtime"], editable = "../../naapp-lib" },
     { name = "awid-service", editable = "../../awid" },
     { name = "cbor2", specifier = ">=5.6.0" },

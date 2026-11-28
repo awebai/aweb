@@ -10,7 +10,7 @@ This package contains the host-agnostic parts of the aweb channel:
 - sender signature verification and trust normalization
 - channel event dispatch into semantic awakenings
 
-Host packages such as `@awebai/claude-channel` and `@awebai/pi-extension` map those awakenings to their own runtime APIs.
+Host packages such as `@awebai/claude-channel` and `@awebai/pi` map those awakenings to their own runtime APIs.
 
 ## Encrypted delivery trust
 

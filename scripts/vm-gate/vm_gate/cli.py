@@ -37,12 +37,13 @@ def parser():
     run.add_argument("--target", choices=["merak", "hetzner"])
     run.add_argument("--timeout", type=int, default=7200)
     # A project receipt: one project's full gate for its release command.
-    run.add_argument("--project", choices=["aweb", "ac"])
+    run.add_argument("--project", choices=["aweb", "ac", "aweb-cloud", "servers"])
     run.add_argument("--machine")
     run.add_argument("--receipt")
     run.add_argument("--files")
     run.add_argument("--image")
     run.add_argument("--aweb-source")
+    run.add_argument("--steps")
     snap = sub.add_parser("snapshot")
     snap.add_argument("--sha", required=True)
     snap.add_argument("--repo")
@@ -70,8 +71,12 @@ def main(argv=None, *, factory=None, out=None):
             from .project import project_job
 
             return project_job(args, factory=factory, out=out)
-        if args.action == "run" and (args.machine or args.files or args.image or args.aweb_source):
-            raise Refused("--machine, --files, --image and --aweb-source need --project")
+        if args.action == "run" and (
+            args.machine or args.files or args.image or args.aweb_source or args.steps
+        ):
+            raise Refused(
+                "--machine, --files, --image, --aweb-source and --steps need --project"
+            )
         if not args.config:
             raise Refused("external --config or VM_GATE_CONFIG is required")
         if os.geteuid() == 0:
