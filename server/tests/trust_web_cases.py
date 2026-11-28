@@ -716,6 +716,11 @@ class World:
         self.issued[subject] = now
         return now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    def root_key(self, org: str) -> SigningKey:
+        """``org``'s root key, which exists before the organisation is created
+        and signs as that root even if it never is."""
+        return self.roots.setdefault(org, SigningKey.generate())
+
     def session_key(self, session: str) -> SigningKey:
         return self.session_keys.setdefault(session, SigningKey.generate())
 
@@ -733,7 +738,7 @@ class World:
         if "controller" in who:
             controlled = who["controller"]
             if "root" in controlled:
-                return self.roots[controlled["root"]]
+                return self.root_key(controlled["root"])
             team = controlled["team"]
             return self.team_keys[self.team_id(team["org"], team["team"])]
         raise NotRunnable(f"party {who!r} has no key in the runner")
@@ -844,9 +849,8 @@ class World:
 
     async def _act_createOrg(self, step: Step) -> None:
         org = step.args["org"]
-        self.roots[org] = SigningKey.generate()
         await self.stack.registry.ensure_namespace(
-            domain=self.domain(org), controller=bytes(self.roots[org])
+            domain=self.domain(org), controller=bytes(self.root_key(org))
         )
 
     async def _register(self, step: Step, parent_chain: list[dict]) -> None:

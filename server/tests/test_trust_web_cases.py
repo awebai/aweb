@@ -321,6 +321,13 @@ def test_the_format_refuses_each_single_fault(name):
 # missing stack, so NotRunnable shows the act was refused before sending.
 
 
+def test_the_root_of_an_organisation_never_created_still_signs_as_itself():
+    world = World(stack=None)
+    asked = world.party_key({"controller": {"root": "o3"}})
+    assert world.party_key({"controller": {"root": "o3"}}) == asked
+    assert world.party_key({"controller": {"root": "o1"}}) != asked
+
+
 @pytest.mark.asyncio
 async def test_a_grant_revocation_naming_another_grant_is_not_sent():
     minted = {
