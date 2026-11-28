@@ -11,8 +11,8 @@ The [repository README](../README.md) has install and server-start commands.
 Use this page to find the document you need, and to see which documents carry
 authority over shipped behavior.
 
-The baseline contains 79 tracked Markdown documents. This front door does not
-self-link. The remaining 78 public Markdown paths appear below exactly once.
+This page links the main documents once each; it is not a complete list of
+the files in `docs/`.
 
 ## Start here
 
@@ -294,6 +294,3 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   behind `aw gc-mail`.
 - [Hosted certificate anchoring draft](drafts/hosted-certificate-anchoring.md) —
   authorized contract for hosted roster read-back; a draft until it lands.
-- [Local-sender verification authority draft](drafts/local-sender-verification-authority.md) —
-  record of the 2026-08-17 threat-model rulings; the normative text lives in
-  the trust model.
