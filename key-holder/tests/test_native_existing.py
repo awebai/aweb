@@ -9,6 +9,10 @@ import httpx
 import pytest
 from approval_service.grading import EnrollmentGrading
 from approval_service.statements import verify_enrollment_evidence
+from attestation_inventory_migration import (
+    lose_passkey_inventory,
+    upgraded_pre_inventory_store,
+)
 from authenticator import packed_device
 from aweb_key_holder import cli
 from aweb_key_holder.auth import Caller
@@ -126,22 +130,18 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
                 "SELECT credential FROM active_attestation_inventory"
             ).fetchall()
         if binding_kind == "hardware":
-            await check_missing_inventory_refusal(
-                holder,
-                client,
-                own,
-                credentials[0]["id"],
-                binding_request,
-                monkeypatch,
-                capsys,
-            )
-        if binding_kind == "mixed":
-            with holder.store._connection() as db, db:
-                removed = db.execute(
-                    "DELETE FROM attestation_inventory WHERE person=? AND credential=?",
-                    (person, credentials[1]["id"]),
+            with holder.store._connection() as db:
+                stored = db.execute(
+                    "SELECT namespace FROM attestation_inventory WHERE person=? AND credential=?",
+                    (person, credentials[0]["id"]),
+                ).fetchone()
+                assert stored["namespace"] == root.domain
+            with upgraded_pre_inventory_store(holder.store):
+                await check_missing_inventory_refusal(
+                    holder, client, own, binding_request, monkeypatch, capsys
                 )
-                assert removed.rowcount == 1
+        if binding_kind == "mixed":
+            lose_passkey_inventory(holder.store, person, credentials[1]["id"])
         response = await call(client, f"/v1/enrollments/{person}/activate", {}, **own)
         assert response.status_code == 200, response.text
         assert holder.active_person(person)["active"] == 1
@@ -161,17 +161,9 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
 
 
 async def check_missing_inventory_refusal(
-    holder, client, own, credential, binding_request, monkeypatch, capsys
+    holder, client, own, binding_request, monkeypatch, capsys
 ):
     person = own["identity"]
-    with holder.store._connection() as db, db:
-        stored = db.execute(
-            "DELETE FROM attestation_inventory WHERE person=? AND credential=? "
-            "RETURNING namespace, person, credential, assessment",
-            (person, credential),
-        ).fetchone()
-        assert stored["namespace"] == holder.store.descriptor().domain
-
     audit = holder.store.audit()
     repeated = await call(
         client, f"/v1/enrollments/{person}/binding", binding_request, **own
@@ -218,15 +210,10 @@ async def check_missing_inventory_refusal(
         "message": message,
     }
     assert holder.store.audit() == audit
-    with holder.store._connection() as db, db:
+    with holder.store._connection() as db:
         assert (
             db.execute(
                 "SELECT active FROM enrollments WHERE person=?", (person,)
             ).fetchone()["active"]
             == 0
-        )
-        db.execute(
-            "INSERT INTO attestation_inventory (namespace, person, credential, assessment) "
-            "VALUES (?, ?, ?, ?)",
-            tuple(stored),
         )
