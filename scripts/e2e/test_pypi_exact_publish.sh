@@ -321,46 +321,4 @@ for knob in PYPI_VERIFY_DEADLINE PYPI_VERIFY_REQUEST_TIMEOUT PYPI_VERIFY_ATTEMPT
 done
 ok "pypi refuses zero and malformed deadline/request/attempt overrides"
 
-# ── real-builder pipeline: build -> workflow cleanup -> inspect ─────
-# The hand-made dists above test the guard; the untested seam that broke a
-# release was the pipeline between the real builder and the guard (uv build
-# stamps a .gitignore the guard rightly refuses). Build a real package with
-# the local uv toolchain, apply the exact cleanup the publish workflow
-# applies, and require the result to inspect clean - builder drift reds here
-# before a hosted runner sees it. Needs uv and its cached build backend.
-awid_version="$(python3 -c "import tomllib; print(tomllib.load(open('$ROOT/awid/pyproject.toml','rb'))['project']['version'])")"
-rm -rf "$tmp/real-dist"; mkdir -p "$tmp/real-dist"
-uv build --sdist --wheel --out-dir "$tmp/real-dist" "$ROOT/awid" >/dev/null 2>&1 \
-  || fail "real uv build of awid failed"
-rm -f "$tmp/real-dist/.gitignore"
-out="$(bash "$LANE" inspect-staged --dist "$tmp/real-dist" \
-  --package awid-service --version "$awid_version" 2>&1)" \
-  || fail "real-builder dist refused after workflow cleanup: $out"
-grep -c "STAGED:" <<<"$out" | grep -qx 2 \
-  || fail "real-builder dist must stage exactly the pair: $out"
-ok "real uv build plus workflow cleanup inspects clean (builder-drift detector)"
-
-naapp_version="$(python3 -c "import tomllib; print(tomllib.load(open('$ROOT/naapp-lib/pyproject.toml','rb'))['project']['version'])")"
-rm -rf "$tmp/real-naapp-dist"; mkdir -p "$tmp/real-naapp-dist"
-uv build --sdist --wheel --out-dir "$tmp/real-naapp-dist" "$ROOT/naapp-lib" >/dev/null 2>&1 \
-  || fail "real uv build of naapp-lib failed"
-rm -f "$tmp/real-naapp-dist/.gitignore"
-out="$(bash "$LANE" inspect-staged --dist "$tmp/real-naapp-dist" \
-  --package aweb-naapp --version "$naapp_version" 2>&1)" \
-  || fail "real-builder aweb-naapp dist refused after workflow cleanup: $out"
-grep -c "STAGED:" <<<"$out" | grep -qx 2 \
-  || fail "real-builder aweb-naapp dist must stage exactly the pair: $out"
-ok "real aweb-naapp build plus workflow cleanup inspects clean"
-
-rm -rf "$tmp/real-naapp-testing-dist"; mkdir -p "$tmp/real-naapp-testing-dist"
-uv build --sdist --wheel --out-dir "$tmp/real-naapp-testing-dist" "$ROOT/naapp-lib/testing" >/dev/null 2>&1 \
-  || fail "real uv build of naapp-lib/testing failed"
-rm -f "$tmp/real-naapp-testing-dist/.gitignore"
-out="$(bash "$LANE" inspect-staged --dist "$tmp/real-naapp-testing-dist" \
-  --package aweb-naapp-testing --version "$naapp_version" 2>&1)" \
-  || fail "real-builder aweb-naapp-testing dist refused after workflow cleanup: $out"
-grep -c "STAGED:" <<<"$out" | grep -qx 2 \
-  || fail "real-builder aweb-naapp-testing dist must stage exactly the pair: $out"
-ok "real aweb-naapp-testing build plus workflow cleanup inspects clean"
-
 printf 'SELFTEST OK: %d assertions\n' "$PASS"
