@@ -83,6 +83,9 @@ type idEncryptionKeyOutput struct {
 	registryCurrent bool
 }
 
+// encryptionKeyClock reads the time new encryption-key assertions are created at.
+var encryptionKeyClock = time.Now
+
 type encryptionKeyPublicationMode uint8
 
 const (
@@ -241,7 +244,14 @@ func prepareIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, 
 	assertion := (*awid.EncryptionKeyAssertion)(nil)
 	status := "published"
 	if record == nil || rotate {
-		record, assertion, err = createLocalEncryptionKeyRecord(identity, signingKey, previousKeyID)
+		createdAt := encryptionKeyClock().UTC()
+		if rotate {
+			createdAt, err = rotationCreatedAt(ctx, identity, record)
+			if err != nil {
+				return idEncryptionKeyOutput{}, err
+			}
+		}
+		record, assertion, err = createLocalEncryptionKeyRecordAt(identity, signingKey, previousKeyID, createdAt)
 		if err != nil {
 			return idEncryptionKeyOutput{}, err
 		}
@@ -590,12 +600,52 @@ func resolveActiveCertificateIdentityForEncryptionKey(workingDir string) (*awcon
 	return resolved, nil
 }
 
+// rotationClockBudget bounds how long rotate waits for the clock to pass its
+// predecessor's creation second.
+const rotationClockBudget = 3 * time.Second
+
+// rotationCreatedAt returns a real clock reading whose whole UTC second is
+// strictly after the predecessor's signed created_at. Assertion times have
+// one-second resolution, and every newest-key projection orders by them, so a
+// rotation in its predecessor's second would tie with the key it replaces. It
+// waits for the next second, cancellably and within rotationClockBudget, and
+// never dates an assertion ahead of the clock.
+func rotationCreatedAt(ctx context.Context, identity *awconfig.ResolvedIdentity, predecessor *awconfig.EncryptionKeyRecord) (time.Time, error) {
+	predecessorCreatedAt := strings.TrimSpace(predecessor.CreatedAt)
+	if assertion, err := loadEncryptionAssertionAt(identity.WorkingDir, identity.IdentityHome, predecessor.AssertionPath); err == nil {
+		predecessorCreatedAt = strings.TrimSpace(assertion.CreatedAt)
+	}
+	after, err := time.Parse(time.RFC3339, predecessorCreatedAt)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("current E2E encryption key %s has no readable created_at (%q): %w", predecessor.KeyID, predecessorCreatedAt, err)
+	}
+	after = after.UTC().Truncate(time.Second)
+	deadline := time.NewTimer(rotationClockBudget)
+	defer deadline.Stop()
+	for {
+		now := encryptionKeyClock().UTC()
+		if now.Truncate(time.Second).After(after) {
+			return now, nil
+		}
+		select {
+		case <-ctx.Done():
+			return time.Time{}, ctx.Err()
+		case <-deadline.C:
+			return time.Time{}, usageError("cannot rotate: the clock reads %s, not after the current E2E encryption key's created_at %s; a rotation must be strictly newer than the key it replaces. Check the system clock and retry", now.Format(time.RFC3339), after.Format(time.RFC3339))
+		case <-time.After(max(time.Until(now.Truncate(time.Second).Add(time.Second)), 0) + 10*time.Millisecond):
+		}
+	}
+}
+
 func createLocalEncryptionKeyRecord(identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey, previousKeyID string) (*awconfig.EncryptionKeyRecord, *awid.EncryptionKeyAssertion, error) {
+	return createLocalEncryptionKeyRecordAt(identity, signingKey, previousKeyID, encryptionKeyClock().UTC())
+}
+
+func createLocalEncryptionKeyRecordAt(identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey, previousKeyID string, now time.Time) (*awconfig.EncryptionKeyRecord, *awid.EncryptionKeyAssertion, error) {
 	priv, rawPub, err := awid.GenerateX25519Keypair()
 	if err != nil {
 		return nil, nil, err
 	}
-	now := time.Now().UTC()
 	assertion, err := awid.BuildEncryptionKeyAssertion(signingKey, strings.TrimSpace(identity.DID), strings.TrimSpace(identity.StableID), rawPub, previousKeyID, now)
 	if err != nil {
 		return nil, nil, err
