@@ -9,7 +9,7 @@ chat and control signals for as long as it runs. This page states one policy
 for how such a client connects, reconnects and reports its state. Three
 clients implement the stream:
 
-- `channel-core/src/api/events.ts` (the Claude Code plugin and the Pi
+- `packages/channel-core/src/api/events.ts` (the Claude Code plugin and the Pi
   extension);
 - `cli/go/internal/wake/stream.go` (the `aw wake` broker, one stream per identity; the
   channel-core child it runs for each instance does not open the stream, it
@@ -161,7 +161,7 @@ nothing.
 
 The two Go clients (the wake broker and `aw run`) share one implementation of
 sections 2 to 6 (`cli/go/run/streampolicy.go`). The TypeScript client has its
-own (`channel-core/src/api/events.ts`) and is tested against the same table of
+own (`packages/channel-core/src/api/events.ts`) and is tested against the same table of
 cases.
 
 ## Decisions recorded at review

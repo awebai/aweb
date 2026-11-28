@@ -15,7 +15,7 @@ import {
   startLoopbackServer,
   temporaryDirectory,
   writeTestPrincipal,
-} from "../../channel-core/test/helpers/dist_fixture.ts";
+} from "../../packages/channel-core/test/helpers/dist_fixture.ts";
 
 const distPath = process.env.AWEB_PI_DIST;
 if (!distPath) throw new Error("AWEB_PI_DIST must name the built Pi extension bundle");

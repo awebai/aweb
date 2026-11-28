@@ -180,7 +180,7 @@ The complete Docker candidate gate runs the same check and fails on drift.
 Run the Node installs first if you are invoking it directly on a fresh checkout:
 
 ```
-(cd channel && npm ci) && (cd pi-extension && npm ci)
+(cd packages/channel && npm ci) && (cd packages/pi-extension && npm ci)
 ```
 
 Without them the bundle sections fail on a missing `esbuild` binary, and they
@@ -239,7 +239,7 @@ checkout remains clean and every test is green.
 
 Reproducible here means reproducible on a clean runner with no helpful ambient
 tools. The OATS seam builds `aw` from the exact aweb checkout and selects the real
-Pi binary installed from `pi-extension/package-lock.json`; it prepends both exact
+Pi binary installed from `packages/pi-extension/package-lock.json`; it prepends both exact
 paths before spawning. It never substitutes a globally installed or previously
 published CLI/runtime. A developer laptop is weak evidence for this property
 precisely because its accumulated tools can hide missing setup.

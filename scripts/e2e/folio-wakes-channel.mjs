@@ -1,6 +1,6 @@
 // Real aw SSE frames, dispatched through the production channel-core consumer.
 import { createInterface } from 'node:readline';
-import { dispatchAgentEvent } from '../../channel-core/dist/index.js';
+import { dispatchAgentEvent } from '../../packages/channel-core/dist/index.js';
 const dispatched = new Set();
 for await (const line of createInterface({ input: process.stdin })) {
   const event = JSON.parse(line);

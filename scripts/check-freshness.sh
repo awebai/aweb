@@ -80,18 +80,18 @@ fi
 #    scripts/check-package-dist.mjs (default-aaju). Verify a clean plugin build
 #    still carries the security surface (the bundle reflects current src).
 section "claude-channel bundle freshness (aaju gate)"
-if (cd channel && npm run --silent build >/dev/null 2>&1 && node scripts/check-package-dist.mjs); then
+if (cd packages/channel && npm run --silent build >/dev/null 2>&1 && node scripts/check-package-dist.mjs); then
   echo "channel bundle is up to date"
 else
   echo "FAIL: claude-channel bundle stale or missing the security surface (see scripts/check-package-dist.mjs)"
   status=1
 fi
 
-# 6. pi-extension/dist is likewise untracked (default-aajc.5) and rebuilt from
+# 6. packages/pi-extension/dist is likewise untracked (default-aajc.5) and rebuilt from
 #    src by prebuild/ensure-channel-core; verify a clean build produces a valid
 #    bundle so the published pi package can never carry stale channel-core.
 section "pi-extension bundle freshness"
-if (cd pi-extension && node scripts/ensure-channel-core.mjs >/dev/null 2>&1 && npm run --silent build >/dev/null 2>&1 && node scripts/check-package-dist.mjs); then
+if (cd packages/pi-extension && node scripts/ensure-channel-core.mjs >/dev/null 2>&1 && npm run --silent build >/dev/null 2>&1 && node scripts/check-package-dist.mjs); then
   echo "pi-extension bundle is up to date"
 else
   echo "FAIL: pi-extension bundle failed to build/validate from source"

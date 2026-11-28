@@ -304,7 +304,7 @@ content projection without granting a worker new signing/decryption authority.
 
 Old plaintext readers that verify exact `signed_payload` bytes still verify the
 signature but may omit the label (`cli/go/awid/signing.go:365`;
-`channel-core/src/identity/signing.ts:186`). Old v2 Go readers ignore the new
+`packages/channel-core/src/identity/signing.ts:186`). Old v2 Go readers ignore the new
 inner field and reconstruct the same fixed header; they can verify/decrypt but
 lose its projection (`cli/go/awid/e2ee_messages.go:480`, `:907`). A reader that
 reconstructs incompatible bytes may reject. It must fail visibly, never remove

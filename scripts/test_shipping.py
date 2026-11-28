@@ -183,8 +183,8 @@ class TagContractTest(unittest.TestCase):
             '[project]\nname = "awid-service"\nversion = "2.3.4"\n', encoding="utf-8"
         )
         for directory, version in (
-            ("channel", "3.4.5"),
-            ("pi-extension", "4.5.6"),
+            ("packages/channel", "3.4.5"),
+            ("packages/pi-extension", "4.5.6"),
             ("packages/claude-skills", "5.6.7"),
         ):
             (root / directory).mkdir(parents=True)
@@ -330,7 +330,7 @@ class TagContractTest(unittest.TestCase):
     def test_pi_publisher_requires_its_declared_aw_floor_to_be_public(self):
         temporary, root = self.repository()
         self.addCleanup(temporary.cleanup)
-        (root / "pi-extension/package.json").write_text(
+        (root / "packages/pi-extension/package.json").write_text(
             json.dumps(
                 {
                     "name": "@awebai/pi",

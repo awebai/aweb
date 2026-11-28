@@ -669,7 +669,7 @@ def self_test(root: Path) -> int:
             ),
             "AC-only path/name": (
                 "ac/backend/src/" + "aweb_cloud/migrations/001.sql\n",
-                "channel/self-test-package.json",
+                "packages/channel/self-test-package.json",
             ),
             "credentialed operator procedure": (
                 "DATABASE_URL=" + "service=production\npg_dump --" + "data-only\n",

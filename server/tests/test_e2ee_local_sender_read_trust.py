@@ -436,7 +436,7 @@ def runtime_packages(server_js_runtime):
     if REPO != SOURCE_REPO:
         assert server_js_runtime == REPO
         return
-    for package in ("channel", "pi-extension"):
+    for package in ("packages/channel", "packages/pi-extension"):
         build = subprocess.run(
             ["npm", "run", "build"], cwd=REPO / package, capture_output=True, text=True
         )
@@ -542,7 +542,7 @@ async def _present_by_wake(
 
 def channel_command():
     """The Claude Code channel plugin from this worker's runtime tree."""
-    return ["node", str(REPO / "channel/dist/index.js")]
+    return ["node", str(REPO / "packages/channel/dist/index.js")]
 
 
 def pi_command(command_dir):
@@ -550,7 +550,7 @@ def pi_command(command_dir):
     return [
         "node",
         str(Path(__file__).with_name("pi_extension_host.mjs")),
-        str(REPO / "pi-extension/dist/index.js"),
+        str(REPO / "packages/pi-extension/dist/index.js"),
         str(command_dir),
     ]
 

@@ -37,23 +37,23 @@ bounded() {
 
 # Run behaviour tests with the TypeScript loader the Pi package uses, bounded.
 behaviour_test() {
-  (cd "$ROOT/pi-extension" && bounded 120 node --import tsx --test --test-reporter=tap "$@")
+  (cd "$ROOT/packages/pi-extension" && bounded 120 node --import tsx --test --test-reporter=tap "$@")
 }
 
 # Positive direction: the production package builds pass the package checkers
 # and every behaviour test.
-build "$ROOT/channel"
-build "$ROOT/pi-extension"
-node "$ROOT/channel/scripts/check-package-dist.mjs" >/dev/null
-node "$ROOT/pi-extension/scripts/check-package-dist.mjs" >/dev/null
-AWEB_CHANNEL_DIST="$ROOT/channel/dist/index.js" behaviour_test "$TESTS/channel_bundle.test.mts" >/dev/null
-AWEB_PI_DIST="$ROOT/pi-extension/dist/index.js" behaviour_test "$TESTS/pi_bundle.test.mts" >/dev/null
+build "$ROOT/packages/channel"
+build "$ROOT/packages/pi-extension"
+node "$ROOT/packages/channel/scripts/check-package-dist.mjs" >/dev/null
+node "$ROOT/packages/pi-extension/scripts/check-package-dist.mjs" >/dev/null
+AWEB_CHANNEL_DIST="$ROOT/packages/channel/dist/index.js" behaviour_test "$TESTS/channel_bundle.test.mts" >/dev/null
+AWEB_PI_DIST="$ROOT/packages/pi-extension/dist/index.js" behaviour_test "$TESTS/pi_bundle.test.mts" >/dev/null
 
 # A session whose shutdown hook never settles keeps its process alive. The
 # control must reach the withheld shutdown and then be stopped by the bound.
 marker="$TMP/hung-shutdown.marker"
 set +e
-out="$(cd "$ROOT/pi-extension" && AWEB_PI_DIST="$ROOT/pi-extension/dist/index.js" \
+out="$(cd "$ROOT/packages/pi-extension" && AWEB_PI_DIST="$ROOT/packages/pi-extension/dist/index.js" \
   AWEB_HUNG_SHUTDOWN_MARKER="$marker" \
   bounded 20 node --import tsx --test --test-reporter=tap "$TESTS/pi_hung_shutdown.test.mts" 2>&1)"
 status=$?
@@ -71,24 +71,24 @@ fi
 mkdir -p "$TMP/scripts"
 cp "$ROOT/scripts/check-node-build-provenance.mjs" "$TMP/scripts/"
 for package in channel-core channel pi-extension; do
-  mkdir -p "$TMP/$package"
+  mkdir -p "$TMP/packages/$package"
   for entry in package.json package-lock.json tsconfig.json scripts; do
-    if [ -e "$ROOT/$package/$entry" ]; then cp -R "$ROOT/$package/$entry" "$TMP/$package/"; fi
+    if [ -e "$ROOT/packages/$package/$entry" ]; then cp -R "$ROOT/packages/$package/$entry" "$TMP/packages/$package/"; fi
   done
 done
-cp -R "$ROOT/channel-core/node_modules" "$TMP/channel-core/node_modules"
+cp -R "$ROOT/packages/channel-core/node_modules" "$TMP/packages/channel-core/node_modules"
 for package in channel pi-extension; do
-  mkdir -p "$TMP/$package/node_modules/@awebai"
-  for entry in "$ROOT/$package/node_modules"/* "$ROOT/$package/node_modules/.bin"; do
+  mkdir -p "$TMP/packages/$package/node_modules/@awebai"
+  for entry in "$ROOT/packages/$package/node_modules"/* "$ROOT/packages/$package/node_modules/.bin"; do
     name="$(basename "$entry")"
-    if [ "$name" != "@awebai" ]; then ln -s "$entry" "$TMP/$package/node_modules/$name"; fi
+    if [ "$name" != "@awebai" ]; then ln -s "$entry" "$TMP/packages/$package/node_modules/$name"; fi
   done
-  for entry in "$ROOT/$package/node_modules/@awebai"/*; do
+  for entry in "$ROOT/packages/$package/node_modules/@awebai"/*; do
     name="$(basename "$entry")"
     if [ "$name" = "channel-core" ]; then
-      ln -s ../../../channel-core "$TMP/$package/node_modules/@awebai/channel-core"
+      ln -s ../../../channel-core "$TMP/packages/$package/node_modules/@awebai/channel-core"
     else
-      ln -s "$entry" "$TMP/$package/node_modules/@awebai/$name"
+      ln -s "$entry" "$TMP/packages/$package/node_modules/@awebai/$name"
     fi
   done
 done
@@ -98,10 +98,10 @@ done
 mutate() {
   local file="$1" current="$2" mutant="$3"
   for package in channel-core channel pi-extension; do
-    rm -rf "$TMP/$package/src"
-    cp -R "$ROOT/$package/src" "$TMP/$package/src"
+    rm -rf "$TMP/packages/$package/src"
+    cp -R "$ROOT/packages/$package/src" "$TMP/packages/$package/src"
   done
-  python3 - "$TMP/channel-core/src/$file" "$current" "$mutant" <<'PY'
+  python3 - "$TMP/packages/channel-core/src/$file" "$current" "$mutant" <<'PY'
 import sys
 from pathlib import Path
 
@@ -120,9 +120,9 @@ PY
 expect_assertion_failure() {
   local package="$1" variable="$2" test_file="$3" name="$4" assertion="$5"
   local out status reason judged
-  build "$TMP/$package"
+  build "$TMP/packages/$package"
   set +e
-  out="$(export "$variable=$TMP/$package/dist/index.js"
+  out="$(export "$variable=$TMP/packages/$package/dist/index.js"
     behaviour_test --test-name-pattern="$name" "$TESTS/$test_file" 2>&1)"
   status=$?
   reason="$(python3 "$ROOT/scripts/lib/named_negative.py" --status "$status" --verdict "$TMP/verdict" \

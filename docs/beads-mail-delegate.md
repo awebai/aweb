@@ -287,7 +287,7 @@ surface.
 
 Caveat documented to users: a recipient running the channel plugin will
 find mail already marked read, because the plugin acknowledges on
-presentation to the session (`channel/src/index.ts:159`). That is the
+presentation to the session (`packages/channel/src/index.ts:159`). That is the
 wake path working, not a bug.
 
 **Index contract:** `read <index>` (1-based) refers to the most recent

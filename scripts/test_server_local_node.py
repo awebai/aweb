@@ -33,8 +33,8 @@ class LocalNodePreparation(unittest.TestCase):
             + "test-awid:\n\t@node suite.cjs registry\n"
         )
         for index, name in enumerate(PACKAGES):
-            package = root / name
-            package.mkdir()
+            package = root / "packages" / name
+            package.mkdir(parents=True)
             manifest = {
                 "name": name,
                 "version": "1.0.0",
@@ -64,7 +64,8 @@ class LocalNodePreparation(unittest.TestCase):
             "const fs=require('node:fs'); const suite=process.argv[2];\n"
             + "if(suite==='server') {\n"
             + "".join(
-                f"fs.readFileSync('{name}/dist/index.js');\n" for name in PACKAGES
+                f"fs.readFileSync('packages/{name}/dist/index.js');\n"
+                for name in PACKAGES
             )
             + "}\nfs.appendFileSync('suite-ran',suite+'\\n');\n"
         )
@@ -95,19 +96,21 @@ class LocalNodePreparation(unittest.TestCase):
     def test_all_suites_build_locked_packages_before_server(self):
         root = self.fixture()
         locks = {
-            name: (root / name / "package-lock.json").read_bytes() for name in PACKAGES
+            name: (root / "packages" / name / "package-lock.json").read_bytes()
+            for name in PACKAGES
         }
         result = self.run_suites(root=root, suite=Suite.ALL)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((root / "suite-ran").read_text(), "server\nregistry\n")
         for name in PACKAGES:
             self.assertEqual(
-                (root / name / "package-lock.json").read_bytes(), locks[name]
+                (root / "packages" / name / "package-lock.json").read_bytes(),
+                locks[name],
             )
 
     def test_failed_node_build_stops_before_server_with_action(self):
         root = self.fixture()
-        (root / "channel/build.cjs").write_text("process.exit(37);\n")
+        (root / "packages/channel/build.cjs").write_text("process.exit(37);\n")
         result = self.run_suites(root=root, suite=Suite.SERVER)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((root / "suite-ran").exists())
@@ -121,7 +124,9 @@ class LocalNodePreparation(unittest.TestCase):
         result = self.run_suites(root=root, suite=Suite.REGISTRY)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((root / "suite-ran").read_text(), "registry\n")
-        self.assertFalse(any((root / name / "dist").exists() for name in PACKAGES))
+        self.assertFalse(
+            any((root / "packages" / name / "dist").exists() for name in PACKAGES)
+        )
 
 
 if __name__ == "__main__":

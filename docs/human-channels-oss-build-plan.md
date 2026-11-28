@@ -133,7 +133,7 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
 
 - **Repo/files:** aweb `cli/go/awid/{signing,e2ee_messages,mail,chat}.go`,
   `server/src/aweb/{e2ee_messages.py,routes/messages.py,routes/chat.py}`,
-  `channel-core/src/identity/`; conformance readers and compose/read tests.
+  `packages/channel-core/src/identity/`; conformance readers and compose/read tests.
 - **Migrations:** none expected: retain signed payload/inner content as source.
   Any necessary persisted projection uses a new ordered migration, never a
   required legacy wire field.
@@ -257,7 +257,7 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
 - **P6a repo/files:** aweb `cli/go/{chat/chat.go,awid/chat.go,cmd/aw/chat.go}` and
   `server/src/aweb/mcp/tools/chat.py`; additive create recipient lists, membership
   operations, exact session send/history selectors and public receipts.
-- **P6b repo/files:** aweb `channel-core/`, `channel/`, `pi-extension/` and
+- **P6b repo/files:** aweb `packages/channel-core/`, `packages/channel/`, `packages/pi-extension/` and
   `cli/go/cmd/aw/wake*`; generic typed-author/via/session/control metadata and
   participant-authorized local readback, capability handling and receipt cursor.
 - **P6c repo/files:** aweb `packages/hermes-aweb-platform/adapter.py`, its tests

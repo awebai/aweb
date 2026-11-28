@@ -15,7 +15,7 @@ import {
   type AgentEvent,
   type TerminalInspection,
   resolveConfig,
-} from "../../../../channel-core/src/index.js";
+} from "../../../../packages/channel-core/src/index.js";
 
 interface InitLine {
   type: "init";

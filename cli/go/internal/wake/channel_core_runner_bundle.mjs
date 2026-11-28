@@ -31,9 +31,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// channel-core/node_modules/graceful-fs/polyfills.js
+// packages/channel-core/node_modules/graceful-fs/polyfills.js
 var require_polyfills = __commonJS({
-  "channel-core/node_modules/graceful-fs/polyfills.js"(exports, module) {
+  "packages/channel-core/node_modules/graceful-fs/polyfills.js"(exports, module) {
     var constants = __require("constants");
     var origCwd = process.cwd;
     var cwd = null;
@@ -319,9 +319,9 @@ var require_polyfills = __commonJS({
   }
 });
 
-// channel-core/node_modules/graceful-fs/legacy-streams.js
+// packages/channel-core/node_modules/graceful-fs/legacy-streams.js
 var require_legacy_streams = __commonJS({
-  "channel-core/node_modules/graceful-fs/legacy-streams.js"(exports, module) {
+  "packages/channel-core/node_modules/graceful-fs/legacy-streams.js"(exports, module) {
     var Stream = __require("stream").Stream;
     module.exports = legacy;
     function legacy(fs) {
@@ -415,9 +415,9 @@ var require_legacy_streams = __commonJS({
   }
 });
 
-// channel-core/node_modules/graceful-fs/clone.js
+// packages/channel-core/node_modules/graceful-fs/clone.js
 var require_clone = __commonJS({
-  "channel-core/node_modules/graceful-fs/clone.js"(exports, module) {
+  "packages/channel-core/node_modules/graceful-fs/clone.js"(exports, module) {
     "use strict";
     module.exports = clone;
     var getPrototypeOf = Object.getPrototypeOf || function(obj) {
@@ -438,9 +438,9 @@ var require_clone = __commonJS({
   }
 });
 
-// channel-core/node_modules/graceful-fs/graceful-fs.js
+// packages/channel-core/node_modules/graceful-fs/graceful-fs.js
 var require_graceful_fs = __commonJS({
-  "channel-core/node_modules/graceful-fs/graceful-fs.js"(exports, module) {
+  "packages/channel-core/node_modules/graceful-fs/graceful-fs.js"(exports, module) {
     var fs = __require("fs");
     var polyfills = require_polyfills();
     var legacy = require_legacy_streams();
@@ -808,9 +808,9 @@ var require_graceful_fs = __commonJS({
   }
 });
 
-// channel-core/node_modules/retry/lib/retry_operation.js
+// packages/channel-core/node_modules/retry/lib/retry_operation.js
 var require_retry_operation = __commonJS({
-  "channel-core/node_modules/retry/lib/retry_operation.js"(exports, module) {
+  "packages/channel-core/node_modules/retry/lib/retry_operation.js"(exports, module) {
     function RetryOperation(timeouts, options) {
       if (typeof options === "boolean") {
         options = { forever: options };
@@ -939,9 +939,9 @@ var require_retry_operation = __commonJS({
   }
 });
 
-// channel-core/node_modules/retry/lib/retry.js
+// packages/channel-core/node_modules/retry/lib/retry.js
 var require_retry = __commonJS({
-  "channel-core/node_modules/retry/lib/retry.js"(exports) {
+  "packages/channel-core/node_modules/retry/lib/retry.js"(exports) {
     var RetryOperation = require_retry_operation();
     exports.operation = function(options) {
       var timeouts = exports.timeouts(options);
@@ -1025,16 +1025,16 @@ var require_retry = __commonJS({
   }
 });
 
-// channel-core/node_modules/retry/index.js
+// packages/channel-core/node_modules/retry/index.js
 var require_retry2 = __commonJS({
-  "channel-core/node_modules/retry/index.js"(exports, module) {
+  "packages/channel-core/node_modules/retry/index.js"(exports, module) {
     module.exports = require_retry();
   }
 });
 
-// channel-core/node_modules/signal-exit/signals.js
+// packages/channel-core/node_modules/signal-exit/signals.js
 var require_signals = __commonJS({
-  "channel-core/node_modules/signal-exit/signals.js"(exports, module) {
+  "packages/channel-core/node_modules/signal-exit/signals.js"(exports, module) {
     module.exports = [
       "SIGABRT",
       "SIGALRM",
@@ -1069,9 +1069,9 @@ var require_signals = __commonJS({
   }
 });
 
-// channel-core/node_modules/signal-exit/index.js
+// packages/channel-core/node_modules/signal-exit/index.js
 var require_signal_exit = __commonJS({
-  "channel-core/node_modules/signal-exit/index.js"(exports, module) {
+  "packages/channel-core/node_modules/signal-exit/index.js"(exports, module) {
     var process2 = global.process;
     var processOk = function(process3) {
       return process3 && typeof process3 === "object" && typeof process3.removeListener === "function" && typeof process3.emit === "function" && typeof process3.reallyExit === "function" && typeof process3.listeners === "function" && typeof process3.kill === "function" && typeof process3.pid === "number" && typeof process3.on === "function";
@@ -1228,9 +1228,9 @@ var require_signal_exit = __commonJS({
   }
 });
 
-// channel-core/node_modules/proper-lockfile/lib/mtime-precision.js
+// packages/channel-core/node_modules/proper-lockfile/lib/mtime-precision.js
 var require_mtime_precision = __commonJS({
-  "channel-core/node_modules/proper-lockfile/lib/mtime-precision.js"(exports, module) {
+  "packages/channel-core/node_modules/proper-lockfile/lib/mtime-precision.js"(exports, module) {
     "use strict";
     var cacheSymbol = /* @__PURE__ */ Symbol();
     function probe(file, fs, callback) {
@@ -1270,9 +1270,9 @@ var require_mtime_precision = __commonJS({
   }
 });
 
-// channel-core/node_modules/proper-lockfile/lib/lockfile.js
+// packages/channel-core/node_modules/proper-lockfile/lib/lockfile.js
 var require_lockfile = __commonJS({
-  "channel-core/node_modules/proper-lockfile/lib/lockfile.js"(exports, module) {
+  "packages/channel-core/node_modules/proper-lockfile/lib/lockfile.js"(exports, module) {
     "use strict";
     var path = __require("path");
     var fs = require_graceful_fs();
@@ -1507,9 +1507,9 @@ var require_lockfile = __commonJS({
   }
 });
 
-// channel-core/node_modules/proper-lockfile/lib/adapter.js
+// packages/channel-core/node_modules/proper-lockfile/lib/adapter.js
 var require_adapter = __commonJS({
-  "channel-core/node_modules/proper-lockfile/lib/adapter.js"(exports, module) {
+  "packages/channel-core/node_modules/proper-lockfile/lib/adapter.js"(exports, module) {
     "use strict";
     var fs = require_graceful_fs();
     function createSyncFs(fs2) {
@@ -1572,9 +1572,9 @@ var require_adapter = __commonJS({
   }
 });
 
-// channel-core/node_modules/proper-lockfile/index.js
+// packages/channel-core/node_modules/proper-lockfile/index.js
 var require_proper_lockfile = __commonJS({
-  "channel-core/node_modules/proper-lockfile/index.js"(exports, module) {
+  "packages/channel-core/node_modules/proper-lockfile/index.js"(exports, module) {
     "use strict";
     var lockfile = require_lockfile();
     var { toPromise, toSync, toSyncOptions } = require_adapter();
@@ -1608,9 +1608,9 @@ var require_proper_lockfile = __commonJS({
   }
 });
 
-// channel-core/node_modules/tldts/dist/cjs/index.js
+// packages/channel-core/node_modules/tldts/dist/cjs/index.js
 var require_cjs = __commonJS({
-  "channel-core/node_modules/tldts/dist/cjs/index.js"(exports) {
+  "packages/channel-core/node_modules/tldts/dist/cjs/index.js"(exports) {
     "use strict";
     function shareSameDomainSuffix(hostname, vhost) {
       if (hostname.endsWith(vhost)) {
@@ -2122,10 +2122,10 @@ function runOATS(bin, args, input = "", options = {}) {
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 
-// channel-core/src/api/client.ts
+// packages/channel-core/src/api/client.ts
 import { createHash as createHash2 } from "node:crypto";
 
-// channel-core/src/api/response.ts
+// packages/channel-core/src/api/response.ts
 var MAX_HTTP_RESPONSE_BYTES = 10 * 1024 * 1024;
 var MAX_HTTP_ERROR_BYTES = 64 * 1024;
 async function readBoundedResponse(response, maxBytes = MAX_HTTP_RESPONSE_BYTES) {
@@ -2170,7 +2170,7 @@ async function readBoundedJSON(response) {
   return JSON.parse(await readBoundedResponse(response));
 }
 
-// channel-core/src/identity/canonical.ts
+// packages/channel-core/src/identity/canonical.ts
 function compareByCodePoint(a, b) {
   for (let i = 0; i < a.length && i < b.length; ) {
     const x = a.codePointAt(i);
@@ -2233,10 +2233,10 @@ function canonicalStringObject(fields) {
   return `{${members.join(",")}}`;
 }
 
-// channel-core/src/identity/did.ts
+// packages/channel-core/src/identity/did.ts
 import { createHash } from "node:crypto";
 
-// channel-core/node_modules/@noble/ed25519/index.js
+// packages/channel-core/node_modules/@noble/ed25519/index.js
 var ed25519_CURVE = {
   p: 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffedn,
   n: 0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3edn,
@@ -2670,7 +2670,7 @@ var wNAF = (n) => {
   return { p, f };
 };
 
-// channel-core/node_modules/@noble/hashes/utils.js
+// packages/channel-core/node_modules/@noble/hashes/utils.js
 function isBytes2(a) {
   return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array" && "BYTES_PER_ELEMENT" in a && a.BYTES_PER_ELEMENT === 1;
 }
@@ -2729,7 +2729,7 @@ var oidNist = (suffix) => ({
   oid: Uint8Array.from([6, 9, 96, 134, 72, 1, 101, 3, 4, 2, suffix])
 });
 
-// channel-core/node_modules/@noble/hashes/_md.js
+// packages/channel-core/node_modules/@noble/hashes/_md.js
 function Chi(a, b, c) {
   return a & b ^ ~a & c;
 }
@@ -2861,7 +2861,7 @@ var SHA512_IV = /* @__PURE__ */ Uint32Array.from([
   327033209
 ]);
 
-// channel-core/node_modules/@noble/hashes/_u64.js
+// packages/channel-core/node_modules/@noble/hashes/_u64.js
 var U32_MASK64 = /* @__PURE__ */ BigInt(2 ** 32 - 1);
 var _32n = /* @__PURE__ */ BigInt(32);
 function fromBig(n, le = false) {
@@ -2896,7 +2896,7 @@ var add4H = (low, Ah, Bh, Ch, Dh) => Ah + Bh + Ch + Dh + (low / 2 ** 32 | 0) | 0
 var add5L = (Al, Bl, Cl, Dl, El) => (Al >>> 0) + (Bl >>> 0) + (Cl >>> 0) + (Dl >>> 0) + (El >>> 0);
 var add5H = (low, Ah, Bh, Ch, Dh, Eh) => Ah + Bh + Ch + Dh + Eh + (low / 2 ** 32 | 0) | 0;
 
-// channel-core/node_modules/@noble/hashes/sha2.js
+// packages/channel-core/node_modules/@noble/hashes/sha2.js
 var SHA256_K = /* @__PURE__ */ Uint32Array.from([
   1116352408,
   1899447441,
@@ -3254,7 +3254,7 @@ var sha512 = /* @__PURE__ */ createHasher(
   /* @__PURE__ */ oidNist(3)
 );
 
-// channel-core/src/identity/signature_wire.ts
+// packages/channel-core/src/identity/signature_wire.ts
 etc.sha512Sync = (...messages) => sha512(etc.concatBytes(...messages));
 function signBytes(input) {
   return sign(input.message, input.seed);
@@ -3308,7 +3308,7 @@ function canonicalPointEncoding(encoded) {
   return y < fieldPrime && !(sign2 === 1n && (y === 1n || y === fieldPrime - 1n));
 }
 
-// channel-core/node_modules/base-x/src/esm/index.js
+// packages/channel-core/node_modules/base-x/src/esm/index.js
 function base(ALPHABET2) {
   if (ALPHABET2.length >= 255) {
     throw new TypeError("Alphabet too long");
@@ -3439,11 +3439,11 @@ function base(ALPHABET2) {
 }
 var esm_default = base;
 
-// channel-core/node_modules/bs58/src/esm/index.js
+// packages/channel-core/node_modules/bs58/src/esm/index.js
 var ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 var esm_default2 = esm_default(ALPHABET);
 
-// channel-core/src/identity/did.ts
+// packages/channel-core/src/identity/did.ts
 var DID_KEY_PREFIX = "did:key:z";
 var ED25519_MULTICODEC = new Uint8Array([237, 1]);
 function computeDIDKey(publicKey) {
@@ -3478,7 +3478,7 @@ function computeStableID(publicKey) {
   return "did:aw:" + esm_default2.encode(hash2.subarray(0, 20));
 }
 
-// channel-core/src/api/client.ts
+// packages/channel-core/src/api/client.ts
 function canonicalTimestamp() {
   return (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
@@ -3678,13 +3678,13 @@ function retryAfterSeconds(header) {
   return header !== null && /^\d+$/.test(header.trim()) ? Number(header.trim()) : void 0;
 }
 
-// channel-core/src/presence.ts
+// packages/channel-core/src/presence.ts
 var PRESENCE_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
 
-// channel-core/src/receive.ts
+// packages/channel-core/src/receive.ts
 var import_proper_lockfile = __toESM(require_proper_lockfile(), 1);
 
-// channel-core/src/api/stream_policy.ts
+// packages/channel-core/src/api/stream_policy.ts
 var STREAM_PLANNED_CLOSE_MIN_MS = 3 * 6e4 + 3e4;
 var STREAM_PLANNED_CLOSE_MAX_MS = 4 * 6e4;
 var STREAM_REFUSED_DELAY_MAX_MS = 15 * 6e4;
@@ -3697,10 +3697,10 @@ var IMF_FIXDATE = new RegExp(`^${WEEKDAY}, (\\d{2}) ${MONTH} (\\d{4}) ${CLOCK} G
 var RFC850_DATE = new RegExp(`^(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day, (\\d{2})-${MONTH}-(\\d{2}) ${CLOCK} GMT$`);
 var ASCTIME_DATE = new RegExp(`^${WEEKDAY} ${MONTH} ([ \\d]\\d) ${CLOCK} (\\d{4})$`);
 
-// channel-core/src/identity/encrypted.ts
+// packages/channel-core/src/identity/encrypted.ts
 import { createHash as createHash3 } from "node:crypto";
 
-// channel-core/src/identity/base64.ts
+// packages/channel-core/src/identity/base64.ts
 var RAW_STD_BASE64 = /^[A-Za-z0-9+/]*$/;
 function decodeRawStdBase64(value) {
   value = value.replace(/[\r\n]/g, "");
@@ -3722,7 +3722,7 @@ function decodeRawURLBase64(value) {
   return new Uint8Array(raw);
 }
 
-// channel-core/src/identity/signing.ts
+// packages/channel-core/src/identity/signing.ts
 var trustedVerificationStatuses = ["verified", "verified_legacy", "verified_custodial"];
 function isTrustedVerificationStatus(status2) {
   return trustedVerificationStatuses.some((trusted) => status2 === trusted);
@@ -3824,7 +3824,7 @@ function signedPayloadConversationStatus(signedPayload, conversationID) {
   }
 }
 
-// channel-core/src/identity/encrypted.ts
+// packages/channel-core/src/identity/encrypted.ts
 function isEncryptedMessage(msg) {
   return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope != null;
 }
@@ -3918,7 +3918,7 @@ async function verifyDecryptedMessage(fetched, decrypted, kind, conversationID, 
   }
 }
 
-// channel-core/src/identity/signed_display.ts
+// packages/channel-core/src/identity/signed_display.ts
 function claims(signedPayload) {
   try {
     const parsed = JSON.parse(signedPayload);
@@ -3971,7 +3971,7 @@ function stableIdentityStandsFor(signed, name, shown, claim, displayed) {
   return name === "to_did" && claim === "" && stable === shown && typeof signed.conversation_id === "string" && signed.conversation_id !== "" && signed.conversation_id === (displayed.conversation_id ?? "");
 }
 
-// channel-core/src/api/mail.ts
+// packages/channel-core/src/api/mail.ts
 async function fetchInbox(client, unreadOnly = true, limit = 50, messageID, log = (message) => console.error(message), reader = { did: "", stableID: "" }) {
   const params = new URLSearchParams();
   if (unreadOnly) params.set("unread_only", "true");
@@ -4083,7 +4083,7 @@ async function verifyInboxMessage(msg) {
   return status2;
 }
 
-// channel-core/src/api/chat.ts
+// packages/channel-core/src/api/chat.ts
 async function fetchHistory(client, sessionId, unreadOnly = false, limit = 50, messageID) {
   const params = new URLSearchParams();
   if (unreadOnly) params.set("unread_only", "true");
@@ -4231,7 +4231,7 @@ async function verifyChatMessage(msg) {
   return status2;
 }
 
-// channel-core/src/api/room.ts
+// packages/channel-core/src/api/room.ts
 async function fetchRoomMessage(client, team, room, id) {
   const message = await client.get(`/v1/room/messages/${encodeURIComponent(id)}`);
   const status2 = await verifySignedPayload(message.signed_payload || "", message.signature || "", message.from_did || "", message.signing_key_id || "");
@@ -4261,12 +4261,12 @@ async function ackRoomNotice(client, id) {
   await client.post(`/v1/room/notices/${encodeURIComponent(id)}/ack`, {});
 }
 
-// channel-core/src/config.ts
+// packages/channel-core/src/config.ts
 import { lstatSync } from "node:fs";
 import { readdir, readFile as readFile3 } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
 
-// channel-core/node_modules/js-yaml/dist/js-yaml.mjs
+// packages/channel-core/node_modules/js-yaml/dist/js-yaml.mjs
 function getDefaultExportFromCjs(x) {
   return x && x.__esModule && Object.prototype.hasOwnProperty.call(x, "default") ? x["default"] : x;
 }
@@ -7332,7 +7332,7 @@ var {
   safeDump
 } = yaml;
 
-// channel-core/src/identity/certificate.ts
+// packages/channel-core/src/identity/certificate.ts
 import { readFile } from "node:fs/promises";
 async function loadTeamCertificate(path) {
   const content = await readFile(path, "utf-8");
@@ -7342,7 +7342,7 @@ function encodeTeamCertificateHeader(cert) {
   return Buffer.from(JSON.stringify(cert), "utf-8").toString("base64");
 }
 
-// channel-core/src/identity/keys.ts
+// packages/channel-core/src/identity/keys.ts
 import { readFile as readFile2 } from "node:fs/promises";
 async function loadSigningKey(path) {
   const content = await readFile2(path, "utf-8");
@@ -7362,7 +7362,7 @@ async function loadSigningKey(path) {
   return bytes;
 }
 
-// channel-core/src/config.ts
+// packages/channel-core/src/config.ts
 function selectIdentityHome(workdir, options = {}) {
   const explicitHome = (options.identityHome || "").trim();
   if (explicitHome) {
@@ -7596,7 +7596,7 @@ async function readYAML(path) {
   return value;
 }
 
-// channel-core/src/identity/strict_json.ts
+// packages/channel-core/src/identity/strict_json.ts
 var StrictJSONError = class extends Error {
   constructor(failure, message) {
     super(message);
@@ -7747,7 +7747,7 @@ var Reader = class {
   }
 };
 
-// channel-core/src/identity/id_certificates.ts
+// packages/channel-core/src/identity/id_certificates.ts
 var ID_CERTIFICATE_PREFIX = "aweb.id-certificate/1\n";
 var ID_CHAIN_MAX_CERTIFICATES = 8;
 var ID_CHAIN_MAX_DECODED_BYTES = 6144;
@@ -7895,10 +7895,10 @@ function hasExactKeys(value, keys) {
   return actual.length === keys.length && actual.every((key, index) => key === keys[index]);
 }
 
-// channel-core/src/identity/id_status.ts
+// packages/channel-core/src/identity/id_status.ts
 import * as dns from "node:dns/promises";
 
-// channel-core/src/identity/id_verification.ts
+// packages/channel-core/src/identity/id_verification.ts
 var ID_STATUS_FRESH_SECONDS = 60;
 function idStatusCacheMode(ageSeconds) {
   if (ageSeconds === null || !Number.isFinite(ageSeconds) || ageSeconds < 0) return "unavailable";
@@ -8230,7 +8230,7 @@ function idRequestDisposition(result, subject, originalAuthPassed) {
   }
 }
 
-// channel-core/src/identity/id_status.ts
+// packages/channel-core/src/identity/id_status.ts
 var IdStatusClient = class {
   constructor(fetchImpl = fetch, resolveTxt3 = dns.resolveTxt, now = Date.now) {
     this.fetchImpl = fetchImpl;
@@ -8328,7 +8328,7 @@ var IdStatusClient = class {
   }
 };
 
-// channel-core/src/identity/registry.ts
+// packages/channel-core/src/identity/registry.ts
 import * as dns2 from "node:dns/promises";
 import { isIP } from "node:net";
 var import_tldts = __toESM(require_cjs(), 1);
@@ -9059,7 +9059,7 @@ function didLogContainsEntry(entries, seq2, entryHash) {
   return false;
 }
 
-// channel-core/src/identity/pinstore.ts
+// packages/channel-core/src/identity/pinstore.ts
 var LAST_SEEN_COALESCE_MS = 6e4;
 function lastSeenIsStale(previous, now) {
   const previousMs = Date.parse(previous);
@@ -9534,7 +9534,7 @@ function validatePin(key, value) {
   return pin;
 }
 
-// channel-core/src/identity/received_id_chain.ts
+// packages/channel-core/src/identity/received_id_chain.ts
 function receivedIdSubject(message) {
   return { id: message.from_stable_id || message.from_did || "", did_key: message.from_did || "", team_member_did_aw: null, team_member_did_key: null };
 }
@@ -9573,7 +9573,7 @@ async function readReceivedIdChain(message, authenticated, status2) {
   return presented;
 }
 
-// channel-core/src/identity/trust.ts
+// packages/channel-core/src/identity/trust.ts
 var ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 var AGENT_META_CACHE_TTL_MS = 60 * 60 * 1e3;
 var AGENT_META_FAILURE_CACHE_MIN_MS = 3e4;
@@ -10355,13 +10355,13 @@ function isTeamScopedName(reference) {
   return colon > 0 && colon === team.lastIndexOf(":") && colon < team.length - 1 && name !== "" && !name.includes("/");
 }
 
-// channel-core/src/channel.ts
+// packages/channel-core/src/channel.ts
 var import_proper_lockfile2 = __toESM(require_proper_lockfile(), 1);
 import { dirname as dirname2, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile as readFile4, rename, rm } from "node:fs/promises";
 
-// channel-core/src/message_presentation.ts
+// packages/channel-core/src/message_presentation.ts
 import { isIP as isIP2 } from "node:net";
 var aliasPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 var noticeIDPattern = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -10426,7 +10426,7 @@ function presentMessageAwakening(awakening) {
   return { ...awakening, content, meta };
 }
 
-// channel-core/src/local_aw.ts
+// packages/channel-core/src/local_aw.ts
 import { execFile, spawn as spawn2 } from "node:child_process";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
@@ -10548,7 +10548,7 @@ function decryptionProof(message) {
   };
 }
 
-// channel-core/src/channel.ts
+// packages/channel-core/src/channel.ts
 var DEFAULT_PIN_STORE_PATH = join2(homedir(), ".config", "aw", "known_agents.yaml");
 var DEFAULT_DELIVERY_STORE_PATH = join2(homedir(), ".config", "aw", "channel-delivered-ids.json");
 var DEFAULT_UNDELIVERED_LOG_PATH = join2(homedir(), ".config", "aw", "channel-undelivered.jsonl");
@@ -11442,7 +11442,7 @@ function isSelfSender(alias, address, stableID, did, self) {
   return (alias || "").trim() === selfAlias;
 }
 
-// channel-core/src/terminal.ts
+// packages/channel-core/src/terminal.ts
 var DEFAULT_MAX_AMBIENT = 50;
 var TerminalInactiveError = class extends Error {
   constructor(state) {

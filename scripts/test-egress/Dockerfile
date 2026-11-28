@@ -28,7 +28,7 @@ RUN uv sync --frozen --project server && uv sync --frozen --project awid \
     && cd cli/go && go mod download
 RUN make naapp-sync
 RUN uv build --project server --out-dir /tmp/server-test-build && rm -rf /tmp/server-test-build
-RUN cd channel-core && npm ci --no-audit --no-fund \
+RUN cd packages/channel-core && npm ci --no-audit --no-fund \
     && cd ../channel && npm ci --no-audit --no-fund \
     && cd ../pi-extension && npm ci --no-audit --no-fund
 USER root

@@ -7,10 +7,10 @@
 // identity home is loaded with resolveConfig, and createChannelClient and
 // createActivityEmitter build the client and emitter (outcomes then go
 // unrecorded; the test reads what the server relayed).
-import { APIClient } from "../../channel-core/dist/api/client.js";
-import { ActivityEmitter } from "../../channel-core/dist/activity/emitter.js";
-import { publishActivity } from "../../channel-core/dist/activity/publish.js";
-import { createActivityEmitter, createChannelClient, resolveConfig } from "../../channel-core/dist/index.js";
+import { APIClient } from "../../packages/channel-core/dist/api/client.js";
+import { ActivityEmitter } from "../../packages/channel-core/dist/activity/emitter.js";
+import { publishActivity } from "../../packages/channel-core/dist/activity/publish.js";
+import { createActivityEmitter, createChannelClient, resolveConfig } from "../../packages/channel-core/dist/index.js";
 
 let input = "";
 for await (const chunk of process.stdin) input += chunk;

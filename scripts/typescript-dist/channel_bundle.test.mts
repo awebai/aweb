@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { genesisKeyAnswer, json, startLoopbackServer, stableIDOf } from "../../channel-core/test/helpers/dist_fixture.ts";
+import { genesisKeyAnswer, json, startLoopbackServer, stableIDOf } from "../../packages/channel-core/test/helpers/dist_fixture.ts";
 
 const distPath = process.env.AWEB_CHANNEL_DIST;
 if (!distPath) throw new Error("AWEB_CHANNEL_DIST must name the built channel bundle");

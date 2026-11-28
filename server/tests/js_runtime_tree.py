@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-PACKAGES = ("channel-core", "channel", "pi-extension")
+PACKAGES = ("packages/channel-core", "packages/channel", "packages/pi-extension")
 FILES = (
     "scripts/check-node-build-provenance.mjs",
     "server/tests/activity_emitter_host.mjs",
@@ -83,7 +83,7 @@ def prepare_runtime_tree(source: Path, root: Path) -> None:
         for directory, _, _ in os.walk(root):
             Path(directory).chmod(0o700)
         # Both prebuilds rebuild core. Complete both before any consumer starts.
-        for package in ("channel", "pi-extension"):
+        for package in ("packages/channel", "packages/pi-extension"):
             result = subprocess.run(
                 ["npm", "run", "build"],
                 cwd=root / package,

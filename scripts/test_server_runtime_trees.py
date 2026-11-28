@@ -136,13 +136,13 @@ class RuntimeTrees(unittest.TestCase):
                 (directory / "node_modules/dependency/dist").mkdir(parents=True)
                 (directory / "node_modules/dependency/dist/kept").write_text("kept")
                 (directory / "package.json").write_text('{"type":"module"}')
-            for package in ("channel", "pi-extension"):
+            for package in ("packages/channel", "packages/pi-extension"):
                 link = source / package / "node_modules/@awebai/channel-core"
                 link.parent.mkdir()
                 # Both npm-relative links and absolute links must be private.
                 link.symlink_to(
-                    source / "channel-core"
-                    if package == "channel"
+                    source / "packages/channel-core"
+                    if package == "packages/channel"
                     else "../../../channel-core"
                 )
             for name in runtime.FILES:
@@ -183,27 +183,29 @@ class RuntimeTrees(unittest.TestCase):
                     for job in jobs:
                         job.result(timeout=15)
                 for root in (reader, other):
-                    for package in ("channel", "pi-extension"):
+                    for package in ("packages/channel", "packages/pi-extension"):
                         self.assertEqual(
                             (
                                 root / package / "node_modules/@awebai/channel-core"
                             ).resolve(),
-                            (root / "channel-core").resolve(),
+                            (root / "packages/channel-core").resolve(),
                         )
                     self.assertEqual(
                         (
-                            root / "channel/node_modules/dependency/dist/kept"
+                            root / "packages/channel/node_modules/dependency/dist/kept"
                         ).read_text(),
                         "kept",
                     )
                 # Establish the old shared reader then remove its core: it must
                 # fail, while the kept readers below must succeed during the gap.
                 subprocess.run(
-                    [str(npm), "run", "build"], cwd=source / "channel", check=True
+                    [str(npm), "run", "build"],
+                    cwd=source / "packages/channel",
+                    check=True,
                 )
                 writer = subprocess.Popen(
                     [str(npm), "run", "build"],
-                    cwd=other / "channel",
+                    cwd=other / "packages/channel",
                     env=dict(environment, HOLD_DIST_GAP="1"),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
@@ -216,7 +218,7 @@ class RuntimeTrees(unittest.TestCase):
                         "writer never opened its dist gap",
                     )
                     self.assertEqual(writer.stdout.readline().strip(), "DIST_REMOVED")
-                    shutil.rmtree(source / "channel-core/dist")
+                    shutil.rmtree(source / "packages/channel-core/dist")
                     old = subprocess.run(
                         [
                             "node",
@@ -286,7 +288,7 @@ class RuntimeTrees(unittest.TestCase):
             outside.mkdir()
             for package in runtime.PACKAGES:
                 (source / package / "node_modules").mkdir(parents=True)
-            (source / "channel/node_modules/escape").symlink_to(outside)
+            (source / "packages/channel/node_modules/escape").symlink_to(outside)
             for name in runtime.FILES:
                 destination = source / name
                 destination.parent.mkdir(parents=True, exist_ok=True)

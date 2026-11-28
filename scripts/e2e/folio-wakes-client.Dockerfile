@@ -9,9 +9,9 @@ RUN go build -p=2 -o /out/aw ./cmd/aw
 
 FROM node:22-bookworm-slim AS channel
 WORKDIR /src
-COPY channel-core/package.json channel-core/package-lock.json ./
+COPY packages/channel-core/package.json packages/channel-core/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY channel-core/ ./
+COPY packages/channel-core/ ./
 RUN npm run build && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM docker:28-cli AS docker-cli
@@ -21,13 +21,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 COPY --from=cli /out/aw /usr/local/bin/aw
 COPY --from=channel /usr/local/bin/node /usr/local/bin/node
-COPY --from=channel /src/dist /workspace/channel-core/dist
-COPY --from=channel /src/package.json /workspace/channel-core/package.json
-COPY --from=channel /src/node_modules /workspace/channel-core/node_modules
+COPY --from=channel /src/dist /workspace/packages/channel-core/dist
+COPY --from=channel /src/package.json /workspace/packages/channel-core/package.json
+COPY --from=channel /src/node_modules /workspace/packages/channel-core/node_modules
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY scripts/e2e/ /workspace/scripts/e2e/
-RUN chmod -R a+rX /workspace/scripts/e2e /workspace/channel-core
+RUN chmod -R a+rX /workspace/scripts/e2e /workspace/packages/channel-core
 RUN AW_NO_UPDATE_CHECK=1 aw version && node --version && docker compose version && python3 --version
 ENV PYTHONUNBUFFERED=1
 WORKDIR /workspace

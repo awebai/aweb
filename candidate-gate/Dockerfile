@@ -62,11 +62,11 @@ RUN test -n "$USER_PATHS_SOURCE_SHA" && test -n "$USER_PATHS_CLI_VERSION" \
     && cd /opt/user-paths/go && CGO_ENABLED=0 go build -trimpath \
        -ldflags "-X main.version=${USER_PATHS_CLI_VERSION} -X main.commit=${USER_PATHS_SOURCE_SHA} -X main.commitRepo=github.com/awebai/aweb" \
        -o /opt/user-paths/aw ./cmd/aw
-COPY channel-core/package.json channel-core/package-lock.json /journey/channel-core/
+COPY packages/channel-core/package.json packages/channel-core/package-lock.json /journey/channel-core/
 WORKDIR /journey/channel-core
 RUN npm ci
-COPY channel-core/tsconfig.json ./
-COPY channel-core/src ./src
+COPY packages/channel-core/tsconfig.json ./
+COPY packages/channel-core/src ./src
 RUN npm run build
 # Released kernel/provider inputs are installed only while preparing this image.
 COPY candidate-gate/released-oats /opt/user-paths/released-oats/

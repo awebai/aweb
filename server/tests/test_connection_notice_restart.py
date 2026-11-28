@@ -110,9 +110,9 @@ async def _mail_while_down(env, cid):
 def node_runtime_command(name, root):
     """The Node runtime named channel, pi or core, from this worker's runtime tree."""
     if name == "channel":
-        return ["node", str(REPO / "channel/dist/index.js")]
+        return ["node", str(REPO / "packages/channel/dist/index.js")]
     host = "pi_extension_host.mjs" if name == "pi" else "channel_core_session_host.mjs"
-    package = "pi-extension" if name == "pi" else "channel-core"
+    package = "packages/pi-extension" if name == "pi" else "packages/channel-core"
     return [
         "node",
         str(Path(__file__).with_name(host)),

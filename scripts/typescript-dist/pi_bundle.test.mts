@@ -17,7 +17,7 @@ import {
   writeTeamCertificate,
   writeTeamState,
   writeWorkspaceBinding,
-} from "../../channel-core/test/helpers/dist_fixture.ts";
+} from "../../packages/channel-core/test/helpers/dist_fixture.ts";
 import {
   beat,
   bundle,

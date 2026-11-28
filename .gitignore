@@ -38,11 +38,11 @@ awid/src/*.egg-info/
 awid/site/public/
 awid/site/.hugo_build.lock
 
-# channel/
-channel/node_modules/
+# packages/channel/
+packages/channel/node_modules/
 
 # Generated package assets
-pi-extension/skills/
+packages/pi-extension/skills/
 
 # Agent instance homes are disposable runtime state; souls and the deployment
 # config are not.
