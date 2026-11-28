@@ -13,10 +13,9 @@ one skill per ZIP with `SKILL.md` at the root, not an npm package.
 
 ```bash
 ./build-zips.sh
-# → dist/aweb-coordination.zip
-# → dist/aweb-tasks.zip
-# → dist/aweb-messaging.zip
-# → dist/aweb-team-membership.zip
+# → dist/<name>.zip for each skill in skills/shipped.json:
+#   aweb-bootstrap, aweb-coordination, aweb-identity, aweb-messaging,
+#   aweb-tasks, aweb-team-membership
 ```
 
 Each ZIP contains:
@@ -31,8 +30,9 @@ as the Codex plugin and the Claude Code npm package.
 
 ## Distribute
 
-The `skills-release.yml` workflow (when extended) attaches these ZIPs to the
-GitHub Release created on each `skills-v*` tag. End-user URLs follow the
+`scripts/publish_release.py` builds these ZIPs when it publishes a `skills-v*`
+tag; uploading them to that tag's GitHub Release is a separate, resumable step
+([release guide](../../docs/release.md)). End-user URLs follow the
 pattern:
 
 ```
@@ -55,7 +55,7 @@ bodies.
 ## Constraints to know about
 
 - `name` field: max 64 chars, lowercase/numbers/hyphens, no "anthropic"/"claude".
-- `description`: max 1024 chars. Current bodies: 266–353 chars (well under).
+- `description`: max 1024 chars. Current descriptions: 213–528 chars.
 - Total upload size: under 30 MB per ZIP (we're at kilobyte scale).
 - Plan gate: Pro / Max / Team / Enterprise only — Free plan can't upload Skills.
 - No org-wide distribution — each Claude.ai user uploads individually.

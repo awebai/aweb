@@ -70,7 +70,6 @@ jobs:
 
       - name: Build package and its in-repo dependencies
         run: |
-          uv build --wheel --project naapp-lib --out-dir "$RUNNER_TEMP/server-wheels"
           uv build --wheel --project awid --out-dir "$RUNNER_TEMP/server-wheels"
           uv build --project server --out-dir "$RUNNER_TEMP/server-wheels"
 

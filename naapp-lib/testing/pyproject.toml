@@ -35,4 +35,3 @@ packages = ["src/aweb_naapp_testing"]
 [tool.uv.sources]
 aweb-naapp = { path = "..", editable = true }
 awid-service = { path = "../../awid", editable = true }
-aweb = { path = "../../server", editable = true }

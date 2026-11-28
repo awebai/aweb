@@ -18,7 +18,8 @@ Skills from [`skills/shipped.json`](../../skills/shipped.json), auto-discovered 
 - **`aweb-messaging`** — mail/chat policy + channel-awakening response.
 - **`aweb-team-membership`** — joining, BYOT, custody, addressability,
   inbound mode, contacts.
-- **`aweb-bootstrap`** — creating a new aweb team from a template.
+- **`aweb-bootstrap`** — recognizing and recovering legacy bootstrap-era
+  `agents/` directories.
 
 ## How it ships to users
 

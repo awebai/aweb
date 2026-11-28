@@ -53,6 +53,21 @@ class Executor:
         compose = "COMPOSE_PROJECT_NAME=" + Q(project) + " " if project else ""
         return f"env -i {compose}HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator "
 
+    def launch_owner(self):
+        """Who owns the launch script and the log directory its completion records go to."""
+        return "gateuser"
+
+    def logs_mode(self):
+        return "-m 0750"
+
+    def runner_cwd(self):
+        """Where the gate's supervisor starts: Python loads its modules from here first."""
+        return f"{REMOTE}/source"
+
+    def runner_prefix(self):
+        """Who runs the gate: the gate user, UID 1000, with the gate's environment."""
+        return "runuser -u gateuser -- " + self.env()
+
     def host_check(self, root=False):
         return (
             self.env(root)
@@ -74,7 +89,7 @@ id gateuser >/dev/null 2>&1 || useradd --uid 1000 --create-home --shell /bin/bas
 usermod -aG docker gateuser
 test "$(id -u gateuser)" = 1000
 install -d -m 0755 -o root -g root {REMOTE}
-install -d -m 0750 -o gateuser -g gateuser {LOGS}
+install -d {self.logs_mode()} -o {self.launch_owner()} -g {self.launch_owner()} {LOGS}
 install -d -m 0755 -o root -g root {REMOTE}/operator
 """
 
@@ -177,8 +192,10 @@ exit "$status"
             (self.directory / "launch.sh", "launch.sh"),
         ]:
             owner = (
-                "gateuser:gateuser"
-                if target in {"source.json", "expected-host.json", "launch.sh"}
+                f"{self.launch_owner()}:{self.launch_owner()}"
+                if target == "launch.sh"
+                else "gateuser:gateuser"
+                if target in {"source.json", "expected-host.json"}
                 else "root:root"
             )
             self.upload(
@@ -288,8 +305,8 @@ exit "$status"
         ledger = Q(self.config["ledger"])
         logs = Q(str(Path(self.config["ledger"]).parent / "gate-logs"))
         command = (
-            f"cd {REMOTE}/source && setsid --wait nohup runuser -u gateuser -- "
-            + self.env()
+            f"cd {self.runner_cwd()} && setsid --wait nohup "
+            + self.runner_prefix()
             + f"AWEB_GATE_LEDGER={ledger} AWEB_GATE_LOG_DIR={logs} GATE_OWNER={Q(self.config['owner'])} "
             + f"timeout --signal=TERM --kill-after={TIMEOUT_KILL_GRACE}s {timeout} "
             + f"python3 -m vm_gate.supervisor run {LOGS} {GRACE} bash {REMOTE}/launch.sh "
@@ -364,7 +381,7 @@ ledger=Path({ledger!r})
 if ledger.exists():shutil.copyfile(ledger,{LOGS + "/ledger-after.tsv"!r})
 logs=ledger.parent/'gate-logs'
 if logs.exists():shutil.copytree(logs,{LOGS + "/ledger-gate-logs"!r},dirs_exist_ok=True)
-paths=[{LOGS!r}]+glob.glob('/tmp/aweb-candidate-gate-*')+glob.glob('/tmp/ac-candidate-gate-*')+glob.glob('/tmp/aweb-ledger-evidence.*')
+paths=[{LOGS!r}]+glob.glob('/tmp/aweb-candidate-gate-*')+glob.glob('/tmp/ac-candidate-gate-*')+glob.glob('/tmp/aweb-cloud-gate-*')+glob.glob('/tmp/aweb-ledger-evidence.*')
 with tarfile.open({REMOTE + "/evidence.tar.gz"!r},'w:gz') as t:
  for path in paths:t.add(path,arcname=path.lstrip('/'))
  spool=Path({REMOTE!r})/'daemon-journal'
