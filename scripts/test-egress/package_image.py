@@ -47,13 +47,22 @@ def uv_projects(root):
 
 def read_package_receipts(root, evidence, image):
     """Read back the build's receipts from the built image, and refuse unless
-    each was written as UID and GID 1000 for this source and its own mode.
+    each was written as UID and GID 1000 for this source and its own mode,
+    and preparation and verification each covered exactly the projects the
+    build selected, with their lock bytes.
 
     A build that prepared no projects wrote none. The copies are kept as
     evidence beside the build's other records.
     """
-    if not uv_projects(root):
+    projects = uv_projects(root)
+    if not projects:
         return
+    locks = {
+        str(Path(project) / "uv.lock"): hashlib.sha256(
+            (root / project / "uv.lock").read_bytes()
+        ).hexdigest()
+        for project in projects
+    }
     digest_file = evidence / "package-preparation-tool.sha256"
     if not digest_file.is_file():
         raise PackageReceiptError(
@@ -92,6 +101,8 @@ def read_package_receipts(root, evidence, image):
             raise PackageReceiptError(
                 f"the {name} receipt is not JSON: {exc}"
             ) from None
+        if not isinstance(receipt, dict):
+            raise PackageReceiptError(f"the {name} receipt is not a JSON object")
         expected = {"status": "PASS", "uid": 1000, "gid": 1000}
         if name == "helper":
             expected.update(mode="0644", sha256=helper_digest)
@@ -105,12 +116,28 @@ def read_package_receipts(root, evidence, image):
                     f"the {name} receipt field {field} is {receipt.get(field)!r}, expected {value!r}"
                 )
         if name == "helper":
-            parents = receipt.get("parents") or {}
+            parents = receipt.get("parents")
             for parent in ("/opt", "/"):
-                if (parents.get(parent) or {}).get("traversable") is not True:
+                row = parents.get(parent) if isinstance(parents, dict) else None
+                if not isinstance(row, dict) or row.get("traversable") is not True:
                     raise PackageReceiptError(
                         f"the helper receipt does not show {parent} traversable by UID 1000"
                     )
+            continue
+        rows = receipt.get("projects")
+        covered = (
+            [row.get("project") for row in rows]
+            if isinstance(rows, list) and all(isinstance(row, dict) for row in rows)
+            else rows
+        )
+        if covered != projects:
+            raise PackageReceiptError(
+                f"the {name} receipt field projects covers {covered!r}, expected {projects!r}"
+            )
+        if receipt.get("locks") != locks:
+            raise PackageReceiptError(
+                f"the {name} receipt field locks is {receipt.get('locks')!r}, expected {locks!r}"
+            )
 
 
 def prepare_image(root, evidence, image, base=None):

@@ -494,6 +494,8 @@ class PackageReceipts(unittest.TestCase):
         self.root = Path(self.temporary.name) / "source"
         (self.root / "naapp/folio").mkdir(parents=True)
         (self.root / "naapp/folio/uv.lock").write_text("version=1\n")
+        (self.root / "server").mkdir()
+        (self.root / "server/uv.lock").write_text("version=1\nserver\n")
         for args in (
             ["init", "-q"],
             ["add", "."],
@@ -529,14 +531,34 @@ class PackageReceipts(unittest.TestCase):
                     "/": dict(mode="0755", traversable=True),
                 },
             ),
-            images.RECEIPTS["prepared"]: dict(
-                status="PASS", uid=1000, gid=1000, mode="prepare", source=self.source
+            images.RECEIPTS["prepared"]: self.coverage(
+                dict(
+                    status="PASS",
+                    uid=1000,
+                    gid=1000,
+                    mode="prepare",
+                    source=self.source,
+                )
             ),
-            images.RECEIPTS["verified"]: dict(
-                status="PASS", uid=1000, gid=1000, mode="verify", source=self.source
+            images.RECEIPTS["verified"]: self.coverage(
+                dict(
+                    status="PASS", uid=1000, gid=1000, mode="verify", source=self.source
+                )
             ),
         }
         self.reads = []
+
+    def coverage(self, receipt):
+        """The project rows and lock digests prepare_projects.py writes."""
+        receipt["projects"] = [
+            dict(project="naapp/folio", playwright=None),
+            dict(project="server", playwright=None),
+        ]
+        receipt["locks"] = {
+            lock: hashlib.sha256((self.root / lock).read_bytes()).hexdigest()
+            for lock in ("naapp/folio/uv.lock", "server/uv.lock")
+        }
+        return receipt
 
     def docker(self, args, **kwargs):
         if args[0] != "docker":
@@ -603,6 +625,73 @@ class PackageReceipts(unittest.TestCase):
             with self.assertRaisesRegex(images.PackageReceiptError, "/opt"):
                 self.read()
 
+    def test_a_receipt_must_cover_the_selected_projects_and_their_locks(self):
+        prepared, verified = (images.RECEIPTS[k] for k in ("prepared", "verified"))
+        cases = {
+            "dropped project": (
+                verified,
+                "projects",
+                [dict(project="naapp/folio", playwright=None)],
+            ),
+            "no projects": (prepared, "projects", None),
+            "wrong lock digest": (
+                prepared,
+                "locks",
+                {"naapp/folio/uv.lock": "0" * 64, "server/uv.lock": "1" * 64},
+            ),
+            "dropped lock": (
+                verified,
+                "locks",
+                {"naapp/folio/uv.lock": hashlib.sha256(b"version=1\n").hexdigest()},
+            ),
+            "no locks": (verified, "locks", None),
+        }
+        for name, (path, field, value) in cases.items():
+            with self.subTest(case=name):
+                original = dict(self.receipts[path])
+                if value is None:
+                    del self.receipts[path][field]
+                else:
+                    self.receipts[path][field] = value
+                with self.assertRaisesRegex(images.PackageReceiptError, field):
+                    self.read()
+                self.receipts[path] = original
+
+    def test_a_malformed_receipt_is_refused_naming_it(self):
+        helper, prepared, verified = (
+            images.RECEIPTS[k] for k in ("helper", "prepared", "verified")
+        )
+        cases = {
+            "not an object": (prepared, lambda receipt: [receipt], "prepared"),
+            "projects not a list": (
+                verified,
+                lambda receipt: dict(receipt, projects="server"),
+                "verified",
+            ),
+            "project row not an object": (
+                prepared,
+                lambda receipt: dict(receipt, projects=["server"]),
+                "prepared",
+            ),
+            "parents not an object": (
+                helper,
+                lambda receipt: dict(receipt, parents=["/opt", "/"]),
+                "helper",
+            ),
+            "parent row not an object": (
+                helper,
+                lambda receipt: dict(receipt, parents={"/opt": True, "/": True}),
+                "helper",
+            ),
+        }
+        for name, (path, change, receipt_name) in cases.items():
+            with self.subTest(case=name):
+                original = self.receipts[path]
+                self.receipts[path] = change(original)
+                with self.assertRaisesRegex(images.PackageReceiptError, receipt_name):
+                    self.read()
+                self.receipts[path] = original
+
     def test_a_receipt_the_image_lacks_is_refused(self):
         del self.receipts[images.RECEIPTS["verified"]]
         with self.assertRaisesRegex(images.PackageReceiptError, "verified"):
@@ -615,7 +704,9 @@ class PackageReceipts(unittest.TestCase):
 
     def test_a_build_without_projects_reads_nothing(self):
         subprocess.run(
-            ["git", "rm", "-q", "naapp/folio/uv.lock"], cwd=self.root, check=True
+            ["git", "rm", "-q", "naapp/folio/uv.lock", "server/uv.lock"],
+            cwd=self.root,
+            check=True,
         )
         self.read()
         self.assertEqual(self.reads, [])
