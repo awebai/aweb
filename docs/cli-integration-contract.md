@@ -564,15 +564,21 @@ the keys and values the providers read:
 - `aw workspace status --limit N --json`, for the roster: `selected_team`,
   `team` (each entry's `alias`, `status`, `last_seen`, `hostname`, `role`,
   `workspace_path`, `context_kind`, `agent_identity_scope`), `team_has_more`
-  and `workspace`. `role` stays present in each `team` entry and in
-  `workspace`, and is always the empty string: aw has no roles. The roster
-  prints `role R` only for a nonempty value, so an empty string prints
-  nothing;
+  and `workspace`. Today `role` is optional and may carry the service's
+  role. From the release that removes roles, `role` is present in
+  `workspace` and in each `team` entry and is always the empty string. That
+  is a condition of accepting that release: its roster JSON must show the
+  empty string there. The roster prints `role R` only for a nonempty value,
+  so an empty string prints nothing. Section 3.6's optional `role` stays
+  optional;
 - `aw workspace connect --service=S --team=T [--role=R]`, without `--json`,
   which the retained-seat spawn and its rollback send, and print as a command
-  for the operator. `--role` is accepted and ignored: nothing is stored and
-  no output is set from it. `aw workspace connect --help` says so. The version
-  1 form in section 3.3 does not list it, and the framework never sends it;
+  for the operator. Today `--role` sets the workspace's role. From the
+  release that removes roles, `--role` is accepted and ignored: nothing is
+  stored and no output is set from it, and `aw workspace connect --help` says
+  so. That is a condition of accepting that release: a connect with a
+  nonempty `--role` must still connect, with the role ignored. The version 1
+  form in section 3.3 does not list it, and the framework never sends it;
 - `aw id team members --team NAME --json`, for the roster when the team id
   has no colon, with the answer of section 3.6;
 - `aw init --do-not-touch-agents-md`, without `--json`, with `AWEB_URL` and
