@@ -7,8 +7,9 @@ Ordinary membership, role strings and audit attribution grant no authority.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol, overload
 
 from fastapi import HTTPException, Request
 from pgdbm.core import TransactionManager
@@ -144,22 +145,91 @@ async def require_install_admission(
     )
 
 
-async def _check_policy(policy, tx, subject, **context) -> None:
-    try:
-        permitted = await policy(tx, subject, **context)
-    except ServiceError:
-        # Preserve the standalone policy's named authority-unavailable response.
-        raise
-    except Exception as exc:
-        raise HTTPException(
+@overload
+def policy_verdict(returned: object = None, *, raised: Exception) -> Exception: ...
+
+
+@overload
+def policy_verdict(
+    returned: object = None, *, raised: None = None
+) -> Exception | None: ...
+
+
+def policy_verdict(
+    returned: object = None, *, raised: Exception | None = None
+) -> Exception | None:
+    """How install authority reads a policy's answer: None permits.
+
+    The policy either returned a value or raised. The standalone policy's
+    named service errors pass through as they are; any other failure is the
+    policy being unavailable; only a returned ``True`` permits.
+    """
+    if isinstance(raised, ServiceError):
+        return raised
+    if raised is not None:
+        return HTTPException(
             status_code=503,
             detail={
                 "code": "install_policy_unavailable",
                 "message": "Installation policy is unavailable",
             },
-        ) from exc
-    if permitted is not True:
-        raise _admin_required()
+        )
+    if returned is not True:
+        return _admin_required()
+    return None
+
+
+async def _check_policy(policy, tx, subject, **context) -> None:
+    try:
+        permitted = await policy(tx, subject, **context)
+    except Exception as exc:  # noqa: BLE001 - a host policy's failure is its answer
+        failure = policy_verdict(raised=exc)
+        if failure is exc:
+            raise
+        raise failure from exc
+    refusal = policy_verdict(permitted)
+    if refusal is not None:
+        raise refusal
+
+
+# The fact the subject rule asks for once a certificate caller passes: the
+# verified internal-auth context, or None.
+INTERNAL = "internal"
+
+
+def install_subject_rule(
+    team_id: str, identity: TeamIdentity | None
+) -> Generator[str, Any, InstallAdminSubject | HTTPException]:
+    """The subject install authority asks the policy about, or the refusal.
+
+    ``identity`` is the route's authenticated certificate caller. A
+    certificate caller must be in the team and act without a delegated grant;
+    only then does the rule ask for the internal-auth context, whose caller
+    must name the team and is the subject when present.
+    """
+    if identity is not None:
+        if identity.team_id != team_id:
+            return HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
+        if identity.grant is not None:
+            return _admin_required()
+    internal = yield INTERNAL
+    if internal is not None:
+        if internal["team_id"] != team_id:
+            return HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
+        return InternalInstallAdminSubject(
+            team_id=team_id,
+            principal_type=internal["principal_type"],
+            principal_id=internal["principal_id"],
+            actor_id=internal["actor_id"],
+        )
+    if identity is not None:
+        return CertificateInstallAdminSubject(
+            team_id=team_id,
+            agent_id=identity.agent_id,
+            certificate_id=identity.certificate_id,
+            did_key=identity.did_key,
+        )
+    return HTTPException(status_code=401, detail="Authentication required")
 
 
 async def _install_subject(
@@ -169,35 +239,23 @@ async def _install_subject(
     team_id: str,
 ) -> InstallAdminSubject:
     team_id = validate_team_id(team_id)
-    if identity is not None:
-        if identity.team_id != team_id:
-            raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-        if identity.grant is not None:
-            raise _admin_required()
-
-    subject: InstallAdminSubject
-    internal = parse_internal_auth_context(request)
-    if internal is not None:
-        if internal["team_id"] != team_id:
-            raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
-        # A forwarded actor that names an agent must be an active member, read
-        # in the mutation's transaction; one that names no agent is the
-        # proxy's team-level principal, whose authority the policy decides.
-        await resolve_internal_actor(tx, internal)
-        subject = InternalInstallAdminSubject(
-            team_id=team_id,
-            principal_type=internal["principal_type"],
-            principal_id=internal["principal_id"],
-            actor_id=internal["actor_id"],
-        )
-    elif identity is not None:
-        subject = CertificateInstallAdminSubject(
-            team_id=team_id,
-            agent_id=identity.agent_id,
-            certificate_id=identity.certificate_id,
-            did_key=identity.did_key,
-        )
+    rule = install_subject_rule(team_id, identity)
+    internal = None
+    try:
+        next(rule)
+        # Verification raises its own 401 here, where it always did.
+        internal = parse_internal_auth_context(request)
+        rule.send(internal)
+    except StopIteration as done:
+        subject = done.value
     else:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
+        raise RuntimeError("install_subject_rule asks for one fact")
+    if isinstance(subject, HTTPException):
+        raise subject
+    if internal is not None:
+        # The subject is the verified internal caller. A forwarded actor that
+        # names an agent must be an active member, read in the mutation's
+        # transaction; one that names no agent is the proxy's team-level
+        # principal, whose authority the policy decides.
+        await resolve_internal_actor(tx, internal)
     return subject
