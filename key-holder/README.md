@@ -87,6 +87,11 @@ This ordered migration preserves the keys, enrollments and signature history.
 It cannot turn an old approved store into approval off. An old operator store
 can run `migrate` without a requirement. Serving never migrates automatically.
 
+If activation returns `attestation_assessment_unavailable`, the pending
+hardware enrolment predates the attestation inventory. Let it expire or remove
+it and start the enrolment again. Existing activated bindings keep working
+after the upgrade.
+
 Production operators can instead select `--grading hardware --mds-cache <path>`.
 Set `--mds-manifest FILE` to the operator-installed reviewed pin and
 `--mds-cache DIR` to its private artifact cache. The shared watcher checks the

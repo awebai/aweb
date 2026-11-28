@@ -34,7 +34,11 @@ class Refused(ApprovalRefused):
         super().__init__(code)
 
 
-HUMAN_APPROVAL_MESSAGES = {
+HOLDER_REFUSAL_MESSAGES = {
+    "attestation_assessment_unavailable": (
+        "The pending enrolment predates the attestation inventory. "
+        "Let it expire or remove it and start the enrolment again."
+    ),
     "human_approval_source_required": (
         "The last applied policy required approval. Pass the rendered file "
         "with --human-approval-config FILE or HUMAN_APPROVAL_CONFIG_FILE. "

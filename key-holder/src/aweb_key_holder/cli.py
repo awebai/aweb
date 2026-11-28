@@ -14,7 +14,7 @@ from approval_service.verify import Refused as ApprovalRefused
 from awid.registry import RegistryError
 from jsonschema import ValidationError
 
-from .keys import HUMAN_APPROVAL_MESSAGES, KeyStore, Refused
+from .keys import HOLDER_REFUSAL_MESSAGES, KeyStore, Refused
 
 
 async def operate(args, parser):
@@ -191,8 +191,8 @@ def main():
             print(json.dumps(result, separators=(",", ":")))
     except (Refused, ApprovalRefused) as error:
         result = {"error": error.code}
-        if error.code in HUMAN_APPROVAL_MESSAGES:
-            result["message"] = HUMAN_APPROVAL_MESSAGES[error.code]
+        if error.code in HOLDER_REFUSAL_MESSAGES:
+            result["message"] = HOLDER_REFUSAL_MESSAGES[error.code]
         if error.code == "legacy_human_issuance_write_human_approval":
             result["message"] = (
                 "human_issuance is retired. For an old approved store, write the "

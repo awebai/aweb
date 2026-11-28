@@ -861,31 +861,32 @@ class Holder:
                         person,
                     ),
                 )
+                # Private issuer inventory for withdrawal matching and P assessment.
+                # The credential grade is the only eligibility signal.
+                # Capture it when B is signed, so retries cannot backfill old bindings.
+                for result in assessments:
+                    assessment = result.attestation_assessment
+                    if assessment is None:
+                        raise Refused("attestation_assessment_unavailable")
+                    record = {"format": assessment.format}
+                    if assessment.verified_chain:
+                        record.update(
+                            aaguid=assessment.aaguid,
+                            firmware_version=assessment.firmware_version,
+                            verified_chain=[
+                                encode(cert) for cert in assessment.verified_chain
+                            ],
+                        )
+                    db.execute(
+                        "INSERT INTO attestation_inventory (namespace,person,credential,assessment) "
+                        "VALUES (?,?,?,?)",
+                        (root.domain, person, result.credential_id, json.dumps(record)),
+                    )
             self._owner(row, caller, admitted)
             if not intent["not_before"] <= now() < intent["deadline"]:
                 raise Refused("enrollment_expired")
             if intent["purpose"] == "enroll_existing_person":
                 self._existing_current(intent, current, root)
-            # Private issuer inventory for withdrawal matching and P assessment.
-            # The credential grade is the only eligibility signal.
-            for result in assessments:
-                assessment = result.attestation_assessment
-                if assessment is None:
-                    raise Refused("attestation_assessment_unavailable")
-                record = {"format": assessment.format}
-                if assessment.verified_chain:
-                    record.update(
-                        aaguid=assessment.aaguid,
-                        firmware_version=assessment.firmware_version,
-                        verified_chain=[
-                            encode(cert) for cert in assessment.verified_chain
-                        ],
-                    )
-                db.execute(
-                    "INSERT INTO attestation_inventory (namespace,person,credential,assessment) "
-                    "VALUES (?,?,?,?) ON CONFLICT (namespace,person,credential) DO NOTHING",
-                    (root.domain, person, result.credential_id, json.dumps(record)),
-                )
             return {
                 "state": "awaiting_confirmation",
                 "intent": signed,

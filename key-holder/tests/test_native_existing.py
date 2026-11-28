@@ -1,15 +1,21 @@
 """Operator issuance followed by own-key later enrollment on the real registry."""
 
+import asyncio
 import json
+import sys
+from datetime import UTC, datetime
 
 import httpx
 import pytest
+from approval_service.grading import EnrollmentGrading
 from approval_service.statements import verify_enrollment_evidence
+from authenticator import packed_device
+from aweb_key_holder import cli
 from aweb_key_holder.auth import Caller
-from policy_inputs import policy_file
 from aweb_key_holder.http import create_app
 from aweb_key_holder.keys import Refused
 from awid.controller_signing import parse_controller_request
+from policy_inputs import policy_file
 from test_native_holder import (
     call,
     commit_identity,
@@ -20,8 +26,9 @@ from test_native_holder import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("binding_kind", ["passkey", "hardware", "mixed"])
 async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
-    native_holder,
+    native_holder, binding_kind, monkeypatch, capsys
 ):
     holder, registry = native_holder.holder, native_holder.registry
     root = holder.store.descriptor()
@@ -60,11 +67,25 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
         controller = Caller(root.did_key, root.did_key, "", b"")
         with pytest.raises(Refused, match="requester_mismatch"):
             await holder.enroll_existing(controller, person=person, chain=[])
-        device, material = material_for(holder, intent)
+        if binding_kind == "passkey":
+            device, material = material_for(holder, intent)
+        else:
+            hardware, snapshot, _attestation = packed_device(
+                holder.approval_origin, holder.rp_id
+            )
+            holder.grading = EnrollmentGrading("hardware", snapshot)
+            device, material = material_for(holder, intent, device=hardware)
+        if binding_kind == "mixed":
+            _, passkey = material_for(holder, intent)
+            material["registrations"].extend(passkey["registrations"])
+        binding_request = {
+            "material": material,
+            "registration_count": len(material["registrations"]),
+        }
         response = await call(
             client,
             f"/v1/enrollments/{person}/binding",
-            {"material": material, "registration_count": 1},
+            binding_request,
             **own,
         )
         assert response.status_code == 200, response.text
@@ -72,12 +93,18 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
         repeated = await call(
             client,
             f"/v1/enrollments/{person}/binding",
-            {"material": material, "registration_count": 1},
+            binding_request,
             **own,
         )
         assert repeated.status_code == 200, repeated.text
         assert repeated.json() == bound
         proof = creation_receipt(bound, device)
+        credentials = proof["binding"]["binding"]["credentials"]
+        assert [entry["grade"] for entry in credentials] == {
+            "passkey": ["passkey_uv"],
+            "hardware": ["certified_hardware"],
+            "mixed": ["certified_hardware", "passkey_uv"],
+        }[binding_kind]
         response = await call(client, f"/v1/enrollments/{person}/finish", proof, **own)
         assert response.status_code == 200, response.text
         activation = response.json()
@@ -98,6 +125,23 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
             assert not db.execute(
                 "SELECT credential FROM active_attestation_inventory"
             ).fetchall()
+        if binding_kind == "hardware":
+            await check_missing_inventory_refusal(
+                holder,
+                client,
+                own,
+                credentials[0]["id"],
+                binding_request,
+                monkeypatch,
+                capsys,
+            )
+        if binding_kind == "mixed":
+            with holder.store._connection() as db, db:
+                removed = db.execute(
+                    "DELETE FROM attestation_inventory WHERE person=? AND credential=?",
+                    (person, credentials[1]["id"]),
+                )
+                assert removed.rowcount == 1
         response = await call(client, f"/v1/enrollments/{person}/activate", {}, **own)
         assert response.status_code == 200, response.text
         assert holder.active_person(person)["active"] == 1
@@ -114,3 +158,75 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
             "SELECT creation_receipt FROM enrollments WHERE person=?", (person,)
         ).fetchone()
         assert json.loads(saved["creation_receipt"]) == proof
+
+
+async def check_missing_inventory_refusal(
+    holder, client, own, credential, binding_request, monkeypatch, capsys
+):
+    person = own["identity"]
+    with holder.store._connection() as db, db:
+        stored = db.execute(
+            "DELETE FROM attestation_inventory WHERE person=? AND credential=? "
+            "RETURNING namespace, person, credential, assessment",
+            (person, credential),
+        ).fetchone()
+        assert stored["namespace"] == holder.store.descriptor().domain
+
+    audit = holder.store.audit()
+    repeated = await call(
+        client, f"/v1/enrollments/{person}/binding", binding_request, **own
+    )
+    assert repeated.status_code == 200
+    with holder.store._connection() as db:
+        assert not db.execute(
+            "SELECT credential FROM attestation_inventory WHERE person=?", (person,)
+        ).fetchall()
+    path = f"/v1/enrollments/{person}/activate"
+    message = (
+        "The pending enrolment predates the attestation inventory. "
+        "Let it expire or remove it and start the enrolment again."
+    )
+    response = await call(client, path, {}, **own)
+    assert response.status_code == 409
+    assert response.json() == {
+        "error": {"code": "attestation_assessment_unavailable", "message": message}
+    }
+
+    caller = Caller(person, own["key"], datetime.now(UTC).isoformat(), b"")
+    with pytest.raises(Refused, match="attestation_assessment_unavailable") as refused:
+        await holder.activate(person, caller=caller, chain=own["chain"])
+
+    async def report_activation_refusal(_args, _parser):
+        # The CLI has no activate subcommand. Exercise its real refusal writer.
+        raise refused.value
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cli, "operate", report_activation_refusal)
+        patch.setattr(
+            sys,
+            "argv",
+            ["aweb-key-holder", "--state", str(holder.store.directory), "serve"],
+        )
+        capsys.readouterr()
+        with pytest.raises(SystemExit) as exited:
+            await asyncio.to_thread(cli.main)
+    assert exited.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err) == {
+        "error": "attestation_assessment_unavailable",
+        "message": message,
+    }
+    assert holder.store.audit() == audit
+    with holder.store._connection() as db, db:
+        assert (
+            db.execute(
+                "SELECT active FROM enrollments WHERE person=?", (person,)
+            ).fetchone()["active"]
+            == 0
+        )
+        db.execute(
+            "INSERT INTO attestation_inventory (namespace, person, credential, assessment) "
+            "VALUES (?, ?, ?, ?)",
+            tuple(stored),
+        )
