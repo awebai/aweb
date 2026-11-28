@@ -979,7 +979,11 @@ class NpmRcContractTest(unittest.TestCase):
             command(seed, "git", "commit", "-qm", "distribution")
             command(root, "git", "clone", "--bare", str(seed), str(remote))
             (upstream / "scripts").mkdir()
-            for name in ("publish_release.py", "release_versions.py"):
+            for name in (
+                "publish_release.py",
+                "release_versions.py",
+                "sync-aw-distribution.sh",
+            ):
                 shutil.copyfile(ROOT / "scripts" / name, upstream / "scripts" / name)
             shutil.copytree(
                 ROOT / "cli/go/npm",

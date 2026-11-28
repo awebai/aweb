@@ -340,15 +340,9 @@ class ReadbackTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_distribution_sync_carries_the_readback_workflow(self):
-        # Exercise the real source-sync copy over an existing distribution
-        # workflow, the file that used to remain independently maintained.
-        workflow = (ROOT / ".github/workflows/aw-release.yml").read_text()
-        copy = next(
-            line.strip()
-            for line in workflow.splitlines()
-            if line.strip().startswith("cp -a cli/go/.")
-        )
+    def test_distribution_sync_replaces_everything_but_the_checkout_git(self):
+        # The release workflow's sync step, over a distribution checkout that
+        # still holds an old release workflow and files the source dropped.
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / "cli/go"
@@ -360,25 +354,33 @@ class ReadbackTests(unittest.TestCase):
                 ignore=shutil.ignore_patterns("__pycache__"),
             )
             external = root / "distribution"
+            (external / ".git").mkdir(parents=True)
+            (external / ".git/HEAD").write_text("ref: refs/heads/main\n")
             (external / ".github/workflows").mkdir(parents=True)
             target = external / ".github/workflows/release.yml"
             target.write_text("old release workflow")
+            (external / "dropped.go").write_text("package dropped\n")
+            (external / "dropped").mkdir()
+            (external / "dropped/file.txt").write_text("stale\n")
             subprocess.run(
-                ["bash", "-c", copy],
-                cwd=root,
-                env=dict(os.environ, external=str(external)),
+                [
+                    "bash",
+                    str(ROOT / "scripts/sync-aw-distribution.sh"),
+                    str(source),
+                    str(external),
+                ],
                 check=True,
             )
             self.assertEqual(
-                target.read_bytes(),
-                (source / ".github/workflows/release.yml").read_bytes(),
+                (external / ".git/HEAD").read_text(), "ref: refs/heads/main\n"
             )
-            self.assertIn("run: ./npm/publish.sh", target.read_text())
-            self.assertIn("timeout-minutes: 60", target.read_text())
-            self.assertEqual(
-                (external / "npm/readback.py").read_bytes(),
-                (source / "npm/readback.py").read_bytes(),
-            )
+            self.assertFalse((external / "dropped.go").exists())
+            self.assertFalse((external / "dropped").exists())
+            for path in source.rglob("*"):
+                if path.is_file():
+                    copied = external / path.relative_to(source)
+                    self.assertEqual(copied.read_bytes(), path.read_bytes(), path)
+            self.assertNotEqual(target.read_text(), "old release workflow")
 
     def test_aw_publisher_reads_all_seven_and_refuses_mismatch(self):
         # Real npm packs and publishes to our disposable HTTP registry. No npm
