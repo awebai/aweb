@@ -112,7 +112,7 @@ def test_a_dropped_first_batch_case_is_detected():
 # the file equals a fresh run of its emitter, so a changed file is a new
 # emission to review here, never a silent edit.
 MODEL_EMISSION_SHA256 = (
-    "8fbb070cf9ad083c26ad93266e81ef2368345b182ed52cab965a033552f3233d"
+    "b9cc9f19278084c968b68f20742094cdbae6eab532f4e890de64063635635aba"
 )
 
 
@@ -121,7 +121,7 @@ def test_the_model_file_is_the_reviewed_emission():
         MODEL_EMISSION_SHA256
     )
     cases = load_corpus(copy.deepcopy(MODEL_CORPUS))
-    assert len(cases) == 38
+    assert len(cases) == 43
     assert all(case.source == "emitted" and case.runnable for case in cases)
     assert all(case.id.startswith("model-") for case in cases)
     assert MODEL_CORPUS["model"]["emitter"] == "lake exe trust-web-cases"
