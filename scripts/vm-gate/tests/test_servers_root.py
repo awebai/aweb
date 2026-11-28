@@ -82,7 +82,7 @@ class RootRunTimeout(unittest.TestCase):
             with self.assertRaisesRegex(
                 Infrastructure, "without its completed exit receipt"
             ):
-                executor.execute({}, 30)
+                executor.execute({}, 30)  # nonliteral-call: gate run, not SQL
             # The runner ran as root, not through runuser.
             [launch] = [
                 command
@@ -222,7 +222,8 @@ class RootLaunchPath(unittest.TestCase):
         ):
             with self.subTest(root=root), tempfile.TemporaryDirectory() as tmp:
                 executor = self.executor(Path(tmp), root)
-                self.assertEqual(executor.execute({}, 30), 0)
+                code = executor.execute({}, 30)  # nonliteral-call: gate run, not SQL
+                self.assertEqual(code, 0)
                 [launch] = [c for c in executor.transport.commands if "launch.sh" in c]
                 self.assertTrue(
                     launch.startswith(f"cd {cwd} && setsid --wait nohup "), launch

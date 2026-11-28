@@ -399,6 +399,7 @@
   },
   "schema_version": 1,
   "marked_nonliteral_files": {
+    "scripts/vm-gate/tests/test_servers_root.py": 2,
     "server/tests/test_app_manifest_fetch.py": 1
   }
 }
