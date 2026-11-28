@@ -161,7 +161,7 @@ nothing.
 
 The two Go clients (the wake broker and `aw run`) share one implementation of
 sections 2 to 6 (`cli/go/run/streampolicy.go`). The TypeScript client has its
-own (`channel-core/src/api/events.ts`) and is tested against the same table of
+own (`packages/channel-core/src/api/events.ts`) and is tested against the same table of
 cases.
 
 ## Decisions recorded at review
