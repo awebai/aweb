@@ -498,8 +498,7 @@ test-cli-released-home:
 			-run '^TestRegistryUpgradeFrom13658$$/^implicit_local_init$$' ./cmd/aw > "$$output" 2>&1 || status=$$?; \
 		cat "$$output"; \
 		test "$$status" -eq 0; \
-		grep -q 'released aw wrote the home' "$$output"; \
-		grep -q 'PASS: TestRegistryUpgradeFrom13658/implicit_local_init (' "$$output"
+		python3 ../../scripts/released_aw_home_result.py "$$output"
 
 # Exercise current SDK/CLI request auth against actual aweb/AWID/PG/Redis.
 test-cli-auth-v2:
