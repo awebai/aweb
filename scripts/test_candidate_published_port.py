@@ -147,23 +147,30 @@ class PublishedPortPropertyTests(unittest.TestCase):
                 self.exercise("refused", startup_error=error("startup"))
 
     def test_persistent_startup_disconnect_still_fails_at_the_original_deadline(self):
+        # Time advances only when the reader sleeps between attempts.
         for error in (RemoteDisconnected, ConnectionResetError, ConnectionRefusedError):
+            now = 0.0
+
+            def clock():
+                return now
+
+            def sleep(seconds):
+                nonlocal now
+                now += seconds
+
             with (
                 self.subTest(error=error),
                 patch.object(
-                    boundaries, "wait_for_published_port", return_value="32768"
+                    boundaries, "read_published_response", side_effect=error("startup")
                 ),
-                patch.object(boundaries.time, "monotonic", side_effect=[0, 9, 10]),
-                patch.object(boundaries.time, "sleep") as sleep,
-            ):
-                with self.assertRaisesRegex(
+                self.assertRaisesRegex(
                     AssertionError,
                     "original host publication never became reachable: startup",
-                ):
-                    self.exercise(
-                        "refused", startup_error=error("startup"), persistent=True
-                    )
-                sleep.assert_called_once_with(0.1)
+                ),
+            ):
+                boundaries.read_until_reachable("32768", clock=clock, sleep=sleep)
+            self.assertGreaterEqual(now, 10)
+            self.assertLess(now, 10.2)
 
     def test_disconnect_after_readiness_is_not_retried(self):
         for error in (RemoteDisconnected, ConnectionResetError, ConnectionRefusedError):

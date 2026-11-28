@@ -37,6 +37,7 @@ class GeneratedCopiesTest(unittest.TestCase):
                         "-z",
                         "--",
                         "Makefile",
+                        "mk",
                         "server/pyproject.toml",
                         "awid/pyproject.toml",
                         "scripts/sync-skill-copies.sh",

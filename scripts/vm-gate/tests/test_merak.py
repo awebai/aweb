@@ -1,5 +1,5 @@
 import ipaddress
-import re
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,26 +16,81 @@ from vm_gate import merak_egress, merak_host
 DEPRECATED_6TO4_RELAY = ipaddress.IPv4Network("192.88.99.0/24")
 
 
+class FakeDocker:
+    """The docker CLI over labelled containers, volumes and networks."""
+
+    def __init__(
+        self, containers, *, volumes=None, networks=None, sticky=(), unlabel=False
+    ):
+        self.containers = dict(containers)
+        self.volumes = dict(volumes or {})
+        self.networks = dict(networks or {})
+        self.sticky = set(sticky)
+        # A sticky container that loses its label still exists under its id.
+        self.unlabel = unlabel
+
+    @staticmethod
+    def matching(resources, args):
+        if "--filter" not in args:
+            return list(resources)
+        selector = args[args.index("--filter") + 1].removeprefix("label=")
+        return [name for name, label in resources.items() if label == selector]
+
+    def __call__(self, *args):
+        if args[:2] == ("ps", "-aq"):
+            return "\n".join(self.matching(self.containers, args))
+        if args[0] == "rm":
+            if args[-1] not in self.sticky:
+                self.containers.pop(args[-1], None)
+            elif self.unlabel:
+                self.containers[args[-1]] = ""
+            return ""
+        if args[:2] == ("volume", "ls"):
+            return "\n".join(self.matching(self.volumes, args))
+        if args[:2] == ("network", "ls"):
+            return "\n".join(self.matching(self.networks, args))
+        if args[:2] == ("network", "rm"):
+            self.networks.pop(args[2])
+            return ""
+        raise AssertionError(f"unexpected docker call: {args}")
+
+
 class MerakTests(unittest.TestCase):
     def test_installed_egress_helper_matches_federation_ipv4_ranges(self):
-        contract = Path(__file__).resolve().parents[3] / "docs/aweb-sot.md"
-        # The R3 vector exercises addresses. The governing SoT enumerates CIDRs.
-        ipv4 = contract.read_text().split("An IPv4 answer is refused in ", 1)[1]
-        ipv4 = ipv4.split("An IPv6 answer is admitted", 1)[0]
-        ranges = {
-            ipaddress.IPv4Network(cidr)
-            for cidr in re.findall(r"`([0-9.]+/[0-9]+)`", ipv4)
-        }
-        self.assertTrue(ranges)
+        # The frozen federation egress vector, not the prose that describes it.
+        vector = json.loads(
+            (
+                Path(__file__).resolve().parents[3]
+                / "docs/vectors/egress-address-v1.json"
+            ).read_text()
+        )
+        ranges = {ipaddress.IPv4Network(cidr) for cidr in vector["denied_ipv4"]}
         self.assertNotIn(DEPRECATED_6TO4_RELAY, ranges)
         installed = {
             ipaddress.IPv4Network(cidr.strip())
             for cidr in merak_egress.NON_PUBLIC.split(",")
         }
         self.assertEqual(installed, ranges | {DEPRECATED_6TO4_RELAY})
+        # Every IPv4 address the vector says federation must refuse is dropped.
+        denied = [
+            address
+            for address in map(ipaddress.ip_address, vector["public_denied"])
+            if address.version == 4
+        ]
+        self.assertTrue(denied)
+        for address in denied:
+            self.assertTrue(
+                any(address in network for network in installed), str(address)
+            )
 
     def test_the_guest_gets_every_cpu_and_the_memory_the_host_spares(self):
-        for cpus, memory_mib in [(4, 16384), (10, 32768), (12, 63488), (16, 65536), (64, 262144)]:
+        for cpus, memory_mib in [
+            (4, 16384),
+            (10, 32768),
+            (12, 63488),
+            (16, 65536),
+            (64, 262144),
+        ]:
             with self.subTest(cpus=cpus, memory_mib=memory_mib):
                 guest_cpus, guest_memory = merak_host.guest_size(cpus, memory_mib)
                 self.assertEqual(guest_cpus, cpus)
@@ -97,18 +152,40 @@ class MerakTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 merak_host.remove_guest(job)
             (job / "owner").write_text(run)
-            with patch.object(
-                merak_host, "docker", side_effect=["abcd", "", "", "abcd"]
-            ):
-                with self.assertRaises(RuntimeError):
+            label = f"{merak_host.LABEL}={run}"
+
+            # Containers that survive "rm" model a daemon that did not remove them.
+            # While anything of the run remains, its firewall rules and its
+            # directory stay.
+            for unlabel in (False, True):
+                docker = FakeDocker({"abcd": label}, sticky={"abcd"}, unlabel=unlabel)
+                with (
+                    self.subTest(unlabel=unlabel),
+                    patch.object(merak_host, "docker", docker),
+                    patch.object(merak_host, "firewall") as firewall,
+                    self.assertRaisesRegex(RuntimeError, "container still present"),
+                ):
                     merak_host.remove_guest(job)
-            self.assertTrue(job.is_dir())
+                firewall.assert_not_called()
+                self.assertTrue(job.is_dir())
             with (
                 patch.object(
                     merak_host,
                     "docker",
-                    side_effect=["abcd", "", "", "", "", "network", "", ""],
+                    FakeDocker({"abcd": label}, volumes={"v": label}),
                 ),
+                patch.object(merak_host, "firewall") as firewall,
+                self.assertRaisesRegex(RuntimeError, "volumes or networks remain"),
+            ):
+                merak_host.remove_guest(job)
+            firewall.assert_not_called()
+            self.assertTrue(job.is_dir())
+            docker = FakeDocker(
+                {"abcd": label, "unrelated": f"{merak_host.LABEL}=vm-{'b' * 32}"},
+                networks={"network": label},
+            )
+            with (
+                patch.object(merak_host, "docker", docker),
                 patch.object(
                     merak_host, "firewall", return_value={"present": False}
                 ) as firewall,
@@ -118,4 +195,6 @@ class MerakTests(unittest.TestCase):
             self.assertEqual(receipt["removed_network_ids"], ["network"])
             self.assertTrue(receipt["exact_ids_absent"])
             self.assertEqual(receipt["container_ids"], ["abcd"])
+            self.assertEqual(set(docker.containers), {"unrelated"})
+            self.assertEqual(docker.networks, {})
             self.assertFalse(job.exists())

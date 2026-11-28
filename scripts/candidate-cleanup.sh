@@ -10,6 +10,15 @@ cleanup_work() {
   [[ ! -e "$work" ]]
 }
 
+# The cleanup verdict, which the VM supervisor reads back as its receipt.
+write_cleanup_verdict() {
+  if [[ "$1" -ne 0 ]]; then
+    printf 'candidate gate cleanup FAILED\n' | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
+  else
+    printf 'candidate gate cleanup PASSED\n' | tee -a "$LOG_DIR/wrapper-verdict.log"
+  fi
+}
+
 # Records why cleanup failed beside the resources it checked.
 cleanup_failure() {
   cleanup_status=1
@@ -96,11 +105,7 @@ cleanup() {
   else
     cleanup_failure "no host baseline"
   fi
-  if [[ "$cleanup_status" -ne 0 ]]; then
-    printf 'candidate gate cleanup FAILED\n' | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
-  else
-    printf 'candidate gate cleanup PASSED\n' | tee -a "$LOG_DIR/wrapper-verdict.log"
-  fi
+  write_cleanup_verdict "$cleanup_status"
   [[ "$original_status" -ne 0 ]] && exit "$original_status"
   exit "$cleanup_status"
 }

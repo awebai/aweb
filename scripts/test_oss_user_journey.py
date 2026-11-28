@@ -5,20 +5,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import json
 import os
-import re
+import shlex
 import subprocess
 import tempfile
 import unittest
 
 
 JOURNEY = Path(__file__).with_name("e2e-oss-user-journey.sh")
-
-
-def function(name):
-    match = re.search(rf"(?ms)^{name}\(\) \{{\n.*?^\}}", JOURNEY.read_text())
-    if match is None:
-        raise AssertionError(f"journey function {name} is missing")
-    return match.group()
+# The journey sources these helpers and runs this checker; the tests use the same files.
+HELPERS = Path(__file__).parent / "lib/oss-journey.sh"
+COMPARE_REFUSALS = Path(__file__).parent / "lib/compare_refusal_traces.py"
+SOURCE_HELPERS = f"source {shlex.quote(str(HELPERS))}"
 
 
 class CommandCaptureTests(unittest.TestCase):
@@ -28,8 +25,7 @@ class CommandCaptureTests(unittest.TestCase):
                 [
                     "set -euo pipefail",
                     "pass=0; fail=0",
-                    function("assert_eq"),
-                    function("capture_success"),
+                    SOURCE_HELPERS,
                     "child() {",
                     "  printf 'called\\n' >>\"$1/calls\"",
                     '  printf \'%s\' \'{"messages":[{"body":"delivered"}]}\'',
@@ -77,13 +73,15 @@ class CommandCaptureTests(unittest.TestCase):
 
 class InboxParsingTests(unittest.TestCase):
     def parse(self, inbox):
-        assignment = next(
-            line
-            for line in JOURNEY.read_text().splitlines()
-            if line.startswith("alice_join_message=")
+        script = "\n".join(
+            [
+                SOURCE_HELPERS,
+                "alice_join_message=\"$(printf '%s\\n' \"$alice_join_inbox\" | inbox_message_body 'Join default-connect e2e')\"",
+                'printf "%s" "$alice_join_message"',
+            ]
         )
         return subprocess.run(
-            ["bash", "-ec", assignment + '\nprintf "%s" "$alice_join_message"'],
+            ["bash", "-ec", script],
             env={**os.environ, "alice_join_inbox": inbox},
             capture_output=True,
             text=True,
@@ -100,6 +98,19 @@ class InboxParsingTests(unittest.TestCase):
         result = self.parse('{"messages":[],"has_more":false}')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_the_join_message_is_selected_by_its_subject(self):
+        inbox = json.dumps(
+            {
+                "messages": [
+                    {"subject": "Unrelated", "body": "not the invitation"},
+                    {"subject": "Join default-connect e2e", "body": "join body"},
+                ]
+            }
+        )
+        result = self.parse(inbox)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "join body")
 
 
 class MailRefusalTraceTests(unittest.TestCase):
@@ -205,19 +216,17 @@ class MailRefusalTraceTests(unittest.TestCase):
         return result.stderr.replace(url.encode(), b"http://aweb.test")
 
     def compare(self, hidden, missing):
-        source = JOURNEY.read_text()
-        start = source.index(
-            "from pathlib import Path\nimport sys",
-            source.index("# Compare the actual POST responses"),
-        )
-        checker = source[start : source.index("\nPY\n", start)]
         with tempfile.TemporaryDirectory() as directory:
             paths = [Path(directory) / name for name in ("hidden", "missing")]
             for path, trace in zip(paths, (hidden, missing)):
                 path.write_bytes(trace)
             return subprocess.run(
-                ["python3", "-", "http://aweb.test/v1/messages", *map(str, paths)],
-                input=checker.encode(),
+                [
+                    "python3",
+                    str(COMPARE_REFUSALS),
+                    "http://aweb.test/v1/messages",
+                    *map(str, paths),
+                ],
                 capture_output=True,
             )
 
@@ -315,7 +324,7 @@ class ServicePortTests(unittest.TestCase):
         script = "\n".join(
             [
                 "set -euo pipefail",
-                function("allocate_service_ports"),
+                SOURCE_HELPERS,
                 'docker() { echo "unexpected docker call" >&2; exit 1; }',
                 'AWEB_PORT=18100; AWID_PORT=18110; PORT_ALLOCATOR=""',
                 "allocate_service_ports",
@@ -435,13 +444,7 @@ class CustomerSecretsStagingTests(unittest.TestCase):
                 [
                     "set -euo pipefail",
                     "pass=0; fail=0",
-                    function("canonicalize_dir"),
-                    function("journey_temp_root"),
-                    function("assert_eq"),
-                    function("capture_success"),
-                    function("run_success"),
-                    function("write_staged_file"),
-                    function("stage_customer_secrets"),
+                    SOURCE_HELPERS,
                     DAEMON_STUB,
                     'TEMP_ROOT="$(journey_temp_root)"',
                     'E2E_ROOT="$(mktemp -d "$TEMP_ROOT/aw-e2e.XXXXXX")"',

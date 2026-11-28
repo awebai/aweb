@@ -60,17 +60,30 @@ class PyPI:
     """Published files by (package, version), as pypi.org's JSON API lists them."""
 
     def __init__(self):
-        self.files = {("awid-service", "0.5.43"): [{"filename": "awid_service-0.5.43.tar.gz", "digests": {"sha256": "0" * 64}}]}
+        self.files = {
+            ("awid-service", "0.5.43"): [
+                {
+                    "filename": "awid_service-0.5.43.tar.gz",
+                    "digests": {"sha256": "0" * 64},
+                }
+            ]
+        }
 
     def download(self, url):
-        name, version = url.removeprefix("https://pypi.org/pypi/").removesuffix("/json").split("/")
+        name, version = (
+            url.removeprefix("https://pypi.org/pypi/").removesuffix("/json").split("/")
+        )
         if (name, version) not in self.files:
             raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO())
         return json.dumps({"urls": self.files[(name, version)]}).encode()
 
     def upload(self, name, version, paths, *, digest=None):
         self.files[(name, version)] = [
-            {"filename": path.name, "digests": {"sha256": digest or sha256(path).removeprefix("sha256:")}, "yanked": False}
+            {
+                "filename": path.name,
+                "digests": {"sha256": digest or sha256(path).removeprefix("sha256:")},
+                "yanked": False,
+            }
             for path in paths
         ]
 
@@ -83,7 +96,10 @@ class Machine:
 
     def factory(self, **kwargs):
         evidence = kwargs["directory"] / "evidence"
-        files = {path.name: sha256(path) for path in kwargs["executor_factory"].keywords["files"]}
+        files = {
+            path.name: sha256(path)
+            for path in kwargs["executor_factory"].keywords["files"]
+        }
         sha = kwargs["source"]["sha"]
         mode = self.mode
 
@@ -103,7 +119,11 @@ class Machine:
                 (run / "release-wheels.json").write_text(
                     json.dumps(
                         {
-                            service: {"wheel": wheel, "container_wheel_sha256": held, "installed_version": "1.27.55"}
+                            service: {
+                                "wheel": wheel,
+                                "container_wheel_sha256": held,
+                                "installed_version": "1.27.55",
+                            }
                             for service in ("aweb-alpha", "aweb-beta")
                         }
                     )
@@ -132,7 +152,11 @@ class Outside:
     def gate(self, argv):
         self.gates.append(argv)
         with patch("os.geteuid", return_value=501):
-            code = vm_gate_main(["--config", str(self.test.config), *argv[1:]], factory=self.machine.factory, out=io.StringIO())
+            code = vm_gate_main(
+                ["--config", str(self.test.config), *argv[1:]],
+                factory=self.machine.factory,
+                out=io.StringIO(),
+            )
         if self.tamper:
             # A receipt that claims green over a check the command makes itself.
             path = Path(argv[argv.index("--receipt") + 1])
@@ -151,6 +175,38 @@ class Outside:
 
     def workflow_run(self, repository, tag):
         return WORKFLOW_RUN
+
+
+class ReleaseBuild(unittest.TestCase):
+    def test_each_real_build_publishes_exactly_its_staged_pair(self):
+        # The real uv build, the release's own selection of the files it ships,
+        # then the PyPI lane's inspection that publish_pypi runs on the assets.
+        for name, directory in release.SOURCE_DIRECTORIES.items():
+            with self.subTest(package=name), tempfile.TemporaryDirectory() as out:
+                files = Path(out)
+                release.Live().build(ROOT / directory, files)
+                release.keep_shipped(files)
+                version = release.tomllib.loads(
+                    (ROOT / directory / "pyproject.toml").read_text()
+                )["project"]["version"]
+                result = subprocess.run(
+                    [
+                        "bash",
+                        str(ROOT / "scripts/pypi-exact-publish.sh"),
+                        "inspect-staged",
+                        "--dist",
+                        out,
+                        "--package",
+                        name,
+                        "--version",
+                        version,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.count("STAGED: "), 2, result.stdout)
 
 
 class ReleaseCommand(unittest.TestCase):
@@ -200,7 +256,11 @@ class ReleaseCommand(unittest.TestCase):
         git(self.repo, "push", "--quiet", "origin", "HEAD:refs/heads/release-head")
         observed = {"go": "1.2.3", "uv": "0.1.2", "node": "22", "python": "3.12"}
         manifest = self.tmp / "manifest.json"
-        manifest.write_text(json.dumps({"observed": observed, "commands": hashes(), "dpkg": "fixture=1"}))
+        manifest.write_text(
+            json.dumps(
+                {"observed": observed, "commands": hashes(), "dpkg": "fixture=1"}
+            )
+        )
         self.config = self.tmp / "operator.json"
         self.config.write_text(
             json.dumps(
@@ -212,7 +272,11 @@ class ReleaseCommand(unittest.TestCase):
                     "owner": "seat",
                     "location": "location",
                     "snapshot_id": 1,
-                    "merak": {"manifest": str(manifest), "platform": "linux/amd64", "release_timeout_seconds": 9000},
+                    "merak": {
+                        "manifest": str(manifest),
+                        "platform": "linux/amd64",
+                        "release_timeout_seconds": 9000,
+                    },
                 }
             )
         )
@@ -240,14 +304,23 @@ class ReleaseCommand(unittest.TestCase):
         return json.loads((self.state / "receipt.json").read_text())
 
     def test_release_gates_then_waits_for_landing_then_tags_publishes_and_checks(self):
-        with self.assertRaisesRegex(release.ReleaseRefusal, "does not contain .*land it unchanged"):
+        with self.assertRaisesRegex(
+            release.ReleaseRefusal, "does not contain .*land it unchanged"
+        ):
             self.release()
         state = self.receipt()
         built = state["steps"]["build"]["files"]
-        self.assertEqual(sorted(built), ["aweb-1.27.55-py3-none-any.whl", "aweb-1.27.55.tar.gz"])
-        self.assertEqual(built, {path.name: sha256(path) for path in (self.state / "files").iterdir()})
+        self.assertEqual(
+            sorted(built), ["aweb-1.27.55-py3-none-any.whl", "aweb-1.27.55.tar.gz"]
+        )
+        self.assertEqual(
+            built,
+            {path.name: sha256(path) for path in (self.state / "files").iterdir()},
+        )
         gate = state["steps"]["gate"]["receipt"]
-        self.assertEqual((gate["project"], gate["sha"], gate["exit"]), ("aweb", self.sha, 0))
+        self.assertEqual(
+            (gate["project"], gate["sha"], gate["exit"]), ("aweb", self.sha, 0)
+        )
         self.assertEqual(gate["files"], built)
         [argv] = self.outside.gates
         self.assertEqual(argv[argv.index("--files") + 1], str(self.state / "files"))
@@ -258,21 +331,38 @@ class ReleaseCommand(unittest.TestCase):
         self.land()
         summary = self.release()
         self.assertIn("server-v1.27.55", summary)
-        self.assertEqual(len(self.outside.gates), 1, "the landed commit reuses its gate")
-        self.assertEqual(release.remote_tag(str(self.remote), "server-v1.27.55"), self.sha)
-        message = git(self.remote, "for-each-ref", "--format=%(contents)", "refs/tags/server-v1.27.55")
+        self.assertEqual(
+            len(self.outside.gates), 1, "the landed commit reuses its gate"
+        )
+        self.assertEqual(
+            release.remote_tag(str(self.remote), "server-v1.27.55"), self.sha
+        )
+        message = git(
+            self.remote,
+            "for-each-ref",
+            "--format=%(contents)",
+            "refs/tags/server-v1.27.55",
+        )
         for name, digest in built.items():
             self.assertIn(f"{digest.removeprefix('sha256:')}  {name}", message)
         self.assertIn(f"Gated by run {gate['run_id']} on merak.", message)
         self.assertEqual(
             self.outside.releases,
-            [("awebai/aweb", "server-v1.27.55", ["aweb-1.27.55-py3-none-any.whl", "aweb-1.27.55.tar.gz"])],
+            [
+                (
+                    "awebai/aweb",
+                    "server-v1.27.55",
+                    ["aweb-1.27.55-py3-none-any.whl", "aweb-1.27.55.tar.gz"],
+                )
+            ],
         )
         self.assertEqual(self.receipt()["steps"]["check"], {"aweb": "1.27.55"})
 
     def test_a_version_pypi_already_has_is_refused_before_any_build(self):
         self.outside.pypi.files[("aweb", "1.27.55")] = []
-        with self.assertRaisesRegex(release.ReleaseRefusal, "PyPI already has aweb 1.27.55"):
+        with self.assertRaisesRegex(
+            release.ReleaseRefusal, "PyPI already has aweb 1.27.55"
+        ):
             self.release()
         self.assertEqual(self.outside.gates, [])
         self.assertFalse(any((self.state / "files").glob("*.whl")))
@@ -287,7 +377,9 @@ class ReleaseCommand(unittest.TestCase):
         git(self.repo, "tag", "-a", "server-v1.27.55", self.base, "-m", "elsewhere")
         git(self.repo, "push", "--quiet", "origin", "refs/tags/server-v1.27.55")
         self.land()
-        with self.assertRaisesRegex(release.ReleaseRefusal, f"already identifies {self.base}"):
+        with self.assertRaisesRegex(
+            release.ReleaseRefusal, f"already identifies {self.base}"
+        ):
             self.release()
         self.assertEqual(self.outside.releases, [])
 
@@ -296,16 +388,38 @@ class ReleaseCommand(unittest.TestCase):
             self.release()
         checkout = self.state / "aweb"
         for make, reason in (
-            (lambda: git(checkout, "tag", "server-v1.27.55", self.sha), "not an annotated tag"),
-            (lambda: git(checkout, "-c", "user.name=f", "-c", "user.email=f@x", "tag", "-a", "server-v1.27.55", self.sha, "-m", "no files"), "locks other files"),
+            (
+                lambda: git(checkout, "tag", "server-v1.27.55", self.sha),
+                "not an annotated tag",
+            ),
+            (
+                lambda: git(
+                    checkout,
+                    "-c",
+                    "user.name=f",
+                    "-c",
+                    "user.email=f@x",
+                    "tag",
+                    "-a",
+                    "server-v1.27.55",
+                    self.sha,
+                    "-m",
+                    "no files",
+                ),
+                "locks other files",
+            ),
         ):
             with self.subTest(reason=reason):
-                git(checkout, "tag", "-d", "server-v1.27.55") if git(checkout, "tag", "--list", "server-v1.27.55") else None
+                git(checkout, "tag", "-d", "server-v1.27.55") if git(
+                    checkout, "tag", "--list", "server-v1.27.55"
+                ) else None
                 make()
                 self.land()
                 with self.assertRaisesRegex(release.ReleaseRefusal, reason):
                     self.release()
-                self.assertIsNone(release.remote_tag(str(self.remote), "server-v1.27.55"))
+                self.assertIsNone(
+                    release.remote_tag(str(self.remote), "server-v1.27.55")
+                )
 
     def test_pypi_serving_other_digests_is_refused_naming_the_workflow_run(self):
         self.outside.publishing = "serve-other"
@@ -319,18 +433,24 @@ class ReleaseCommand(unittest.TestCase):
     def test_pypi_never_serving_is_refused_naming_the_workflow_run(self):
         self.outside.publishing = "none"
         self.land()
-        with self.assertRaisesRegex(release.ReleaseRefusal, "PyPI has no aweb 1.27.55 yet .*runs/1"):
+        with self.assertRaisesRegex(
+            release.ReleaseRefusal, "PyPI has no aweb 1.27.55 yet .*runs/1"
+        ):
             self.release()
 
     def test_a_red_gate_is_kept_as_an_attempt_and_a_rerun_gates_again(self):
         self.outside.machine.mode = "red"
         with self.assertRaisesRegex(release.ReleaseRefusal, "the gate is red"):
             self.release()
-        self.assertEqual([attempt["exit"] for attempt in self.receipt()["gate_attempts"]], [1])
+        self.assertEqual(
+            [attempt["exit"] for attempt in self.receipt()["gate_attempts"]], [1]
+        )
         self.outside.machine.mode = "green"
         self.land()
         self.release()
-        self.assertEqual([attempt["exit"] for attempt in self.receipt()["gate_attempts"]], [1, 0])
+        self.assertEqual(
+            [attempt["exit"] for attempt in self.receipt()["gate_attempts"]], [1, 0]
+        )
 
     def test_a_gate_whose_rebuild_differs_is_refused(self):
         self.outside.machine.mode = "rebuild-differs"
@@ -345,12 +465,19 @@ class ReleaseCommand(unittest.TestCase):
 
     def test_a_green_receipt_over_another_wheel_or_rebuild_is_refused(self):
         def other_wheel(record):
-            record["installed_wheels"]["aweb-beta"]["container_wheel_sha256"] = "sha256:" + "e" * 64
+            record["installed_wheels"]["aweb-beta"]["container_wheel_sha256"] = (
+                "sha256:" + "e" * 64
+            )
 
         def other_rebuild(record):
-            record["rebuilt_files"] = {name: "sha256:" + "f" * 64 for name in record["rebuilt_files"]}
+            record["rebuilt_files"] = {
+                name: "sha256:" + "f" * 64 for name in record["rebuilt_files"]
+            }
 
-        for tamper, reason in ((other_wheel, "did not install the built wheel"), (other_rebuild, "rebuild of S differs")):
+        for tamper, reason in (
+            (other_wheel, "did not install the built wheel"),
+            (other_rebuild, "rebuild of S differs"),
+        ):
             with self.subTest(reason=reason):
                 self.outside.tamper = tamper
                 with self.assertRaisesRegex(release.ReleaseRefusal, reason):
@@ -362,14 +489,20 @@ class ReleaseCommand(unittest.TestCase):
         wheel = next((self.state / "files").glob("*.whl"))
         wheel.write_bytes(wheel.read_bytes() + b"\0")
         self.land()
-        with self.assertRaisesRegex(release.ReleaseRefusal, "changed since they were built"):
+        with self.assertRaisesRegex(
+            release.ReleaseRefusal, "changed since they were built"
+        ):
             self.release()
 
     def test_a_new_awid_service_is_refused_naming_what_the_gate_lacks(self):
-        with self.assertRaisesRegex(release.ReleaseRefusal, "awid image built from that wheel.*both wheels"):
+        with self.assertRaisesRegex(
+            release.ReleaseRefusal, "awid image built from that wheel.*both wheels"
+        ):
             self.release(packages=("awid-service", "aweb"))
         del self.outside.pypi.files[("awid-service", "0.5.43")]
-        with self.assertRaisesRegex(release.ReleaseRefusal, "awid-service 0.5.43 is not on PyPI"):
+        with self.assertRaisesRegex(
+            release.ReleaseRefusal, "awid-service 0.5.43 is not on PyPI"
+        ):
             self.release(state=self.tmp / "state-2")
         self.assertEqual(self.outside.gates, [])
 

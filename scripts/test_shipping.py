@@ -896,7 +896,8 @@ class NpmRcContractTest(unittest.TestCase):
         # (downstream clone) is intercepted; local Git inspection stays real.
         workflow = (ROOT / ".github/workflows/aw-release.yml").read_text()
         shell = textwrap.dedent(workflow.split("        run: |\n", 1)[1])
-        for case in ("rc", "final", "final-without-rc"):
+        # "absent": the pushed tag names a release this checkout has no tag for.
+        for case in ("rc", "final", "final-without-rc", "absent"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 init_fixture_repo(root)
@@ -943,9 +944,10 @@ class NpmRcContractTest(unittest.TestCase):
                         "SIDE_EFFECT": str(side_effect),
                         "RUNNER_TEMP": str(root / "runner"),
                         "AW_REPO_TOKEN": "test-boundary-not-a-secret",
-                        "GITHUB_REF_NAME": "aw-v1.36.48-rc.1"
-                        if case == "rc"
-                        else "aw-v1.36.48",
+                        "GITHUB_REF_NAME": {
+                            "rc": "aw-v1.36.48-rc.1",
+                            "absent": "aw-v1.36.49",
+                        }.get(case, "aw-v1.36.48"),
                     }
                     result = run_fixture(
                         ["bash", "-c", shell],
@@ -954,6 +956,14 @@ class NpmRcContractTest(unittest.TestCase):
                         text=True,
                         capture_output=True,
                     )
+                if case == "absent":
+                    # Refused before anything leaves the runner.
+                    self.assertNotIn(result.returncode, (0, 86), result.stderr)
+                    self.assertIn(
+                        "local candidate tag aw-v1.36.49 is absent", result.stderr
+                    )
+                    self.assertFalse(side_effect.exists())
+                    continue
                 # One gate qualifies the tagged tree; a final needs no prior RC.
                 self.assertEqual(result.returncode, 86, result.stderr)
                 self.assertEqual(side_effect.read_text(), "clone\n")
@@ -979,7 +989,11 @@ class NpmRcContractTest(unittest.TestCase):
             command(seed, "git", "commit", "-qm", "distribution")
             command(root, "git", "clone", "--bare", str(seed), str(remote))
             (upstream / "scripts").mkdir()
-            for name in ("publish_release.py", "release_versions.py"):
+            for name in (
+                "publish_release.py",
+                "release_versions.py",
+                "sync-aw-distribution.sh",
+            ):
                 shutil.copyfile(ROOT / "scripts" / name, upstream / "scripts" / name)
             shutil.copytree(
                 ROOT / "cli/go/npm",

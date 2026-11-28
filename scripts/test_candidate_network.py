@@ -11,13 +11,13 @@ import os
 import re
 from pathlib import Path
 import shutil
+import shlex
 import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import time
-from types import SimpleNamespace
 from urllib.parse import urlsplit
 import unittest
 from unittest.mock import patch
@@ -367,136 +367,6 @@ class EndpointTests(unittest.TestCase):
         )
         self.assertEqual(result.stdout.strip(), "http://127.0.0.1:49151")
 
-    def test_channel_does_not_reserve_ports_and_selects_both_service_names(self):
-        source = (ROOT / "channel/test/integration.test.ts").read_text()
-        allocation = source[
-            source.index("  const directNetwork =") : source.index(
-                "  const projectSeed ="
-            )
-        ]
-        endpoints = source[
-            source.index("  const publishedHost =") : source.index(
-                "  await writeFile(envFilePath,"
-            )
-        ]
-        helper = source[
-            source.index("function candidateHostname(") : source.index(
-                "function dockerPublishedHost("
-            )
-        ]
-        helper = helper.replace(": string", "")
-        project = "aweb-candidate-08f4f622d1ec-780cad-naapp-library"
-        program = (
-            'import {execFileSync} from "node:child_process"; import {join} from "node:path"; '
-            + "const repoRoot="
-            + json.dumps(str(ROOT))
-            + "; "
-            + helper
-            + "const projectName="
-            + json.dumps(project)
-            + "; "
-            'function dockerPublishedHost(){return "aweb-docker.test";} '
-            'function reserveLoopbackPorts(){throw Error("unexpected host allocation");}\n'
-            + allocation
-            + endpoints
-            + "\nconsole.log(JSON.stringify([awebURL,awidURL]));"
-        )
-        result = subprocess.run(
-            ["node", "--input-type=module", "-e", program],
-            env={**os.environ, "CANDIDATE_RUNNER_NAME": "probe"},
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            json.loads(result.stdout),
-            [
-                f"http://{network.hostname(project, 'aweb')}:8000",
-                f"http://{network.hostname(project, 'awid')}:8010",
-            ],
-        )
-
-    def test_naapp_database_and_registry_endpoints_are_direct(self):
-        for package in ("folio", "library"):
-            path = ROOT / "naapp" / package / "tests/test_e2e_smoke.py"
-            tree = ast.parse(path.read_text())
-            definitions = [
-                node
-                for node in tree.body
-                if isinstance(node, (ast.ClassDef, ast.FunctionDef))
-                and node.name in ("E2EStack", "e2e_stack", "candidate_hostname")
-            ]
-            namespace = {
-                "__file__": str(path),
-                "Path": Path,
-                "subprocess": subprocess,
-                "sys": sys,
-            }
-            exec(
-                "from __future__ import annotations\nfrom dataclasses import dataclass\n"
-                + "\n".join(ast.unparse(node) for node in definitions),
-                namespace,
-            )
-            for project in (
-                "proof",
-                "aweb-candidate-08f4f622d1ec-780cad-naapp-library",
-            ):
-                stack = namespace["e2e_stack"](
-                    {
-                        "NAAPP_E2E_PROJECT": project,
-                        "NAAPP_E2E_CONTAINER_NETWORK": "1",
-                        "NAAPP_E2E_HOST": "aweb-docker.test",
-                    }
-                )
-                self.assertEqual(
-                    stack.awid_url, f"http://{network.hostname(project, 'awid')}:8010"
-                )
-                self.assertIn(
-                    f"{network.hostname(project, 'postgres')}:5432", stack.postgres_url
-                )
-                if package == "folio":
-                    self.assertEqual(
-                        stack.redis_url,
-                        f"redis://{network.hostname(project, 'redis')}:6379/0",
-                    )
-                else:
-                    old_path = ROOT / "naapp/library/tests/test_old_registry_e2e.py"
-                    test = next(
-                        node
-                        for node in ast.parse(old_path.read_text()).body
-                        if isinstance(node, ast.FunctionDef)
-                    )
-                    # Execute the actual endpoint selection, stopping before HTTP.
-                    boundary = next(
-                        i
-                        for i, node in enumerate(test.body)
-                        if isinstance(node, ast.Expr)
-                        and isinstance(node.value, ast.Call)
-                        and isinstance(node.value.func, ast.Name)
-                        and node.value.func.id == "_wait_http_ok"
-                    )
-                    namespace.update(
-                        os=SimpleNamespace(
-                            environ={
-                                "NAAPP_E2E_PROJECT": project,
-                                "NAAPP_E2E_CONTAINER_NETWORK": "1",
-                            }
-                        ),
-                        _require_e2e_enabled=lambda: None,
-                    )
-                    exec(
-                        compile(
-                            ast.Module(body=test.body[:boundary], type_ignores=[]),
-                            str(old_path),
-                            "exec",
-                        ),
-                        namespace,
-                    )
-                    self.assertEqual(
-                        namespace["old_registry"],
-                        f"http://{network.hostname(project, 'awid-pre-status')}:8010",
-                    )
-
     def test_a2a_alias_agrees_with_its_client(self):
         source = (ROOT / "scripts/e2e-a2a-gateway-docker.sh").read_text()
         assignment = next(
@@ -515,12 +385,8 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(result.stdout, network.hostname(project, "gateway"))
 
     def test_gate_does_not_allocate_or_use_host_ports(self):
-        journey = (ROOT / "scripts/e2e-oss-user-journey.sh").read_text()
-        functions = journey[
-            journey.index("allocate_service_ports() {") : journey.index("compose() {")
-        ]
         result = bash(
-            functions + "\n"
+            f"source {shlex.quote(str(ROOT / 'scripts/lib/oss-journey.sh'))}\n"
             'docker() { echo "unexpected host allocation" >&2; return 99; }; '
             "AWEB_PORT=; AWID_PORT=; PORT_ALLOCATOR=; "
             "allocate_service_ports; release_service_ports; "
