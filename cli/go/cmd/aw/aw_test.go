@@ -19,6 +19,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/spf13/cobra"
 )
 
 // guarded holds a value shared between a test goroutine and its httptest handler
@@ -149,81 +150,38 @@ func stableIDFromDidForTest(t *testing.T, did string) string {
 }
 
 func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
-	t.Parallel()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	buildAwBinary(t, ctx, bin)
-
-	helpCmd := exec.CommandContext(ctx, bin, "--help")
-	helpCmd.Dir = tmp
-	out, err := helpCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("top-level help failed: %v\n%s", err, string(out))
+	declared := map[string]bool{}
+	for _, group := range rootCmd.Groups() {
+		declared[group.ID] = true
 	}
-
-	text := string(out)
-	for _, want := range []string{
-		"Workspace Setup",
-		"Identity",
-		"Messaging & Network",
-		"Coordination & Runtime",
-		"Obsolete / Legacy Compatibility",
-		"Utility",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("top-level help missing group %q:\n%s", want, text)
+	byName := map[string]*cobra.Command{}
+	for _, command := range rootCmd.Commands() {
+		byName[command.Name()] = command
+		if command.GroupID != "" && !declared[command.GroupID] {
+			t.Errorf("%s is in undeclared group %q", command.Name(), command.GroupID)
 		}
 	}
-
-	identityIdx := strings.Index(text, "Identity")
-	networkIdx := strings.Index(text, "Messaging & Network")
-	coordinationIdx := strings.Index(text, "Coordination & Runtime")
-	obsoleteIdx := strings.Index(text, "Obsolete / Legacy Compatibility")
-	utilityIdx := strings.Index(text, "Utility")
-	workspaceIdx := strings.Index(text, "Workspace Setup")
-	if workspaceIdx < 0 || identityIdx < 0 || networkIdx < 0 || coordinationIdx < 0 || obsoleteIdx < 0 || utilityIdx < 0 {
-		t.Fatalf("missing expected group boundaries:\n%s", text)
+	for name, group := range map[string]string{
+		"claim-human": groupWorkspace,
+		"check":       groupWorkspace,
+		"mcp-config":  groupIdentity,
+		"team":        groupIdentity,
+		"whoami":      groupIdentity,
+		"run":         groupCoordination,
+	} {
+		command, ok := byName[name]
+		if !ok {
+			t.Errorf("top-level command %s is missing", name)
+			continue
+		}
+		if command.GroupID != group {
+			t.Errorf("%s is in group %q, want %q", name, command.GroupID, group)
+		}
 	}
-
-	claimHumanIdx := strings.Index(text, "claim-human")
-	if claimHumanIdx < workspaceIdx || claimHumanIdx > identityIdx {
-		t.Fatalf("expected claim-human in Workspace Setup group:\n%s", text)
-	}
-
-	checkIdx := strings.Index(text, "\n  check")
-	if checkIdx < workspaceIdx || checkIdx > identityIdx {
-		t.Fatalf("expected check in Workspace Setup group:\n%s", text)
-	}
-
-	mcpIdx := strings.Index(text, "mcp-config")
-	if mcpIdx < identityIdx || mcpIdx > networkIdx {
-		t.Fatalf("expected mcp-config in Identity group:\n%s", text)
-	}
-
-	teamIdx := strings.Index(text, "\n  team")
-	if teamIdx < identityIdx || teamIdx > networkIdx {
-		t.Fatalf("expected team in Identity group:\n%s", text)
-	}
-
-	whoamiIdx := strings.Index(text, "whoami")
-	if whoamiIdx < identityIdx || whoamiIdx > networkIdx {
-		t.Fatalf("expected whoami in Identity group:\n%s", text)
-	}
-
-	runIdx := strings.Index(text, "run")
-	if runIdx < coordinationIdx || runIdx > obsoleteIdx {
-		t.Fatalf("expected run in Coordination & Runtime group:\n%s", text)
-	}
-
-	if strings.Contains(text, "\n  agents") {
-		t.Fatalf("agents command should not appear in top-level help after retirement:\n%s", text)
-	}
-	if strings.Contains(text, "\n  spawn") || strings.Contains(text, "\nspawn") {
-		t.Fatalf("spawn should not appear in top-level help:\n%s", text)
+	for _, retired := range []string{"agents", "spawn"} {
+		if command, ok := byName[retired]; ok && !command.Hidden {
+			t.Errorf("retired command %s is listed in top-level help", retired)
+		}
 	}
 }
 
