@@ -117,7 +117,6 @@ packages = ["src/aweb_naapp"]
 [tool.uv.sources]
 awid-service = { path = "../awid", editable = true }
 aweb-naapp-testing = { path = "testing", editable = true }
-aweb = { path = "../server", editable = true }
 
 [dependency-groups]
 dev = [
