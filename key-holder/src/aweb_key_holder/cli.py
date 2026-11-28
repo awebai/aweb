@@ -14,7 +14,7 @@ from approval_service.verify import Refused as ApprovalRefused
 from awid.registry import RegistryError
 from jsonschema import ValidationError
 
-from .keys import HUMAN_APPROVAL_MESSAGES, KeyStore, Refused
+from .keys import HOLDER_REFUSAL_MESSAGES, KeyStore, Refused
 
 
 async def operate(args, parser):
@@ -133,6 +133,9 @@ def main():
     backup = commands.add_parser("backup")
     backup.add_argument("--offline-public-key", required=True)
     commands.add_parser("migrate")
+    commands.add_parser(
+        "metadata-check", help="Check verified FIDO metadata against issuer inventory"
+    )
     audit = commands.add_parser("audit")
     audit.add_argument("--after", type=int, default=0)
     audit.add_argument("--limit", type=int, default=100)
@@ -161,6 +164,18 @@ def main():
             result = KeyStore.open(args.state).audit(after=args.after, limit=args.limit)
         elif args.command == "retire-person":
             result = KeyStore.open(args.state).retire_person(args.person)
+        elif args.command == "metadata-check":
+            from .metadata_monitor import check_metadata
+
+            if args.mds_cache is None:
+                parser.error("metadata-check requires --mds-cache")
+            report, status = check_metadata(
+                args.state,
+                cache_dir=args.mds_cache,
+                manifest_path=args.mds_manifest,
+            )
+            print(json.dumps(report, separators=(",", ":")))
+            raise SystemExit(status)
         elif args.command == "migrate":
             from approval_service.gate import load_policy
 
@@ -191,8 +206,8 @@ def main():
             print(json.dumps(result, separators=(",", ":")))
     except (Refused, ApprovalRefused) as error:
         result = {"error": error.code}
-        if error.code in HUMAN_APPROVAL_MESSAGES:
-            result["message"] = HUMAN_APPROVAL_MESSAGES[error.code]
+        if error.code in HOLDER_REFUSAL_MESSAGES:
+            result["message"] = HOLDER_REFUSAL_MESSAGES[error.code]
         if error.code == "legacy_human_issuance_write_human_approval":
             result["message"] = (
                 "human_issuance is retired. For an old approved store, write the "

@@ -39,8 +39,24 @@ async def register_identity(registry):
     return seed, key, stable_id_from_did_key(key)
 
 
-def material_for(holder, intent):
-    device = Passkey(holder.approval_origin, holder.rp_id)
+async def register_namespace(holder, registry):
+    root = holder.store.descriptor()
+    await registry.controller_request(
+        parse_controller_request(
+            {
+                "operation": "namespace_register",
+                "domain": root.domain,
+                "controller_did": root.did_key,
+            }
+        ),
+        controllers={"controller": root},
+        signer=lambda ctx: holder.store.sign_controller(ctx, actor="operator"),
+    )
+
+
+def material_for(holder, intent, *, device=None):
+    if device is None:
+        device = Passkey(holder.approval_origin, holder.rp_id)
     material = {
         "version": 1,
         "state": "pending",
@@ -118,17 +134,7 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
 ):
     holder, registry = native_holder.holder, native_holder.registry
     root = holder.store.descriptor()
-    await registry.controller_request(
-        parse_controller_request(
-            {
-                "operation": "namespace_register",
-                "domain": root.domain,
-                "controller_did": root.did_key,
-            }
-        ),
-        controllers={"controller": root},
-        signer=lambda ctx: holder.store.sign_controller(ctx, actor="operator"),
-    )
+    await register_namespace(holder, registry)
     first_seed, first_key, first = await register_identity(registry)
     intent = (await holder.bootstrap(first, first_key))["intent"]
     first_device, material = material_for(holder, intent)

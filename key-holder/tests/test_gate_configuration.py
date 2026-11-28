@@ -4,6 +4,7 @@ import pytest
 from approval_service.grading import EnrollmentGrading
 from aweb_key_holder.enrollment import Holder
 from aweb_key_holder.keys import KeyStore, Refused
+from legacy_schema import remove_attestation_inventory
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -19,6 +20,7 @@ def test_legacy_holder_refuses_start_with_replacement_instruction(
         if "human_issuance" not in names:
             db.execute("ALTER TABLE configuration ADD COLUMN human_issuance TEXT")
         db.execute("UPDATE configuration SET human_issuance=?", (mode,))
+        remove_attestation_inventory(db)
         db.execute("PRAGMA user_version=4")
     values = (
         dict(
@@ -42,6 +44,7 @@ def test_approved_database_requires_explicit_configured_migration(tmp_path):
         db.execute(
             "ALTER TABLE configuration ADD COLUMN human_issuance TEXT NOT NULL DEFAULT 'approved'"
         )
+        remove_attestation_inventory(db)
         db.execute("PRAGMA user_version=4")
     with pytest.raises(Refused, match="human_approval"):
         KeyStore.open(store.directory)
@@ -60,7 +63,7 @@ def test_approved_database_requires_explicit_configured_migration(tmp_path):
     assert reopened.descriptor() == descriptor
     assert reopened.audit()[0]["operation"] == "human_approval_change"
     with reopened._connection() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 6
         assert "human_issuance" not in {
             row[1] for row in db.execute("PRAGMA table_info(configuration)")
         }
@@ -138,6 +141,7 @@ def test_actual_legacy_cli_names_the_replacement_section(tmp_path):
         db.execute(
             "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
         )
+        remove_attestation_inventory(db)
         db.execute("PRAGMA user_version=4")
     result = subprocess.run(
         [
@@ -172,6 +176,7 @@ def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(tm
         db.execute(
             "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
         )
+        remove_attestation_inventory(db)
         db.execute("PRAGMA user_version=4")
     store.migrate(
         policy=Policy.from_section(
@@ -335,6 +340,7 @@ def test_cli_policy_refusal_explains_the_operator_action(tmp_path, problem):
             db.execute(
                 "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
             )
+            remove_attestation_inventory(db)
             db.execute("PRAGMA user_version=4")
         store.migrate(
             policy=Policy.from_section(

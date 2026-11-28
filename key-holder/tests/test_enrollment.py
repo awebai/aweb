@@ -1,39 +1,23 @@
 """Holder-owned enrollment state and concrete shared protocol checks."""
 
+import json
 import sqlite3
 import time
 from datetime import UTC, datetime
 
 import pytest
 from approval_service.canonical import canonical, parse
-from approval_service.encoding import decode
+from approval_service.encoding import decode, encode
 from approval_service.enrollment import PublicIssuer
 from approval_service.grading import EnrollmentGrading
 from approval_service.requester import AdmittedRequester
 from approval_service.seams import check_enrollment_intent, commitment
 from approval_service.verify import Refused as ApprovalRefused
-from authenticator import Passkey
+from authenticator import Passkey, packed_device
 from aweb_key_holder.auth import Caller
-from aweb_key_holder.enrollment import Holder
-from aweb_key_holder.keys import KeyStore, Refused
+from aweb_key_holder.keys import Refused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from pending import expire_pending
-from policy_inputs import policy_file
-
-
-@pytest.fixture
-def holder(tmp_path):
-    store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    policy = policy_file(tmp_path / "human-approval.json", store.descriptor().domain)
-    return Holder(
-        store,
-        human_approval_config=policy,
-        registry=None,
-        origin="https://holder.example",
-        approval_origin="https://approval.example",
-        rp_id="approval.example",
-        grading=EnrollmentGrading("passkey_only", None),
-    )
 
 
 def person():
@@ -119,10 +103,11 @@ def owner(holder, person):
     }
 
 
-def creation(holder, identity=None):
+def creation(holder, identity=None, *, device=None):
     target, key = identity or person()
     intent = holder.bootstrap_pending(target, key)["intent"]
-    device = Passkey(holder.approval_origin, holder.rp_id)
+    if device is None:
+        device = Passkey(holder.approval_origin, holder.rp_id)
     material = {
         "version": 1,
         "state": "pending",
@@ -167,9 +152,66 @@ def test_creation_proof_evidence_and_nonce_commit_once_with_real_webauthn_crypto
     assert holder.store.audit() == audit
     with holder.store._connection() as db:
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == 1
+        row = db.execute(
+            "SELECT namespace, person, credential, assessment FROM attestation_inventory"
+        ).fetchone()
+        assert tuple(row) == (
+            holder.store.descriptor().domain,
+            target,
+            receipt["assertion"]["id"],
+            json.dumps({"format": "none"}),
+        )
+        assert not db.execute("SELECT * FROM active_attestation_inventory").fetchall()
     # Signed creation evidence alone does not establish public committed identity.
     with pytest.raises(Refused, match="approver_not_active"):
         holder.active_person(target)
+
+
+def test_replacing_expired_enrollment_removes_its_pending_inventory(holder):
+    target, receipt = creation(holder)
+    identity_key = receipt["binding"]["binding"]["identity_key"]
+    expire_pending(holder, target)
+    holder.bootstrap_pending(target, identity_key)
+    with holder.store._connection() as db:
+        assert not db.execute("SELECT * FROM attestation_inventory").fetchall()
+
+
+def test_verified_hardware_chain_stays_in_the_issuer_inventory(holder):
+    device, snapshot, (aaguid, batch_der, root_der) = packed_device(
+        holder.approval_origin, holder.rp_id
+    )
+    holder.grading = EnrollmentGrading("hardware", snapshot)
+    target, receipt = creation(holder, device=device)
+    issuer = PublicIssuer(holder.store.descriptor().did_key, int(time.time()))
+    value = holder.finish_creation(
+        target, receipt, issuer=issuer, **owner(holder, target)
+    )
+    credential = receipt["binding"]["binding"]["credentials"][0]
+    assert credential["grade"] == "certified_hardware"
+    assert set(credential) == {
+        "id",
+        "key",
+        "algorithm",
+        "grade",
+        "snapshot",
+        "grade_policy",
+    }
+    with holder.store._connection() as db:
+        saved = db.execute(
+            "SELECT assessment FROM attestation_inventory WHERE person=? AND credential=?",
+            (target, credential["id"]),
+        ).fetchone()
+    assert json.loads(saved["assessment"]) == {
+        "format": "packed",
+        "aaguid": aaguid,
+        "firmware_version": None,
+        "verified_chain": [encode(batch_der), encode(root_der)],
+    }
+    for public in (receipt, value, holder.store.audit()):
+        serialized = json.dumps(public)
+        assert aaguid not in serialized
+        assert encode(batch_der) not in serialized
+        assert encode(root_der) not in serialized
 
 
 def test_nonce_write_failure_rolls_back_evidence_and_signature_audit(holder):
