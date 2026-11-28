@@ -1,6 +1,6 @@
 ---
 title: "aweb resource-pack template contract"
-description: "Contract for new-design templates that package roles, instructions, playbooks, skills, and harness adapters without owning identity or workspace state."
+description: "Contract for new-design templates that package instructions, playbooks, skills, and harness adapters without owning identity or workspace state."
 weight: 24
 ---
 
@@ -28,7 +28,6 @@ define or launch the resulting agents.
 
 Resource packs should make it easy to answer:
 
-- What roles should this team have?
 - What shared instructions should agents read?
 - What operating playbooks, checklists, handoff shapes, and review patterns are
   useful?
@@ -58,12 +57,10 @@ aw init                                      # first workspace
 aw team invite
 aw team join <invite-token>                  # fresh invitee; connects from token
 aw workspace connect --service <service-url> --team <team>:<namespace>  # existing cert / --no-connect
-aw roles add <role-name> --title <title> --playbook-file <path>
-aw roles set --bundle-file <path>
 aw instructions set --body-file <path>
 ```
 
-On Cloud, role-bundle and team-instruction writes, including publishing, activating and resetting, are performed from the dashboard by a person with the owner or admin role. `aw` with an agent certificate is refused for these writes, and a person's API key is not accepted for them today. Agents may still read bundles and instructions and select their own role name normally. Standalone OSS operators define their own publication policy.
+On Cloud, team-instruction writes, including publishing, activating and resetting, are performed from the dashboard by a person with the owner or admin role. `aw` with an agent certificate is refused for these writes, and a person's API key is not accepted for them today. Agents may still read instructions normally. Standalone OSS operators define their own publication policy.
 
 BYOT/controller operations remain protocol/admin primitives and are not hidden
 inside templates.
@@ -78,8 +75,6 @@ resource-pack.yaml
 README.md
 resources/
   instructions.md
-  roles/
-    <role>.md
   playbooks/
     <playbook>.md
   fragments/
@@ -99,7 +94,7 @@ examples/
 ```
 
 Only `resource-pack.yaml` and `README.md` are required. Everything else is
-optional, but packs that define roles or shared instructions should keep them
+optional, but packs that define shared instructions should keep them
 under `resources/`.
 
 ## `resource-pack.yaml`
@@ -115,10 +110,6 @@ name: coordinator-with-dev-review
 summary: Coordinator, developer, and reviewer operating resources.
 resources:
   instructions: resources/instructions.md
-  roles:
-    coordinator: resources/roles/coordinator.md
-    developer: resources/roles/developer.md
-    reviewer: resources/roles/reviewer.md
   playbooks:
     review-loop: resources/playbooks/review-loop.md
 skills:
@@ -137,7 +128,6 @@ Allowed top-level fields:
 | `name` | yes | Stable resource-pack name. Not an identity alias or team name. |
 | `summary` | no | Human-readable description. |
 | `resources.instructions` | no | Path to harness-neutral shared instructions Markdown. |
-| `resources.roles` | no | Map of role name to harness-neutral role Markdown. |
 | `resources.souls` | no | Compatibility map of name to an optional, identity-free definition directory (`soul.yaml`, `AGENTS.md`, seed `docs/`/`decisions/`/`memory/`). Aweb treats these as opaque orchestrator-owned resources; it does not define their semantics or lifecycle. |
 | `resources.playbooks` | no | Map of playbook key to Markdown. |
 | `resources.docs` | no | Map of doc key to shared team docs Markdown (e.g. a team architecture doc copied into the target). |
@@ -163,7 +153,6 @@ runtime-specific file as the canonical source of truth.
 Allowed:
 
 - `resources/instructions.md` as canonical shared team instructions;
-- `resources/roles/developer.md` as a canonical role playbook;
 - `resources/fragments/agents.md` as a reusable AGENTS.md fragment;
 - `adapters/claude/README.md` explaining how to render or copy resources into
   Claude Code-specific files;
@@ -188,19 +177,10 @@ An agent applying a resource pack should:
    workspace connect`).
 3. Copy/adapt harness-neutral resources into a reviewable location in the
    target repo.
-4. Publish shared team context explicitly. For a novice, add roles one by one
-   from Markdown files:
+4. Publish the shared team instructions explicitly:
 
    ```bash
    aw instructions set --body-file <adapted-instructions.md>
-   aw roles add coordinator --title "Coordinator" --playbook-file resources/roles/coordinator.md
-   aw roles add developer --title "Developer" --playbook-file resources/roles/developer.md
-   ```
-
-   For scripted/bulk updates, publish a reviewed JSON bundle:
-
-   ```bash
-   aw roles set --bundle-file <adapted-roles.json>
    ```
 
 5. Generate or copy harness adapters only after the human chooses that harness.
@@ -235,9 +215,9 @@ Bootstrap-era `team.yaml` fields map to resource-pack resources as follows:
 | Bootstrap-era field | Resource-pack replacement |
 | --- | --- |
 | `instructions.file` | `resources.instructions` |
-| `roles.<name>.file` | `resources.roles.<name>` |
+| `roles.<name>.file` | No replacement: aw has no team roles |
 | `home/<responsibility>/AGENTS.md` | `resources/fragments/` or harness adapter examples |
-| `agents.<responsibility>.role_name` | Suggested application note, not identity state |
+| `agents.<responsibility>.role_name` | Remove from template: aw has no team roles |
 | `agents.<responsibility>.identity_scope` | Remove from template; choose identity with setup primitives |
 | `agents.<responsibility>.work` | Remove from template; use explicit git/filesystem steps |
 | `naming.*` | Remove from template; choose aliases/addresses at invite/join/identity time |
@@ -257,5 +237,5 @@ Use:
 
 - `aweb-team-membership` for invite/join/team membership decisions;
 - `aweb-identity` for key custody and global/local identity decisions;
-- `aweb-coordination` for tasks, roles, instructions, locks, and handoffs;
+- `aweb-coordination` for tasks, instructions, locks, and handoffs;
 - `aweb-bootstrap` only for legacy bootstrap-era layout recovery or migration.

@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- aw drops team roles. Shared team instructions stay.
+  - Gone: `aw roles`, `aw role-name set`, `--role` and `--role-name` on
+    `aw init` and `aw service init`, the `AWEB_ROLE_NAME` and `AWEB_ROLE`
+    fallback, and the server's MCP `roles_show` and `roles_list` tools.
+  - `aw workspace add-worktree` no longer takes a role argument or prompts for
+    one.
+  - `aw workspace status` no longer prints a role or reports `role_name`. Its
+    JSON keeps `role`, always the empty string, in `workspace` and in each
+    `team` entry, for the released OATS roster.
+  - `aw workspace connect --role` is accepted and ignored, for released OATS
+    providers.
+  - `aw doctor --online` checks the server's team through `GET /v1/agents`,
+    and drops its `team.server.roles_read` and
+    `team.server.selected_role_matches_local` checks.
+  - New requests carry no role. An API-key init that a released aw saved part
+    way resumes with the role it saved, since the hosted init binds it.
+  - The Go library drops its team roles API (`ActiveTeamRoles`, the other
+    `*TeamRoles` calls and their types) and the role fields of
+    `PatchCurrentWorkspaceRequest` and `PatchCurrentWorkspaceResponse`.
+  - `roles` and `role-name` stay reserved app ids, since released aw carries
+    those commands.
+  - The resource packs drop their role playbooks. The server's `/v1/roles`
+    routes and its workspace role fields stay for the hosted service.
+
 - aw's own agent orchestration is removed: `aw run`, `aw blueprint`,
   `aw agent`, and `aw team admin up|adopt|refresh|add|extend` with their hidden
   `aw team <command>` aliases. Materializing and launching agents is OATS's job.

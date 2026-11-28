@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -192,7 +193,7 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	// Exercise the port-443 SSH form used when GitHub's port 22 is blocked.
 	initGitRepoWithOrigin(t, tmp, "ssh://git@ssh.github.com:443/acme/backend.git")
 
-	run := exec.CommandContext(ctx, bin, "init", "--url", server.URL, "--role", "developer", "--json")
+	run := exec.CommandContext(ctx, bin, "init", "--url", server.URL, "--json")
 	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -367,6 +368,7 @@ func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) 
 	}
 
 	var gotConnectPayload connectRequest
+	var gotConnectBody map[string]any
 	publishCertTeams := []string{}
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -376,7 +378,15 @@ func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) 
 				"aweb_url":       serverURL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
-			if err := json.NewDecoder(r.Body).Decode(&gotConnectPayload); err != nil {
+			raw, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(raw, &gotConnectPayload); err != nil {
+				t.Fatal(err)
+			}
+			gotConnectBody = map[string]any{}
+			if err := json.Unmarshal(raw, &gotConnectBody); err != nil {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -399,7 +409,8 @@ func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) 
 		}
 	})
 
-	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "connect", "--service", server.URL, "--json")
+	// Released OATS providers pass --role; it is accepted and ignored.
+	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "connect", "--service", server.URL, "--role=developer", "--json")
 	run.Env = testCommandEnv(filepath.Join(root, "home"))
 	run.Dir = instanceHome
 	out, err := run.CombinedOutput()
@@ -408,6 +419,12 @@ func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) 
 	}
 	if gotConnectPayload.WorkspacePath != identityHome {
 		t.Fatalf("workspace_path=%q want external root %q", gotConnectPayload.WorkspacePath, identityHome)
+	}
+	if role, sent := gotConnectBody["role"]; sent {
+		t.Fatalf("workspace connect sent role %v", role)
+	}
+	if rawWorkspace, err := os.ReadFile(filepath.Join(identityHome, "workspace.yaml")); err != nil || strings.Contains(string(rawWorkspace), "role") {
+		t.Fatalf("workspace connect stored a role (err %v):\n%s", err, rawWorkspace)
 	}
 	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(identityHome, "workspace.yaml"))
 	if err != nil {
@@ -448,6 +465,23 @@ func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) 
 	}
 	if primaryAfter := fileDigestsForTest(t, filepath.Join(instanceHome, ".aw")); !reflect.DeepEqual(primaryAfter, primaryBefore) {
 		t.Fatal("service init mutated caller primary identity home")
+	}
+}
+
+// Released OATS providers pass --role to workspace connect, so it stays there,
+// documented as accepted and ignored. init and service init no longer take one.
+func TestRoleFlagIsAcceptedAndIgnoredOnlyOnWorkspaceConnect(t *testing.T) {
+	flag := workspaceConnectCmd.Flags().Lookup("role")
+	if flag == nil || flag.Hidden || !strings.Contains(flag.Usage, "Accepted and ignored") {
+		t.Fatalf("workspace connect --role = %+v, want a visible flag documented as accepted and ignored", flag)
+	}
+	for _, name := range []string{"role", "role-name"} {
+		if initCmd.Flags().Lookup(name) != nil {
+			t.Errorf("aw init still has --%s", name)
+		}
+		if serviceInitCmd.Flags().Lookup(name) != nil {
+			t.Errorf("aw service init still has --%s", name)
+		}
 	}
 }
 
@@ -612,7 +646,7 @@ func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
 
 	initGitRepoWithOrigin(t, tmp, "https://github.com/acme/backend.git")
 
-	run := exec.CommandContext(ctx, bin, "init", "--url", server.URL+"/api", "--role", "developer", "--json")
+	run := exec.CommandContext(ctx, bin, "init", "--url", server.URL+"/api", "--json")
 	run.Env = idCreateCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()

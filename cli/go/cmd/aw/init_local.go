@@ -23,7 +23,6 @@ type implicitLocalInitRequest struct {
 	RegistryURL string
 	Alias       string
 	TeamName    string
-	Role        string
 	HumanName   string
 	AgentType   string
 }
@@ -224,8 +223,8 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 	return initCertificateConnectWithOptions(req.WorkingDir, req.AwebURL, certificateConnectOptions{
 		TeamRegistryURL:        prepared.Plan.RegistryURL,
 		RegistryOperatorOrigin: operatorRegistryOrigin(prepared.Plan.RegistryURL, ""),
-		ContextFile:            req.ContextFile, Role: strings.TrimSpace(req.Role),
-		HumanName: strings.TrimSpace(req.HumanName),
-		AgentType: strings.TrimSpace(req.AgentType),
+		ContextFile:            req.ContextFile,
+		HumanName:              strings.TrimSpace(req.HumanName),
+		AgentType:              strings.TrimSpace(req.AgentType),
 	})
 }

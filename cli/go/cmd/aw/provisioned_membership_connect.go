@@ -13,7 +13,6 @@ type provisionedTeamMembership struct {
 	WorkingDir string
 	Home       awconfig.IdentityHome
 	AwebURL    string
-	Role       string
 	HumanName  string
 	AgentType  string
 }
@@ -50,7 +49,7 @@ func connectProvisionedTeamMembership(request provisionedTeamMembership) (connec
 	if serviceURL == "" {
 		return connectOutput{}, &provisionedMembershipIncompleteError{cause: &plainRefusal{text: "Membership is saved; the E2E key is NOT published by this provisioning attempt. Run `" + connectCommand + "` to connect and publish it."}}
 	}
-	output, err := initCertificateConnectWithOptions(request.WorkingDir, serviceURL, certificateConnectOptions{IdentityHome: request.Home.Root, Role: request.Role, HumanName: request.HumanName, AgentType: request.AgentType, EncryptionPublication: encryptionPublicationRequiredService})
+	output, err := initCertificateConnectWithOptions(request.WorkingDir, serviceURL, certificateConnectOptions{IdentityHome: request.Home.Root, HumanName: request.HumanName, AgentType: request.AgentType, EncryptionPublication: encryptionPublicationRequiredService})
 	if err == nil {
 		return output, nil
 	}

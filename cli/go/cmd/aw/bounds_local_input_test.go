@@ -81,16 +81,3 @@ func TestLoadOptionalRequestBodyRejectsOversizeBodyFile(t *testing.T) {
 		t.Fatalf("oversize --body-file should be rejected, got: %v", err)
 	}
 }
-
-// stdin: a piped --bundle-file "-" is bounded like a file so an unbounded pipe
-// cannot exhaust memory.
-func TestResolveRolesBundleRejectsOversizeStdin(t *testing.T) {
-	prev := maxBodyFileBytes
-	maxBodyFileBytes = 1024
-	t.Cleanup(func() { maxBodyFileBytes = prev })
-
-	oversize := strings.Repeat("a", int(maxBodyFileBytes)+4096)
-	if _, err := resolveRolesBundle(strings.NewReader(oversize), "", "-"); err == nil || !strings.Contains(err.Error(), "exceeds maximum size") {
-		t.Fatalf("oversize piped --bundle-file should be rejected, got: %v", err)
-	}
-}

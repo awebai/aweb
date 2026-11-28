@@ -54,7 +54,6 @@ type connectResponse struct {
 type connectRequest struct {
 	Hostname      string `json:"hostname"`
 	WorkspacePath string `json:"workspace_path"`
-	Role          string `json:"role,omitempty"`
 	HumanName     string `json:"human_name,omitempty"`
 	AgentType     string `json:"agent_type,omitempty"`
 }
@@ -64,7 +63,6 @@ type certificateConnectOptions struct {
 	TeamRegistryURL       string
 	ContextFile           workspaceContextPolicy
 	EncryptionPublication encryptionPublicationPolicy
-	Role                  string
 	HumanName             string
 	AgentType             string
 	APIKey                string
@@ -116,7 +114,6 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	reqBody := connectRequest{
 		Hostname:      hostname,
 		WorkspacePath: bindingWorkspacePath,
-		Role:          strings.TrimSpace(opts.Role),
 		HumanName:     resolveHumanNameValue(opts.HumanName, resolveAgentTypeValue(opts.AgentType)),
 		AgentType:     resolveAgentTypeValue(strings.TrimSpace(opts.AgentType)),
 	}
@@ -187,7 +184,6 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		upsertWorkspaceMembershipCache(workspaceState, awconfig.WorktreeMembership{
 			TeamID:      resp.TeamID,
 			Alias:       resp.Alias,
-			RoleName:    strings.TrimSpace(opts.Role),
 			WorkspaceID: resp.WorkspaceID,
 			CertPath:    filepath.ToSlash(certPath),
 			JoinedAt:    strings.TrimSpace(cert.IssuedAt),

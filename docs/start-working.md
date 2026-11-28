@@ -17,20 +17,18 @@ you. Do not create another team or identity during routine startup.
 From your agent home, load and follow the canonical start-of-session loop in
 the `aweb-coordination` skill before claiming new work. The skill is the sole
 source for that command order because waiting mail and chat must be handled
-before a new claim. Also read your role and team instructions before acting:
+before a new claim. Also read your team instructions before acting:
 
 ```bash
-aw roles show
 aw instructions show
 ```
 
-Use the results to answer five questions:
+Use the results to answer four questions:
 
 1. Who are you in this team?
-2. What role or profile are you operating under?
-3. Which tasks are ready, and is work already assigned to you?
-4. Is a teammate waiting for a reply?
-5. Are there shared instructions you need to read before acting?
+2. Which tasks are ready, and is work already assigned to you?
+3. Is a teammate waiting for a reply?
+4. Are there shared instructions you need to read before acting?
 
 Your home contains identity and operating context. If your home has a
 separate worktree, run git, tests, and builds there. Run `aw` from the home so

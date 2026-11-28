@@ -101,8 +101,6 @@ fields:
   (`selection.go:107` -> `Selection.BaseURL`); also `APIKey`, and the
   repo/host binding metadata `RepoID`, `CanonicalOrigin`, `Hostname`,
   `WorkspacePath`, `HumanName`, `AgentType`.
-- membership `RoleName` — role resolution (`roles.go:424`), status
-  (`workspace.go:1159`), doctor (`doctor_aweb.go:488`).
 - membership `WorkspaceID` — coordination self-identity (`work.go:266`),
   add-worktree collision check (`workspace.go:365`), status, doctor
   (`doctor_aweb.go:378,411`).
@@ -152,7 +150,7 @@ behaviour. We remove the *duplication* and the *divergence*:
 - **Store reconciliation** (the data-level application of the same principle):
   one writer for the shared spine so it cannot drift; one read-precedence
   everywhere (fix the gateway inversion); and shrink `workspace.yaml`'s
-  membership to only its unique fields (`TeamID` key + `RoleName` +
+  membership to only its unique fields (`TeamID` key +
   `WorkspaceID`), reading `Alias`/`CertPath`/`JoinedAt` from `teams.yaml` (the
   roster authority), with a one-time config migration for existing worktrees.
 

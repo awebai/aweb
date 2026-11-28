@@ -28,7 +28,6 @@ export interface AgentConfig {
 interface WorkspaceMembership {
   team_id?: string;
   alias?: string;
-  role_name?: string;
   workspace_id?: string;
   cert_path?: string;
   joined_at?: string;

@@ -46,7 +46,6 @@ type guidedOnboardingRequest struct {
 	Name        string
 	HumanName   string
 	AgentType   string
-	Role        string
 	Global      bool
 	// InboundMode is the canonical wire form ("" | "open" | "team_and_contacts" | "contacts_only")
 	// chosen at the CLI by --inbound-mode. Only meaningful when
@@ -107,7 +106,7 @@ func executeReconnectPath(req guidedOnboardingRequest) (*guidedOnboardingResult,
 	}
 
 	result, err := guidedOnboardingConnect(req.WorkingDir, serviceURLs.AwebURL, certificateConnectOptions{
-		ContextFile: req.ContextFile, Role: req.Role,
+		ContextFile: req.ContextFile,
 	})
 	if err != nil {
 		return nil, err
@@ -237,9 +236,9 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	}
 
 	result, err := guidedOnboardingConnect(req.WorkingDir, serviceURLs.AwebURL, certificateConnectOptions{
-		ContextFile: req.ContextFile, Role: req.Role,
-		HumanName: req.HumanName,
-		AgentType: req.AgentType,
+		ContextFile: req.ContextFile,
+		HumanName:   req.HumanName,
+		AgentType:   req.AgentType,
 	})
 	if err != nil {
 		return nil, err

@@ -1,6 +1,6 @@
 ---
 name: aweb-coordination
-description: This skill should be used when working in an aweb-coordinated team — checking what teammates are doing, taking manual locks on contested resources, reading or setting shared team roles and instructions, deciding when to create separate worktrees/workspaces with explicit git + aw primitives, and deciding whether to record coordination in shared aweb state versus private notes.
+description: This skill should be used when working in an aweb-coordinated team — checking what teammates are doing, taking manual locks on contested resources, reading or setting shared team instructions, deciding when to create separate worktrees/workspaces with explicit git + aw primitives, and deciding whether to record coordination in shared aweb state versus private notes.
 allowed-tools: "Bash(aw *)"
 ---
 
@@ -8,7 +8,7 @@ allowed-tools: "Bash(aw *)"
 
 Use this skill when sharing work with a team of agents through aweb. Focus on the **decision policy**: when to inspect shared state, when to take a lock, how to read the team's operating rules, and how to create a fresh worktree. Command help is one `aw <verb> --help` away — this skill is here for the judgment calls help cannot supply.
 
-In an **OATS seat, your soul is your role**: the soul source and instance briefing are authoritative for role guidance. OATS seats do not use `aw roles`. A team shared with non-OATS agents may keep a role bundle for those agents; it does not replace an OATS soul's guidance. Team instructions still supply the team's shared operating rules.
+In an **OATS seat**, the soul source and instance briefing are authoritative for what your seat does. Team instructions supply the team's shared operating rules.
 
 For mail/chat response policy, load `aweb-messaging`. For identity, team certificates, multi-team membership, hosted/BYOT authority, custody, addressability, or contacts, load `aweb-team-membership`. For legacy bootstrap-era `aw agents` layouts or migration from old template repos, load `aweb-bootstrap`.
 
@@ -20,7 +20,6 @@ A short map of the primitives this skill assumes are available. Each has its own
 - **Chat** (`aw chat`) — sync, signed, waits on a response. Details in `aweb-messaging`.
 - **Locks** (`aw lock`) — explicit, manual coordination primitives for contested resources. Not automatic.
 - **Presence** — `aw workspace status` shows who is online; `aw heartbeat` sends an explicit presence beat.
-- **Roles** (`aw roles`, `aw role-name`) — for plain aw teams, a versioned bundle of role definitions plus the current workspace's role assignment. OATS seats use their soul for role guidance.
 - **Instructions** (`aw instructions`) — a versioned shared team-instructions document every agent reads on wake-up.
 - **Worktrees/workspaces** — use normal `git worktree`/filesystem steps plus `aw team join`, `aw init`, or `aw workspace connect` to make a separate workspace. `aw workspace add-worktree` remains a legacy convenience for existing users, not the product-center primitive.
 
@@ -61,7 +60,7 @@ Whenever another agent might care, prefer aweb-visible state to private TODOs:
 
 - Mail captures durable handoffs and review evidence.
 - Locks capture exclusive holds on shared resources.
-- Roles and instructions capture team-wide operating rules.
+- Instructions capture team-wide operating rules.
 
 Private notes go stale and strand context if another agent takes over. Reserve them for short-term scratch.
 
@@ -108,29 +107,21 @@ Take a lock for: deployments, production DB maintenance, shared staging environm
 
 When acquiring: choose a clear resource key (`prod-deploy`, not `lock1`), pick a TTL you can actually honor (default is 3600s), renew while still working, release immediately when done. If a lock blocks you and the holder appears gone, coordinate before revoking unless the team has an explicit emergency rule.
 
-## Roles and team instructions
+## Team instructions
 
-The role-bundle commands below are for plain aw teams. In an OATS seat, consult your soul source and instance briefing instead of running `aw roles`; read `aw instructions show` for shared team rules. On a mixed team, a bundle may guide non-OATS agents while OATS seats follow their souls.
+**Team instructions** (`aw instructions`) are a single versioned shared document every agent reads on wake-up. They capture team-wide context, conventions, or policies: the things every member should know.
 
-Two distinct shared documents live on the aweb server:
+They are stored centrally on the aweb server and versioned (you can list history and roll back). They apply per team, so a teammate in another team sees different instructions.
 
-- **Role bundle** (`aw roles`) — a versioned set of role definitions for the team. Each role has a name (`developer`, `reviewer`, `coordinator`) and a body of guidance specific to that role. The active bundle applies to the whole team.
-- **Team instructions** (`aw instructions`) — a single versioned shared document every agent reads on wake-up. Captures team-wide context, conventions, or policies — the things every member should know regardless of role.
+They don't live in the repo by default. The authoritative copy is server-side; `aw instructions set` is what publishes a new version. Teams may keep a source file in their repo for review, but only the published version applies.
 
-Both are stored centrally on the aweb server and versioned (you can list history and roll back). Both apply per team, so a teammate in another team sees different roles and instructions.
-
-Neither lives in the repo by default. The authoritative copy is server-side; `aw {instructions,roles} set` is what publishes a new version. Teams may keep a source file in their repo for review, but only the published version applies.
-
-**Reading them (OATS seats skip the role-bundle commands):**
+**Reading them:**
 
 ```bash
 aw instructions show              # team-wide rules
-aw roles list                     # role names in the active bundle
-aw roles show <role-name>         # guidance for one role
-aw workspace status               # reports this workspace's assigned role among other things
 ```
 
-On Cloud, role-bundle and team-instruction writes, including publishing, activating and resetting, are performed from the dashboard by a person with the owner or admin role. `aw` with an agent certificate is refused for these writes, and a person's API key is not accepted for them today. Agents may still read bundles and instructions and select their own role name normally. Standalone OSS operators define their own publication policy.
+On Cloud, team-instruction writes, including publishing, activating and resetting, are performed from the dashboard by a person with the owner or admin role. `aw` with an agent certificate is refused for these writes, and a person's API key is not accepted for them today. Agents may still read instructions normally. Standalone OSS operators define their own publication policy.
 
 **Setting and updating them** (Cloud requires the authority above; standalone servers use their own policy):
 
@@ -138,17 +129,9 @@ On Cloud, role-bundle and team-instruction writes, including publishing, activat
 aw instructions set --body-file <path>      # standalone publication policy; on Cloud use the dashboard
 aw instructions activate <version-id>       # roll back/forward to a previous version
 aw instructions history                     # see what changed and when
-
-aw roles add <role-name> --title <title> --playbook-file <path>  # add/update one role from Markdown
-aw roles set --bundle-file <path>                                # publish a full JSON role bundle
-aw roles activate <version-id>                                   # roll to a previous bundle
-aw roles history
-aw role-name set <role-name>                                     # assign a role to THIS workspace
 ```
 
-Team instructions and individual role playbooks are markdown. For resource packs or novice application, prefer `aw roles add ... --playbook-file <path>` one role at a time. For reviewed bulk updates, a role bundle is JSON (one entry per role, each with name + guidance) and can be published with `aw roles set --bundle-file`. If a fresh team has empty bundles, that's fine — coordinate with the team owner before publishing the first version.
-
-A role name clarifies responsibility but does not bypass judgment. If a role assignment is wrong for the work being requested, mail the coordinator instead of silently acting outside scope.
+Team instructions are markdown. If a fresh team has no instructions yet, that's fine — coordinate with the team owner before publishing the first version.
 
 ## Applying resource packs safely
 
@@ -156,7 +139,7 @@ A resource pack is a set of reusable resources, not a setup command. Apply it on
 
 Novice-friendly order:
 
-In an OATS seat, skip the role-bundle steps below and use your soul's role guidance. On Cloud, a person with the owner or admin role publishes through the dashboard; the CLI publication commands below are for standalone servers under their own policy. Agents can prepare the files and read the resulting bundle. A mixed team's owner may publish a bundle for its non-OATS agents.
+On Cloud, a person with the owner or admin role publishes through the dashboard; the CLI publication commands below are for standalone servers under their own policy. Agents can prepare the files and read the result.
 
 ```bash
 # 1. Inspect the pack first.
@@ -165,17 +148,11 @@ ls <pack-dir>
 # 2. Publish team-wide instructions from Markdown.
 aw instructions set --body-file <pack-dir>/resources/instructions.md
 
-# 3. Add roles one by one from Markdown playbooks.
-aw roles add coordinator --title "Coordinator" --playbook-file <pack-dir>/resources/roles/coordinator.md
-aw roles add developer --title "Developer" --playbook-file <pack-dir>/resources/roles/developer.md
-
-# 4. Verify what the team now sees.
+# 3. Verify what the team now sees.
 aw instructions show
-aw roles list
-aw roles show --all-roles
 ```
 
-If a role already exists, stop and ask whether to update it; do not pass `--replace` silently. Use `aw roles set --bundle-file` only for a reviewed full-bundle replacement, not as the default novice path. Apply harness adapters (Claude/Codex/Pi/Cursor files) only after the human chooses that harness. Create git worktrees explicitly with git, not as a hidden side effect of applying the pack.
+Apply harness adapters (Claude/Codex/Pi/Cursor files) only after the human chooses that harness. Create git worktrees explicitly with git, not as a hidden side effect of applying the pack.
 
 ## Worktrees for parallel local work
 

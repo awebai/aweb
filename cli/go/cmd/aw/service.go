@@ -11,7 +11,6 @@ import (
 var (
 	serviceInitServiceURL string
 	serviceInitTeamID     string
-	serviceInitRole       string
 )
 
 var serviceCmd = &cobra.Command{
@@ -41,7 +40,6 @@ func init() {
 	serviceCmd.GroupID = groupWorkspace
 	serviceInitCmd.Flags().StringVar(&serviceInitServiceURL, "service", "", "Service URL to connect to")
 	serviceInitCmd.Flags().StringVar(&serviceInitTeamID, "team", "", "Canonical AWID team id to activate before connecting")
-	serviceInitCmd.Flags().StringVar(&serviceInitRole, "role", "", "Optional role name for this workspace")
 	serviceCmd.AddCommand(serviceInitCmd)
 	rootCmd.AddCommand(serviceCmd)
 }
@@ -71,7 +69,6 @@ func runServiceInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	opts := certificateConnectOptions{
-		Role:         strings.TrimSpace(serviceInitRole),
 		IdentityHome: home.Root,
 	}
 	if home.External() {

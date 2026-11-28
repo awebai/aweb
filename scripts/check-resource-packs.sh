@@ -55,10 +55,6 @@ for pack in sorted(p for p in root.iterdir() if p.is_dir()):
             f'add it to the manifest or remove it'
         )
 
-    role_files = sorted((pack / 'resources' / 'roles').glob('*.md'))
-    if role_files and 'aw roles add' not in readme.read_text():
-        raise SystemExit(f'{readme}: packs with Markdown roles must teach aw roles add')
-
     forbidden_file_parts = {'.aw', 'team-certs', 'signing.key', 'encryption.key'}
     for path in pack.rglob('*'):
         parts = set(path.relative_to(pack).parts)

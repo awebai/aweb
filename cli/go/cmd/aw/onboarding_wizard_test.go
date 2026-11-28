@@ -58,12 +58,10 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 	}
 
 	var connectWorkingDir, connectServerURL string
-	var connectOpts certificateConnectOptions
 	var hostedCalls, byodCalls int
 	guidedOnboardingConnect = func(workingDir, serverURL string, opts certificateConnectOptions) (connectOutput, error) {
 		connectWorkingDir = workingDir
 		connectServerURL = serverURL
-		connectOpts = opts
 		return connectOutput{
 			Status:  "connected",
 			TeamID:  "default:alice.aweb.ai",
@@ -85,7 +83,6 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 		PromptIn:   strings.NewReader("2\n"),
 		PromptOut:  &bytes.Buffer{},
 		BaseURL:    "https://app.aweb.ai",
-		Role:       "reviewer",
 	})
 	if err != nil {
 		t.Fatalf("executeGuidedOnboardingWizard: %v", err)
@@ -98,9 +95,6 @@ func TestGuidedOnboardingReconnectSkipsWizardWhenIdentityAndCertExist(t *testing
 	}
 	if connectServerURL != "https://app.aweb.ai/api" {
 		t.Fatalf("server_url=%q", connectServerURL)
-	}
-	if connectOpts.Role != "reviewer" {
-		t.Fatalf("role=%q", connectOpts.Role)
 	}
 	if hostedCalls != 0 || byodCalls != 0 {
 		t.Fatalf("expected reconnect path only, got hosted=%d byod=%d", hostedCalls, byodCalls)
@@ -415,7 +409,6 @@ func TestExecuteBYODPathDefaultsToLocalAlias(t *testing.T) {
 		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &out,
 		BaseURL:    "https://app.example",
-		Role:       "developer",
 	})
 	if err != nil {
 		t.Fatalf("executeBYODPath: %v", err)
@@ -520,11 +513,9 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 	}
 
 	var connectWorkingDir, connectServerURL string
-	var connectOpts certificateConnectOptions
 	guidedOnboardingConnect = func(workingDir, serverURL string, opts certificateConnectOptions) (connectOutput, error) {
 		connectWorkingDir = workingDir
 		connectServerURL = serverURL
-		connectOpts = opts
 		return connectOutput{
 			Status:  "connected",
 			TeamID:  "default:acme.com",
@@ -538,7 +529,6 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &bytes.Buffer{},
 		BaseURL:    "https://app.example",
-		Role:       "developer",
 		Global:     true,
 	})
 	if err != nil {
@@ -559,9 +549,6 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 	}
 	if connectServerURL != "https://app.example" {
 		t.Fatalf("server_url=%q", connectServerURL)
-	}
-	if connectOpts.Role != "developer" {
-		t.Fatalf("role=%q", connectOpts.Role)
 	}
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))
@@ -687,7 +674,6 @@ func TestExecuteBYODPathProvisionsLocalTeamWithoutIdentityRegistrationAgainstSer
 		PromptOut:   &out,
 		BaseURL:     awebServer.URL,
 		RegistryURL: registryServer.URL,
-		Role:        "developer",
 	})
 	if err != nil {
 		t.Fatalf("executeBYODPath: %v", err)
@@ -881,7 +867,6 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		PromptIn:           strings.NewReader("jack\nlaptop\ny\ny\njack@example.com\n"),
 		PromptOut:          &out,
 		BaseURL:            onboardingServer.URL + "/api",
-		Role:               "developer",
 		HumanName:          "Operator Jane",
 		AgentType:          "codex",
 		Global:             true,
@@ -909,8 +894,8 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if got, _ := signupBody["did_aw"].(string); strings.TrimSpace(got) == "" {
 		t.Fatalf("signup did_aw must be set for global path; got=%v", signupBody["did_aw"])
 	}
-	if connectBody["role"] != "developer" {
-		t.Fatalf("connect role=%v", connectBody["role"])
+	if role, sent := connectBody["role"]; sent {
+		t.Fatalf("connect sent role %v", role)
 	}
 	if connectBody["human_name"] != "Operator Jane" {
 		t.Fatalf("connect human_name=%v", connectBody["human_name"])
@@ -1863,7 +1848,6 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 		PromptOut:   &out,
 		BaseURL:     connectServer.URL,
 		RegistryURL: registryServer.URL,
-		Role:        "developer",
 		HumanName:   "Operator Jane",
 		AgentType:   "codex",
 		Global:      true,
@@ -1884,8 +1868,8 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 	if gotCertPayload["member_address"] != "acme.com/alice" {
 		t.Fatalf("cert member_address=%v", gotCertPayload["member_address"])
 	}
-	if gotConnectBody["role"] != "developer" {
-		t.Fatalf("connect role=%v", gotConnectBody["role"])
+	if role, sent := gotConnectBody["role"]; sent {
+		t.Fatalf("connect sent role %v", role)
 	}
 	if gotConnectBody["human_name"] != "Operator Jane" {
 		t.Fatalf("connect human_name=%v", gotConnectBody["human_name"])
@@ -2089,7 +2073,6 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 		PromptIn:   strings.NewReader("Alice\nAcme.com\n"),
 		PromptOut:  &bytes.Buffer{},
 		BaseURL:    onboardingServer.URL,
-		Role:       "developer",
 		HumanName:  "Operator Jane",
 		AgentType:  "codex",
 		Global:     true,
@@ -2109,8 +2092,8 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 	if gotCertPayload["member_address"] != "acme.com/alice" {
 		t.Fatalf("cert member_address=%v", gotCertPayload["member_address"])
 	}
-	if gotConnectBody["role"] != "developer" {
-		t.Fatalf("connect role=%v", gotConnectBody["role"])
+	if role, sent := gotConnectBody["role"]; sent {
+		t.Fatalf("connect sent role %v", role)
 	}
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, ".aw", "identity.yaml"))

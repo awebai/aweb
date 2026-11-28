@@ -23,7 +23,6 @@ type worktreeAgentCreation struct {
 	ServerURL       string
 	TeamID          string
 	Alias           string
-	Role            string
 	Workspace       *awconfig.WorktreeWorkspace
 	TeamRegistryURL string
 }
@@ -33,7 +32,7 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 	branchCreated := input.BranchCreated
 	teamID, workingDir := input.TeamID, input.WorkingDir
 	sourceServerURL, sourceIdentityHome := input.ServerURL, externalIdentityHomeRoot(input.CreatorHome)
-	alias, role, state := input.Alias, input.Role, input.Workspace
+	alias, state := input.Alias, input.Workspace
 	teamDomain, teamName, err := awid.ParseTeamID(teamID)
 	if err != nil {
 		return connectOutput{}, err
@@ -78,7 +77,7 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
-	connectResult, err := connectProvisionedTeamMembership(provisionedTeamMembership{WorkingDir: worktreePath, Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(worktreePath)}, AwebURL: sourceServerURL, Role: role, HumanName: strings.TrimSpace(state.HumanName), AgentType: strings.TrimSpace(state.AgentType)})
+	connectResult, err := connectProvisionedTeamMembership(provisionedTeamMembership{WorkingDir: worktreePath, Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(worktreePath)}, AwebURL: sourceServerURL, HumanName: strings.TrimSpace(state.HumanName), AgentType: strings.TrimSpace(state.AgentType)})
 	if err != nil {
 		return retain("connect new worktree", err)
 	}
@@ -94,7 +93,7 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 func addWorktreeViaCloudBootstrap(input worktreeAgentCreation) (connectOutput, error) {
 	worktreePath, root, branchName := input.WorktreePath, input.RepoRoot, input.BranchName
 	branchCreated := input.BranchCreated
-	sourceServerURL, alias, role, state := input.ServerURL, input.Alias, input.Role, input.Workspace
+	sourceServerURL, alias, state := input.ServerURL, input.Alias, input.Workspace
 	apiKey := strings.TrimSpace(state.APIKey)
 	if apiKey == "" {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
@@ -119,7 +118,6 @@ func addWorktreeViaCloudBootstrap(input worktreeAgentCreation) (connectOutput, e
 		RegistryURL:           input.TeamRegistryURL,
 		APIKey:                apiKey,
 		Alias:                 alias,
-		Role:                  role,
 		HumanName:             strings.TrimSpace(state.HumanName),
 		AgentType:             strings.TrimSpace(state.AgentType),
 		Global:                false,
@@ -142,7 +140,7 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 	worktreePath, root, branchName := input.WorktreePath, input.RepoRoot, input.BranchName
 	branchCreated := input.BranchCreated
 	primaryDir, primaryIdentityHome := input.WorkingDir, externalIdentityHomeRoot(input.CreatorHome)
-	sourceServerURL, alias, role, state := input.ServerURL, input.Alias, input.Role, input.Workspace
+	sourceServerURL, alias, state := input.ServerURL, input.Alias, input.Workspace
 	invite, err := createWorkspaceTeamInviteAt(primaryDir, primaryIdentityHome)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
@@ -183,7 +181,7 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
-	connectResult, err := connectProvisionedTeamMembership(provisionedTeamMembership{WorkingDir: worktreePath, Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(worktreePath)}, AwebURL: awebURL, Role: role, HumanName: strings.TrimSpace(state.HumanName), AgentType: strings.TrimSpace(state.AgentType)})
+	connectResult, err := connectProvisionedTeamMembership(provisionedTeamMembership{WorkingDir: worktreePath, Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(worktreePath)}, AwebURL: awebURL, HumanName: strings.TrimSpace(state.HumanName), AgentType: strings.TrimSpace(state.AgentType)})
 	if err != nil {
 		return connectOutput{}, retainWorktreeSetupFailure(worktreeSetupFailure{Creation: input, AwebURL: awebURL, Cause: fmt.Errorf("connect new worktree: %w", err)})
 	}

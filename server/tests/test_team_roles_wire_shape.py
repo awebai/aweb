@@ -21,7 +21,6 @@ from aweb.coordination.routes.team_instructions import (
 from aweb.mcp.auth import AuthContext
 from aweb.mcp.tools import _common as common_tools
 from aweb.mcp.tools import team_instructions as team_instructions_tools
-from aweb.mcp.tools import team_roles as team_roles_tools
 
 
 def test_create_team_roles_request_uses_base_team_roles_id():
@@ -139,42 +138,6 @@ def test_team_instructions_history_response_emits_instruction_versions():
     )
 
 
-class _FakeAwebDB:
-    async def fetch_one(self, _query: str, *_args):
-        return {"role": "developer"}
-
-
-class _FakeDBInfra:
-    def get_manager(self, name: str):
-        assert name == "aweb"
-        return _FakeAwebDB()
-
-
-class _FakeTeamRolesVersion:
-    id = "roles-123"
-    team_id = "backend:acme.com"
-    version = 4
-    created_at = type(
-        "FakeCreatedAt",
-        (),
-        {"isoformat": lambda self: "2026-01-01T00:00:00Z"},
-    )()
-    updated_at = None
-    bundle = type(
-        "FakeBundle",
-        (),
-        {
-            "roles": {
-                "developer": {
-                    "title": "Developer",
-                    "playbook_md": "Ship code",
-                }
-            },
-            "adapters": {},
-        },
-    )()
-
-
 class _FakeInstructionsDB:
     async def fetch_one(self, _query: str, *_args):
         return {
@@ -195,37 +158,6 @@ class _FakeInstructionsDBInfra:
     def get_manager(self, name: str):
         assert name == "aweb"
         return _FakeInstructionsDB()
-
-
-@pytest.mark.asyncio
-async def test_mcp_roles_show_emits_team_roles_ids(monkeypatch):
-    async def fake_get_active_team_roles(*_args, **_kwargs):
-        return _FakeTeamRolesVersion()
-
-    monkeypatch.setattr(
-        common_tools,
-        "get_auth",
-        lambda: AuthContext(
-            certificate_id="cert-1",
-            team_id="backend:acme.com",
-            agent_id="agent-1",
-            alias="alice",
-            did_key="did:key:z6Mkexample",
-        ),
-    )
-    monkeypatch.setattr(
-        team_roles_tools,
-        "get_active_team_roles",
-        fake_get_active_team_roles,
-    )
-
-    payload = await team_roles_tools.roles_show(_FakeDBInfra())
-    data = json.loads(payload)
-
-    assert data["team_roles_id"] == "roles-123"
-    assert data["active_team_roles_id"] == "roles-123"
-    assert data["updated_at"] == "2026-01-01T00:00:00Z"
-    assert data["selected_role"]["role_name"] == "developer"
 
 
 @pytest.mark.asyncio

@@ -28,7 +28,6 @@ TEAM_TOOL_REFUSAL = {
 }
 TEAM_TOOLS = (
     "task_list",
-    "roles_show",
     "instructions_show",
     "workspace_status",
 )

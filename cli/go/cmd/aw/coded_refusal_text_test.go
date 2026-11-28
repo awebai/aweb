@@ -38,10 +38,10 @@ func TestCodedRefusalPrintsTheServersMessage(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{TeamID: "backend:demo", Agents: []awid.AgentView{{AgentID: "agent-bob", Alias: "bob", DIDKey: "did:key:z6Mkbob"}}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
 			coded(w, http.StatusGone, "participant_retired", "bob has moved; start a new mail to bob in ops")
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{"team_roles_id": "roles-1", "active_team_roles_id": "roles-1", "team_id": "backend:demo", "version": 1, "updated_at": "2026-03-10T10:00:00Z", "roles": map[string]any{}, "adapters": map[string]any{}})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/roles":
-			coded(w, http.StatusForbidden, "admin_required", "Only an admin human can publish roles.")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "active_team_instructions_id": "instructions-1", "team_id": "backend:demo", "version": 1, "updated_at": "2026-03-10T10:00:00Z", "document": map[string]any{"body_md": "Old rules.", "format": "markdown"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/instructions":
+			coded(w, http.StatusForbidden, "admin_required", "Only an admin human can publish instructions.")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -65,15 +65,14 @@ func TestCodedRefusalPrintsTheServersMessage(t *testing.T) {
 		return 0, stdout.String(), stderr.String()
 	}
 
-	bundle := `{"roles":{"developer":{"title":"Developer","playbook_md":"Ship code."}}}`
 	for _, tc := range []struct {
 		name, stdin, code, message string
 		args                       []string
 	}{
 		{name: "participant retired", code: "participant_retired", message: "bob has moved; start a new mail to bob in ops",
 			args: []string{"mail", "send", "--to", "bob", "--subject", "Status", "--body", "hello"}},
-		{name: "admin required", stdin: bundle, code: "admin_required", message: "Only an admin human can publish roles.",
-			args: []string{"roles", "set", "--bundle-file", "-"}},
+		{name: "admin required", stdin: "New rules.", code: "admin_required", message: "Only an admin human can publish instructions.",
+			args: []string{"instructions", "set", "--body-file", "-"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			exit, _, stderr := run(tc.stdin, tc.args...)

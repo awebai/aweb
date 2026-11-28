@@ -144,7 +144,7 @@ processes, and session UX.
   scheduled for repositioning.
 - [Tasks and work](tasks-and-work.md) — current optional shared work
   coordination; external task providers remain valid.
-- [Roles, instructions, and locks](roles-instructions-locks.md) — current
+- [Instructions and locks](instructions-and-locks.md) — current
   optional team operating context and resource reservation.
 - [Work across teams](work-across-teams.md) — multi-team identity and messaging.
 - [MCP tutorial](mcp-tutorial.md) — optional MCP client journey scheduled for an

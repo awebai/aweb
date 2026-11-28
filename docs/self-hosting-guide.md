@@ -136,7 +136,6 @@ Useful checks:
 aw workspace status
 aw id show
 aw id cert show
-aw roles show
 ```
 
 ### Reset the Local Stack

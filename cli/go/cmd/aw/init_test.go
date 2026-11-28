@@ -50,7 +50,6 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	defer os.Chdir(origWd)
 
 	initURL = "https://app.aweb.ai"
-	initRole = "reviewer"
 	initGlobal = false
 	initInjectDocs = false
 	initSetupHooks = false
@@ -97,9 +96,6 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	}
 	if captured.HumanName != "" {
 		t.Fatalf("agent human_name=%q, want empty", captured.HumanName)
-	}
-	if captured.Role != "reviewer" {
-		t.Fatalf("role=%q", captured.Role)
 	}
 	if !captured.AskPostCreateSetup {
 		t.Fatal("expected guided onboarding to include post-create setup prompts")
@@ -1592,7 +1588,6 @@ func TestInitUsesImplicitLocalFlowWhenRegistryIsLocalhost(t *testing.T) {
 	oldRegistry := initAWIDRegistry
 	oldCompatURL := initURL
 	oldAlias := initAlias
-	oldRole := initRole
 	oldHumanName := initHumanName
 	oldAgentType := initAgentType
 	oldNewTeam := initNewTeam
@@ -1604,7 +1599,6 @@ func TestInitUsesImplicitLocalFlowWhenRegistryIsLocalhost(t *testing.T) {
 		initAWIDRegistry = oldRegistry
 		initURL = oldCompatURL
 		initAlias = oldAlias
-		initRole = oldRole
 		initHumanName = oldHumanName
 		initAgentType = oldAgentType
 		initNewTeam = oldNewTeam
@@ -1621,7 +1615,6 @@ func TestInitUsesImplicitLocalFlowWhenRegistryIsLocalhost(t *testing.T) {
 	initAwebURL = "http://localhost:8100"
 	initAWIDRegistry = "http://127.0.0.1:8010"
 	initAlias = "alice"
-	initRole = "developer"
 	initHumanName = "Alice Operator"
 	initAgentType = "codex"
 	initNewTeam = true
@@ -1660,9 +1653,6 @@ func TestInitUsesImplicitLocalFlowWhenRegistryIsLocalhost(t *testing.T) {
 	if got.Alias != "alice" {
 		t.Fatalf("alias=%q", got.Alias)
 	}
-	if got.Role != "developer" {
-		t.Fatalf("role=%q", got.Role)
-	}
 	if got.HumanName != "Alice Operator" {
 		t.Fatalf("human_name=%q", got.HumanName)
 	}
@@ -1683,7 +1673,6 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 	oldDomain := initDomain
 	oldAlias := initAlias
 	oldName := initName
-	oldRole := initRole
 	oldPersistent := initGlobal
 	oldNewAccount := initNewAccount
 	t.Cleanup(func() {
@@ -1698,7 +1687,6 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 		initDomain = oldDomain
 		initAlias = oldAlias
 		initName = oldName
-		initRole = oldRole
 		initGlobal = oldPersistent
 		initNewAccount = oldNewAccount
 	})
@@ -1719,7 +1707,6 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 	initDomain = ""
 	initAlias = "laptop"
 	initName = ""
-	initRole = "developer"
 	initGlobal = true
 	initNewAccount = true
 
@@ -1769,7 +1756,6 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 	oldDomain := initDomain
 	oldAlias := initAlias
 	oldName := initName
-	oldRole := initRole
 	oldPersistent := initGlobal
 	oldNewTeam := initNewTeam
 	t.Cleanup(func() {
@@ -1784,7 +1770,6 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 		initDomain = oldDomain
 		initAlias = oldAlias
 		initName = oldName
-		initRole = oldRole
 		initGlobal = oldPersistent
 		initNewTeam = oldNewTeam
 	})
@@ -1805,7 +1790,6 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 	initDomain = "example.com"
 	initAlias = "alice"
 	initName = ""
-	initRole = "developer"
 	initGlobal = false
 	initNewTeam = true
 
@@ -2034,7 +2018,6 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 		AwebURL:     awebServer.URL,
 		RegistryURL: registryServer.URL,
 		Alias:       "alice",
-		Role:        "developer",
 		HumanName:   "Alice Operator",
 		AgentType:   "codex",
 	})
@@ -2059,8 +2042,8 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	if gotCertPayload["member_address"] != nil {
 		t.Fatalf("local cert should carry no member_address: %v", gotCertPayload["member_address"])
 	}
-	if gotConnectBody["role"] != "developer" {
-		t.Fatalf("connect role=%v", gotConnectBody["role"])
+	if role, sent := gotConnectBody["role"]; sent {
+		t.Fatalf("connect sent role %v", role)
 	}
 	if gotConnectBody["human_name"] != "Alice Operator" {
 		t.Fatalf("connect human_name=%v", gotConnectBody["human_name"])

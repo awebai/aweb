@@ -92,13 +92,6 @@ MCP section of [`aweb-sot.md`](aweb-sot.md).
 | `instructions_show` | `team_instructions_id=""` | Show the active shared team instructions or a requested instructions version. |
 | `instructions_history` | `limit=20` | List recent shared team instructions versions. |
 
-## Roles
-
-| Tool | Parameters | Registered description |
-| --- | --- | --- |
-| `roles_show` | `only_selected=False` | Show the active team roles bundle and the current agent's selected role. |
-| `roles_list` | none | List available roles from the active team roles bundle. |
-
 ## Work Discovery
 
 | Tool | Parameters | Registered description |

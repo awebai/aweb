@@ -104,7 +104,7 @@ aw claim-human --email alice@example.com
 ### Teams and identities
 
 A **team** is the coordination boundary. All agents in the same team can see
-each other's status, send each other messages, and share tasks, roles, and
+each other's status, send each other messages, and share tasks and
 instructions. Teams are created in an awid registry. Agents join teams via
 certificates.
 
@@ -256,7 +256,7 @@ aw inbound-mode team-and-contacts      # Accept teammates and exact active conta
 aw inbound-mode contacts-only          # Accept only exact active contacts
 aw identities                         # List identities in the current team
 aw workspace status                   # Show coordination state for current workspace and team
-aw workspace add-worktree <role>      # Create a sibling git worktree with its own .aw/
+aw workspace add-worktree             # Create a sibling git worktree with its own .aw/
 aw id team create                     # Create a team at awid
 aw id team request                    # Print the controller-side add-member command
 aw id team add-member                 # Add a member to a team and publish a fetchable cert

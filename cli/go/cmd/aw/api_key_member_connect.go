@@ -29,7 +29,6 @@ func connectAPIKeyInitializedMember(input apiKeyMemberConnection) (connectOutput
 		RegistryOperatorOrigin: operatorRegistryOrigin(input.TeamRegistryURL, ""),
 		ContextFile:            req.ContextFile,
 		EncryptionPublication:  req.EncryptionPublication,
-		Role:                   strings.TrimSpace(req.Role),
 		HumanName:              strings.TrimSpace(req.HumanName),
 		AgentType:              strings.TrimSpace(req.AgentType),
 		APIKey:                 strings.TrimSpace(input.WorkspaceAPIKey),

@@ -112,14 +112,6 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 					"escalations_pending": 0,
 					"timestamp":           "2026-07-25T00:00:00Z",
 				})
-			case r.Method == http.MethodGet && r.URL.Path == "/v1/roles/active":
-				requireCertificateAuthForTest(t, r)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"team_roles_id": "roles-1",
-					"roles": map[string]any{
-						"developer": map[string]any{"title": "Developer"},
-					},
-				})
 			case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 				requireCertificateAuthForTest(t, r)
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -290,13 +282,13 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 	assertInstanceStateAbsent("team request")
 
 	addShadow := seedLocalShadow()
-	addOut := run("workspace", "add-worktree", "developer", "--name", "charlie", "--json")
+	addOut := run("workspace", "add-worktree", "--name", "charlie", "--json")
 	var added workspaceAddWorktreeOutput
 	if err := json.Unmarshal(extractJSON(t, addOut), &added); err != nil {
 		t.Fatal(err)
 	}
 	child := filepath.Join(canonicalTmp, "repo-charlie")
-	if added.Alias != "charlie" || added.Role != "developer" || added.WorktreePath != child {
+	if added.Alias != "charlie" || added.WorktreePath != child {
 		t.Fatalf("add-worktree output=%+v", added)
 	}
 	var registered map[string]any

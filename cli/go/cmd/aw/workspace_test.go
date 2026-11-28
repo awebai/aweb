@@ -250,7 +250,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 		"- Claims: TASK-001 \"Own task\" (claim age: months)",
 		"- Locks: src/main.go (TTL:",
 		"## Team",
-		"bob (reviewer) — idle, seen ",
+		"bob — idle, seen ",
 		"Host: reviewbox  Path: /Users/bob/repo-other",
 		"Repo: github.com/acme/other  Branch: review-branch",
 		"Focus: TASK-900 \"Review release\"",
@@ -259,7 +259,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 		"Locks: src/review.go (TTL:",
 		"reason: review follow-up",
 		"### Unknown repo",
-		"carol (developer) — active",
+		"carol — active",
 		"Team roster incomplete: showing at most 50 workspaces.",
 		"Escalations pending: 2",
 		"Claim conflicts: 1",
@@ -270,6 +270,39 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	}
 	if strings.Contains(text, "[stale]") {
 		t.Fatalf("workspace output must report claim age without a stale-policy verdict:\n%s", text)
+	}
+	for _, role := range []string{"Role:", "(reviewer)", "(developer)"} {
+		if strings.Contains(text, role) {
+			t.Fatalf("workspace status printed a team role %q:\n%s", role, text)
+		}
+	}
+
+	// The released OATS roster reads role from each team entry and from
+	// workspace, so it stays present and is always empty.
+	runJSON := exec.CommandContext(ctx, bin, "workspace", "status", "--json")
+	runJSON.Env = testCommandEnv(tmp)
+	runJSON.Dir = tmp
+	jsonOut, err := runJSON.Output()
+	if err != nil {
+		t.Fatalf("run --json failed: %v\n%s", err, jsonOut)
+	}
+	var status struct {
+		Workspace map[string]any   `json:"workspace"`
+		Team      []map[string]any `json:"team"`
+	}
+	if err := json.Unmarshal(jsonOut, &status); err != nil {
+		t.Fatalf("decode status: %v\n%s", err, jsonOut)
+	}
+	if role, ok := status.Workspace["role"]; !ok || role != "" {
+		t.Fatalf("workspace role = %v (present %v), want an empty string", role, ok)
+	}
+	if len(status.Team) == 0 {
+		t.Fatalf("status has no team entries:\n%s", jsonOut)
+	}
+	for _, entry := range status.Team {
+		if role, ok := entry["role"]; !ok || role != "" {
+			t.Fatalf("team entry %v role = %v (present %v), want an empty string", entry["alias"], role, ok)
+		}
 	}
 }
 
@@ -373,7 +406,7 @@ func TestAwWorkspaceStatusAllShowsAllMemberships(t *testing.T) {
 		t.Fatalf("default text status failed: %v\n%s", err, string(defaultTextOut))
 	}
 	defaultText := string(defaultTextOut)
-	if !strings.Contains(defaultText, "- Memberships: backend:demo (developer) [active]") {
+	if !strings.Contains(defaultText, "- Memberships: backend:demo [active]") {
 		t.Fatalf("default text missing active membership summary:\n%s", defaultText)
 	}
 	if strings.Contains(defaultText, "design:demo") || strings.Contains(defaultText, "ops:demo") {
@@ -416,7 +449,7 @@ func TestAwWorkspaceStatusAllShowsAllMemberships(t *testing.T) {
 	}
 	allText := string(allTextOut)
 	for _, want := range []string{
-		"- Memberships: backend:demo (developer) [active], design:demo (designer), ops:demo (operator)",
+		"- Memberships: backend:demo [active], design:demo, ops:demo",
 	} {
 		if !strings.Contains(allText, want) {
 			t.Fatalf("all text missing %q:\n%s", want, allText)
@@ -511,7 +544,7 @@ func TestAwWorkspaceStatusWithoutLocalWorkspaceShowsAgentContext(t *testing.T) {
 		"- Claims: none",
 		"- Locks: none",
 		"## Team",
-		"reviewer-jane (coordinator) — active",
+		"reviewer-jane — active",
 		"Repo: github.com/acme/ac",
 		"Focus: none",
 		"Epic: EPIC-22 (Release coordination)",
@@ -1092,7 +1125,7 @@ func TestAwWorkspaceAddWorktreeRejectsTrackedAwebRuntimeState(t *testing.T) {
 	runGitForTest(t, repo, "add", ".aw")
 	runGitForTest(t, repo, "commit", "-m", "Accidentally track aw runtime")
 
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--name", "bob")
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "--name", "bob")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -1173,14 +1206,6 @@ func testHeadlessControllerWorktree(t *testing.T, teamReadStatus int) {
 				"current_did_key": parentDID,
 				"id_tree":         map[string]any{"enrolled": false},
 			})
-		case "/v1/roles/active":
-			requireCertificateAuthForTest(t, r)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "pol-1",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
 		case "/v1/agents/suggest-alias-prefix":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1200,9 +1225,8 @@ func testHeadlessControllerWorktree(t *testing.T, teamReadStatus int) {
 			if value, ok := connectBody["repo_origin"]; ok {
 				t.Fatalf("connect request must not carry repo_origin; got %v", value)
 			}
-			role, _ := connectBody["role"].(string)
-			if role != "developer" {
-				t.Fatalf("role=%q", role)
+			if role, sent := connectBody["role"]; sent {
+				t.Fatalf("connect sent role %v", role)
 			}
 			path, _ := connectBody["workspace_path"].(string)
 			if !strings.HasSuffix(path, string(filepath.Separator)+"repo-charlie") {
@@ -1245,7 +1269,7 @@ func testHeadlessControllerWorktree(t *testing.T, teamReadStatus int) {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree")
 	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	if teamReadStatus != 0 {
 		run.Env = append(run.Env, "AWEB_API_KEY="+ambientKey)
@@ -1411,18 +1435,6 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: agents})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/conversations"):
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/roles/active"):
-			http.NotFound(w, r)
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/roles/active"):
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "roles-1",
-				"team_id":       teamID,
-				"version":       1,
-				"updated_at":    "2026-04-16T00:00:00Z",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/workspaces/team"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"workspaces": []map[string]any{{
@@ -1592,7 +1604,7 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		return string(out)
 	}
 
-	runAW(repo, "workspace", "add-worktree", "developer", "--name", "charlie")
+	runAW(repo, "workspace", "add-worktree", "--name", "charlie")
 	child := filepath.Join(tmp, "repo-charlie")
 	if _, err := os.Stat(child); err != nil {
 		t.Fatalf("expected child worktree: %v", err)
@@ -1776,16 +1788,6 @@ func TestExplicitSetupKeyAddWorktreeMailRoundTrip(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: agents})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/conversations"):
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/roles/active"):
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "roles-1",
-				"team_id":       teamID,
-				"version":       1,
-				"updated_at":    "2026-04-16T00:00:00Z",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/workspaces/team"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"workspaces": []map[string]any{{
@@ -1889,7 +1891,7 @@ func TestExplicitSetupKeyAddWorktreeMailRoundTrip(t *testing.T) {
 	baseEnv := withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWEB_API_KEY", "AWID_REGISTRY_URL")
 	discoveryEnv := append(append([]string{}, baseEnv...), "AW_TEST_WORKTREE_DISCOVERY=1")
 	initEnv := append(append([]string{}, discoveryEnv...), "AWEB_API_KEY="+apiKey)
-	runAW(repo, initEnv, "init", "--aweb-url", hostedURL, "--name", "alice", "--role", "developer")
+	runAW(repo, initEnv, "init", "--aweb-url", hostedURL, "--name", "alice")
 	initReads := discoveryReads.Load()
 	if initReads == 0 {
 		t.Fatal("default API-key init did not attempt team registry discovery")
@@ -1907,7 +1909,7 @@ func TestExplicitSetupKeyAddWorktreeMailRoundTrip(t *testing.T) {
 		t.Fatalf("parent local cert member_did_aw=%q", parentCert.MemberDIDAW)
 	}
 
-	runAW(repo, discoveryEnv, "workspace", "add-worktree", "developer", "--name", "charlie")
+	runAW(repo, discoveryEnv, "workspace", "add-worktree", "--name", "charlie")
 	if discoveryReads.Load() <= initReads {
 		t.Fatal("default worktree creation did not attempt team registry discovery")
 	}
@@ -2080,14 +2082,6 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/roles/active":
-			requireCertificateAuthForTest(t, r)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "pol-1",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
 		case "/v1/workspaces/team":
 			requireCertificateAuthForTest(t, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2120,7 +2114,7 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 		t.Fatalf("seed .aw/context: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--name", "bob")
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "--name", "bob")
 	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
@@ -2154,19 +2148,12 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 
 			var createInviteHit atomic.Bool
 			var workspaceInitHit atomic.Bool
-			var connectRole string
+			var connectSentRole bool
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/v1/roles/active":
-					_ = json.NewEncoder(w).Encode(map[string]any{
-						"team_roles_id": "roles-1",
-						"roles": map[string]any{
-							"frontend": map[string]any{"title": "Frontend"},
-						},
-					})
 				case "/v1/agents/suggest-alias-prefix":
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"team_id":     teamID,
@@ -2238,11 +2225,11 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 					if cert.Alias != "alice" {
 						t.Fatalf("connect alias=%q", cert.Alias)
 					}
-					var body connectRequest
+					var body map[string]any
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Fatalf("decode connect body: %v", err)
 					}
-					connectRole = body.Role
+					_, connectSentRole = body["role"]
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"team_id":      teamID,
 						"alias":        "alice",
@@ -2250,7 +2237,6 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 						"workspace_id": "ws-alice",
 						"repo_id":      "repo-alice",
 						"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
-						"role":         body.Role,
 					})
 				case "/v1/agents/me/encryption-key":
 					writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", teamID, "alice")
@@ -2300,7 +2286,7 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 			}
 			shadowBefore := fileDigestsForTest(t, filepath.Join(repo, ".aw"))
 
-			run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree", "frontend")
+			run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree")
 			run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY="+test.ambientKey)
 			run.Stdin = strings.NewReader("")
 			run.Dir = repo
@@ -2314,8 +2300,8 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 			if workspaceInitHit.Load() {
 				t.Fatal("unexpected workspace init call")
 			}
-			if connectRole != "frontend" {
-				t.Fatalf("connect role=%q, want frontend", connectRole)
+			if connectSentRole {
+				t.Fatal("add-worktree sent a role to connect")
 			}
 			if !strings.Contains(string(out), "New agent worktree created at") || !strings.Contains(string(out), "alice") {
 				t.Fatalf("unexpected output:\n%s", string(out))
@@ -2371,13 +2357,6 @@ func TestAwWorkspaceAddWorktreeUsesStoredKeyInSelectedHome(t *testing.T) {
 				return
 			}
 			serveAPIKeyCreationTeamRead(w, r, teamID)
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "pol-1",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
 		case "/v1/agents/suggest-alias-prefix":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_id":     teamID,
@@ -2463,7 +2442,7 @@ func TestAwWorkspaceAddWorktreeUsesStoredKeyInSelectedHome(t *testing.T) {
 		t.Fatalf("seed principal context: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree", "developer")
+	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree")
 	run.Env = append(testCommandEnv(tmp), "AWEB_API_KEY=aw_sk_person_setup")
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
@@ -2529,7 +2508,7 @@ func TestAwWorkspaceAddWorktreeRequiresGitWorktree(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeWorkspaceBindingForTest(t, tmp, workspaceBinding("https://example.com", "backend:source", "alice", "source-1"))
 
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
+	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree")
 	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = tmp

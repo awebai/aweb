@@ -1708,7 +1708,7 @@ func sortedReservedRootCommandNames() []string {
 // for their users.
 func reservedRootCommandNames() map[string]bool {
 	reserved := builtinRootCommandNames()
-	for _, name := range []string{"agent", "blueprint", "run"} {
+	for _, name := range []string{"agent", "blueprint", "role-name", "roles", "run"} {
 		reserved[name] = true
 	}
 	return reserved

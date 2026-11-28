@@ -166,8 +166,6 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": canonical, "api_key_kind": "workspace"})
 				case "/api/v1/discovery", "/v1/discovery":
 					json.NewEncoder(w).Encode(map[string]string{"aweb_url": origin, "registry_url": registryURL})
-				case "/v1/roles/active", "/api/v1/roles/active":
-					json.NewEncoder(w).Encode(map[string]any{"roles": map[string]any{"developer": map[string]any{"description": "Develop"}}})
 				case "/v1/workspaces/team":
 					json.NewEncoder(w).Encode(map[string]any{"workspaces": []any{}})
 				case "/v1/agents", "/api/v1/agents":

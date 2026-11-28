@@ -24,20 +24,18 @@ const (
 	doctorCheckServerVersion           = "server.aweb_url.version_header"
 	doctorCheckServerTeamAuth          = "server.auth.team_certificate_request"
 
-	doctorCheckWorkspaceTeamRead       = "workspace.server.team_read"
-	doctorCheckWorkspaceCurrentRow     = "workspace.server.current_row"
-	doctorCheckWorkspaceIdentityMatch  = "workspace.server.identity_matches_local"
-	doctorCheckWorkspaceDeletedState   = "workspace.server.deleted_state"
-	doctorCheckWorkspacePresence       = "workspace.server.presence_visible"
-	doctorCheckWorkspaceReadOnly       = "workspace.lifecycle.read_only_invariant"
-	doctorCheckTeamRolesRead           = "team.server.roles_read"
-	doctorCheckTeamSelectedRoleMatches = "team.server.selected_role_matches_local"
-	doctorCheckTeamMembershipAuth      = "team.server.membership_authorized"
-	doctorCheckCoordinationStatusRead  = "coordination.server.status_read"
-	doctorCheckCoordinationClaims      = "coordination.server.claims_visible"
-	doctorCheckCoordinationCoherence   = "coordination.server.claims_coherent"
-	doctorCheckCoordinationLocks       = "coordination.server.locks_visible"
-	doctorCheckCoordinationConflicts   = "coordination.server.conflicts_visible"
+	doctorCheckWorkspaceTeamRead      = "workspace.server.team_read"
+	doctorCheckWorkspaceCurrentRow    = "workspace.server.current_row"
+	doctorCheckWorkspaceIdentityMatch = "workspace.server.identity_matches_local"
+	doctorCheckWorkspaceDeletedState  = "workspace.server.deleted_state"
+	doctorCheckWorkspacePresence      = "workspace.server.presence_visible"
+	doctorCheckWorkspaceReadOnly      = "workspace.lifecycle.read_only_invariant"
+	doctorCheckTeamMembershipAuth     = "team.server.membership_authorized"
+	doctorCheckCoordinationStatusRead = "coordination.server.status_read"
+	doctorCheckCoordinationClaims     = "coordination.server.claims_visible"
+	doctorCheckCoordinationCoherence  = "coordination.server.claims_coherent"
+	doctorCheckCoordinationLocks      = "coordination.server.locks_visible"
+	doctorCheckCoordinationConflicts  = "coordination.server.conflicts_visible"
 )
 
 type doctorAwebState struct {
@@ -117,8 +115,6 @@ func (r *doctorRunner) runWorkspaceDoctorChecks() {
 func (r *doctorRunner) runTeamDoctorChecks() {
 	state := collectDoctorAwebStateAt(r.workingDir, r.identityHome)
 	networkIDs := []string{
-		doctorCheckTeamRolesRead,
-		doctorCheckTeamSelectedRoleMatches,
 		doctorCheckTeamMembershipAuth,
 	}
 	if state.hasNoWorkspaceContext() {
@@ -496,39 +492,21 @@ func (r *doctorRunner) addTeamOnlineChecks(state *doctorAwebState, client *aweb.
 	registry, err := newRegistryClientWithPreferredBaseURL(state.registryURL)
 	if err != nil {
 		r.add(awebCheck(doctorCheckTeamMembershipAuth, doctorStatusUnknown, nil, "Current team membership is unknown: registry configuration could not be read.", "Repair the selected registry configuration and retry aw doctor --online.", map[string]any{"error": err.Error()}))
-		r.addBlockedAwebChecks([]string{doctorCheckTeamRolesRead, doctorCheckTeamSelectedRoleMatches}, doctorCheckTeamMembershipAuth)
 		return
 	}
 	membership := doctorCurrentTeamCertificate(ctx, registry, awid.CurrentTeamCertificateCheck{RegistryURL: state.registryURL, Certificate: state.cert})
 	if membership.Status != doctorStatusOK {
 		r.add(membership)
-		r.addBlockedAwebChecks([]string{doctorCheckTeamRolesRead, doctorCheckTeamSelectedRoleMatches}, doctorCheckTeamMembershipAuth)
 		return
 	}
-	localRole := ""
-	if state.membership != nil {
-		localRole = strings.TrimSpace(state.membership.RoleName)
-	}
-	roles, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{
-		RoleName:     localRole,
-		OnlySelected: localRole != "",
-	})
+	// The team the server authenticates this certificate into, read from the
+	// agent roster, must be the certificate's own team.
+	agents, err := client.ListAgents(ctx)
 	if err != nil {
-		r.addAwebHTTPErrorCheck(doctorCheckTeamRolesRead, err, "Active team roles read failed.", "Retry with the active workspace certificate or repair local team credentials.")
-		r.addBlockedAwebChecks([]string{doctorCheckTeamSelectedRoleMatches, doctorCheckTeamMembershipAuth}, doctorCheckTeamRolesRead)
+		r.addAwebHTTPErrorCheck(doctorCheckTeamMembershipAuth, err, "Team agents read failed.", "Retry with the active workspace certificate or repair local team credentials.")
 		return
 	}
-	r.add(awebCheck(doctorCheckTeamRolesRead, doctorStatusOK, &doctorTarget{Type: "team", ID: strings.TrimSpace(roles.TeamID)}, "Active team roles read succeeded.", "", map[string]any{"team_id": strings.TrimSpace(roles.TeamID), "version": roles.Version}))
-	selectedRole := ""
-	if roles.SelectedRole != nil {
-		selectedRole = strings.TrimSpace(roles.SelectedRole.RoleName)
-	}
-	if localRole != "" && selectedRole != "" && localRole != selectedRole {
-		r.add(awebCheck(doctorCheckTeamSelectedRoleMatches, doctorStatusWarn, &doctorTarget{Type: "team", ID: strings.TrimSpace(roles.TeamID)}, "Selected server role differs from local membership role_name.", "Switch roles or repair local workspace metadata if this is unexpected.", map[string]any{"local_role_name": localRole, "server_role_name": selectedRole}))
-	} else {
-		r.add(awebCheck(doctorCheckTeamSelectedRoleMatches, doctorStatusOK, &doctorTarget{Type: "team", ID: strings.TrimSpace(roles.TeamID)}, "Selected team role is coherent where visible.", "", map[string]any{"local_role_name": localRole, "server_role_name": selectedRole}))
-	}
-	serverTeamID := strings.TrimSpace(roles.TeamID)
+	serverTeamID := strings.TrimSpace(agents.TeamID)
 	localTeamID := ""
 	if state.cert != nil {
 		localTeamID = strings.TrimSpace(state.cert.Team)

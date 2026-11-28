@@ -2761,16 +2761,6 @@ echo "  PASS: lock released"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 15: Roles
-# ---------------------------------------------------------------------------
-echo "=== Phase 15: Roles ==="
-
-capture_success roles_out "roles_out" run_aw_in "$ALICE_DIR" roles show
-roles_exit=$?
-assert_eq "roles show exit" "0" "$roles_exit"
-echo ""
-
-# ---------------------------------------------------------------------------
 # Phase 16: Verify team at awid
 # ---------------------------------------------------------------------------
 echo "=== Phase 16: Verify team at awid ==="

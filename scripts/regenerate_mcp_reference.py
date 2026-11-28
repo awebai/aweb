@@ -47,7 +47,6 @@ CANONICAL_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     ("Instructions", ("instructions_show", "instructions_history")),
-    ("Roles", ("roles_show", "roles_list")),
     ("Work Discovery", ("work_ready", "work_active", "work_blocked")),
     ("Workspace Coordination", ("workspace_status",)),
     (

@@ -71,7 +71,7 @@ func resumeSignupFromInit(input initSignupResumeInput) (initDispatchResult, erro
 		ContextFile: input.Identity.ContextFile,
 		WorkingDir:  input.WorkingDir, PromptIn: os.Stdin, PromptOut: input.Command.ErrOrStderr(), BaseURL: baseURL,
 		Username: strings.TrimSpace(initUsername), Alias: firstNonEmptyString(initName, initAlias),
-		Role: input.Identity.Role, HumanName: input.Identity.HumanName, AgentType: input.Identity.AgentType,
+		HumanName: input.Identity.HumanName, AgentType: input.Identity.AgentType,
 		Global: initGlobal, InboundMode: canonicalInitInboundModeForWire(initInboundMode),
 		InjectAgentDocs: initInjectDocs, DoNotTouchAgentsMD: initDoNotTouchAgentsMD, NonInteractive: !initIsTTY() || jsonFlag,
 	}, state)

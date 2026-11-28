@@ -67,7 +67,6 @@ var (
 	initAgentType          string
 	initWriteContext       bool
 	initPrintExports       bool
-	initRole               string
 	initGlobal             bool
 	initInboundMode        string
 	initJoinFrom           string
@@ -139,7 +138,6 @@ func init() {
 	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime label (default: AWEB_AGENT_TYPE or agent; human kind is verified by the server)")
 	initCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Ensure .aw/context exists in the current directory")
 	initCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
-	addWorkspaceRoleFlags(initCmd, &initRole, "Workspace role name (must match a role in the active team roles bundle)")
 	initCmd.Flags().BoolVar(&initGlobal, "global", false, "Create an addressed self-custodial global identity instead of the default local workspace")
 	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|team-and-contacts|contacts-only). Only valid with --global.")
 	initCmd.Flags().StringVar(&initInvite, "invite", "", "Join this invite with an independently selected creator")
@@ -158,11 +156,6 @@ func init() {
 	initCmd.Flags().StringVar(&initTeam, "team", "", "Name of the team --new-team creates on a local (localhost) awid registry (default: default)")
 
 	rootCmd.AddCommand(initCmd)
-}
-
-func addWorkspaceRoleFlags(cmd *cobra.Command, target *string, description string) {
-	cmd.Flags().StringVar(target, "role-name", "", description)
-	cmd.Flags().StringVar(target, "role", "", "Compatibility alias for --role-name")
 }
 
 func validateInitOutcomeFlags(input initInviteInput) error {
@@ -387,7 +380,6 @@ func dispatchExplicitInitOutcome(cmd *cobra.Command, input initInviteInput) (ini
 
 type initIdentityInput struct {
 	ContextFile workspaceContextPolicy
-	Role        string
 	HumanName   string
 	AgentType   string
 }
@@ -398,7 +390,6 @@ type initIdentityInput struct {
 func initConnectIdentity(input initIdentityInput) certificateConnectOptions {
 	return certificateConnectOptions{
 		ContextFile: input.ContextFile,
-		Role:        resolveRequestedRole(strings.TrimSpace(input.Role)),
 		HumanName:   strings.TrimSpace(input.HumanName),
 		AgentType:   resolveAgentTypeValue(strings.TrimSpace(input.AgentType)),
 	}
@@ -594,11 +585,10 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, request initInviteConnection
 }
 
 func connectInitAcceptedInvite(cmd *cobra.Command, workingDir, awebURL string, home awconfig.IdentityHome) error {
-	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
+	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), HumanName: initHumanName, AgentType: initAgentType})
 	result, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
 		IdentityHome: home.Root,
 		ContextFile:  identity.ContextFile,
-		Role:         identity.Role,
 		HumanName:    identity.HumanName,
 		AgentType:    identity.AgentType,
 	})
@@ -661,7 +651,7 @@ func filepathAbs(path string) (string, error) {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
+	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), HumanName: initHumanName, AgentType: initAgentType})
 	if activeHuman != nil {
 		return runHumanConnect(cmd)
 	}
@@ -771,7 +761,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 				RegistryURL: registryURL,
 				Alias:       resolveAliasValue(resolveInitLocalName()),
 				TeamName:    strings.TrimSpace(initTeam),
-				Role:        identity.Role,
 				HumanName:   identity.HumanName,
 				AgentType:   identity.AgentType,
 			})
@@ -826,7 +815,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 			Name:               resolveInitGlobalName(identityScopeFromFlags(identityScopeFlags{Global: initGlobal})),
 			HumanName:          identity.HumanName,
 			AgentType:          identity.AgentType,
-			Role:               identity.Role,
 			Global:             initGlobal,
 			InboundMode:        canonicalInitInboundModeForWire(initInboundMode),
 			InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,
@@ -872,7 +860,7 @@ type initAPIKeySelection struct {
 }
 
 func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
-	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
+	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), HumanName: initHumanName, AgentType: initAgentType})
 	// A roster request can omit agent_type. Preserve that exact wire choice
 	// on native recovery unless the operator explicitly supplies a value.
 	if selected.Recovery != nil && firstNonEmpty(initAgentType, os.Getenv("AWEB_AGENT_TYPE")) == "" {
@@ -907,7 +895,6 @@ func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 		APIKey:       apiKey,
 		Name:         resolveInitGlobalName(identityScopeFromFlags(identityScopeFlags{Global: initGlobal})),
 		Alias:        requestedAlias,
-		Role:         identity.Role,
 		HumanName:    identity.HumanName,
 		AgentType:    identity.AgentType,
 		Global:       initGlobal,
@@ -928,7 +915,7 @@ func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 }
 
 func runInitFromExistingCertificate(cmd *cobra.Command) (initDispatchResult, error) {
-	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
+	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), HumanName: initHumanName, AgentType: initAgentType})
 	wd, err := os.Getwd()
 	if err != nil {
 		return initDispatchComplete, err
@@ -956,7 +943,6 @@ func runInitFromExistingCertificate(cmd *cobra.Command) (initDispatchResult, err
 		}
 		result, err := initCertificateConnectWithOptions(wd, serviceURLs.AwebURL, certificateConnectOptions{
 			ContextFile: identity.ContextFile,
-			Role:        identity.Role,
 			HumanName:   identity.HumanName,
 			AgentType:   identity.AgentType,
 		})
@@ -1132,7 +1118,7 @@ func initShouldUseImplicitLocalFlow(registryURL string) bool {
 // escalate to full init because it changes identity/team state or has no
 // existing workspace to operate on.
 func initNeedsFullInitForAddonOnly() (bool, error) {
-	if initBYOD || initUsername != "" || initDomain != "" || initAlias != "" || initName != "" || initRole != "" || initGlobal {
+	if initBYOD || initUsername != "" || initDomain != "" || initAlias != "" || initName != "" || initGlobal {
 		return true, nil
 	}
 	wd, err := os.Getwd()

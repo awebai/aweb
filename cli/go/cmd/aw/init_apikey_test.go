@@ -215,7 +215,7 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 			if keyKind != creationKeyKindUnspecified {
 				bin := filepath.Join(t.TempDir(), "aw")
 				buildAwBinary(t, context.Background(), bin)
-				command := exec.Command(bin, "init", "--name", "requested-alias", "--role", "backend", "--json", "--do-not-touch-agents-md")
+				command := exec.Command(bin, "init", "--name", "requested-alias", "--json", "--do-not-touch-agents-md")
 				command.Dir = tmp
 				command.Env = append(testCommandEnv(t.TempDir()), "AWEB_URL="+externalLikeTestURL(t, server.URL), "AWEB_API_KEY="+apiKey, "AWID_REGISTRY_URL="+server.URL)
 				var stderr bytes.Buffer
@@ -234,7 +234,6 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 					AwebURL:     externalLikeTestURL(t, server.URL),
 					APIKey:      apiKey,
 					Alias:       "requested-alias",
-					Role:        "backend",
 				})
 				if err != nil {
 					t.Fatalf("runAPIKeyBootstrapInit: %v", err)
@@ -248,8 +247,8 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 			if initBody["alias"] != "requested-alias" {
 				t.Fatalf("init alias=%v", initBody["alias"])
 			}
-			if initBody["role_name"] != "backend" {
-				t.Fatalf("init role_name=%v", initBody["role_name"])
+			if roleName, sent := initBody["role_name"]; sent {
+				t.Fatalf("init sent role_name %v", roleName)
 			}
 			if _, ok := initBody["lifetime"]; ok {
 				t.Fatalf("workspace init request must not send lifetime: %v", initBody["lifetime"])
@@ -266,8 +265,8 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 			if _, ok := initBody["address"]; ok {
 				t.Fatalf("local CLI workspace bootstrap must not request an address: %v", initBody["address"])
 			}
-			if connectBody["role"] != "backend" {
-				t.Fatalf("connect role=%v", connectBody["role"])
+			if role, sent := connectBody["role"]; sent {
+				t.Fatalf("connect sent role %v", role)
 			}
 			if result.TeamID != "backend:acme.com" {
 				t.Fatalf("team_id=%q", result.TeamID)
@@ -455,7 +454,7 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	tmp := t.TempDir()
 	bin := filepath.Join(t.TempDir(), "aw")
 	buildAwBinary(t, t.Context(), bin)
-	command := exec.CommandContext(t.Context(), bin, "init", "--global", "--name", "alice", "--do-not-touch-agents-md", "--json", "--role", "backend", "--human-name", "Alice", "--agent-type", "codex")
+	command := exec.CommandContext(t.Context(), bin, "init", "--global", "--name", "alice", "--do-not-touch-agents-md", "--json", "--human-name", "Alice", "--agent-type", "codex")
 	command.Dir = tmp
 	command.Env = append(testCommandEnv(t.TempDir()), "AWEB_URL="+externalLikeTestURL(t, server.URL), "AWEB_API_KEY="+apiKey, "AWID_REGISTRY_URL="+server.URL)
 	var stderr bytes.Buffer
@@ -561,6 +560,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 
 	var registeredDIDKeys []string
 	var workspaceInitDIDKeys []string
+	var workspaceInitRoleNames []any
 	var workspaceInitCalls int
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
@@ -602,6 +602,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 			}
 			didKey, _ := body["did"].(string)
 			workspaceInitDIDKeys = append(workspaceInitDIDKeys, didKey)
+			workspaceInitRoleNames = append(workspaceInitRoleNames, body["role_name"])
 			if workspaceInitCalls == 1 {
 				http.Error(w, `{"detail":"temporary workspace failure"}`, http.StatusInternalServerError)
 				return
@@ -668,7 +669,6 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 		RegistryURL: server.URL,
 		APIKey:      "aw_sk_test_persistent_resume",
 		Name:        "alice",
-		Role:        "backend",
 		Global:      true,
 	}
 
@@ -686,6 +686,21 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 		t.Fatal("AWEB_API_KEY was written to partial init state")
 	}
 
+	// A partial init that a released aw saved carries the role it sent, and the
+	// hosted init binds that role into the request it replays.
+	partialPath := apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)})
+	partial, err := loadAPIKeyPartialInit(partialPath)
+	if err != nil || partial == nil {
+		t.Fatalf("load partial init: %v", err)
+	}
+	if partial.RoleName != "" {
+		t.Fatalf("new partial init saved role_name %q", partial.RoleName)
+	}
+	partial.RoleName = "backend"
+	if err := saveAPIKeyPartialInit(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)}, partial); err != nil {
+		t.Fatal(err)
+	}
+
 	result, err := runAPIKeyBootstrapInit(req)
 	if err != nil {
 		t.Fatalf("retry runAPIKeyBootstrapInit: %v", err)
@@ -701,6 +716,9 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 	}
 	if len(workspaceInitDIDKeys) != 2 || workspaceInitDIDKeys[0] != workspaceInitDIDKeys[1] {
 		t.Fatalf("workspace init DID keys=%v", workspaceInitDIDKeys)
+	}
+	if len(workspaceInitRoleNames) != 2 || workspaceInitRoleNames[0] != nil || workspaceInitRoleNames[1] != "backend" {
+		t.Fatalf("workspace init role_name values=%v, want none on the new request and the saved role on the replay", workspaceInitRoleNames)
 	}
 	signingKey, err := awid.LoadSigningKey(filepath.Join(tmp, ".aw", "signing.key"))
 	if err != nil {
@@ -724,7 +742,6 @@ func TestRunAPIKeyBootstrapInitGlobalRejectsPartialContextMismatch(t *testing.T)
 		RegistryURL: "https://registry.example",
 		APIKey:      "aw_sk_test_partial_mismatch",
 		Name:        "alice",
-		Role:        "backend",
 		Global:      true,
 	}
 	material, err := generateAPIKeyBootstrapIdentity()

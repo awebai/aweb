@@ -110,13 +110,6 @@ func TestAwWorkspaceAddWorktreeRefusesAnUnconfirmedTeamKey(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "pol-1",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
 		case "/v1/agents/suggest-alias-prefix":
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "name_prefix": "grace"})
 		case "/api/v1/workspaces/init":
@@ -158,7 +151,7 @@ func TestAwWorkspaceAddWorktreeRefusesAnUnconfirmedTeamKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree", "developer")
+	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree")
 	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo

@@ -43,11 +43,12 @@ func TestReservedAppIDsArtifactMatchesLiveCobraReservedNames(t *testing.T) {
 	}
 }
 
-// Released aw binaries still carry `aw agent`, `aw blueprint` and `aw run`, so
-// an app with one of those ids would collide with that command for their users.
+// Released aw binaries still carry `aw agent`, `aw blueprint`, `aw role-name`,
+// `aw roles` and `aw run`, so an app with one of those ids would collide with
+// that command for their users.
 func TestReservedAppIDsKeepTheCommandNamesOfReleasedAw(t *testing.T) {
 	reserved := reservedRootCommandNames()
-	for _, name := range []string{"agent", "blueprint", "run"} {
+	for _, name := range []string{"agent", "blueprint", "role-name", "roles", "run"} {
 		if !reserved[name] {
 			t.Errorf("app id %q is not reserved", name)
 		}
@@ -283,7 +284,7 @@ printf 'AW_DID=%s\n' "$AW_DID"
 
 	// A word reserved only as an app id is an ordinary argument to a plugin:
 	// it does not end the scan for a trailing --identity-home.
-	for _, word := range []string{"agent", "blueprint", "run"} {
+	for _, word := range []string{"agent", "blueprint", "role-name", "roles", "run"} {
 		runTrailing := exec.CommandContext(ctx, bin, "hello", word, "--identity-home", identityHome)
 		runTrailing.Dir = tmp
 		runTrailing.Env = append(os.Environ(), "HOME="+home, "PATH="+pathDir+string(os.PathListSeparator)+os.Getenv("PATH"), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=")

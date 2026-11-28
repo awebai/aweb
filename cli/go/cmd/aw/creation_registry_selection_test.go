@@ -158,10 +158,6 @@ func TestWorkspaceAddWorktreeChecksTheSelectedMembershipRegistry(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "roles", "roles": map[string]any{"developer": map[string]any{"title": "Developer"}},
-			})
 		case "/v1/agents/suggest-alias-prefix":
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "name_prefix": "child"})
 		case "/api/v1/workspaces/init":
@@ -242,7 +238,7 @@ func TestWorkspaceAddWorktreeChecksTheSelectedMembershipRegistry(t *testing.T) {
 			defer cancel()
 			bin := filepath.Join(root, "aw")
 			buildAwBinary(t, ctx, bin)
-			command := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
+			command := exec.CommandContext(ctx, bin, "workspace", "add-worktree")
 			command.Dir = repo
 			command.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+tc.envOrigin,
 				"APP_ENV=production", "AWEB_FEDERATION_TEST=")

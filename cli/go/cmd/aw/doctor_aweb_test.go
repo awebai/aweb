@@ -28,7 +28,8 @@ type doctorAwebServer struct {
 	Unauthorized   bool
 	Unavailable    bool
 	VersionHeader  string
-	RolesTeamID    string
+	AgentsTeamID   string
+	AgentsRefused  bool
 	WorkspaceError string
 }
 
@@ -115,31 +116,19 @@ func newDoctorAwebServer(t *testing.T, cfg *doctorAwebServer) *doctorAwebServer 
 				"escalations_pending": 0,
 				"timestamp":           "2026-04-18T00:00:00Z",
 			})
-		case "/v1/roles/active":
+		case "/v1/agents":
 			if !cfg.requireTeamAuth(w, r) {
 				return
 			}
-			roleName := strings.TrimSpace(r.URL.Query().Get("role_name"))
-			if r.URL.Query().Get("only_selected") == "true" && roleName == "" {
-				http.Error(w, "only_selected=true requires a role_name parameter", http.StatusBadRequest)
+			if cfg.AgentsRefused {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			teamID := "backend:example.com"
-			if strings.TrimSpace(cfg.RolesTeamID) != "" {
-				teamID = cfg.RolesTeamID
+			if strings.TrimSpace(cfg.AgentsTeamID) != "" {
+				teamID = cfg.AgentsTeamID
 			}
-			resp := map[string]any{
-				"team_roles_id":        "roles-1",
-				"active_team_roles_id": "roles-1",
-				"team_id":              teamID,
-				"version":              1,
-				"updated_at":           "2026-04-18T00:00:00Z",
-				"roles":                map[string]any{},
-			}
-			if roleName != "" {
-				resp["selected_role"] = map[string]any{"role_name": roleName}
-			}
-			_ = json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "agents": []any{}})
 		case "/v1/messages/inbox":
 			if !cfg.requireMessageAuth(w, r) {
 				return
@@ -263,7 +252,6 @@ func TestAwDoctorAwebOnlineHappyPath(t *testing.T) {
 		doctorCheckCoordinationStatusRead,
 		doctorCheckCoordinationClaims,
 		doctorCheckCoordinationCoherence,
-		doctorCheckTeamRolesRead,
 		doctorCheckTeamMembershipAuth,
 		doctorCheckMessagingInboxRead,
 		doctorCheckMessagingChatPending,
@@ -290,37 +278,6 @@ func TestAwDoctorAwebOnlineHappyPath(t *testing.T) {
 		t.Fatalf("doctor rewrote workspace.yaml\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 	assertNoDuplicateDoctorChecks(t, got)
-}
-
-func TestAwDoctorTeamOnlineUsesWorkspaceRoleName(t *testing.T) {
-	t.Parallel()
-
-	server := newDoctorAwebServer(t, nil)
-	bin, tmp := buildDoctorBinary(t)
-	registryURL := writeDoctorLocalFixture(t, tmp, server.Server.URL)
-	workspacePath := filepath.Join(tmp, awconfig.DefaultWorktreeWorkspaceRelativePath())
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
-	if err != nil {
-		t.Fatalf("load workspace: %v", err)
-	}
-	if len(workspace.Memberships) != 1 {
-		t.Fatalf("memberships=%d", len(workspace.Memberships))
-	}
-	workspace.Memberships[0].RoleName = "coordinator"
-	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
-		t.Fatalf("save workspace: %v", err)
-	}
-
-	out, err := runDoctorCLIWithRegistry(t, bin, tmp, registryURL, "doctor", "team", "--online", "--json")
-	if err != nil {
-		t.Fatalf("doctor team failed: %v\n%s", err, string(out))
-	}
-	got := decodeDoctorOutput(t, out)
-	requireDoctorCheckStatus(t, got, doctorCheckTeamRolesRead, doctorStatusOK)
-	check := requireDoctorCheckStatus(t, got, doctorCheckTeamSelectedRoleMatches, doctorStatusOK)
-	if check.Detail["local_role_name"] != "coordinator" || check.Detail["server_role_name"] != "coordinator" {
-		t.Fatalf("role detail=%#v", check.Detail)
-	}
 }
 
 func TestAwDoctorAwebVersionHeaderReported(t *testing.T) {
@@ -461,7 +418,7 @@ func TestAwDoctorCoordinationClaimsIncoherentWarns(t *testing.T) {
 func TestAwDoctorTeamMembershipAuthorizedDetectsTeamMismatch(t *testing.T) {
 	t.Parallel()
 
-	server := newDoctorAwebServer(t, &doctorAwebServer{RolesTeamID: "backend:other.example.com"})
+	server := newDoctorAwebServer(t, &doctorAwebServer{AgentsTeamID: "backend:other.example.com"})
 	bin, tmp := buildDoctorBinary(t)
 	registryURL := writeDoctorLocalFixture(t, tmp, server.Server.URL)
 
@@ -492,8 +449,25 @@ func TestAwDoctorAwebUnauthorizedBlocked(t *testing.T) {
 	}
 	got := decodeDoctorOutput(t, out)
 	requireDoctorCheckStatus(t, got, doctorCheckWorkspaceTeamRead, doctorStatusBlocked)
-	requireDoctorCheckStatus(t, got, doctorCheckTeamRolesRead, doctorStatusBlocked)
 	requireDoctorCheckStatus(t, got, doctorCheckMessagingInboxRead, doctorStatusBlocked)
+}
+
+func TestAwDoctorTeamMembershipAuthorizedBlockedWhenTheAgentsReadIsRefused(t *testing.T) {
+	t.Parallel()
+
+	server := newDoctorAwebServer(t, &doctorAwebServer{AgentsRefused: true})
+	bin, tmp := buildDoctorBinary(t)
+	registryURL := writeDoctorLocalFixture(t, tmp, server.Server.URL)
+
+	out, err := runDoctorCLIWithRegistry(t, bin, tmp, registryURL, "doctor", "team", "--online", "--json")
+	if err != nil {
+		t.Fatalf("doctor team failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	check := requireDoctorCheckStatus(t, got, doctorCheckTeamMembershipAuth, doctorStatusBlocked)
+	if check.Detail["reason"] != "caller_not_authorized" {
+		t.Fatalf("membership_authorized detail=%#v", check.Detail)
+	}
 }
 
 func TestAwDoctorAwebUnavailableUnknown(t *testing.T) {

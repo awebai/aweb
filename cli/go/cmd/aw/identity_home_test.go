@@ -132,10 +132,6 @@ func TestExternalIdentityHomeUsesPrincipalWithoutCopyingOrLinkingIdentityMateria
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		switch r.URL.Path {
-		case "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{"team_roles_id": "roles-1", "roles": map[string]any{"attached-role": map[string]any{"title": "Attached"}}})
-		case "/v1/agents/me":
-			_ = json.NewEncoder(w).Encode(map[string]any{"role_name": "attached-role"})
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		case "/v1/agents/heartbeat":
@@ -203,22 +199,6 @@ func TestExternalIdentityHomeUsesPrincipalWithoutCopyingOrLinkingIdentityMateria
 				t.Fatalf("attached mail inbox failed: %v\n%s", mailErr, mailOut)
 			}
 
-			// Exercise a principal write through the real command path. The workspace
-			// mutation must land in the identity home, never the empty instance.
-			roleArgs := []string{"role-name", "set", "attached-role"}
-			if tc.name == "flag" {
-				roleArgs = append([]string{"--identity-home", identityHome}, roleArgs...)
-			}
-			role := exec.CommandContext(ctx, bin, roleArgs...)
-			role.Dir = instanceHome
-			role.Env = cmd.Env
-			if roleOut, roleErr := role.CombinedOutput(); roleErr != nil {
-				t.Fatalf("attached role-name write failed: %v\n%s", roleErr, roleOut)
-			}
-			workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(identityHome, "workspace.yaml"))
-			if err != nil || workspace.Membership("backend:aweb.ai").RoleName != "attached-role" {
-				t.Fatalf("principal workspace did not receive role mutation: err=%v workspace=%#v", err, workspace)
-			}
 			principalMaterial = principalMaterialForTest(t, identityHome)
 			assertNoIdentityMaterialForTest(t, instanceHome, identityHome, principalMaterial)
 

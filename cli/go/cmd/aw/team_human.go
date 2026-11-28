@@ -518,7 +518,6 @@ func runTeamHumanCreateHostedInitBundle(input hostedTeamCreation) (*guidedOnboar
 		Name:               requestName,
 		HumanName:          resolveHumanNameValue(initHumanName, resolveAgentType()),
 		AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-		Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
 		Global:             firstAgentGlobal,
 		InboundMode:        canonicalInitInboundModeForWire(initInboundMode),
 		InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,

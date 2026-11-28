@@ -111,7 +111,6 @@ func init() {
 	lockCmd.GroupID = groupCoordination
 	notifyCmd.GroupID = groupCoordination
 	instructionsCmd.GroupID = groupCoordination
-	rolesCmd.GroupID = groupCoordination
 	custodyCmd.GroupID = groupIdentity
 
 	versionCmd.GroupID = groupUtility
@@ -136,8 +135,6 @@ func init() {
 	bindTeamSelector(lockCmd)
 	bindTeamSelector(notifyCmd)
 	bindTeamSelector(instructionsCmd)
-	bindTeamSelector(rolesCmd)
-	bindTeamSelector(roleNameCmd)
 	bindTeamSelector(heartbeatCmd)
 	bindTeamSelector(eventsCmd)
 	bindTeamSelector(controlCmd)

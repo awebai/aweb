@@ -18,7 +18,7 @@ to refresh it.
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `verify`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
-| Coordination & Runtime | `instructions`, `lock`, `notify`, `role-name`, `roles`, `task`, `work` |
+| Coordination & Runtime | `instructions`, `lock`, `notify`, `task`, `work` |
 | Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `validate`, `version` |
 | Additional Commands | `session`, `who` |
 
@@ -168,8 +168,6 @@ Flags:
 - `--parent string Same-machine creator home for a fresh child`
 - `--print-exports Print shell export lines after JSON output`
 - `--remove-notify-hook Remove only the exact aw notify PostToolUse hook from current directory and repository root settings, with backups (standalone local action)`
-- `--role string Compatibility alias for --role-name`
-- `--role-name string Workspace role name (must match a role in the active team roles bundle)`
 - `--setup-channel Set up Claude Code aweb-channel plugin for real-time coordination`
 - `--setup-hooks Enable Claude Code chat-only polling after tool calls (explicit fallback; no mail or idle wake-ups)`
 - `--team string Name of the team --new-team creates on a local (localhost) awid registry (default: default)`
@@ -222,7 +220,6 @@ not create identities, create teams, or change AWID team membership.
 
 Flags:
 - `-h, --help help for init`
-- `--role string Optional role name for this workspace`
 - `--service string Service URL to connect to`
 - `--team string Canonical AWID team id to activate before connecting`
 
@@ -270,7 +267,7 @@ create teams, or change AWID team membership.
 
 Flags:
 - `-h, --help help for connect`
-- `--role string Optional role name for this workspace`
+- `--role string Accepted and ignored: aw sends and stores no team role`
 - `--service string Service URL to connect to`
 - `--team string Canonical AWID team id to activate before connecting`
 
@@ -3797,138 +3794,6 @@ repo, the repository root's .claude/settings.json, with backups.
 Flags:
 - `-h, --help help for notify`
 - `--team string Override the selected team_id for this command`
-
-## `role-name`
-
-### `role-name`
-
-The role name is this workspace's operating responsibility on this team. It is
-independently mutable, and changing it grants no additional authority.
-
-Subcommands:
-- `set` Set the current workspace operating role
-
-Flags:
-- `-h, --help help for role-name`
-- `--team string Override the selected team_id for this command`
-
-## `role-name set`
-
-### `role-name set`
-
-Set the current workspace operating role.
-
-The role name is this workspace's operating responsibility on this team. It is
-independently mutable, and changing it grants no additional authority.
-
-Flags:
-- `-h, --help help for set`
-
-## `roles`
-
-### `roles`
-
-Read and manage team roles bundles and role definitions
-
-Subcommands:
-- `activate` Activate an existing team roles bundle version
-- `add` Add or update one role in the active team roles bundle
-- `deactivate` Deactivate team roles by replacing the active bundle with an empty bundle
-- `history` List team roles history
-- `list` List roles defined in the active team roles bundle
-- `reset` Reset team roles to the server default bundle
-- `set` Create and activate a new team roles bundle version
-- `show` Show role guidance from the active team roles bundle
-
-Flags:
-- `-h, --help help for roles`
-- `--team string Override the selected team_id for this command`
-
-## `roles activate`
-
-### `roles activate`
-
-Activate an existing team roles bundle version
-
-Flags:
-- `-h, --help help for activate`
-
-## `roles add`
-
-### `roles add`
-
-Add or update one role in the active team roles bundle.
-
-This is the novice-friendly way to build a roles bundle from resource-pack
-role Markdown files one role at a time. It reads the active bundle, adds the
-role, creates a new bundle version, and activates it.
-
-Flags:
-- `-h, --help help for add`
-- `--playbook string Role playbook Markdown body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --playbook-file for Markdown or command examples`
-- `--playbook-file string Read role playbook Markdown from a file ('-' for stdin); safe for Markdown or command examples`
-- `--replace Replace an existing role with the same name`
-- `--title string Human-readable role title (defaults to role name)`
-
-## `roles deactivate`
-
-### `roles deactivate`
-
-Deactivate team roles by replacing the active bundle with an empty bundle
-
-Flags:
-- `-h, --help help for deactivate`
-
-## `roles history`
-
-### `roles history`
-
-List team roles history
-
-Flags:
-- `-h, --help help for history`
-- `--limit int Max role bundle versions (default 20)`
-
-## `roles list`
-
-### `roles list`
-
-List roles defined in the active team roles bundle
-
-Flags:
-- `-h, --help help for list`
-
-## `roles reset`
-
-### `roles reset`
-
-Reset team roles to the server default bundle
-
-Flags:
-- `-h, --help help for reset`
-
-## `roles set`
-
-### `roles set`
-
-Create and activate a new team roles bundle version
-
-Flags:
-- `--bundle-file string Read team roles bundle JSON from a file ('-' for stdin); safe for Markdown playbooks or command examples`
-- `--bundle-json string Team roles bundle JSON. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --bundle-file for Markdown or command examples`
-- `-h, --help help for set`
-
-## `roles show`
-
-### `roles show`
-
-Show role guidance from the active team roles bundle
-
-Flags:
-- `--all-roles Include all role playbooks instead of only the selected role`
-- `-h, --help help for show`
-- `--role string Compatibility alias for --role-name`
-- `--role-name string Preview a specific role name`
 
 ## `task`
 

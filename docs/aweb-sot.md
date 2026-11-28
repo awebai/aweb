@@ -1644,7 +1644,7 @@ relies on are:
 Most coordination commands also accept `--team <team_id>` to override `active_team`
 for a single invocation without mutating `.aw/teams.yaml`.
 
-All coordination commands (mail, chat, tasks, claims, locks, roles,
+All coordination commands (mail, chat, tasks, claims, locks,
 instructions, work, contacts, etc.) are listed in
 [`cli-command-reference.md`](cli-command-reference.md):
 
@@ -1655,8 +1655,6 @@ aw work ready/active/blocked
 aw task create/list/show/update/close/reopen/delete
 aw task comment/dep/stats
 aw lock acquire/renew/release/revoke/list
-aw roles show/list/set/activate/reset/deactivate
-aw role-name set
 aw instructions show/set/activate/reset
 aw contacts list/add/remove
 aw control pause/resume/interrupt
@@ -1696,7 +1694,6 @@ memberships:
 aweb_url: https://app.aweb.ai
 memberships:
   - team_id: backend:acme.com
-    role_name: developer
     workspace_id: "550e8400-e29b-41d4-a716-446655440000"
     cert_path: team-certs/backend__acme.com.pem
     joined_at: "2026-04-06T..."
@@ -1714,10 +1711,9 @@ when the identity needs one. The credentials live under `team-certs/`.
 `teams.yaml` is the source of truth for the active team and the
 identity-level team membership view. `workspace.yaml` is an aweb
 coordination binding only: it carries the aweb server URL, per-team
-workspace bindings such as `workspace_id` and `role_name`, and local
-repo/workspace metadata. `role_name` selects the workspace's current operating
-responsibility and team playbook. It is independently mutable and does not
-grant authority. It does not carry awid-specific URL fields,
+workspace bindings such as `workspace_id`, and local repo/workspace metadata.
+aw has no team roles: it ignores a `role_name` a released aw left in a
+membership and drops it on its next save. It does not carry awid-specific URL fields,
 hosted-specific URL fields, identity key material, or the active team
 selection.
 
@@ -1973,7 +1969,6 @@ families are:
 | Chat | `send_chat`, `check_chats`, `read_chat`, `mark_chat_read` |
 | Tasks | `task_create`, `task_get`, `task_list`, `task_update`, `task_claim`, `task_close`, `task_reopen`, `task_comment_add`, `task_comment_list`, `task_ready` |
 | Work discovery | `work_ready`, `work_active`, `work_blocked` |
-| Roles | `roles_show`, `roles_list` |
 | Instructions | `instructions_show`, `instructions_history` |
 | Contacts | `list_contacts`, `add_contact`, `add_contact_by_handle`, `remove_contact`, `read_contact_messages` |
 | Presence | `list_agents`, `heartbeat` |

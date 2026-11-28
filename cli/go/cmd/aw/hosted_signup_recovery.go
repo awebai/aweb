@@ -313,7 +313,7 @@ func completeRecoverableHostedSignup(input hostedSignupCompletion) (result *guid
 	if err := persistHostedIdentityState(hostedStatePersistence{WorkingDir: req.WorkingDir, IdentityHome: home, RegistryURL: provisioned.RegistryURL, SigningKey: provisioned.SigningKey, Certificate: provisioned.Certificate, DIDKey: provisioned.DIDKey, DIDAW: provisioned.DIDAW, MemberAddress: provisioned.MemberAddress, Scope: scope}); err != nil {
 		return nil, err
 	}
-	connected, err := guidedOnboardingConnect(req.WorkingDir, input.Creation.Context.AwebURL, certificateConnectOptions{ContextFile: req.ContextFile, Role: req.Role, HumanName: req.HumanName, AgentType: req.AgentType, APIKey: provisioned.APIKey})
+	connected, err := guidedOnboardingConnect(req.WorkingDir, input.Creation.Context.AwebURL, certificateConnectOptions{ContextFile: req.ContextFile, HumanName: req.HumanName, AgentType: req.AgentType, APIKey: provisioned.APIKey})
 	if err != nil {
 		return nil, err
 	}

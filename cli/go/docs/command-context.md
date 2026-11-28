@@ -24,8 +24,6 @@ service, and non-coding agents with no repo context:
 - `aw chat ...`
 - `aw mail ...`
 - `aw instructions show`
-- `aw roles show`
-- `aw roles list`
 - `aw work ready`
 - `aw work active`
 - `aw work blocked`

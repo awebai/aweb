@@ -38,7 +38,7 @@ func apiKeyCreationRecoveryAdvice(request apiKeyInitRequest, cause error) error 
 		args = append(args, "--alias", request.Alias)
 	}
 	for _, setting := range []struct{ flag, value string }{
-		{"--role-name", request.Role}, {"--human-name", request.HumanName}, {"--agent-type", request.AgentType}, {"--inbound-mode", request.InboundMode},
+		{"--human-name", request.HumanName}, {"--agent-type", request.AgentType}, {"--inbound-mode", request.InboundMode},
 	} {
 		if strings.TrimSpace(setting.value) != "" {
 			args = append(args, setting.flag, setting.value)

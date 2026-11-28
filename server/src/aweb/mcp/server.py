@@ -32,7 +32,6 @@ from aweb.mcp.registration import (
     identity,
     instructions,
     mail,
-    roles,
     room,
     tasks,
     work,
@@ -184,7 +183,6 @@ def register_tools(
     chat.register_tools(mcp, dependencies)
     tasks.register_tools(mcp, dependencies)
     instructions.register_tools(mcp, dependencies)
-    roles.register_tools(mcp, dependencies)
     work.register_tools(mcp, dependencies)
     workspace.register_tools(mcp, dependencies)
     contacts.register_tools(mcp, dependencies)

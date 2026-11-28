@@ -447,13 +447,6 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeUsesStoredKeyOrSignedInvite(t 
 				"workspace_id": "ws-" + request.Alias, "did": request.DID, "identity_scope": awid.IdentityModeLocal,
 				"custody": awid.CustodySelf, "api_key": "aw_sk_child_" + request.Alias, "team_did_key": teamDIDKey,
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/roles/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_roles_id": "roles-1",
-				"roles": map[string]any{
-					"developer": map[string]any{"title": "Developer"},
-				},
-			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/workspaces/team":
 			workspaces := make([]map[string]any, 0, len(connectAliases))
 			for _, alias := range connectAliases {
@@ -480,9 +473,6 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeUsesStoredKeyOrSignedInvite(t 
 					t.Error(err)
 					w.WriteHeader(http.StatusBadRequest)
 					return
-				}
-				if request.Role != "developer" {
-					t.Errorf("child %s connect role=%q, want developer", alias, request.Role)
 				}
 			}
 			connectAliases = append(connectAliases, alias)
@@ -545,7 +535,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeUsesStoredKeyOrSignedInvite(t 
 				t.Fatal(err)
 			}
 		}
-		cmd := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--name", alias)
+		cmd := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "--name", alias)
 		cmd.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL, "AWEB_API_KEY=")
 		if alias == "bob" {
 			cmd.Env = append(cmd.Env, "AWEB_API_KEY="+parentAPIKey)
@@ -616,7 +606,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeUsesStoredKeyOrSignedInvite(t 
 		}
 	})
 
-	cmd := exec.CommandContext(ctx, bin, "--identity-home", home, "workspace", "add-worktree", "developer", "--name", "missing-parent")
+	cmd := exec.CommandContext(ctx, bin, "--identity-home", home, "workspace", "add-worktree", "--name", "missing-parent")
 	cmd.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	cmd.Dir = repo
 	out, err := cmd.CombinedOutput()

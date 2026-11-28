@@ -38,7 +38,6 @@ type apiKeyInitRequest struct {
 	APIKey                string
 	Name                  string
 	Alias                 string
-	Role                  string
 	HumanName             string
 	AgentType             string
 	Global                bool
@@ -52,17 +51,18 @@ type apiKeyInitRequest struct {
 }
 
 type apiKeyBootstrapRequest struct {
-	IDTree        *awid.IDTreeCreationRequest `json:"id_tree,omitempty"`
-	DID           string                      `json:"did"`
-	PublicKey     string                      `json:"public_key"`
-	Name          string                      `json:"name,omitempty"`
-	Alias         string                      `json:"alias,omitempty"`
-	Custody       string                      `json:"custody"`
-	RoleName      string                      `json:"role_name,omitempty"`
-	HumanName     string                      `json:"human_name,omitempty"`
-	AgentType     string                      `json:"agent_type,omitempty"`
-	IdentityScope string                      `json:"identity_scope"`
-	InboundMode   string                      `json:"inbound_mode,omitempty"`
+	IDTree    *awid.IDTreeCreationRequest `json:"id_tree,omitempty"`
+	DID       string                      `json:"did"`
+	PublicKey string                      `json:"public_key"`
+	Name      string                      `json:"name,omitempty"`
+	Alias     string                      `json:"alias,omitempty"`
+	Custody   string                      `json:"custody"`
+	// RoleName is sent only to replay a partial init saved by a released aw.
+	RoleName      string `json:"role_name,omitempty"`
+	HumanName     string `json:"human_name,omitempty"`
+	AgentType     string `json:"agent_type,omitempty"`
+	IdentityScope string `json:"identity_scope"`
+	InboundMode   string `json:"inbound_mode,omitempty"`
 }
 
 type apiKeyBootstrapResponse struct {
@@ -94,9 +94,11 @@ type apiKeyPartialInitState struct {
 	AwebURL         string                `yaml:"aweb_url"`
 	RegistryURL     string                `yaml:"registry_url"`
 	TeamIDHint      string                `yaml:"team_id_hint,omitempty"`
-	RoleName        string                `yaml:"role_name,omitempty"`
-	HumanName       string                `yaml:"human_name,omitempty"`
-	AgentType       string                `yaml:"agent_type,omitempty"`
+	// RoleName is the role a released aw saved with its partial init. The hosted
+	// init binds it into the request, so a resume sends it back unchanged.
+	RoleName  string `yaml:"role_name,omitempty"`
+	HumanName string `yaml:"human_name,omitempty"`
+	AgentType string `yaml:"agent_type,omitempty"`
 	// Reachability is a legacy partial-init field. It is accepted on read for
 	// one-release compatibility but ignored and never sent to cloud.
 	Reachability      string `yaml:"reachability,omitempty"`
@@ -254,7 +256,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 			Name:          name,
 			Alias:         alias,
 			Custody:       awid.CustodySelf,
-			RoleName:      strings.TrimSpace(req.Role),
+			RoleName:      strings.TrimSpace(state.RoleName),
 			HumanName:     strings.TrimSpace(req.HumanName),
 			AgentType:     strings.TrimSpace(req.AgentType),
 			IdentityScope: string(identityScopeFromFlags(identityScopeFlags{Global: req.Global})),
@@ -510,7 +512,6 @@ func newAPIKeyPartialInitState(
 		AwebURL:           awebURL,
 		RegistryURL:       strings.TrimSpace(registryURL),
 		TeamIDHint:        req.SelectedTeamID,
-		RoleName:          strings.TrimSpace(req.Role),
 		HumanName:         strings.TrimSpace(req.HumanName),
 		AgentType:         strings.TrimSpace(req.AgentType),
 		APIKeyFingerprint: apiKeyFingerprint(req.APIKey),
@@ -584,9 +585,6 @@ func validateAPIKeyPartialInitContext(
 	}
 	if state.RegistryURL != expected.RegistryURL {
 		mismatches = append(mismatches, fmt.Sprintf("registry_url %q != %q", state.RegistryURL, expected.RegistryURL))
-	}
-	if state.RoleName != expected.RoleName {
-		mismatches = append(mismatches, fmt.Sprintf("role_name %q != %q", state.RoleName, expected.RoleName))
 	}
 	if state.HumanName != expected.HumanName {
 		mismatches = append(mismatches, fmt.Sprintf("human_name %q != %q", state.HumanName, expected.HumanName))

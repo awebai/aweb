@@ -7,7 +7,6 @@ from aweb.mcp.tools import _common as common_tools
 from aweb.mcp.tools import agents as agent_tools
 from aweb.mcp.tools import tasks as task_tools
 from aweb.mcp.tools import team_instructions as instruction_tools
-from aweb.mcp.tools import team_roles as role_tools
 from aweb.mcp.tools import work as work_tools
 from aweb.mcp.tools import workspace as workspace_tools
 
@@ -39,7 +38,6 @@ def _identity_only_auth(team_id: str | None) -> AuthContext:
         lambda infra: task_tools.task_comment_list(infra, ref="aweb-aagt.3"),
         lambda infra: work_tools.work_ready(infra),
         lambda infra: workspace_tools.workspace_status(infra, None),
-        lambda infra: role_tools.roles_show(infra),
         lambda infra: instruction_tools.instructions_show(infra),
     ],
 )

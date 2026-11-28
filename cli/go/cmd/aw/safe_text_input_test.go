@@ -24,8 +24,6 @@ func TestInlineLongTextFlagHelpWarnsAboutShellExpansion(t *testing.T) {
 		{name: "task comment body", cmd: taskCommentAddCmd, flag: "body", safeFlag: "--body-file"},
 		{name: "instructions body", cmd: instructionsSetCmd, flag: "body", safeFlag: "--body-file"},
 		{name: "signed request body", cmd: idRequestCmd, flag: "body", safeFlag: "--body-file"},
-		{name: "role playbook", cmd: rolesAddCmd, flag: "playbook", safeFlag: "--playbook-file"},
-		{name: "roles bundle JSON", cmd: rolesSetCmd, flag: "bundle-json", safeFlag: "--bundle-file"},
 		{name: "task close reason", cmd: taskCloseCmd, flag: "reason", safeFlag: "--reason-file"},
 		{name: "task create description", cmd: taskCreateCmd, flag: "description", safeFlag: "--description-file"},
 		{name: "task create notes", cmd: taskCreateCmd, flag: "notes", safeFlag: "--notes-file"},

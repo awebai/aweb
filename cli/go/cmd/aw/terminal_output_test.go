@@ -165,7 +165,7 @@ func TestIDLogTextEscapesTheRegistryError(t *testing.T) {
 
 func TestWorkspaceTextEscapesServerAliases(t *testing.T) {
 	requireTerminalSafe(t, formatGoneWorkspaces([]goneWorkspace{{Alias: hostileAlias + "\x1b[2J", CleanupStatus: "blocked"}}))
-	requireTerminalSafe(t, formatWorkspaceAddWorktree(workspaceAddWorktreeOutput{Alias: hostileAlias + "\x1b[2J", Role: "dev"}))
+	requireTerminalSafe(t, formatWorkspaceAddWorktree(workspaceAddWorktreeOutput{Alias: hostileAlias + "\x1b[2J"}))
 }
 
 func TestPinStoreListEscapesPinnedAddresses(t *testing.T) {

@@ -27,9 +27,6 @@ runtime-specific canonical files.
 
    ```bash
    aw instructions set --body-file resources/instructions.md
-   aw roles add coordinator --title "Coordinator" --playbook-file resources/roles/coordinator.md
-   aw roles add developer --title "Developer" --playbook-file resources/roles/developer.md
-   aw roles add reviewer --title "Reviewer" --playbook-file resources/roles/reviewer.md
    ```
 
 4. Use normal `git worktree` commands when you want separate working copies;

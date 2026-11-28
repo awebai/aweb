@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,12 +30,12 @@ var workspaceStatusCmd = &cobra.Command{
 }
 
 var workspaceAddWorktreeCmd = &cobra.Command{
-	Use:   "add-worktree [role]",
+	Use:   "add-worktree",
 	Short: "Legacy convenience: create a sibling git worktree and coordination workspace",
 	Long: "Legacy convenience for existing users: create a sibling git worktree and initialize a new coordination workspace in it.\n\n" +
 		"New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or aw workspace connect unless this command is reduced to a transparent wrapper with no identity/team orchestration.\n\n" +
 		"If the service cannot report the team for AWEB_API_KEY, creation uses the current workspace's existing authority.",
-	Args: cobra.RangeArgs(0, 1),
+	Args: cobra.NoArgs,
 	RunE: runWorkspaceAddWorktree,
 }
 
@@ -113,7 +112,6 @@ type workspaceStatusOutput struct {
 
 type workspaceAddWorktreeOutput struct {
 	Alias        string `json:"alias"`
-	Role         string `json:"role"`
 	Branch       string `json:"branch"`
 	WorktreePath string `json:"worktree_path"`
 }
@@ -121,7 +119,6 @@ type workspaceAddWorktreeOutput struct {
 type workspaceTeamMembershipItem struct {
 	TeamID      string `json:"team_id"`
 	Alias       string `json:"alias"`
-	RoleName    string `json:"role_name,omitempty"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	Active      bool   `json:"active"`
 }
@@ -163,7 +160,8 @@ func init() {
 	markDeprecatedHiddenFlag(workspaceAddWorktreeCmd, "alias", "name")
 	workspaceConnectCmd.Flags().StringVar(&serviceInitServiceURL, "service", "", "Service URL to connect to")
 	workspaceConnectCmd.Flags().StringVar(&serviceInitTeamID, "team", "", "Canonical AWID team id to activate before connecting")
-	workspaceConnectCmd.Flags().StringVar(&serviceInitRole, "role", "", "Optional role name for this workspace")
+	// Released OATS providers pass --role; aw no longer sends or stores a team role.
+	workspaceConnectCmd.Flags().String("role", "", "Accepted and ignored: aw sends and stores no team role")
 
 	workspaceCmd.AddCommand(workspaceStatusCmd)
 	workspaceCmd.AddCommand(workspaceConnectCmd)
@@ -274,6 +272,13 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 
 	if self.WorkspaceID == "" {
 		self = fallbackWorkspaceInfo(sel, state)
+	}
+	// aw has no team roles. The released OATS roster reads role from workspace
+	// and from each team entry, so it stays present as an empty string.
+	noRole := ""
+	self.Role = &noRole
+	for i := range team {
+		team[i].Role = &noRole
 	}
 
 	teamLocks := map[string][]aweb.ReservationView{}
@@ -496,19 +501,6 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	requested := ""
-	if len(args) > 0 {
-		requested = strings.TrimSpace(args[0])
-	}
-	role, err := resolveRole(client, requested, isTTY() && requested == "", os.Stdin, os.Stderr)
-	if err != nil {
-		return err
-	}
-	role = normalizeWorkspaceRole(role)
-	if role != "" && !isValidWorkspaceRole(role) {
-		return usageError("invalid role: use 1-2 words (letters/numbers) with hyphens/underscores allowed; max 50 chars")
-	}
-
 	sourceIdentityHome := externalIdentityHomeRoot(home)
 	state, teamState, _, err := loadCurrentWorkspaceAndTeamState(workingDir, sourceIdentityHome)
 	if err != nil {
@@ -573,7 +565,6 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Creating worktree for branch %q...\n", branchName)
 		fmt.Fprintf(os.Stderr, "  Main repo: %s\n", root)
 		fmt.Fprintf(os.Stderr, "  Worktree:  %s\n", worktreePath)
-		fmt.Fprintf(os.Stderr, "  Role:      %s\n", role)
 		fmt.Fprintf(os.Stderr, "  Name:      %s\n\n", alias)
 		fmt.Fprintln(os.Stderr, "Creating git worktree...")
 	}
@@ -607,7 +598,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	child := worktreeAgentCreation{
 		WorkingDir: workingDir, CreatorHome: home, WorktreePath: worktreePath, RepoRoot: root,
 		BranchName: branchName, BranchCreated: branchCreated, ServerURL: sourceServerURL, TeamID: teamID,
-		Alias: alias, Role: role, Workspace: state,
+		Alias: alias, Workspace: state,
 	}
 	switch {
 	case hasTeamKey:
@@ -626,7 +617,6 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 
 	output := workspaceAddWorktreeOutput{
 		Alias:        alias,
-		Role:         role,
 		Branch:       branchName,
 		WorktreePath: worktreePath,
 	}
@@ -781,9 +771,6 @@ func fallbackWorkspaceInfo(sel *awconfig.Selection, state *awconfig.WorktreeWork
 		if strings.TrimSpace(membership.Alias) != "" {
 			info.Alias = strings.TrimSpace(membership.Alias)
 		}
-		if strings.TrimSpace(membership.RoleName) != "" {
-			info.Role = stringPtr(strings.TrimSpace(membership.RoleName))
-		}
 	}
 	if strings.TrimSpace(state.HumanName) != "" {
 		info.HumanName = stringPtr(strings.TrimSpace(state.HumanName))
@@ -827,7 +814,6 @@ func formatWorkspaceAddWorktree(v any) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("New agent worktree created at %s\n", abbreviateUserHome(out.WorktreePath)))
 	sb.WriteString(fmt.Sprintf("Name:       %s\n", out.Alias))
-	sb.WriteString(fmt.Sprintf("Role:       %s\n", out.Role))
 	sb.WriteString(fmt.Sprintf("Branch:     %s\n", out.Branch))
 	sb.WriteString(fmt.Sprintf("Workspace:  this worktree is now agent %s\n", out.Alias))
 	sb.WriteString("State:      .aw/ in that worktree stores the local identity and workspace binding\n")
@@ -887,9 +873,8 @@ func formatWorkspaceMigrateMultiTeam(v any) string {
 }
 
 var (
-	workspaceAliasPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
-	workspaceRoleWordPattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
-	workspaceIDPattern       = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	workspaceAliasPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+	workspaceIDPattern    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 )
 
 func isValidWorkspaceAlias(alias string) bool {
@@ -898,101 +883,6 @@ func isValidWorkspaceAlias(alias string) bool {
 
 func isValidSuggestedAliasPrefix(alias string) bool {
 	return isValidWorkspaceAlias(alias)
-}
-
-func normalizeWorkspaceRole(role string) string {
-	fields := strings.Fields(strings.TrimSpace(role))
-	if len(fields) == 0 {
-		return ""
-	}
-	return strings.ToLower(strings.Join(fields, " "))
-}
-
-func isValidWorkspaceRole(role string) bool {
-	normalized := normalizeWorkspaceRole(role)
-	if normalized == "" || len(normalized) > 50 {
-		return false
-	}
-	words := strings.Split(normalized, " ")
-	if len(words) > 2 {
-		return false
-	}
-	for _, word := range words {
-		if !workspaceRoleWordPattern.MatchString(word) {
-			return false
-		}
-	}
-	return true
-}
-
-// fetchAvailableRoles returns the available roles from the team roles bundle.
-// This is the single source of truth for role lists.
-func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
-	ctx, cancel := commandAPIContext(nil)
-	defer cancel()
-
-	resp, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: false})
-	if err != nil {
-		return nil, fmt.Errorf("fetching team roles: %w", err)
-	}
-
-	roles := make([]string, 0, len(resp.Roles))
-	for name := range resp.Roles {
-		roles = append(roles, name)
-	}
-	sort.Strings(roles)
-	return roles, nil
-}
-
-// resolveRole fetches available roles from the team roles bundle, validates
-// the requested role against them, and optionally prompts the user to
-// choose. This is the single entry point for role resolution.
-func resolveRole(client *aweb.Client, requested string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {
-	roles, err := fetchAvailableRoles(client)
-	if err != nil {
-		debugLog("fetch roles: %v", err)
-		return normalizeWorkspaceRole(requested), nil
-	}
-	if len(roles) == 0 {
-		return normalizeWorkspaceRole(requested), nil
-	}
-	return selectRoleFromAvailableRoles(requested, roles, allowPrompt, in, out)
-}
-
-func selectRoleFromAvailableRoles(requested string, roles []string, allowPrompt bool, in io.Reader, out io.Writer) (string, error) {
-	if len(roles) == 0 {
-		return "", usageError("no roles defined in the active team roles")
-	}
-
-	normalizedRoles := make(map[string]string, len(roles))
-	for _, role := range roles {
-		normalized := normalizeWorkspaceRole(role)
-		if normalized != "" {
-			normalizedRoles[normalized] = role
-		}
-	}
-
-	requested = normalizeWorkspaceRole(requested)
-	if requested != "" {
-		if role, ok := normalizedRoles[requested]; ok {
-			return role, nil
-		}
-		return "", usageError("invalid role %q; available roles: %s", requested, strings.Join(roles, ", "))
-	}
-
-	if !allowPrompt {
-		return "", usageError("no role specified; available roles: %s", strings.Join(roles, ", "))
-	}
-
-	role, err := promptIndexedChoice("Role", roles, -1, in, out)
-	if err != nil {
-		return "", err
-	}
-	role = normalizeWorkspaceRole(role)
-	if selected, ok := normalizedRoles[role]; ok {
-		return selected, nil
-	}
-	return "", usageError("invalid role %q; available roles: %s", role, strings.Join(roles, ", "))
 }
 
 func fetchWorkspaceTeamAliases(client *aweb.Client, workspaceID string) (map[string]bool, error) {
@@ -1134,9 +1024,6 @@ func formatWorkspaceStatus(v any) string {
 	}
 	sb.WriteString(fmt.Sprintf("- Name: %s\n", out.Workspace.Alias))
 	sb.WriteString(fmt.Sprintf("- Context: %s\n", out.ContextKind))
-	if out.Workspace.Role != nil && strings.TrimSpace(*out.Workspace.Role) != "" {
-		sb.WriteString(fmt.Sprintf("- Role: %s\n", strings.TrimSpace(*out.Workspace.Role)))
-	}
 	sb.WriteString(fmt.Sprintf("- Status: %s\n", out.Workspace.Status))
 	if out.Workspace.Hostname != nil && strings.TrimSpace(*out.Workspace.Hostname) != "" {
 		sb.WriteString(fmt.Sprintf("- Hostname: %s\n", strings.TrimSpace(*out.Workspace.Hostname)))
@@ -1166,9 +1053,6 @@ func formatWorkspaceStatus(v any) string {
 	} else {
 		formatTeamWorkspace := func(workspace aweb.WorkspaceInfo) {
 			line := workspace.Alias
-			if workspace.Role != nil && strings.TrimSpace(*workspace.Role) != "" {
-				line += " (" + strings.TrimSpace(*workspace.Role) + ")"
-			}
 			line += " — " + workspace.Status
 			if lastSeen := derefString(workspace.LastSeen); lastSeen != "" {
 				line += ", seen " + formatTimeAgo(lastSeen)
@@ -1229,7 +1113,6 @@ func membershipItemsForWorkspaceState(state *awconfig.WorktreeWorkspace, teamSta
 			return []workspaceTeamMembershipItem{{
 				TeamID:      strings.TrimSpace(membership.TeamID),
 				Alias:       strings.TrimSpace(membership.Alias),
-				RoleName:    strings.TrimSpace(membership.RoleName),
 				WorkspaceID: strings.TrimSpace(membership.WorkspaceID),
 				Active:      strings.EqualFold(strings.TrimSpace(membership.TeamID), activeTeam),
 			}}
@@ -1242,7 +1125,6 @@ func membershipItemsForWorkspaceState(state *awconfig.WorktreeWorkspace, teamSta
 		items = append(items, workspaceTeamMembershipItem{
 			TeamID:      strings.TrimSpace(membership.TeamID),
 			Alias:       strings.TrimSpace(membership.Alias),
-			RoleName:    strings.TrimSpace(membership.RoleName),
 			WorkspaceID: strings.TrimSpace(membership.WorkspaceID),
 			Active:      strings.EqualFold(strings.TrimSpace(membership.TeamID), activeTeam),
 		})
@@ -1263,9 +1145,6 @@ func formatWorkspaceMembershipSummary(items []workspaceTeamMembershipItem) strin
 	parts := make([]string, 0, len(items))
 	for _, item := range items {
 		label := item.TeamID
-		if strings.TrimSpace(item.RoleName) != "" {
-			label += " (" + strings.TrimSpace(item.RoleName) + ")"
-		}
 		if item.Active {
 			label += " [active]"
 		}

@@ -22,13 +22,3 @@ func resolveHumanNameValue(value, agentType string) string {
 	}
 	return "developer"
 }
-
-func resolveRequestedRole(explicit string) string {
-	if v := strings.TrimSpace(explicit); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(os.Getenv("AWEB_ROLE_NAME")); v != "" {
-		return v
-	}
-	return strings.TrimSpace(os.Getenv("AWEB_ROLE"))
-}

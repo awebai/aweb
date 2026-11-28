@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1318,46 +1317,6 @@ func promptRequiredStringWithIO(label, suggestedValue string, in io.Reader, out 
 			return strings.TrimSpace(suggestedValue), nil
 		}
 		fmt.Fprintf(out, "%s is required.\n", label)
-	}
-}
-
-func promptIndexedChoice(label string, options []string, defaultIndex int, in io.Reader, out io.Writer) (string, error) {
-	if len(options) == 0 {
-		return "", fmt.Errorf("no options available")
-	}
-	hasDefault := defaultIndex >= 0 && defaultIndex < len(options)
-	if !hasDefault {
-		defaultIndex = -1
-	}
-
-	for i, option := range options {
-		fmt.Fprintf(out, "  %d. %s\n", i+1, option)
-	}
-
-	reader := bufferedPromptReader(in)
-	for {
-		if hasDefault {
-			fmt.Fprintf(out, "%s number [%d]: ", label, defaultIndex+1)
-		} else {
-			fmt.Fprintf(out, "%s number: ", label)
-		}
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return "", err
-		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			if hasDefault {
-				return options[defaultIndex], nil
-			}
-			fmt.Fprintf(out, "Enter a number between 1 and %d.\n", len(options))
-			continue
-		}
-		index, err := strconv.Atoi(line)
-		if err == nil && index >= 1 && index <= len(options) {
-			return options[index-1], nil
-		}
-		fmt.Fprintf(out, "Enter a number between 1 and %d.\n", len(options))
 	}
 }
 

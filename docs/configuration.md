@@ -141,7 +141,6 @@ active_team: backend:acme.com
 memberships:
   - team_id: backend:acme.com
     alias: alice
-    role_name: developer
     workspace_id: "550e8400-e29b-41d4-a716-446655440000"
     cert_path: team-certs/backend__acme.com.pem
     joined_at: "2026-04-06T..."
@@ -301,7 +300,7 @@ Common writes to `.aw/` come from:
 ```bash
 aw init
 aw id team accept-invite <token>
-aw workspace add-worktree <role>
+aw workspace add-worktree
 ```
 
 - `aw init` writes or refreshes `workspace.yaml`, `context`, and related local binding state

@@ -18,7 +18,7 @@ For new setup, use:
   claims;
 - ordinary `git worktree` / filesystem operations for worktrees and copied
   resources;
-- team blueprints / resource packs for reusable roles, instructions, skills,
+- team blueprints / resource packs for reusable instructions, skills,
   and harness adapters.
 
 ## How to recognize an old bootstrap layout
@@ -57,8 +57,9 @@ that state as private identity material. Never delete it casually.
 
 ## Migration guidance
 
-- Roles and instructions from `agents/roles/` and `agents/instructions.md` can be copied
-  into a resource pack or applied explicitly with `aw roles` / `aw instructions`.
+- Instructions from `agents/instructions.md` can be copied into a resource pack
+  or applied explicitly with `aw instructions`. Role files under `agents/roles/`
+  have no aw equivalent: aw has no team roles.
 - Per-agent startup text from `agents/home/<responsibility>/AGENTS.md` can move
   into blueprint profile instructions or a manually maintained home.
 - Final names, DIDs, addresses, certificates, and `.aw` state must remain local
