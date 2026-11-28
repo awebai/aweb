@@ -25,9 +25,43 @@ build() {
   fi
 }
 
-# Run behaviour tests with the TypeScript loader the Pi package uses.
+# Run a command in its own process group under a hard limit of SECONDS. At the
+# limit the whole group is killed, its absence is observed, and the exit status
+# is 124. The test process's runtime, not its harness, owns the cleanup.
+bounded() {
+  python3 - "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+import time
+
+seconds, *argv = sys.argv[1:]
+child = subprocess.Popen(argv, start_new_session=True)
+try:
+    sys.exit(child.wait(timeout=float(seconds)))
+except subprocess.TimeoutExpired:
+    os.killpg(child.pid, signal.SIGKILL)
+    child.wait()
+    # A killed grandchild stays in the group until its new parent reaps it;
+    # macOS answers EPERM for such a group. Absence is ESRCH.
+    until = time.monotonic() + 10
+    while time.monotonic() < until:
+        try:
+            os.killpg(child.pid, 0)
+        except ProcessLookupError:
+            print(f"bounded: {argv[0]} outlived {seconds} s; its process group was killed", file=sys.stderr)
+            sys.exit(124)
+        except PermissionError:
+            pass
+        time.sleep(0.05)
+    sys.exit(f"bounded: the process group of {argv[0]} survived SIGKILL")
+PY
+}
+
+# Run behaviour tests with the TypeScript loader the Pi package uses, bounded.
 behaviour_test() {
-  (cd "$ROOT/pi-extension" && node --import tsx --test --test-reporter=tap "$@")
+  (cd "$ROOT/pi-extension" && bounded 120 node --import tsx --test --test-reporter=tap "$@")
 }
 
 # Positive direction: the production package builds pass the package checkers
@@ -38,6 +72,21 @@ node "$ROOT/channel/scripts/check-package-dist.mjs" >/dev/null
 node "$ROOT/pi-extension/scripts/check-package-dist.mjs" >/dev/null
 AWEB_CHANNEL_DIST="$ROOT/channel/dist/index.js" behaviour_test "$TESTS/channel_bundle.test.mts" >/dev/null
 AWEB_PI_DIST="$ROOT/pi-extension/dist/index.js" behaviour_test "$TESTS/pi_bundle.test.mts" >/dev/null
+
+# A session whose shutdown hook never settles keeps its process alive. The
+# control must reach the withheld shutdown and then be stopped by the bound.
+marker="$TMP/hung-shutdown.marker"
+set +e
+out="$(cd "$ROOT/pi-extension" && AWEB_PI_DIST="$ROOT/pi-extension/dist/index.js" \
+  AWEB_HUNG_SHUTDOWN_MARKER="$marker" \
+  bounded 20 node --import tsx --test --test-reporter=tap "$TESTS/pi_hung_shutdown.test.mts" 2>&1)"
+status=$?
+set -e
+if [ "$status" -ne 124 ] || [ ! -f "$marker" ]; then
+  printf 'SELF-TEST FAIL: the hung-shutdown control was not held until its bound (exit %s, marker %s):\n%s\n' \
+    "$status" "$([ -f "$marker" ] && echo written || echo absent)" "$out" >&2
+  exit 1
+fi
 
 # The mutant tree mirrors the checkout's layout, so each package's production
 # build resolves @awebai/channel-core to the mutated sibling exactly as it
@@ -95,11 +144,14 @@ expect_assertion_failure() {
   local out status
   build "$TMP/$package"
   set +e
-  out="$(env "$variable=$TMP/$package/dist/index.js" \
-    bash -c 'cd "$1/pi-extension" && node --import tsx --test --test-reporter=tap --test-name-pattern="$2" "$3"' \
-    _ "$ROOT" "$name" "$TESTS/$test_file" 2>&1)"
+  out="$(export "$variable=$TMP/$package/dist/index.js"
+    behaviour_test --test-name-pattern="$name" "$TESTS/$test_file" 2>&1)"
   status=$?
   set -e
+  if [ "$status" -eq 124 ]; then
+    printf 'SELF-TEST INCONCLUSIVE: %s "%s" hung instead of failing:\n%s\n' "$package" "$name" "$out" >&2
+    return 1
+  fi
   if [ "$status" -eq 0 ]; then
     echo "SELF-TEST FAIL: $package passed \"$name\" without its guarded behaviour" >&2
     return 1
