@@ -9,7 +9,26 @@ import { PinStore } from "../../channel-core/src/identity/pinstore.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "../../channel-core/src/identity/signing.js";
 import { SenderTrustManager } from "../../channel-core/src/identity/trust.js";
 import { readReceivedIdChain } from "../../channel-core/src/identity/received_id_chain.js";
-import { createChannelTraceSink, dispatchEvent } from "../src/index.js";
+import { dispatchAgentEvent, type PinStoreWriter } from "@awebai/channel-core";
+import { channelDispatchOptions, createChannelTraceSink } from "../src/index.js";
+
+// Dispatch an event with the options main() hands the channel loop.
+function dispatchEvent(
+  mcp: never,
+  client: never,
+  pinStore: PinStore,
+  trust: SenderTrustManager,
+  self: Parameters<typeof channelDispatchOptions>[1]["self"],
+  dispatched: Set<string>,
+  event: AgentEvent,
+  pinStoreWriter?: PinStoreWriter,
+): Promise<void> {
+  return dispatchAgentEvent(
+    channelDispatchOptions(mcp, { client, pinStore, pinStoreWriter, trust, self }),
+    dispatched,
+    event,
+  );
+}
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const vectors = JSON.parse(

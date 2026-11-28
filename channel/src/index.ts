@@ -240,26 +240,17 @@ async function main() {
   };
   try {
     await startChannelLoop({
-      client,
-      pinStore,
-      trust,
-      self,
+      ...channelDispatchOptions(mcp, {
+        client,
+        pinStore,
+        trust,
+        self,
+        onChatPresented: (sessionID, options) => activity?.emitter.chatWakeDelivered(sessionID, options),
+        onTrace: traceSink?.onTrace,
+      }),
       signal: abort.signal,
       teamID: config.teamID,
       workdir,
-      onAwakening: (awakening) => notifyClaudeAwakening(mcp, awakening),
-      onChatPresented: (sessionID, options) => activity?.emitter.chatWakeDelivered(sessionID, options),
-      // On Claude the MCP notification IS the presentation of the mail to the
-      // agent (Claude presents at the first tool boundary), so mail is marked read
-      // at presentation — matching the honest semantic "presented = read". If the
-      // transport send fails, the ack is skipped and reconnect re-fetches the still
-      // -unread message; if the send succeeds but the process dies before
-      // presentation, the message is already read and is reachable only via
-      // aw mail show / a read-inclusive view (default-aaka), not by unread-only
-      // reconnect. Never acking is not the fix: it left mail unread and caused a
-      // replay burst on reconnect (default-aajy).
-      mailAcknowledgment: "delivery",
-      onTrace: traceSink?.onTrace,
       onStreamState: (state) => handleClaudeStreamState(state),
       reloadCredentials: createChannelCredentialReload({
         client, config, load: () => loadChannelConfig(workdir), self, trust, receipt, activity: () => activity?.emitter,
@@ -274,33 +265,30 @@ async function main() {
   }
 }
 
-export async function dispatchEvent(
+type ChannelDispatchOptions = Parameters<typeof dispatchAgentEvent>[0];
+
+/**
+ * How this plugin dispatches a received event to Claude: the options main()
+ * hands the channel loop, and the ones its dispatch tests use.
+ */
+export function channelDispatchOptions(
   mcp: Server,
-  client: APIClient,
-  pinStore: PinStore,
-  trust: SenderTrustManager,
-  self: SelfIdentity,
-  dispatched: Set<string>,
-  event: AgentEvent,
-  pinStoreWriter?: PinStoreWriter,
-): Promise<void> {
-  await dispatchAgentEvent(
-    {
-      client,
-      pinStore,
-      pinStoreWriter,
-      trust,
-      self,
-      onAwakening: (awakening) => mcp.notification({
-        method: "notifications/claude/channel",
-        params: { content: awakening.content, meta: awakening.meta },
-      }),
-      // Presented (notification) = read; see startChannelLoop above (aajy).
-      mailAcknowledgment: "delivery",
-    },
-    dispatched,
-    event,
-  );
+  deps: Pick<ChannelDispatchOptions, "client" | "pinStore" | "pinStoreWriter" | "trust" | "self" | "onChatPresented" | "onTrace">,
+): ChannelDispatchOptions {
+  return {
+    ...deps,
+    onAwakening: (awakening) => notifyClaudeAwakening(mcp, awakening),
+    // On Claude the MCP notification IS the presentation of the mail to the
+    // agent (Claude presents at the first tool boundary), so mail is marked read
+    // at presentation — matching the honest semantic "presented = read". If the
+    // transport send fails, the ack is skipped and reconnect re-fetches the still
+    // -unread message; if the send succeeds but the process dies before
+    // presentation, the message is already read and is reachable only via
+    // aw mail show / a read-inclusive view (default-aaka), not by unread-only
+    // reconnect. Never acking is not the fix: it left mail unread and caused a
+    // replay burst on reconnect (default-aajy).
+    mailAcknowledgment: "delivery",
+  };
 }
 
 export function isDirectExecution(moduleURL: string): boolean {
