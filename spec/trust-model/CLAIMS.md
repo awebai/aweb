@@ -18,10 +18,10 @@ One line for every sentence that says something about the model, apart from a th
 
 | Sentence | Kind | What makes it true |
 |---|---|---|
-| Experimental; proofs checked by Lean; comparison with running implementations pending | process | The generated cases have not yet been run against the code (see "Not done") |
+| Experimental; proofs checked by Lean; comparison with running implementations covers the first batch only | process | Only the first batch of generated cases is run against the code (see "Not done") |
 | A formal model, in Lean 4, of who may do what in aweb | process | The files in `TrustWeb/` |
 | Lean checks that each result follows from the definitions | process | `lake build`; see "How to check it yourself" |
-| The definitions were checked against aweb by reading the source; not yet run against the code | process | The source readings; "Not done" |
+| The definitions were checked against aweb by reading the source, and against the code only by the first batch | process | The source readings; "Not done" |
 | A row is proved only for what its statement says | process | Reading convention |
 
 ### How to check it yourself
@@ -244,7 +244,7 @@ Each item pairs a sentence about the model with one about the real system.
 
 | Sentence | Kind | What makes it true |
 |---|---|---|
-| It is not yet run against the code; the model runs and generates its first batch | process | `run` and the generator exist (rows 91 to 93); the runner has not run the file |
+| Only its first batch is run against the code; a case the code disagrees with is held out as a filed disagreement | process, source | `run` and the generator (rows 91 to 93); the runner in the aweb server's tests |
 | Several definitions were corrected after the last source check | process | The list given there |
 
 ## TrustWeb/Model.lean

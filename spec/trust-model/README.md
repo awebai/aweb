@@ -1,8 +1,8 @@
 # The trust web: a formal model
 
-**Experimental formal model of selected aweb trust rules. Proofs are checked by Lean. Comparison against running implementations is pending.**
+**Experimental formal model of selected aweb trust rules. Proofs are checked by Lean. Comparison against running implementations covers the first batch of generated cases only.**
 
-This is a formal model, in Lean 4, of who may do what in aweb: organisations, their members, teams, admins, keys, grants and invitations. Lean checks that each result below follows from the definitions; whether the definitions match aweb was checked by reading the source, and the model is not yet run against the code. A row is proved only for what its statement says.
+This is a formal model, in Lean 4, of who may do what in aweb: organisations, their members, teams, admins, keys, grants and invitations. Lean checks that each result below follows from the definitions; whether the definitions match aweb was checked by reading the source, and against the code only by the first batch of generated cases (see "Not done"). A row is proved only for what its statement says.
 
 ## How to check it yourself
 
@@ -293,5 +293,5 @@ Each item says what the real system does that the model leaves out.
 
 ## Not done
 
-- **It is not yet run against the code.** The model runs, and generates its first batch of cases (rows 91 to 93); running them against the registry and the server is the runner's, which has not run them yet.
+- **Only its first batch is run against the code.** The model runs, and generates its first batch of cases (rows 91 to 93). The runner in the aweb server's tests runs them against the registry and the server; a case the code disagrees with is held out as a filed disagreement until it is settled which side is wrong.
 - **Several definitions were corrected after the last check against the source** and need checking again: the as-built rule for adding a person, root replacement, grants ending with their certificate, the condition for sending, invitations, and the last-admin rule.
