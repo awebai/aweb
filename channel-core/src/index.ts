@@ -86,6 +86,7 @@ export {
   isTrustedVerificationStatus,
   loadPinStore,
   loadSessionPinStore,
+  MAIL_THREAD_TEACHING,
   resolveRegistryFallbackURL,
   startChannelLoop,
   trustWarningLine,

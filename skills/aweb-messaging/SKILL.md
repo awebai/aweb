@@ -90,7 +90,7 @@ flags for long or Markdown-rich content.
 
 ## Responding to mail
 
-Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.
+Answer in the conversation: aw mail reply <message_id> --body-file <file>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject> --body-file <file>.
 
 A thread is a conversation, titled by its first message's subject. A reply keeps that title, so `aw mail reply` takes no `--subject`:
 

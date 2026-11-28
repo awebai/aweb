@@ -80,6 +80,14 @@
   `aw` goes on. The listener used to close on its own schedule, so the browser
   could show a connection error although the handoff had succeeded.
 
+- Mail wakes, `aw mail` help, the skills and the mail guide now teach the
+  same reply rule, with the body in a file: "Answer in the conversation:
+  `aw mail reply <message_id> --body-file <file>`. Start a new thread only for
+  a new topic:
+  `aw mail send --to <recipient> --subject <subject> --body-file <file>`." The
+  Claude Code channel already said this; it now takes the wording from
+  channel-core, and a script check compares every copy with the `aw` help.
+
 - The Go packages `wake` (with `wake/session`), `hookevent`, `a2a`, `a2agw`,
   `strictjson`, `canonicaljson`, `logschain` and `signaturewire` were never part
   of the documented Go library and are now internal to the `aw` module, under
