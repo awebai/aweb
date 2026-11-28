@@ -103,7 +103,7 @@ async def _admit_refreshed_controller(
     """Admit the SDK's refreshed key through the same pin owner, without rereads.
 
     The signature-failure refresh has already acquired this evidence. The
-    existing pin owner (docs/drafts/team-key-pinning.md) applies unchanged;
+    existing pin owner (docs/trust-model.md, "Team-key pins") applies unchanged;
     a certificate's asserted key is never input.
     """
     if not served_key:

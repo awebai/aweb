@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 
 from fastapi import HTTPException
@@ -114,6 +114,116 @@ async def has_current_shared_team(
     return bool(recipient_teams & sender_teams)
 
 
+class _Unread(Enum):
+    UNREAD = auto()
+
+
+UNREAD = _Unread.UNREAD
+"""A fact the caller has not read yet."""
+
+
+class DeliveryFact(Enum):
+    """A read the rule may need, in the order it needs them."""
+
+    INBOUND_MODE = "inbound_mode"
+    SHARED_TEAM = "shared_team"
+    CONTACT_MATCH = "contact_match"
+
+
+class SharedTeam(Enum):
+    """What the current-membership read found."""
+
+    SHARED = auto()
+    NOT_SHARED = auto()
+    UNAVAILABLE = auto()
+
+
+@dataclass(frozen=True, kw_only=True)
+class DeliveryFacts:
+    global_recipient: bool
+    attempt: DeliveryAttempt
+    recipient_address: str = ""
+    inbound_mode: InboundMode | _Unread = UNREAD
+    shared_team: SharedTeam | _Unread = UNREAD
+    contact_match: IdentityContactMatch | _Unread = UNREAD
+
+
+@dataclass(frozen=True)
+class NeedDeliveryFact:
+    fact: DeliveryFact
+
+
+@dataclass(frozen=True)
+class DeliveryAdmitted:
+    pass
+
+
+@dataclass(frozen=True)
+class DeliveryMembershipUnavailable:
+    """No contact admits the sender and the membership read failed: its error stands."""
+
+
+@dataclass(frozen=True)
+class DeliveryDenied:
+    code: DeliveryRefusalCode
+    detail: str
+
+
+DeliveryStep = (
+    NeedDeliveryFact | DeliveryAdmitted | DeliveryMembershipUnavailable | DeliveryDenied
+)
+
+
+def decide_delivery(facts: DeliveryFacts) -> DeliveryStep:
+    """Global And Local Identities (docs/identity-messaging-contract.md:81-99).
+
+    Global contacts-only always applies to continuations. Local participants
+    may continue a stored route. Otherwise only current team intersection or an
+    exact active identity contact authorizes a restricted recipient. Returns
+    the next fact the rule needs, or its verdict.
+    """
+    mode = None
+    if facts.global_recipient:
+        if facts.inbound_mode is UNREAD:
+            return NeedDeliveryFact(DeliveryFact.INBOUND_MODE)
+        mode = facts.inbound_mode
+    if mode is InboundMode.OPEN:
+        return DeliveryAdmitted()
+    if not facts.global_recipient and facts.attempt is DeliveryAttempt.STORED_ROUTE:
+        return DeliveryAdmitted()
+    if mode is not InboundMode.CONTACTS_ONLY:
+        if facts.shared_team is UNREAD:
+            return NeedDeliveryFact(DeliveryFact.SHARED_TEAM)
+        if facts.shared_team is SharedTeam.SHARED:
+            return DeliveryAdmitted()
+    if facts.contact_match is UNREAD:
+        return NeedDeliveryFact(DeliveryFact.CONTACT_MATCH)
+    if facts.contact_match is IdentityContactMatch.MATCHED:
+        return DeliveryAdmitted()
+    # An exact contact independently admits the sender. Otherwise an
+    # unavailable membership read must retain its cause and retry status.
+    if facts.shared_team is SharedTeam.UNAVAILABLE:
+        return DeliveryMembershipUnavailable()
+    if facts.contact_match is IdentityContactMatch.NEEDS_BINDING:
+        return DeliveryDenied(
+            DeliveryRefusalCode.CONTACT_IDENTITY_BINDING_REQUIRED,
+            CONTACT_REBIND_ACTION,
+        )
+    if not facts.global_recipient:
+        # Preserve the published local-only 404 (federation-error-reference.md:40).
+        # Missing identities retain their distinct released error code.
+        return DeliveryDenied(
+            DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING,
+            unreachable_address_refusal(facts.recipient_address),
+        )
+    detail = (
+        "Recipient only accepts messages from exact active contacts. "
+        if mode is InboundMode.CONTACTS_ONLY
+        else "Recipient only accepts messages from verified team members or exact active contacts. "
+    ) + _POLICY_ACTION
+    return DeliveryDenied(DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED, detail)
+
+
 async def authorize_delivery(
     db,
     *,
@@ -125,60 +235,53 @@ async def authorize_delivery(
     """Enforce Global And Local Identities (docs/identity-messaging-contract.md:81-99) on
     every transport.
 
-    Global contacts-only always applies to continuations. Local participants
-    may continue a stored route. Otherwise only current team intersection or an
-    exact active identity contact authorizes a restricted recipient.
+    Reads the facts ``decide_delivery`` asks for, in its order, and acts on
+    its verdict.
     """
-    global_recipient = is_global_recipient(recipient)
-    mode = await recipient_inbound_mode(db, recipient) if global_recipient else None
-    if mode is InboundMode.OPEN:
-        return
-    if not global_recipient and attempt is DeliveryAttempt.STORED_ROUTE:
-        return
+    facts = DeliveryFacts(
+        global_recipient=is_global_recipient(recipient),
+        attempt=attempt,
+        recipient_address=str(recipient.get("address") or ""),
+    )
     membership_error = None
-    if mode is not InboundMode.CONTACTS_ONLY:
-        try:
-            if await has_current_shared_team(
-                db,
-                recipient=recipient,
-                sender_dids=sender.identity_dids(),
-                registry_client=registry_client,
-            ):
-                return
-        except (HTTPException, RegistryClientUnavailable) as exc:
-            # An exact contact independently admits the sender. Otherwise an
-            # unavailable membership read must retain its cause and retry status.
-            membership_error = exc
-    owner_dids = [
-        str(recipient[field]) for field in ("did_aw", "did_key") if recipient.get(field)
-    ]
-    match = await identity_contact_match(
-        db,
-        owner_dids=owner_dids,
-        address=sender.address,
-        sender_did=sender.contact_did(),
-    )
-    if match is IdentityContactMatch.MATCHED:
+    while isinstance(step := decide_delivery(facts), NeedDeliveryFact):
+        if step.fact is DeliveryFact.INBOUND_MODE:
+            facts = replace(
+                facts, inbound_mode=await recipient_inbound_mode(db, recipient)
+            )
+        elif step.fact is DeliveryFact.SHARED_TEAM:
+            try:
+                shared = await has_current_shared_team(
+                    db,
+                    recipient=recipient,
+                    sender_dids=sender.identity_dids(),
+                    registry_client=registry_client,
+                )
+            except (HTTPException, RegistryClientUnavailable) as exc:
+                membership_error = exc
+                facts = replace(facts, shared_team=SharedTeam.UNAVAILABLE)
+            else:
+                facts = replace(
+                    facts,
+                    shared_team=SharedTeam.SHARED if shared else SharedTeam.NOT_SHARED,
+                )
+        else:
+            owner_dids = [
+                str(recipient[field])
+                for field in ("did_aw", "did_key")
+                if recipient.get(field)
+            ]
+            facts = replace(
+                facts,
+                contact_match=await identity_contact_match(
+                    db,
+                    owner_dids=owner_dids,
+                    address=sender.address,
+                    sender_did=sender.contact_did(),
+                ),
+            )
+    if isinstance(step, DeliveryAdmitted):
         return
-    if membership_error is not None:
+    if isinstance(step, DeliveryMembershipUnavailable):
         raise membership_error
-    if match is IdentityContactMatch.NEEDS_BINDING:
-        raise DeliveryPolicyRefused(
-            code=DeliveryRefusalCode.CONTACT_IDENTITY_BINDING_REQUIRED,
-            detail=CONTACT_REBIND_ACTION,
-        )
-    if not global_recipient:
-        # Preserve the published local-only 404 (federation-error-reference.md:40).
-        # Missing identities retain their distinct released error code.
-        raise DeliveryPolicyRefused(
-            code=DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING,
-            detail=unreachable_address_refusal(str(recipient.get("address") or "")),
-        )
-    detail = (
-        "Recipient only accepts messages from exact active contacts. "
-        if mode is InboundMode.CONTACTS_ONLY
-        else "Recipient only accepts messages from verified team members or exact active contacts. "
-    ) + _POLICY_ACTION
-    raise DeliveryPolicyRefused(
-        code=DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED, detail=detail
-    )
+    raise DeliveryPolicyRefused(code=step.code, detail=step.detail)

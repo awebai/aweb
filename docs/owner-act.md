@@ -1,6 +1,7 @@
 # Owner act: `aweb.owner-act/1`
 
-Status: **specified experimental public contract, not yet shipped**. Owner: the
+Status: **experimental public contract**; `aw hooks activate` and `aw hooks revoke`
+sign it since aw-v1.36.57. Owner: the
 aweb OSS hooks lane (aweb-acgh.16). This document is the source of truth for the
 signed artifact by which a team's owner authorizes a governance act that no
 admin, member or agent can perform. Its vector is

@@ -7,8 +7,8 @@
 #
 # Output: dist/<skill-name>.zip for each canonical skill in ../../skills/.
 #
-# To publish: skills-release.yml workflow attaches these as GH Release
-# assets on each skills-v* tag, downloadable at e.g.
+# To publish: scripts/publish_release.py runs this for each skills-v* tag; the
+# ZIPs are then uploaded as GitHub Release assets, downloadable at e.g.
 # https://github.com/awebai/aweb/releases/download/skills-v0.1.0/aweb-coordination.zip
 set -euo pipefail
 cd "$(dirname "$0")"

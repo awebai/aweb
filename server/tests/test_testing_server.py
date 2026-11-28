@@ -55,6 +55,29 @@ async def test_the_server_is_healthy_and_reached_through_its_transport(stack) ->
     assert stack.registry.transport.calls[0].url.path == "/health"
 
 
+async def _own_connections(db) -> dict[str, int]:
+    rows = await db.fetch_all(
+        "SELECT application_name, count(*) AS n FROM pg_stat_activity"
+        " WHERE datname = current_database() GROUP BY application_name"
+    )
+    return {row["application_name"]: row["n"] for row in rows}
+
+
+@pytest.mark.asyncio
+async def test_each_helper_holds_a_small_pool_under_its_own_name(stack) -> None:
+    """Many suites share one Postgres: each helper's pool stays small and says
+    whose it is in pg_stat_activity."""
+    server_db = stack.server.db.get_manager("aweb")
+    registry_db = stack.registry.db
+    for db in (server_db, registry_db):
+        stats = await db.get_pool_stats()
+        assert (stats["min_size"], stats["max_size"]) == (1, 5), stats
+    server = await _own_connections(server_db)
+    registry = await _own_connections(registry_db)
+    assert server.get("aweb_testing_running_server", 0) >= 1, server
+    assert registry.get("awid_testing_running_registry", 0) >= 1, registry
+
+
 class _FailingRedis:
     async def ping(self):
         raise RuntimeError("redis refused")

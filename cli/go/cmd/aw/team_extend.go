@@ -114,46 +114,104 @@ func resolveTeamExtendAuthority(wd string) (teamExtendAuthority, error) {
 		}
 		return teamExtendAuthority{Tier: teamExtendAuthorityTierAPIKey, AnchorDir: wd, AgentsRoot: agentsRoot, APIKey: apiKey}, nil
 	}
-	if candidate, ok, err := resolveTeamExtendCandidate(wd, teamID); err != nil {
+	facts := teamExtendCreatorFacts{CreatorRequired: true, TeamFilter: teamID, AgentsRoot: agentsRoot}
+	if err := readTeamExtendCreatorFacts(wd, teamID, &facts); err != nil {
 		return teamExtendAuthority{}, err
-	} else if ok {
-		return teamExtendAuthority{Tier: teamExtendAuthorityTierCurrentWorkspace, AnchorDir: candidate.HomeDir, AgentsRoot: agentsRoot, TeamID: candidate.TeamID}, nil
 	}
-	home, homeErr := identityHomeForDir(wd)
-	if homeErr != nil {
-		return teamExtendAuthority{}, homeErr
-	}
-	if home.External() {
-		return teamExtendAuthority{}, usageError("selected identity home %s has no invite authority for the requested team", home.Root)
-	}
-	candidates, checked, err := scanTeamExtendCandidates(agentsRoot, teamID)
+	creator, err := decideTeamExtendCreator(facts)
 	if err != nil {
 		return teamExtendAuthority{}, err
 	}
-	if len(candidates) == 0 {
-		if teamID != "" {
-			return teamExtendAuthority{}, usageError("no membership authority found for --team-id %s: no --api-key/%s, and no matching invite-capable agent workspace under %s (checked %d candidate homes); run aw team admin extend inside a team directory, pass --api-key, or create a new team with aw team admin create <name>", teamID, initAPIKeyEnvVar, agentsRoot, checked)
+	authority := teamExtendAuthority{Tier: creator.Tier, AnchorDir: creator.Candidate.HomeDir, AgentsRoot: agentsRoot, TeamID: creator.Candidate.TeamID}
+	if creator.Tier == teamExtendAuthorityTierDiscoveredAgent {
+		printDiscoveredCreator(*creator.Candidate)
+		authority.Checked = facts.Checked
+	}
+	return authority, nil
+}
+
+// teamExtendCreatorFacts holds what extend has found about candidate creators.
+// A creator is required when no API key supplies authority; with a workspace
+// key, finding none leaves creation to the working directory.
+type teamExtendCreatorFacts struct {
+	CreatorRequired bool
+	TeamFilter      string
+	AgentsRoot      string
+	Current         *teamExtendCandidate
+	ExternalHome    string
+	Discovered      []teamExtendCandidate
+	Checked         int
+}
+
+type teamExtendCreator struct {
+	Tier      string
+	Candidate *teamExtendCandidate
+}
+
+// decideTeamExtendCreator chooses the workspace that creates extend's members:
+// the working directory's own membership, else the one discovered agent
+// workspace, never one of several by directory order.
+func decideTeamExtendCreator(facts teamExtendCreatorFacts) (teamExtendCreator, error) {
+	if facts.Current != nil {
+		return teamExtendCreator{Tier: teamExtendAuthorityTierCurrentWorkspace, Candidate: facts.Current}, nil
+	}
+	if facts.CreatorRequired && facts.ExternalHome != "" {
+		return teamExtendCreator{}, usageError("selected identity home %s has no invite authority for the requested team", facts.ExternalHome)
+	}
+	if len(facts.Discovered) == 0 {
+		if !facts.CreatorRequired {
+			return teamExtendCreator{Tier: teamExtendAuthorityTierCurrentWorkspace}, nil
 		}
-		return teamExtendAuthority{}, usageError("no membership authority found: no --api-key/%s, and no invite-capable agent workspace under %s (checked %d candidate homes); run aw team admin extend inside a team directory, pass --api-key, or create a new team with aw team admin create <name>", initAPIKeyEnvVar, agentsRoot, checked)
-	}
-	teams := map[string]bool{}
-	for _, candidate := range candidates {
-		teams[candidate.TeamID] = true
-	}
-	if teamID == "" && len(teams) > 1 {
-		teamIDs := make([]string, 0, len(teams))
-		for id := range teams {
-			teamIDs = append(teamIDs, id)
+		if facts.TeamFilter != "" {
+			return teamExtendCreator{}, usageError("no membership authority found for --team-id %s: no --api-key/%s, and no matching invite-capable agent workspace under %s (checked %d candidate homes); run aw team admin extend inside a team directory, pass --api-key, or create a new team with aw team admin create <name>", facts.TeamFilter, initAPIKeyEnvVar, facts.AgentsRoot, facts.Checked)
 		}
-		sort.Strings(teamIDs)
-		return teamExtendAuthority{}, usageError("multiple teams found under %s: %s; pass --team-id to choose one", agentsRoot, strings.Join(teamIDs, ", "))
+		return teamExtendCreator{}, usageError("no membership authority found: no --api-key/%s, and no invite-capable agent workspace under %s (checked %d candidate homes); run aw team admin extend inside a team directory, pass --api-key, or create a new team with aw team admin create <name>", initAPIKeyEnvVar, facts.AgentsRoot, facts.Checked)
 	}
-	if len(candidates) > 1 {
-		return teamExtendAuthority{}, creationCandidatesError(candidates)
+	if facts.CreatorRequired && facts.TeamFilter == "" {
+		teams := map[string]bool{}
+		for _, candidate := range facts.Discovered {
+			teams[candidate.TeamID] = true
+		}
+		if len(teams) > 1 {
+			teamIDs := make([]string, 0, len(teams))
+			for id := range teams {
+				teamIDs = append(teamIDs, id)
+			}
+			sort.Strings(teamIDs)
+			return teamExtendCreator{}, usageError("multiple teams found under %s: %s; pass --team-id to choose one", facts.AgentsRoot, strings.Join(teamIDs, ", "))
+		}
 	}
-	winner := candidates[0]
-	printDiscoveredCreator(winner)
-	return teamExtendAuthority{Tier: teamExtendAuthorityTierDiscoveredAgent, AnchorDir: winner.HomeDir, AgentsRoot: agentsRoot, TeamID: winner.TeamID, Checked: checked}, nil
+	if len(facts.Discovered) > 1 {
+		return teamExtendCreator{}, creationCandidatesError(facts.Discovered)
+	}
+	return teamExtendCreator{Tier: teamExtendAuthorityTierDiscoveredAgent, Candidate: &facts.Discovered[0]}, nil
+}
+
+// readTeamExtendCreatorFacts reads candidates in the order the decision uses
+// them and stops at the first fact that decides it: the working directory's
+// membership of currentTeamFilter's team (any team when empty), then, without
+// one, the identity home and the agent workspaces of the facts' team filter.
+func readTeamExtendCreatorFacts(wd, currentTeamFilter string, facts *teamExtendCreatorFacts) error {
+	current, ok, err := resolveTeamExtendCandidate(wd, currentTeamFilter)
+	if err != nil {
+		return err
+	}
+	if ok {
+		facts.Current = &current
+		return nil
+	}
+	if facts.CreatorRequired {
+		home, err := identityHomeForDir(wd)
+		if err != nil {
+			return err
+		}
+		if home.External() {
+			facts.ExternalHome = home.Root
+			return nil
+		}
+	}
+	facts.Discovered, facts.Checked, err = scanTeamExtendCandidates(facts.AgentsRoot, facts.TeamFilter)
+	return err
 }
 
 func activeTeamIDForExtend(wd string) (string, bool, error) {
@@ -304,30 +362,23 @@ func selectTeamExtendCreation(wd string, authority teamExtendAuthority) (teamExt
 		if selected.APIKeyKind == creationKeyKindWorkspace {
 			requested := selected.CanonicalTeamID
 			// Discover a native issuer using the same current/discovered selection as
-			// no-key extend. The deciding function below still checks its team.
-			candidate, ok, err := resolveTeamExtendCandidate(wd, "")
+			// no-key extend. resolveAgentCreation below still checks its team.
+			facts := teamExtendCreatorFacts{TeamFilter: requested, AgentsRoot: agentsRoot}
+			if err := readTeamExtendCreatorFacts(wd, "", &facts); err != nil {
+				return teamExtendAuthority{}, err
+			}
+			creator, err := decideTeamExtendCreator(facts)
 			if err != nil {
 				return teamExtendAuthority{}, err
 			}
-			tier := teamExtendAuthorityTierCurrentWorkspace
-			if !ok {
-				candidates, _, err := scanTeamExtendCandidates(agentsRoot, requested)
-				if err != nil {
-					return teamExtendAuthority{}, err
-				}
-				if len(candidates) > 0 {
-					if len(candidates) > 1 {
-						return teamExtendAuthority{}, creationCandidatesError(candidates)
-					}
-					candidate, ok = candidates[0], true
-					tier = teamExtendAuthorityTierDiscoveredAgent
-					printDiscoveredCreator(candidate)
-				}
-			}
 			anchor := wd
-			if ok {
-				anchor = candidate.HomeDir
+			if creator.Candidate != nil {
+				anchor = creator.Candidate.HomeDir
 			}
+			if creator.Tier == teamExtendAuthorityTierDiscoveredAgent {
+				printDiscoveredCreator(*creator.Candidate)
+			}
+			tier := creator.Tier
 			creation, err := resolveAgentCreation(agentCreationRequest{WorkingDir: anchor, APIKey: apiKey, AwebURL: base, RequestedTeam: requested, SelectedTeam: selected})
 			if err != nil {
 				return teamExtendAuthority{}, err

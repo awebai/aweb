@@ -19,6 +19,52 @@ import (
 	"github.com/awebai/aw/internal/blueprint"
 )
 
+func TestTeamExtendCreatorDecision(t *testing.T) {
+	current := teamExtendCandidate{HomeDir: "/work", TeamID: "dev:acme.com"}
+	a := teamExtendCandidate{HomeDir: "/agents/a", TeamID: "dev:acme.com"}
+	b := teamExtendCandidate{HomeDir: "/agents/b", TeamID: "dev:acme.com"}
+	c := teamExtendCandidate{HomeDir: "/agents/c", TeamID: "ops:acme.com"}
+	const noneTail = "run aw team admin extend inside a team directory, pass --api-key, or create a new team with aw team admin create <name>"
+	ambiguous := "choose the creating workspace: run aw team admin extend from it, or select --identity-home <home>; candidates: /agents/a (dev:acme.com), /agents/b (dev:acme.com)"
+	for _, tc := range []struct {
+		name      string
+		facts     teamExtendCreatorFacts
+		tier      string
+		candidate *teamExtendCandidate
+		refusal   string
+	}{
+		{"current workspace wins over discovered ones", teamExtendCreatorFacts{CreatorRequired: true, Current: &current, Discovered: []teamExtendCandidate{a, c}}, teamExtendAuthorityTierCurrentWorkspace, &current, ""},
+		{"current workspace wins with a workspace key", teamExtendCreatorFacts{Current: &current, Discovered: []teamExtendCandidate{a, b}}, teamExtendAuthorityTierCurrentWorkspace, &current, ""},
+		{"external identity home has no invite authority", teamExtendCreatorFacts{CreatorRequired: true, ExternalHome: "/ext/.aw", Discovered: []teamExtendCandidate{a}}, "", nil, "selected identity home /ext/.aw has no invite authority for the requested team"},
+		{"external identity home with a workspace key creates there", teamExtendCreatorFacts{ExternalHome: "/ext/.aw"}, teamExtendAuthorityTierCurrentWorkspace, nil, ""},
+		{"no authority for the requested team", teamExtendCreatorFacts{CreatorRequired: true, TeamFilter: "dev:acme.com", AgentsRoot: "/agents", Checked: 3}, "", nil, "no membership authority found for --team-id dev:acme.com: no --api-key/AWEB_API_KEY, and no matching invite-capable agent workspace under /agents (checked 3 candidate homes); " + noneTail},
+		{"no authority at all", teamExtendCreatorFacts{CreatorRequired: true, AgentsRoot: "/agents"}, "", nil, "no membership authority found: no --api-key/AWEB_API_KEY, and no invite-capable agent workspace under /agents (checked 0 candidate homes); " + noneTail},
+		{"workspace key without a creator creates here", teamExtendCreatorFacts{TeamFilter: "dev:acme.com", AgentsRoot: "/agents"}, teamExtendAuthorityTierCurrentWorkspace, nil, ""},
+		{"several teams need --team-id", teamExtendCreatorFacts{CreatorRequired: true, AgentsRoot: "/agents", Discovered: []teamExtendCandidate{c, a}}, "", nil, "multiple teams found under /agents: dev:acme.com, ops:acme.com; pass --team-id to choose one"},
+		{"several workspaces of one team need a choice", teamExtendCreatorFacts{CreatorRequired: true, Discovered: []teamExtendCandidate{b, a}}, "", nil, ambiguous},
+		{"several workspaces of the requested team need a choice", teamExtendCreatorFacts{CreatorRequired: true, TeamFilter: "dev:acme.com", Discovered: []teamExtendCandidate{a, b}}, "", nil, ambiguous},
+		{"several workspaces with a workspace key need a choice", teamExtendCreatorFacts{TeamFilter: "dev:acme.com", Discovered: []teamExtendCandidate{a, b}}, "", nil, ambiguous},
+		{"one discovered workspace creates", teamExtendCreatorFacts{CreatorRequired: true, Discovered: []teamExtendCandidate{a}}, teamExtendAuthorityTierDiscoveredAgent, &a, ""},
+		{"one discovered workspace creates with a workspace key", teamExtendCreatorFacts{TeamFilter: "dev:acme.com", Discovered: []teamExtendCandidate{a}}, teamExtendAuthorityTierDiscoveredAgent, &a, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := decideTeamExtendCreator(tc.facts)
+			if tc.refusal != "" {
+				if err == nil || err.Error() != tc.refusal || exitCode(err) != 2 {
+					t.Fatalf("error=%v, want usage error %q", err, tc.refusal)
+				}
+				return
+			}
+			if err != nil || got.Tier != tc.tier {
+				t.Fatalf("creator=%+v err=%v", got, err)
+			}
+			if (got.Candidate == nil) != (tc.candidate == nil) || (got.Candidate != nil && *got.Candidate != *tc.candidate) {
+				t.Fatalf("candidate=%+v, want %+v", got.Candidate, tc.candidate)
+			}
+		})
+	}
+}
+
 func TestTeamExtendAmbientAPIKeyUsesActiveTeamAssertion(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
