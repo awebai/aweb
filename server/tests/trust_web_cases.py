@@ -523,7 +523,6 @@ def load_corpus(corpus: Any) -> list[Case]:
 # evidence_unavailable, not as a refusal.
 DISAGREEMENTS: dict[str, str] = {
     "mint-grant-after-removal-refused": "aweb-adyz.2",
-    "remove-member-ends-its-grant": "aweb-adyz.2",
     "model-admit-local-member-to-second-team-refused": "aweb-adyz.1",
     "model-admit-to-admin-team-refused": "aweb-adyz.4",
     "model-register-person-in-missing-org-refused": "aweb-adyz.5",
@@ -1456,7 +1455,7 @@ NOT_THE_CERTIFICATES_KEY = PremiseRefusals(
     (
         WireRefusal(
             401,
-            code="member_key_mismatch",
+            detail="member_key_mismatch",
             source="awid/src/awid/team_certificate.py:292-293, 356-367",
         ),
     )
