@@ -37,16 +37,21 @@ test("passive terminal cleanup waits for the panes the stopped server leaves run
   // kill-server returns before the panes exit. A pane's shell that writes its
   // history as it exits must not race the root's removal.
   const scratch = mkdtempSync("/tmp/kpw-");
-  const root = join(scratch, "root"), marker = join(scratch, "pane-last-write");
+  const root = join(scratch, "root"), marker = join(scratch, "pane-last-write"), ready = join(scratch, "pane-ready");
   mkdirSync(root);
+  let pid = 0;
   try {
-    // The pane is not the test's child, as a real pane is the server's.
+    // The pane is not the test's child, as a real pane is the server's. It
+    // says it is ready only once its SIGHUP handler is installed, so the
+    // signal cannot arrive first.
     const pane = spawnSync("/bin/sh", ["-c", `nohup ${JSON.stringify(process.execPath)} -e ${JSON.stringify(
-      `process.on("SIGHUP", () => setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker)}, "history"); process.exit(0); }, 300));setInterval(() => {}, 1000)`,
+      `process.on("SIGHUP", () => setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker)}, "history"); process.exit(0); }, 300));require("fs").writeFileSync(${JSON.stringify(ready)}, "");setInterval(() => {}, 1000)`,
     )} >/dev/null 2>&1 & echo $!`], { encoding: "utf8" });
-    const pid = Number(pane.stdout.trim());
+    pid = Number(pane.stdout.trim());
     assert.ok(Number.isInteger(pid) && pid > 0, "the pane started");
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+    const readyBy = Date.now() + 10000;
+    while (!existsSync(ready) && Date.now() < readyBy) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    assert.equal(existsSync(ready), true, "the pane installed its SIGHUP handler");
     const tmuxBinary = join(scratch, "tmux.mjs");
     writeFileSync(tmuxBinary, `#!${process.execPath}
 const args = process.argv.slice(2).join(" ");
@@ -57,7 +62,10 @@ process.exit(1);
     cleanupPassiveTerminal({ root, tmuxBinary, env: { PATH: process.env.PATH } });
     assert.equal(existsSync(marker), true, "cleanup returns only after the pane's last write");
     assert.equal(existsSync(root), false, "the root is removed after the pane exits");
-  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  } finally {
+    if (pid > 0) { try { process.kill(pid, "SIGKILL"); } catch {} }
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });
 
 test("passive terminal cleanup counts an unreaped pane as exited", () => {
@@ -70,7 +78,12 @@ test("passive terminal cleanup counts an unreaped pane as exited", () => {
     const deadline = Date.now() + 10000;
     while (!(existsSync(paneFile) && existsSync(parentFile)) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     const pid = Number(readFileSync(paneFile, "utf8").trim());
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+    // Wait for the pane to become the zombie this test is about, not for a
+    // time it usually takes to get there.
+    const state = () => spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim();
+    const zombieBy = Date.now() + 10000;
+    while (!state().startsWith("Z") && Date.now() < zombieBy) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    assert.ok(state().startsWith("Z"), `the exited pane is a zombie (state ${JSON.stringify(state())})`);
     assert.doesNotThrow(() => process.kill(pid, 0), "the exited pane is still a process: a zombie");
     const tmuxBinary = join(root, "tmux.mjs");
     writeFileSync(tmuxBinary, `#!${process.execPath}
