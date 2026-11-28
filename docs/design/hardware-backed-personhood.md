@@ -701,7 +701,7 @@ either mode.
 
 A later controller rotation, a key change, or a lapsed P does not change a
 historical reading of a window that P covered. That matches the existing rule
-not to rewrite a historical claim as failed ([approval-service protocol, lines 667–668](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L667-L668)).
+not to rewrite a historical claim as failed ([approval-service protocol, lines 669–675](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L669-L675)).
 
 A historical reading reports what the issuer stated under the snapshot it
 named. It does not re-evaluate withdrawals that FIDO published later. The
@@ -713,7 +713,7 @@ the relying party's own record ([approval-service protocol, lines 403–406](htt
 
 | Item | Where it lives | Why |
 |---|---|---|
-| Raw attestation object | Never retained. The issuer checks it and drops it, the same rule awsign applies ([approval-service deployment, lines 120–125](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md#L120-L125)). | Not needed after the check. |
+| Raw attestation object | The issuer discards it after checking. awsign retains it while enrollment is pending and erases it at activation or pending-enrollment deletion. [Approval-service deployment, lines 101–107](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md#L101-L107). | Supports the issuer's independent registration check. |
 | The `AttestationAssessment` (§4.2a) of a batch-profile basis credential: format, AAGUID, firmware, verified chain, root, profile | **Issuer only**: private, encrypted at rest, keyed by (namespace, person, credential). Deleted when the credential leaves B or the ID is revoked. Never logged, exported, or put in P, B, E or the registry. | Needed to re-evaluate against later snapshots and certificate-scoped withdrawals (§3). Retained only for the batch profile, which identifies a model and batch, never a device (§2). Other profiles are discarded at assessment. |
 | Credential public key, selector, grade, enrollment snapshot digest | Public in B, as today | Existing |
 | Person ID, certificate digest, identity key, `H_B`, selector, basis, grade policy, `assessed_under`, dates | Public in P | The minimum needed to check P |
@@ -740,7 +740,7 @@ Further rules:
 | Namespace-controller rotation | P signed by the superseded key no longer verifies under current Trust. That reads `signature_invalid`, or `issuer_superseded` with independently verified predecessor evidence (§5.2 step 3). The new issuer re-signs at the next renewal under §4.2. Historical readings use as-of Trust. | `README.md:30-37` |
 | Basis credential lost, replaced or withdrawn | Replacing or withdrawing an enrolled key changes the identity key ([approval-service protocol, lines 94–99](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L94-L99)). The old P becomes not current. A new P needs a batch-profile `certified_hardware` credential in the new B that completed its own proof (§4.2). If only passkeys remain, hardware backing is `none` from then on. Personhood (the issuer's vouching) is unaffected. The retained reference is deleted. | §4.2 |
 | A second hardware credential is still enrolled | That credential grounds a new P only if it meets §4.2 itself: its own batch-profile assessment and its own completed issuer-built confirmation. P names it, and a basis never moves silently. | §4.2 |
-| Re-enrollment at another origin or RP | New B, new assessment, new P. Nothing carries over. | [approval-service protocol, lines 121–126](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L121-L126) |
+| Re-enrollment at another origin or RP | New B, new assessment, new P. Nothing carries over. | [approval-service protocol, lines 7–10](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L7-L10) |
 | Recovery or recreation after losing every key | A new creation event after an explicit break. P starts over and never inherits the old basis. | [approval-service deployment, lines 160–167](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/deployment.md#L160-L167); [approval-service protocol, lines 100–106](https://github.com/awebai/approval-service/blob/be53c0a0f69e04460a2165c62d0211372965d824/docs/protocol.md#L100-L106) |
 | ID revoked | Current readings give `not_current`. Retained references are deleted. Historical readings of earlier windows still hold. | §5.4 |
 | Model withdrawn by FIDO | No renewal and no revocation. Backing reads `lapsed` from `valid_until`. The person can enrol a current key, which grounds a new P once it completes its own proof (§4.2). Personhood is unaffected. B's grade is untouched (see §10.4). | §3 |
