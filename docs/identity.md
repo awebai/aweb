@@ -12,12 +12,11 @@ authority. A hosted operator may hold controller or identity private keys only
 for an explicitly hosted-authority or custodial flow. AWID itself never holds
 private keys or signs on anyone's behalf.
 
-The [identity certificates v1 candidate](id-certificates.md) defines a
+The [identity certificates v1 contract](id-certificates.md) defines a
 parent-signed human/agent tree rooted in DNS namespace authority, alongside
 unchanged team certificates. The nearest human answers for an agent;
-membership, roles and custody stay separate. Implementation follows contract
-review. The former [email attribution candidate](drafts/member-attribution.md) is
-superseded and must not be implemented.
+membership, roles and custody stay separate. The earlier email attribution
+proposal is superseded and must not be implemented.
 
 ## Entities
 

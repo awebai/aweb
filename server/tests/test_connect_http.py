@@ -583,13 +583,6 @@ async def test_connect_http_rejects_alias_collision_for_different_agent(connect_
     first_sk, _, first_did_key = _make_keypair()
     second_sk, _, second_did_key = _make_keypair()
 
-    existing_cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        first_did_key,
-        team_id="backend:acme.com",
-        alias="alice",
-    )
     new_cert = _make_certificate(
         team_sk,
         team_did_key,

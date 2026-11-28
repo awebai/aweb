@@ -37,7 +37,7 @@ def parser():
     run.add_argument("--target", choices=["merak", "hetzner"])
     run.add_argument("--timeout", type=int, default=7200)
     # A project receipt: one project's full gate for its release command.
-    run.add_argument("--project", choices=["aweb", "ac", "servers"])
+    run.add_argument("--project", choices=["aweb", "ac", "aweb-cloud", "servers"])
     run.add_argument("--machine")
     run.add_argument("--receipt")
     run.add_argument("--files")

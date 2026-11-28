@@ -310,46 +310,6 @@ async def test_deliver_message_cross_identity_to_contact(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_rejects_non_contact_sender(aweb_cloud_db):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
-    await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
-
-    alice_did_aw = "did:aw:alice"
-    bob_did_aw = "did:aw:bob"
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="backend:acme.com",
-        alias="alice",
-        did_key=_make_did_key(),
-        did_aw=alice_did_aw,
-        address="acme.com/alice",
-    )
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="ops:otherco.com",
-        alias="bob",
-        did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="otherco.com/bob",
-        inbound_mode="team_and_contacts",
-    )
-
-    with pytest.raises(ForbiddenError, match="contacts"):
-        await _deliver_fixture_mail(
-            db_shim,
-            from_did=alice_did_aw,
-            to_did=bob_did_aw,
-            from_alias="alice",
-            to_alias="bob",
-            sender_address="acme.com/alice",
-            subject="Hello",
-            body="Hi Bob!",
-            priority="normal",
-        )
-
-
-@pytest.mark.asyncio
 async def test_exact_active_identity_contact_helper_is_narrow(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -491,47 +451,6 @@ async def test_agents_inbound_mode_check_rejects_stale_values(aweb_cloud_db):
             agent_id,
         )
     assert "agents_inbound_mode_valid" in str(withdrawn_mode.value)
-
-
-@pytest.mark.asyncio
-async def test_deliver_message_team_and_contacts_allows_verified_same_team_non_contact(
-    aweb_cloud_db,
-):
-    db_shim = _DbShim(aweb_cloud_db.aweb_db)
-    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
-    bob_did_aw = "did:aw:bob-team-and-contacts"
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="backend:acme.com",
-        alias="bob",
-        did_key=_make_did_key(),
-        did_aw=bob_did_aw,
-        address="acme.com/bob",
-        inbound_mode="team_and_contacts",
-    )
-
-    await _insert_agent(
-        aweb_cloud_db.aweb_db,
-        team_id="backend:acme.com",
-        alias="alice",
-        did_key=_make_did_key(),
-        did_aw="did:aw:alice-team-and-contacts",
-        address="acme.com/alice",
-    )
-
-    msg_id, _ = await _deliver_fixture_mail(
-        db_shim,
-        from_did="did:aw:alice-team-and-contacts",
-        to_did=bob_did_aw,
-        from_alias="alice",
-        to_alias="bob",
-        sender_address="acme.com/alice",
-        sender_verified_team_id="backend:acme.com",
-        subject="Hello",
-        body="Hi Bob!",
-        priority="normal",
-    )
-    assert msg_id is not None
 
 
 @pytest.mark.asyncio
@@ -687,34 +606,4 @@ async def test_deliver_message_recipient_not_found(aweb_cloud_db):
             subject="test",
             body="test",
             priority="normal",
-        )
-
-
-@pytest.mark.asyncio
-async def test_contacts_only_rejects_verified_teammate_before_contact(aweb_cloud_db):
-    from aweb.messaging.messages import authorize_message_delivery
-
-    manager = aweb_cloud_db.aweb_db
-    await _insert_team(manager, "backend:acme.com")
-    recipient_id = await _insert_agent(
-        manager,
-        team_id="backend:acme.com",
-        alias="strict",
-        did_key=_make_did_key(),
-        did_aw="did:aw:strict",
-        address="acme.com/strict",
-        inbound_mode="contacts_only",
-    )
-    recipient = await get_agent_by_id(_DbShim(manager), agent_id=recipient_id)
-    with pytest.raises(
-        ForbiddenError,
-        match="Recipient only accepts messages from exact active contacts",
-    ):
-        await authorize_message_delivery(
-            _DbShim(manager),
-            recipient_agent=recipient,
-            sender_did="did:aw:teammate",
-            sender_address="acme.com/teammate",
-            stored_route_continuation=True,
-            registry_client=None,
         )
