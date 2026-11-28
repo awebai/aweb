@@ -778,29 +778,54 @@ separately approved step (same document, §7).
 
 **Pilot controller custody.** On 2026-11-28 Juan chose option A for where
 the controller key lives. The new service holds the `awebai.org` namespace
-controller key in the background worker's environment only. The web app
-has no copy or environment access to it. This is the `awebai.org`
-controller exception to F1.
+controller key in a `0600` secret file mounted only into the background
+worker service. This is the `awebai.org` controller exception to F1.
 
 The coordinator's pilot plan places the `awebai.org` admin and open team
-keys in the same worker environment, pending Juan's review. The web app
-receives none of these keys. The namespace controller can authorise
-replacement of either team key, so moving the existing team keys outside
-the worker would still leave it with that authority. See
+keys in the same worker-only secret mount, pending Juan's review. The
+namespace controller can authorise replacement of either team key. See
 [AWID signing authority](../awid-sot.md#authentication).
+All three keys are delivered as `0600` files. The web app's configuration
+has no access to any of the three. Key material is never put in environment
+variables, logs or error output.
 
 The worker signs B, D and E as required by the enrollment and continuity
 rules, publishes S with `grants: []`, and signs P at issuance and monthly
 renewal, within §4.2's eligibility and expiry checks. Each pilot P carries
 `grant: null`.
 
+**Signing authority.** The worker treats every job payload as untrusted.
+A job can identify an operation and a record to inspect. The worker loads
+the authoritative state, re-derives the basis for the exact operation and
+constructs the bytes it signs. Its authorising inputs are worker-owned or
+independently authenticated. The web role cannot create or amend those
+authorisations by enqueueing a job or writing its fields.
+
+- For B, the worker uses its own registration assessment, challenge and
+  eligibility checks for the exact credential and binding. For D and E it
+  verifies the exact committed confirmation or continuity evidence as
+  required by §§4.2 and 4.6. For P it verifies the current binding and
+  designation and re-evaluates eligibility under the current snapshot.
+- For certificate issuance it resolves the exact namespace, team and
+  subject, checks the required issuer or team authority, and checks the
+  applicable enrollment or authorised roster. For S it reads the approved
+  issuer policy and the current revision and epoch. Apply the same
+  operation-specific rule to each use of the keys.
+
+The worker checks current authority at the final signing decision,
+including §4.2's compare-and-sign for D and P. It refuses before signing or
+publishing when any required basis cannot be independently established.
+
 **Detection and recovery.** The operator watches the new registry's public
 change feed and alerts on any controller or key change for the namespace
-or either team outside its authorised changes. The watcher verifies the
-feed and its position, then reconciles changes to the namespace controller
-epoch and keys and to the admin and open team keys since its last verified
-observation against the operator's record of approved changes. It refreshes
-those checks even on idle feed barriers.
+or either team outside its authorised changes. The watcher runs outside
+the worker and its custody boundary. The operator records approved changes
+out of band in an operator-held record. The worker and its credentials
+cannot write that record or administer the watcher. The watcher verifies
+the feed and its position, then reconciles the namespace controller epoch
+and keys and the admin and open team keys since its last verified
+observation against that record. It refreshes those checks even on idle
+feed barriers.
 The [public feed](standing-proof-and-feed.md#4-public-feed)
 carries opaque invalidation handles. It supplies a change signal, and the
 authenticated reads establish what changed. Alert separately if freshness
@@ -1075,13 +1100,20 @@ matter, and each test is paired with a valid neighbouring case:
   `vouched` (`issuer_default`), even though `awebai.org`'s S says
   `hardware_backing_required`.
 - Pilot custody and monitoring:
-  - the namespace controller and both team keys are in the worker
-    environment alone. The worker publishes S with an empty grant list and
-    signs a monthly renewal that verifies under the controller key with
-    `grant: null`;
+  - inspect the deployed worker and web service configurations. Verify
+    worker-only `0600` mounts, absence of all three keys from web service
+    configuration, and absence of key material from environment variables,
+    logs and error output. A monthly renewal verifies under the controller
+    key with `grant: null` and S has an empty grant list;
+  - through the web role enqueue a forged job claiming an unsupported
+    enrollment, designation or roster. The worker refuses without creating
+    a signature, certificate or publication. Exercise a valid job through
+    the same entry point with independently established authority;
   - a planned key change and a change absent from the operator's authorised
     record produce distinct watcher results. Check the namespace controller,
-    admin team and open team independently. Feed gaps alert separately;
+    admin team and open team independently. Show that worker credentials
+    cannot change the approved-change record or watcher. Feed gaps alert
+    separately;
   - rehearse DNS recovery with a fresh controller. Verify the replacement
     epoch, refusal of stale issuer evidence and current evidence for an
     explicitly re-established binding.
