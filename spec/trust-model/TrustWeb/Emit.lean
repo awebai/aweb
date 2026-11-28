@@ -172,6 +172,9 @@ def Case.json (c : Case) : Except String Json := do
     | .ok _, some q => throw s!"{c.name}: allowed, meant refused on {q}"
     | .error p, none => throw s!"{c.name}: refused on {p}, meant allowed"
   if c.refusedOn.isSome then
+    let failing := (c.req.act.checks builtRule s c.req.who []).filter (fun k => !decide k.prop)
+    if failing.length != 1 then
+      throw s!"{c.name}: fails {failing.length} premises, not one: {failing.map (·.name)}"
     for mate in routeMates s c.req.act do
       if let .ok _ := run builtRule s c.req.who [] mate then
         throw s!"{c.name}: another act on the same route allows the same request"
@@ -232,7 +235,7 @@ def cases : List Case := [
     refusedOn := "registerByRoot.Issuer", neighbour := "register-person-by-root",
     observe := [.cert alice] },
   { name := "register-person-in-missing-org-refused", setup := org12,
-    req := ⟨rootOf 1, .registerByRoot ⟨3, alice, .person, .root⟩⟩,
+    req := ⟨rootOf 3, .registerByRoot ⟨3, alice, .person, .root⟩⟩,
     refusedOn := "registerByRoot.OrgExists", neighbour := "register-person-by-root",
     observe := [.cert alice] },
   { name := "register-person-twice-refused", setup := org12 ++ [⟨rootOf 1, .registerByRoot (personCert alice)⟩],
@@ -272,7 +275,7 @@ def cases : List Case := [
   { name := "revoke-self", setup := withAlice,
     req := ⟨.id alice, .revokeSelf (personCert alice)⟩, observe := revokeObs alice .person },
   { name := "revoke-self-unregistered-refused", setup := withAlice,
-    req := ⟨.id alice, .revokeSelf (personCert carol)⟩,
+    req := ⟨.id carol, .revokeSelf (personCert carol)⟩,
     refusedOn := "revokeSelf.Registered", neighbour := "revoke-self",
     observe := [.revoked carol] },
   { name := "revoke-self-beside-agent", setup := withBot1,
@@ -325,7 +328,7 @@ def cases : List Case := [
     refusedOn := "admit.Authorised", neighbour := "admit-member",
     observe := [.hasTeamCert 1 (.named 1) carol] },
   { name := "admit-to-admin-team-refused", setup := org1,
-    req := ⟨teamOf 1 1, .admit ⟨1, .admin, carol⟩⟩,
+    req := ⟨.controller (.team 1 .admin), .admit ⟨1, .admin, carol⟩⟩,
     refusedOn := "admit.NotAdminTeam", neighbour := "admit-member",
     observe := [.hasTeamCert 1 .admin carol] },
   { name := "admit-member-to-second-team", setup := org1,
@@ -367,14 +370,33 @@ def cases : List Case := [
     refusedOn := "revokeGrant.Stands", neighbour := "revoke-grant", observe := [.grant 1] }
 ]
 
-/-- How many of a case's setup, party and arguments differ from another's. -/
+/-- The party an act's arguments fix, for the acts whose asker follows from
+them: the controller of a membership's team, the root controller of a
+certificate's organisation, or a revoked identity itself. -/
+def followingParty : Act → Option Party
+  | .admit m | .remove m | .admitAdmin m => some (.controller (.team m.org m.team))
+  | .revokeSelf c => some (.id c.subject)
+  | .registerByRoot c => some (.controller (.root c.org))
+  | _ => none
+
+/-- Whether a case's party is the one its arguments fix. -/
+def partyFollows (c : Case) : Bool :=
+  match followingParty c.req.act with
+  | some p => decide (p = c.req.who)
+  | none => false
+
+/-- How many of a case's setup, party and arguments differ from another's. A
+party that follows from the arguments in both cases changes with them, and is
+not counted as a change of its own. -/
 def changes (a b : Case) : Except String Nat := do
   let setupA ← a.setup.mapM reqJson
   let setupB ← b.setup.mapM reqJson
   let (actA, argsA) ← actJson a.req.act
   let (actB, argsB) ← actJson b.req.act
   if actA != actB then throw s!"{a.name}: its neighbour {b.name} is another act"
-  return [setupA != setupB, (← partyJson a.req.who) != (← partyJson b.req.who), argsA != argsB].count true
+  let partyChanged := (← partyJson a.req.who) != (← partyJson b.req.who) &&
+    !(partyFollows a && partyFollows b)
+  return [setupA != setupB, partyChanged, argsA != argsB].count true
 
 /-- Every refused case names an allowed neighbour that differs from it in
 exactly one of its setup, its party and its arguments. -/

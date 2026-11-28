@@ -877,13 +877,7 @@ and principal. No implementation consumes it until the shared
 
 ### `trust-web-cases-model-v2.json` — experimental, generated
 
-These are cases emitted by the experimental trust-web model in `spec/trust-model`, a Lean 4 model of selected trust rules. The format is `aweb.trust-web-cases/2`, with `source` `emitted` on every case. `lake exe trust-web-cases` produces the file from `spec/trust-model`, given the model commit it was run at.
-
-The model's author owns the cases and their meaning:
-- every verdict, and every premise a refusal names, comes from the model's executable step, which the model proves equal to its rules;
-- the build of `spec/trust-model` fails unless this file's format, emitter and cases are the generator's current output.
-
-Do not edit it by hand; regenerate it. Its intended consumer is the trust-web case runner in the server's tests. Until the runner loads it, no test consumes it, and it claims nothing about the code: agreement between the model and the code is claimed only for cases the runner has run.
+Cases emitted by the trust-web model in `spec/trust-model` (`lake exe trust-web-cases`), format `aweb.trust-web-cases/2`. The model's build fails unless this file is the generator's current output; regenerate it, never edit it. The trust-web case runner in the server's tests is its consumer.
 
 ## Experimental and compatibility A2A fixtures
 

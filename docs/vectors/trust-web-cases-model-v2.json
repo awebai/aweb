@@ -57,7 +57,7 @@
      "kind": "person",
      "issuer": {"member": "bot1"}}},
    "act": "registerByRoot"},
-  {"who": {"controller": {"root": "o1"}},
+  {"who": {"controller": {"root": "o3"}},
    "status": "implemented",
    "source": "emitted",
    "setup":
@@ -340,7 +340,7 @@
    "expect": {"result": "allowed"},
    "args": {"subject": "alice"},
    "act": "revokeSelf"},
-  {"who": {"id": "alice"},
+  {"who": {"id": "carol"},
    "status": "implemented",
    "source": "emitted",
    "setup":
@@ -734,7 +734,7 @@
    "args":
    {"membership": {"team": {"named": 1}, "org": "o1", "member": "carol"}},
    "act": "admit"},
-  {"who": {"controller": {"team": {"team": {"named": 1}, "org": "o1"}}},
+  {"who": {"controller": {"team": {"team": "admin", "org": "o1"}}},
    "status": "implemented",
    "source": "emitted",
    "setup": [{"who": {"dns": "o1"}, "args": {"org": "o1"}, "act": "createOrg"}],

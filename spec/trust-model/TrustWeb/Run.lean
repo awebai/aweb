@@ -77,21 +77,22 @@ inductive Act where
   | sendGrant (g : Grant)
   deriving DecidableEq, Repr
 
-/-- `who` is `id p` for the member `p` that issued `c`. -/
+/-- If a member `p` issued `c`, `who` is `id p`. (Whether a member issued
+`c` is a check of its own, `ByMember`, so each check fails alone.) -/
 def AskedByIssuer (c : Cert) (who : Party) : Prop :=
   match c.issuer with
-  | .root => False
+  | .root => True
   | .member p => who = .id p
 
 instance AskedByIssuer.decidable (c : Cert) (who : Party) : Decidable (AskedByIssuer c who) := by
   unfold AskedByIssuer
   cases c.issuer <;> infer_instance
 
-/-- The member that issued `c` is valid in `c`'s organisation, of some kind
-for which `ok` holds. -/
+/-- If a member issued `c`, it is valid in `c`'s organisation, of some kind
+for which `ok` holds. (Whether a member issued `c` is `ByMember`.) -/
 def IssuerValid (s : State) (c : Cert) (ok : Kind → Prop) : Prop :=
   match c.issuer with
-  | .root => False
+  | .root => True
   | .member p => ∃ pk, Valid s c.org p pk ∧ ok pk
 
 instance IssuerValid.decidable (s : State) (c : Cert) (ok : Kind → Prop) [DecidablePred ok] :
@@ -141,7 +142,8 @@ def Act.checks (ask : AskRule) [AskDecidable ask] (s : State) (who : Party)
     [⟨"registerByParent.Issuer", ByMember c⟩, ⟨"registerByParent.Asker", AskedByIssuer c who⟩,
      ⟨"registerByParent.Fresh", Fresh s c.subject⟩,
      ⟨"registerByParent.Valid", IssuerValid s c (fun _ => True)⟩,
-     ⟨"registerByParent.MayIssue", IssuerValid s c (fun pk => MayIssue pk c.kind)⟩]
+     ⟨"registerByParent.MayIssue",
+       IssuerValid s c (fun _ => True) → IssuerValid s c (fun pk => MayIssue pk c.kind)⟩]
   | .revokeSelf c =>
     [⟨"revokeSelf.Registered", c ∈ s.certs⟩, ⟨"revokeSelf.Asker", who = .id c.subject⟩]
   | .revokeChild c =>
@@ -311,8 +313,9 @@ theorem Act.Accepted.step {ask : AskRule} [AskDecidable ask] {s : State} {who : 
     cases hi : c.issuer with
     | root => simp [ByMember, hi] at h1
     | member p =>
-      simp [AskedByIssuer, IssuerValid, hi] at h2 h5
-      obtain ⟨pk, hv, hm⟩ := h5
+      simp [AskedByIssuer, IssuerValid, hi] at h2 h4 h5
+      obtain ⟨k0, hv0⟩ := h4
+      obtain ⟨pk, hv, hm⟩ := h5 k0 hv0
       subst h2
       exact .registerByParent hi h3 hv hm
   | revokeSelf c =>
@@ -400,7 +403,7 @@ theorem Step.accepted {ask : AskRule} [AskDecidable ask] {s s' : State} {who : P
   | registerByParent h1 h2 h3 h4 =>
     exact ⟨.registerByParent _, [], by
       simp [Act.Accepted, Act.checks, ByMember, AskedByIssuer, IssuerValid, h1, h2]
-      exact ⟨⟨_, h3⟩, _, h3, h4⟩, rfl⟩
+      exact ⟨⟨_, h3⟩, fun _ _ => ⟨_, h3, h4⟩⟩, rfl⟩
   | revokeSelf h1 =>
     exact ⟨.revokeSelf _, [], by simp [Act.Accepted, Act.checks, h1], rfl⟩
   | revokeChild h1 h2 h3 =>
