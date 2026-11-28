@@ -63,9 +63,9 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(verdict, "refused")
         self.assertLessEqual(elapsed, 125000)
         self.assertEqual(refusal, REFUSAL)
-        # Each attempt's timeout is the budget left, never more.
-        self.assertTrue(all(0 < timeout <= 125 for timeout in timeouts), timeouts)
-        self.assertEqual(timeouts, sorted(timeouts, reverse=True))
+        # Each attempt's timeout is the budget left at its start: attempts take
+        # 2 s and pauses 5 s, so 125, 118 and 111 s.
+        self.assertEqual(timeouts, [125, 118, 111])
 
     def test_a_correct_refusal_completing_after_the_window_is_late(self):
         verdict, elapsed, refusal, _ = self.probe(
@@ -143,15 +143,12 @@ class Commands(unittest.TestCase):
             result, root = self.run_probe(directory, command, window=1)
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertEqual((root / "verdict").read_text(), "late\n")
-            # Bounded by the budget left (1.5 s here), not by the attempt's 30 s.
-            self.assertLess(time.monotonic() - started, 10)
-            pid = int(pid_file.read_text())
-            state = subprocess.run(
-                ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True
-            ).stdout.strip()
-            self.assertEqual(
-                state, "", f"the attempt {pid} outlived the probe: {state}"
-            )
+            # Bounded by the 1.5 s left, not by the full 6 s window nor the
+            # attempt's 30 s.
+            self.assertLess(time.monotonic() - started, 4)
+            # Observed absent: no such process; any other error surfaces.
+            with self.assertRaises(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), 0)
 
 
 if __name__ == "__main__":
