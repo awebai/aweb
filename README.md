@@ -334,10 +334,11 @@ boundary between shipped behavior and planned work.
 
 ## Contributing
 
-Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has
-the development workflow and test commands, [SECURITY.md](SECURITY.md) says how
-to report a vulnerability privately, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-applies to every project space. Real `.aw/` directories contain local identity
+Issues and pull requests are welcome. The [contributing guide](docs/contributing.md)
+has the review gate, the development workflow and test commands,
+[SECURITY.md](.github/SECURITY.md) says how to report a vulnerability
+privately, and [CODE_OF_CONDUCT.md](.github/CODE_OF_CONDUCT.md) applies to
+every project space. Real `.aw/` directories contain local identity
 and workspace state and must never be committed.
 
 ## License
