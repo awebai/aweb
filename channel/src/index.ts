@@ -7,8 +7,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
-  type APIClient,
-  type AgentEvent,
   type ChannelAwakening,
   CHANNEL_CORE_SECURITY_CONTRACT,
   createChannelClient,
@@ -17,8 +15,6 @@ import {
   dispatchAgentEvent,
   formatEventStreamState,
   loadSessionPinStore,
-  type PinStore,
-  type PinStoreWriter,
   type ChannelTraceEntry,
   type RegistryIdentityConfig,
   type ResolveTxt,
