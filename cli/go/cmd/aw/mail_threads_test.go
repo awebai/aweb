@@ -96,7 +96,7 @@ func TestAwMailThreadsListsEachThreadWithItsTitle(t *testing.T) {
 		"Last activity: 2026-10-30T09:00:00Z\n",
 		"Conversation ID: 22222222-2222-4222-8222-222222222222",
 		"aw mail threads --cursor cursor-2",
-		"Answer in the conversation: aw mail reply <message_id>.",
+		mailThreadTeaching,
 		"Continue a thread: aw mail send --conversation-id <conversation_id> --body-file <file>",
 	} {
 		if !strings.Contains(text, want) {
@@ -186,9 +186,6 @@ func TestMailHelpTeachesReplyInTheConversation(t *testing.T) {
 		if !strings.Contains(cmd, mailThreadTeaching) {
 			t.Fatalf("help does not teach the thread model:\n%s", cmd)
 		}
-	}
-	if mailThreadTeaching != "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>." {
-		t.Fatalf("teaching wording changed: %q", mailThreadTeaching)
 	}
 }
 

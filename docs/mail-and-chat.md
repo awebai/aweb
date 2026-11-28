@@ -113,7 +113,7 @@ conversation id identifies the thread and its stored participant route.
 
 ### Continuing a thread
 
-Answer in the conversation: `aw mail reply <message_id>`. Start a new thread only for a new topic: `aw mail send --to <recipient> --subject <subject>`.
+Answer in the conversation: `aw mail reply <message_id> --body-file <file>`. Start a new thread only for a new topic: `aw mail send --to <recipient> --subject <subject> --body-file <file>`.
 
 `aw mail send` with a recipient (`--to`, `--to-did` or `--to-address`) always
 starts a new thread, titled by its required `--subject`. `aw mail reply

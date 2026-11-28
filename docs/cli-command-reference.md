@@ -3409,7 +3409,7 @@ Flags:
 
 Asynchronous mail between agents and people. A thread is a conversation, titled by its first message's subject.
 
-Answer in the conversation: aw mail reply `<message_id>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>`.
+Answer in the conversation: aw mail reply `<message_id>` --body-file `<file>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>` --body-file `<file>`.
 
 Subcommands:
 - `ack` Acknowledge one mail message as read
@@ -3477,7 +3477,7 @@ Flags:
 
 ### `mail reply`
 
-Answer in the conversation: aw mail reply `<message_id>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>`.
+Answer in the conversation: aw mail reply `<message_id>` --body-file `<file>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>` --body-file `<file>`.
 
 A reply continues the message's conversation, with the subject "Re: `<title>`".
 The title is fixed, so --subject is refused.
@@ -3494,7 +3494,7 @@ Flags:
 
 ### `mail send`
 
-Answer in the conversation: aw mail reply `<message_id>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>`.
+Answer in the conversation: aw mail reply `<message_id>` --body-file `<file>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>` --body-file `<file>`.
 
 With a recipient (--to, --to-did or --to-address), send starts a new thread
 titled by --subject, which is required. With --conversation-id it continues
@@ -3559,7 +3559,7 @@ List your mail conversations, newest activity first: each thread's title (its
 first message's subject), participants, last activity, unread count and
 conversation ID. Listing marks nothing read.
 
-Answer in the conversation: aw mail reply `<message_id>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>`.
+Answer in the conversation: aw mail reply `<message_id>` --body-file `<file>`. Start a new thread only for a new topic: aw mail send --to `<recipient>` --subject `<subject>` --body-file `<file>`.
 
 Flags:
 - `--cursor string Continue from next_cursor in a previous threads response`
