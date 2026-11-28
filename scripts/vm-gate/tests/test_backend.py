@@ -102,11 +102,33 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(c.calls, [])
 
     def test_b2_inventory_uses_a_namespace_distinct_from_live_b1_helpers(self):
-        c = Client()
-        Backend(c, {}).list("r")
-        self.assertEqual(
-            c.calls[0][2]["params"]["label_selector"], "aweb-vm-gate.run=r"
-        )
+        # The provider filters by label_selector ("key" or "key=value"). A B1
+        # diagnostic helper labels its run without the gate's prefix.
+        servers = [
+            {"id": "gate-r", "labels": {"aweb-vm-gate.run": "r"}},
+            {"id": "b1-r", "labels": {"run": "r"}},
+            {"id": "gate-other", "labels": {"aweb-vm-gate.run": "other"}},
+        ]
+
+        class Selecting(Client):
+            def request(self, method, url, **kw):
+                if url != "/servers":
+                    return super().request(method, url, **kw)
+                key, _, value = kw["params"]["label_selector"].partition("=")
+                return {
+                    "servers": [
+                        item
+                        for item in servers
+                        if key in item["labels"]
+                        and (not value or item["labels"][key] == value)
+                    ],
+                    "meta": {"pagination": {"next_page": None}},
+                }
+
+        backend = Backend(Selecting(), {})
+        self.assertEqual([x["id"] for x in backend.list("r")], ["gate-r"])
+        # The reaper's unfiltered inventory sees every gate run and no B1 helper.
+        self.assertEqual([x["id"] for x in backend.list()], ["gate-r", "gate-other"])
 
     def test_expired_provider_deadline_cannot_start_a_mutation(self):
         import time
