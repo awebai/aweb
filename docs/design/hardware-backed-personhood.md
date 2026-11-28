@@ -778,16 +778,25 @@ separately approved step (same document, §7).
 
 **Pilot controller custody.** On 2026-11-28 Juan chose option A for where
 the controller key lives. The new service holds the `awebai.org` namespace
-controller key in a `0600` secret file mounted only into the background
+controller key in a secret file mounted only into the background
 worker service. This is the `awebai.org` controller exception to F1.
 
 The coordinator's pilot plan places the `awebai.org` admin and open team
 keys in the same worker-only secret mount, pending Juan's review. The
 namespace controller can authorise replacement of either team key. See
 [AWID signing authority](../awid-sot.md#authentication).
-All three keys are delivered as `0600` files. The web app's configuration
-has no access to any of the three. Key material is never put in environment
-variables, logs or error output.
+
+**Render secret files.** Configure the files on the worker service alone.
+Render presents each configured name as a symlink. The worker resolves
+that name with `realpath` and requires the resolved target to be strictly
+beneath `/etc/secrets/`. It opens the resolved path with `O_NOFOLLOW` and
+checks the open descriptor with `fstat`: a regular file, UID 0, GID 1000,
+mode exactly `0640`, and a size within the key loader's bound. It verifies
+from mount information that the file is on the read-only secret mount.
+Once the checks pass, the worker reads from that descriptor within the
+size bound and uses the mounted file directly. The web app's configuration
+has no access to any of the three keys. Key material is never put in
+environment variables, logs or error output.
 
 The worker signs B, D and E as required by the enrollment and continuity
 rules, publishes S with `grants: []`, and signs P at issuance and monthly
@@ -1102,10 +1111,13 @@ matter, and each test is paired with a valid neighbouring case:
   `hardware_backing_required`.
 - Pilot custody and monitoring:
   - inspect the deployed worker and web service configurations. Verify
-    worker-only `0600` mounts, absence of all three keys from web service
-    configuration, and absence of key material from environment variables,
-    logs and error output. A monthly renewal verifies under the controller
-    key with `grant: null` and S has an empty grant list;
+    worker-only Render secret files and absence of all three keys from web
+    service configuration, environment variables, logs and error output.
+    Accept the valid symlink layout and resolved file specified in §8.1.
+    Refuse an escaping target, a non-regular file, incorrect ownership or
+    mode, oversized contents, or a writable mount. A monthly renewal
+    verifies under the controller key with `grant: null` and S has an empty
+    grant list;
   - through the web role enqueue a forged job claiming an unsupported
     enrollment, designation or roster. The worker refuses without creating
     a signature, certificate or publication. Exercise a valid job through
