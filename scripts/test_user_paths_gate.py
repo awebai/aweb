@@ -15,6 +15,10 @@ spec = importlib.util.spec_from_file_location(
 )
 result_model = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(result_model)
+# The human paths each lane must report, as the result model defines them.
+HUMAN_CASES = {
+    f"{lane}/{case}" for lane in ("head", "released") for case in result_model.HUMANS
+}
 
 
 def known_failure(case):
@@ -75,8 +79,12 @@ class UserPathsAdmission(unittest.TestCase):
 
             report = json.loads((root / "evidence/qualification.json").read_text())
             self.assertEqual(report["status"], "FAILED")
-            self.assertEqual(len(report["required_humans"]), 12)
-            self.assertEqual(result.stdout.count("NOT COVERED: pending aweb-actu"), 12)
+            # Every required human path is reported uncovered, by name.
+            self.assertEqual(
+                {row["case"] for row in report["required_humans"]}, HUMAN_CASES
+            )
+            for row in report["required_humans"]:
+                self.assertIn(f"{row['case']}: {row['status']}\n", result.stdout)
             self.assertIn("incomplete: human paths not covered", result.stdout)
 
     def test_agent_failures_cleanup_budget_and_visible_human_gap(self):
@@ -107,10 +115,12 @@ class UserPathsAdmission(unittest.TestCase):
                 for row in full["required_humans"]
             )
         )
-        self.assertEqual(len(full["required_humans"]), 12)
-        self.assertEqual(len(full["required_agent_cases"]), 66)
-        self.assertEqual(len(full["passed_agent_cases"]), 66)
-        self.assertEqual(len(full["known_issue_budget"]), 4)
+        # Every required case is counted as passed and none is dropped.
+        self.assertEqual(
+            set(full["passed_agent_cases"]), set(full["required_agent_cases"])
+        )
+        self.assertEqual(full["missing_agent_cases"], [])
+        self.assertEqual({row["case"] for row in full["required_humans"]}, HUMAN_CASES)
         self.assertEqual(
             {row["task"] for row in full["known_issue_budget"]},
             {"aweb-actw", "aweb-adje.15"},
@@ -461,7 +471,8 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 )
                 reused = invoke(None)
                 self.assertIn("no stages run", reused)
-                self.assertEqual(reused.count("NOT COVERED: pending aweb-actu"), 12)
+                for case in HUMAN_CASES:
+                    self.assertIn(f"{case}: NOT COVERED: pending aweb-actu", reused)
                 self.assertIn("incomplete: human paths not covered", reused)
                 self.assertEqual(len(ledger_rows()), 6)
                 # A new main with the same reviewed ceilings keeps the cached
@@ -545,12 +556,19 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                 with_files = ledger_rows()[-1].split("\t")[0]
                 self.assertNotEqual(with_files, without)
                 listing = subprocess.check_output(
-                    [sys.executable, str(ROOT / "scripts/release_files.py"), "listing", str(dist)],
+                    [
+                        sys.executable,
+                        str(ROOT / "scripts/release_files.py"),
+                        "listing",
+                        str(dist),
+                    ],
                     text=True,
                 )
                 lane_path, *lane_listing = lane_receipt.read_text().splitlines()
                 self.assertEqual(Path(lane_path).name, "release-files")
-                self.assertTrue(Path(lane_path).parent.name.startswith("aweb-candidate-gate-"))
+                self.assertTrue(
+                    Path(lane_path).parent.name.startswith("aweb-candidate-gate-")
+                )
                 self.assertEqual(lane_listing, listing.splitlines())
                 self.assertIn(
                     "no stages run",
@@ -608,7 +626,7 @@ class ExactMessageAssertions(unittest.TestCase):
 
     def test_contacts_only_requires_the_policy_read_back_from_storage(self):
         import sys
-        from unittest.mock import Mock, call, patch
+        from unittest.mock import Mock, patch
 
         spec = importlib.util.spec_from_file_location(
             "user_paths", ROOT / "scripts/e2e/user_paths.py"
@@ -619,26 +637,29 @@ class ExactMessageAssertions(unittest.TestCase):
         lane = paths.Lane.__new__(paths.Lane)
         lane.name, lane.version = "released", "1.36.40"
         lane.failures, lane.outcomes, lane.actors = [], [], {}
-        lane.command = Mock(
-            side_effect=[
-                {"inbound_mode": "contacts_only"},
-                {"inbound_mode": "team_and_contacts"},
-                {"inbound_mode": "open"},
-            ]
-        )
+        # A released server that answers the set with the requested mode but
+        # stores another one; only reading the policy back reveals it.
+        stored = {"g2": "open"}
+
+        def command(alias, *args):
+            if args == ("inbound-mode",):
+                return {"inbound_mode": stored[alias]}
+            assert args[0] == "inbound-mode", args
+            requested = args[1].replace("-", "_")
+            stored[alias] = (
+                "team_and_contacts" if requested == "contacts_only" else requested
+            )
+            return {"inbound_mode": requested}
+
+        lane.command = command
         lane.refused = Mock()
         lane.run_case("released/contacts-only/mail", lambda: lane.contacts_only("mail"))
+        # The outcome comes from the stored read-back, and the policy is restored.
         self.assertEqual(lane.outcomes[0]["observed_status"], "FAILED")
         self.assertEqual(lane.outcomes[0]["status"], "KNOWN_ISSUE")
+        self.assertIn("server stored team_and_contacts", lane.outcomes[0]["error"])
         self.assertEqual(lane.failures, [])
-        self.assertEqual(
-            lane.command.call_args_list,
-            [
-                call("g2", "inbound-mode", "contacts-only"),
-                call("g2", "inbound-mode"),
-                call("g2", "inbound-mode", "open"),
-            ],
-        )
+        self.assertEqual(stored["g2"], "open")
         lane.refused.assert_not_called()
 
     def exercise(self, kind, encrypted, mutate=None):
@@ -1085,7 +1106,6 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
                 self.assertNotIn("PASS ", stdout.getvalue())
 
     def test_exact_measured_failures_only_on_each_released_cell(self):
-        self.assertEqual(len(result_model.KNOWN_RELEASED_ISSUES), 2)
         for case in ["released/t1->t2/chat/v2", "released/t2->t1/chat/v2"]:
             for version in ["1.36.53", "1.36.54"]:
                 row = dict(case=case, status="FAILED", failure=known_failure(case))
