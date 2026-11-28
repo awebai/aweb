@@ -33,6 +33,9 @@ Two investigations where duration, not response, decided the outcome.
 - Injected latency proves the particular premature barrier it removes. Fifty
   isolated passes do not clear a failure seen in a full repeated matrix, and do
   not explain every later timeout.
+- Injected delay cannot reproduce an ordering bug both ways: a fix that
+  correctly waits hangs on the held delay. See
+  [reproduce an ordering flake by stress, not a gate](/aweb-expert/lessons/reproduce-an-ordering-flake-by-stress-not-a-gate.md).
 
 Related: [acceptance must exercise the claimed operation](/coordinator/acceptance-must-exercise-the-claimed-operation.md).
 
