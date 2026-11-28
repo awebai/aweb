@@ -176,6 +176,39 @@ class ReadbackTests(unittest.TestCase):
                 {(a.package, kind) for a in artifacts for kind in ("tag", "version")},
             )
 
+    def test_one_deadline_spans_the_whole_package_set(self):
+        # aw-linux-x64's tag lags 2 s and aw-linux-arm64's 5 s. One 4 s budget
+        # for the set refuses arm64; a budget renewed per package accepts it.
+        reader = load_reader()
+        with tempfile.TemporaryDirectory() as temp, Registry().serve() as registry:
+            clock = Clock()
+            artifacts = []
+            for package in PACKAGES:
+                name = "@awebai/" + package
+                path = Path(temp) / (package + ".tgz")
+                path.write_bytes(package.encode())
+                artifacts.append(reader.Artifact(name, path))
+                registry.packages[name] = path.read_bytes()
+            lag = {"@awebai/aw-linux-x64": 2, "@awebai/aw-linux-arm64": 5}
+            registry.tags_visible = lambda name: clock.now() >= lag.get(name, 0)
+            with self.assertRaisesRegex(
+                reader.ReadbackRefusal, "uncertain at deadline"
+            ) as refusal:
+                reader.verify(
+                    artifacts,
+                    "1.2.3",
+                    dist_tag="next",
+                    registry=registry.url,
+                    deadline_seconds=4,
+                    backoff_seconds=1,
+                    clock=clock.now,
+                    sleep=clock.sleep,
+                )
+            self.assertEqual(clock.now(), 4)
+            pending = str(refusal.exception).split(": ", 1)[1]
+            self.assertIn("@awebai/aw-linux-arm64", pending)
+            self.assertNotIn("@awebai/aw-linux-x64", pending)
+
     def test_outage_and_mismatch_never_succeed(self):
         reader = load_reader()
         for fault in ("outage", "absent", "integrity", "bytes", "stale-tag"):
