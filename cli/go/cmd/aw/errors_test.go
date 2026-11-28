@@ -116,7 +116,14 @@ func undecryptable(t *testing.T) error {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.DecryptE2EEEnvelope(&awid.E2EEMessageEnvelope{MessageVersion: awid.E2EEMessageVersion, EnvelopeType: awid.E2EEEnvelopeType})
+	// A genuine sealed message, so the refusal is the missing key rather than
+	// the envelope's evidence.
+	alice, bob := newCustodyE2EETestIdentity(t, "acme.com/alice"), newCustodyE2EETestIdentity(t, "acme.com/bob")
+	envelope, err := awid.EncryptE2EEMail(awid.E2EEEncryptMailParams{Sender: awid.E2EESenderKey{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion, SigningKey: bob.signKey}, Recipients: []awid.E2EERecipientKey{{Address: alice.address, DID: alice.did, StableID: alice.stableID, EncryptionKey: alice.assertion}}, Subject: "sealed", Body: "sealed", MessageID: "33333333-3333-4333-8333-333333333333", ConversationID: "44444444-4444-4444-8444-444444444444", CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.DecryptE2EEEnvelope(envelope)
 	if err == nil {
 		t.Fatal("expected a decryption failure")
 	}
