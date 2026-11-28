@@ -142,7 +142,11 @@ func newRealCommandWorldWithRecipientFault(t *testing.T, recipientHome string, l
 }
 
 func (world *realCommandWorld) runInIdentityHome(home string, args ...string) (string, error) {
-	command := exec.CommandContext(world.Context, world.Binary, append([]string{"--identity-home", home, "--json"}, args...)...)
+	return world.runInIdentityHomeContext(world.Context, home, args...)
+}
+
+func (world *realCommandWorld) runInIdentityHomeContext(ctx context.Context, home string, args ...string) (string, error) {
+	command := exec.CommandContext(ctx, world.Binary, append([]string{"--identity-home", home, "--json"}, args...)...)
 	command.Dir = filepath.Dir(home)
 	command.Env = append(idCreateCommandEnv(world.UserHome), "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
 	// JSON is a stdout contract; stderr may carry ordinary recovery prose.
