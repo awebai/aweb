@@ -45,7 +45,9 @@ from release_files import (  # noqa: E402
 
 STEPS = ("build", "gate", "tag", "publish", "check")
 SHA = re.compile(r"[0-9a-f]{40}")
-GITHUB = re.compile(r"(?:https://github\.com/|git@github\.com:|ssh://(?:git@)?(?:ssh\.)?github\.com(?::443)?/)([^/]+/[^/]+?)(?:\.git)?")
+GITHUB = re.compile(
+    r"(?:https://github\.com/|git@github\.com:|ssh://(?:git@)?(?:ssh\.)?github\.com(?::443)?/)([^/]+/[^/]+?)(?:\.git)?"
+)
 WORKFLOW = "pypi-release.yml"
 # Until the release gate installs a new awid-service wheel under test, a release
 # that needs one is refused. This names what is missing.
@@ -86,7 +88,10 @@ def remote_tag(remote: str, tag: str) -> str | None:
     """The commit a remote tag identifies, or None when the remote has no such tag."""
     ref = f"refs/tags/{tag}"
     listed = subprocess.run(
-        ["git", "ls-remote", remote, ref, ref + "^{}"], check=True, capture_output=True, text=True
+        ["git", "ls-remote", remote, ref, ref + "^{}"],
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
     refs = dict(reversed(line.split("\t")) for line in listed.splitlines())
     return refs.get(ref + "^{}", refs.get(ref))
@@ -94,7 +99,10 @@ def remote_tag(remote: str, tag: str) -> str | None:
 
 def tag_lines(files: dict[str, str]) -> str:
     """The files a tag locks, in the format publish_release.py reads: hex, two spaces, name."""
-    return "".join(f"{digest.removeprefix('sha256:')}  {name}\n" for name, digest in sorted(files.items()))
+    return "".join(
+        f"{digest.removeprefix('sha256:')}  {name}\n"
+        for name, digest in sorted(files.items())
+    )
 
 
 class Receipt:
@@ -149,7 +157,9 @@ class Release:
             raise ReleaseRefusal("the release commit must be a full lowercase SHA")
         unknown = sorted(set(packages) - set(PACKAGES))
         if unknown or not packages:
-            raise ReleaseRefusal(f"packages must be among {', '.join(PACKAGES)}: got {packages}")
+            raise ReleaseRefusal(
+                f"packages must be among {', '.join(PACKAGES)}: got {packages}"
+            )
         self.root, self.sha, self.machine, self.state = root, sha, machine, state
         self.packages = [name for name in PUBLICATION_ORDER if name in packages]
         self.outside, self.launcher = outside, launcher
@@ -158,13 +168,17 @@ class Release:
         self.remote = git(root, "remote", "get-url", "origin")
         self.repository = repository
         self.receipt = Receipt(
-            state / "receipt.json", {"sha": sha, "packages": self.packages, "machine": machine}
+            state / "receipt.json",
+            {"sha": sha, "packages": self.packages, "machine": machine},
         )
 
     def checkout(self) -> Path:
         """S, alone, outside the operator's checkout: a builder there sees only S's files."""
         checkout = self.state / "aweb"
-        if checkout.exists() and git(checkout, "rev-parse", "HEAD", check=False) == self.sha:
+        if (
+            checkout.exists()
+            and git(checkout, "rev-parse", "HEAD", check=False) == self.sha
+        ):
             return checkout
         shutil.rmtree(checkout, ignore_errors=True)
         checkout.mkdir(parents=True)
@@ -192,11 +206,15 @@ class Release:
         recorded = self.receipt.get("build")
         if recorded is not None:
             if not self.files.exists() or digests(self.files) != recorded["files"]:
-                raise ReleaseRefusal(f"the built files in {self.files} changed since they were built")
+                raise ReleaseRefusal(
+                    f"the built files in {self.files} changed since they were built"
+                )
             return
         checkout = self.checkout()
         awid_version = self.version_at("awid-service")
-        if "awid-service" in self.packages or not self.on_pypi("awid-service", awid_version):
+        if "awid-service" in self.packages or not self.on_pypi(
+            "awid-service", awid_version
+        ):
             raise ReleaseRefusal(AWID_UNGATED.format(version=awid_version))
         if self.files.exists():
             shutil.rmtree(self.files)
@@ -206,40 +224,36 @@ class Release:
             source = checkout / SOURCE_DIRECTORIES[name]
             # A builder whose project path matches the project's own ignore rules
             # drops them all, and then ships files no other build of S ships.
-            if git(checkout, "check-ignore", "--no-index", str(source.resolve()).lstrip("/"), check=False):
+            if git(
+                checkout,
+                "check-ignore",
+                "--no-index",
+                str(source.resolve()).lstrip("/"),
+                check=False,
+            ):
                 raise ReleaseRefusal(
                     f"{source.resolve()} lies in a directory the aweb ignore rules name; "
                     "keep the release state elsewhere (--state)"
                 )
             version = self.version_at(name)
             if self.on_pypi(name, version):
-                raise ReleaseRefusal(f"PyPI already has {name} {version}; {self.sha} cannot release it again")
+                raise ReleaseRefusal(
+                    f"PyPI already has {name} {version}; {self.sha} cannot release it again"
+                )
             self.outside.build(source, self.files)
             packages[name] = version
         # The directory holds exactly the files the release ships; a builder's own markers go.
-        shipped = self.shipped()
-        for path in self.files.iterdir():
-            if path not in shipped:
-                path.unlink()
+        keep_shipped(self.files)
         try:
             files = digests(self.files)
         except ReleaseFilesRefusal as error:
             raise ReleaseRefusal(str(error)) from None
-        if {name: version for name, (version, _w, _s) in built_packages(self.files).items()} != packages:
+        if {
+            name: version
+            for name, (version, _w, _s) in built_packages(self.files).items()
+        } != packages:
             raise ReleaseRefusal(f"the build of {self.sha} is not {packages}")
         self.receipt.record("build", {"files": files, "packages": packages})
-
-    def shipped(self) -> set[Path]:
-        """The built wheel and sdist of each package; the builder may leave its own markers beside them."""
-        found = set()
-        for name, prefix in PACKAGES.items():
-            wheels = sorted(self.files.glob(f"{prefix}-*-py3-none-any.whl"))
-            sdists = sorted(self.files.glob(f"{prefix}-*.tar.gz"))
-            if wheels or sdists:
-                if len(wheels) != 1 or len(sdists) != 1:
-                    raise ReleaseRefusal(f"the build left {len(wheels)} {name} wheels and {len(sdists)} sdists")
-                found.update((wheels[0], sdists[0]))
-        return found
 
     # 2. One gate run at S with the built files.
     def gate(self) -> None:
@@ -279,13 +293,26 @@ class Release:
                 "evidence": result.get("evidence"),
             }
         )
-        if (result.get("project"), result.get("sha"), result.get("machine")) != ("aweb", self.sha, self.machine):
-            raise ReleaseRefusal("the gate receipt is for another project, commit or machine")
+        if (result.get("project"), result.get("sha"), result.get("machine")) != (
+            "aweb",
+            self.sha,
+            self.machine,
+        ):
+            raise ReleaseRefusal(
+                "the gate receipt is for another project, commit or machine"
+            )
         if result.get("files") != built["files"]:
-            raise ReleaseRefusal("the gate receipt tested other files than the ones built for this release")
+            raise ReleaseRefusal(
+                "the gate receipt tested other files than the ones built for this release"
+            )
         vm_gate = result.get("vm_gate") or {}
-        if result.get("exit") == 70 or vm_gate.get("infrastructure") not in (None, "refused"):
-            raise ReleaseRefusal(f"the gate run hit an infrastructure fault: {vm_gate.get('error')}; rerun make release")
+        if result.get("exit") == 70 or vm_gate.get("infrastructure") not in (
+            None,
+            "refused",
+        ):
+            raise ReleaseRefusal(
+                f"the gate run hit an infrastructure fault: {vm_gate.get('error')}; rerun make release"
+            )
         if result.get("exit") == 2:
             raise ReleaseRefusal(f"the gate refused the run: {vm_gate.get('error')}")
         if status != 0 or result.get("exit") != 0:
@@ -295,13 +322,22 @@ class Release:
         if result.get("rebuilt_files") != built["files"]:
             raise ReleaseRefusal("the gate's rebuild of S differs from the built files")
         if "aweb" in built["packages"]:
-            wheel = next(name for name in built["files"] if name.startswith("aweb-") and name.endswith(".whl"))
+            wheel = next(
+                name
+                for name in built["files"]
+                if name.startswith("aweb-") and name.endswith(".whl")
+            )
             held = {
                 service: (record or {}).get("container_wheel_sha256")
                 for service, record in (result.get("installed_wheels") or {}).items()
             }
-            if held != {"aweb-alpha": built["files"][wheel], "aweb-beta": built["files"][wheel]}:
-                raise ReleaseRefusal(f"the gate's servers did not install the built wheel: {held}")
+            if held != {
+                "aweb-alpha": built["files"][wheel],
+                "aweb-beta": built["files"][wheel],
+            }:
+                raise ReleaseRefusal(
+                    f"the gate's servers did not install the built wheel: {held}"
+                )
         self.receipt.record("gate", {"run_id": result.get("run_id"), "receipt": result})
 
     # 3. Tag S once it is on main.
@@ -310,7 +346,9 @@ class Release:
             return
         git(self.root, "fetch", "--quiet", "origin", "main")
         main = git(self.root, "rev-parse", "origin/main")
-        if subprocess.run(["git", "merge-base", "--is-ancestor", self.sha, main], cwd=self.root).returncode:
+        if subprocess.run(
+            ["git", "merge-base", "--is-ancestor", self.sha, main], cwd=self.root
+        ).returncode:
             raise ReleaseRefusal(
                 f"origin/main ({main}) does not contain {self.sha}: land it unchanged as a fast-forward, "
                 "then rerun make release to tag and publish"
@@ -321,19 +359,41 @@ class Release:
         for name in self.packages:
             tag = RELEASE_TAGS[name] + built["packages"][name]
             prefix = PACKAGES[name] + "-"
-            files = {file: digest for file, digest in built["files"].items() if file.startswith(prefix)}
+            files = {
+                file: digest
+                for file, digest in built["files"].items()
+                if file.startswith(prefix)
+            }
             lines = tag_lines(files)
             tagged = remote_tag(self.remote, tag)
             if tagged is None:
                 if not git(checkout, "tag", "--list", tag):
                     message = f"{tag}\n\nGated by run {gate['run_id']} on {self.machine}.\n\n{lines}"
-                    git(checkout, "-c", "tag.gpgSign=false", "tag", "-a", tag, self.sha, "-m", message)
+                    git(
+                        checkout,
+                        "-c",
+                        "tag.gpgSign=false",
+                        "tag",
+                        "-a",
+                        tag,
+                        self.sha,
+                        "-m",
+                        message,
+                    )
                 self.require_tag(checkout, tag, lines)
                 git(checkout, "push", "--quiet", self.remote, f"refs/tags/{tag}")
             elif tagged != self.sha:
-                raise ReleaseRefusal(f"{tag} already identifies {tagged}, not {self.sha}")
+                raise ReleaseRefusal(
+                    f"{tag} already identifies {tagged}, not {self.sha}"
+                )
             else:
-                git(checkout, "fetch", "--quiet", self.remote, f"+refs/tags/{tag}:refs/tags/{tag}")
+                git(
+                    checkout,
+                    "fetch",
+                    "--quiet",
+                    self.remote,
+                    f"+refs/tags/{tag}:refs/tags/{tag}",
+                )
                 self.require_tag(checkout, tag, lines)
             tags[name] = tag
         self.receipt.record("tag", tags)
@@ -344,9 +404,15 @@ class Release:
         if git(checkout, "cat-file", "-t", ref) != "tag":
             raise ReleaseRefusal(f"{tag} is not an annotated tag")
         if git(checkout, "rev-parse", f"{ref}^{{commit}}") != self.sha:
-            raise ReleaseRefusal(f"{tag} identifies {git(checkout, 'rev-parse', ref + '^{commit}')}, not {self.sha}")
-        if not git(checkout, "for-each-ref", "--format=%(contents)", ref).endswith(lines.rstrip("\n")):
-            raise ReleaseRefusal(f"{tag} at {self.sha} locks other files than the ones built")
+            raise ReleaseRefusal(
+                f"{tag} identifies {git(checkout, 'rev-parse', ref + '^{commit}')}, not {self.sha}"
+            )
+        if not git(checkout, "for-each-ref", "--format=%(contents)", ref).endswith(
+            lines.rstrip("\n")
+        ):
+            raise ReleaseRefusal(
+                f"{tag} at {self.sha} locks other files than the ones built"
+            )
 
     # 4. Attach exactly the files; the trusted-publishing workflow uploads them.
     def publish(self) -> None:
@@ -356,7 +422,9 @@ class Release:
             if name in published:
                 continue
             prefix = PACKAGES[name] + "-"
-            files = sorted(self.files / file for file in built["files"] if file.startswith(prefix))
+            files = sorted(
+                self.files / file for file in built["files"] if file.startswith(prefix)
+            )
             self.outside.github_release(self.repository, tags[name], files)
             self.wait(name, built["packages"][name], tags[name])
             published[name] = tags[name]
@@ -366,14 +434,24 @@ class Release:
         """PyPI serves exactly the built files of this package, with their digests, none yanked."""
         built = self.receipt.get("build")
         prefix = PACKAGES[name] + "-"
-        expected = {file: digest for file, digest in built["files"].items() if file.startswith(prefix)}
-        urls = json.loads(self.outside.download(f"https://pypi.org/pypi/{name}/{version}/json"))["urls"]
+        expected = {
+            file: digest
+            for file, digest in built["files"].items()
+            if file.startswith(prefix)
+        }
+        urls = json.loads(
+            self.outside.download(f"https://pypi.org/pypi/{name}/{version}/json")
+        )["urls"]
         yanked = sorted(entry["filename"] for entry in urls if entry.get("yanked"))
         if yanked:
             raise ReleaseRefusal(f"PyPI {name} {version} has yanked files: {yanked}")
-        served = {entry["filename"]: "sha256:" + entry["digests"]["sha256"] for entry in urls}
+        served = {
+            entry["filename"]: "sha256:" + entry["digests"]["sha256"] for entry in urls
+        }
         if served != expected:
-            raise ReleaseRefusal(f"PyPI {name} {version} serves {served}, not the built {expected}")
+            raise ReleaseRefusal(
+                f"PyPI {name} {version} serves {served}, not the built {expected}"
+            )
 
     def wait(self, name: str, version: str, tag: str) -> None:
         """Until PyPI serves the files, or the deadline; the refusal names the workflow run."""
@@ -404,12 +482,18 @@ class Release:
         built = self.receipt.get("build")
         for name in self.packages:
             self.served(name, built["packages"][name])
-        self.receipt.record("check", {name: built["packages"][name] for name in self.packages})
+        self.receipt.record(
+            "check", {name: built["packages"][name] for name in self.packages}
+        )
 
     def summary(self) -> str:
         built, gate = self.receipt.get("build"), self.receipt.get("gate")
-        lines = [f"Released {', '.join(self.receipt.get('tag').values())} at {self.sha} (gate run {gate['run_id']} on {self.machine})."]
-        lines += [f"  {digest}  {name}" for name, digest in sorted(built["files"].items())]
+        lines = [
+            f"Released {', '.join(self.receipt.get('tag').values())} at {self.sha} (gate run {gate['run_id']} on {self.machine})."
+        ]
+        lines += [
+            f"  {digest}  {name}" for name, digest in sorted(built["files"].items())
+        ]
         return "\n".join(lines)
 
     def run(self, through: str | None = None) -> str:
@@ -422,11 +506,40 @@ class Release:
         return self.summary()
 
 
+def keep_shipped(files: Path) -> None:
+    """Leave in `files` only the built wheel and sdist of each package; a builder's own markers go."""
+    shipped = set()
+    for name, prefix in PACKAGES.items():
+        wheels = sorted(files.glob(f"{prefix}-*-py3-none-any.whl"))
+        sdists = sorted(files.glob(f"{prefix}-*.tar.gz"))
+        if wheels or sdists:
+            if len(wheels) != 1 or len(sdists) != 1:
+                raise ReleaseRefusal(
+                    f"the build left {len(wheels)} {name} wheels and {len(sdists)} sdists"
+                )
+            shipped.update((wheels[0], sdists[0]))
+    for path in files.iterdir():
+        if path not in shipped:
+            path.unlink()
+
+
 class Live:
     """The real boundary: uv, PyPI, the gate launcher and gh."""
 
     def build(self, source: Path, out: Path) -> None:
-        subprocess.run(["uv", "build", "--quiet", "--wheel", "--sdist", "--out-dir", str(out), str(source)], check=True)
+        subprocess.run(
+            [
+                "uv",
+                "build",
+                "--quiet",
+                "--wheel",
+                "--sdist",
+                "--out-dir",
+                str(out),
+                str(source),
+            ],
+            check=True,
+        )
 
     def download(self, url: str) -> bytes:
         with urllib.request.urlopen(url, timeout=60) as response:
@@ -437,17 +550,34 @@ class Live:
 
     def github_release(self, repository: str, tag: str, files: list[Path]) -> None:
         viewed = subprocess.run(
-            ["gh", "release", "view", tag, "--repo", repository, "--json", "assets"], capture_output=True, text=True
+            ["gh", "release", "view", tag, "--repo", repository, "--json", "assets"],
+            capture_output=True,
+            text=True,
         )
         if viewed.returncode == 0:
-            assets = {(asset["name"], asset["size"]) for asset in json.loads(viewed.stdout)["assets"]}
+            assets = {
+                (asset["name"], asset["size"])
+                for asset in json.loads(viewed.stdout)["assets"]
+            }
             if assets != {(path.name, path.stat().st_size) for path in files}:
-                raise ReleaseRefusal(f"the GitHub release {tag} carries other files: {sorted(assets)}")
+                raise ReleaseRefusal(
+                    f"the GitHub release {tag} carries other files: {sorted(assets)}"
+                )
             return
         subprocess.run(
             [
-                "gh", "release", "create", tag, "--repo", repository, "--verify-tag", "--title", tag,
-                "--notes", f"{tag}: the gated files listed in the tag message.", *map(str, files),
+                "gh",
+                "release",
+                "create",
+                tag,
+                "--repo",
+                repository,
+                "--verify-tag",
+                "--title",
+                tag,
+                "--notes",
+                f"{tag}: the gated files listed in the tag message.",
+                *map(str, files),
             ],
             check=True,
         )
@@ -455,8 +585,19 @@ class Live:
     def workflow_run(self, repository: str, tag: str) -> str | None:
         listed = subprocess.run(
             [
-                "gh", "run", "list", "--repo", repository, "--workflow", WORKFLOW, "--branch", tag,
-                "--json", "url,status,conclusion", "--limit", "1",
+                "gh",
+                "run",
+                "list",
+                "--repo",
+                repository,
+                "--workflow",
+                WORKFLOW,
+                "--branch",
+                tag,
+                "--json",
+                "url,status,conclusion",
+                "--limit",
+                "1",
             ],
             capture_output=True,
             text=True,
@@ -470,14 +611,34 @@ class Live:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--sha", required=True, help="the reviewed aweb commit S to release")
-    parser.add_argument("--package", action="append", required=True, choices=sorted(PACKAGES), help="repeat per package")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--sha", required=True, help="the reviewed aweb commit S to release"
+    )
+    parser.add_argument(
+        "--package",
+        action="append",
+        required=True,
+        choices=sorted(PACKAGES),
+        help="repeat per package",
+    )
     parser.add_argument("--machine", required=True, help="the machine the gate runs on")
-    parser.add_argument("--through", choices=STEPS, help="stop after this step; rerun without it to continue")
-    parser.add_argument("--state", type=Path, help="receipt directory (default ~/.local/state/aweb/releases/<sha>)")
+    parser.add_argument(
+        "--through",
+        choices=STEPS,
+        help="stop after this step; rerun without it to continue",
+    )
+    parser.add_argument(
+        "--state",
+        type=Path,
+        help="receipt directory (default ~/.local/state/aweb/releases/<sha>)",
+    )
     arguments = parser.parse_args(argv)
-    state = arguments.state or Path.home() / ".local/state/aweb/releases" / arguments.sha
+    state = (
+        arguments.state or Path.home() / ".local/state/aweb/releases" / arguments.sha
+    )
     root = Path.cwd().resolve()
     try:
         origin = git(root, "remote", "get-url", "origin")
@@ -500,7 +661,10 @@ def main(argv: list[str] | None = None) -> int:
         )
     except (ReleaseRefusal, subprocess.CalledProcessError) as error:
         print(f"release refused: {error}", file=sys.stderr)
-        print(f"rerun make release to continue; state is in {state}/receipt.json", file=sys.stderr)
+        print(
+            f"rerun make release to continue; state is in {state}/receipt.json",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

@@ -16,7 +16,6 @@ import sys
 import tarfile
 import tempfile
 import threading
-import time
 import unittest
 from unittest import mock
 
@@ -117,8 +116,8 @@ class PublicationTest(unittest.TestCase):
     def test_runnerless_publishes_and_checks_seven_exact_staged_tarballs(self):
         self.exercise_runnerless()
 
-    def test_runnerless_lag_exhausts_one_budget_without_republishing(self):
-        self.exercise_runnerless(lag=True)
+    def test_runnerless_readback_refusal_fails_without_republishing(self):
+        self.exercise_runnerless(refuse=True)
 
     def test_runnerless_build_commands_disable_notifier(self):
         sys.path.insert(0, str(ROOT / "scripts"))
@@ -154,7 +153,7 @@ class PublicationTest(unittest.TestCase):
                         )
             self.assertEqual(registry.reads, set())
 
-    def exercise_runnerless(self, lag=False):
+    def exercise_runnerless(self, refuse=False):
         # Real pack/inspect/publish/read-back logic with a fixture compiler
         # and an owned HTTP registry. No binary/runtime claim is made.
         sys.path.insert(0, str(ROOT / "scripts"))
@@ -200,25 +199,10 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
                 "NODE_AUTH_TOKEN": "disposable-fixture",
             }
             readbacks = []
-            first_read = None
-            if lag:
-
-                def visible(name):
-                    nonlocal first_read
-                    if first_read is None:
-                        first_read = time.monotonic()
-                    # One 4-second budget refuses the second package at 5s;
-                    # renewed per-package budgets incorrectly accept it.
-                    delay = (
-                        2
-                        if name.endswith("aw-linux-x64")
-                        else 5
-                        if name.endswith("aw-linux-arm64")
-                        else 0
-                    )
-                    return time.monotonic() - first_read >= delay
-
-                registry.tags_visible = visible
+            if refuse:
+                # A permanent mismatch on one package refuses the readback at
+                # once; the publisher must report it and publish nothing again.
+                registry.corrupt = "@awebai/aw-linux-arm64"
             real_run = publisher.run
 
             def observe_run(root, *args, **kwargs):
@@ -226,11 +210,6 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
                     str(arg).endswith("npm/readback.py") for arg in args
                 ):
                     readbacks.append(args)
-                    if lag:
-                        # Shorten only the public verifier's budget for this
-                        # real-time HTTP control; no authority/HTTP substitution.
-                        args += ("--deadline-seconds", "4", "--backoff-seconds", "1")
-                        kwargs["timeout"] = 10
                 return real_run(root, *args, **kwargs)
 
             # The pre-publish existence decision is isolated; npm PUTs and
@@ -240,9 +219,10 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
                 mock.patch.object(publisher, "request_json", return_value=(404, {})),
                 mock.patch.object(publisher, "run", side_effect=observe_run),
             ):
-                if lag:
+                if refuse:
                     with self.assertRaisesRegex(
-                        publisher.PublishRefusal, "uncertain at deadline"
+                        publisher.PublishRefusal,
+                        "permanent integrity mismatch: @awebai/aw-linux-arm64@1.2.3",
                     ):
                         publisher.publish_aw_npm(
                             root, "1.2.3", "a" * 40, staged_final=True
@@ -261,14 +241,15 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
             self.assertTrue(
                 all(tags == {"next": "1.2.3"} for _, _, tags in registry.published)
             )
-            self.assertEqual(
-                registry.reads,
-                {
-                    ("@awebai/" + p, kind)
-                    for p in PACKAGES
-                    for kind in ("version", "tag")
-                },
-            )
+            if not refuse:
+                self.assertEqual(
+                    registry.reads,
+                    {
+                        ("@awebai/" + p, kind)
+                        for p in PACKAGES
+                        for kind in ("version", "tag")
+                    },
+                )
             self.assertEqual(
                 len(readbacks),
                 1,

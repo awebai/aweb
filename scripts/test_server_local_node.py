@@ -22,17 +22,12 @@ class LocalNodePreparation(unittest.TestCase):
             (root / "scripts" / name).write_bytes(
                 (ROOT / "scripts" / name).read_bytes()
             )
-        make = (ROOT / "Makefile").read_text()
         # Execute the committed installation/build owner with real npm and
         # dependency-free locked packages, then assert inputs at the suite boundary.
-        recipes = (
-            "test-node-deps:"
-            + make.split("\ntest-node-deps:", 1)[1].split(
-                "\ntest-channel test-channel-core", 1
-            )[0]
-        )
+        (root / "mk").mkdir()
+        (root / "mk/node.mk").write_bytes((ROOT / "mk/node.mk").read_bytes())
         (root / "Makefile").write_text(
-            recipes
+            "include mk/node.mk\n"
             + "\n.PHONY: test-server test-awid\n"
             + "test-server:\n\t@node suite.cjs server\n"
             + "test-awid:\n\t@node suite.cjs registry\n"

@@ -34,8 +34,7 @@ jobs:
           git clone --branch main \
             "https://x-access-token:${AW_REPO_TOKEN}@github.com/awebai/aw.git" \
             "$external"
-          find "$external" -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
-          cp -a cli/go/. "$external/"
+          bash scripts/sync-aw-distribution.sh cli/go "$external"
           git -C "$external" config user.name 'github-actions[bot]'
           git -C "$external" config user.email 'github-actions[bot]@users.noreply.github.com'
           git -C "$external" add -A

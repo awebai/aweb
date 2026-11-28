@@ -37,24 +37,9 @@ case "${AWEB_E2E_PHASE:-all}" in
   *) echo "unsupported AWEB_E2E_PHASE: $AWEB_E2E_PHASE" >&2; exit 2 ;;
 esac
 
-canonicalize_dir() {
-  local dir="$1"
-  bash -c 'cd "$1" && pwd -P' _ "$dir"
-}
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$REPO_ROOT/scripts/journey-network.sh"
-# Docker resolves a bind source on the daemon's host. Inside the candidate
-# runner the daemon is the host's, and only the run-owned bind root has the same
-# path on both sides, so the journey's files live there when it is set.
-journey_temp_root() {
-  local root="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
-  if [[ -n "${AWEB_DOCKER_BIND_ROOT:-}" && ( "$root" != /* || ! -d "$root" ) ]]; then
-    echo "FATAL: AWEB_DOCKER_BIND_ROOT must be an existing absolute directory: $root" >&2
-    return 2
-  fi
-  canonicalize_dir "$root"
-}
+source "$REPO_ROOT/scripts/lib/oss-journey.sh"
 TEMP_ROOT="$(journey_temp_root)" || exit 2
 case "$TEMP_ROOT" in
   /|"$REPO_ROOT"|"$REPO_ROOT"/*) echo "FATAL: unsafe journey temp root: $TEMP_ROOT" >&2; exit 2 ;;
@@ -100,39 +85,6 @@ esac
 AWID_E2E_SERVICE_TOKEN="${AWEB_E2E_SERVICE_TOKEN:-$(openssl rand -hex 32)}"
 PROJECT="${AWEB_E2E_PROJECT:-aweb-user-e2e-$RANDOM-$$}"
 PORT_ALLOCATOR=""
-
-allocate_service_ports() {
-  if [[ -n "${CANDIDATE_RUNNER_NAME:-}" ]]; then
-    AWEB_PORT=8000
-    AWID_PORT=8010
-    return 0
-  fi
-  # Replacing a service behind the same published port can leave stale TCP
-  # forwarding tuples on Docker Desktop. Back-to-back journeys must not reuse
-  # fixed ports. Allocate on the daemon, not in the runner's network namespace.
-  if [[ -n "$AWEB_PORT" && -n "$AWID_PORT" ]]; then
-    return 0
-  fi
-  PORT_ALLOCATOR="$PROJECT-ports"
-  docker run -d --name "$PORT_ALLOCATOR" \
-    --label "aweb.e2e.project=$PROJECT" \
-    --memory 32m --pids-limit 16 \
-    -p "${AWEB_PORT:-0}:8000" -p "${AWID_PORT:-0}:8010" \
-    --entrypoint /bin/sleep redis:7-alpine infinity >/dev/null
-  AWEB_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "8000/tcp") 0).HostPort}}' "$PORT_ALLOCATOR")"
-  AWID_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "8010/tcp") 0).HostPort}}' "$PORT_ALLOCATOR")"
-  [[ "$AWEB_PORT" =~ ^[0-9]+$ && "$AWID_PORT" =~ ^[0-9]+$ \
-    && "$AWEB_PORT" -gt 0 && "$AWEB_PORT" -le 65535 \
-    && "$AWID_PORT" -gt 0 && "$AWID_PORT" -le 65535 \
-    && "$AWEB_PORT" != "$AWID_PORT" ]]
-}
-
-release_service_ports() {
-  if [[ -n "$PORT_ALLOCATOR" ]]; then
-    docker rm -fv "$PORT_ALLOCATOR" >/dev/null || return
-    PORT_ALLOCATOR=""
-  fi
-}
 
 compose() {
   docker compose -p "$PROJECT" --env-file .env.e2e "$@"
@@ -343,17 +295,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-assert_eq() {
-  local label="$1" expected="$2" actual="$3"
-  if [[ "$expected" == "$actual" ]]; then
-    echo "  PASS: $label"
-    pass=$((pass + 1))
-  else
-    echo "  FAIL: $label (expected '$expected', got '$actual')"
-    fail=$((fail + 1))
-  fi
-}
-
 assert_not_empty() {
   local label="$1" value="$2"
   if [[ -n "$value" ]]; then
@@ -473,103 +414,6 @@ run_aw_in() {
 # Uses the shared E2E_HOME as a neutral working directory.
 run_aw() {
   run_aw_in "$E2E_HOME" "$@"
-}
-
-capture_success() {
-  local output_var="$1" label="$2"
-  shift 2
-  local output status
-  # Successful commands can emit retry/warning diagnostics on stderr. Keep
-  # those in the journey log, outside the machine-readable stdout we parse.
-  if output="$("$@")"; then
-    status=0
-  else
-    status=$?
-  fi
-  assert_eq "$label exit" "0" "$status"
-  if [[ "$status" == "0" ]]; then
-    printf -v "$output_var" "%s" "$output"
-  else
-    printf -v "$output_var" "%s" ""
-    if [[ -n "$output" ]]; then
-      echo "  $label output: ${output:0:240}"
-    fi
-  fi
-  return 0
-}
-
-run_success() {
-  local label="$1"
-  shift
-  local output status
-  if output="$("$@" 2>&1)"; then
-    status=0
-  else
-    status=$?
-  fi
-  assert_eq "$label exit" "0" "$status"
-  if [[ "$status" != "0" && -n "$output" ]]; then
-    echo "  $label output: ${output:0:240}"
-  fi
-  return 0
-}
-
-write_staged_file() {
-  local path="$1" content="$2"
-  printf '%s' "$content" >"$path"
-}
-
-# stage_customer_secrets writes the customer server's credentials. The key map
-# names the key by a path relative to itself. The key and the database URL are
-# given to the image's uid 1001 with mode 0400. The ownership change runs in a
-# container, which sees the directory through the Docker daemon, so it first
-# checks that every staged file is a regular file visible there. What is
-# asserted is that the files are mode 0400 and that uid 1001 actually reads
-# them. The owner is reported, not asserted: Docker Desktop file sharing
-# accepts chown without storing it, and enforces neither owner nor mode
-# between container uids, so this phase makes no claim that other uids cannot
-# read the files. Diagnostics name files, owners and modes, never contents.
-# Returns non-zero after a recorded failure.
-stage_customer_secrets() {
-  local failures_before="$fail" ownership
-  run_success "customer server key staged" \
-    cp "$CUSTOMER_IDENTITY_DIR/.aw/signing.key" "$CUSTOMER_KEYS_DIR/customerteam.key"
-  run_success "customer server key map staged" write_staged_file "$CUSTOMER_KEYS_DIR/member-keys.json" \
-    $'{"customerteam:test.local": "customerteam.key"}\n'
-  run_success "customer server database url staged" write_staged_file "$CUSTOMER_KEYS_DIR/database-url" \
-    $'postgresql://aweb:customer-e2e-test@postgres:5432/aweb\n'
-  run_success "customer postgres secrets directory" mkdir -p "$CUSTOMER_SECRETS_DIR/postgres"
-  run_success "customer postgres password staged" write_staged_file "$CUSTOMER_SECRETS_DIR/postgres/password" \
-    'customer-e2e-test'
-  [[ "$fail" == "$failures_before" ]] || return 1
-  capture_success ownership "customer secrets ownership" \
-    docker run --rm -v "$CUSTOMER_KEYS_DIR:/keys" --entrypoint /bin/sh redis:7-alpine -c '
-      set -e
-      for f in customerteam.key database-url member-keys.json; do
-        if [ ! -f "/keys/$f" ]; then
-          echo "missing in the daemon view of the customer secrets: $f"
-          ls -ln /keys
-          exit 3
-        fi
-      done
-      chown 1001:1001 /keys/customerteam.key /keys/database-url
-      chmod 0400 /keys/customerteam.key /keys/database-url
-      stat -c "%n %u:%g %a" /keys/customerteam.key /keys/database-url'
-  [[ "$fail" == "$failures_before" ]] || return 1
-  echo "$ownership" | while read -r name owner mode; do
-    echo "  customer secrets owner (not asserted): $name $owner"
-  done
-  assert_eq "customer secrets are mode 0400" "400 400" "$(echo "$ownership" | awk '{print $3}' | paste -sd' ' -)"
-  [[ "$fail" == "$failures_before" ]] || return 1
-  run_success "customer secrets are readable by the image user" \
-    docker run --rm --user 1001:1001 -v "$CUSTOMER_KEYS_DIR:/keys:ro" --entrypoint /bin/sh redis:7-alpine -c '
-      for f in customerteam.key database-url; do
-        if ! cat "/keys/$f" >/dev/null; then
-          echo "unreadable by uid 1001: $f"
-          exit 4
-        fi
-      done'
-  [[ "$fail" == "$failures_before" ]]
 }
 
 # assert_who_legacy_local checks `aw who --json` for a local did:key identity
@@ -1106,7 +950,7 @@ run_success "fresh local mail lands after join without setup commands" run_aw_in
   --subject "Join default-connect e2e" \
   --body "invite join check mail works"
 capture_success alice_join_inbox "alice_join_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
-alice_join_message="$(printf '%s\n' "$alice_join_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin)['messages']; print(next((m['body'] for m in msgs if m.get('subject')=='Join default-connect e2e'), ''))")"
+alice_join_message="$(printf '%s\n' "$alice_join_inbox" | inbox_message_body 'Join default-connect e2e')"
 assert_eq "joiner's mail lands in inviter inbox" "invite join check mail works" "$alice_join_message"
 
 # Create a local-only teammate and remove the service-local E2E key row to
@@ -2534,54 +2378,8 @@ fi
 # refusal under test. Earlier attempts must be actual retryable failures.
 printf '%s\n' "$carol_leaked_conversation_out" >"$E2E_ROOT/hidden-conversation.trace"
 printf '%s\n' "$missing_conversation_out" >"$E2E_ROOT/missing-conversation.trace"
-if python3 - "$AWEB_URL/v1/messages" \
-  "$E2E_ROOT/hidden-conversation.trace" "$E2E_ROOT/missing-conversation.trace" <<'PY'
-from pathlib import Path
-import sys
-
-def response(path):
-    requests = Path(path).read_bytes().split(b"AW TRACE request: ")
-    target = b"POST " + sys.argv[1].encode() + b"\n"
-    matches = [request for request in requests if request.startswith(target)]
-    # Keep diagnostics after the temporary trace files are removed. Do not
-    # print signed headers or message bodies, only request/status/retry lines.
-    summary = [line.decode(errors="replace") for line in Path(path).read_bytes().splitlines()
-               if line.startswith((b"AW TRACE request: ", b"AW TRACE response: HTTP ",
-                                   b"service temporarily unavailable, retrying "))]
-    assert matches, f"{Path(path).name}: no mail POST; trace summary: {summary}"
-    assert len(matches) <= 4, f"{Path(path).name}: too many mail POST attempts: {len(matches)}"
-    for index, attempt in enumerate(matches[:-1]):
-        # These are the client's bounded retries, not a second command send.
-        notice = f"service temporarily unavailable, retrying {index + 1}/3 (POST /v1/messages)\n".encode()
-        assert notice in attempt, f"mail POST attempt {index + 1}: missing retry notice"
-        if b"AW TRACE response" not in attempt:
-            # A transport error has no response; the actual client retry
-            # notice is required. A partial HTTP response must not pass here.
-            continue
-        status, _, _ = parse_response(attempt)
-        assert status == 503, f"mail POST attempt {index + 1}: non-retryable HTTP {status}"
-    status, headers, body = parse_response(matches[-1])
-    assert status == 404, f"{Path(path).name}: final mail POST HTTP {status}; trace summary: {summary}"
-    # Only the final JSON refusal is compared as raw wire bytes. An earlier
-    # non-JSON 503 body may have been sanitized by the client's trace writer.
-    length = int(headers[b"Content-Length"])
-    assert length > 0 and body[length:length + 1] == b"\n", "incomplete response trace"
-    return status, body[:length], headers[b"Content-Type"]
-
-def parse_response(attempt):
-    assert attempt.count(b"AW TRACE response: HTTP ") == 1, "missing or ambiguous mail POST response"
-    head, body = attempt.split(b"AW TRACE response: HTTP ", 1)[1].split(
-        b"AW TRACE response body: ", 1)
-    status = int(head.splitlines()[0])
-    prefix = b"AW TRACE response header: "
-    headers = dict(line[len(prefix):].split(b": ", 1)
-                   for line in head.splitlines() if line.startswith(prefix))
-    return status, headers, body
-
-hidden, missing = map(response, sys.argv[2:])
-assert missing[0] == 404, "missing conversation must return 404"
-assert hidden == missing, "hidden and missing conversation wire responses differ"
-PY
+if python3 "$REPO_ROOT/scripts/lib/compare_refusal_traces.py" "$AWEB_URL/v1/messages" \
+  "$E2E_ROOT/hidden-conversation.trace" "$E2E_ROOT/missing-conversation.trace"
 then
   echo "  PASS: leaked and missing conversation_id have identical 404 status, body and content-type"
   pass=$((pass + 1))

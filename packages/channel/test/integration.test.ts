@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -11,6 +11,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { NotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
 import { childEnvironment } from "./helpers/child_env.js";
+import { serverEndpoints } from "./helpers/server_endpoints.js";
 
 const execFileAsync = promisify(execFile);
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -422,19 +423,6 @@ function dockerBindRoot(): string {
   return resolve(rawRoot);
 }
 
-function candidateHostname(project: string, service: string): string {
-  return execFileSync("python3", [join(repoRoot, "scripts/candidate-network.py"), "hostname", project, service],
-    { encoding: "utf8" }).trim();
-}
-
-function dockerPublishedHost(): string {
-  const host = process.env.AWEB_DOCKER_PUBLISHED_HOST || "127.0.0.1";
-  if (host !== "127.0.0.1" && host !== "aweb-docker.test") {
-    throw new Error(`AWEB_DOCKER_PUBLISHED_HOST has unsupported fixed value ${host}`);
-  }
-  return host;
-}
-
 async function waitUntil(
   predicate: () => Promise<boolean>,
   timeoutMs: number,
@@ -464,9 +452,6 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     throw new Error("Docker daemon unavailable; start Docker or set AWEB_TEST_URL/AWID_TEST_URL");
   }
 
-  const directNetwork = Boolean(process.env.CANDIDATE_RUNNER_NAME);
-  const [awebPort, awidPort, pgPort, redisPort] = directNetwork
-    ? [8000, 8010, 5432, 6379] : await reserveLoopbackPorts(4);
   const projectSeed = process.env.AWEB_CHANNEL_E2E_PROJECT
     || `aweb-channel-${basename(tempRoot)}`;
   const projectName = projectSeed
@@ -482,9 +467,8 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
   const postgresPassword = "aweb-e2e-test";
   const postgresDb = "aweb";
 
-  const publishedHost = dockerPublishedHost();
-  const awebURL = `http://${directNetwork ? candidateHostname(projectName, "aweb") : publishedHost}:${awebPort}`;
-  const awidURL = `http://${directNetwork ? candidateHostname(projectName, "awid") : publishedHost}:${awidPort}`;
+  const { awebPort, awidPort, pgPort, redisPort, awebURL, awidURL } =
+    await serverEndpoints(repoRoot, projectName, reserveLoopbackPorts);
   await writeFile(envFilePath, [
     `POSTGRES_USER=${postgresUser}`,
     `POSTGRES_PASSWORD=${postgresPassword}`,

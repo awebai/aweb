@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -80,25 +81,79 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse(receipt["finalized"])
 
     def test_gate_cleanup_receipt_is_required_and_bound_to_run(self):
+        scripts = Path(__file__).resolve().parents[2]
+
+        def write(
+            root,
+            *,
+            cleanup_status=0,
+            receipt_run="this-run",
+            cleanup="passed",
+            writer_exit=0,
+        ):
+            # The gate's own writers produce both files the receipt is read from.
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1/candidate-cleanup.sh"; source "$1/candidate-record.sh"; '
+                    'write_cleanup_verdict "$2" >/dev/null 2>&1; '
+                    'run_id="$3" candidate_writer_status="$5" '
+                    'write_candidate_interruption 143 "$4"',
+                    "receipt",
+                    str(scripts),
+                    str(cleanup_status),
+                    receipt_run,
+                    cleanup,
+                    str(writer_exit),
+                ],
+                env=dict(os.environ, LOG_DIR=str(root)),
+                check=True,
+            )
+
+        def status(registry):
+            return supervisor.cleanup_receipts(registry, True)[0]["status"]
+
+        # An owned run whose cleanup passed but left no interruption receipt.
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             registry = root / "registry"
             registry.write_text("this-run\t" + str(root) + "\n")
-            (root / "run-id").write_text("other-run\n")
-            (root / "wrapper-verdict.log").write_text("candidate gate cleanup PASSED\n")
-            self.assertEqual(
-                supervisor.cleanup_receipts(registry, True)[0]["status"], "absent"
-            )
             (root / "run-id").write_text("this-run\n")
-            self.assertEqual(
-                supervisor.cleanup_receipts(registry, True)[0]["status"], "absent"
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1/candidate-cleanup.sh"; write_cleanup_verdict 0 >/dev/null',
+                    "verdict",
+                    str(scripts),
+                ],
+                env=dict(os.environ, LOG_DIR=str(root)),
+                check=True,
             )
-            (root / "interruption.tsv").write_text(
-                "this-run\t143\tdate\tcleanup=passed\twriter_exit=0\n"
-            )
-            self.assertEqual(
-                supervisor.cleanup_receipts(registry, True)[0]["status"], "passed"
-            )
+            self.assertFalse((root / "interruption.tsv").exists())
+            self.assertEqual(status(registry), "absent")
+
+        cases = {
+            "passed": ({}, "passed"),
+            "wrong run in receipt": ({"receipt_run": "other-run"}, "absent"),
+            "cleanup failed": ({"cleanup_status": 1, "cleanup": "failed"}, "absent"),
+            # The interruption receipt is checked on its own, not through the verdict.
+            "interrupted cleanup failed": ({"cleanup": "failed"}, "absent"),
+            "writer failed": ({"writer_exit": 1}, "absent"),
+        }
+        for name, (fields, expected) in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                registry = root / "registry"
+                registry.write_text("this-run\t" + str(root) + "\n")
+                (root / "summary.tsv").write_text("")
+                write(root, **fields)
+                # The directory must belong to this run before any receipt counts.
+                (root / "run-id").write_text("other-run\n")
+                self.assertEqual(status(registry), "absent")
+                (root / "run-id").write_text("this-run\n")
+                self.assertEqual(status(registry), expected)
 
     def test_signal_resistant_group_is_killed_within_grace(self):
         started = time.monotonic()
@@ -149,11 +204,27 @@ class SupervisorTests(unittest.TestCase):
             command = next(
                 c for c in remote.transport.commands if "vm_gate.supervisor run" in c
             )
-            self.assertLess(
-                command.index("runuser"), command.index("timeout --signal=TERM")
+            argv = shlex.split(command)
+            # The gate user's process runs under the timeout, and the timeout
+            # leaves the supervisor its kill grace before SIGKILL.
+            user = argv.index("runuser")
+            self.assertEqual(argv[user : user + 4], ["runuser", "-u", "gateuser", "--"])
+            limit = argv.index("timeout")
+            self.assertGreater(limit, user)
+            self.assertEqual(
+                argv[limit : limit + 8],
+                [
+                    "timeout",
+                    "--signal=TERM",
+                    f"--kill-after={supervisor.TIMEOUT_KILL_GRACE}s",
+                    "60",
+                    "python3",
+                    "-m",
+                    "vm_gate.supervisor",
+                    "run",
+                ],
             )
-            self.assertIn("vm_gate.supervisor run", command)
-            self.assertIn("--kill-after=130s", command)
+            self.assertGreater(supervisor.TIMEOUT_KILL_GRACE, supervisor.GRACE)
 
 
 class StopOrderingTests(unittest.TestCase):

@@ -29,6 +29,7 @@ _image_spec = importlib.util.spec_from_file_location(
 _image_module = importlib.util.module_from_spec(_image_spec)
 _image_spec.loader.exec_module(_image_module)
 prepare_image = _image_module.prepare_image
+read_package_receipts = _image_module.read_package_receipts
 
 
 # One runner's memory: the suite's processes plus one more GiB for each
@@ -594,6 +595,8 @@ def run_suite(args):
             prepare_image(
                 ROOT, evidence, image, base=os.environ.get("CANDIDATE_GATE_IMAGE")
             )
+            # The build's own proof, read back before anything uses the image.
+            read_package_receipts(ROOT, evidence, image)
         # Pull service images before entering isolation.
         for service in ("postgres:17", "redis:7"):
             subprocess.run(

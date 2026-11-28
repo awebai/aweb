@@ -477,20 +477,8 @@ test-cli-auth-v2:
 	cd server && uv sync --frozen
 	cd server && PYTHONPATH=tests UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q ../cli/tests/test_request_auth_v2_stack.py
 
-# The Node suites have separate lockfiles and a local file: dependency from the
-# host adapters to channel-core. Install all three before any Node test target
-# so both `make test` and focused Node targets work from a clean checkout.
-test-node-deps:
-	cd packages/channel-core && npm ci --no-audit --no-fund
-	cd packages/channel && npm ci --no-audit --no-fund
-	cd packages/pi-extension && npm ci --no-audit --no-fund
-
-# Local server fixtures consume these Node artifacts before their first test.
-.PHONY: prepare-server-node
-prepare-server-node: test-node-deps
-	cd packages/channel-core && npm run build
-	cd packages/channel && npm run build
-	cd packages/pi-extension && npm run build
+# test-node-deps and prepare-server-node, which test_server_local_node.py runs.
+include $(dir $(lastword $(MAKEFILE_LIST)))mk/node.mk
 
 test-channel test-channel-core test-pi-extension test-wake-channel-core-bundle: test-node-deps
 
@@ -719,6 +707,7 @@ deploy-site: verify-site
 
 test-npm-exact-publish:
 	bash scripts/e2e/test_npm_exact_publish.sh
+	python3 scripts/e2e/test_npm_readback_real_deadline.py
 
 test-pypi-exact-publish:
 	bash scripts/e2e/test_pypi_exact_publish.sh

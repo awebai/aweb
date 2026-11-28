@@ -16,7 +16,6 @@ import sys
 import tarfile
 import tempfile
 import threading
-import time
 import unittest
 import urllib.parse
 import zipfile
@@ -176,6 +175,39 @@ class ReadbackTests(unittest.TestCase):
                 {(a.package, kind) for a in artifacts for kind in ("tag", "version")},
             )
 
+    def test_one_deadline_spans_the_whole_package_set(self):
+        # aw-linux-x64's tag lags 2 s and aw-linux-arm64's 5 s. One 4 s budget
+        # for the set refuses arm64; a budget renewed per package accepts it.
+        reader = load_reader()
+        with tempfile.TemporaryDirectory() as temp, Registry().serve() as registry:
+            clock = Clock()
+            artifacts = []
+            for package in PACKAGES:
+                name = "@awebai/" + package
+                path = Path(temp) / (package + ".tgz")
+                path.write_bytes(package.encode())
+                artifacts.append(reader.Artifact(name, path))
+                registry.packages[name] = path.read_bytes()
+            lag = {"@awebai/aw-linux-x64": 2, "@awebai/aw-linux-arm64": 5}
+            registry.tags_visible = lambda name: clock.now() >= lag.get(name, 0)
+            with self.assertRaisesRegex(
+                reader.ReadbackRefusal, "uncertain at deadline"
+            ) as refusal:
+                reader.verify(
+                    artifacts,
+                    "1.2.3",
+                    dist_tag="next",
+                    registry=registry.url,
+                    deadline_seconds=4,
+                    backoff_seconds=1,
+                    clock=clock.now,
+                    sleep=clock.sleep,
+                )
+            self.assertEqual(clock.now(), 4)
+            pending = str(refusal.exception).split(": ", 1)[1]
+            self.assertIn("@awebai/aw-linux-arm64", pending)
+            self.assertNotIn("@awebai/aw-linux-x64", pending)
+
     def test_outage_and_mismatch_never_succeed(self):
         reader = load_reader()
         for fault in ("outage", "absent", "integrity", "bytes", "stale-tag"):
@@ -261,61 +293,9 @@ class ReadbackTests(unittest.TestCase):
                         "a published gitHead never changes; do not wait for it",
                     )
 
-    def test_bounded_entrypoint_survives_real_old_deadline(self):
-        # Actual elapsed time and real HTTP: the old two-minute default fails.
-        # The curl adapter only selects our owned endpoint for the old shell
-        # implementation, whose registry URL was not configurable.
-        with tempfile.TemporaryDirectory() as temp, Registry().serve() as registry:
-            root = Path(temp)
-            package = "@awebai/lag-fixture"
-            staged = root / "p.tgz"
-            staged.write_bytes(b"exact staged bytes")
-            registry.packages[package] = staged.read_bytes()
-            started = time.monotonic()
-            registry.visible = lambda: time.monotonic() - started >= 125
-            curl = shutil.which("curl")
-            adapter = root / "curl"
-            adapter.write_text(
-                "#!/usr/bin/env python3\nimport os,sys\n"
-                + f'args=[v.replace("https://registry.npmjs.org", {registry.url!r}) for v in sys.argv[1:]]\n'
-                + f"os.execv({curl!r}, [{curl!r}]+args)\n"
-            )
-            adapter.chmod(0o755)
-            env = dict(
-                os.environ,
-                PATH=str(root) + os.pathsep + os.environ["PATH"],
-                NPM_CONFIG_REGISTRY=registry.url,
-            )
-            result = subprocess.run(
-                [
-                    "bash",
-                    str(ROOT / "scripts/npm-exact-publish.sh"),
-                    "verify-published-bounded",
-                    "--tgz",
-                    str(staged),
-                    "--package",
-                    package,
-                    "--version",
-                    "1.2.3",
-                    "--post-action",
-                    "publish",
-                ],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=170,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-    def test_distribution_sync_carries_the_readback_workflow(self):
-        # Exercise the real source-sync copy over an existing distribution
-        # workflow, the file that used to remain independently maintained.
-        workflow = (ROOT / ".github/workflows/aw-release.yml").read_text()
-        copy = next(
-            line.strip()
-            for line in workflow.splitlines()
-            if line.strip().startswith("cp -a cli/go/.")
-        )
+    def test_distribution_sync_replaces_everything_but_the_checkout_git(self):
+        # The release workflow's sync step, over a distribution checkout that
+        # still holds an old release workflow and files the source dropped.
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / "cli/go"
@@ -327,25 +307,37 @@ class ReadbackTests(unittest.TestCase):
                 ignore=shutil.ignore_patterns("__pycache__"),
             )
             external = root / "distribution"
+            (external / ".git").mkdir(parents=True)
+            (external / ".git/HEAD").write_text("ref: refs/heads/main\n")
             (external / ".github/workflows").mkdir(parents=True)
             target = external / ".github/workflows/release.yml"
             target.write_text("old release workflow")
+            # The distribution's own .github entries survive the sync.
+            owned = external / ".github/CODEOWNERS"
+            owned.write_bytes(b"* @distribution-owners\n")
+            (external / "dropped.go").write_text("package dropped\n")
+            (external / "dropped").mkdir()
+            (external / "dropped/file.txt").write_text("stale\n")
             subprocess.run(
-                ["bash", "-c", copy],
-                cwd=root,
-                env=dict(os.environ, external=str(external)),
+                [
+                    "bash",
+                    str(ROOT / "scripts/sync-aw-distribution.sh"),
+                    str(source),
+                    str(external),
+                ],
                 check=True,
             )
             self.assertEqual(
-                target.read_bytes(),
-                (source / ".github/workflows/release.yml").read_bytes(),
+                (external / ".git/HEAD").read_text(), "ref: refs/heads/main\n"
             )
-            self.assertIn("run: ./npm/publish.sh", target.read_text())
-            self.assertIn("timeout-minutes: 60", target.read_text())
-            self.assertEqual(
-                (external / "npm/readback.py").read_bytes(),
-                (source / "npm/readback.py").read_bytes(),
-            )
+            self.assertFalse((external / "dropped.go").exists())
+            self.assertFalse((external / "dropped").exists())
+            for path in source.rglob("*"):
+                if path.is_file():
+                    copied = external / path.relative_to(source)
+                    self.assertEqual(copied.read_bytes(), path.read_bytes(), path)
+            self.assertNotEqual(target.read_text(), "old release workflow")
+            self.assertEqual(owned.read_bytes(), b"* @distribution-owners\n")
 
     def test_aw_publisher_reads_all_seven_and_refuses_mismatch(self):
         # Real npm packs and publishes to our disposable HTTP registry. No npm

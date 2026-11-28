@@ -107,6 +107,20 @@ async def _mail_while_down(env, cid):
     return mid
 
 
+def node_runtime_command(name, root):
+    """The Node runtime named channel, pi or core, from this worker's runtime tree."""
+    if name == "channel":
+        return ["node", str(REPO / "packages/channel/dist/index.js")]
+    host = "pi_extension_host.mjs" if name == "pi" else "channel_core_session_host.mjs"
+    package = "packages/pi-extension" if name == "pi" else "packages/channel-core"
+    return [
+        "node",
+        str(Path(__file__).with_name(host)),
+        str(REPO / f"{package}/dist/index.js"),
+        str(root),
+    ]
+
+
 @asynccontextmanager
 async def _runtime(name, root, binary, env):
     messages = []
@@ -160,19 +174,8 @@ async def _runtime(name, root, binary, env):
             "--oats-bin",
             str(oats),
         ]
-    elif name == "channel":
-        command = ["node", str(REPO / "packages/channel/dist/index.js")]
     else:
-        host = (
-            "pi_extension_host.mjs" if name == "pi" else "channel_core_session_host.mjs"
-        )
-        package = "packages/pi-extension" if name == "pi" else "packages/channel-core"
-        command = [
-            "node",
-            str(Path(__file__).with_name(host)),
-            str(REPO / f"{package}/dist/index.js"),
-            str(root),
-        ]
+        command = node_runtime_command(name, root)
     process = await asyncio.create_subprocess_exec(
         *command,
         cwd=root,
