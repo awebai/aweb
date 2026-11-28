@@ -297,7 +297,7 @@ cleanup() {
   local status=$?
   echo ""
   echo "--- Cleanup ---"
-  stop_revocation_probe
+  stop_revocation_probe || status=1
   stop_quickstart_bridges
   release_service_ports || status=1
   release_customer_port 2>/dev/null || status=1
@@ -2947,7 +2947,7 @@ assert_eq "bob revoked" "revoked" "$REVOKE_STATUS"
 # Phase 22 recreates the server. The window is the deployed server's own: one
 # fresh window of its cached revocation list plus the stale-while-revalidate
 # window.
-REVOCATION_ANCHOR="$(monotonic_seconds)"
+REVOCATION_ANCHOR="$(monotonic_ms)"
 REVOCATION_WINDOW="$(cd "$SERVER_DIR" && compose exec -T aweb python -c \
   'from awid import registry; print(registry._TEAM_REVOCATIONS_CACHE_TTL_SECONDS * registry._STALE_MULTIPLIER)')"
 [[ "$REVOCATION_WINDOW" =~ ^[1-9][0-9]*$ ]] || {
@@ -2961,21 +2961,26 @@ start_revocation_probe "$REVOCATION_PROBE" "$REVOCATION_ANCHOR" "$REVOCATION_WIN
 finish_revocation_probe() {
   echo "=== Phase 20: Bob's requests fail after revocation ==="
   wait "$REVOCATION_PROBE_PID" || true
-  stop_revocation_probe
-  local verdict budget refused_subject alice_inbox
-  budget=$((REVOCATION_WINDOW + 5))
+  if ! stop_revocation_probe; then
+    echo "  FAIL: the revocation probe's processes could not be ended"
+    fail=$((fail + 1))
+    exit 1
+  fi
+  local verdict budget_ms elapsed_ms refused_subject alice_inbox
+  budget_ms=$(((REVOCATION_WINDOW + 5) * 1000))
   verdict="$(cat "$REVOCATION_PROBE/verdict")"
+  elapsed_ms="$(cat "$REVOCATION_PROBE/elapsed-ms" 2>/dev/null || echo unknown)"
   if [[ "$verdict" != refused ]]; then
-    echo "  FAIL: bob's sends ended $verdict, not refused within ${budget}s of his removal"
+    echo "  FAIL: bob's sends ended $verdict (${elapsed_ms} ms), not refused within ${budget_ms} ms of his removal"
     fail=$((fail + 1))
     exit 1
   fi
-  if (($(cat "$REVOCATION_PROBE/seconds") > budget)); then
-    echo "  FAIL: bob was refused $(cat "$REVOCATION_PROBE/seconds")s after removal, past ${budget}s"
+  if ((elapsed_ms > budget_ms)); then
+    echo "  FAIL: bob was refused ${elapsed_ms} ms after removal, past ${budget_ms} ms"
     fail=$((fail + 1))
     exit 1
   fi
-  echo "  bob refused $(cat "$REVOCATION_PROBE/seconds")s after removal (budget ${budget}s)"
+  echo "  bob refused ${elapsed_ms} ms after removal (budget ${budget_ms} ms)"
   verdict="$(python3 -c '
 import json, sys
 error = json.load(open(sys.argv[1]))["error"]
