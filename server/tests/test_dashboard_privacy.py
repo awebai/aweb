@@ -95,6 +95,7 @@ async def privacy_stack(
     outbox_recovery=OutboxRecoveryOwnership.NATIVE,
     proxy_verification=None,
     workspace_counts=None,
+    run_migrations=True,
 ):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
@@ -109,9 +110,11 @@ async def privacy_stack(
     ) as redis:
         await redis.ping()
         db = database if database is not None else DatabaseInfra()
-        await db.initialize(shared_pool=shared_test_pool)
+        await db.initialize(shared_pool=shared_test_pool, run_migrations=run_migrations)
         registry_db = AwidDatabaseInfra(schema="privacy_registry")
-        await registry_db.initialize(shared_pool=shared_test_pool)
+        await registry_db.initialize(
+            shared_pool=shared_test_pool, run_migrations=run_migrations
+        )
         # Registry rate limits are not under test here; an in-memory window
         # keeps each app's DID registrations out of the per-IP window that
         # every run on the shared Redis would otherwise consume.
