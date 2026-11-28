@@ -511,33 +511,27 @@ migration, switch authority and open the destination in one activation.
 The migration has its own acceptance and change window immediately
 after E5 readiness.
 
-#### Address and namespace decision
+#### New addresses for juan.aweb.ai holders
 
-Juan selects one of these paths before issuing a cutover plan. The current
-registry records `juan.aweb.ai` as a child delegated by `aweb.ai`, with
-its own controller key. The parent DNS record and registry identify the
-same parent controller. The child currently has no exact `_awid` record.
+On 2026-11-28 Juan decided that the hosted `juan.aweb.ai` child stays
+with the frozen service. The current registry records that child as
+delegated by `aweb.ai` with its own controller key. The parent DNS
+record and registry identify the same parent controller. The child
+currently has no exact `_awid` record.
 
-- **Transfer the child namespace and preserve its addresses.** The
-  parent and child authorities must authorise release and transfer of the
-  exact child to the new registry. Publish the exact child DNS and signer
-  binding under authorised control. Retire the old delegation and active
-  registry authority for that scope and prove both serving paths reject
-  stale pins as authority. The same addresses remain assigned to the
-  same DIDs and point to the new delivery origin.
-- **Give the child namespace's holders new addresses under `awebai.org`.**
-  The relevant source and destination authorities authorise each
-  holder's exact identity transfer and new address bindings. Identity
-  certificates are domain-bound, so a move across domains requires an
-  explicit continuity-preserving re-anchor with the new chain. A fresh
-  registration or address reassignment cannot establish it. Retire the
-  old addresses and preserve them as historical evidence.
+Give its moving holders new addresses under `awebai.org`. The source
+and destination authorities authorise each holder's exact identity
+transfer and new address binding. Identity certificates are
+domain-bound. The move preserves the stable DID by explicitly
+re-anchoring it under the new chain, using the verified source head
+and paired holder and controller evidence. Resolve recovery or
+admission for any identity whose authority or required ancestry cannot
+be transferred before opening the migrating scope.
 
-Both paths preserve the DID where authorised continuity is proved. Paired
-holder and controller evidence establishes the new address binding. The
-address decision for the child does not change the scope of the service
-move. Resolve recovery or admission for any identity whose authority or
-required ancestry cannot be transferred before opening the destination.
+Retire each moved holder's old address at the source and preserve it
+as historical evidence. The frozen boundary has no automatic
+forwarding. New requests and replies use the verified destination
+binding.
 
 #### Common migration gates
 
