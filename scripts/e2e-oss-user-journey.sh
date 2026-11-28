@@ -2947,9 +2947,14 @@ assert_eq "bob revoked" "revoked" "$REVOKE_STATUS"
 # finish_revocation_probe collects the verdict before Phase 22 recreates the
 # server. The window is the deployed server's own: one fresh window of its
 # cached revocation list plus the stale-while-revalidate window.
+# Seconds on the monotonic clock, which every process on the host shares.
+monotonic_seconds() {
+  python3 -c 'import time; print(int(time.monotonic()))'
+}
+
 probe_revocation() {
   local dir="$1" window="$2" started attempt=0 out status
-  started="$(date +%s)"
+  started="$(monotonic_seconds)"
   while :; do
     attempt=$((attempt + 1))
     if out="$(run_aw_in "$BOB_DIR" mail send --plaintext --to alice \
@@ -2961,11 +2966,11 @@ probe_revocation() {
     if [[ "$status" != 0 ]]; then
       printf '%s\n' "$out" >"$dir/refusal.json"
       printf 'after-revocation-%s\n' "$attempt" >"$dir/refused-subject"
-      printf '%s\n' "$(($(date +%s) - started))" >"$dir/seconds"
+      printf '%s\n' "$(($(monotonic_seconds) - started))" >"$dir/seconds"
       printf '%s\n' "$status" >"$dir/exit"
       return 0
     fi
-    if (($(date +%s) - started > window + 5)); then
+    if (($(monotonic_seconds) - started > window + 5)); then
       printf 'accepted\n' >"$dir/exit"
       return 0
     fi
