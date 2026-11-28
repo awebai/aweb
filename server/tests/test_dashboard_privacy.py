@@ -46,6 +46,7 @@ from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
 from awid_service.testing import Registry, ServiceTransport
 from dashboard_test_support import _JWT_SECRET, _make_jwt
+from messaging_actor_support import privacy_actor, register_messaging_actors
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -70,6 +71,18 @@ async def privacy_app(shared_test_pool, monkeypatch, request):
         monkeypatch,
         proxy_verification=getattr(request, "param", None),
     ) as env:
+        yield env
+
+
+@pytest_asyncio.fixture
+async def registered_privacy_app(shared_test_pool, monkeypatch):
+    async with privacy_stack(shared_test_pool, monkeypatch, aliases=()) as env:
+        actors = await register_messaging_actors(
+            env, team_id=TEAM, aliases=("alice", "bob", "carol"), local=True
+        )
+        env.actors.update(
+            {alias: privacy_actor(actor) for alias, actor in actors.items()}
+        )
         yield env
 
 
@@ -162,13 +175,14 @@ async def privacy_stack(
             app.state.on_mutation = observe_mutation
             manager = db.get_manager("aweb")
             team_sk, team_did = _TEAM_SIGNING_KEY, _TEAM_DID_KEY
-            await manager.execute(
-                "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
-                "VALUES ($1, 'example.test', $2, $3)",
-                TEAM,
-                TEAM_NAME,
-                team_did,
-            )
+            if aliases:
+                await manager.execute(
+                    "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
+                    "VALUES ($1, 'example.test', $2, $3)",
+                    TEAM,
+                    TEAM_NAME,
+                    team_did,
+                )
             await registry.register_team(
                 domain="example.test",
                 name=TEAM_NAME,
@@ -281,6 +295,35 @@ async def privacy_stack(
             await db.close()
 
 
+@pytest.mark.asyncio
+async def test_privacy_actors_have_registered_memberships(registered_privacy_app):
+    env = registered_privacy_app
+    registry = env.app.state.awid_registry_client
+    certificates = await registry.list_team_certificates(
+        "example.test", TEAM_NAME, active_only=True
+    )
+    assert {certificate.member_did_key for certificate in certificates} == {
+        actor.did for actor in env.actors.values()
+    }
+    registered_ids = {
+        certificate.member_did_key: certificate.certificate_id
+        for certificate in certificates
+    }
+    for actor in env.actors.values():
+        row = await env.db.fetch_one(
+            """SELECT a.certificate_id, a.accepted_team_did_key
+               FROM {{tables.agents}} a
+               JOIN {{tables.workspaces}} w ON w.agent_id = a.agent_id
+               WHERE a.agent_id = $1 AND a.team_id = $2 AND w.workspace_id = $3""",
+            actor.id,
+            TEAM,
+            actor.workspace,
+        )
+        assert row is not None
+        assert row["certificate_id"] == registered_ids[actor.did]
+        assert row["accepted_team_did_key"] == env.team_did
+
+
 async def _request(env, actor, method, path, body=None):
     identity = env.actors[actor]
     content = json.dumps(body).encode() if body is not None else b""
@@ -329,8 +372,10 @@ async def test_registry_rate_limit_window_is_private_to_each_app(privacy_app):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("visibility", ["public", "private"])
-async def test_dashboard_cannot_read_mail_but_participants_can(privacy_app, visibility):
-    env = privacy_app
+async def test_dashboard_cannot_read_mail_but_participants_can(
+    registered_privacy_app, visibility
+):
+    env = registered_privacy_app
     await env.registry_db.execute(
         "UPDATE {{tables.teams}} SET visibility = $1", visibility
     )
@@ -389,9 +434,9 @@ async def test_dashboard_cannot_read_mail_but_participants_can(privacy_app, visi
     "token,status", [(None, 401), ("invalid", 401), ("wrong_team", 403)]
 )
 async def test_public_team_activity_requires_verified_dashboard_token(
-    privacy_app, token, status
+    registered_privacy_app, token, status
 ):
-    env = privacy_app
+    env = registered_privacy_app
     # Prove the real registry exposes this team's directory publicly.
     assert (await env.client.get(f"/v1/teams/{TEAM}/agents")).status_code == 200
     if token == "wrong_team":
@@ -405,9 +450,9 @@ async def test_public_team_activity_requires_verified_dashboard_token(
 
 @pytest.mark.asyncio
 async def test_team_stream_suppresses_old_publishers_and_keeps_task_activity(
-    privacy_app,
+    registered_privacy_app,
 ):
-    env = privacy_app
+    env = registered_privacy_app
     async with env.client.stream(
         "GET",
         f"/v1/teams/{TEAM}/events/stream",
@@ -452,8 +497,10 @@ async def test_team_stream_suppresses_old_publishers_and_keeps_task_activity(
 
 
 @pytest.mark.asyncio
-async def test_real_sends_keep_mutation_callbacks_and_participant_reads(privacy_app):
-    env = privacy_app
+async def test_real_sends_keep_mutation_callbacks_and_participant_reads(
+    registered_privacy_app,
+):
+    env = registered_privacy_app
     async with env.redis.pubsub() as pubsub:
         await pubsub.subscribe(team_events_channel_name(TEAM))
         await pubsub.get_message(timeout=1)  # subscription acknowledgement
@@ -507,8 +554,8 @@ async def test_real_sends_keep_mutation_callbacks_and_participant_reads(privacy_
 
 
 @pytest.mark.asyncio
-async def test_agent_event_snapshot_stays_participant_scoped(privacy_app):
-    env = privacy_app
+async def test_agent_event_snapshot_stays_participant_scoped(registered_privacy_app):
+    env = registered_privacy_app
     message_id = await _seed_mail(env)
     # An elapsed polling deadline still returns the initial participant-scoped
     # snapshot, making both positive and negative reads finite and deterministic.
@@ -537,8 +584,8 @@ async def test_agent_event_snapshot_stays_participant_scoped(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_public_usage_requires_token_and_keeps_aggregate(privacy_app):
-    env = privacy_app
+async def test_public_usage_requires_token_and_keeps_aggregate(registered_privacy_app):
+    env = registered_privacy_app
     await _seed_mail(env)
     response = await env.client.get("/v1/usage", params={"team_id": TEAM})
     assert response.status_code == 401
@@ -558,9 +605,9 @@ async def test_public_usage_requires_token_and_keeps_aggregate(privacy_app):
 @pytest.mark.parametrize("alias", ["bob", "carol"])
 @pytest.mark.parametrize("specific_workspace", [False, True])
 async def test_status_stream_keeps_mail_private_and_team_tasks_visible(
-    privacy_app, alias, specific_workspace
+    registered_privacy_app, alias, specific_workspace
 ):
-    env = privacy_app
+    env = registered_privacy_app
     actor = env.actors[alias]
     bob_workspace = str(env.actors["bob"].workspace)
     headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
@@ -617,14 +664,14 @@ async def test_status_stream_keeps_mail_private_and_team_tasks_visible(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("colliding_workspace", [False, True])
 async def test_embedded_public_status_reader_never_gets_messaging(
-    privacy_app, colliding_workspace, monkeypatch
+    registered_privacy_app, colliding_workspace, monkeypatch
 ):
     """Exercise the real embedded route with its host-supplied public identity.
 
     The standalone app does not authenticate public principals. The host's
     authentication bridge is tested by the embedding application, not mocked here.
     """
-    env = privacy_app
+    env = registered_privacy_app
     actor_id = "00000000-0000-0000-0000-000000000001"
     workspace_id = str(env.actors["bob"].workspace)
     if colliding_workspace:
