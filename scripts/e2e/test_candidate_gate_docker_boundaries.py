@@ -283,6 +283,26 @@ STARTUP_READ_ERRORS = (
 )
 
 
+def read_until_reachable(
+    port: str,
+    *,
+    timeout: float = 10.0,
+    clock=time.monotonic,
+    sleep=time.sleep,
+) -> str:
+    """Read the published service, retrying startup errors until the deadline."""
+    deadline = clock() + timeout
+    while True:
+        try:
+            return read_published_response(port)
+        except STARTUP_READ_ERRORS as error:
+            if clock() >= deadline:
+                raise AssertionError(
+                    f"original host publication never became reachable: {error}"
+                ) from error
+            sleep(0.1)
+
+
 class HostPublishedPortTests(unittest.TestCase):
     """Only the host-side checks preflight invokes this real-socket test."""
 
@@ -431,17 +451,7 @@ class HostPublishedPortTests(unittest.TestCase):
             created = launch(original, "127.0.0.1::80", expected)
             self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
             port = wait_for_published_port(original)
-            deadline = time.monotonic() + 10
-            while True:
-                try:
-                    response = read_published_response(port)
-                    break
-                except STARTUP_READ_ERRORS as error:
-                    if time.monotonic() >= deadline:
-                        self.fail(
-                            f"original host publication never became reachable: {error}"
-                        )
-                    time.sleep(0.1)
+            response = read_until_reachable(port)
             self.assertEqual(response, expected + "\n")
             before = snapshot(original)
             owner(before)
