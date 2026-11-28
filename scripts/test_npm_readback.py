@@ -312,6 +312,9 @@ class ReadbackTests(unittest.TestCase):
             (external / ".github/workflows").mkdir(parents=True)
             target = external / ".github/workflows/release.yml"
             target.write_text("old release workflow")
+            # The distribution's own .github entries survive the sync.
+            owned = external / ".github/CODEOWNERS"
+            owned.write_bytes(b"* @distribution-owners\n")
             (external / "dropped.go").write_text("package dropped\n")
             (external / "dropped").mkdir()
             (external / "dropped/file.txt").write_text("stale\n")
@@ -334,6 +337,7 @@ class ReadbackTests(unittest.TestCase):
                     copied = external / path.relative_to(source)
                     self.assertEqual(copied.read_bytes(), path.read_bytes(), path)
             self.assertNotEqual(target.read_text(), "old release workflow")
+            self.assertEqual(owned.read_bytes(), b"* @distribution-owners\n")
 
     def test_aw_publisher_reads_all_seven_and_refuses_mismatch(self):
         # Real npm packs and publishes to our disposable HTTP registry. No npm
