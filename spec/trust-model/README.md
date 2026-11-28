@@ -165,16 +165,17 @@ Row 70 says the attacker never gains an admin's key; an attack that begins with 
 
 The registry issues a statement only where its fact holds at its cut, with the fact's handles there, and with an expiry no later than the cut's time plus the lifetime its purpose allows (`Issued`). The purpose is ordinary standing, or current evidence for one exact request, with a nonce used once (`Purpose`). A `Verifier` decides from four things: the last cut of the feed it has applied, the issuer time of its last applied barrier, an upper bound on the issuer's time now, and the nonces it has used.
 
-`Admits` takes all of these at once: the statement's fact is the request's, the request is signed by the fact's subject, the verifier has applied the statement's cut, its clock is before the expiry and before the barrier's time plus the feed bound, no applied entry after the cut retires one of the statement's handles (`Defeated`), an ordinary statement serves only a request that creates no authority, and current evidence serves only a request that creates authority, with its digest and its nonce unused. `Admits` keeps no record of which statements the verifier has seen, so a first presentation is judged like any other. Three premises stand for what the real registry must do, named and taken as given here:
+`Admits` takes all of these at once: the statement's fact is the request's, the request is signed by the fact's subject, the verifier has applied the statement's cut, its clock is before the expiry and before the barrier's time plus the feed bound, no entry the verifier has applied, at any cut up to its own, retires one of the statement's handles (`Defeated`), an ordinary statement serves only a request that creates no authority, and current evidence serves only a request that creates authority, with its digest and its nonce unused. `Admits` keeps no record of which statements the verifier has seen, so a first presentation is judged like any other. Four premises stand for what the real registry must do, named and taken as given here:
 - each change that ends a fact retires one of its handles (`FeedComplete`);
 - cut times never go back (`TimeMonotone`);
-- a verifier's last barrier was observed no later than the next change after its applied cut committed (`BarrierBefore`).
+- a verifier's last barrier was observed no later than the next change after its applied cut committed (`BarrierBefore`);
+- the registry never gives a fact a handle that an entry at or before that cut has retired (`NoRetiredHandles`). This is the issuer's duty. The verifier does not rely on it: it refuses on any applied entry.
 
 | # | In plain words | Lean name |
 |---|---|---|
 | 75 | A statement creates no authority. The registry issues one only where its fact holds at its cut. Under the feed premise, a verifier admits a request on an issued statement only for that statement's fact, signed by the fact's subject, and only if the fact holds in the record at the cut the verifier has applied | `issued_fact_holds`, `admitted_fact_holds_at_applied` |
 | 76 | Expiry bounds a statement: a verifier admits on it only before its expiry, so for an issued statement before its cut's time plus its lifetime. At the expiry, nothing is admitted | `admitted_before_expiry`, `not_admitted_at_expiry` |
-| 77 | An applied entry, after a statement's cut, that retires one of its handles defeats it. Under the feed premise, an issued statement whose fact has stopped holding at some cut from its own up to the verifier's applied cut is not admitted | `defeated_not_admitted`, `ended_fact_not_admitted` |
+| 77 | An applied entry that retires one of a statement's handles defeats it, at any cut up to the verifier's, including one before the statement's own cut. Under the issuer premise, only an entry after an issued statement's cut defeats it, so this refuses nothing the registry issued correctly. Under the feed premise, an issued statement whose fact has stopped holding at some cut from its own up to the verifier's applied cut is not admitted | `defeated_not_admitted`, `defeat_is_after_cut`, `ended_fact_not_admitted` |
 | 78 | A statement from a cut the verifier has not applied is not admitted | `ahead_not_admitted` |
 | 79 | An applied feed point older than the bound refuses: when the verifier's clock is at least its last barrier's time plus the feed bound, nothing is admitted | `stale_feed_not_admitted` |
 | 80 | The removal bound. Under the feed, time and barrier premises, if an issued statement's fact no longer holds at a cut at or after the statement's, and the verifier's clock is at least the feed bound past that cut's time, the statement is not admitted, whether or not the verifier has applied that cut | `removal_bound` |
@@ -186,7 +187,7 @@ The paired cases use one example registry:
 - It is back at cut 2, at time 6, under handle 101.
 - Cut 3, at time 8, changes something else and retires handle 555. Later cuts commit at time 10000 plus the cut.
 
-The lifetime is 1800, the evidence lifetime 10 and the feed bound 30, so the removal falls inside both lifetimes. Each refused case below other than the expiry boundary is unexpired, and each is refused for the reason it names. Every verifier the cases use is consistent with the example's times: its clock is at or after its applied cut's time and its barrier's, and its barrier was observed no later than the change after its applied cut (`Consistent`, `example_verifiers_consistent`). The example meets the feed and time premises, and the barrier premise wherever a case uses it (`exampleRegistry_feedComplete`, `exampleRegistry_timeMonotone`). It issues its statements (`exampleStatement_issued`, `exampleStatementAgain_issued`, `exampleEvidence_issued_at_head`). A request either creates authority or not (`exampleCreation`, `exampleRequest`).
+The lifetime is 1800, the evidence lifetime 10 and the feed bound 30, so the removal falls inside both lifetimes. Each refused case below other than the expiry boundary is unexpired, and each is refused for the reason it names. Every verifier the cases use is consistent with the example's times: its clock is at or after its applied cut's time and its barrier's, and its barrier was observed no later than the change after its applied cut (`Consistent`, `example_verifiers_consistent`). The example meets the feed, time and issuer premises, and the barrier premise wherever a case uses it (`exampleRegistry_feedComplete`, `exampleRegistry_timeMonotone`, `exampleRegistry_noRetiredHandles`). A second registry, `reuseRegistry`, is the same except that from cut 2 it gives the fact handle 100 again, as a restored or faulty issuer might. It issues its statements (`exampleStatement_issued`, `exampleStatementAgain_issued`, `exampleEvidence_issued_at_head`). A request either creates authority or not (`exampleCreation`, `exampleRequest`).
 
 | # | In plain words | Lean name |
 |---|---|---|
@@ -198,9 +199,10 @@ The lifetime is 1800, the evidence lifetime 10 and the feed bound 30, so the rem
 | 87 | Continuity: cut 3, at time 8, retires another handle, and at time 9 the statement from cut 2 stays admitted by a verifier that has applied cut 3 | `continuity_keeps_statement` |
 | 88 | Evidence issued at head 0 for the creating request with digest 42 is admitted for it once at time 7, before the removal reaches the verifier, and refused after its nonce is used. At the same time it is refused by a verifier that has applied the removal, and for a creating request with digest 43. Ordinary standing is refused for the creating request. At head 1 a fresh request gets no evidence | `evidence_admitted_once`, `evidence_refused_after_removal_applied`, `evidence_refused_for_other_request`, `no_evidence_after_removal` |
 | 89 | A statement for another team, or a request signed by another key, does not help | `refused_for_other_fact`, `refused_for_other_signer` |
+| 90 | A reused handle: the second registry meets the feed and time premises and issues, at cut 2, a statement on handle 100, which cut 1 retired. It breaks the issuer premise, and a verifier at cut 2 refuses the statement by the entry at cut 1, before the statement's cut. Its admitted neighbour is row 86's statement on a new handle | `reused_handle_refused` |
 
 The layer's limits.
-- The three premises are what the registry's feed, clock and barriers must do. The integration tests prove them, not this layer.
+- The four premises are what the registry's feed, clock, barriers and issuance must do. The integration tests prove them, not this layer.
 - The record at each cut is any record. The layer does not tie it to the model's acts, so its rows hold for any history, the model's included.
 - Signatures rest on assumption 1, the registry's and the request's alike. A statement's handles are numbers, so their randomness and what the feed reveals are outside the layer.
 - The layer has one registry and no grants, since grants stay with the service that owns them.
@@ -208,6 +210,7 @@ The layer's limits.
 - The verifier's clock is an upper bound on the issuer's time now, so clock error is folded into that premise.
 - Re-admission and continuity are shown with a team fact. Cutting off an identity is a fact that stops holding, under the same rows 77 and 80. A root rotation that keeps every registration is not in the model, so continuity here is a change that leaves the fact holding and retires none of its handles.
 - Which acts create authority is the request's flag. The layer does not list the acts.
+- `Verifier.consumed` stands for the destination's shared, transactional replay state. Row 81 proves the step that records a use. That the state is shared by every process of the destination is for the integration cases, which run two processes of one destination.
 
 ## What must never happen
 

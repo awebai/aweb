@@ -393,7 +393,8 @@ Each item pairs a sentence about the model with one about the real system.
 | README, `IssuedAtHead` | Evidence issued at the registry's head | definition | Its body |
 | README, `Admits` | It keeps no record of which statements the verifier has seen, so a first presentation is judged like any other | definition | `Admits` reads only the statement, the request and the verifier's applied cut, barrier, clock and used nonces; no field records a statement |
 | `Purpose.consume` | Using current evidence uses its nonce | definition | Its body |
-| README, `FeedComplete`, `TimeMonotone`, `BarrierBefore` | The three premises, named and taken as given | assumption | Their bodies; each appears only as a hypothesis |
+| README, `FeedComplete`, `TimeMonotone`, `BarrierBefore`, `NoRetiredHandles` | The four premises, named and taken as given | assumption | Their bodies; each appears only as a hypothesis |
+| README, `NoRetiredHandles` | It is the issuer's duty; the verifier does not rely on it and refuses on any applied entry | definition, result | `Defeated` ranges over every applied cut; `NoRetiredHandles` is a hypothesis only of `defeat_is_after_cut` |
 | `Handle` | A handle the registry mints | definition | An abbreviation for a number |
 | 75 to 81 | The rules | result | The theorems named in each row |
 | 75, 77 | Rows 75 and 77 hold for issued statements, under the feed premise | result | `admitted_fact_holds_at_applied` and `ended_fact_not_admitted` take both `FeedComplete` and `Issued`; issuance is the registry's, admission the verifier's |
@@ -403,10 +404,12 @@ Each item pairs a sentence about the model with one about the real system.
 | README, `Consistent` | Every verifier the cases use is consistent with the example's times | definition, result | `Consistent`; `example_verifiers_consistent` lists every verifier the cases use |
 | README, example | The example meets the feed and time premises, the barrier premise where a case uses it, and issues its statements | result | `exampleRegistry_feedComplete`, `exampleRegistry_timeMonotone`, the barrier premise in `refused_at_removal_bound`, `exampleStatement_issued`, `exampleStatementAgain_issued`, `exampleEvidence_issued_at_head`, with `exampleFact_holds` and `Fact.not_holds_empty` |
 | 82 | This is the window the Design allows, and row 80 closes it | result | `admitted_before_removal_reaches_verifier`; `refused_at_removal_bound` uses `removal_bound` |
-| 82 to 89 | The paired cases | result | The theorems named in each row; each refused case has an admitted neighbour one change away, in its row or in row 82 (the statement at time 7 with a barrier at 4) or row 88 (the evidence at time 7) |
+| 82 to 90 | The paired cases | result | The theorems named in each row; each refused case has an admitted neighbour one change away, in its row or in row 82 (the statement at time 7 with a barrier at 4) or row 88 (the evidence at time 7) |
 | README, limits | Re-admission and continuity are shown with a team fact; cutting off an identity is a fact that stops holding; continuity is a change that leaves the fact holding and retires none of its handles; a rotation that keeps registrations is not in the model | definition, result | `exampleFact` is a team fact; rows 77 and 80 are for any `Fact`; `continuity_keeps_statement`; the README's "Where the model does less" on root replacement |
 | README, limits | Which acts create authority is the request's flag; the layer does not list them | definition | `Request.creates` is a field; no act is named |
-| README, limits | The three premises are what the registry must do, and the integration tests prove them | assumption, source | They are hypotheses of the rows; the design leaves issuance, feed and transaction premises to integration cases |
+| README, limits | `Verifier.consumed` stands for the destination's shared replay state; row 81 proves the step that records a use; sharing across processes is for the integration cases | definition, source | `Purpose.consume` updates one `Verifier`; the design asks for two processes of one destination in the replay case |
+| README, example | The second registry and what it reuses | definition | `reuseRegistry`, `reusedStatement` |
+| README, limits | The premises are what the registry must do, and the integration tests prove them | assumption, source | They are hypotheses of the rows; the design leaves issuance, feed and transaction premises to integration cases |
 | README, limits | The record at each cut is any record, so the rows hold for any history | definition | `Registry.record` is any function; no row assumes `Reachable` or `Step` |
 | README, limits | Signatures rest on assumption 1; handles are numbers, so their randomness and what the feed reveals are outside | assumption, definition | A1; `Handle` |
 | README, limits | One registry and no grants | definition | `Admits` takes one `Registry`; `Fact` has no grant |

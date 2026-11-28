@@ -97,10 +97,10 @@ structure Request where
   digest : Nat
   creates : Bool
 
-/-- An entry the verifier has applied, after the statement's cut, retires one
-of the statement's handles. -/
+/-- An entry the verifier has applied, at any cut up to its applied one,
+retires one of the statement's handles. -/
 def Defeated (R : Registry) (v : Verifier) (st : Statement) : Prop :=
-  ∃ j, st.cut < j ∧ j ≤ v.applied ∧ ∃ x, x ∈ R.feed j ∧ x ∈ st.deps
+  ∃ j, j ≤ v.applied ∧ ∃ x, x ∈ R.feed j ∧ x ∈ st.deps
 
 /-- An ordinary statement fits only a request that creates no authority;
 current evidence fits only a request that creates authority, with the
@@ -140,6 +140,11 @@ issued `st`, `st` is current evidence, and `st`'s cut is `head`. -/
 def IssuedAtHead (R : Registry) (b : Bounds) (head : Nat) (st : Statement) : Prop :=
   Issued R b st ∧ (∃ d n, st.purpose = .current d n) ∧ st.cut = head
 
+/-- The issuer premise: the registry never gives a fact, at a cut, a handle
+that an entry at or before that cut has retired. -/
+def NoRetiredHandles (R : Registry) : Prop :=
+  ∀ n f j, j ≤ n → ∀ x, x ∈ R.feed j → x ∉ R.handles n f
+
 /-- The barrier premise: the verifier's last applied barrier was observed no
 later than the change after its applied cut committed. -/
 def BarrierBefore (R : Registry) (v : Verifier) : Prop :=
@@ -164,8 +169,8 @@ theorem admitted_fact_holds_at_applied {R : Registry} {b : Bounds} {v : Verifier
   rw [← hf]
   apply Classical.byContradiction
   intro hno
-  obtain ⟨j, hj1, hj2, x, hx, hxd⟩ := hfeed st.fact st.cut v.applied hcut hst.1 hno
-  exact hnd ⟨j, hj1, hj2, x, hx, hst.2.1 ▸ hxd⟩
+  obtain ⟨j, -, hj2, x, hx, hxd⟩ := hfeed st.fact st.cut v.applied hcut hst.1 hno
+  exact hnd ⟨j, hj2, x, hx, hst.2.1 ▸ hxd⟩
 
 /-- Expiry bounds a statement: a verifier admits on it only before its expiry,
 so for an issued statement before its cut's time plus its lifetime. -/
@@ -179,6 +184,18 @@ theorem not_admitted_at_expiry {R : Registry} {b : Bounds} {v : Verifier} {r : R
     {st : Statement} (h : st.expiry ≤ v.now) : ¬ Admits R b v r st :=
   fun ha => Nat.lt_irrefl _ (Nat.lt_of_lt_of_le ha.2.2.2.1 h)
 
+/-- Under the issuer premise, only an entry after an issued statement's cut
+defeats it, so checking every applied entry refuses no statement the registry
+issued correctly for a reason older than its cut. -/
+theorem defeat_is_after_cut {R : Registry} {b : Bounds} {v : Verifier} {st : Statement}
+    (hno : NoRetiredHandles R) (hst : Issued R b st) (h : Defeated R v st) :
+    ∃ j, st.cut < j ∧ j ≤ v.applied ∧ ∃ x, x ∈ R.feed j ∧ x ∈ st.deps := by
+  obtain ⟨j, hj, x, hx, hd⟩ := h
+  refine ⟨j, ?_, hj, x, hx, hd⟩
+  apply Classical.byContradiction
+  intro hle
+  exact hno st.cut st.fact j (by omega) x hx (hst.2.1 ▸ hd)
+
 /-- An applied entry that retires one of a statement's handles defeats it,
 on any presentation. -/
 theorem defeated_not_admitted {R : Registry} {b : Bounds} {v : Verifier} {r : Request}
@@ -191,8 +208,8 @@ theorem ended_fact_not_admitted {R : Registry} {b : Bounds} {v : Verifier} {r : 
     {st : Statement} {m : Nat} (hfeed : FeedComplete R) (hst : Issued R b st)
     (hm1 : st.cut ≤ m) (hm2 : m ≤ v.applied) (hend : ¬ st.fact.Holds (R.record m)) :
     ¬ Admits R b v r st := by
-  obtain ⟨j, hj1, hj2, x, hx, hxd⟩ := hfeed st.fact st.cut m hm1 hst.1 hend
-  exact defeated_not_admitted ⟨j, hj1, Nat.le_trans hj2 hm2, x, hx, hst.2.1 ▸ hxd⟩
+  obtain ⟨j, -, hj2, x, hx, hxd⟩ := hfeed st.fact st.cut m hm1 hst.1 hend
+  exact defeated_not_admitted ⟨j, Nat.le_trans hj2 hm2, x, hx, hst.2.1 ▸ hxd⟩
 
 /-- A statement from a cut the verifier has not applied is not admitted. -/
 theorem ahead_not_admitted {R : Registry} {b : Bounds} {v : Verifier} {r : Request}
@@ -298,12 +315,12 @@ theorem exampleFact_holds : exampleFact.Holds memberRecord := by
   simp [Registered, memberRecord, emptyRecord]
 
 /-- The example registry: cut 1 is the record with nothing in it, every other
-cut is `memberRecord`; times 0, 4, 6, 8, then `n + 10000`; handle 100 before
-cut 2 and 101 from it; the feed retires 100 at cut 1 and 555 at cut 3. -/
+cut is `memberRecord`; times 0, 4, 6, 8, then `n + 10000`; handle 100 at
+cut 0, none at cut 1, and 101 from cut 2; the feed retires 100 at cut 1 and 555 at cut 3. -/
 def exampleRegistry : Registry where
   record := fun n => if n = 1 then emptyRecord else memberRecord
   time := fun n => if n = 0 then 0 else if n = 1 then 4 else if n = 2 then 6 else if n = 3 then 8 else n + 10000
-  handles := fun n _ => if n < 2 then [100] else [101]
+  handles := fun n _ => if n = 0 then [100] else if n = 1 then [] else [101]
   feed := fun j => if j = 1 then [100] else if j = 3 then [555] else []
 
 /-- The example's bounds: 1800 for a statement, 10 for current evidence, 30
@@ -354,12 +371,12 @@ theorem exampleStatementAgain_issued :
    by simp [exampleRegistry, exampleStatementAgain],
    by simp [exampleRegistry, exampleStatementAgain, exampleBounds, Purpose.life]⟩
 
-/-- A statement is not defeated if no feed entry after its cut, up to the
-verifier's applied cut, retires one of its handles. -/
-theorem example_not_defeated {v : Verifier} {st : Statement}
-    (h : ∀ j, st.cut < j → j ≤ v.applied → ∀ x, x ∈ exampleRegistry.feed j → x ∉ st.deps) :
+/-- A statement is not defeated if no feed entry up to the verifier's applied
+cut retires one of its handles. -/
+theorem example_not_defeated (v : Verifier) (st : Statement)
+    (h : ∀ j, j ≤ v.applied → ∀ x, x ∈ exampleRegistry.feed j → x ∉ st.deps) :
     ¬ Defeated exampleRegistry v st :=
-  fun ⟨j, hj1, hj2, x, hx, hd⟩ => h j hj1 hj2 x hx hd
+  fun ⟨j, hj, x, hx, hd⟩ => h j hj x hx hd
 
 /-- After the removal committed, before it reaches the verifier: a verifier at
 cut 0 admits the unexpired statement at time 7, although 7 was removed at cut
@@ -368,14 +385,17 @@ closes it. -/
 theorem admitted_before_removal_reaches_verifier :
     Admits exampleRegistry exampleBounds ⟨0, 4, 7, []⟩ exampleRequest exampleStatement :=
   ⟨rfl, rfl, by decide, by decide, by decide,
-    example_not_defeated (fun j h1 h2 => by simp [exampleStatement] at h1 h2; omega), rfl⟩
+    example_not_defeated ⟨0, 4, 7, []⟩ exampleStatement (by
+      intro j hj x hx hd
+      simp only [exampleRegistry] at hx
+      by_cases h1 : j = 1 <;> by_cases h3 : j = 3 <;> simp_all), rfl⟩
 
 /-- At the same time, a verifier that has applied the removal refuses the same
 statement, unexpired and with a fresh barrier, on its first presentation there
 as on any other. -/
 theorem refused_after_removal_applied :
     ¬ Admits exampleRegistry exampleBounds ⟨1, 4, 7, []⟩ exampleRequest exampleStatement :=
-  defeated_not_admitted ⟨1, by decide, by decide, 100, by simp [exampleRegistry],
+  defeated_not_admitted ⟨1, by decide, 100, by simp [exampleRegistry],
     by simp [exampleStatement]⟩
 
 /-- The removal bound: a verifier still at cut 0, with the latest barrier the
@@ -384,7 +404,10 @@ the removal, while the statement is unexpired. -/
 theorem admitted_just_before_removal_bound :
     Admits exampleRegistry exampleBounds ⟨0, 4, 33, []⟩ exampleRequest exampleStatement :=
   ⟨rfl, rfl, by decide, by decide, by decide,
-    example_not_defeated (fun j h1 h2 => by simp [exampleStatement] at h1 h2; omega), rfl⟩
+    example_not_defeated ⟨0, 4, 33, []⟩ exampleStatement (by
+      intro j hj x hx hd
+      simp only [exampleRegistry] at hx
+      by_cases h1 : j = 1 <;> by_cases h3 : j = 3 <;> simp_all), rfl⟩
 
 theorem refused_at_removal_bound :
     ¬ Admits exampleRegistry exampleBounds ⟨0, 4, 34, []⟩ exampleRequest exampleStatement :=
@@ -404,12 +427,10 @@ at time 1805 and refused at time 1806, by a verifier at cut 3. -/
 theorem admitted_just_before_expiry :
     Admits exampleRegistry exampleBounds ⟨3, 1790, 1805, []⟩ exampleRequest exampleStatementAgain :=
   ⟨rfl, rfl, by decide, by decide, by decide,
-    example_not_defeated (fun j h1 h2 x hx => by
-      simp [exampleStatementAgain] at h1 h2
-      have : j = 3 := by omega
-      subst this
-      simp [exampleRegistry] at hx
-      simp [hx, exampleStatementAgain]), rfl⟩
+    example_not_defeated ⟨3, 1790, 1805, []⟩ exampleStatementAgain (by
+      intro j hj x hx hd
+      simp only [exampleRegistry] at hx
+      by_cases h1 : j = 1 <;> by_cases h3 : j = 3 <;> simp_all [exampleStatementAgain]), rfl⟩
 
 theorem refused_at_expiry :
     ¬ Admits exampleRegistry exampleBounds ⟨3, 1790, 1806, []⟩ exampleRequest exampleStatementAgain :=
@@ -428,8 +449,11 @@ theorem readmitted_statement_admitted_old_refused :
     Admits exampleRegistry exampleBounds ⟨2, 6, 8, []⟩ exampleRequest exampleStatementAgain ∧
       ¬ Admits exampleRegistry exampleBounds ⟨2, 6, 8, []⟩ exampleRequest exampleStatement :=
   ⟨⟨rfl, rfl, by decide, by decide, by decide,
-    example_not_defeated (fun j h1 h2 => by simp [exampleStatementAgain] at h1 h2; omega), rfl⟩,
-   defeated_not_admitted ⟨1, by decide, by decide, 100, by simp [exampleRegistry],
+    example_not_defeated ⟨2, 6, 8, []⟩ exampleStatementAgain (by
+      intro j hj x hx hd
+      simp only [exampleRegistry] at hx
+      by_cases h1 : j = 1 <;> by_cases h3 : j = 3 <;> simp_all [exampleStatementAgain]), rfl⟩,
+   defeated_not_admitted ⟨1, by decide, 100, by simp [exampleRegistry],
       by simp [exampleStatement]⟩⟩
 
 /-- Continuity: cut 3, at time 8, changes something else and retires another
@@ -438,12 +462,10 @@ has applied cut 3. -/
 theorem continuity_keeps_statement :
     Admits exampleRegistry exampleBounds ⟨3, 8, 9, []⟩ exampleRequest exampleStatementAgain :=
   ⟨rfl, rfl, by decide, by decide, by decide,
-    example_not_defeated (fun j h1 h2 x hx => by
-      simp [exampleStatementAgain] at h1 h2
-      have : j = 3 := by omega
-      subst this
-      simp [exampleRegistry] at hx
-      simp [hx, exampleStatementAgain]), rfl⟩
+    example_not_defeated ⟨3, 8, 9, []⟩ exampleStatementAgain (by
+      intro j hj x hx hd
+      simp only [exampleRegistry] at hx
+      by_cases h1 : j = 1 <;> by_cases h3 : j = 3 <;> simp_all [exampleStatementAgain]), rfl⟩
 
 /-- The example's current evidence: for the request with digest 42, nonce 9,
 issued at cut 0 with lifetime 10. -/
@@ -464,14 +486,17 @@ theorem evidence_admitted_once :
       ¬ Admits exampleRegistry exampleBounds
         (exampleEvidence.purpose.consume ⟨0, 4, 7, []⟩) exampleCreation exampleEvidence :=
   ⟨⟨rfl, rfl, by decide, by decide, by decide,
-    example_not_defeated (fun j h1 h2 => by simp [exampleEvidence] at h1 h2; omega),
+    example_not_defeated ⟨0, 4, 7, []⟩ exampleEvidence (by
+      intro j hj x hx hd
+      simp only [exampleRegistry] at hx
+      by_cases h1 : j = 1 <;> by_cases h3 : j = 3 <;> simp_all),
     by simp [exampleEvidence, Purpose.Fits, exampleCreation]⟩,
    current_used_once (d := 42) (n := 9) rfl⟩
 
 /-- At the same time, a verifier that has applied the removal refuses it. -/
 theorem evidence_refused_after_removal_applied :
     ¬ Admits exampleRegistry exampleBounds ⟨1, 4, 7, []⟩ exampleCreation exampleEvidence :=
-  defeated_not_admitted ⟨1, by decide, by decide, 100, by simp [exampleRegistry],
+  defeated_not_admitted ⟨1, by decide, 100, by simp [exampleRegistry],
     by simp [exampleEvidence]⟩
 
 /-- The same evidence for a creating request with another digest is refused,
@@ -508,6 +533,51 @@ theorem refused_for_other_signer :
   fun ha => by
     have := ha.2.1
     simp [exampleStatement, exampleFact, Fact.subject] at this
+
+theorem exampleRegistry_noRetiredHandles : NoRetiredHandles exampleRegistry := by
+  intro n f j hjn x hx hh
+  simp only [exampleRegistry] at hx hh
+  by_cases h1 : j = 1 <;> by_cases h3 : j = 3 <;> by_cases hn0 : n = 0 <;> by_cases hn1 : n = 1 <;>
+    simp_all <;> omega
+
+/-- A restored or faulty issuer: the example's registry, except that from cut
+2 it gives the fact handle 100 again, which cut 1 retired. -/
+def reuseRegistry : Registry := { exampleRegistry with
+  handles := fun n _ => if n = 1 then [] else [100] }
+
+/-- The statement that issuer gives at cut 2, on the retired handle. -/
+def reusedStatement : Statement := ⟨exampleFact, 2, 1806, [100], .ordinary⟩
+
+/-- That registry meets the feed and time premises and issues the statement,
+but breaks the issuer premise; a verifier at cut 2 refuses the statement by the
+entry at cut 1, before its cut. Its neighbour is the re-admission with a new
+handle (`readmitted_statement_admitted_old_refused`). -/
+theorem reused_handle_refused :
+    FeedComplete reuseRegistry ∧ TimeMonotone reuseRegistry ∧
+      Issued reuseRegistry exampleBounds reusedStatement ∧ ¬ NoRetiredHandles reuseRegistry ∧
+      ¬ Admits reuseRegistry exampleBounds ⟨2, 6, 8, []⟩ exampleRequest reusedStatement := by
+  refine ⟨?_, exampleRegistry_timeMonotone, ⟨?_, ?_, ?_⟩, ?_, ?_⟩
+  · intro f n m hnm hn hm
+    by_cases h1 : n = 1
+    · subst h1
+      simp [reuseRegistry, exampleRegistry] at hn
+      exact absurd hn (Fact.not_holds_empty f)
+    · by_cases h2 : m = 1
+      · subst h2
+        have hn0 : n = 0 := by omega
+        subst hn0
+        exact ⟨1, by omega, by omega, 100, by simp [reuseRegistry, exampleRegistry],
+          by simp [reuseRegistry]⟩
+      · simp [reuseRegistry, exampleRegistry, h1, h2] at hn hm
+        exact absurd hn hm
+  · simpa [reuseRegistry, exampleRegistry, reusedStatement] using exampleFact_holds
+  · simp [reuseRegistry, reusedStatement]
+  · simp [reuseRegistry, exampleRegistry, reusedStatement, exampleBounds, Purpose.life]
+  · intro h
+    exact h 2 exampleFact 1 (by decide) 100 (by simp [reuseRegistry, exampleRegistry])
+      (by simp [reuseRegistry])
+  · exact defeated_not_admitted ⟨1, by decide, 100, by simp [reuseRegistry, exampleRegistry],
+      by simp [reusedStatement]⟩
 
 /-- A verifier is consistent with the registry's times: its clock is at or
 after the time of its applied cut and of its barrier, and its barrier was
