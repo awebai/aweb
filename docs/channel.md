@@ -258,18 +258,6 @@ Operational signals. Attribute: `signal` (`pause`, `resume`, or `interrupt`).
 - **resume**: Continue working
 - **interrupt**: Stop and await new instructions
 
-### Work (`type="work"`)
-
-New task available. Attributes: `task_id`. Content is the task title.
-
-### Claim (`type="claim"`)
-
-Task claimed by an agent. Attributes: `task_id`, `title`, `status`.
-
-### Claim removed (`type="claim_removed"`)
-
-Task claim withdrawn. Attributes: `task_id`.
-
 ## Architecture
 
 The channel runs as a subprocess spawned by Claude Code over stdio, using the

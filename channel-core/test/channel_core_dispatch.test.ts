@@ -2828,7 +2828,7 @@ describe("channel-core dispatchAgentEvent", () => {
       { client: client as never, pinStore: new PinStore(), trust, self, onAwakening },
       new Set(),
       (async function* () {
-        yield { type: "work_available", task_id: "task-ambient" } satisfies AgentEvent;
+        yield { type: "app_event", event_id: "event-ambient", app_id: "app-1", app_event_type: "note", delivery_intent: "ambient" } satisfies AgentEvent;
         yield { type: "chat_message", session_id: "session-chat-after-ambient", message_id: "chat-after-ambient" } satisfies AgentEvent;
       })(),
     );

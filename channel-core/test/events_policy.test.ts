@@ -672,7 +672,7 @@ describe("the refused notice to the agent", () => {
   test("is presented again for a refusal after the server served an ordinary event", async () => {
     const { client } = scriptedClient(
       answers(401),
-      closes(frame("connected"), frame("work_available", { task_id: "t-1", title: "Review the plan" })),
+      closes(frame("connected"), frame("app_event", { event_id: "e-1", app_id: "app-1", app_event_type: "note", delivery_intent: "ambient" })),
       answers(403),
     );
     const channel = loop(client);
@@ -684,7 +684,7 @@ describe("the refused notice to the agent", () => {
     await vi.waitFor(() => expect(channel.notices()).toHaveLength(2));
 
     expect(channel.awakenings.map((awakening) => [awakening.kind, awakening.meta.cause])).toEqual([
-      ["channel", "401"], ["work", undefined], ["channel", "403"],
+      ["channel", "401"], ["app", undefined], ["channel", "403"],
     ]);
     await channel.stop();
   });

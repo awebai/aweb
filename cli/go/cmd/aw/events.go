@@ -337,12 +337,6 @@ func writeEventText(out, errOut io.Writer, ev *awid.AgentEvent) {
 			ev.SessionID,
 			ev.MessageID,
 		)
-	case awid.AgentEventWorkAvailable:
-		termtext.Fprintln(out, "[work_available] task_id=%s title=%q", ev.TaskID, ev.Title)
-	case awid.AgentEventClaimUpdate:
-		termtext.Fprintln(out, "[claim_update] task_id=%s title=%q status=%s", ev.TaskID, ev.Title, ev.Status)
-	case awid.AgentEventClaimRemoved:
-		termtext.Fprintln(out, "[claim_removed] task_id=%s", ev.TaskID)
 	case awid.AgentEventControlPause:
 		termtext.Fprintln(out, "[control_pause] signal_id=%s", ev.SignalID)
 	case awid.AgentEventControlResume:

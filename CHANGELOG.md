@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- The channel, the Pi extension and `aw` drop the `work_available`,
+  `claim_update` and `claim_removed` wake events. No aweb server has ever sent
+  them. `aw events stream` and the wake broker no longer print or deliver them,
+  and the channel's `work`, `claim` and `claim_removed` awakening kinds are gone.
+  Released clients ignore event types they do not know, so a server that sent
+  one would not break them.
+- Go API removal in `github.com/awebai/aw/awid`, all for events no server
+  produces or for `aw run`, which is gone:
+  - the `AgentEventWorkAvailable`, `AgentEventClaimUpdate` and
+    `AgentEventClaimRemoved` constants;
+  - the `TaskID`, `Title` and `Status` fields of `AgentEvent`, which only those
+    events carried;
+  - the wake-filter family: `WakeFilter` and its `autofeed` parameter,
+    `IsProtocolEvent`, `IsCoordinationEvent`, `ProtocolWakeFilter`,
+    `CoordinationWakeFilter` and `DefaultWakeFilter`. Their only user was
+    `aw run`.
 - aw drops team roles. Shared team instructions stay.
   - Gone: `aw roles`, `aw role-name set`, `--role` and `--role-name` on
     `aw init` and `aw service init`, the `AWEB_ROLE_NAME` and `AWEB_ROLE`

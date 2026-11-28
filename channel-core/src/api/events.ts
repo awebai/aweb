@@ -9,9 +9,6 @@ export type AgentEventType =
   | "control_pause"
   | "control_resume"
   | "control_interrupt"
-  | "work_available"
-  | "claim_update"
-  | "claim_removed"
   | "app_event"
   | "error";
 
@@ -68,9 +65,6 @@ export interface AgentEvent {
   session_id?: string;
   subject?: string;
   signal_id?: string;
-  task_id?: string;
-  title?: string;
-  status?: string;
   text?: string;
   sender_waiting?: boolean;
   event_id?: string;
@@ -323,7 +317,7 @@ function readWithInactivity(
 const KNOWN_TYPES: Set<string> = new Set([
   "connected", "mail_message", "chat_message",
   "control_pause", "control_resume", "control_interrupt",
-  "work_available", "claim_update", "claim_removed", "app_event", "error",
+  "app_event", "error",
   "actionable_mail", "actionable_chat", "actionable_room_post", "room_post",
 ]);
 

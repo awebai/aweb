@@ -143,9 +143,6 @@ reproduce for the runtime it wakes. It is what `channel-core` dispatches today.
 | `mail_message` | `wake` | the exact message fetched by `message_id`, with sender, subject, priority, and verification status, subject to the presentation rule below |
 | `chat_message` | `steer` when `sender_waiting`, otherwise `wake` | the chat message, with session, conversation, `sender_waiting`/`sender_leaving`, and verification status, subject to the presentation rule below |
 | `control_pause`, `control_resume`, `control_interrupt` | `steer` | the signal only |
-| `work_available` | `ambient` | the task title and `task_id` |
-| `claim_update` | `ambient` | `task_id`, title, status |
-| `claim_removed` | `ambient` | `task_id` |
 | `app_event` | the server-resolved subscriber `delivery_intent`, defaulting to `ambient` if absent | app id, app event type, resource reference, and a bounded payload summary |
 
 The three delivery intents are the runtime contract: `wake` interrupts an idle

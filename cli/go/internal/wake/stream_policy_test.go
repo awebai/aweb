@@ -478,10 +478,10 @@ func TestStreamFlapWithTheConnectedEventGrowsTheRefusedDelay(t *testing.T) {
 	// Any other event is the server serving this caller: the delay starts over.
 	source := <-sources
 	source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventConnected, AgentID: "a"})
-	source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventWorkAvailable, TaskID: "t1", Title: "x"})
+	source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "e1"})
 	source.Feed(revoked)
 	if wait := awaitStreamRetryWait(t, clock, started+3); wait != 30*time.Second {
-		t.Fatalf("refused after a work event: retry in %s, want half of 1 minute", wait)
+		t.Fatalf("refused after an app event: retry in %s, want half of 1 minute", wait)
 	}
 }
 

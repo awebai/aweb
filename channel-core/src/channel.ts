@@ -49,7 +49,7 @@ export interface SelfIdentity {
 }
 
 /** "channel" is a notice from the channel itself; every other kind carries an event of the stream. */
-export type ChannelAwakeningKind = "mail" | "chat" | "room" | "control" | "work" | "claim" | "claim_removed" | "app" | "channel";
+export type ChannelAwakeningKind = "mail" | "chat" | "room" | "control" | "app" | "channel";
 export type ChannelDeliveryIntent = "wake" | "steer" | "ambient";
 
 export interface ChannelAwakening {
@@ -709,41 +709,6 @@ export async function dispatchAgentEvent(
           type: "control",
           signal: event.type.replace("control_", ""),
           signal_id: event.signal_id || "",
-        },
-      });
-      break;
-    case "work_available":
-      await deliverAwakening(options, {
-        kind: "work",
-        content: event.title || "",
-        deliveryIntent: "ambient",
-        meta: {
-          type: "work",
-          task_id: event.task_id || "",
-        },
-      });
-      break;
-    case "claim_update":
-      await deliverAwakening(options, {
-        kind: "claim",
-        content: event.title || "",
-        deliveryIntent: "ambient",
-        meta: {
-          type: "claim",
-          task_id: event.task_id || "",
-          title: event.title || "",
-          status: event.status || "",
-        },
-      });
-      break;
-    case "claim_removed":
-      await deliverAwakening(options, {
-        kind: "claim_removed",
-        content: "",
-        deliveryIntent: "ambient",
-        meta: {
-          type: "claim_removed",
-          task_id: event.task_id || "",
         },
       });
       break;

@@ -131,17 +131,6 @@ func TestParseAgentEvent(t *testing.T) {
 			},
 		},
 		{
-			name:      "claim removed",
-			eventName: "claim_removed",
-			data:      `{"type":"claim_removed","task_id":"t1"}`,
-			check: func(t *testing.T, evt AgentEvent) {
-				t.Helper()
-				if evt.Type != AgentEventClaimRemoved || evt.TaskID != "t1" {
-					t.Fatalf("unexpected claim_removed event: %#v", evt)
-				}
-			},
-		},
-		{
 			name:      "control interrupt",
 			eventName: "control_interrupt",
 			data:      `{"type":"control_interrupt","signal_id":"sig1"}`,

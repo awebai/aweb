@@ -84,7 +84,7 @@ func TestGCMailWireShowsHostileRunesVisibly(t *testing.T) {
 func TestEventsStreamTextEscapesSenderAndServerText(t *testing.T) {
 	var out, errOut bytes.Buffer
 	writeEventText(&out, &errOut, &awid.AgentEvent{Type: awid.AgentEventActionableChat, FromAlias: hostileAlias, FromAddress: hostileName, MessageID: "m1"})
-	writeEventText(&out, &errOut, &awid.AgentEvent{Type: awid.AgentEventClaimUpdate, TaskID: "t1", Title: "x", Status: "open\x1b[2J\u202e"})
+	writeEventText(&out, &errOut, &awid.AgentEvent{Type: awid.AgentEventControlPause, SignalID: "sig\x1b[2J\u202e"})
 	writeEventText(&out, &errOut, &awid.AgentEvent{Type: awid.AgentEventError, Text: "server says\x1b]0;t\a\u202e"})
 	requireTerminalSafe(t, out.String())
 	requireTerminalSafe(t, errOut.String())

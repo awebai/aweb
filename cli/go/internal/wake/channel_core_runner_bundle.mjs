@@ -10928,41 +10928,6 @@ async function dispatchAgentEvent(options, dispatched, event, log = (message) =>
         }
       });
       break;
-    case "work_available":
-      await deliverAwakening(options, {
-        kind: "work",
-        content: event.title || "",
-        deliveryIntent: "ambient",
-        meta: {
-          type: "work",
-          task_id: event.task_id || ""
-        }
-      });
-      break;
-    case "claim_update":
-      await deliverAwakening(options, {
-        kind: "claim",
-        content: event.title || "",
-        deliveryIntent: "ambient",
-        meta: {
-          type: "claim",
-          task_id: event.task_id || "",
-          title: event.title || "",
-          status: event.status || ""
-        }
-      });
-      break;
-    case "claim_removed":
-      await deliverAwakening(options, {
-        kind: "claim_removed",
-        content: "",
-        deliveryIntent: "ambient",
-        meta: {
-          type: "claim_removed",
-          task_id: event.task_id || ""
-        }
-      });
-      break;
     case "app_event":
       await dispatchAppEvent(options, dispatched, event);
       break;
@@ -11498,7 +11463,7 @@ function messageRecoveryCommand(awakening, awCommand) {
   return void 0;
 }
 function safeAwakeningNotice(awakening, awCommand = "aw") {
-  const id = validatedNoticeID(awakening.meta.message_id || awakening.meta.event_id || awakening.meta.task_id) || "id-unavailable";
+  const id = validatedNoticeID(awakening.meta.message_id || awakening.meta.event_id) || "id-unavailable";
   return `aweb: new event ${id} waiting \u2014 run ${awCommand} events stream --json`;
 }
 function textForTerminalAwakening(awakening, receivingIdentityHome) {
@@ -11544,7 +11509,7 @@ function raceAbort(promise, signal) {
   });
 }
 function ambientKey(awakening) {
-  return awakening.meta.event_id || awakening.meta.task_id || awakening.meta.message_id || `${awakening.kind}:${awakening.meta.type || "ambient"}`;
+  return awakening.meta.event_id || awakening.meta.message_id || `${awakening.kind}:${awakening.meta.type || "ambient"}`;
 }
 function rejectItem(item, error) {
   item.reject(error);

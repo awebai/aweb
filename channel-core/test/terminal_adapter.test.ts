@@ -123,9 +123,9 @@ describe("terminal channel adapter", () => {
     };
     const handler = createTerminalAwakeningHandler({ home: "/agent", session, maxAmbient: 1 });
     let firstRejected = false;
-    const first = handler(awakening({ kind: "work", content: "task-1", deliveryIntent: "ambient", meta: { type: "work", task_id: "t1" } }))
+    const first = handler(awakening({ kind: "app", content: "task-1", deliveryIntent: "ambient", meta: { type: "app_event", event_id: "t1" } }))
       .catch(() => { firstRejected = true; });
-    const second = handler(awakening({ kind: "claim", content: "task-2", deliveryIntent: "ambient", meta: { type: "claim", task_id: "t2" } }));
+    const second = handler(awakening({ kind: "app", content: "task-2", deliveryIntent: "ambient", meta: { type: "app_event", event_id: "t2" } }));
     await flush();
     expect(session.input).not.toHaveBeenCalled();
     expect(firstRejected).toBe(true);
@@ -134,8 +134,8 @@ describe("terminal channel adapter", () => {
     const wake = handler(awakening({ content: "wake body" }));
     await Promise.all([first, second, wake]);
     expect(session.input).toHaveBeenCalledTimes(1);
-    expect(inputs[0]).not.toContain("task_id: t1");
-    expect(inputs[0]).toContain("task_id: t2");
+    expect(inputs[0]).not.toContain("event_id: t1");
+    expect(inputs[0]).toContain("event_id: t2");
     expect(inputs[0]).toContain("wake body");
     expect(handler.status()).toEqual({ ambientQueued: 0, ambientDropped: 1 });
   });
@@ -147,17 +147,17 @@ describe("terminal channel adapter", () => {
       input: vi.fn(async (_home, text) => { inputs.push(text); }),
     };
     const handler = createTerminalAwakeningHandler({ home: "/agent", session, maxAmbient: 2 });
-    const t1Old = handler(awakening({ kind: "work", content: "old", deliveryIntent: "ambient", meta: { type: "work", task_id: "t1" } })).catch(() => {});
-    const t2 = handler(awakening({ kind: "work", content: "two", deliveryIntent: "ambient", meta: { type: "work", task_id: "t2" } })).catch(() => {});
-    const t1New = handler(awakening({ kind: "work", content: "new", deliveryIntent: "ambient", meta: { type: "work", task_id: "t1" } })).catch(() => {});
-    const t3 = handler(awakening({ kind: "work", content: "three", deliveryIntent: "ambient", meta: { type: "work", task_id: "t3" } })).catch(() => {});
+    const t1Old = handler(awakening({ kind: "app", content: "old", deliveryIntent: "ambient", meta: { type: "app_event", event_id: "t1" } })).catch(() => {});
+    const t2 = handler(awakening({ kind: "app", content: "two", deliveryIntent: "ambient", meta: { type: "app_event", event_id: "t2" } })).catch(() => {});
+    const t1New = handler(awakening({ kind: "app", content: "new", deliveryIntent: "ambient", meta: { type: "app_event", event_id: "t1" } })).catch(() => {});
+    const t3 = handler(awakening({ kind: "app", content: "three", deliveryIntent: "ambient", meta: { type: "app_event", event_id: "t3" } })).catch(() => {});
     await flush();
     await handler(awakening({ content: "wake body" }));
     await Promise.all([t1Old, t2, t1New, t3]);
     expect(inputs[0]).toContain("new");
-    expect(inputs[0]).toContain("task_id: t1");
-    expect(inputs[0]).toContain("task_id: t3");
-    expect(inputs[0]).not.toContain("task_id: t2");
+    expect(inputs[0]).toContain("event_id: t1");
+    expect(inputs[0]).toContain("event_id: t3");
+    expect(inputs[0]).not.toContain("event_id: t2");
   });
 
   test.each(["idle", "unknown"])("%s input strips controls but preserves newline and tab", async (state) => {
@@ -278,7 +278,7 @@ test("held notice uses registered identity, omits sender content and ambient tex
   const handler = createTerminalAwakeningHandler({ home: "/agent", session: {
     inspect: async () => ({ present: true, state: "idle" }), input,
   } });
-  const ambient = handler(awakening({ kind: "work", content: "ambient secret", deliveryIntent: "ambient" }));
+  const ambient = handler(awakening({ kind: "app", content: "ambient secret", deliveryIntent: "ambient" }));
   const held = awakening({ kind: "mail", content: "sender secret", meta: { trust_status: "unverified", subject: "sender subject", from: "sender name", identity_home: "/forged" } });
   await expect(handler(held, "/joined identity")).rejects.toThrow("input refused");
   await expect(handler(held, "/joined identity")).rejects.toThrow("terminal delivery held");

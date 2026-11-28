@@ -347,7 +347,7 @@ func TestPlannedCloseIsNotReportedAsAnOutage(t *testing.T) {
 			t.Fatalf("connection %d planned its close after %s, want %s", connection, planned, want)
 		}
 		source := sources[connection]
-		source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventWorkAvailable, TaskID: "t1", Title: "x"})
+		source.FeedEvent(awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "e1"})
 		// Heartbeats keep the stream from being silent up to its close.
 		elapsed := time.Duration(0)
 		for planned-elapsed > 30*time.Second {

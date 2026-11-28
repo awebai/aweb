@@ -117,7 +117,7 @@ function messageRecoveryCommand(awakening: ChannelAwakening, awCommand: string):
 }
 
 function safeAwakeningNotice(awakening: ChannelAwakening, awCommand = "aw"): string {
-  const id = validatedNoticeID(awakening.meta.message_id || awakening.meta.event_id || awakening.meta.task_id) || "id-unavailable";
+  const id = validatedNoticeID(awakening.meta.message_id || awakening.meta.event_id) || "id-unavailable";
   return `aweb: new event ${id} waiting — run ${awCommand} events stream --json`;
 }
 
@@ -166,7 +166,7 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Pro
 }
 
 function ambientKey(awakening: ChannelAwakening): string {
-  return awakening.meta.event_id || awakening.meta.task_id || awakening.meta.message_id || `${awakening.kind}:${awakening.meta.type || "ambient"}`;
+  return awakening.meta.event_id || awakening.meta.message_id || `${awakening.kind}:${awakening.meta.type || "ambient"}`;
 }
 
 function rejectItem(item: AmbientItem, error: Error): void {

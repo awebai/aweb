@@ -19,9 +19,6 @@ const (
 	AgentEventActionableMail     AgentEventType = "actionable_mail"
 	AgentEventActionableChat     AgentEventType = "actionable_chat"
 	AgentEventActionableRoomPost AgentEventType = "actionable_room_post"
-	AgentEventWorkAvailable      AgentEventType = "work_available"
-	AgentEventClaimUpdate        AgentEventType = "claim_update"
-	AgentEventClaimRemoved       AgentEventType = "claim_removed"
 	AgentEventControlPause       AgentEventType = "control_pause"
 	AgentEventControlResume      AgentEventType = "control_resume"
 	AgentEventControlInterrupt   AgentEventType = "control_interrupt"
@@ -54,9 +51,6 @@ type AgentEvent struct {
 	Encrypted      bool            `json:"encrypted,omitempty"`
 	UnreadCount    int             `json:"unread_count,omitempty"`
 	SenderWaiting  bool            `json:"sender_waiting,omitempty"`
-	TaskID         string          `json:"task_id,omitempty"`
-	Title          string          `json:"title,omitempty"`
-	Status         string          `json:"status,omitempty"`
 	SignalID       string          `json:"signal_id,omitempty"`
 	EventID        string          `json:"event_id,omitempty"`
 	AppID          string          `json:"app_id,omitempty"`
@@ -290,51 +284,6 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 			SessionID:      payload.SessionID,
 			UnreadCount:    payload.UnreadCount,
 			SenderWaiting:  payload.SenderWaiting,
-		}, true, nil
-
-	case AgentEventWorkAvailable:
-		var payload struct {
-			TaskID string `json:"task_id"`
-			Title  string `json:"title"`
-		}
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return AgentEvent{}, false, fmt.Errorf("parse work_available event: %w", err)
-		}
-		return AgentEvent{
-			Type:   AgentEventWorkAvailable,
-			Raw:    raw,
-			TaskID: payload.TaskID,
-			Title:  payload.Title,
-		}, true, nil
-
-	case AgentEventClaimUpdate:
-		var payload struct {
-			TaskID string `json:"task_id"`
-			Title  string `json:"title"`
-			Status string `json:"status"`
-		}
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return AgentEvent{}, false, fmt.Errorf("parse claim_update event: %w", err)
-		}
-		return AgentEvent{
-			Type:   AgentEventClaimUpdate,
-			Raw:    raw,
-			TaskID: payload.TaskID,
-			Title:  payload.Title,
-			Status: payload.Status,
-		}, true, nil
-
-	case AgentEventClaimRemoved:
-		var payload struct {
-			TaskID string `json:"task_id"`
-		}
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return AgentEvent{}, false, fmt.Errorf("parse claim_removed event: %w", err)
-		}
-		return AgentEvent{
-			Type:   AgentEventClaimRemoved,
-			Raw:    raw,
-			TaskID: payload.TaskID,
 		}, true, nil
 
 	case AgentEventControlPause, AgentEventControlResume, AgentEventControlInterrupt:
