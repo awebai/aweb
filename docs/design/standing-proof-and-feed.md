@@ -763,11 +763,18 @@ policy imposes no new restriction on unrelated zones.
    removal and parent transfer wait for that check to show no remaining
    shared controllers. Step 1 names the resulting per-child controllers.
 
-   In the verified source inventory for this move, all live child
-   controllers are held in frozen custody. Operations supplies their
-   namespace-controller signatures for steps 0 and 1 and the later
-   transfers. The separate holder and roster checks above still apply to
-   transferred identities and teams.
+   The source inventory for this move identifies every live child
+   controller as hosted. Signing readiness requires proof of the shared
+   old controller key. Rehearse a challenge signature through the custody
+   tool against a representative store, then verify a fresh signature from
+   approved source custody against the shared public key in AWID. Keep
+   private material within custody. If a custody row cannot supply the
+   shared key, obtain the old-key proof from the original parent key in
+   its existing custody. Without that proof, step 0 stays incomplete and
+   neither key removal nor transfer proceeds. Operations supplies the
+   namespace-controller signatures once custody is confirmed. The
+   separate holder and roster checks still apply to transferred
+   identities and teams.
 
 1. **Pin the source per child.** Inventory and freeze new provisioning for
    the moving parent. Before changing the parent's `_awid`, publish exact
