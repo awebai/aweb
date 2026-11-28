@@ -74,9 +74,13 @@ func (l *Loopback) Wait(ctx context.Context, expiresAt time.Time) (string, error
 	}
 }
 
-// Close stops the listener.
+// Close stops the listener. It closes the listening socket itself, which the
+// server knows about only once its serving goroutine has started.
 func (l *Loopback) Close() {
-	l.closeOnce.Do(func() { l.server.Close() })
+	l.closeOnce.Do(func() {
+		_ = l.listener.Close()
+		l.server.Close()
+	})
 }
 
 func (l *Loopback) serve(w http.ResponseWriter, r *http.Request) {
@@ -89,9 +93,11 @@ func (l *Loopback) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.Itoa(len(callbackPage)))
 	_, _ = w.Write([]byte(callbackPage))
-	// The whole page is on the wire before the code is handed over: Wait
-	// closes the connection under this handler once it has the code.
+	// The whole page is on the wire before the listener closes, closing this
+	// connection too, and the listener is closed before the code is handed
+	// over, whether or not Wait has started.
 	_ = http.NewResponseController(w).Flush()
+	l.Close()
 	l.codes <- code
 }
 
