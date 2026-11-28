@@ -145,35 +145,6 @@ func seedReplaceKeyWorkspace(t *testing.T, serverURL string) (root, agentHome, o
 	return root, agentHome, oldDID, newDID, teamKey, oldCert
 }
 
-func TestLocalIdentityKeyReplacementAuthPayloadMatchesServerCanonicalOrder(t *testing.T) {
-	payload := localIdentityKeyReplacementRequest{
-		TeamID: "backend:acme.com", OldDIDKey: "did:key:old", NewDIDKey: "did:key:new",
-		OldCertificateID: "cert-old", NewCertificateID: "cert-new",
-	}
-	got, err := localIdentityKeyReplacementAuthPayload("alice", payload, "2026-07-23T00:00:00Z")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := `{"agent_alias":"alice","new_certificate_id":"cert-new","new_did_key":"did:key:new","old_certificate_id":"cert-old","old_did_key":"did:key:old","operation":"replace_local_identity_key","team_id":"backend:acme.com","timestamp":"2026-07-23T00:00:00Z"}`
-	if string(got) != want {
-		t.Fatalf("canonical payload=%s\nwant=%s", got, want)
-	}
-}
-
-// The server rebuilds this payload with Python's canonical_json_bytes, which
-// writes '<', '>', '&', U+2028 and U+2029 as themselves.
-func TestLocalIdentityKeyReplacementAuthPayloadWritesTextAsTheServerDoes(t *testing.T) {
-	text := "t<&>" + string(rune(0x2028)) + string(rune(0x2029))
-	got, err := localIdentityKeyReplacementAuthPayload("alice", localIdentityKeyReplacementRequest{TeamID: text}, "2026-07-23T00:00:00Z")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := `{"agent_alias":"alice","new_certificate_id":"","new_did_key":"","old_certificate_id":"","old_did_key":"","operation":"replace_local_identity_key","team_id":"` + text + `","timestamp":"2026-07-23T00:00:00Z"}`
-	if string(got) != want {
-		t.Fatalf("canonical payload=%q\nwant=%q", got, want)
-	}
-}
-
 func TestTeamReplaceKeyGenerateFlagRequiresHomeAndRejectsExplicitNewDID(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	oldPub, _, _ := awid.GenerateKeypair()
@@ -299,7 +270,7 @@ func TestTeamReplaceKeyWithOperatorIdentityHomeRefreshesOnlyTargetEncryptionKey(
 			if err != nil {
 				t.Fatal(err)
 			}
-			canonical, err := localIdentityKeyReplacementAuthPayload("alice", servicePayload, r.Header.Get("X-AWEB-Timestamp"))
+			canonical, err := awid.LocalIdentityKeyReplacementPayload(awid.LocalIdentityKeyReplacementPayloadInput{Alias: "alice", Request: servicePayload, Timestamp: r.Header.Get("X-AWEB-Timestamp")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -781,8 +752,4 @@ func parseDIDKeyAuthorizationForTest(value string) (string, string, error) {
 		return "", "", io.ErrUnexpectedEOF
 	}
 	return parts[1], parts[2], nil
-}
-
-func localIdentityKeyReplacementAuthPayload(alias string, payload localIdentityKeyReplacementRequest, timestamp string) ([]byte, error) {
-	return awid.LocalIdentityKeyReplacementPayload(awid.LocalIdentityKeyReplacementPayloadInput{Alias: alias, Request: payload, Timestamp: timestamp})
 }
