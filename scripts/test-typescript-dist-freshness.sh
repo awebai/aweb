@@ -10,6 +10,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/aweb-dist-freshness.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
+# Builds and behaviour tests make their temporary files inside this run's own
+# directory, so they go with it on pass and on failure.
+mkdir "$TMP/tmp"
+export TMPDIR="$TMP/tmp"
 TESTS="$ROOT/scripts/typescript-dist"
 
 # Run a package's production build, showing its output only when it fails.
