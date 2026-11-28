@@ -152,21 +152,35 @@ class Ports(unittest.TestCase):
             self.assertIn("LOCAL_PORT_DIAGNOSTIC", captured.getvalue())
             events.append("cleanup")
 
+        # Time advances only when the wait sleeps between inspections.
+        now = 0.0
+
+        def clock():
+            return now
+
+        def sleep(seconds):
+            nonlocal now
+            now += seconds
+
         with (
             contextlib.redirect_stderr(captured),
             patch.object(local, "invoke", side_effect=command),
             patch.object(local, "check_docker", return_value={}),
             patch.object(local, "memory_owner", return_value=Mock()),
             patch.object(local, "remove_project", side_effect=cleanup),
-            patch.object(local.time, "monotonic", side_effect=[0, 0, 6, 6]),
-            patch.object(local.time, "sleep"),
+            patch.object(local.time, "monotonic", side_effect=clock),
+            patch.object(local.time, "sleep", side_effect=sleep),
         ):
             with self.assertRaisesRegex(local.Refused, "within five seconds"):
                 with local.local_services(
                     workers=1, project="aw-local-test", environ={}
                 ):
                     self.fail("must not start suite")
-        self.assertEqual(events, ["inspect", "compose-port", "cleanup"])
+        self.assertGreaterEqual(now, 5)
+        self.assertLess(now, 5.2)
+        self.assertEqual(events[-2:], ["compose-port", "cleanup"])
+        self.assertTrue(events[:-2])
+        self.assertEqual(set(events[:-2]), {"inspect"})
         record = json.loads(captured.getvalue().removeprefix("LOCAL_PORT_DIAGNOSTIC "))
         self.assertEqual(record["container"], "a" * 64)
         self.assertEqual(record["compose_port"]["output"], "invalid IP:0\n")

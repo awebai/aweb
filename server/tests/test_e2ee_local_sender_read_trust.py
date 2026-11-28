@@ -537,13 +537,27 @@ async def _present_by_wake(
     return (status.group(1) if status else None), text
 
 
+def channel_command():
+    """The Claude Code channel plugin from this worker's runtime tree."""
+    return ["node", str(REPO / "channel/dist/index.js")]
+
+
+def pi_command(command_dir):
+    """The pi extension, hosted from this worker's runtime tree."""
+    return [
+        "node",
+        str(Path(__file__).with_name("pi_extension_host.mjs")),
+        str(REPO / "pi-extension/dist/index.js"),
+        str(command_dir),
+    ]
+
+
 async def _present_by_channel(
     tmp_path, binary, command_dir, command_env, message_id, conversation_id
 ):
     stderr = (tmp_path / "channel.stderr").open("wb")
     plugin = await asyncio.create_subprocess_exec(
-        "node",
-        str(REPO / "channel/dist/index.js"),
+        *channel_command(),
         cwd=command_dir,
         env=command_env,
         stdin=asyncio.subprocess.PIPE,
@@ -594,10 +608,7 @@ async def _present_by_pi(
     tmp_path, binary, command_dir, command_env, message_id, conversation_id
 ):
     session = await asyncio.create_subprocess_exec(
-        "node",
-        str(Path(__file__).with_name("pi_extension_host.mjs")),
-        str(REPO / "pi-extension/dist/index.js"),
-        command_dir,
+        *pi_command(command_dir),
         cwd=command_dir,
         env=command_env,
         stdin=asyncio.subprocess.PIPE,

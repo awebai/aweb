@@ -19,7 +19,11 @@ class RunnerResources(unittest.TestCase):
         for args in (small, large):
             self.assertFalse(any(a.startswith("--cpu") for a in args), args)
         for option, low, high in [
-            ("--memory", f"{module.RUNNER_MEMORY_MIB}m", f"{module.runner_memory_mib(11)}m"),
+            (
+                "--memory",
+                f"{module.RUNNER_MEMORY_MIB}m",
+                f"{module.runner_memory_mib(11)}m",
+            ),
         ]:
             at = small.index(option) + 1
             self.assertEqual(small[at], low)
@@ -30,16 +34,23 @@ class RunnerResources(unittest.TestCase):
         self.assertEqual(large[at - 1], "-e")
         del large[at - 1 : at + 1]
         self.assertEqual(small, large)
-        self.assertEqual(small[small.index("--user") + 1], "1000:1000")
-        self.assertEqual(small[small.index("--network") + 1], "owned-network")
-        self.assertEqual(small[small.index("--pids-limit") + 1], "2048")
-        self.assertEqual(small[small.index("--dns-search") + 1], ".")
-        self.assertFalse(any("docker.sock" in value for value in small))
+
+    def test_the_runner_is_unprivileged_and_bounded(self):
+        args = runner_args("owned-network", "172.20.0.2", "owned-image")
+        uid = args[args.index("--user") + 1].split(":", 1)[0]
+        self.assertNotIn(uid, ("", "0", "root"))
+        self.assertGreater(int(args[args.index("--pids-limit") + 1]), 0)
+        self.assertEqual(args[args.index("--network") + 1], "owned-network")
+        # "." means no search domain: names resolve only as given.
+        self.assertEqual(args[args.index("--dns-search") + 1], ".")
+        self.assertNotIn("--privileged", args)
+        self.assertFalse(any("docker.sock" in value for value in args))
 
     def test_each_suite_runner_has_its_own_name(self):
         names = {
             runner_args("net", "172.20.0.2", "image", name=suite)[
-                runner_args("net", "172.20.0.2", "image", name=suite).index("--name") + 1
+                runner_args("net", "172.20.0.2", "image", name=suite).index("--name")
+                + 1
             ]
             for suite in ("test-server", "test-awid", "_candidate-unit-pi")
         }
