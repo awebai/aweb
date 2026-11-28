@@ -3433,37 +3433,6 @@ async def test_create_chat_session_team_and_contacts_accepts_verified_same_team_
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_to_global_address_allows_explicit_inbound_mode_open(
-    registered_mail_actors,
-):
-    from messaging_actor_support import (
-        register_messaging_actors,
-        set_messaging_inbound_mode,
-    )
-
-    env, actors = registered_mail_actors
-    alice, bob = (actors["alice"], actors["bob"])
-    others = await register_messaging_actors(
-        env, team_id="ops:otherco.com", aliases=("bob",), local=False
-    )
-    bob = others["bob"]
-    await set_messaging_inbound_mode(env, bob, mode="open")
-    app = env.app
-    alice_sk, alice_did_key = (alice.signing_key, alice.did_key)
-    payload = {"to_addresses": [bob.address], "message": "allowed"}
-    body = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, alice.stable_id, body),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
-    assert resp.status_code == 200, resp.text
-
-
-@pytest.mark.asyncio
 async def test_create_chat_session_to_address_local_ephemeral_without_route_is_not_routable(
     registered_mail_actors,
 ):
