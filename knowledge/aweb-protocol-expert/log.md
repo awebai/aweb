@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-28
+* **Harvest**: OKF proposal from aweb-protocol-expert-pilot-custody with one backing note. Design-level only; the hosted custody design is described generically and the operator's custody decision is source-reported.
+* **Creation**: lesson [a watch on a held root key sits outside the holder's trust](/aweb-protocol-expert/lessons/a-watch-on-a-held-root-sits-outside-the-holders-trust.md).
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
