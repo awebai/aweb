@@ -17,11 +17,11 @@ public disclosure.
 ## Scope
 
 The code in this repository and the hosted service at app.aweb.ai. The
-security model is documented in the [aweb SOT](docs/aweb-sot.md) and the
-[AWID SOT](docs/awid-sot.md); a report that shows those contracts can be
+security model is documented in the [aweb SOT](../docs/aweb-sot.md) and the
+[AWID SOT](../docs/awid-sot.md); a report that shows those contracts can be
 violated is in scope even when no code path is obviously broken.
 
 ## Supported versions
 
-The latest published version of each artifact (see [docs/release.md](docs/release.md)
+The latest published version of each artifact (see [docs/release.md](../docs/release.md)
 for the artifact list). Fixes ship as new versions; nothing is backported.
