@@ -42,9 +42,11 @@ def service_memory_mib(workers: int) -> int:
 def xdist_worker_index(worker: str, count: int) -> int:
     """The index of xdist worker gw<N> in a run of count workers.
 
-    Raises ValueError unless worker names one of them, 0 <= N < count.
+    Raises ValueError unless worker is exactly the name xdist gives one of
+    them (gw0, gw1, ..., no leading zero), 0 <= N < count: two spellings of
+    one index would share its services.
     """
-    match = re.fullmatch(r"gw([0-9]+)", worker)
+    match = re.fullmatch(r"gw(0|[1-9][0-9]*)", worker)
     if match is None or int(match.group(1)) >= count:
         raise ValueError(f"{worker!r} is not one of {count} xdist workers")
     return int(match.group(1))
@@ -87,7 +89,7 @@ def local_worker_service(environ: MutableMapping[str, str]) -> dict[str, int]:
         worker = environ["PYTEST_XDIST_WORKER"]
         if not isinstance(plan, list) or not 1 <= count <= 4 or len(plan) != count:
             raise ValueError("worker count differs from the service plan")
-        xdist_worker_index(worker, count)
+        index = xdist_worker_index(worker, count)
         ports = set()
         for row in plan:
             if not isinstance(row, dict) or set(row) != {"postgres_port", "redis_port"}:
@@ -101,7 +103,7 @@ def local_worker_service(environ: MutableMapping[str, str]) -> dict[str, int]:
                 ):
                     raise ValueError("unsafe or shared local service port")
                 ports.add(port)
-        return plan[int(worker[2:])]
+        return plan[index]
     except (KeyError, ValueError, TypeError) as exc:
         raise RuntimeError("Invalid local worker services. " + recovery) from exc
 

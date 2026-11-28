@@ -164,6 +164,26 @@ class LocalControls(unittest.TestCase):
                 }
             )
 
+    def test_local_worker_names_are_the_exact_xdist_names(self):
+        # Two spellings of one index would bind two workers to one service pair.
+        owner = local.memory_owner()._worker_module
+        plan = [{"postgres_port": 15000, "redis_port": 16000}]
+        env = {
+            "AWEB_LOCAL_TEST_SERVICES": json.dumps(plan),
+            "PYTEST_XDIST_WORKER": "gw0",
+            "PYTEST_XDIST_WORKER_COUNT": "1",
+        }
+        owner.configure_worker_environment(env)
+        self.assertEqual(env["TEST_DB_PORT"], "15000")
+        for worker in ("gw00", "gw01"):
+            with self.subTest(worker=worker):
+                with self.assertRaisesRegex(
+                    RuntimeError, "Re-run make test-server-local"
+                ):
+                    owner.configure_worker_environment(
+                        {**env, "PYTEST_XDIST_WORKER": worker}
+                    )
+
     def test_real_entry_refuses_host_database_before_docker(self):
         result = subprocess.run(
             [sys.executable, str(local.ROOT / "scripts/test_server_local.py")],
