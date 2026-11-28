@@ -172,9 +172,9 @@ The registry issues a statement only where its fact holds at its cut, with the f
 
 | # | In plain words | Lean name |
 |---|---|---|
-| 75 | A statement creates no authority. The registry issues one only where its fact holds at its cut. Under the feed premise, a verifier admits a request on a statement only for that statement's fact, signed by the fact's subject, and only if the fact holds in the record at the cut the verifier has applied | `issued_fact_holds`, `admitted_fact_holds_at_applied` |
+| 75 | A statement creates no authority. The registry issues one only where its fact holds at its cut. Under the feed premise, a verifier admits a request on an issued statement only for that statement's fact, signed by the fact's subject, and only if the fact holds in the record at the cut the verifier has applied | `issued_fact_holds`, `admitted_fact_holds_at_applied` |
 | 76 | Expiry bounds a statement: a verifier admits on it only before its expiry, so for an issued statement before its cut's time plus its lifetime. At the expiry, nothing is admitted | `admitted_before_expiry`, `not_admitted_at_expiry` |
-| 77 | An applied entry, after a statement's cut, that retires one of its handles defeats it. Under the feed premise, a statement whose fact has stopped holding at some cut from its own up to the verifier's applied cut is not admitted | `defeated_not_admitted`, `ended_fact_not_admitted` |
+| 77 | An applied entry, after a statement's cut, that retires one of its handles defeats it. Under the feed premise, an issued statement whose fact has stopped holding at some cut from its own up to the verifier's applied cut is not admitted | `defeated_not_admitted`, `ended_fact_not_admitted` |
 | 78 | A statement from a cut the verifier has not applied is not admitted | `ahead_not_admitted` |
 | 79 | An applied feed point older than the bound refuses: when the verifier's clock is at least its last barrier's time plus the feed bound, nothing is admitted | `stale_feed_not_admitted` |
 | 80 | The removal bound. Under the feed, time and barrier premises, if an issued statement's fact no longer holds at a cut at or after the statement's, and the verifier's clock is at least the feed bound past that cut's time, the statement is not admitted, whether or not the verifier has applied that cut | `removal_bound` |
@@ -184,18 +184,18 @@ The paired cases use one example registry:
 - Identity 7 is in team 1 of organisation 0 at cut 0, at time 0.
 - It is removed at cut 1, at time 4, which retires handle 100.
 - It is back at cut 2, at time 6, under handle 101.
-- Cut 3, at time 10003, changes something else and retires handle 555.
+- Cut 3, at time 8, changes something else and retires handle 555. Later cuts commit at time 10000 plus the cut.
 
-The lifetime is 1800, the evidence lifetime 10 and the feed bound 30, so the removal falls inside both lifetimes, and each refused case below is unexpired and refused for the reason it names. The example meets the feed and time premises, and the barrier premise wherever a case uses it (`exampleRegistry_feedComplete`, `exampleRegistry_timeMonotone`). It issues its statements (`exampleStatement_issued`, `exampleStatementAgain_issued`, `exampleEvidence_issued_at_head`). A request either creates authority or not (`exampleCreation`, `exampleRequest`).
+The lifetime is 1800, the evidence lifetime 10 and the feed bound 30, so the removal falls inside both lifetimes. Each refused case below other than the expiry boundary is unexpired, and each is refused for the reason it names. Every verifier the cases use is consistent with the example's times: its clock is at or after its applied cut's time and its barrier's, and its barrier was observed no later than the change after its applied cut (`Consistent`, `example_verifiers_consistent`). The example meets the feed and time premises, and the barrier premise wherever a case uses it (`exampleRegistry_feedComplete`, `exampleRegistry_timeMonotone`). It issues its statements (`exampleStatement_issued`, `exampleStatementAgain_issued`, `exampleEvidence_issued_at_head`). A request either creates authority or not (`exampleCreation`, `exampleRequest`).
 
 | # | In plain words | Lean name |
 |---|---|---|
 | 82 | A verifier that has applied only cut 0 admits the statement from cut 0 at time 7, although 7 was removed at time 4. This is the window the Design allows, and row 80 closes it. At the same time, a verifier that has applied cut 1 refuses the same statement. One still at cut 0, with the latest barrier the premise allows, admits at time 33 and refuses at time 34, the feed bound after the removal | `admitted_before_removal_reaches_verifier`, `refused_after_removal_applied`, `admitted_just_before_removal_bound`, `refused_at_removal_bound` |
 | 83 | A lost feed: with its last barrier at time 0, the verifier refuses the statement at time 30 | `refused_on_stale_feed` |
-| 84 | The expiry boundary: the statement from cut 2, with expiry 1806, is admitted at time 1805 and refused at time 1806 | `admitted_just_before_expiry`, `refused_at_expiry` |
+| 84 | The expiry boundary: the statement from cut 2, with expiry 1806, is admitted at time 1805 and refused at time 1806, by a verifier at cut 3 | `admitted_just_before_expiry`, `refused_at_expiry` |
 | 85 | A statement ahead of the verifier: the statement from cut 2 is refused by a verifier at cut 1 | `refused_when_ahead` |
 | 86 | Re-admission: at cut 2 and time 8, the statement issued at cut 2 is admitted, and the one from cut 0 is refused by its retired handle | `readmitted_statement_admitted_old_refused` |
-| 87 | Continuity: cut 3 retires another handle, and the statement from cut 2 stays admitted by a verifier that has applied cut 3 | `continuity_keeps_statement` |
+| 87 | Continuity: cut 3, at time 8, retires another handle, and at time 9 the statement from cut 2 stays admitted by a verifier that has applied cut 3 | `continuity_keeps_statement` |
 | 88 | Evidence issued at head 0 for the creating request with digest 42 is admitted for it once at time 7, before the removal reaches the verifier, and refused after its nonce is used. At the same time it is refused by a verifier that has applied the removal, and for a creating request with digest 43. Ordinary standing is refused for the creating request. At head 1 a fresh request gets no evidence | `evidence_admitted_once`, `evidence_refused_after_removal_applied`, `evidence_refused_for_other_request`, `no_evidence_after_removal` |
 | 89 | A statement for another team, or a request signed by another key, does not help | `refused_for_other_fact`, `refused_for_other_signer` |
 

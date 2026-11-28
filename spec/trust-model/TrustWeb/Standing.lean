@@ -264,10 +264,10 @@ theorem no_evidence_at_failed_head {R : Registry} {b : Bounds} {st : Statement}
 
 One registry. Identity 7 is in team 1 of organisation 0 at cut 0 (time 0). It
 is removed at cut 1 (time 4), which retires handle 100, and is back at cut 2
-(time 6) under handle 101. Cut 3 (time 10003) changes something else and
-retires handle 555. Every removal falls inside the lifetimes, so the refused
-cases are unexpired and refused by the feed. Each refused case has an
-admitted neighbour one change away. -/
+(time 6) under handle 101. Cut 3 (time 8) changes something else and retires
+handle 555; later cuts commit at `n + 10000`. Every removal falls inside the
+lifetimes, so the refused cases other than the expiry boundary are unexpired.
+Each refused case has an admitted neighbour one change away. -/
 
 /-- The record with nothing in it. -/
 def emptyRecord : State := ⟨[], [], [], [], [], [], [], [], [], []⟩
@@ -298,11 +298,11 @@ theorem exampleFact_holds : exampleFact.Holds memberRecord := by
   simp [Registered, memberRecord, emptyRecord]
 
 /-- The example registry: cut 1 is the record with nothing in it, every other
-cut is `memberRecord`; times 0, 4, 6, then `n + 10000`; handle 100 before
+cut is `memberRecord`; times 0, 4, 6, 8, then `n + 10000`; handle 100 before
 cut 2 and 101 from it; the feed retires 100 at cut 1 and 555 at cut 3. -/
 def exampleRegistry : Registry where
   record := fun n => if n = 1 then emptyRecord else memberRecord
-  time := fun n => if n = 0 then 0 else if n = 1 then 4 else if n = 2 then 6 else n + 10000
+  time := fun n => if n = 0 then 0 else if n = 1 then 4 else if n = 2 then 6 else if n = 3 then 8 else n + 10000
   handles := fun n _ => if n < 2 then [100] else [101]
   feed := fun j => if j = 1 then [100] else if j = 3 then [555] else []
 
@@ -327,7 +327,8 @@ theorem exampleRegistry_feedComplete : FeedComplete exampleRegistry := by
 theorem exampleRegistry_timeMonotone : TimeMonotone exampleRegistry := by
   intro i j hij
   simp only [exampleRegistry]
-  split <;> split <;> (try split) <;> (try split) <;> (try split) <;> (try split) <;> omega
+  split <;> split <;> (try split) <;> (try split) <;> (try split) <;> (try split) <;>
+    (try split) <;> (try split) <;> omega
 
 /-- The example's statement: identity 7's team standing at cut 0, until 1800. -/
 def exampleStatement : Statement := ⟨exampleFact, 0, 1800, [100], .ordinary⟩
@@ -399,14 +400,19 @@ theorem refused_on_stale_feed :
   stale_feed_not_admitted (by simp [exampleBounds])
 
 /-- The expiry boundary: the statement from cut 2, with expiry 1806, is admitted
-at time 1805 and refused at time 1806. -/
+at time 1805 and refused at time 1806, by a verifier at cut 3. -/
 theorem admitted_just_before_expiry :
-    Admits exampleRegistry exampleBounds ⟨2, 1790, 1805, []⟩ exampleRequest exampleStatementAgain :=
+    Admits exampleRegistry exampleBounds ⟨3, 1790, 1805, []⟩ exampleRequest exampleStatementAgain :=
   ⟨rfl, rfl, by decide, by decide, by decide,
-    example_not_defeated (fun j h1 h2 => by simp [exampleStatementAgain] at h1 h2; omega), rfl⟩
+    example_not_defeated (fun j h1 h2 x hx => by
+      simp [exampleStatementAgain] at h1 h2
+      have : j = 3 := by omega
+      subst this
+      simp [exampleRegistry] at hx
+      simp [hx, exampleStatementAgain]), rfl⟩
 
 theorem refused_at_expiry :
-    ¬ Admits exampleRegistry exampleBounds ⟨2, 1790, 1806, []⟩ exampleRequest exampleStatementAgain :=
+    ¬ Admits exampleRegistry exampleBounds ⟨3, 1790, 1806, []⟩ exampleRequest exampleStatementAgain :=
   not_admitted_at_expiry (by simp [exampleStatementAgain])
 
 /-- A statement ahead of the verifier: the statement from cut 2 is refused by a
@@ -426,10 +432,11 @@ theorem readmitted_statement_admitted_old_refused :
    defeated_not_admitted ⟨1, by decide, by decide, 100, by simp [exampleRegistry],
       by simp [exampleStatement]⟩⟩
 
-/-- Continuity: cut 3 changes something else and retires another handle; the
-statement from cut 2 stays admitted by a verifier that has applied cut 3. -/
+/-- Continuity: cut 3, at time 8, changes something else and retires another
+handle; at time 9 the statement from cut 2 stays admitted by a verifier that
+has applied cut 3. -/
 theorem continuity_keeps_statement :
-    Admits exampleRegistry exampleBounds ⟨3, 10003, 10, []⟩ exampleRequest exampleStatementAgain :=
+    Admits exampleRegistry exampleBounds ⟨3, 8, 9, []⟩ exampleRequest exampleStatementAgain :=
   ⟨rfl, rfl, by decide, by decide, by decide,
     example_not_defeated (fun j h1 h2 x hx => by
       simp [exampleStatementAgain] at h1 h2
@@ -501,5 +508,21 @@ theorem refused_for_other_signer :
   fun ha => by
     have := ha.2.1
     simp [exampleStatement, exampleFact, Fact.subject] at this
+
+/-- A verifier is consistent with the registry's times: its clock is at or
+after the time of its applied cut and of its barrier, and its barrier was
+observed no later than the change after its applied cut. -/
+def Consistent (R : Registry) (v : Verifier) : Prop :=
+  R.time v.applied ≤ v.now ∧ v.barrier ≤ v.now ∧ BarrierBefore R v
+
+/-- Every verifier the paired cases use is consistent with the example's times. -/
+theorem example_verifiers_consistent :
+    ∀ v ∈ [(⟨0, 4, 7, []⟩ : Verifier), ⟨1, 4, 7, []⟩, ⟨0, 4, 33, []⟩, ⟨0, 4, 34, []⟩,
+      ⟨0, 0, 30, []⟩, ⟨3, 1790, 1805, []⟩, ⟨3, 1790, 1806, []⟩, ⟨2, 6, 8, []⟩,
+      ⟨3, 8, 9, []⟩, ⟨0, 4, 7, [9]⟩], Consistent exampleRegistry v := by
+  intro v hv
+  simp at hv
+  rcases hv with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    simp [Consistent, BarrierBefore, exampleRegistry]
 
 end TrustWeb
