@@ -213,16 +213,18 @@ prefix ending in one newline, and an issuer signature
 | `identity_key` | The person's current identity key (`did:key`) |
 | `binding` | `H_B` of the current B that lists the basis credential |
 | `credential` | The basis credential's selector in that B |
+| `designation` | `H_D`, the digest of the controller-signed basis designation D for this credential (§4.6) |
+| `grant` | The `grant_id` of the delegated grant that signed this P (§4.5), or null when the controller signed it |
 | `basis` | `certified_hardware`, the only v1 value |
 | `grade_policy` | The B entry's `grade_policy` (for example `fido-mds-l1-single-device-uv-v1`) |
 | `assessed_under` | `sha256:` digest of the snapshot whose evaluation, in the final decision of §4.2, justified **this** P. This holds for the first P as well. It may differ from the enrollment snapshot that B records, and B keeps that original snapshot unchanged. |
 | `issued_at` | The issuer's clock time |
-| `valid_until` | `min(assessed_under.valid_until, issued_at + 31 days)`. It is computed only from inputs that every credential assessed under that snapshot shares, never from a model- or batch-specific date (§3, §6). |
+| `valid_until` | `min(assessed_under.valid_until, issued_at + 31 days)`, and for a delegated P also at most the grant's `not_after`. It is computed only from inputs that every credential assessed under that snapshot shares, never from a model- or batch-specific date (§3, §6). |
 
 `P` = issuer signature over `UTF8("aweb.human-hardware-backing/1\n") + canonical_json(P_body)`.
 P is signed by the person's namespace controller under its current epoch, or
-by a **hardware-backing signer** that the namespace's current issuer statement
-lists (§4.5). The controller's key is found and checked the same way as for B
+by the key of a **delegated grant** that the namespace's committed issuer
+statement lists (§4.5). The controller's key is found and checked the same way as for B
 (approval-service@be53c0a `README.md:30-37,148-153`). P is the namespace's
 statement. An identity parent (a human who issued this human) never signs it.
 
@@ -338,70 +340,127 @@ Option B (§8.2) needs a verifier to learn, for a given issuing namespace,
 whether that namespace's `kind=human` certificates vouch on their own. The
 holder must not be able to suppress the answer. A pilot whose namespace root
 is held outside the service also needs a way to renew P without a human act
-for each person. One controller-signed statement carries both.
+for each person. One controller-signed record type carries both. It reuses
+the D2 namespace-controller record pattern unchanged: the encoding, the chain,
+publication, and the signed currentness read
+(`docs/design/standing-organisation-records.md` §1 and §4-5). It adds no
+second record mechanism.
 
-`S_body`, closed:
+**The record.** It has type `awid.issuer-personhood/1`. Its exact payload
+fields follow the D2 encoding (`standing-organisation-records.md:25-44`):
 
 | Field | Value |
 |---|---|
-| `version` | `1` |
-| `namespace` | The exact namespace |
-| `epoch` | The namespace's current epoch (`docs/id-certificates.md:317-339`) |
-| `seq` | Starts at 1 and increases by exactly 1 with each new statement for this namespace, across epochs |
+| `domain` | The exact namespace |
+| `registry_origin` | The registry that the namespace's `_awid` record names |
+| `controller_epoch` | The open epoch it is signed under |
+| `revision` | Starts at 1 and increases by exactly 1. The chain runs per namespace and continues across epochs, deletion and re-registration. |
+| `previous` | Null for revision 1, and otherwise the preceding record's digest |
 | `personhood` | `issuer_vouches` (the default meaning of `kind=human`) or `hardware_backing_required` |
-| `hardware_backing_signers` | A list, possibly empty, of `{key: did:key, not_after: RFC 3339}` entries. Each key may sign P for this namespace and nothing else. `not_after` is at most 92 days after `issued_at`. |
-| `issued_at` | The controller's clock time |
+| `grants` | A list, possibly empty, of `{grant_id, key, not_before, not_after}`. `grant_id` is a nonreusable UUID, `key` an Ed25519 `did:key`, and `not_after - not_before` is at most 92 days. |
 
-`S` = signature by the namespace controller's current epoch key over
-`UTF8("aweb.namespace-issuer-statement/1\n") + canonical_json(S_body)`.
+The namespace controller signs it under the open epoch key, in the D2
+envelope.
 
-**Where it lives.** The registry stores and serves S with the namespace
-record, together with its history, as it stores and serves other controller
-acts. It has no authority over them (`docs/human-approval-architecture.md:229-234`).
-The registry accepts a new S only if it verifies under the namespace's open
-epoch key and `seq` is the previous value plus one. A namespace with no S is
-served as `issuer_statement: null`. S is never carried by a holder, and a
-verifier ignores any S a holder presents.
+**Publication** (`PUT /v1/namespaces/{domain}/issuer-personhood`, with the
+covering controller request). This follows D2 §1. It runs under the **same
+namespace write lock that serialises rotation, recovery and deletion**. Under
+that lock the registry:
+
+- verifies the covering request, and the exact open epoch and its controller,
+  independently of the object;
+- requires `revision` = head revision + 1 and `previous` = head digest;
+- refuses a `grant_id` that any earlier revision listed and a later revision
+  removed, so a re-addition needs a new `grant_id`.
+
+A retry with byte-identical canonical bytes and signature returns the same
+result. A conflicting revision or a stale predecessor is refused, so two
+publications cannot both commit. A publication that loses to a rotation
+fails its epoch check and must be re-signed under the new epoch. Deleting the
+namespace retains the head's revision and digest as a tombstone, as epoch
+sequences are retained (`docs/awid-sot.md:293-308`). Re-registration
+continues the chain from that tombstone, and the revision never resets.
+
+**Force intervals.** A revision enters force at its registry commit time. It
+leaves force at the commit time of the next revision, or when its
+`controller_epoch` is retired, whichever comes first. A grant is in force
+from the later of `not_before` and the commit time of the first revision that
+lists it. It leaves force at the earliest of `not_after`, the commit time of
+the first revision that omits it, and the retirement of that revision's epoch.
+Neither the controller's clock nor the delegate's clock sets an interval.
+
+**Currentness read** (`GET /v1/namespaces/{domain}/issuer-personhood?nonce={nonce}`).
+This is the D2 signed observation, purpose `awid.namespace-read/1` and
+`kind` `issuer_personhood` (`standing-organisation-records.md:180-204`). It
+binds `issuer`, `registry_origin`, `kind`, `domain`, `controller_epoch`, the
+verifier's fresh `nonce`, `observed_at`, an exclusive `expires_at` at most 30
+seconds later, `state`, `revision`, `record_sha256` and the current record's
+`committed_at`, and the registry's pinned `namespace_read` key signs it.
+`state` is one of:
+
+- `present`, when the head was committed under the **open** epoch. The
+  response carries the controller-signed record;
+- `absent`, only when **no revision has ever been committed** for this
+  namespace, tombstones included. Absence means "never published";
+- anything else returns HTTP 503 `authority_unavailable` with no
+  observation. That covers an unproven epoch, an inconsistent read, and a
+  head that exists but was signed under a retired epoch, the post-rotation
+  gap. A cold verifier gets the same 503 in the gap.
+
+There is no `issuer_statement` field on the namespace record, so a legacy
+response cannot omit it.
+
+**History read** (`GET /v1/namespaces/{domain}/issuer-personhood/history?at={T}&nonce={nonce}`).
+This is a separate route from currentness. It returns a signed observation of
+kind `issuer_personhood_at`, bound like the current read. It carries the
+revision in force at T with its force interval (`committed_at`, and
+`superseded_at` or null), together with the epoch interval. The interval can
+also be `absent`, meaning none in force at T because nothing had been
+committed by then. Otherwise the read is unavailable. A revision committed
+after T is never in force at T, whatever its signed fields say.
+
+**What the read proves.** The registry's read signer is trusted to report its
+committed state honestly, the same trust the verifier already places in exact
+certificate-status reads. Its signature proves what the registry committed,
+and when. It proves neither the issuer's policy, which only the controller's
+signature on the record proves, nor any person's hardware.
 
 **Exact namespace only.** S applies to certificates whose `domain` is exactly
-`namespace`. An ancestor's S never applies to a child namespace, whether the
+`domain`. An ancestor's S never applies to a child namespace, whether the
 child was delegated, inherited its TXT record, or is hosted by the same
-service. The hosting provider's origin or domain never selects the issuer.
-So aweb.ai's S covers aweb.ai's own IDs. An organisation's namespace that
-aweb.ai hosts is covered only by that organisation's own S, and has none by
-default.
+service. A hosting provider's origin or domain never selects the issuer. An
+organisation's namespace that the pilot hosts is covered only by that
+organisation's own S, and has none by default.
 
-**Epoch change.** After a controller rotation, the S signed under the
-previous epoch no longer governs current readings. Until the new controller
-signs a new S, the namespace's statement is `unavailable` (§5.1). This is the
-same re-signing duty as for B after rotation.
+**Delegated grants.** A listed grant's key can sign P for this namespace, and
+nothing else. It cannot sign B, D, E, certificates or S. Every P it signs
+also needs the controller's basis designation D (§4.6), so a grant can only
+renew backing for credentials the controller has designated. §8.1 states the
+worst case. Holding a grant key is a custody decision for the namespace's
+owner, and for awebai.org it is Juan's (§8.1). Without a grant, the
+controller signs every P itself.
 
-**Rollback.** The registry is trusted not to hide S in the same way it is
-already trusted not to hide a revocation in exact status reads. A verifier
-that keeps state records the highest `seq` it has accepted for a namespace,
-as servers do for team-key acts. It refuses a lower `seq`, and refuses
-`null` after it has seen a statement. Each of those reads as `unavailable`.
-A namespace returns to the default meaning only through a newer S that says
-`issuer_vouches`, never through absence.
+### 4.6 The basis designation D
 
-**Delegated hardware-backing signers.** The controller signs S rarely: when
-the signer list changes, and at least every 92 days. Each listed key is
-narrowly scoped:
+The approval service accepts B signed by the namespace controller or by the
+subject's actual-parent issuer (approval-service@be53c0a `README.md:148-155`).
+That rule is unchanged. A B grade of `certified_hardware` does not show the
+batch profile, the exact confirmation or the current eligibility. So a P
+needs one more controller act, made once per basis:
 
-- it can sign P, and nothing else. It cannot sign B, E, certificates or S;
-- a P it signs is still subject to every §5.2 check. In particular, the
-  credential must be `certified_hardware` in a controller-signed B. A leaked
-  delegated key can therefore only extend or re-issue backing for credentials
-  that the controller already bound as hardware. It cannot create a hardware
-  claim for any other key;
-- a P signed by a delegated key counts for a current reading only while the
-  **current** S lists that key and `issued_at <= not_after`. Removing the key
-  from S ends the current reading of every P it signed at once. Historical
-  readings use the S in force at T (§5.5).
+`D_body`, closed: `version` 1, `namespace`, `person`, `certificate`,
+`identity_key`, `binding` (`H_B`), `credential`, `profile`
+(`aweb-attestation-batch-v1`), `confirmation` (the digest of the
+confirmation or continuity receipt from §4.2 step 2), and `controller_epoch`.
+`D` is the namespace controller's signature, under the open epoch key and
+**only** that key, over `UTF8("aweb.hardware-backing-basis/1\n") + canonical_json(D_body)`.
 
-Holding a delegated signer key is a custody decision for the namespace's
-owner. For awebai.org it is a decision for Juan (§8.1). Without a delegated
-key, the controller signs every P itself.
+The controller signs D when §4.2 steps 1-3 hold: at the enrollment commit,
+together with E, and again after a recorded continuity transition. It
+re-signs D after a controller rotation, the same duty as for B. The holder
+presents D with P. D carries no model, format or date (§6). A TPM-grade B, a
+passkey B, or a B whose basis never completed its own confirmation therefore
+has no D, and no P can be built on it by anyone.
 
 ## 5. How a verifier reads it
 
@@ -415,24 +474,44 @@ message or chain verdict or its exit code (`docs/protocol.md:575-578`).
 ### 5.1 Personhood: the issuer's vouching, under the issuer's statement
 
 For a human link whose certificate verified with `kind=human` under the
-existing chain rules, the verifier reads the issuing namespace's issuer
-statement (§4.5) from the registry that namespace's authority names. For
-current readings, the read is fresh within the existing 60-second rule.
-`personhood.issuer` is the checked issuing namespace.
+existing chain rules, the verifier classifies personhood from a **fresh**
+currentness observation of the issuing namespace's S (§4.5). To get one, it:
 
-| Statement read | `personhood.status` | `personhood.reason` |
+1. resolves the registry and the open epoch independently, from the
+   namespace's `_awid` record and the existing ID-tree discovery;
+2. sends its own new nonce;
+3. checks the read signature under the pinned `namespace_read` key, the
+   exact `domain`, `kind`, `controller_epoch` equal to the epoch it resolved,
+   and `expires_at`;
+4. for `present`, also checks the controller's signature under the open
+   epoch key and `record_sha256`.
+
+**Coherence.** The observation's `observed_at` must be no earlier than the
+certificate-status observation this verification used for the same link. A
+verifier may reuse its own observation until `expires_at` only within that
+rule. The issuer commits S before it commits any certificate S covers
+(§8.2). So a cached absence from before publication cannot classify a
+certificate committed after publication.
+
+**Pins.** A verifier that keeps state pins `(revision, record_sha256)` per
+namespace. A lower revision, the same revision with a different digest, or
+`absent` after a pinned revision is a conflict: it reads unavailable and
+needs reconciliation.
+
+| Observation | `personhood.status` | `personhood.reason` |
 |---|---|---|
-| Registry answers `null` (no S), and the verifier has not seen one before | `vouched` | `issuer_default` |
-| Valid S, `issuer_vouches` | `vouched` | `issuer_statement` |
-| Valid S, `hardware_backing_required`, and `hardware_backing.status` is `current` (§5.2) | `vouched` | `hardware_backed` |
-| Valid S, `hardware_backing_required`, and backing is `lapsed`, `none` or `invalid` | `unknown` | `hardware_backing_required` |
-| The read fails or times out, S is from a superseded epoch, or the read is a rollback | `unknown` | `issuer_statement_unavailable` |
-| S is malformed, or its signature does not verify under the open epoch key | `unknown` | `issuer_statement_invalid` |
+| Valid `absent` (never published) | `vouched` | `issuer_default` |
+| Valid `present`, `issuer_vouches` | `vouched` | `issuer_statement` |
+| Valid `present`, `hardware_backing_required`, and `hardware_backing.status` is `current` (§5.2) | `vouched` | `hardware_backed` |
+| Valid `present`, `hardware_backing_required`, and backing is `lapsed`, `none` or `invalid` | `unknown` | `hardware_backing_required` |
+| 503, unsupported route, read failure or timeout, unproven epoch, scope mismatch, expired or incoherent observation, or a pin conflict | `unknown` | `issuer_statement_unavailable` |
+| Bad read signature, bad controller signature, or digest mismatch | `unknown` | `issuer_statement_invalid` |
 
-The status is never `vouched` because a statement is missing, unreadable or
-invalid. Only an authenticated `null` or a valid S yields it. An agent link
-has no personhood reading. An organisation's namespace that publishes no S
-reads exactly as it does today.
+The status is never `vouched` because S is missing, unreadable or invalid.
+Only a valid signed `absent` (never published) or a valid `present` record
+yields it. An agent link has no personhood reading. An organisation's
+namespace that never publishes S reads exactly as it does today, apart from
+needing the one fresh read.
 
 ### 5.2 Hardware backing: the reading rule for P
 
@@ -448,10 +527,16 @@ reads exactly as it does today.
    `missing_statement`.
 2. The version is supported and the body is well formed and closed. If not,
    `unsupported_version` or `malformed`.
-3. The signature verifies under independently obtained Trust. The signer is
-   either the namespace controller's current epoch key, or a
-   hardware-backing signer that the current S lists, with
-   `issued_at <= not_after` (§4.5). If a trust input cannot be read, the
+3. The signature verifies under independently obtained Trust. If `grant` is
+   null, the signer is the namespace controller's open epoch key. If `grant`
+   is set, then for a current reading the fresh S observation of §5.1 must
+   list that `grant_id` with this `key`. The evaluation time and `issued_at`
+   must both fall inside the grant's in-force interval (§4.5), and
+   `valid_until` must be at most its `not_after`. A grant that has expired
+   or been removed fails every current reading, whatever `issued_at` claims,
+   so backdating gains nothing. Removal takes effect for a current reading
+   within one observation lifetime, at most 30 seconds after the removing
+   revision commits. If a trust input cannot be read, the
    reason is `trust_input_unavailable`, never a manufactured invalid
    signature. If the signature does not verify under current Trust, it is
    `signature_invalid`. The one exception is `issuer_superseded` (status
@@ -464,9 +549,14 @@ reads exactly as it does today.
    authenticated superseded signer are never confused.
 4. `person`, `certificate` and `identity_key` equal this link's checked subject.
    If not, `binding_mismatch`.
-5. A presented B verifies, `H_B(B)` equals `binding`, and B lists `credential`
-   with grade `certified_hardware` and the same `grade_policy`. If B is absent,
-   the reason is `missing_binding`. If it does not match, `binding_mismatch`.
+5. A presented B verifies under the unchanged approval-service rules,
+   `H_B(B)` equals `binding`, and B lists `credential` with grade
+   `certified_hardware` and the same `grade_policy`. A presented D verifies
+   under the namespace controller's open epoch key, `H_D(D)` equals
+   `designation`, and D names the same person, certificate, identity key,
+   `binding` and `credential`. If B or D is absent, the reason is
+   `missing_binding` or `missing_designation`. If either does not match, it
+   is `binding_mismatch`.
    The body also satisfies `issued_at < valid_until <= issued_at + 31 days`;
    otherwise it is `malformed`.
 6. The evaluation time is at or after `issued_at` (otherwise `not_yet_valid`)
@@ -515,7 +605,7 @@ Each human link gets these results, added beside the existing fields in
 | `personhood.reason` | `issuer_default`, `issuer_statement`, `hardware_backed`, `hardware_backing_required`, `issuer_statement_unavailable`, `issuer_statement_invalid` |
 | `personhood.issuer` | The checked issuing namespace, or null |
 | `hardware_backing.status` | `current`, `lapsed`, `none` or `invalid` |
-| `hardware_backing.reason` | `checked`, `missing_statement`, `missing_binding`, `malformed`, `unsupported_version`, `signature_invalid`, `issuer_superseded`, `binding_mismatch`, `not_yet_valid`, `expired`, `not_current`, `trust_input_unavailable` |
+| `hardware_backing.reason` | `checked`, `missing_statement`, `missing_binding`, `missing_designation`, `malformed`, `unsupported_version`, `signature_invalid`, `issuer_superseded`, `binding_mismatch`, `not_yet_valid`, `expired`, `not_current`, `trust_input_unavailable` |
 | `hardware_backing.issuer` / `credential` / `assessed_under` / `valid_until` | From a checked P, or null |
 | `hardware_backing.enrollment_proof` | `true`, `false` or null, plus the receipt's event when it is true |
 | `as_of` | The evaluation time, and whether this is a current or a historical reading |
@@ -541,11 +631,20 @@ credential that actually signed (`docs/protocol.md:558-563`).
 
 ### 5.5 Historical (as-of) reading
 
-A relying party that saved P, B, any receipt, and as-of Trust (the issuer key
-and the certificate status at time T) can later ask "was this ID
+A relying party that saved P, B, D, any receipt, and as-of Trust (the issuer
+key and the certificate status at time T) can later ask "was this ID
 hardware-backed at T?" The check runs §5.2 with time T and the as-of Trust,
 which is the existing explicit as-of practice (approval-service@be53c0a
 `README.md:23-27,159-160`). Step 7 then uses status as of T.
+
+Personhood and delegated grants as of T need authenticated S evidence for T.
+That is either the currentness observation the relying party saved at T, or
+a history observation for T (§4.5). Each proves the revision and grants in
+force at T from commit times and epoch boundaries, never from `issued_at`. A
+delegated P counts as of T only if its grant was in force at both T and
+`issued_at`. Without that evidence, personhood as of T is `unknown`
+(`issuer_statement_unavailable`), and a delegated P as of T is
+`trust_input_unavailable`.
 
 A later controller rotation, a key change, or a lapsed P does not change a
 historical reading of a window that P covered. That matches the existing rule
@@ -565,6 +664,8 @@ the relying party's own record (`docs/protocol.md:403-406`).
 | The `AttestationAssessment` (§4.2a) of a batch-profile basis credential: format, AAGUID, firmware, verified chain, root, profile | **Issuer only**: private, encrypted at rest, keyed by (namespace, person, credential). Deleted when the credential leaves B or the ID is revoked. Never logged, exported, or put in P, B, E or the registry. | Needed to re-evaluate against later snapshots and certificate-scoped withdrawals (§3). Retained only for the batch profile, which identifies a model and batch, never a device (§2). Other profiles are discarded at assessment. |
 | Credential public key, selector, grade, enrollment snapshot digest | Public in B, as today | Existing |
 | Person ID, certificate digest, identity key, `H_B`, selector, basis, grade policy, `assessed_under`, dates | Public in P | The minimum needed to check P |
+| Person ID, certificate digest, identity key, `H_B`, selector, profile name, confirmation digest, epoch | Public in D, presented by the holder | The minimum needed to check the controller's designation. No model, format or date. |
+| Namespace policy and grant keys | Public in S, in the registry | S names no person, credential, grade or custody |
 | Which model or vendor the person uses | Never public | P names no model. `assessed_under` and `valid_until` derive only from inputs shared by every credential assessed under that snapshot (§4.1). A known model- or batch-specific withdrawal date suppresses P rather than appearing in it (§3). |
 
 Further rules:
@@ -597,8 +698,11 @@ Further rules:
 The contract in §§2-7 is generic. Any issuer, including an organisation's key
 holder or the hosted service acting as an organisation's issuer, may sign P
 under the same rule. None is required to. This section covers aweb.ai's own
-issuance, for people who sign in. While it is prototyped, that namespace is
-awebai.org; it moves to aweb.ai when ready.
+issuance, for people who sign in. In E5 that issuer is the `awebai.org`
+namespace, served by the new service and registry
+(`docs/design/standing-proof-and-feed.md:415-420`). Frozen `aweb.ai` keeps its
+existing identities, and moving any customer to the new service is a
+separately approved step (same document, §7).
 
 ### 8.1 Settled
 
@@ -621,13 +725,34 @@ awebai.org; it moves to aweb.ai when ready.
   enrollment (`docs/human-approval-architecture.md:452-453`).
 - **Who signs, when the namespace root is held outside the service.** Under
   Juan's custody ruling F1, awebai.org's root and team keys are held outside
-  the pilot. The controller (the outside holder) signs B at each person's
-  hardware enrollment, which happens once per enrollment, and signs S. Monthly
-  renewal of P then needs no human act per person: the pilot renews P with a
-  hardware-backing signer key that S lists (§4.5). That key cannot sign B,
-  certificates or S. Holding it in the pilot is a narrow custody change from
-  F1, so it goes to Juan with that reason. If Juan declines, the outside
-  holder signs every P renewal.
+  the pilot. The outside holder, as controller:
+  - signs B, D and E once at each person's hardware enrollment;
+  - signs S whenever the policy or a grant changes, and at least every 92
+    days, because each grant lasts at most 92 days.
+
+  With a grant, the pilot renews P monthly with no human act per person. If
+  Juan declines a grant, the outside holder signs every P renewal.
+
+  **Worst case of a pilot-held grant key, in plain words.** If that key
+  leaks, whoever holds it can keep "hardware backing current" for any
+  awebai.org person the controller has already designated, and so keep that
+  person reading "vouched". It can do this even after FIDO has withdrawn that
+  person's key model, or after the pilot stopped renewing them. It lasts until
+  the controller publishes an S without the grant (effective within 30
+  seconds for any verifier making a fresh read), or until the grant's
+  `not_after`, at most 92 days.
+
+  It cannot:
+  - designate anyone new, or back a passkey, a TPM-grade key, a withdrawn
+    key that was never designated, or a credential that never completed its
+    own confirmation;
+  - sign certificates, B, D, E or S;
+  - act for any other namespace, including organisations the pilot hosts;
+  - affect a person whose identity key has changed;
+  - change any approval, membership or message verdict.
+
+  Holding the key in the pilot is a narrow custody change from F1, so it goes
+  to Juan with this worst case.
 
 ### 8.2 Decided: option B, an ID for every sign-in
 
@@ -640,12 +765,13 @@ shared grade (§10.5).
 
 aweb.ai therefore:
 
-1. publishes S with `personhood: hardware_backing_required` **before** it
-   issues the first sign-in ID. A `kind=human` ID issued before S exists would
-   read `vouched` under §5.1;
+1. commits S (revision 1, `personhood: hardware_backing_required`)
+   **before** it commits the first sign-in certificate. Under §5.1's
+   coherence rule, a certificate committed after S can never be classified by
+   an earlier absence;
 2. issues a `kind=human` certificate to each person who signs in;
-3. signs P, through the controller or a listed hardware-backing signer, for
-   each person whose certified credential meets §4.2.
+3. signs D through the controller for each person whose certified credential
+   meets §4.2, and signs P through the controller or a grant in S.
 
 That person's link reads `personhood: vouched` (reason `hardware_backed`)
 while P is current. Every other aweb.ai person reads
@@ -653,11 +779,13 @@ while P is current. Every other aweb.ai person reads
 `vouched` back into `unknown`, with "hardware backing lapsed". Nothing is
 revoked.
 
-**Released verifiers.** Verifiers released before §4.5 never read S. They
-report a `kind=human` certificate without any personhood line, and they do
-not render the issuer's vouching. The `personhood` reading exists only in
-verifiers that implement this design. aweb.ai's own surfaces render
-`unknown` from the first day.
+**A new verifier contract.** The `personhood` and `hardware_backing` readings
+are a new verifier contract, and exist only in verifiers that implement this
+design. Released `aw` does not provide them. aw-v1.36.58 has no `aw verify`
+command. aw-v1.36.59 checks responsibility (the nearest human in the chain)
+without reading S. That responsibility signal is a different, released fact
+and stays unchanged; it never means personhood. The service's own surfaces
+render the new reading from the first day.
 
 ## 9. Contract text this changes
 
@@ -670,9 +798,11 @@ approval when it is implemented; the coordinator routes it.
   the issuer vouches only while the ID's hardware backing is current. Otherwise
   personhood is unknown." The definition of a human ID stays as it is.
 - `docs/human-assurance-contract.md:21-22` changes the same way.
-- `docs/awid-sot.md` gains S: its body and domain, the registry's acceptance
-  rule (open epoch key and `seq` + 1), the `issuer_statement` field and
-  history on the namespace record, and the rollback rule.
+- `docs/awid-sot.md` gains the `awid.issuer-personhood/1` record type in the
+  D2 pattern: payload, chain and tombstone rules, publication under the
+  namespace write lock, force intervals, the `issuer_personhood` currentness
+  observation (with absence meaning never published), and the separate
+  `issuer_personhood_at` history read.
 - `docs/human-approval-architecture.md`, "Showing that an ID belongs to a
   person", gains P and S beside B and E, and the verifier result gains
   `personhood` and `hardware_backing` (§5.4).
@@ -805,8 +935,9 @@ mail sent by the person's agents.
 | The P basis restricted to the batch profile (`aweb-attestation-batch-v1`) | `tpm`, `apple`, AttCA, AnonCA and mixed profiles have no established privacy (§2) |
 | The verifier's `personhood` and `hardware_backing` results and wording | No existing field names who vouches, or reports hardware backing per link |
 | The issuer's own pin installation | Required independence: the issuer never uses awsign's snapshot (`registration.py:228-234`) |
-| Namespace issuer statement S, `aweb.namespace-issuer-statement/1`, stored and served by the registry | Option B needs an authenticated condition the holder cannot suppress. No existing carrier can hold it (§10.7). |
-| Delegated hardware-backing signers in S | Lets P renew monthly without a human act per person while the root stays outside the service. Using one is a custody decision (§8.1). |
+| Record type `awid.issuer-personhood/1` in the existing D2 record pattern, with its currentness and history reads | Option B needs an authenticated condition the holder cannot suppress. No existing carrier can hold it (§10.7). It reuses D2's encoding, chain, publication and read signature. |
+| Basis designation D, `aweb.hardware-backing-basis/1` | A B grade does not prove the batch profile, the confirmation or eligibility, and B may be signed by an actual-parent issuer (§4.6) |
+| Delegated grants in S | Lets P renew monthly without a human act per person while the root stays outside the service. Using one is a custody decision (§8.1). |
 
 Not reused: awsign's metadata cache (independence), B as the carrier of the
 claim (no lifetime), and the hosted sign-in credential (§10.2).
@@ -837,38 +968,58 @@ matter, and each test is paired with a valid neighbouring case:
   P reads `current` when read as of a time inside its window under as-of
   Trust. A P signed by an arbitrary key reads `signature_invalid` even when
   history is supplied.
-- Issuer statement, with the `kind=human` certificate held fixed and only the
-  statement varied:
-  - registry `null`: `vouched`, reason `issuer_default`;
-  - S `issuer_vouches`: `vouched`;
-  - S `hardware_backing_required` with P `current`: `vouched`, reason
+- Personhood, with the `kind=human` certificate held fixed and only the S
+  observation varied:
+  - a never-published organisation (valid `absent`): `vouched`, reason
+    `issuer_default`;
+  - a legacy registry without the route, or a 404: `unknown`,
+    `issuer_statement_unavailable`;
+  - present `issuer_vouches`: `vouched`;
+  - present `hardware_backing_required` with P `current`: `vouched`, reason
     `hardware_backed`;
   - the same with P `lapsed`, or no P: `unknown`, reason
     `hardware_backing_required`;
-  - registry read failure or timeout: `unknown`, reason
-    `issuer_statement_unavailable`;
-  - S under a superseded epoch: `unknown`, reason `issuer_statement_unavailable`;
-  - S with a bad signature: `unknown`, reason `issuer_statement_invalid`.
-- Rollback: a verifier that has accepted `seq` 2 refuses `seq` 1 and refuses
-  `null`, both as `issuer_statement_unavailable`. A new verifier that sees
-  `seq` 3 `issuer_vouches` reads `vouched`.
-- A holder-presented S, whether favourable or not, changes nothing. Only the
-  registry read counts.
-- Exact namespace: an organisation's namespace hosted by aweb.ai, or a child
-  namespace delegated from aweb.ai, with no S of its own reads `vouched`,
-  even though aweb.ai's S says `hardware_backing_required`.
-- Registry acceptance: an S that is not signed by the open epoch key, or does
-  not have `seq` equal to the previous plus one, is refused.
-- Delegated signer: a P signed by a key listed in the current S is accepted,
-  and a P signed by that key after its `not_after` is `signature_invalid`.
-  After the key is removed from S, a current reading of its P is
-  `signature_invalid`, and an as-of reading inside the earlier S's window is
-  `current`. A delegated key's signature on B, E, a certificate or S is
-  refused. A delegated P whose credential is `passkey_uv` in B is
-  `binding_mismatch`.
-- Ordering: an aweb.ai sign-in ID issued while the registry still answers
-  `null` reads `vouched`. This is why S is published before the first ID
-  (§8.2).
+  - read failure or timeout, unproven epoch, or wrong `controller_epoch` or
+    `kind` in the observation: `unknown`, `issuer_statement_unavailable`;
+  - bad read signature or bad controller signature: `unknown`,
+    `issuer_statement_invalid`.
+- Replayed absence: an `absent` observation made for another nonce is
+  unusable. One observed before S was committed, used for a certificate whose
+  status observation is later, fails coherence and reads `unknown`.
+- Post-rotation gap: after a controller rotation and before the new epoch's S
+  is committed, a cold verifier gets 503 and reads `unknown`, never `vouched`.
+- Pins: a verifier pinned at revision 2 refuses revision 1, a different
+  digest at revision 2, and `absent`, all as `issuer_statement_unavailable`.
+- Publication: two competing revision-2 publications commit one and refuse
+  the other. A publication racing an epoch rotation is refused. A
+  byte-identical retry returns the same result. Re-registration with the same
+  key continues from the tombstoned revision and never returns `absent`. A
+  removed `grant_id` cannot be re-added.
+- As-of: an S whose fields claim an earlier time, but which was committed
+  after T, is not in force at T. With no saved or history observation for T,
+  personhood as of T is `unknown`.
+- A holder-presented S, favourable or not, changes nothing.
+- Exact namespace: an organisation's namespace hosted by the pilot, or a
+  child namespace delegated from `awebai.org`, with no S of its own reads
+  `vouched` (`issuer_default`), even though `awebai.org`'s S says
+  `hardware_backing_required`.
+- Delegated grants:
+  - a P signed in the last window before `not_after`, read before
+    `not_after`, is accepted;
+  - a P signed after expiry with a backdated `issued_at` fails, as does any
+    current reading after `not_after`;
+  - after the grant is removed, current readings fail within one observation
+    lifetime, and a re-added key needs a new `grant_id`. The old grant's P
+    stay dead;
+  - an independent historical reading with a history observation for T
+    accepts a P whose grant was in force at T and at `issued_at`;
+  - a delegated key's signature on B, D, E, a certificate or S is refused;
+  - controls: a TPM-grade `certified_hardware` B, and a B whose model was
+    withdrawn before designation, have no D, so a delegated P on them reads
+    `missing_designation`.
+- Ordering: S revision 1 is committed before the first sign-in certificate.
+  A certificate committed before S, which is not allowed, would read
+  `vouched` and is the control for that rule.
 - A FIDO withdrawal leaves the certificate unrevoked. Backing reads `lapsed`
   after `valid_until`. A newly enrolled current key that completes its own
   proof reads `current` again.
