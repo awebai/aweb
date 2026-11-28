@@ -125,9 +125,34 @@ class ReleasedArtifactTests(unittest.TestCase):
                     fetch.freeze_release(
                         root / "wrong", version="9.9.9", registry=origin
                     )
+                released_platform = json.loads(
+                    fetch.download(f"{origin}/@awebai%2f{selected}/1.2.3")
+                )
+                pinned = {**frozen, "platforms": {selected: released_platform["dist"]}}
                 hits.clear()
-                fetch.fetch(root / "frozen", origin, metadata=frozen)
-                self.assertNotIn("/@awebai%2faw/latest", hits)
+                staged = root / "pinned"
+                receipt = fetch.fetch(staged, origin, metadata=pinned)
+                self.assertEqual(hits, ["/aw.tgz", "/" + selected + ".tgz"])
+                hits.clear()
+                self.assertEqual(fetch.verify_pinned(staged, pinned), receipt)
+                self.assertEqual(hits, [], "verification is offline")
+                binary = Path(receipt["binary"])
+                original_binary = binary.read_bytes()
+                binary.write_bytes(original_binary + b" ")
+                with self.assertRaisesRegex(
+                    ValueError, "differs from the locked package"
+                ):
+                    fetch.verify_pinned(staged, pinned)
+                binary.write_bytes(original_binary)
+                tarball = staged / (selected + ".tgz")
+                tarball.write_bytes(tarball.read_bytes() + b" ")
+                with self.assertRaisesRegex(ValueError, "SHA512 integrity mismatch"):
+                    fetch.verify_pinned(staged, pinned)
+                with self.assertRaisesRegex(ValueError, "no pinned package"):
+                    fetch.pinned_platform_metadata(
+                        {**pinned, "platforms": {}}, selected
+                    )
+
                 first = fetch.freeze_latest(root / "snapshots", origin)
                 original = first.read_bytes()
                 scenario["failure"] = "latest-source"

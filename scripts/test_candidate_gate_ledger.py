@@ -134,6 +134,13 @@ class CompleteGateVerdictTests(unittest.TestCase):
         self.assertEqual(rows["checks"], "FAILED")
         self.assertEqual(rows["user-paths"], "PASSED")
 
+    def test_released_home_writer_failure_fails_unit(self):
+        result, rows = self.suite("unit", "test-cli-released-home")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(rows["unit/test-cli-released-home"], "FAILED")
+        self.assertEqual(rows["unit/_candidate-unit-suites"], "PASSED")
+        self.assertEqual(rows["unit"], "FAILED")
+
     def test_each_isolated_unit_suite_reports_its_own_leaf(self):
         listed, _ = self.suite("--list-unit-suites")
         self.assertEqual(listed.returncode, 0, listed.stderr)

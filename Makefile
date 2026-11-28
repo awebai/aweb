@@ -51,6 +51,7 @@ help:
 	@echo "  test-key-holder Run the key holder's tests (PostgreSQL and REDIS_URL)"
 	@echo "  test-hermes-platform Run the Hermes plugin's tests on Hermes's own locked environment (release precondition)"
 	@echo "  test-cli     Run CLI tests"
+	@echo "  test-cli-released-home  Verify the prepared released aw against the current home reader"
 	@echo "  test-channel Run channel tests"
 	@echo "  test-channel-core Run channel-core tests"
 	@echo "  test-channel-core-process-guard Run the multi-process DeliveryStore guard (release path)"
@@ -471,6 +472,34 @@ test-cli: production-awid-sync
 	# A short, canonical temp root avoids macOS /var symlinks and socket limits.
 	cd cli/go && TMPDIR="$$(python3 -c 'import os; print(os.path.realpath("/tmp"))')" \
 		GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1 -timeout 20m
+
+# The candidate image prepares the locked old writer before the unit stage.
+# A native run can point this target at a separately prepared artifact directory.
+RELEASED_AW_HOME_DIR ?= /opt/released-aw-home
+
+.PHONY: test-cli-released-home
+test-cli-released-home:
+	@set -eu; \
+		receipt=$$(python3 scripts/fetch_released_aw.py "$(RELEASED_AW_HOME_DIR)" \
+			--metadata-input candidate-gate/released-aw-home.json --verify-pinned); \
+		printf '%s\n' "$$receipt"; \
+		released=$$(printf '%s\n' "$$receipt" | python3 -c 'import json,sys; print(json.load(sys.stdin)["binary"])'); \
+		current=; \
+		if [ -n "$${CANDIDATE_LOG_DIR:-}" ]; then \
+			current="$$CANDIDATE_LOG_DIR/unit-aw/aw"; \
+			test -x "$$current"; \
+		fi; \
+		output=$$(mktemp); \
+		trap 'rm -f "$$output"' EXIT; \
+		cd cli/go; \
+		status=0; \
+		AW_TEST_AW_13658="$$released" AW_TEST_CLI_BINARY="$$current" GOPROXY=off GOSUMDB=off \
+			$(TEST_EGRESS_RUNNER) go test -v -count=1 -timeout 3m \
+			-run '^TestRegistryUpgradeFrom13658$$/^implicit_local_init$$' ./cmd/aw > "$$output" 2>&1 || status=$$?; \
+		cat "$$output"; \
+		test "$$status" -eq 0; \
+		grep -q 'released aw wrote the home' "$$output"; \
+		grep -q 'PASS: TestRegistryUpgradeFrom13658/implicit_local_init (' "$$output"
 
 # Exercise current SDK/CLI request auth against actual aweb/AWID/PG/Redis.
 test-cli-auth-v2:

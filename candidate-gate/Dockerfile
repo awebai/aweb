@@ -62,6 +62,11 @@ RUN test -n "$USER_PATHS_SOURCE_SHA" && test -n "$USER_PATHS_CLI_VERSION" \
     && cd /opt/user-paths/go && CGO_ENABLED=0 go build -trimpath \
        -ldflags "-X main.version=${USER_PATHS_CLI_VERSION} -X main.commit=${USER_PATHS_SOURCE_SHA} -X main.commitRepo=github.com/awebai/aweb" \
        -o /opt/user-paths/aw ./cmd/aw
+# The unit-stage home-upgrade lane verifies and runs these prepared bytes offline.
+COPY scripts/fetch_released_aw.py candidate-gate/released-aw-home.json /opt/released-aw-home-prep/
+RUN python3 /opt/released-aw-home-prep/fetch_released_aw.py /opt/released-aw-home \
+        --metadata-input /opt/released-aw-home-prep/released-aw-home.json \
+    && chmod 0755 /opt/released-aw-home/aw
 COPY channel-core/package.json channel-core/package-lock.json /journey/channel-core/
 WORKDIR /journey/channel-core
 RUN npm ci

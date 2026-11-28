@@ -219,6 +219,7 @@ func testLegacyLocalRegistryUpgrade(t *testing.T) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("released implicit init: %v\n%s", err, out)
 		}
+		t.Log("released aw wrote the home")
 	} else {
 		// Use the released wire shape in routine tests. Set AW_TEST_AW_13658
 		// to exercise the actual released writer against the same endpoints.

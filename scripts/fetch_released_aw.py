@@ -209,6 +209,20 @@ def freeze_metadata(*, directory: Path, metadata: dict[str, Any]) -> Path:
     return destination
 
 
+def pinned_platform_metadata(wrapper, selected):
+    platforms = wrapper.get("platforms")
+    if platforms is None:
+        return None
+    if selected not in platforms:
+        raise ValueError(f"no pinned package for {selected}")
+    return {
+        "name": "@awebai/" + selected,
+        "version": wrapper["version"],
+        "dist": platforms[selected],
+        **({"gitHead": wrapper["gitHead"]} if "gitHead" in wrapper else {}),
+    }
+
+
 def fetch(
     destination,
     registry="https://registry.npmjs.org",
@@ -225,7 +239,10 @@ def fetch(
         raise ValueError("npm latest must name an exact final aw version")
     source, commit = wrapper_source(wrapper, resolve_tag)
     records = []
-    for name, metadata in [("aw", wrapper), (selected, None)]:
+    for name, metadata in [
+        ("aw", wrapper),
+        (selected, pinned_platform_metadata(wrapper, selected)),
+    ]:
         metadata = metadata or json.loads(
             download(f"{registry}/@awebai%2f{name}/{version}")
         )
@@ -263,6 +280,12 @@ def fetch(
             binary = destination / ("aw.exe" if "windows" in selected else "aw")
             binary.write_bytes(tar_member(body, "package/" + filename))
             binary.chmod(0o700)
+    evidence = binary_evidence(binary, version, selected, source, commit, records)
+    (destination / "provenance.json").write_text(json.dumps(evidence, indent=2) + "\n")
+    return evidence
+
+
+def binary_evidence(binary, version, selected, source, commit, records):
     result = subprocess.run(
         [str(binary.resolve()), "version"],
         capture_output=True,
@@ -277,7 +300,7 @@ def fetch(
         r"^\s*commit: " + re.escape(commit) + r"(?:\s|$)", result.stdout, re.M
     ):
         raise ValueError("downloaded aw source stamp mismatch")
-    evidence = dict(
+    return dict(
         version=version,
         platform=selected,
         source=source,
@@ -287,7 +310,51 @@ def fetch(
         version_output=result.stdout,
         packages=records,
     )
-    (destination / "provenance.json").write_text(json.dumps(evidence, indent=2) + "\n")
+
+
+def verify_pinned(destination, wrapper):
+    """Verify the prepared executable and its receipt against the checked-in lock."""
+    selected = platform_package()
+    platform = pinned_platform_metadata(wrapper, selected)
+    if platform is None:
+        raise ValueError("offline verification requires locked platform archives")
+    version = wrapper["version"]
+    if "gitHead" not in wrapper and not wrapper.get("sourceCommit"):
+        raise ValueError("offline verification requires a locked source commit")
+    source, commit = wrapper_source(wrapper, aw_tag_commit)
+    records = []
+    wrapper_archive = (destination / "aw.tgz").read_bytes()
+    platform_archive = (destination / (selected + ".tgz")).read_bytes()
+    for name, metadata, body in (
+        ("aw", wrapper, wrapper_archive),
+        (selected, platform, platform_archive),
+    ):
+        dist = metadata["dist"]
+        verify_integrity(body, dist["integrity"])
+        packed = package_json(body, metadata["name"], version)
+        records.append(
+            dict(
+                name=metadata["name"],
+                version=version,
+                gitHead=metadata.get("gitHead"),
+                **dist,
+            )
+        )
+        if name == "aw":
+            validate_platform_pin(packed, selected, version)
+
+    windows = "windows" in selected
+    binary = destination / ("aw.exe" if windows else "aw")
+    archive_binary = tar_member(
+        platform_archive, "package/aw.exe" if windows else "package/bin/aw"
+    )
+    if binary.read_bytes() != archive_binary:
+        raise ValueError("the prepared aw binary differs from the locked package")
+    evidence = binary_evidence(binary, version, selected, source, commit, records)
+    if json.loads((destination / "provenance.json").read_text()) != evidence:
+        raise ValueError(
+            "the prepared aw provenance differs from the verified artifact"
+        )
     return evidence
 
 
@@ -296,6 +363,7 @@ if __name__ == "__main__":
     parser.add_argument("destination", type=Path, nargs="?")
     parser.add_argument("--resolve-only", type=Path)
     parser.add_argument("--metadata-input", type=Path)
+    parser.add_argument("--verify-pinned", action="store_true")
     parser.add_argument("--freeze-latest", type=Path)
     args = parser.parse_args()
     if args.freeze_latest:
@@ -311,4 +379,9 @@ if __name__ == "__main__":
         metadata = (
             json.loads(args.metadata_input.read_text()) if args.metadata_input else None
         )
-        print(json.dumps(fetch(args.destination, metadata=metadata)))
+        if args.verify_pinned:
+            if metadata is None:
+                parser.error("--verify-pinned requires --metadata-input")
+            print(json.dumps(verify_pinned(args.destination, metadata)))
+        else:
+            print(json.dumps(fetch(args.destination, metadata=metadata)))

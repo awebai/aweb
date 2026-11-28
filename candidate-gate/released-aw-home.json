@@ -1,0 +1,35 @@
+{
+  "name": "@awebai/aw",
+  "version": "1.36.58",
+  "gitHead": "a3223c1d32b8144abfd34d63b521b38d2b227ad5",
+  "dist": {
+    "integrity": "sha512-XXI+KavALNzjD/iFPbLKr8O4ChtbnG3V9eYL/uf4gBd/nkrf7VhV8P9xRmAd/x7bM7Lix6AI7XFvuIQBk3cUvA==",
+    "tarball": "https://registry.npmjs.org/@awebai/aw/-/aw-1.36.58.tgz"
+  },
+  "platforms": {
+    "aw-darwin-arm64": {
+      "integrity": "sha512-yofpJraLG3bQ32yXzvuSYwAOvEByP0i6jEfZRz4b/1yYsjMR/iuOuXdZPu8VVLSVd39V4mK4FHYlc5JlUITEuQ==",
+      "tarball": "https://registry.npmjs.org/@awebai/aw-darwin-arm64/-/aw-darwin-arm64-1.36.58.tgz"
+    },
+    "aw-darwin-x64": {
+      "integrity": "sha512-/eh5tQpi26e8GkTYA6P6WyhG14VR0abktbQKOggEEIWB3cBoIWFdld1snZlFhUMdsViuLS1OKwRtFZEd5rLXYw==",
+      "tarball": "https://registry.npmjs.org/@awebai/aw-darwin-x64/-/aw-darwin-x64-1.36.58.tgz"
+    },
+    "aw-linux-arm64": {
+      "integrity": "sha512-bduXhkOCm60yw4wp0o8T15BAj289kYmQwdoaGNe9CI+UrMeFQ7EKIFYUfj9dLP/utPFnHjK9sheGEVkP5JdSIw==",
+      "tarball": "https://registry.npmjs.org/@awebai/aw-linux-arm64/-/aw-linux-arm64-1.36.58.tgz"
+    },
+    "aw-linux-x64": {
+      "integrity": "sha512-T0IhrNcBcckcjUCAWcCM1s9TUe7qGGFTwedDUWIqJnI/Hp+wYUL1WWVRf+dbSN4shlj2s2md18UcClfZkFAhrg==",
+      "tarball": "https://registry.npmjs.org/@awebai/aw-linux-x64/-/aw-linux-x64-1.36.58.tgz"
+    },
+    "aw-windows-arm64": {
+      "integrity": "sha512-Qvnz2z9Qp+ZV2Qjdm9mfN/RvoO+vUs+m8imI7x9yz3z9uNtdLGJj9QD78anN1F8tpgN3ch+pwVXrKlIowSIR/A==",
+      "tarball": "https://registry.npmjs.org/@awebai/aw-windows-arm64/-/aw-windows-arm64-1.36.58.tgz"
+    },
+    "aw-windows-x64": {
+      "integrity": "sha512-PL9fQBGnjBNBZdQN30IvHccTIVgWBL4u5TdFOuL6/40FUF2e4zOTPhGg+3idJwgPzgvxYHtOqx34aXB45Tmj+w==",
+      "tarball": "https://registry.npmjs.org/@awebai/aw-windows-x64/-/aw-windows-x64-1.36.58.tgz"
+    }
+  }
+}
