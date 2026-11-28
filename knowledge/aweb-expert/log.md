@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-28
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-e1-removals (E1.4).
+* **Creation**: lesson [a rename to the canonical name can shadow an imported name](/aweb-expert/lessons/a-rename-can-shadow-an-imported-name.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
